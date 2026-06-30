@@ -1,0 +1,111 @@
+name: Coverage Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CP Coverage
+        working-directory: packages/control-plane
+        run: mvn test jacoco:report
+        env:
+          XIHE_CP_DATASOURCE_URL: jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+
+      - name: Runtime Coverage
+        working-directory: packages/runtime
+        run: cargo tarpaulin --out xml --skip-clean
+
+      - name: Agent Coverage
+        working-directory: packages/agent
+        run: pytest --cov=src --cov-report=xml --cov-fail-under=80
+
+      - name: UI Coverage
+        working-directory: packages/ui
+        run: pnpm test:unit -- --coverage
+
+      - name: Check Coverage Thresholds
+        run: |
+          set -e
+          THRESHOLD_CP=80
+          THRESHOLD_RUNTIME=70
+          THRESHOLD_AGENT=80
+          THRESHOLD_UI=70
+          FAILED=0
+
+          # CP: parse JaCoCo XML (line coverage)
+          if [ -f packages/control-plane/target/site/jacoco/jacoco.xml ]; then
+            CP_COV=$(python3 -c "
+          import xml.etree.ElementTree as ET
+          tree = ET.parse('packages/control-plane/target/site/jacoco/jacoco.xml')
+          root = tree.getroot()
+          for counter in root.findall('counter'):
+            if counter.get('type') == 'LINE':
+              missed = int(counter.get('missed'))
+              covered = int(counter.get('covered'))
+              total = missed + covered
+              if total > 0:
+                print(int(covered * 100 / total))
+                break
+          " 2>/dev/null || echo "0")
+            echo "CP coverage: ${CP_COV}% (threshold: ${THRESHOLD_CP}%)"
+            if [ "$CP_COV" -lt "$THRESHOLD_CP" ]; then
+              echo "::error::CP coverage ${CP_COV}% is below ${THRESHOLD_CP}%"
+              FAILED=1
+            fi
+          else
+            echo "::warning::CP JaCoCo report not found"
+          fi
+
+          # Runtime: parse cargo-tarpaulin XML
+          if [ -f packages/runtime/cobertura.xml ]; then
+            RT_COV=$(python3 -c "
+          import xml.etree.ElementTree as ET
+          tree = ET.parse('packages/runtime/cobertura.xml')
+          root = tree.getroot()
+          rate = root.get('line-rate', '0')
+          print(int(float(rate) * 100))
+          " 2>/dev/null || echo "0")
+            echo "Runtime coverage: ${RT_COV}% (threshold: ${THRESHOLD_RUNTIME}%)"
+            if [ "$RT_COV" -lt "$THRESHOLD_RUNTIME" ]; then
+              echo "::error::Runtime coverage ${RT_COV}% is below ${THRESHOLD_RUNTIME}%"
+              FAILED=1
+            fi
+          else
+            echo "::warning::Runtime coverage report not found"
+          fi
+
+          # Agent: pytest-cov enforces threshold at CLI level (--cov-fail-under=80)
+          # If coverage < 80%, the "Agent Coverage" step above already fails.
+          # No additional parsing needed here.
+          AGENT_THRESH=80
+          echo "Agent coverage: enforced by pytest --cov-fail-under=${AGENT_THRESH} (step-level gate)"
+
+          # UI: parse vitest coverage (lcov or text-summary)
+          if [ -f packages/ui/coverage/coverage-summary.json ]; then
+            UI_COV=$(python3 -c "
+          import json
+          with open('packages/ui/coverage/coverage-summary.json') as f:
+            data = json.load(f)
+            print(int(data['total']['lines']['pct']))
+          " 2>/dev/null || echo "0")
+            echo "UI coverage: ${UI_COV}% (threshold: ${THRESHOLD_UI}%)"
+            if [ "$UI_COV" -lt "$THRESHOLD_UI" ]; then
+              echo "::error::UI coverage ${UI_COV}% is below ${THRESHOLD_UI}%"
+              FAILED=1
+            fi
+          else
+            echo "::warning::UI coverage summary not found"
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Coverage thresholds not met"
+            exit 1
+          fi
+
+          echo "All coverage thresholds met"

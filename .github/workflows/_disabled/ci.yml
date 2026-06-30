@@ -1,0 +1,53 @@
+name: xihe CI
+
+on:
+  push:
+    branches: [main, develop, internal/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ui-unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: corepack enable && pnpm install --ignore-workspace
+      - run: pnpm test:unit
+
+  agent-unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install uv && uv sync --all-extras
+      - run: uv run pytest tests/unit/ -v
+
+  cp-unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - run: mvn test -Dtest="*Test,*Test" -DfailIfNoTests=false
+
+  runtime-unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test --lib
