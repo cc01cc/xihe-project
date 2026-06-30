@@ -1,0 +1,134 @@
+[package]
+name = "xihe-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "xihe-runtime"
+path = "src/main.rs"
+
+[[bin]]
+name = "xihe-container-runtime"
+path = "src/container_runtime.rs"
+
+[[bin]]
+name = "xihe-mcp-bridge"
+path = "src/mcp_bridge.rs"
+
+[dependencies]
+rmcp = { version = "1.7.0", features = ["server", "transport-streamable-http-server", "schemars"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-util = "0.7.18"
+axum = "0.8.9"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "registry"] }
+tracing-appender = "0.2.5"
+anyhow = "1.0.102"
+
+# === NEW: File system & tools ===
+ignore = "0.4.26"
+walkdir = "2.5.0"
+globset = "0.4.18"
+tempfile = "3.27.0"
+
+# === NEW: Async & streaming ===
+tokio-stream = "0.1.18"
+tower-http = { version = "0.6.11", features = ["cors"] }
+
+# === NEW: Error handling ===
+thiserror = "2.0.18"
+
+# === NEW: ID & time ===
+uuid = { version = "1.23.3", features = ["v4", "v7"] }
+chrono = "0.4.45"
+
+# === NEW: Regex for grep ===
+regex = "1.12.4"
+
+# === NEW: File watching ===
+notify = "8.2.0"
+
+# === NEW: Dotenv loading ===
+dotenvy = "0.15"
+
+# === NEW: Docker sandbox (MVP) ===
+bollard = "0.21.0"
+
+# === NEW: Unix sandbox (optional, for future) ===
+# nix = "0.29.0"
+
+# === NEW: PDF text extraction ===
+pdf-extract = "0.10.0"
+
+# === NEW: Base64 encoding ===
+base64 = "0.22.1"
+
+# === NEW: URL percent-encoding support (REST API write path) ===
+percent-encoding = "2"
+bytes = "1"
+
+# === NEW: HTTP client & HTML parsing (web_fetch) ===
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "blocking"] }
+scraper = "0.27.0"
+html2md = "0.2.15"
+
+[dependencies.tower]
+version = "0.5"
+features = ["util"]
+
+[lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+unused_imports = "deny"
+dead_code = "deny"
+
+[lints.clippy]
+all = "warn"
+correctness = "deny"
+suspicious = "deny"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+mockito = "1.7.2"
+
+[[test]]
+name = "artifact_test"
+path = "tests/artifact_test.rs"
+
+[[test]]
+name = "background_test"
+path = "tests/background_test.rs"
+
+[[test]]
+name = "bridge_integration_test"
+path = "tests/bridge_integration_test.rs"
+
+[[test]]
+name = "escape_test"
+path = "tests/escape_test.rs"
+
+[[test]]
+name = "mcp_multi_workspace_test"
+path = "tests/mcp_multi_workspace_test.rs"
+
+[[test]]
+name = "mcp_tools_test"
+path = "tests/mcp_tools_test.rs"
+
+[[test]]
+name = "sandbox_test"
+path = "tests/sandbox_test.rs"
+
+[[test]]
+name = "unit_tools_test"
+path = "tests/unit_tools_test.rs"
+
+[[test]]
+name = "cp_stub_integration_test"
+path = "tests/cp_stub_integration_test.rs"
+
+[[test]]
+name = "cp_real_integration_test"
+path = "tests/cp_real_integration_test.rs"
