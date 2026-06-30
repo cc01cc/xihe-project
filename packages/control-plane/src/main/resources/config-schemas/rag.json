@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "chunk_size": { "type": ["integer", "string"] },
+    "top_k": { "type": ["integer", "string"] }
+  },
+  "additionalProperties": false
+}

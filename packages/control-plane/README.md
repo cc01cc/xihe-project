@@ -1,0 +1,1 @@
+../../docs/i18n/zh-Hans/packages/control-plane/README.md

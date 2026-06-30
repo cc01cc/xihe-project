@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "logLevel": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"] },
+    "levelAgent": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"] },
+    "levelCp": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"] },
+    "levelRuntime": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"] },
+    "logDir": { "type": "string" },
+    "auditConsole": { "type": "string", "enum": ["true", "false"] },
+    "useRegistry": { "type": "string", "enum": ["true", "false"] },
+    "useSupervisor": { "type": "string", "enum": ["true", "false"] },
+    "workersDir": { "type": "string" },
+    "runtimeFilter": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "openaiApiKey": { "type": "string", "pattern": "^(sk-|$)" },
+    "deepseekApiKey": { "type": "string" },
+    "anthropicApiKey": { "type": "string", "pattern": "^(sk-ant-|$)" },
+    "xiaomiApiKey": { "type": "string" },
+    "dashscopeApiKey": { "type": "string" },
+    "baseUrl": { "type": "string", "format": "uri" },
+    "imageProvider": { "type": "string" },
+    "maxTokens": { "type": "integer", "minimum": 1, "maximum": 128000 },
+    "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+    "timeout": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": false
+}

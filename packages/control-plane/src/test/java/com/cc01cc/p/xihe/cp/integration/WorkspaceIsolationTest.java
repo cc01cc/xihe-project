@@ -1,0 +1,219 @@
+package com.cc01cc.p.xihe.cp.integration;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+import com.cc01cc.p.xihe.cp.auth.AuthResponse;
+import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@ActiveProfiles("h2")
+class WorkspaceIsolationTest {
+
+    @Autowired
+    private WebApplicationContext webApplicationContext;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private WorkspaceService workspaceService;
+
+    @Autowired
+    private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private WorkspaceUserRepository workspaceUserRepository;
+
+    @Autowired
+    private SessionRepository sessionRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    private MockMvc mockMvc;
+    private User userA;
+    private User userB;
+    private Workspace ws1;
+    private Workspace ws2;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
+
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String emailA = "user-a-" + suffix + "@test.com";
+        String emailB = "user-b-" + suffix + "@test.com";
+
+        registerUser(emailA, "Test1234!", "User A");
+        userA = userRepository.findByEmail(emailA).orElseThrow();
+        registerUser(emailB, "Test1234!", "User B");
+        userB = userRepository.findByEmail(emailB).orElseThrow();
+
+        ws1 = workspaceService.createWorkspace("ws-isolation-1-" + suffix, userA.getId());
+        ws2 = workspaceService.createWorkspace("ws-isolation-2-" + suffix, userA.getId());
+        workspaceUserRepository.save(new WorkspaceUser(ws2.getId(), userB.getId(), WorkspaceRole.MEMBER));
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
+    }
+
+    @Test
+    void sessionWorkspaceIsolation() {
+        Session sessionInWs1 = new Session(ws1.getId(), userA.getId(), "Session in WS-1");
+        sessionInWs1.setId(UUID.randomUUID().toString());
+        sessionRepository.save(sessionInWs1);
+
+        Session sessionInWs2 = new Session(ws2.getId(), userB.getId(), "Session in WS-2");
+        sessionInWs2.setId(UUID.randomUUID().toString());
+        sessionRepository.save(sessionInWs2);
+
+        List<Session> ws1Sessions = sessionRepository
+                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws1.getId());
+        assertEquals(1, ws1Sessions.size());
+        assertEquals(sessionInWs1.getTitle(), ws1Sessions.get(0).getTitle());
+
+        List<Session> ws2Sessions = sessionRepository
+                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws2.getId());
+        assertEquals(1, ws2Sessions.size());
+        assertEquals(sessionInWs2.getTitle(), ws2Sessions.get(0).getTitle());
+
+        assertTrue(ws2Sessions.stream().noneMatch(s -> s.getId().equals(sessionInWs1.getId())));
+        assertTrue(ws1Sessions.stream().noneMatch(s -> s.getId().equals(sessionInWs2.getId())));
+    }
+
+    @Test
+    void tenantContextWorkspaceSwitch() {
+        TenantContext.setWorkspaceId(ws1.getId());
+        TenantContext.setWorkspacePath(ws1.getStoragePath());
+        TenantContext.setWorkspaceRole(WorkspaceRole.OWNER.name());
+
+        assertAll("ws-1 context",
+            () -> assertEquals(ws1.getId(), TenantContext.getWorkspaceId()),
+            () -> assertEquals(ws1.getStoragePath(), TenantContext.getWorkspacePath()),
+            () -> assertEquals(WorkspaceRole.OWNER.name(), TenantContext.getWorkspaceRole())
+        );
+
+        TenantContext.clear();
+        assertNull(TenantContext.getWorkspaceId());
+        assertNull(TenantContext.getWorkspacePath());
+        assertNull(TenantContext.getWorkspaceRole());
+
+        TenantContext.setWorkspaceId(ws2.getId());
+        TenantContext.setWorkspacePath(ws2.getStoragePath());
+        TenantContext.setWorkspaceRole(WorkspaceRole.MEMBER.name());
+
+        assertAll("ws-2 context",
+            () -> assertEquals(ws2.getId(), TenantContext.getWorkspaceId()),
+            () -> assertEquals(ws2.getStoragePath(), TenantContext.getWorkspacePath()),
+            () -> assertEquals(WorkspaceRole.MEMBER.name(), TenantContext.getWorkspaceRole())
+        );
+
+        TenantContext.clear();
+    }
+
+    @Test
+    void workspaceRoleResolution() {
+        String roleA = workspaceService.resolveWorkspaceRole(ws1.getId(), userA.getId());
+        assertEquals(WorkspaceRole.OWNER.name(), roleA);
+
+        String roleB = workspaceService.resolveWorkspaceRole(ws2.getId(), userB.getId());
+        assertEquals(WorkspaceRole.MEMBER.name(), roleB);
+
+        assertNull(workspaceService.resolveWorkspaceRole(ws1.getId(), userB.getId()));
+    }
+
+    @Test
+    void memberCannotAccessOwnerWorkspace() {
+        String roleB = workspaceService.resolveWorkspaceRole(ws1.getId(), userB.getId());
+        assertNull(roleB, "user-b should have no role in ws-1");
+
+        String roleA = workspaceService.resolveWorkspaceRole(ws2.getId(), userA.getId());
+        assertEquals(WorkspaceRole.OWNER.name(), roleA,
+                "user-a is OWNER of ws-2 and should have access");
+    }
+
+    @Test
+    void jwtTokenWithWorkspaceContextIsValid() {
+        String token = TestDataFactory.createWorkspaceToken(
+                userA.getId(), "user-a@test.com", "USER", ws1.getId());
+        assertNotNull(token);
+        assertTrue(TestDataFactory.tokenProvider().validateToken(token));
+        assertEquals(userA.getId(), TestDataFactory.tokenProvider().getUserIdFromToken(token));
+        assertEquals(ws1.getId(), TestDataFactory.tokenProvider().getWorkspaceIdFromToken(token));
+    }
+
+    @Test
+    void registeredUserTokenHasNullWorkspace() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String email = "token-null-ws-" + suffix + "@test.com";
+        String token = registerAndExtractToken(email, "Test1234!", "Token Test");
+        assertNotNull(token);
+        assertTrue(TestDataFactory.tokenProvider().validateToken(token));
+        assertNull(TestDataFactory.tokenProvider().getWorkspaceIdFromToken(token));
+    }
+
+    @Test
+    void crossWorkspaceSessionQueryReturnsEmpty() {
+        Session sessionInWs1 = new Session(ws1.getId(), userA.getId(), "WS-1 exclusive");
+        sessionInWs1.setId(UUID.randomUUID().toString());
+        sessionRepository.save(sessionInWs1);
+
+        List<Session> ws2Sessions = sessionRepository
+                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws2.getId());
+        Optional<String> matched = ws2Sessions.stream()
+                .map(Session::getId)
+                .filter(id -> id.equals(sessionInWs1.getId()))
+                .findAny();
+        assertTrue(matched.isEmpty(), "ws-2 query must not return sessions from ws-1");
+    }
+
+    private void registerUser(String email, String password, String name) throws Exception {
+        RegisterRequest request = new RegisterRequest(email, password, name);
+        mockMvc.perform(post("/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated());
+    }
+
+    private String registerAndExtractToken(String email, String password, String name) throws Exception {
+        RegisterRequest request = new RegisterRequest(email, password, name);
+        String json = mockMvc.perform(post("/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readValue(json, AuthResponse.class).getAccessToken();
+    }
+}
