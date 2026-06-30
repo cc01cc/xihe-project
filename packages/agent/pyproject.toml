@@ -1,0 +1,66 @@
+[project]
+name = "xihe-agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.136.3",
+    "uvicorn>=0.48.0",
+    "httpx[socks]>=0.28.1",
+    "pydantic>=2.13.4",
+    "loguru>=0.7.3",
+    "langchain-core>=1.0.0",
+    "langchain-mcp-adapters>=0.2.2",
+    "langgraph>=1.2.2",
+    "litellm>=1.68.0",
+    "langchain-litellm>=0.3.0",
+    "langgraph-supervisor>=0.0.31",
+    "langchain>=1.3.4",
+    "langchain-postgres>=0.0.14",
+    "psycopg>=3.2.0",
+    "watchdog>=4.0.0",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0.3", "pytest-asyncio>=1.4.0", "ruff>=0.15.15"]
+
+[build-system]
+requires = ["hatchling>=1.29.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xihe_agent"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+    "pytest-httpx>=0.35.0",
+    "ruff>=0.15.15",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+lint.select = ["E", "F", "I", "W", "UP", "N", "SIM"]
+lint.ignore = ["E501", "SIM108"]
+lint.per-file-ignores."tests/**" = ["F401", "F811", "F841"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+check_untyped_defs = false
+follow_imports = "silent"
+ignore_missing_imports = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+ignore_errors = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: CP integration tests (require running CP)",
+    "docker: tests that require Docker",
+]
