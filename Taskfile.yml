@@ -1,0 +1,249 @@
+# DEPRECATED: This Taskfile is kept for backwards compatibility only.
+# Use `mise run <task>` as the primary command interface.
+# See AGENTS.md and docs/DEV-015-monorepo-task-conventions.md for the new conventions.
+#
+# Example replacements:
+#   task setup        -> mise run setup
+#   task dev:all      -> mise run dev:full
+#   task dev:backend  -> mise run dev:backend
+#   task validate     -> mise run validate
+#   task ui:lint      -> mise run lint:ui
+#   task agent:test   -> mise run test:agent
+version: "3"
+output: prefixed
+
+tasks:
+  setup:
+    desc: Install dependencies for all active modules
+    cmds:
+      - task: ui:install
+      - task: agent:install
+      - task: cp:install
+      - task: runtime:install
+
+  dev:backend:
+    desc: Start runtime, agent, control plane via Docker Compose
+    cmds:
+      - bash -c 'trap "docker compose down" EXIT; docker compose up --build runtime control-plane agent postgres'
+
+  dev:all:
+    desc: Start all 4 modules via Docker + UI on host (Ctrl+C cleans up containers)
+    cmds:
+      - bash scripts/dev-all.sh
+
+  ui:install:
+    desc: Install UI dependencies
+    dir: packages/ui
+    cmds:
+      - pnpm install --ignore-workspace
+
+  ui:dev:
+    desc: Start the UI development server
+    dir: packages/ui
+    cmds:
+      - XIHE_ENV="${XIHE_ENV:-dev}" bash ../../scripts/run-with-log.sh ui pnpm --ignore-workspace run dev
+
+  ui:lint:
+    desc: Run UI lint (oxlint)
+    dir: packages/ui
+    cmds:
+      - pnpm --ignore-workspace run lint
+
+  ui:typecheck:
+    desc: Run UI type check (vue-tsc)
+    dir: packages/ui
+    cmds:
+      - pnpm --ignore-workspace run typecheck
+
+  ui:build:
+    desc: Build the UI bundle
+    dir: packages/ui
+    cmds:
+      - pnpm --ignore-workspace run build
+
+  ui:test:
+    desc: Run the UI unit test suite
+    dir: packages/ui
+    cmds:
+      - pnpm --ignore-workspace run test:unit
+
+  agent:install:
+    desc: Sync Python dependencies for the agent
+    dir: packages/agent
+    cmds:
+      - uv sync --all-extras
+
+  agent:lint:
+    desc: Run Agent lint (ruff + mypy)
+    dir: packages/agent
+    cmds:
+      - uv run ruff check
+      - uv run mypy src/
+
+  agent:dev:
+    desc: Start the agent service
+    dir: packages/agent
+    cmds:
+      - XIHE_ENV="${XIHE_ENV:-dev}" bash ../../scripts/run-with-log.sh agent uv run python -m xihe_agent.main
+
+  agent:test:
+    desc: Run the agent test suite
+    dir: packages/agent
+    cmds:
+      - uv run pytest
+
+  cp:install:
+    desc: Resolve Maven dependencies for the control plane
+    dir: packages/control-plane
+    cmds:
+      - mvn dependency:resolve
+
+  cp:lint:
+    desc: Run CP lint (Checkstyle)
+    dir: packages/control-plane
+    cmds:
+      - mvn checkstyle:check
+
+  cp:dev:
+    desc: Start the control plane
+    dir: packages/control-plane
+    cmds:
+      - XIHE_ENV="${XIHE_ENV:-dev}" bash ../../scripts/run-with-log.sh cp mvn spring-boot:run
+
+  cp:test:
+    desc: Run the control plane test suite
+    dir: packages/control-plane
+    cmds:
+      - mvn test
+
+  runtime:install:
+    desc: Fetch Rust dependencies for the runtime
+    dir: packages/runtime
+    cmds:
+      - cargo fetch
+
+  runtime:build:
+    desc: Build all runtime binaries (lib + 3 bin targets)
+    dir: packages/runtime
+    cmds:
+      - cargo build --release
+
+  runtime:lint:
+    desc: Run Runtime lint (clippy)
+    dir: packages/runtime
+    cmds:
+      - cargo clippy -- -D warnings
+
+  runtime:dev:
+    desc: Start the runtime service
+    dir: packages/runtime
+    cmds:
+      - XIHE_ENV="${XIHE_ENV:-dev}" bash ../../scripts/run-with-log.sh runtime cargo run
+
+  runtime:test:
+    desc: Run the runtime test suite (all, sandbox tests need Docker)
+    dir: packages/runtime
+    cmds:
+      - cargo test
+
+  runtime:test:lib:
+    desc: Run runtime unit tests only (no Docker needed)
+    dir: packages/runtime
+    cmds:
+      - cargo test --lib
+
+  image:workspace:build:
+    desc: Build the xihe/workspace Docker image (multi-stage)
+    cmds:
+      - docker build -t xihe/workspace -f docker/images/workspace/Dockerfile ../..
+
+  logs:clean:
+    desc: Remove root log files created by the dev tasks
+    cmds:
+      - rm -rf logs
+
+  integration:test:
+    desc: Run backend integration tests — T2 (no Docker) + T3 (auto Docker partial stack)
+    cmds:
+      - task: integration:test:t2
+      - task: integration:test:t3
+
+  integration:test:t2:
+    desc: Run T2 cross-module stub integration tests (no Docker required)
+    cmds:
+      - echo "=== CP T2 WireMock tests ==="
+      - cd packages/control-plane && mvn test -Dtest="crossmodule/*" -pl . 2>&1 | tail -5
+      - echo "=== Agent T2 stub tests ==="
+      - cd packages/agent && uv run pytest tests/integration/test_cp_stub_integration.py -v 2>&1 | tail -10
+      - echo "=== Runtime T2 stub tests ==="
+      - cd packages/runtime && cargo test --test cp_stub_integration_test 2>&1 | tail -5
+
+  integration:test:t3:
+    desc: Run T3 cross-module real integration tests (requires Docker)
+    cmds:
+      - bash -c '
+          echo "=== Starting Docker stack for T3 ===";
+          docker compose up -d --build postgres control-plane agent runtime 2>&1;
+          CP_PORT="${XIHE_CP_PORT:-12631}";
+          echo "Waiting for CP...";
+          for i in $(seq 1 30); do
+            curl -s "http://localhost:${CP_PORT}/actuator/health" >/dev/null 2>&1 &&
+            echo "CP ready" && break;
+            sleep 2;
+          done;
+          echo "=== Agent T3 real integration tests ===";
+          CP_URL="http://localhost:${CP_PORT}" uv run pytest packages/agent/tests/integration/test_cp_real_integration.py -v;
+          rc1=$?;
+          echo "=== Runtime T3 real integration tests ===";
+          XIHE_CP_PORT="${CP_PORT}" cargo test --test cp_real_integration_test --manifest-path packages/runtime/Cargo.toml -- --ignored 2>&1 | tail -10;
+          rc2=$?;
+          docker compose down;
+          exit $((rc1 | rc2))
+        '
+
+  e2e:test:
+    desc: Run end-to-end stack tests (auto-start/stop Docker Compose)
+    cmds:
+      - bash -c '
+          docker compose up -d --build;
+          echo "Waiting for stack...";
+          CP_PORT="${XIHE_CP_PORT:-12631}";
+          for i in $(seq 1 30); do
+            curl -s "http://localhost:${CP_PORT}/actuator/health" >/dev/null 2>&1 &&
+            echo "Ready" && break;
+            sleep 2;
+          done;
+          cd packages/ui && npx playwright test --config e2e/playwright.config.ts;
+          rc=$?;
+          docker compose down;
+          exit $rc
+        '
+
+  validate:full:
+    desc: Run full validation + integration + E2E (requires Docker)
+    cmds:
+      - task: validate
+      - task: runtime:test
+      - task: integration:test
+      - task: e2e:test
+
+  validate:
+    desc: Run all quality gates — lint + typecheck + build + test (Docker auto-managed)
+    cmds:
+      - task: ui:lint
+      - task: ui:typecheck
+      - task: ui:build
+      - task: ui:test
+      - task: agent:lint
+      - task: agent:test
+      - task: cp:lint
+      - task: cp:test
+      - task: runtime:build
+      - task: runtime:lint
+      - task: runtime:test:lib
+      - task: lint:links
+
+  lint:links:
+    desc: Check documentation links (no escape from docs/)
+    cmds:
+      - bash ../../scripts/check-doc-links.sh "{{.TASKFILE_DIR}}"

@@ -1,0 +1,222 @@
+[env]
+NODE_OPTIONS = "--max-old-space-size=2048"
+
+[tools]
+node = "22"
+pnpm = "10"
+python = "3.12"
+uv = "latest"
+java = "temurin-25"
+maven = "3.9"
+rust = "1.88"
+task = "3"
+
+[tasks.setup]
+depends = ["setup:ui", "setup:agent", "setup:cp", "setup:runtime"]
+description = "Install dependencies for all active modules"
+alias = "setup"
+
+[tasks."setup:ui"]
+run = "pnpm install --ignore-workspace"
+description = "Install UI dependencies"
+dir = "packages/ui"
+alias = "setup:ui"
+
+[tasks."setup:agent"]
+run = "uv sync --all-extras"
+description = "Sync Python dependencies for the agent"
+dir = "packages/agent"
+alias = "setup:agent"
+
+[tasks."setup:cp"]
+run = "mvn dependency:resolve"
+description = "Resolve Maven dependencies for the control plane"
+dir = "packages/control-plane"
+alias = "setup:cp"
+
+[tasks."setup:runtime"]
+run = "cargo fetch"
+description = "Fetch Rust dependencies for the runtime"
+dir = "packages/runtime"
+alias = "setup:runtime"
+
+[tasks.dev]
+depends = ["dev:ui"]
+description = "Start the UI development server (backend must be running)"
+alias = "dev"
+
+[tasks."dev:full"]
+run = "bash scripts/dev-all.sh"
+description = "Start all 4 modules via Docker + UI on host (Ctrl+C cleans up containers)"
+alias = "dev:full"
+
+[tasks."dev:backend"]
+run = "bash -c 'trap \"docker compose down\" EXIT; docker compose up --build runtime control-plane agent postgres'"
+description = "Start runtime, agent, control plane via Docker Compose"
+alias = "dev:backend"
+
+[tasks."dev:ui"]
+run = "XIHE_ENV=\"${XIHE_ENV:-dev}\" bash ../../scripts/run-with-log.sh ui pnpm --ignore-workspace run dev"
+description = "Start the UI development server"
+dir = "packages/ui"
+alias = "dev:ui"
+
+[tasks."dev:agent"]
+run = "XIHE_ENV=\"${XIHE_ENV:-dev}\" bash ../../scripts/run-with-log.sh agent uv run python -m xihe_agent.main"
+description = "Start the agent service"
+dir = "packages/agent"
+alias = "dev:agent"
+
+[tasks."dev:cp"]
+run = "XIHE_ENV=\"${XIHE_ENV:-dev}\" bash ../../scripts/run-with-log.sh cp mvn spring-boot:run"
+description = "Start the control plane"
+dir = "packages/control-plane"
+alias = "dev:cp"
+
+[tasks."dev:runtime"]
+run = "XIHE_ENV=\"${XIHE_ENV:-dev}\" bash ../../scripts/run-with-log.sh runtime cargo run"
+description = "Start the runtime service"
+dir = "packages/runtime"
+alias = "dev:runtime"
+
+[tasks.build]
+depends = ["build:ui", "build:runtime"]
+description = "Build all production artifacts"
+alias = "build"
+
+[tasks."build:ui"]
+run = "pnpm --ignore-workspace run build"
+description = "Build the UI bundle"
+dir = "packages/ui"
+alias = "build:ui"
+
+[tasks."build:runtime"]
+run = "cargo build --release"
+description = "Build all runtime binaries (lib + 3 bin targets)"
+dir = "packages/runtime"
+alias = "build:runtime"
+
+[tasks.test]
+depends = ["test:ui", "test:agent", "test:cp", "test:runtime:lib"]
+description = "Run all tests"
+alias = "test"
+
+[tasks."test:ui"]
+run = "pnpm --ignore-workspace run test:unit"
+description = "Run the UI unit test suite"
+dir = "packages/ui"
+alias = "test:ui"
+
+[tasks."test:agent"]
+run = "uv run pytest"
+description = "Run the agent test suite"
+dir = "packages/agent"
+alias = "test:agent"
+
+[tasks."test:cp"]
+run = "mvn test"
+description = "Run the control plane test suite"
+dir = "packages/control-plane"
+alias = "test:cp"
+
+[tasks."test:runtime"]
+run = "cargo test"
+description = "Run the runtime test suite (all, sandbox tests need Docker)"
+dir = "packages/runtime"
+alias = "test:runtime"
+
+[tasks."test:runtime:lib"]
+run = "cargo test --lib"
+description = "Run runtime unit tests only (no Docker needed)"
+dir = "packages/runtime"
+alias = "test:runtime:lib"
+
+[tasks."test:e2e"]
+run = "bash scripts/mise/e2e-test.sh"
+description = "Run end-to-end stack tests (auto-start/stop Docker Compose)"
+alias = "test:e2e"
+
+[tasks."test:integration"]
+depends = ["test:integration:t2", "test:integration:t3"]
+description = "Run backend integration tests — T2 (no Docker) + T3 (auto Docker partial stack)"
+alias = "test:integration"
+
+[tasks."test:integration:t2"]
+run = "bash scripts/mise/integration-test-t2.sh"
+description = "Run T2 cross-module stub integration tests (no Docker required)"
+alias = "test:integration:t2"
+
+[tasks."test:integration:t3"]
+run = "bash scripts/mise/integration-test-t3.sh"
+description = "Run T3 cross-module real integration tests (requires Docker)"
+alias = "test:integration:t3"
+
+[tasks.lint]
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime"]
+description = "Run all linters"
+alias = "lint"
+
+[tasks."lint:ui"]
+run = "pnpm --ignore-workspace run lint"
+description = "Run UI lint (oxlint)"
+dir = "packages/ui"
+alias = "lint:ui"
+
+[tasks."lint:agent"]
+run = "uv run ruff check && uv run mypy src/"
+description = "Run Agent lint (ruff + mypy)"
+dir = "packages/agent"
+alias = "lint:agent"
+
+[tasks."lint:cp"]
+run = "mvn checkstyle:check"
+description = "Run CP lint (Checkstyle)"
+dir = "packages/control-plane"
+alias = "lint:cp"
+
+[tasks."lint:runtime"]
+run = "cargo clippy -- -D warnings"
+description = "Run Runtime lint (clippy)"
+dir = "packages/runtime"
+alias = "lint:runtime"
+
+[tasks."lint:links"]
+run = "bash ../scripts/check-doc-links.sh \"{{config_root}}\""
+description = "Check documentation links (no escape from docs/)"
+alias = "lint:links"
+
+[tasks.typecheck]
+depends = ["typecheck:ui"]
+description = "Run static type checks"
+alias = "typecheck"
+
+[tasks."typecheck:ui"]
+run = "pnpm --ignore-workspace run typecheck"
+description = "Run UI type check (vue-tsc)"
+dir = "packages/ui"
+alias = "typecheck:ui"
+
+[tasks.format]
+run = "bash scripts/mise/format.sh"
+description = "Format code across modules"
+alias = "format"
+
+[tasks.validate]
+depends = ["lint", "typecheck", "build", "test", "lint:links"]
+description = "Run all quality gates — lint + typecheck + build + test (Docker auto-managed)"
+alias = "validate"
+
+[tasks."validate:full"]
+depends = ["validate", "test:runtime", "test:integration", "test:e2e"]
+description = "Run full validation + integration + E2E (requires Docker)"
+alias = "validate:full"
+
+[tasks."image:workspace:build"]
+run = "docker build -t xihe/workspace -f docker/images/workspace/Dockerfile ../.."
+description = "Build the xihe/workspace Docker image (multi-stage)"
+alias = "image:workspace:build"
+
+[tasks.clean]
+run = "rm -rf logs packages/*/target packages/*/dist packages/*/coverage"
+description = "Remove build artifacts, logs, and temporary files"
+alias = "clean"

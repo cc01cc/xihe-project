@@ -1,0 +1,65 @@
+# Rust
+**/target/
+**/Cargo.lock
+**/*.rs.bk
+
+# Node
+node_modules/
+dist/
+.vite/
+.turbo/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+build/
+.gradle/
+.mvn/wrapper/maven-wrapper.jar
+target/
+
+# IDE
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# Env
+.env
+.env.local
+.env.*
+!.env.example
+config.import.local.jsonc
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+tmp/
+*.tmp
+**/out/
+
+# Playwright E2E artifacts
+playwright-report/
+test-results/
+screenshots/
+
+# Runtime data (generated, not committed)
+packages/control-plane/data/
+
+# Dev/test data (PDFs, images, etc.)
+data/

@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: xihe-postgres
+    environment:
+      POSTGRES_DB: xihe
+      POSTGRES_USER: xihe
+      POSTGRES_PASSWORD: xihe123
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "${XIHE_PG_PORT:-12634}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xihe -d xihe"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - xihe-net
+
+  control-plane:
+    build:
+      context: packages/control-plane
+      dockerfile: Dockerfile
+    container_name: xihe-cp
+    ports:
+      - "${XIHE_CP_PORT:-12631}:8080"
+    env_file:
+      - path: .env.dev
+        required: false
+    environment:
+      XIHE_CP_PORT: "8080"
+      XIHE_LOG_DIR: "/logs"
+      XIHE_CP_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/xihe"
+      XIHE_AGENT_URL: "http://agent:8000/chat"
+      XIHE_AGENT_BASE_URL: "http://agent:8000"
+      XIHE_RUNTIME_URL: "http://runtime:8001/mcp"
+      SPRING_PROFILES_ACTIVE: "dev"
+    volumes:
+      - ./logs/cp:/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - xihe-net
+
+  agent:
+    build:
+      context: packages/agent
+      dockerfile: Dockerfile
+    container_name: xihe-agent
+    ports:
+      - "${XIHE_AGENT_PORT:-12632}:8000"
+    env_file:
+      - path: .env.dev
+        required: false
+    environment:
+      XIHE_AGENT_PORT: "8000"
+      XIHE_LOG_DIR: "/logs"
+      XIHE_CP_PORT: "8080"
+      XIHE_CP_URL: "http://control-plane:8080"
+    volumes:
+      - ./logs/agent:/logs
+    depends_on:
+      control-plane:
+        condition: service_started
+    networks:
+      - xihe-net
+
+  runtime:
+    build:
+      context: packages/runtime
+      dockerfile: Dockerfile
+    container_name: xihe-runtime
+    ports:
+      - "${XIHE_RUNTIME_PORT:-12633}:8001"
+    env_file:
+      - path: .env.dev
+        required: false
+    environment:
+      XIHE_RUNTIME_PORT: "8001"
+      XIHE_CP_URL: "http://control-plane:8080"
+    volumes:
+      - ./logs/runtime:/logs
+    networks:
+      - xihe-net
+
+volumes:
+  pgdata:
+
+networks:
+  xihe-net:
+    driver: bridge

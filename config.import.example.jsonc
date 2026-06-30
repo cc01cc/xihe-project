@@ -1,0 +1,63 @@
+{
+  // =========================================================================
+  // xihe 配置导入模板 — Admin Layer
+  // =========================================================================
+  // 用法:
+  //   cp config.import.example.jsonc config.import.local.jsonc
+  //   # 填入真实 API key
+  //   curl -X POST /api/v1/config/import \
+  //     -H "Authorization: Bearer $ADMIN_TOKEN" \
+  //     -H "Content-Type: application/json" \
+  //     -d @config.import.local.jsonc
+  //
+  // 此文件含占位符值，供参考。真实配置请复制为 config.import.local.jsonc 后填写。
+  // config.import.local.jsonc 被 gitignore，不会提交。
+
+  // llm-provider — Admin Layer
+  "llm-provider": {
+    "deepseekApiKey": "sk-your-deepseek-api-key",
+    "deepseekModel": "deepseek-v4-flash",
+    "deepseekApiBase": "https://api.deepseek.com/v1",
+    "openaiApiKey": "",
+    "xiaomiApiKey": "",
+    "defaultProvider": "deepseek",
+    "imageProvider": ""
+  },
+
+  // embedding — Admin Layer (apiKey/apiBase 复用 llm-provider 配置)
+  "embedding": {
+    "model": "text-embedding-3-small",
+    "dimensions": 1536
+  },
+
+  // user-preference — Admin Layer（admin 默认值，user 可覆盖）
+  "user-preference": {
+    "defaultModel": "deepseek-v4-flash",
+    "maxTokens": 4096,
+    "temperature": 0.7,
+    "timeout": 30
+  },
+
+  // logging — Admin Layer
+  "logging": {
+    "logLevel": "debug",
+    "levelAgent": "debug",
+    "levelCp": "debug",
+    "levelRuntime": "debug",
+    "levelUi": "debug",
+    "auditConsole": "true",
+    "instructions": "你是 xihe Agent，一个通用的 AI 助手。请用中文回答。你可以使用各种工具来帮助用户完成任务。",
+    "userName": "开发者",
+    "useRegistry": "false",
+    "useSupervisor": "false"
+  },
+
+  // workspace-config — Admin Layer
+  "workspace-config": {
+    "workspacePath": "./workspace",
+    "workspaceId": "ws_default",
+    "image": "xihe/workspace:latest",
+    "dockerImage": "xihe/workspace:latest",
+    "profile": "strict"
+  }
+}
