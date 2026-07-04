@@ -12,6 +12,9 @@
 - 使用 vue-sonner 替代自定义 Toast 方案（`useToast.ts` + `ToastContainer.vue`）
 - 新增 `cn()` 工具函数（`clsx` + `tailwind-merge`）
 - 清理旧的 `src/styles/variables.css`
+- 新增 AI 聊天组件库：MessageScroller、Message、Bubble、Attachment、Marker 五个组件族
+- 新增 MessageScroller 滚动控制器：锚定/自动跟随/预加载保持/消息级跳转/可见性追踪
+- 新增 `scroll-fade` 与 `shimmer` CSS utility
 - 支持 CommonMark + GFM（表格、删除线、任务列表、自动链接、嵌套列表、引用块）
 - 支持 `<think>` reasoning 折叠块与行内 citation `[n]`
 - 详见各包源码和 `docs/` 目录

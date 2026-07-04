@@ -4,6 +4,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn-vue/tailwind.css";
+@import "./scroll-fade.css";
+@import "./shimmer.css";
 
 @custom-variant dark (&:is(.dark *));
 

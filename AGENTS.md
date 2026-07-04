@@ -138,7 +138,7 @@ CP ConfigService 按 **三层所有权（System ⊃ Admin ⊃ User）+ 领域（
 - **Naming**: `camelCase` (TS/JS/Java), `snake_case` (Python/Rust)
 - **Agent 术语**: 代码包用 Agent 模块 (module)，运行进程用 Agent 服务 (server)，运行时单元用 Agent Worker (Worker)
 - **异常日志**: 每个 catch 必须有日志 + stacktrace，禁止 silent catch
-- **UI**: reka-ui + Tailwind v4，Toast 为唯一反馈渠道
+- **UI**: reka-ui + Tailwind v4；聊天组件使用自研 MessageScroller / Message / Bubble / Attachment / Marker 五个组件族；Toast 为唯一反馈渠道
 - **配置**: 3-tier (system > admin > user)，CP ConfigService 统一管理
 - **Service 纯函数**: Service 不依赖 ConfigClient，配置由调用方解析后传入
 - **提交**: Conventional Commits，pass `mise run validate` 后可提交

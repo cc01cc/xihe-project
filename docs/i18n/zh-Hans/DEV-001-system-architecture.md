@@ -336,3 +336,28 @@ interface Message {
 ```
 
 > 详细协议见 `DEV-002-message-protocol.md`（待编写）。
+
+---
+
+## 6. Chat UI 组件架构
+
+聊天界面采用分层组件库实现，位于 `packages/ui/src/components/ui/`：
+
+| 组件族 | 用途 | 关键特性 |
+|--------|------|---------|
+| `message-scroller/` | 滚动容器 | 锚定/自动跟随/预加载保持/消息级跳转/可见性追踪 |
+| `message/` | 消息卡片 | Message / MessageGroup / MessageAvatar / MessageContent / MessageHeader / MessageFooter |
+| `bubble/` | 消息气泡 | user / assistant / system 变体，cva 管理 |
+| `attachment/` | 附件展示 | 媒体/文件/动作按钮，state/size/orientation 变体 |
+| `marker/` | 时间/状态标记 | 分隔线变体，cva 管理 |
+
+滚动行为核心位于 `packages/ui/src/composables/messageScroller*.ts` 与 `packages/ui/src/lib/messageScrollerGeometry.ts`：
+
+- **模式状态机**：`following-bottom` → `free-scrolling` → `anchored-to-message` → `settling-jump`
+- **用户滚动意图**：监听 wheel / touchmove / PageUp/PageDown/Home/End 等按键
+- **新回合锚定**：新消息到达时滚动到锚定项顶部，并通过 `scrollPreviousItemPeek` 保留上文上下文
+- **预加载保持**：`preserveScrollOnPrepend` 在历史消息前置时保持当前可视锚点
+- **可见性追踪**：懒订阅的 `IntersectionObserver` 提供 `currentAnchorId` 与 `visibleMessageIds`
+- **性能策略**：`shallowRef` + 手动 `data-*` 属性同步，避免高频滚动触发 Vue 全子树响应
+
+详见 `plans/PLAN-024-XH-chat-components.md`。

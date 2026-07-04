@@ -328,3 +328,28 @@ interface Message {
 ```
 
 > Detailed protocol in `DEV-002-message-protocol.md` (to be written).
+
+---
+
+## 6. Chat UI Component Architecture
+
+The chat interface is implemented as a layered component library in `packages/ui/src/components/ui/`:
+
+| Component Family | Purpose | Key Features |
+|-----------------|---------|-------------|
+| `message-scroller/` | Scroll container | Anchor / auto-follow / prepend preservation / message-level jump / visibility tracking |
+| `message/` | Message card | Message / MessageGroup / MessageAvatar / MessageContent / MessageHeader / MessageFooter |
+| `bubble/` | Message bubble | user / assistant / system variants managed by cva |
+| `attachment/` | Attachment display | Media / file / action buttons with state / size / orientation variants |
+| `marker/` | Time / status marker | Divider variant managed by cva |
+
+Scroll behavior core is in `packages/ui/src/composables/messageScroller*.ts` and `packages/ui/src/lib/messageScrollerGeometry.ts`:
+
+- **Mode state machine**: `following-bottom` → `free-scrolling` → `anchored-to-message` → `settling-jump`
+- **User scroll intent**: Listens to wheel / touchmove / PageUp/PageDown/Home/End keys
+- **New turn anchoring**: Scrolls to top of anchored item when new messages arrive, preserving previous context via `scrollPreviousItemPeek`
+- **Prepend preservation**: `preserveScrollOnPrepend` keeps the current viewport anchor when history is prepended
+- **Visibility tracking**: Lazy `IntersectionObserver` subscription provides `currentAnchorId` and `visibleMessageIds`
+- **Performance strategy**: `shallowRef` + manual `data-*` attribute sync avoids full Vue subtree reactivity during high-frequency scroll updates
+
+See `plans/PLAN-024-XH-chat-components.md` for details.

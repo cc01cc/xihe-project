@@ -1,0 +1,19 @@
+<script setup lang="ts">
+import { cn } from '@/lib/utils'
+
+const props = defineProps<{
+  class?: string
+}>()
+</script>
+
+<template>
+  <div
+    data-slot="attachment-content"
+    :class="cn(
+      'max-w-full min-w-0 flex-1 leading-tight group-data-[orientation=vertical]/attachment:px-1',
+      props.class,
+    )"
+  >
+    <slot />
+  </div>
+</template>
