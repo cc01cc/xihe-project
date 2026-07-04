@@ -5,7 +5,7 @@ import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
 import { useConfigStore } from '../../stores/config'
 import { useWorkspaceAgentSync } from '../../composables/useWorkspaceAgentSync'
-import { useToast } from '../../composables/useToast'
+import { toast } from 'vue-sonner'
 import { logger } from '../../lib/logger'
 
 const props = defineProps<{
@@ -17,7 +17,6 @@ const chatStore = useChatStore()
 const agentStore = useAgentStore()
 const configStore = useConfigStore()
 const { handleToolCall } = useWorkspaceAgentSync()
-const toast = useToast()
 
 const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(props.sessionId)
 

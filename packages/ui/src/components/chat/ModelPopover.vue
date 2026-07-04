@@ -19,14 +19,13 @@ import {
 } from 'reka-ui'
 import { useConfigStore } from '../../stores/config'
 import { useSessionStore } from '../../stores/session'
-import { useToast } from '../../composables/useToast'
+import { toast } from 'vue-sonner'
 import { getProviderInfo, getModelTags, getModelContextWindow } from '../../types/provider'
 
 const { t } = useI18n()
 const router = useRouter()
 const configStore = useConfigStore()
 const sessionStore = useSessionStore()
-const { error: showError } = useToast()
 
 const open = ref(false)
 const searchTerm = ref('')
@@ -36,7 +35,7 @@ watch(
   () => configStore.modelError,
   (val) => {
     if (val) {
-      showError(val)
+      toast.error(val)
       configStore.modelError = null
     }
   },

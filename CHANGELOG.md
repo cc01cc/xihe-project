@@ -8,7 +8,10 @@
 - 基于 pnpm workspace 的 monorepo 项目结构
 - Docker Compose 全栈部署（4 服务 + PostgreSQL）
 - `mise run validate` 全量验证管道
-- 聊天消息 Markdown 渲染全面转向解析/渲染分离架构（`marked` lexer + 递归 Vue token 组件）
+- 集成 shadcn-vue 组件库：CLI 生成 Button、Input、Textarea、Card、Sheet、Progress、Badge、Dialog、AlertDialog、Sonner、Tooltip、Switch、RadioGroup、Checkbox、Skeleton、Separator、ScrollArea 等组件
+- 使用 vue-sonner 替代自定义 Toast 方案（`useToast.ts` + `ToastContainer.vue`）
+- 新增 `cn()` 工具函数（`clsx` + `tailwind-merge`）
+- 清理旧的 `src/styles/variables.css`
 - 支持 CommonMark + GFM（表格、删除线、任务列表、自动链接、嵌套列表、引用块）
 - 支持 `<think>` reasoning 折叠块与行内 citation `[n]`
 - 详见各包源码和 `docs/` 目录

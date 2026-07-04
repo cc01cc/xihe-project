@@ -4,7 +4,7 @@ import { useTheme } from './composables/useTheme'
 import { ThemeInjectionKey } from './types'
 import { useConfigStore } from './stores/config'
 import { useAuthStore } from './stores/auth'
-import ToastContainer from './components/shared/ToastContainer.vue'
+import { Toaster } from './components/ui/sonner'
 
 const theme = useTheme()
 provide(ThemeInjectionKey, theme)
@@ -21,5 +21,5 @@ onMounted(() => {
 
 <template>
   <router-view />
-  <ToastContainer />
+  <Toaster />
 </template>

@@ -16,7 +16,7 @@
 | 层 | 技术 | 版本 |
 |----|------|------|
 | UI 框架 | Vue 3 + Pinia + vue-router | ^3.5 / ^3.0 / ^5.1 |
-| UI 构建 | Vite + Tailwind v4 + reka-ui | ^8 / ^4.3 / ^2.9 |
+| UI 构建 | Vite + Tailwind CSS 4 + shadcn-vue | ^8 / ^4.3 / ^2.7 |
 | CP 框架 | Spring Boot 4 + Spring Security + Spring Data JPA | 4.0.6 |
 | Agent 框架 | FastAPI + LangChain + LangGraph + litellm | — |
 | Runtime 框架 | rmcp + Axum + Tokio + bollard | 1.7.0 / 0.8.9 / 1.52.3 |

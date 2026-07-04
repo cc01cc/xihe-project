@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '../../composables/useToast'
+import { toast } from 'vue-sonner'
 import { useConfigStore } from '../../stores/config'
 import ConfigDomainPanel, { type DomainField } from '../../components/settings/ConfigDomainPanel.vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
@@ -10,7 +10,6 @@ import { api, request } from '../../composables/api'
 
 const { t } = useI18n()
 const configStore = useConfigStore()
-const { success, error } = useToast()
 
 type LayerTab = 'system' | 'admin' | 'user'
 const activeTab = ref<LayerTab>('admin')
@@ -125,7 +124,7 @@ onMounted(async () => {
   } catch (e) {
     console.warn('Failed to load config domains', e)
     fetchError.value = true
-    error('Failed to load configuration')
+    toast.error('Failed to load configuration')
   }
 })
 
@@ -149,12 +148,12 @@ async function saveMcpConfig() {
   try {
     const parsed = JSON.parse(mcpJson.value)
     await api.saveMcpConfig('default', parsed.mcpServers)
-    success(t('common.saved'))
+    toast.success(t('common.saved'))
   } catch (e) {
     if (e instanceof SyntaxError) {
       mcpError.value = t('settings.invalidJson')
     } else {
-      error(t('settings.saveFailed'))
+      toast.error(t('settings.saveFailed'))
     }
   } finally {
     mcpSaving.value = false
@@ -203,9 +202,9 @@ async function handleAdminSave(domain: string, body: Record<string, string>) {
   try {
     await configStore.putAdminConfig(domain, body)
     await configStore.loadAllDomains()
-    success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
+    toast.success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
   } catch (e) {
-    error(e instanceof Error ? e.message : `Failed to save ${domain}`)
+    toast.error(e instanceof Error ? e.message : `Failed to save ${domain}`)
   }
 }
 
@@ -213,9 +212,9 @@ async function handleUserSave(domain: string, body: Record<string, string>) {
   try {
     await configStore.putUserConfig(domain, body)
     await configStore.loadAllDomains()
-    success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
+    toast.success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
   } catch (e) {
-    error(e instanceof Error ? e.message : `Failed to save ${domain}`)
+    toast.error(e instanceof Error ? e.message : `Failed to save ${domain}`)
   }
 }
 
@@ -226,9 +225,9 @@ async function handleReset(domain: string, key: string) {
       body: JSON.stringify({ [key]: '' }),
     })
     await configStore.loadAllDomains()
-    success(`${key} ${t('common.reset')}`)
+    toast.success(`${key} ${t('common.reset')}`)
   } catch (e) {
-    error(e instanceof Error ? e.message : 'Reset failed')
+    toast.error(e instanceof Error ? e.message : 'Reset failed')
   }
 }
 

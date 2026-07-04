@@ -30,7 +30,7 @@ xihe 采用 **四模块 Hub-Module 架构**，核心设计理念是**解耦**—
 | 构建工具 | Vite 8 |
 | 路由 | Vue Router |
 | 状态管理 | Pinia + pinia-plugin-persistedstate |
-| 组件库 | reka-ui（无样式可访问组件）+ 自定义 shadcn/ui 风格组件套件（Button、Card、Dialog、Select、Input 等） |
+| 组件库 | shadcn-vue（基于 reka-ui 的无样式可访问组件）+ Tailwind CSS v4，含 Button、Card、Dialog、Input、MessageScroller 等组件族 |
 | 图标 | @lucide/vue + @iconify/vue |
 | CSS 方案 | Tailwind CSS v4 + HSL 主题变量，支持暗色模式。辅助工具：class-variance-authority、clsx、tailwind-merge |
 | Markdown 渲染 | remark/rehype 管线 + Shiki 语法高亮 + KaTeX 数学公式 |

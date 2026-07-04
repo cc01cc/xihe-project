@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useWorkspaceStore } from '../../stores/workspace'
-import { useToast } from '../../composables/useToast'
+import { toast } from 'vue-sonner'
 import ConfirmModal from '../shared/ConfirmModal.vue'
 import BaseModal from '../shared/BaseModal.vue'
 
@@ -16,7 +16,6 @@ const emit = defineEmits<{
 }>()
 
 const ws = useWorkspaceStore()
-const { success, error } = useToast()
 const isDir = ref(false)
 const showDeleteModal = ref(false)
 const showNewFileModal = ref(false)
@@ -44,9 +43,9 @@ function confirmDelete() {
   deleteLoading.value = true
   try {
     ws.deleteNode(props.path)
-    success(`Deleted "${props.path}"`)
+    toast.success(`Deleted "${props.path}"`)
   } catch {
-    error(`Failed to delete "${props.path}"`)
+    toast.error(`Failed to delete "${props.path}"`)
   }
   deleteLoading.value = false
 }
@@ -66,7 +65,7 @@ function confirmNewFile() {
   if (!name) return
   const parentDir = isDir.value ? props.path : props.path.substring(0, props.path.lastIndexOf('/'))
   ws.createFile(parentDir, name)
-  success(`Created "${name}"`)
+  toast.success(`Created "${name}"`)
   showNewFileModal.value = false
   emit('close')
 }

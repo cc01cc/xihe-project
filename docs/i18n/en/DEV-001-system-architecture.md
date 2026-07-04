@@ -30,7 +30,7 @@ xihe adopts a **four-module Hub-Module architecture**. The core design philosoph
 | Build Tool | Vite 8 |
 | Routing | Vue Router |
 | State Management | Pinia + pinia-plugin-persistedstate |
-| Component Library | reka-ui (unstyled accessible components) + custom shadcn/ui-style component suite (Button, Card, Dialog, Select, Input, etc.) |
+| Component Library | shadcn-vue (unstyled accessible components via reka-ui) + Tailwind CSS v4, including Button, Card, Dialog, Input, MessageScroller, etc. |
 | Icons | @lucide/vue + @iconify/vue |
 | CSS Solution | Tailwind CSS v4 + HSL theme variables, supports dark mode. Utilities: class-variance-authority, clsx, tailwind-merge |
 | Markdown Rendering | remark/rehype pipeline + Shiki syntax highlighting + KaTeX math formulas |
