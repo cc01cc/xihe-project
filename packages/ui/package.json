@@ -18,7 +18,6 @@
     "@lucide/vue": "^1.17.0",
     "@microsoft/fetch-event-source": "^2.0.1",
     "@tailwindcss/vite": "^4.3.0",
-    "@tanstack/vue-virtual": "^3.13.26",
     "@vueuse/core": "^14.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -360,4 +360,11 @@ interface Message {
 - **可见性追踪**：懒订阅的 `IntersectionObserver` 提供 `currentAnchorId` 与 `visibleMessageIds`
 - **性能策略**：`shallowRef` + 手动 `data-*` 属性同步，避免高频滚动触发 Vue 全子树响应
 
-详见 `plans/PLAN-024-XH-chat-components.md`。
+ChatView 集成方式：
+
+- `ChatView.vue` 使用 `MessageScrollerProvider` 包裹 `MessageList`
+- `MessageList.vue` 用 `MessageScroller` / `Viewport` / `Content` / `Item` 替换旧的 `@tanstack/vue-virtual` 容器
+- 用户消息的 `MessageScrollerItem` 绑定 `:scroll-anchor="true"`，作为新回合的滚动锚点
+- SSE 流式开始时 `chatStore.createStreamingMessage()` 立即创建真实 assistant 消息，`appendToken()` 直接追加到该消息的 `content`，无需独立的 `streamingContent` 伪消息
+
+详见 `plans/PLAN-024-XH-chat-components.md` 与 `plans/PLAN-025-XH-chat-integration.md`。

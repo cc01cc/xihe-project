@@ -352,4 +352,11 @@ Scroll behavior core is in `packages/ui/src/composables/messageScroller*.ts` and
 - **Visibility tracking**: Lazy `IntersectionObserver` subscription provides `currentAnchorId` and `visibleMessageIds`
 - **Performance strategy**: `shallowRef` + manual `data-*` attribute sync avoids full Vue subtree reactivity during high-frequency scroll updates
 
-See `plans/PLAN-024-XH-chat-components.md` for details.
+ChatView integration:
+
+- `ChatView.vue` wraps `MessageList` with `MessageScrollerProvider`
+- `MessageList.vue` replaces the old `@tanstack/vue-virtual` container with `MessageScroller` / `Viewport` / `Content` / `Item`
+- User message `MessageScrollerItem` binds `:scroll-anchor="true"` as the scroll anchor for new turns
+- When SSE streaming starts, `chatStore.createStreamingMessage()` immediately creates a real assistant message; `appendToken()` appends directly to that message's `content`, eliminating the separate `streamingContent` pseudo-message
+
+See `plans/PLAN-024-XH-chat-components.md` and `plans/PLAN-025-XH-chat-integration.md` for details.

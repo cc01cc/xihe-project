@@ -37,35 +37,48 @@ describe('useChatStore', () => {
     expect(store.getMessages('s1')).toHaveLength(2)
   })
 
-  it('appendToken accumulates streaming content', () => {
+  it('createStreamingMessage adds assistant message and tracks it', () => {
     const store = useChatStore()
-    store.appendToken('s1', 'Hel')
-    store.appendToken('s1', 'lo')
-    expect(store.getStreamingContent('s1')).toBe('Hello')
-    expect(store.streamingSessionId).toBe('s1')
+    const id = store.createStreamingMessage('s1')
+    const msgs = store.getMessages('s1')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('assistant')
+    expect(msgs[0].id).toBe(id)
+    expect(msgs[0].isStreaming).toBe(true)
+    expect(store.getStreamingMessageId('s1')).toBe(id)
+    expect(store.isStreaming('s1')).toBe(true)
   })
 
-  it('finalizeStreaming moves content to last assistant message', () => {
+  it('appendToken appends to streaming message content', () => {
     const store = useChatStore()
-    store.addMessage('s1', {
-      id: 'm1', sessionId: 's1', role: 'assistant' as const,
-      content: '', timestamp: '2024-01-01',
-    })
+    store.createStreamingMessage('s1')
+    store.appendToken('s1', 'Hel')
+    store.appendToken('s1', 'lo')
+    const msgs = store.getMessages('s1')
+    expect(msgs[0].content).toBe('Hello')
+  })
+
+  it('appendToken does nothing when no streaming message exists', () => {
+    const store = useChatStore()
+    store.appendToken('s1', 'orphan')
+    expect(store.getMessages('s1')).toEqual([])
+  })
+
+  it('finalizeStreaming marks streaming message as completed', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
     store.appendToken('s1', 'streamed content')
     store.finalizeStreaming('s1')
     const msgs = store.getMessages('s1')
     expect(msgs[0].content).toBe('streamed content')
-    expect(store.getStreamingContent('s1')).toBeUndefined()
+    expect(msgs[0].isStreaming).toBe(false)
+    expect(store.isStreaming('s1')).toBe(false)
   })
 
-  it('finalizeStreaming creates new message when no assistant message exists', () => {
+  it('finalizeStreaming does nothing when no streaming message exists', () => {
     const store = useChatStore()
-    store.appendToken('s1', 'new content')
     store.finalizeStreaming('s1')
-    const msgs = store.getMessages('s1')
-    expect(msgs).toHaveLength(1)
-    expect(msgs[0].role).toBe('assistant')
-    expect(msgs[0].content).toBe('new content')
+    expect(store.getMessages('s1')).toEqual([])
   })
 
   it('clearSession removes all data for a session', () => {
@@ -74,9 +87,10 @@ describe('useChatStore', () => {
       id: 'm1', sessionId: 's1', role: 'user' as const,
       content: 'x', timestamp: '2024-01-01',
     })
-    store.appendToken('s1', 'pending')
+    store.createStreamingMessage('s1')
     store.clearSession('s1')
     expect(store.getMessages('s1')).toEqual([])
-    expect(store.getStreamingContent('s1')).toBeUndefined()
+    expect(store.getStreamingMessageId('s1')).toBeNull()
+    expect(store.isStreaming('s1')).toBe(false)
   })
 })

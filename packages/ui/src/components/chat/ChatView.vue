@@ -27,11 +27,6 @@ const messages = computed(() => {
   return chatStore.getMessages(id)
 })
 
-const streamingContent = computed(() => {
-  const id = currentSessionId.value
-  return id ? chatStore.getStreamingContent(id) : undefined
-})
-
 const isStreaming = computed(() => {
   return agentStore.agentState.status === 'thinking' || agentStore.agentState.status === 'executing'
 })
@@ -92,7 +87,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <div v-if="messages.length === 0 && !streamingContent" class="flex-1 flex flex-col items-center justify-center gap-4 px-4">
+    <div v-if="messages.length === 0" class="flex-1 flex flex-col items-center justify-center gap-4 px-4">
       <div class="text-2xl font-semibold text-muted-foreground">xihe</div>
       <p class="text-sm text-muted-foreground text-center max-w-md">你好，我是 xihe Agent。有什么我可以帮你的？</p>
       <div class="flex flex-wrap gap-2 justify-center max-w-md">
@@ -110,7 +105,6 @@ onMounted(() => {
     <MessageList
       v-else
       :messages="messages"
-      :streaming-content="streamingContent"
       @approve="approveTool"
       @reject="rejectTool"
     />

@@ -15,6 +15,10 @@
 - 新增 AI 聊天组件库：MessageScroller、Message、Bubble、Attachment、Marker 五个组件族
 - 新增 MessageScroller 滚动控制器：锚定/自动跟随/预加载保持/消息级跳转/可见性追踪
 - 新增 `scroll-fade` 与 `shimmer` CSS utility
+- ChatView 集成 MessageScroller 替换旧虚拟滚动：SSE 开始即创建真实 assistant 消息，流式内容直接更新消息 content
+- MessageItem 渲染层替换为 Message + Bubble 组件族，用户消息 `align=end`，助手消息 `align=start`
+- 移除 `@tanstack/vue-virtual` 依赖及 sentinel-based 自动滚动实现
+- 打开聊天时默认滚动到 `last-anchor`，用户消息自动设为滚动锚点
 - 支持 CommonMark + GFM（表格、删除线、任务列表、自动链接、嵌套列表、引用块）
 - 支持 `<think>` reasoning 折叠块与行内 citation `[n]`
 - 详见各包源码和 `docs/` 目录

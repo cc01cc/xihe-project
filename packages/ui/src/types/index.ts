@@ -12,11 +12,19 @@ export interface ToolCall {
   id: string
   name: string
   arguments: string
+  status: 'running' | 'completed' | 'failed' | 'pending'
   result?: string
   error?: string
   startedAt?: string
   completedAt?: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'approved' | 'rejected'
+}
+
+export interface Attachment {
+  id: string
+  name: string
+  type: string
+  size: number
+  url: string
 }
 
 export interface Message {
@@ -26,6 +34,19 @@ export interface Message {
   content: string
   timestamp: string
   toolCalls?: ToolCall[]
+  isStreaming?: boolean
+  attachments?: Attachment[]
+}
+
+export interface Message {
+  id: string
+  sessionId: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: string
+  toolCalls?: ToolCall[]
+  isStreaming?: boolean
+  attachments?: Attachment[]
 }
 
 export interface ProviderConfig {

@@ -25,6 +25,9 @@ watch(
   (id) => {
     if (id) {
       connect({
+        onStart: () => {
+          chatStore.createStreamingMessage(id)
+        },
         onToken: (token: string) => {
           chatStore.appendToken(id, token)
         },
@@ -36,6 +39,7 @@ watch(
           agentStore.setStatus('idle')
         },
         onError: (msg: string) => {
+          chatStore.finalizeStreaming(id)
           agentStore.setStatus('error')
           toast.error(msg)
         },

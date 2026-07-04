@@ -27,6 +27,7 @@ function normalizeTokenContent(content: unknown): string {
 }
 
 export interface SSECallbacks {
+  onStart?: () => void
   onToken?: (token: string) => void
   onToolCall?: (name: string, args: Record<string, unknown>) => void
   onToolResult?: (data: Record<string, unknown>) => void
@@ -73,7 +74,10 @@ export function useSSE(sessionId: string) {
   function handleMessage(msg: EventSourceMessage) {
     switch (msg.event) {
       case 'token':
-        isStreaming.value = true
+        if (!isStreaming.value) {
+          isStreaming.value = true
+          currentCallbacks.onStart?.()
+        }
         resetStreamTimeout()
         try {
           const data = JSON.parse(msg.data) as { content?: unknown }
