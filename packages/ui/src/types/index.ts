@@ -19,12 +19,13 @@ export interface ToolCall {
   completedAt?: string
 }
 
-export interface Attachment {
+export interface AttachmentFile {
   id: string
   name: string
   type: string
   size: number
   url: string
+  state: 'idle' | 'uploading' | 'processing' | 'error' | 'done'
 }
 
 export interface Message {
@@ -35,18 +36,9 @@ export interface Message {
   timestamp: string
   toolCalls?: ToolCall[]
   isStreaming?: boolean
-  attachments?: Attachment[]
-}
-
-export interface Message {
-  id: string
-  sessionId: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  timestamp: string
-  toolCalls?: ToolCall[]
-  isStreaming?: boolean
-  attachments?: Attachment[]
+  attachments?: AttachmentFile[]
+  marker?: 'status' | 'date' | 'tool'
+  status?: string
 }
 
 export interface ProviderConfig {

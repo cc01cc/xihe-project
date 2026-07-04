@@ -2,6 +2,12 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ToolCall } from '../../types'
+import {
+  LoaderCircle,
+  CheckCircle,
+  XCircle,
+  Clock,
+} from '@lucide/vue'
 
 const props = defineProps<{
   toolCall: ToolCall
@@ -15,6 +21,15 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const expanded = ref(false)
 
+const statusIcons: Record<string, typeof LoaderCircle> = {
+  pending: Clock,
+  running: LoaderCircle,
+  completed: CheckCircle,
+  failed: XCircle,
+  approved: CheckCircle,
+  rejected: XCircle,
+}
+
 const statusColors: Record<string, string> = {
   pending: 'text-yellow-500',
   running: 'text-blue-500',
@@ -22,15 +37,6 @@ const statusColors: Record<string, string> = {
   failed: 'text-red-500',
   approved: 'text-green-500',
   rejected: 'text-red-500',
-}
-
-const statusIcons: Record<string, string> = {
-  pending: 'i-lucide-clock',
-  running: 'i-lucide-loader-circle',
-  completed: 'i-lucide-check-circle',
-  failed: 'i-lucide-x-circle',
-  approved: 'i-lucide-check-circle',
-  rejected: 'i-lucide-x-circle',
 }
 
 const duration = computed(() => {
@@ -42,9 +48,9 @@ const duration = computed(() => {
 </script>
 
 <template>
-  <div class="my-2 rounded-lg border bg-card overflow-hidden">
+  <div class="my-2 overflow-hidden rounded-lg border bg-card">
     <button
-      class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 transition-colors"
+      class="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent/50"
       @click="expanded = !expanded"
     >
       <span :class="[statusIcons[toolCall.status] || 'i-lucide-bot', 'size-4 shrink-0', statusColors[toolCall.status] || 'text-muted-foreground']" />
@@ -61,29 +67,30 @@ const duration = computed(() => {
         :class="expanded ? 'rotate-180' : ''"
       />
     </button>
-    <div v-if="expanded" class="px-3 pb-3 space-y-2 border-t pt-2 text-xs">
-      <div class="text-muted-foreground font-mono">
-        <div class="font-medium text-foreground mb-1">Arguments</div>
-        <pre class="whitespace-pre-wrap break-all bg-muted/30 p-2 rounded">{{ typeof toolCall.arguments === 'string' ? toolCall.arguments : JSON.stringify(toolCall.arguments, null, 2) }}</pre>
+
+    <div v-if="expanded" class="space-y-2 border-t px-3 pb-3 pt-2 text-xs">
+      <div class="font-mono text-muted-foreground">
+        <div class="mb-1 font-medium text-foreground">Arguments</div>
+        <pre class="rounded bg-muted/30 p-2 whitespace-pre-wrap break-all">{{ typeof toolCall.arguments === 'string' ? toolCall.arguments : JSON.stringify(toolCall.arguments, null, 2) }}</pre>
       </div>
       <div v-if="toolCall.result" class="font-mono">
-        <div class="font-medium text-foreground mb-1">Result</div>
-        <pre class="whitespace-pre-wrap break-all bg-muted/30 p-2 rounded">{{ typeof toolCall.result === 'string' ? toolCall.result.substring(0, 2000) : JSON.stringify(toolCall.result, null, 2) }}</pre>
-        <p v-if="toolCall.result.length > 2000" class="text-muted-foreground mt-1">Output truncated ({{ toolCall.result.length }} chars total)</p>
+        <div class="mb-1 font-medium text-foreground">Result</div>
+        <pre class="rounded bg-muted/30 p-2 whitespace-pre-wrap break-all">{{ typeof toolCall.result === 'string' ? toolCall.result.substring(0, 2000) : JSON.stringify(toolCall.result, null, 2) }}</pre>
+        <p v-if="toolCall.result.length > 2000" class="mt-1 text-muted-foreground">Output truncated ({{ toolCall.result.length }} chars total)</p>
       </div>
       <div v-if="toolCall.error" class="font-mono">
-        <div class="font-medium text-destructive mb-1">Error</div>
-        <pre class="whitespace-pre-wrap break-all bg-destructive/10 p-2 rounded text-destructive">{{ toolCall.error }}</pre>
+        <div class="mb-1 font-medium text-destructive">Error</div>
+        <pre class="rounded bg-destructive/10 p-2 whitespace-pre-wrap break-all text-destructive">{{ toolCall.error }}</pre>
       </div>
       <div v-if="toolCall.status === 'pending'" class="flex gap-2 pt-1">
         <button
-          class="px-3 py-1 text-xs rounded bg-primary text-primary-foreground hover:opacity-90"
+          class="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90"
           @click="emit('approve', toolCall.id)"
         >
           {{ t('chat.approve') }}
         </button>
         <button
-          class="px-3 py-1 text-xs rounded border text-muted-foreground hover:bg-accent"
+          class="rounded border px-3 py-1 text-xs text-muted-foreground hover:bg-accent"
           @click="emit('reject', toolCall.id)"
         >
           {{ t('chat.reject') }}

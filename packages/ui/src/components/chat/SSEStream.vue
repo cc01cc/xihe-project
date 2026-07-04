@@ -33,6 +33,15 @@ watch(
         },
         onStatus: (status: string) => {
           agentStore.setStatus(status as 'thinking' | 'executing' | 'idle')
+          if (status === 'thinking' || status === 'executing') {
+            chatStore.addMarker(id, {
+              role: 'system',
+              content: status,
+              timestamp: new Date().toISOString(),
+              marker: 'status',
+              status,
+            })
+          }
         },
         onDone: () => {
           chatStore.finalizeStreaming(id)

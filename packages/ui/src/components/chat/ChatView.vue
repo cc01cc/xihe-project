@@ -33,15 +33,26 @@ const isStreaming = computed(() => {
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null)
 
-function handleSend(content: string) {
+function handleSend(content: string, files?: File[]) {
   const id = currentSessionId.value
   if (!id) return
+
+  const attachments = files?.map((file) => ({
+    id: crypto.randomUUID(),
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    url: URL.createObjectURL(file),
+    state: 'done' as const,
+  }))
+
   chatStore.addMessage(id, {
     id: crypto.randomUUID(),
     sessionId: id,
     role: 'user',
     content,
     timestamp: new Date().toISOString(),
+    attachments,
   })
   agentStore.setStatus('thinking')
   streamComponent.value?.sendMessage(content)

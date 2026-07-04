@@ -1,10 +1,25 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted } from 'vue'
 import type { Message } from '../../types'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import VoiceOutput from '../multimodal/VoiceOutput.vue'
-import { Bot, User } from '@lucide/vue'
+import {
+  Attachment,
+  AttachmentActions,
+  AttachmentAction,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from '@/components/ui/attachment'
+import {
+  Marker,
+  MarkerIcon,
+  MarkerContent,
+} from '@/components/ui/marker'
+import { Download, Brain, LoaderCircle, Clock, Bot, User } from '@lucide/vue'
 import {
   Message as MessageRoot,
   MessageAvatar,
@@ -27,6 +42,7 @@ const emit = defineEmits<{
 
 const isUser = computed(() => props.message.role === 'user')
 const isSystem = computed(() => props.message.role === 'system')
+const isMarker = computed(() => props.message.marker !== undefined)
 
 const timestamp = computed(() => {
   const d = new Date(props.message.timestamp)
@@ -49,10 +65,54 @@ const content = computed(() => {
   }
   return props.message.content
 })
+
+const statusIcon = computed(() => {
+  switch (props.message.status) {
+    case 'thinking':
+      return Brain
+    case 'executing':
+      return LoaderCircle
+    default:
+      return Clock
+  }
+})
+
+function isImage(type: string) {
+  return type.startsWith('image/')
+}
+
+function downloadAttachment(url: string, name: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+}
+
+onUnmounted(() => {
+  props.message.attachments?.forEach((attachment) => {
+    if (attachment.url.startsWith('blob:')) {
+      URL.revokeObjectURL(attachment.url)
+    }
+  })
+})
 </script>
 
 <template>
+  <Marker
+    v-if="isMarker"
+    variant="default"
+    :class="message.status === 'executing' ? 'shimmer' : ''"
+  >
+    <MarkerIcon>
+      <component :is="statusIcon" class="size-4" />
+    </MarkerIcon>
+    <MarkerContent>
+      {{ message.status === 'executing' ? 'Executing task...' : 'Thinking...' }}
+    </MarkerContent>
+  </Marker>
+
   <MessageRoot
+    v-else
     :align="isUser ? 'end' : 'start'"
     class="px-3 py-1.5"
   >
@@ -62,7 +122,32 @@ const content = computed(() => {
       </div>
     </MessageAvatar>
 
-    <MessageContent class="max-w-[85%] md:max-w-[75%] min-w-0">
+    <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%]">
+      <AttachmentGroup v-if="message.attachments?.length">
+        <Attachment
+          v-for="attachment in message.attachments"
+          :key="attachment.id"
+          :class="isImage(attachment.type) ? 'w-32' : 'w-48'"
+        >
+          <AttachmentMedia v-if="isImage(attachment.type)">
+            <img
+              :src="attachment.url"
+              :alt="attachment.name"
+              class="size-full object-cover"
+            />
+          </AttachmentMedia>
+          <AttachmentContent>
+            <AttachmentTitle>{{ attachment.name }}</AttachmentTitle>
+            <AttachmentDescription>{{ (attachment.size / 1024).toFixed(1) }} KB</AttachmentDescription>
+          </AttachmentContent>
+          <AttachmentActions>
+            <AttachmentAction @click="downloadAttachment(attachment.url, attachment.name)">
+              <Download class="size-4" />
+            </AttachmentAction>
+          </AttachmentActions>
+        </Attachment>
+      </AttachmentGroup>
+
       <Bubble :variant="bubbleVariant">
         <BubbleContent>
           <MarkdownRenderer

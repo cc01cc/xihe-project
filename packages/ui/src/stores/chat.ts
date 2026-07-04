@@ -26,6 +26,14 @@ export const useChatStore = defineStore('chat', () => {
     messages.value[sessionId].push(message)
   }
 
+  function addMarker(sessionId: string, marker: Omit<Message, 'id' | 'sessionId'>) {
+    addMessage(sessionId, {
+      id: crypto.randomUUID(),
+      sessionId,
+      ...marker,
+    })
+  }
+
   function createStreamingMessage(sessionId: string): string {
     const id = crypto.randomUUID()
     const message: Message = {
@@ -85,6 +93,7 @@ export const useChatStore = defineStore('chat', () => {
     getStreamingMessageId,
     isStreaming,
     addMessage,
+    addMarker,
     createStreamingMessage,
     appendToken,
     finalizeStreaming,

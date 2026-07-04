@@ -12,6 +12,7 @@ import {
   MessageScrollerButton,
   useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller'
+import { Marker } from '@/components/ui/marker'
 
 const props = defineProps<{
   messages: Message[]
@@ -32,6 +33,22 @@ const filteredMessages = computed(() => {
 
   const q = searchQuery.value.toLowerCase()
   return props.messages.filter((msg) => msg.content.toLowerCase().includes(q))
+})
+
+const entries = computed(() => {
+  const result: Array<{ type: 'message'; msg: Message } | { type: 'date'; date: string; id: string }> = []
+  let lastDate = ''
+
+  for (const msg of filteredMessages.value) {
+    const date = new Date(msg.timestamp).toLocaleDateString()
+    if (date !== lastDate) {
+      result.push({ type: 'date', date, id: `date-${date}` })
+      lastDate = date
+    }
+    result.push({ type: 'message', msg })
+  }
+
+  return result
 })
 
 const scrollable = useMessageScrollerScrollable()
@@ -58,19 +75,28 @@ const isAtBottom = computed(() => scrollable.value.end)
       <MessageScroller class="flex-1">
         <MessageScrollerViewport preserve-scroll-on-prepend>
           <MessageScrollerContent>
-            <MessageScrollerItem
-              v-for="msg in filteredMessages"
-              :key="msg.id"
-              :message-id="msg.id"
-              :scroll-anchor="msg.role === 'user'"
-            >
-              <MessageItem
-                :message="msg"
-                :is-streaming="msg.isStreaming"
-                @approve="emit('approve', $event)"
-                @reject="emit('reject', $event)"
-              />
-            </MessageScrollerItem>
+            <template v-for="entry in entries" :key="entry.type === 'message' ? entry.msg.id : entry.id">
+              <MessageScrollerItem
+                v-if="entry.type === 'message'"
+                :message-id="entry.msg.id"
+                :scroll-anchor="entry.msg.role === 'user'"
+              >
+                <MessageItem
+                  :message="entry.msg"
+                  :is-streaming="entry.msg.isStreaming"
+                  @approve="emit('approve', $event)"
+                  @reject="emit('reject', $event)"
+                />
+              </MessageScrollerItem>
+
+              <Marker
+                v-else
+                variant="separator"
+                class="my-2"
+              >
+                {{ entry.date }}
+              </Marker>
+            </template>
           </MessageScrollerContent>
         </MessageScrollerViewport>
       </MessageScroller>
