@@ -29,29 +29,29 @@ describe('useSessionStore', () => {
 
   it('createSession prepends to the beginning of the list', () => {
     const store = useSessionStore()
-    const s1 = store.createSession()
-    const s2 = store.createSession()
+    const _s1 = store.createSession()
+    const _s2 = store.createSession()
 
-    expect(store.sessions[0].id).toBe(s2.id)
-    expect(store.sessions[1].id).toBe(s1.id)
+    expect(store.sessions[0].id).toBe(_s2.id)
+    expect(store.sessions[1].id).toBe(_s1.id)
   })
 
   it('deleteSession removes the session from list', () => {
     const store = useSessionStore()
-    const s1 = store.createSession()
-    const s2 = store.createSession()
-    const s3 = store.createSession()
+    const _s1 = store.createSession()
+    const _s2 = store.createSession()
+    const _s3 = store.createSession()
 
-    store.deleteSession(s2.id)
+    store.deleteSession(_s2.id)
 
     expect(store.sessions.length).toBe(2)
-    expect(store.sessions.find((s) => s.id === s2.id)).toBeUndefined()
+    expect(store.sessions.find((s) => s.id === _s2.id)).toBeUndefined()
   })
 
   it('deleteSession switches currentSessionId when deleting active session', () => {
     const store = useSessionStore()
     const s1 = store.createSession()
-    const s2 = store.createSession()
+    const _s2 = store.createSession()
 
     store.selectSession(s1.id)
     expect(store.currentSessionId).toBe(s1.id)

@@ -57,6 +57,11 @@ function handleResizeStart(e: MouseEvent) {
   document.addEventListener('mouseup', onMouseUp)
 }
 
+function navigateToWorkspace() {
+  const id = sessionStore.currentSessionId ?? sessionStore.createSession().id
+  router.push(`/workspace/${id}`)
+}
+
 function navigateSettings() {
   router.push('/settings/config')
 }
@@ -109,7 +114,7 @@ function handleLogout() {
     <div class="px-3 py-2">
       <button
         class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-        @click="router.push('/workspace')"
+        @click="navigateToWorkspace"
       >
         <span class="i-lucide-folder-tree size-4" />
         {{ t('sidebar.workspace') }}

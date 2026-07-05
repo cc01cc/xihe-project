@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useSessionStore } from './session'
 import { api, apiPost } from '../composables/api'
 import { readFilePreview } from '../composables/fileService'
 import { logger } from '../lib/logger'
@@ -19,6 +20,13 @@ function detectLanguage(path: string): string {
 }
 
 export const useWorkspaceStore = defineStore('workspace', () => {
+  const sessionStore = useSessionStore()
+
+  const sessionId = computed<string | null>(() => sessionStore.currentSessionId)
+  const sessionAttachments = computed(() => sessionStore.currentSessionAttachments)
+  const sessionFileContext = computed(() => sessionStore.currentSessionFileContext)
+  const sessionAgents = computed(() => sessionStore.currentAgentIds)
+
   const fileTree = ref<FileNode[]>([])
   const expandedPaths = ref<Set<string>>(new Set())
   const loading = ref(false)
@@ -216,6 +224,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
+  function syncActiveFileToSession() {
+    if (!sessionId.value || !activeFilePath.value) return
+    sessionStore.setFileContext(sessionId.value, {
+      activeFilePath: activeFilePath.value,
+      workspaceFiles: Array.from(openFiles.value.keys()),
+    })
+  }
+
   function openImportDialog() { showImportDialog.value = true }
   function closeImportDialog() { showImportDialog.value = false; uploadQueue.value = [] }
 
@@ -287,6 +303,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   return {
+    sessionId, sessionAttachments, sessionFileContext, sessionAgents,
     fileTree, expandedPaths, loading, treeError,
     openFiles, activeFilePath, activeFile, openFileList,
     showImportDialog, uploadQueue,
@@ -294,5 +311,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     openFile, closeFile, updateFileContent, saveFile,
     deleteNode, createFile, splitPdf, loadFullContent,
     openImportDialog, closeImportDialog, addToUploadQueue, removeFromUploadQueue, executeUpload,
+    syncActiveFileToSession,
   }
 })

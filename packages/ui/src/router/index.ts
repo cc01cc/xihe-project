@@ -70,13 +70,14 @@ const router = createRouter({
       component: () => import('../views/auth/RegisterView.vue'),
     },
     {
-      path: '/workspace',
+      path: '/workspace/:sessionId?',
       name: 'workspace',
       component: () => import('../layouts/AppLayout.vue'),
       meta: { requiresAuth: true },
       children: [
         {
           path: '',
+          name: 'workspace-session',
           component: () => import('../components/workspace/WorkspaceView.vue'),
         },
       ],

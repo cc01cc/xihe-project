@@ -21,6 +21,9 @@ sidebar_order: 0
 - [DEV-011: E2E 测试策略](DEV-011-e2e-test-strategy.md)
 - [DEV-012: 集成测试策略](DEV-012-integration-test-strategy.md)
 - [DEV-013: 单元测试策略](DEV-013-unit-test-strategy.md)
+- [DEV-015: Session 视图层设计](DEV-015-session-views.md)
+- [RFC-001: Session 领域模型](RFC-001-session-domain-model.md)
+- [ADR-001: Session Store 边界](ADR-001-session-store-boundary.md)
 
 ## 用户手册
 

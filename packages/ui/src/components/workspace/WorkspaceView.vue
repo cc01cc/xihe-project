@@ -1,14 +1,48 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useWorkspaceStore } from '../../stores/workspace'
+import { useSessionStore } from '../../stores/session'
 import WorkspaceToolbar from './WorkspaceToolbar.vue'
 import FileTreePanel from './FileTreePanel.vue'
 import FileEditor from './FileEditor.vue'
 import FileContextMenu from './FileContextMenu.vue'
 import FileImportDialog from './FileImportDialog.vue'
+import ChatPanel from '../chat/ChatPanel.vue'
 
+const route = useRoute()
 const ws = useWorkspaceStore()
+const sessionStore = useSessionStore()
 const contextMenu = ref<{ path: string; x: number; y: number } | null>(null)
+
+const sessionId = computed(() => {
+  const id = (route.params.sessionId as string) || sessionStore.currentSessionId
+  if (id && !sessionStore.currentSessionId) {
+    sessionStore.selectSession(id)
+  }
+  if (!id && !sessionStore.currentSessionId) {
+    const session = sessionStore.createSession()
+    return session.id
+  }
+  return id
+})
+
+watch(
+  () => sessionId.value,
+  (id) => {
+    if (id) {
+      sessionStore.selectSession(id)
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => ws.activeFilePath,
+  () => {
+    ws.syncActiveFileToSession()
+  },
+)
 
 function handleContextmenu(path: string, event: MouseEvent) {
   contextMenu.value = { path, x: event.clientX, y: event.clientY }
@@ -28,6 +62,13 @@ function handleUpload() {
     <div class="flex-1 flex flex-col min-w-0">
       <WorkspaceToolbar @upload="handleUpload" />
       <FileEditor />
+    </div>
+
+    <div
+      v-if="sessionId"
+      class="w-96 border-l bg-muted/5 flex flex-col shrink-0"
+    >
+      <ChatPanel :session-id="sessionId" />
     </div>
 
     <FileContextMenu
