@@ -13,12 +13,13 @@ const props = withDefaults(defineProps<{
 </script>
 
 <template>
-  <Primitive.button
+  <Primitive
+    as="button"
     data-slot="attachment-trigger"
     :as-child="props.asChild"
     :type="props.type"
     :class="cn('absolute inset-0 z-10 outline-none', props.class)"
   >
     <slot />
-  </Primitive.button>
+  </Primitive>
 </template>

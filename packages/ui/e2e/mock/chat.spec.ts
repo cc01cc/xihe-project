@@ -105,7 +105,7 @@ test.describe('Chat', () => {
     await expect(page.locator('text=const x = 1')).toBeVisible({ timeout: 10000 })
     await expect(page.locator('text=const y = 2')).toBeVisible({ timeout: 10000 })
 
-    const codeBlock = page.locator('pre code:has-text("const x = 1")')
+    const codeBlock = page.locator('pre:has-text("const x = 1")').first()
     await expect(codeBlock).toBeVisible({ timeout: 10000 })
 
     await expect(page).toHaveScreenshot('chat-streaming-markdown.png')
@@ -131,5 +131,19 @@ test.describe('Chat', () => {
     await stopButton.click()
 
     await expect(page.locator('button[aria-label="chat.send"], button[aria-label="发送"]')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('new user message is marked as scroll anchor', async ({ page }) => {
+    await setupMockAuth(page, {
+      sse: { tokens: ['reply '] },
+    })
+
+    await page.goto('/chat/anchor-session')
+
+    const textarea = page.locator('textarea')
+    await textarea.fill('Anchor me')
+    await textarea.press('Enter')
+
+    await expect(page.locator('[data-slot="message-scroller-item"][data-scroll-anchor="true"]')).toBeVisible({ timeout: 5000 })
   })
 })

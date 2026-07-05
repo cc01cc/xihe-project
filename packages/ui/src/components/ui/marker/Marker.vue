@@ -31,12 +31,13 @@ const props = withDefaults(
 </script>
 
 <template>
-  <Primitive.div
+  <Primitive
+    as="div"
     data-slot="marker"
     :data-variant="props.variant"
     :as-child="props.asChild"
     :class="cn(markerVariants({ variant: props.variant }), props.class)"
   >
     <slot />
-  </Primitive.div>
+  </Primitive>
 </template>

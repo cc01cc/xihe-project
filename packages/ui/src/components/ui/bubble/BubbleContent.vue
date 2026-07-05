@@ -11,7 +11,8 @@ const props = withDefaults(defineProps<{
 </script>
 
 <template>
-  <Primitive.div
+  <Primitive
+    as="div"
     data-slot="bubble-content"
     :as-child="props.asChild"
     :class="cn(
@@ -20,5 +21,5 @@ const props = withDefaults(defineProps<{
     )"
   >
     <slot />
-  </Primitive.div>
+  </Primitive>
 </template>

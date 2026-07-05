@@ -15,10 +15,9 @@ import {
   AttachmentTitle,
 } from '@/components/ui/attachment'
 import {
-  Marker,
-  MarkerIcon,
-  MarkerContent,
-} from '@/components/ui/marker'
+  Bubble,
+  BubbleContent,
+} from '@/components/ui/bubble'
 import { Download, Brain, LoaderCircle, Clock, Bot, User } from '@lucide/vue'
 import {
   Message as MessageRoot,
@@ -26,9 +25,10 @@ import {
   MessageContent,
 } from '@/components/ui/message'
 import {
-  Bubble,
-  BubbleContent,
-} from '@/components/ui/bubble'
+  Marker,
+  MarkerIcon,
+  MarkerContent,
+} from '@/components/ui/marker'
 
 const props = defineProps<{
   message: Message

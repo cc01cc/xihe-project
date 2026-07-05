@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import type { Message } from '../../types'
 import MessageItem from './MessageItem.vue'
 import MessageSearch from './MessageSearch.vue'
+import { Marker } from '@/components/ui/marker'
 import {
   MessageScroller,
   MessageScrollerProvider,
@@ -10,9 +11,7 @@ import {
   MessageScrollerContent,
   MessageScrollerItem,
   MessageScrollerButton,
-  useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller'
-import { Marker } from '@/components/ui/marker'
 
 const props = defineProps<{
   messages: Message[]
@@ -50,16 +49,12 @@ const entries = computed(() => {
 
   return result
 })
-
-const scrollable = useMessageScrollerScrollable()
-const isAtBottom = computed(() => scrollable.value.end)
 </script>
 
 <template>
   <MessageScrollerProvider
     auto-scroll
     default-scroll-position="last-anchor"
-    class="flex-1"
   >
     <div class="relative flex flex-1 flex-col">
       <div
@@ -102,7 +97,7 @@ const isAtBottom = computed(() => scrollable.value.end)
       </MessageScroller>
 
       <MessageScrollerButton
-        v-if="!isAtBottom && filteredMessages.length > 0"
+        v-if="filteredMessages.length > 0"
         direction="end"
       />
     </div>

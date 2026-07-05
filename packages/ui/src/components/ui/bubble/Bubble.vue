@@ -48,7 +48,8 @@ const props = withDefaults(
 </script>
 
 <template>
-  <Primitive.div
+  <Primitive
+    as="div"
     data-slot="bubble"
     :data-variant="props.variant"
     :data-align="props.align"
@@ -56,5 +57,5 @@ const props = withDefaults(
     :class="cn(bubbleVariants({ variant: props.variant }), props.class)"
   >
     <slot />
-  </Primitive.div>
+  </Primitive>
 </template>
