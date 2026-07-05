@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ArrowDown } from '@lucide/vue'
-import { useMessageScrollerContext } from '@/composables/messageScroller'
+import { useMessageScrollerContext, useMessageScrollerScrollable } from '@/composables/messageScroller'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
@@ -18,11 +18,11 @@ const props = withDefaults(defineProps<{
   size: 'icon-sm',
 })
 
-const { scrollToEnd, scrollToStart, stateStore } = useMessageScrollerContext()
+const { scrollToEnd, scrollToStart } = useMessageScrollerContext()
+const scrollable = useMessageScrollerScrollable()
 
 const isActive = computed(() => {
-  const state = stateStore.getSnapshot()
-  return props.direction === 'start' ? state.start : state.end
+  return props.direction === 'start' ? scrollable.value.start : scrollable.value.end
 })
 
 function handleClick(event: MouseEvent) {
@@ -42,6 +42,7 @@ function handleClick(event: MouseEvent) {
 <template>
   <Button
     data-slot="message-scroller-button"
+    data-testid="message-scroller-button"
     :data-direction="direction"
     :data-variant="variant"
     :data-size="size"

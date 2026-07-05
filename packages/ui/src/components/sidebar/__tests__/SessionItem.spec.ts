@@ -22,7 +22,7 @@ describe('SessionItem', () => {
     })
     const classes = wrapper.find('div').classes()
     const hasActive = classes.some((c: string) => c.includes('active') || c.includes('Active') || c.includes('bg-'))
-    expect(wrapper.text()).toContain('Active')
+    expect(hasActive).toBe(true)
   })
 
   it('renders clickable session', () => {

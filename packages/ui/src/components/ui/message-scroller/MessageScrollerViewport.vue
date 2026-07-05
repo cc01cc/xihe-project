@@ -80,10 +80,11 @@ onUnmounted(() => {
   <div
     ref="viewportEl"
     data-slot="message-scroller-viewport"
+    data-testid="message-scroller-viewport"
     role="region"
     aria-label="Messages"
     tabindex="0"
-    class="size-full min-h-0 min-w-0 scroll-fade-b overflow-y-auto overscroll-contain contain-content"
+    class="min-h-0 min-w-0 w-full flex-1 scroll-fade-b overflow-y-auto overscroll-contain contain-content"
     @scroll="handleScroll"
     @wheel="handleWheel"
     @touchmove="handleTouchMove"

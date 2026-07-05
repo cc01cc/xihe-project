@@ -1,15 +1,9 @@
 <script setup lang="ts">
 import { XIcon } from '@lucide/vue';
 
-import type { DialogContentEmits, DialogContentProps } from "reka-ui"
+import { DialogClose, DialogContent, DialogPortal, useForwardPropsEmits, type DialogContentEmits, type DialogContentProps } from "reka-ui"
 import type { HTMLAttributes } from "vue"
 import { reactiveOmit } from "@vueuse/core"
-import {
-  DialogClose,
-  DialogContent,
-  DialogPortal,
-  useForwardPropsEmits,
-} from "reka-ui"
 import { cn } from "@/lib/utils"
 import { Button } from '@/components/ui/button'
 import DialogOverlay from "./DialogOverlay.vue"

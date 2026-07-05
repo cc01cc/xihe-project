@@ -13,7 +13,7 @@ vi.mock('pdfjs-dist', () => ({
             width: Math.round(612 * scale),
             height: Math.round(792 * scale),
           })),
-          render: vi.fn(({ canvasContext, viewport }: any) => ({
+          render: vi.fn(({ canvasContext: _canvasContext, viewport: _viewport }: any) => ({
             promise: Promise.resolve(),
             cancel: vi.fn(),
           })),

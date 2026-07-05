@@ -9,6 +9,7 @@ test('register page 2x visual snapshot', async () => {
   await page.goto(`http://localhost:${UI_PORT}/register`, { waitUntil: 'networkidle' })
   await page.waitForSelector('h1', { timeout: 10000 })
   const dpr = await page.evaluate(() => window.devicePixelRatio)
+  // eslint-disable-next-line no-console
   console.log('DPR:', dpr)
   await expect(page).toHaveScreenshot('register-page-2x.png')
   await ctx.close()

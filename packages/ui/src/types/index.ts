@@ -1,11 +1,34 @@
 import type { InjectionKey, Ref } from 'vue'
 
+export interface SessionContext {
+  agents: string[]
+  ragContext?: RAGContext
+  mcpContext?: MCPContext
+  fileContext?: FileContext
+}
+
+export interface RAGContext {
+  knowledgeBaseIds?: string[]
+  searchEnabled?: boolean
+}
+
+export interface MCPContext {
+  serverIds?: string[]
+  toolFilter?: string[]
+}
+
+export interface FileContext {
+  workspaceFiles?: string[]
+  activeFilePath?: string
+}
+
 export interface Session {
   id: string
   title: string
   createdAt: string
   updatedAt: string
   modelId?: string
+  context?: SessionContext
 }
 
 export interface ToolCall {

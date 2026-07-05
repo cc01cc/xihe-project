@@ -7,6 +7,7 @@ import ConfigDomainPanel, { type DomainField } from '../../components/settings/C
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 import { api, request } from '../../composables/api'
+import { logger } from '../../lib/logger'
 
 const { t } = useI18n()
 const configStore = useConfigStore()
@@ -122,7 +123,7 @@ onMounted(async () => {
     await configStore.loadAllDomains()
     await loadMcpConfig()
   } catch (e) {
-    console.warn('Failed to load config domains', e)
+    logger.warn('Failed to load config domains', e)
     fetchError.value = true
     toast.error('Failed to load configuration')
   }
@@ -137,7 +138,7 @@ async function loadMcpConfig() {
       mcpJson.value = JSON.stringify({ mcpServers: {} }, null, 2)
     }
   } catch (e) {
-    console.warn('Failed to load MCP config, using empty default', e)
+    logger.warn('Failed to load MCP config, using empty default', e)
     mcpJson.value = JSON.stringify({ mcpServers: {} }, null, 2)
   }
 }

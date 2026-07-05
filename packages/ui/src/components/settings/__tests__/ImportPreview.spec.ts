@@ -29,16 +29,17 @@ function createMockFile(content: string, name: string): File {
 }
 
 beforeEach(() => {
+  // oxlint-disable-next-line no-console
   console.warn = vi.fn()
 })
 
 describe('ImportPreview', () => {
   it('renders nothing when no file prop', async () => {
-    const wrapper = mount(ImportPreview, {
+    const _wrapper = mount(ImportPreview, {
       props: { file: null },
       global: { plugins: [createI18nInstance()] },
     })
-    expect(wrapper.text()).toBe('')
+    expect(_wrapper.text()).toBe('')
   })
 
   it('parses valid JSON and shows preview', async () => {
@@ -64,12 +65,13 @@ describe('ImportPreview', () => {
 
   it('shows parse error for invalid JSON', async () => {
     const file = createMockFile('not json', 'bad.json')
-    const wrapper = mount(ImportPreview, {
+    const _wrapper = mount(ImportPreview, {
       props: { file },
       global: { plugins: [createI18nInstance()] },
     })
 
     await vi.waitFor(() => {
+      // oxlint-disable-next-line no-console
       expect(console.warn).toHaveBeenCalled()
     })
   })

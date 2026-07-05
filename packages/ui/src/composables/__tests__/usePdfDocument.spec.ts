@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 
-const mockGetDocument = vi.fn((...args: any[]) => ({
+const mockGetDocument = vi.fn((..._args: any[]) => ({
   promise: Promise.resolve({ numPages: 3 }),
 }))
 vi.mock('pdfjs-dist', () => ({

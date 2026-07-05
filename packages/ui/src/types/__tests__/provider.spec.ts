@@ -7,7 +7,7 @@ describe('BUILTIN_PROVIDERS', () => {
   })
 
   it('includes openai', () => {
-    const p = BUILTIN_PROVIDERS.find((p) => p.id === 'openai')
+    const p = BUILTIN_PROVIDERS.find((provider) => provider.id === 'openai')
     expect(p).toBeDefined()
     expect(p!.name).toBe('OpenAI')
     expect(p!.defaultModel).toBe('gpt-4o')
@@ -15,7 +15,7 @@ describe('BUILTIN_PROVIDERS', () => {
   })
 
   it('includes deepseek', () => {
-    const p = BUILTIN_PROVIDERS.find((p) => p.id === 'deepseek')
+    const p = BUILTIN_PROVIDERS.find((provider) => provider.id === 'deepseek')
     expect(p).toBeDefined()
     expect(p!.name).toBe('DeepSeek')
     expect(p!.defaultModel).toBe('deepseek-chat')
@@ -23,7 +23,7 @@ describe('BUILTIN_PROVIDERS', () => {
   })
 
   it('includes xiaomi', () => {
-    const p = BUILTIN_PROVIDERS.find((p) => p.id === 'xiaomi')
+    const p = BUILTIN_PROVIDERS.find((provider) => provider.id === 'xiaomi')
     expect(p).toBeDefined()
     expect(p!.name).toBe('小米 MiMo')
     expect(p!.defaultModel).toBe('mimo-v2-omni')
@@ -31,7 +31,7 @@ describe('BUILTIN_PROVIDERS', () => {
   })
 
   it('includes anthropic', () => {
-    const p = BUILTIN_PROVIDERS.find((p) => p.id === 'anthropic')
+    const p = BUILTIN_PROVIDERS.find((provider) => provider.id === 'anthropic')
     expect(p).toBeDefined()
     expect(p!.name).toBe('Anthropic')
     expect(p!.defaultModel).toBe('claude-sonnet-4-20250514')

@@ -11,7 +11,7 @@ const { t } = useI18n()
 const isRecording = ref(false)
 const recognitionText = ref('')
 let recognition: SpeechRecognition | null = null
-let isSupported = typeof window !== 'undefined' && (window.SpeechRecognition !== undefined || window.webkitSpeechRecognition !== undefined)
+const isSupported = typeof window !== 'undefined' && (window.SpeechRecognition !== undefined || window.webkitSpeechRecognition !== undefined)
 
 watch(isRecording, (val) => {
   if (val) startRecording()

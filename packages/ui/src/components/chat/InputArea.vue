@@ -81,6 +81,7 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
     props: {
       class: 'shrink-0 size-8 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity',
       disabled: props.isStreaming ? false : sendDisabled.value,
+      'data-testid': props.isStreaming ? 'chat-stop-button' : 'chat-send-button',
       'aria-label': props.isStreaming ? t('chat.stop') : t('chat.send'),
       onClick: props.isStreaming ? stopInput : handleSend,
     },
@@ -236,6 +237,7 @@ function handleTranscript(text: string) {
       >
         <textarea
           v-model="input"
+          data-testid="chat-input"
           class="w-full min-h-[44px] max-h-[200px] px-2 py-2 bg-transparent resize-none text-sm placeholder:text-muted-foreground focus:outline-none field-sizing-content"
           :placeholder="t('chat.placeholder')"
           rows="1"

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { I18nPage } from '../page-objects/I18nPage'
 
 test.describe('Internationalization', () => {
   test.beforeEach(async ({ page }) => {
@@ -8,9 +9,10 @@ test.describe('Internationalization', () => {
   })
 
   test('switches from en to zh-CN and shows Chinese text', async ({ page }) => {
+    const i18n = new I18nPage(page)
     await page.goto('/login')
     await page.waitForLoadState('networkidle')
-    await page.evaluate(() => localStorage.setItem('xihe-language', 'zh-CN'))
+    await i18n.setLanguage('zh-CN')
     await page.reload()
     await page.waitForLoadState('networkidle')
     const body = page.locator('body')
@@ -18,8 +20,11 @@ test.describe('Internationalization', () => {
   })
 
   test('login page snapshot in Chinese', async ({ page }) => {
-    await page.evaluate(() => localStorage.setItem('xihe-language', 'zh-CN'))
+    const i18n = new I18nPage(page)
     await page.goto('/login')
+    await page.waitForLoadState('networkidle')
+    await i18n.setLanguage('zh-CN')
+    await page.reload()
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveScreenshot('login-zh-CN.png')
   })

@@ -160,9 +160,13 @@ class Logger {
 
     const ts = new Date(entry.timestamp).toLocaleTimeString('zh-CN')
     const prefix = `[${ts}] [${level.toUpperCase()}]${deviceTag}`
+    // oxlint-disable-next-line no-console
     const cfn = level === 'error' ? console.error
+      // oxlint-disable-next-line no-console
       : level === 'warn' ? console.warn
+      // oxlint-disable-next-line no-console
       : level === 'debug' ? console.debug
+      // oxlint-disable-next-line no-console
       : console.log
     cfn(prefix, message, data, this.context)
 

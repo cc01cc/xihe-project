@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { ModelPopoverPage } from '../page-objects/ModelPopoverPage'
 
 test.describe('Model Popover', () => {
   test.beforeEach(async ({ page }) => {
@@ -13,11 +14,7 @@ test.describe('Model Popover', () => {
       await route.fulfill({
         status: 200,
         headers: { 'Content-Type': 'text/event-stream' },
-        body: new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode('retry: 5000\n\n'))
-          },
-        }),
+        body: 'retry: 5000\n\n',
       })
     })
 
@@ -43,37 +40,36 @@ test.describe('Model Popover', () => {
     await page.goto('/chat/sid-1')
     await page.waitForTimeout(2000)
 
-    const trigger = page.locator('button:has-text("Select Model"), button:has-text("选择模型")')
-    await expect(trigger).toBeVisible({ timeout: 5000 })
+    const popover = new ModelPopoverPage(page)
+    await expect(popover.trigger).toBeVisible({ timeout: 5000 })
   })
 
   test('clicking trigger opens popover with provider groups', async ({ page }) => {
     await page.goto('/chat/sid-1')
     await page.waitForTimeout(2000)
 
-    const trigger = page.locator('button:has-text("Select Model"), button:has-text("选择模型")')
-    await trigger.click()
+    const popover = new ModelPopoverPage(page)
+    await popover.open()
     await page.waitForTimeout(500)
 
-    await expect(page.locator('text=DeepSeek')).toBeVisible()
-    await expect(page.locator('text=OpenAI')).toBeVisible()
-    await expect(page.locator('text=deepseek-chat')).toBeVisible()
-    await expect(page.locator('text=gpt-4o')).toBeVisible()
+    await expect(popover.groupLocator('deepseek')).toBeVisible()
+    await expect(popover.groupLocator('openai')).toBeVisible()
+    await expect(popover.itemLocator('deepseek', 'deepseek-chat')).toBeVisible()
+    await expect(popover.itemLocator('openai', 'gpt-4o')).toBeVisible()
   })
 
   test('selecting a model updates trigger text and persists to localStorage', async ({ page }) => {
     await page.goto('/chat/sid-1')
     await page.waitForTimeout(2000)
 
-    const trigger = page.locator('button:has-text("Select Model"), button:has-text("选择模型")')
-    await trigger.click()
+    const popover = new ModelPopoverPage(page)
+    await popover.open()
     await page.waitForTimeout(500)
 
-    const modelBtn = page.locator('button:has-text("deepseek-chat")').last()
-    await modelBtn.click()
+    await popover.selectModel('deepseek', 'deepseek-chat')
     await page.waitForTimeout(500)
 
-    await expect(trigger).toContainText('deepseek-chat')
+    await expect(popover.trigger).toContainText('deepseek-chat')
 
     const stored = await page.evaluate(() => localStorage.getItem('xihe-session-models'))
     expect(stored).toBeTruthy()
@@ -85,35 +81,32 @@ test.describe('Model Popover', () => {
     await page.goto('/chat/sid-1')
     await page.waitForTimeout(2000)
 
-    const trigger = page.locator('button:has-text("Select Model"), button:has-text("选择模型")')
-    await trigger.click()
+    const popover = new ModelPopoverPage(page)
+    await popover.open()
     await page.waitForTimeout(500)
 
-    const searchInput = page.locator('input[placeholder*="Search"], input[placeholder*="搜索"]')
-    await searchInput.fill('reasoner')
+    await popover.search('reasoner')
     await page.waitForTimeout(300)
 
-    await expect(page.locator('text=deepseek-reasoner')).toBeVisible()
-    await expect(page.locator('button:has-text("gpt-4o")')).not.toBeVisible()
+    await expect(popover.itemLocator('deepseek', 'deepseek-reasoner')).toBeVisible()
+    await expect(popover.itemLocator('openai', 'gpt-4o')).not.toBeVisible()
   })
 
   test('selected model persists after page reload', async ({ page }) => {
     await page.goto('/chat/sid-1')
     await page.waitForTimeout(2000)
 
-    const trigger = page.locator('button:has-text("Select Model"), button:has-text("选择模型")')
-    await trigger.click()
+    const popover = new ModelPopoverPage(page)
+    await popover.open()
     await page.waitForTimeout(500)
 
-    const modelBtn = page.locator('button:has-text("gpt-4o")').last()
-    await modelBtn.click()
+    await popover.selectModel('openai', 'gpt-4o')
     await page.waitForTimeout(500)
 
     await page.reload()
     await page.waitForTimeout(2000)
 
-    const reloadedTrigger = page.locator('button:has-text("gpt-4o")')
-    await expect(reloadedTrigger).toBeVisible({ timeout: 5000 })
+    await expect(popover.trigger).toContainText('gpt-4o')
   })
 
   test('favorite toggle persists to localStorage', async ({ page }) => {
@@ -124,20 +117,16 @@ test.describe('Model Popover', () => {
     await page.goto('/chat/sid-1')
     await page.waitForTimeout(2000)
 
-    const trigger = page.locator('button:has-text("Select Model"), button:has-text("选择模型")')
-    await trigger.click()
+    const popover = new ModelPopoverPage(page)
+    await popover.open()
     await page.waitForTimeout(500)
 
-    const starBtns = page.locator('[class*="i-lucide-star-off"]')
-    const count = await starBtns.count()
-    if (count > 0) {
-      await starBtns.first().click()
-      await page.waitForTimeout(300)
+    await popover.toggleFavorite('deepseek', 'deepseek-chat')
+    await page.waitForTimeout(300)
 
-      const stored = await page.evaluate(() => localStorage.getItem('xihe-model-favorites'))
-      expect(stored).toBeTruthy()
-      const parsed = JSON.parse(stored!)
-      expect(parsed.length).toBeGreaterThan(0)
-    }
+    const stored = await page.evaluate(() => localStorage.getItem('xihe-model-favorites'))
+    expect(stored).toBeTruthy()
+    const parsed = JSON.parse(stored!)
+    expect(parsed.length).toBeGreaterThan(0)
   })
 })

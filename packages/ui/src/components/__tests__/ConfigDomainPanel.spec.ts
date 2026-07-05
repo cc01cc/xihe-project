@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import ConfigDomainPanel from '../settings/ConfigDomainPanel.vue'
-import type { DomainField } from '../settings/ConfigDomainPanel.vue'
+import ConfigDomainPanel, { type DomainField } from '../settings/ConfigDomainPanel.vue'
 import { createI18n } from 'vue-i18n'
 
 const i18n = createI18n({
@@ -47,7 +46,7 @@ describe('ConfigDomainPanel', () => {
     const wrapper = mountPanel({ entries: {} })
     await expandPanel(wrapper)
 
-    const labels = wrapper.findAll('.text-muted-foreground.w-1\\/3')
+    const labels = wrapper.findAll(String.raw`.text-muted-foreground.w-1\/3`)
     expect(labels).toHaveLength(4)
     expect(labels[0].text()).toBe('Provider')
     expect(labels[1].text()).toBe('API Key')

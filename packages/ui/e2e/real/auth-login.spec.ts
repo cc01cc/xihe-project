@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
 test.describe('Auth — Real Backend', () => {
-  let authToken = ''
+  let _authToken = ''
 
   test.beforeAll(async ({ request }) => {
     const r = await request.post(`${CP_URL}/auth/register`, {
@@ -11,7 +11,7 @@ test.describe('Auth — Real Backend', () => {
     })
     if (r.ok()) {
       const body = await r.json()
-      authToken = body.accessToken
+      _authToken = body.accessToken
     }
   })
 

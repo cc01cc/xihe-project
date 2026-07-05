@@ -21,9 +21,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 <template>
   <Teleport to="body">
     <Transition name="modal">
-      <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center" @click.self="emit('close')">
-        <div class="fixed inset-0 bg-black/50" />
-        <div class="relative z-10 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
+      <div v-if="show" data-testid="modal-backdrop" class="fixed inset-0 z-50 flex items-center justify-center" @click.self="emit('close')">
+        <div data-testid="modal-overlay" class="fixed inset-0 bg-black/50" />
+        <div data-testid="modal-content" class="relative z-10 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
           <div v-if="title" class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-semibold">{{ title }}</h2>
             <button class="p-1 rounded hover:bg-accent" aria-label="Close" @click="emit('close')">

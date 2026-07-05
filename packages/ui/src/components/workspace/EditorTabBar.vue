@@ -17,22 +17,26 @@ const emit = defineEmits<{
     v-if="openFiles.length > 0"
     class="flex items-center border-b bg-muted/20 shrink-0 overflow-x-auto"
   >
-    <button
+    <div
       v-for="file in openFiles"
       :key="file.path"
-      class="flex items-center gap-1.5 px-3 py-1.5 text-xs border-r hover:bg-accent/50 transition-colors shrink-0"
+      role="tab"
+      :aria-selected="file.path === activePath"
+      tabindex="0"
+      class="flex items-center gap-1.5 px-3 py-1.5 text-xs border-r hover:bg-accent/50 transition-colors shrink-0 cursor-pointer"
       :class="file.path === activePath ? 'bg-background font-medium' : 'text-muted-foreground'"
       @click="emit('select', file.path)"
+      @keydown.enter="emit('select', file.path)"
     >
       <span>{{ file.modified ? '●' : '' }}</span>
       <span class="truncate max-w-24">{{ file.name }}</span>
       <button
         class="ml-1 p-0.5 rounded hover:bg-accent hover:text-foreground"
-          aria-label="Close tab"
-          @click.stop="emit('close', file.path)"
-        >
+        aria-label="Close tab"
+        @click.stop="emit('close', file.path)"
+      >
         <span class="i-lucide-x size-3" />
       </button>
-    </button>
+    </div>
   </div>
 </template>

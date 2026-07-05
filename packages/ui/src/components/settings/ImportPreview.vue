@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { logger } from '../../lib/logger'
 import BaseModal from '../shared/BaseModal.vue'
 
 const props = defineProps<{
@@ -44,7 +45,7 @@ async function parseFile(file: File) {
     importData.value = { file, chatCount: chats.length, messageCount }
     showModal.value = true
   } catch (e) {
-    console.warn('Import file parse failed: ' + (e instanceof Error ? e.message : String(e)))
+    logger.warn('Import file parse failed: ' + (e instanceof Error ? e.message : String(e)))
     previewError.value = e instanceof Error ? e.message : 'Failed to parse file'
   }
   parsing.value = false

@@ -3,6 +3,7 @@ import { ref, watch, computed } from 'vue'
 import { usePdfDocument } from '../../composables/usePdfDocument'
 import { api } from '../../composables/api'
 import { formatFileSize } from '../../lib/fileSize'
+import { logger } from '../../lib/logger'
 import PdfToolbar from './PdfToolbar.vue'
 import PdfPageCanvas from './PdfPageCanvas.vue'
 
@@ -39,7 +40,7 @@ function normalizeData(src: string | ArrayBuffer | null): string | ArrayBuffer |
     try {
       return base64ToUint8Array(src).buffer as ArrayBuffer
     } catch {
-      console.warn('PDF src is not valid base64, falling back to raw string')
+      logger.warn('PDF src is not valid base64, falling back to raw string')
       return src
     }
   }

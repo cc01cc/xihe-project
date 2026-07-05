@@ -16,6 +16,7 @@ afterEach(() => {
   const elapsed = Date.now() - testStartTime
   // Only log if test is slow (>2s) to avoid noise
   if (elapsed > 2000) {
+    // oxlint-disable-next-line no-console
     console.warn(`[SLOW TEST] ${elapsed}ms`)
   }
 })

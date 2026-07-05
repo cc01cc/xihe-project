@@ -56,7 +56,7 @@ const entries = computed(() => {
     auto-scroll
     default-scroll-position="last-anchor"
   >
-    <div class="relative flex flex-1 flex-col">
+    <div class="relative flex flex-1 flex-col min-h-0">
       <div
         v-if="showSearch"
         class="absolute right-2 top-2 z-10"

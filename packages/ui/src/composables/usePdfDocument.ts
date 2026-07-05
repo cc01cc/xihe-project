@@ -1,4 +1,5 @@
 import { ref, computed, watch } from 'vue'
+import { logger } from '../lib/logger'
 
 type PdfSource = (() => string | ArrayBuffer | null) | string | ArrayBuffer | null
 
@@ -24,7 +25,7 @@ export function usePdfDocument(src: PdfSource) {
       pdfDoc.value = await (pdfjsLib.getDocument as any)({ data }).promise
       numPages.value = pdfDoc.value.numPages
     } catch (e: any) {
-      console.warn('Failed to load PDF: ' + (e.message || 'unknown'))
+      logger.warn('Failed to load PDF: ' + (e.message || 'unknown'))
       error.value = e.message || 'Failed to load PDF'
     }
     loading.value = false

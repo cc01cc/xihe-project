@@ -184,6 +184,7 @@ onMounted(() => {
   >
     <ComboboxTrigger as-child>
       <button
+        data-testid="model-popover-trigger"
         class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-dashed bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors max-w-[240px] truncate"
       >
         <span class="i-lucide-cpu size-3 shrink-0" />
@@ -239,6 +240,7 @@ onMounted(() => {
             <div class="px-2 pb-1 sticky top-0 bg-popover z-10">
               <ComboboxInput
                 v-model="searchTerm"
+                data-testid="model-popover-search"
                 class="w-full px-2 py-1 text-xs rounded border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 :placeholder="t('chat.searchModels')"
               />
@@ -264,12 +266,14 @@ onMounted(() => {
                 :key="`fav-${fav.provider}-${fav.model}`"
                 :value="`${fav.provider}/${fav.model}`"
                 :text-value="`${fav.model} ${getProviderInfo(fav.provider)?.name ?? fav.provider}`"
+                :data-testid="`model-item-${fav.provider}/${fav.model}`"
                 class="w-full flex items-center justify-between px-2 py-1 text-xs rounded hover:bg-accent data-[highlighted]:bg-accent data-[state=checked]:bg-accent outline-none cursor-pointer"
                 @select="handleSelect"
               >
                 <span class="truncate">{{ fav.model }} · {{ getProviderInfo(fav.provider)?.name ?? fav.provider }}</span>
                 <button
                   class="size-5 flex items-center justify-center shrink-0 rounded hover:bg-background"
+                  :data-testid="`model-favorite-${fav.provider}/${fav.model}`"
                   :aria-label="configStore.isFavorite(fav.provider, fav.model) ? 'Unfavorite' : 'Favorite'"
                   @click.stop.prevent="toggleFav(fav.provider, fav.model)"
                   @pointerdown.stop
@@ -289,6 +293,7 @@ onMounted(() => {
               <CollapsibleRoot
                 :open="!isGroupCollapsed(group.provider)"
                 :unmount-on-hide="false"
+                :data-testid="`model-group-${group.provider}`"
                 @update:open="setGroupCollapsed(group.provider, !$event)"
               >
                 <ComboboxGroup class="py-1">
@@ -314,6 +319,7 @@ onMounted(() => {
                       :key="`${group.provider}-${model}`"
                       :value="`${group.provider}/${model}`"
                       :text-value="`${model} ${group.name} ${getModelTags(group.provider, model).join(' ')}`"
+                      :data-testid="`model-item-${group.provider}/${model}`"
                       class="w-full flex items-center justify-between px-2 py-1 pl-6 text-xs rounded hover:bg-accent data-[highlighted]:bg-accent data-[state=checked]:bg-accent outline-none cursor-pointer"
                       @select="handleSelect"
                     >
@@ -335,6 +341,7 @@ onMounted(() => {
                       </div>
                       <button
                         class="size-5 flex items-center justify-center shrink-0 rounded hover:bg-background"
+                        :data-testid="`model-favorite-${group.provider}/${model}`"
                         :aria-label="configStore.isFavorite(group.provider, model) ? 'Unfavorite' : 'Favorite'"
                         @click.stop.prevent="toggleFav(group.provider, model)"
                         @pointerdown.stop

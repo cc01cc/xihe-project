@@ -20,7 +20,7 @@ async function capture() {
     const imageCapture = new ImageCapture(track)
     const bitmap = await imageCapture.grabFrame()
     track.stop()
-    stream.getTracks().forEach((t) => t.stop())
+    stream.getTracks().forEach((mediaTrack) => mediaTrack.stop())
 
     const canvas = document.createElement('canvas')
     canvas.width = bitmap.width

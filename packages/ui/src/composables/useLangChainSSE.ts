@@ -1,4 +1,5 @@
 import type { LangChainEvent, SSEEvent } from '../types'
+import { logger } from '../lib/logger'
 
 export function mapLangChainEventToSSE(lcEvent: LangChainEvent): SSEEvent | SSEEvent[] | null {
   switch (lcEvent.event) {
@@ -66,7 +67,7 @@ export function parseLangChainEvent(raw: string): LangChainEvent | null {
     }
     return null
   } catch {
-    console.warn('Failed to parse LangChain event JSON')
+    logger.warn('Failed to parse LangChain event JSON')
     return null
   }
 }

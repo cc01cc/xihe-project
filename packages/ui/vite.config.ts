@@ -90,7 +90,7 @@ export default defineConfig(({ mode }) => {
                     target: cpBaseUrl,
                     changeOrigin: true,
                     ws: true,
-                    rewrite: (path) => path.replace(/^\/api\/v1/, ""),
+                    rewrite: (_path) => _path.replace(/^\/api\/v1/, ""),
                     configure: (proxy) => {
                         proxy.on("proxyReq", (proxyReq, req) => {
                             if (req.url?.includes("/v1/events")) {
@@ -102,7 +102,7 @@ export default defineConfig(({ mode }) => {
                 "/agent-proxy": {
                     target: agentBaseUrl,
                     changeOrigin: true,
-                    rewrite: (path) => path.replace(/^\/agent-proxy/, ""),
+                    rewrite: (_path) => _path.replace(/^\/agent-proxy/, ""),
                 },
             },
         },
