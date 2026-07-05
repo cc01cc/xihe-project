@@ -15,8 +15,12 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.File;
+import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.repository.FileRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -35,18 +39,70 @@ public class WorkspaceFileController {
     private final String runtimeUrl;
     private final PdfSplitService pdfSplitService;
     private final ObjectMapper objectMapper;
+    private final FileRepository fileRepository;
+    private final SessionRepository sessionRepository;
+    private final WorkspaceUserRepository workspaceUserRepository;
 
     public WorkspaceFileController(
             @Value("${cp.workspace-base-path:/data/xihe/workspaces}") String workspaceBasePath,
             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
             RestTemplate restTemplate,
             PdfSplitService pdfSplitService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            FileRepository fileRepository,
+            SessionRepository sessionRepository,
+            WorkspaceUserRepository workspaceUserRepository) {
         this.workspaceBasePath = workspaceBasePath;
         this.runtimeUrl = runtimeUrl;
         this.restTemplate = restTemplate;
         this.pdfSplitService = pdfSplitService;
         this.objectMapper = objectMapper;
+        this.fileRepository = fileRepository;
+        this.sessionRepository = sessionRepository;
+        this.workspaceUserRepository = workspaceUserRepository;
+    }
+
+    @GetMapping("/{fileId:[a-fA-F0-9\\\\-]{36}}")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<Resource> serveAttachment(@PathVariable String fileId) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            logger.warn("Attachment serve rejected: missing tenant context fileId={}", fileId);
+            return ResponseEntity.status(403).build();
+        }
+        try {
+            File file = fileRepository.findById(fileId).orElse(null);
+            if (file == null) {
+                logger.warn("Attachment not found: {}", fileId);
+                return ResponseEntity.notFound().build();
+            }
+            Session session = sessionRepository.findById(file.getSessionId()).orElse(null);
+            if (session == null || !workspaceId.equals(session.getWorkspaceId())) {
+                logger.warn("Attachment access denied fileId={} session={}", fileId, file.getSessionId());
+                return ResponseEntity.status(403).build();
+            }
+            if (!workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent()) {
+                logger.warn("Attachment access denied for user fileId={} userId={}", fileId, userId);
+                return ResponseEntity.status(403).build();
+            }
+
+            java.io.File physical = new java.io.File(file.getStoragePath());
+            if (!physical.exists() || !physical.isFile()) {
+                logger.warn("Attachment physical file missing: {}", file.getStoragePath());
+                return ResponseEntity.notFound().build();
+            }
+
+            Resource resource = new FileSystemResource(physical);
+            String contentType = file.getMimeType() != null ? file.getMimeType() : resolveContentType(file.getFilename());
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .body(resource);
+        } catch (Exception e) {
+            logger.error("Failed to serve attachment fileId={}", fileId, e);
+            return ResponseEntity.status(500).build();
+        }
     }
 
     @GetMapping("/{*path}")
@@ -59,7 +115,7 @@ public class WorkspaceFileController {
                 return ResponseEntity.status(403).build();
             }
 
-            File file = new File(resolved);
+            java.io.File file = new java.io.File(resolved);
             if (!file.exists() || !file.isFile()) {
                 logger.warn("File not found: {}", resolved);
                 return ResponseEntity.notFound().build();
@@ -102,18 +158,18 @@ public class WorkspaceFileController {
             boolean isPdf = originalName.toLowerCase().endsWith(".pdf");
 
             if (isPdf && size > 10L * 1024 * 1024 && splitPreference) {
-                File tempFile = File.createTempFile("split-", ".pdf");
+                java.io.File tempFile = java.io.File.createTempFile("split-", ".pdf");
                 try {
                     file.transferTo(tempFile);
                     List<String> chunks = pdfSplitService.splitPdf(tempFile.toPath(), originalName, wsId);
-                    logger.info("PDF split complete: {} → {} chunks", originalName, chunks.size());
+                    logger.info("PDF split complete: {} -> {} chunks", originalName, chunks.size());
                     return ResponseEntity.ok(Map.of("chunks", chunks, "original", originalName));
                 } finally {
                     tempFile.delete();
                 }
             } else {
                 String destPath = wsPath + "/" + originalName;
-                File dest = new File(destPath);
+                java.io.File dest = new java.io.File(destPath);
                 dest.getParentFile().mkdirs();
                 file.transferTo(dest);
                 logger.info("File uploaded: {} ({} bytes)", destPath, size);
@@ -144,7 +200,7 @@ public class WorkspaceFileController {
                 return ResponseEntity.status(403).body(Map.of("error", "path traversal"));
             }
 
-            File pdfFile = pdfPath.toFile();
+            java.io.File pdfFile = pdfPath.toFile();
             if (!pdfFile.exists() || !pdfFile.isFile()) {
                 return ResponseEntity.notFound().build();
             }
@@ -155,7 +211,7 @@ public class WorkspaceFileController {
             }
 
             List<String> chunks = pdfSplitService.splitPdf(pdfPath, path, wsId);
-            logger.info("Lazy split complete: {} → {} chunks", path, chunks.size());
+            logger.info("Lazy split complete: {} -> {} chunks", path, chunks.size());
             return ResponseEntity.ok(Map.of("chunks", chunks));
         } catch (Exception e) {
             logger.error("Split failed", e);
@@ -173,7 +229,7 @@ public class WorkspaceFileController {
                 return ResponseEntity.status(403).build();
             }
 
-            File file = new File(resolved);
+            java.io.File file = new java.io.File(resolved);
             if (!file.exists()) {
                 logger.warn("File not found: {}", resolved);
                 return ResponseEntity.notFound().build();
@@ -190,11 +246,11 @@ public class WorkspaceFileController {
 
                 String baseName = PdfSplitService.baseNameOf(fileName);
                 if (!baseName.equals(fileName)) {
-                    File dir = new File(dirPath);
-                    File[] chunks = dir.listFiles((d, name) -> name.matches(".+\\.p\\d+-\\d+\\.pdf$")
+                    java.io.File dir = new java.io.File(dirPath);
+                    java.io.File[] chunks = dir.listFiles((d, name) -> name.matches(".+\\.p\\d+-\\d+\\.pdf$")
                             && PdfSplitService.baseNameOf(name).equals(baseName));
                     if (chunks != null) {
-                        for (File chunk : chunks) {
+                        for (java.io.File chunk : chunks) {
                             if (chunk.delete()) {
                                 logger.debug("Cascade deleted chunk: {}", chunk.getName());
                             }

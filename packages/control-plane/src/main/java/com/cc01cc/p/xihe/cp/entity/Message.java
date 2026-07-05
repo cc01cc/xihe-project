@@ -25,6 +25,9 @@ public class Message {
     @Column(columnDefinition = "TEXT")
     private String metadata;
 
+    @Column(name = "attachments", columnDefinition = "TEXT")
+    private String attachments;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -55,6 +58,9 @@ public class Message {
 
     public String getMetadata() { return metadata; }
     public void setMetadata(String metadata) { this.metadata = metadata; }
+
+    public String getAttachments() { return attachments; }
+    public void setAttachments(String attachments) { this.attachments = attachments; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

@@ -18,6 +18,12 @@ public class File {
     @Column(name = "workspace_id", length = 36)
     private String workspaceId;
 
+    @Column(name = "session_id", length = 36)
+    private String sessionId;
+
+    @Column(name = "message_id", length = 36)
+    private String messageId;
+
     @Column(nullable = false, length = 255)
     private String filename;
 
@@ -54,6 +60,12 @@ public class File {
 
     public String getWorkspaceId() { return workspaceId; }
     public void setWorkspaceId(String workspaceId) { this.workspaceId = workspaceId; }
+
+    public String getSessionId() { return sessionId; }
+    public void setSessionId(String sessionId) { this.sessionId = sessionId; }
+
+    public String getMessageId() { return messageId; }
+    public void setMessageId(String messageId) { this.messageId = messageId; }
 
     public String getFilename() { return filename; }
     public void setFilename(String filename) { this.filename = filename; }

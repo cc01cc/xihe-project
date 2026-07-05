@@ -6,6 +6,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
+import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -31,12 +37,33 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     @Autowired
     private SseEmitterManager sseEmitterManager;
 
+    @Autowired
+    private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private WorkspaceUserRepository workspaceUserRepository;
+
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
+
     private String token;
+    private String workspaceId;
 
     @BeforeEach
     void setUp() {
         super.setUp();
         token = registerAndLogin();
+
+        String userId = jwtTokenProvider.getUserIdFromToken(token);
+        Workspace ws = new Workspace("Agent Test", userId);
+        ws = workspaceRepository.save(ws);
+        workspaceId = ws.getId();
+        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        token = jwtTokenProvider.createAccessToken(userId, jwtTokenProvider.getEmailFromToken(token), "USER", workspaceId);
+
+        assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent(),
+                "Workspace user should be created");
+
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);
     }
 
@@ -54,7 +81,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 "session_id", sessionId,
                 "content", "Hello",
                 "user_id", "test-user",
-                "workspace_id", "test-ws"
+                "workspace_id", workspaceId
         );
 
         ResponseEntity<Map> response = restTemplate.exchange(
@@ -86,7 +113,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 "session_id", sessionId,
                 "content", "Hi",
                 "user_id", "test-user",
-                "workspace_id", "test-ws"
+                "workspace_id", workspaceId
         );
 
         ResponseEntity<Map> response = restTemplate.exchange(

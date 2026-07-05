@@ -19,6 +19,9 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 
 import java.util.List;
 import java.util.Map;
@@ -42,6 +45,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private WorkspaceRepository workspaceRepository;
 
+    @Autowired
+    private WorkspaceUserRepository workspaceUserRepository;
+
     private String authToken;
     private String userId;
     private String workspaceId;
@@ -58,6 +64,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         userId = user.getId();
         Workspace ws = workspaceRepository.save(new Workspace("test-workspace", userId));
         workspaceId = ws.getId();
+        workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
 
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);
     }
