@@ -32,12 +32,12 @@ class LLMProvider(ABC):
     """Abstract LLM backend."""
 
     @abstractmethod
-    async def generate(self, request: LLMRequest) -> str:
+    async def complete(self, request: LLMRequest) -> str:
         """Generate a complete non-streaming response."""
         ...
 
     @abstractmethod
-    async def stream_generate(self, request: LLMRequest) -> AsyncIterator[LLMToken]:
+    async def stream_complete(self, request: LLMRequest) -> AsyncIterator[LLMToken]:
         """Generate a streaming response, yielding tokens."""
         ...
 

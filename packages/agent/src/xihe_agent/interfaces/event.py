@@ -18,6 +18,7 @@ EventType = Literal[
     "epoch.started",
     "epoch.replaced",
     "runtime.state_cleared",
+    "session.forked",
     "compaction.applied",
 ]
 
