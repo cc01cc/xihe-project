@@ -39,8 +39,8 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     })
   })
 
-  await page.route('**/api/v1/exec', async (route) => {
-    await route.fulfill({ status: 200, body: 'OK' })
+  await page.route('**/api/v1/chat', async (route) => {
+    await route.fulfill({ status: 202, body: JSON.stringify({ status: 'accepted' }) })
   })
 
   await page.route('**/api/v1/models', async (route) => {
@@ -53,7 +53,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
 
   await page.route('**/api/v1/**', async (route) => {
     const url = route.request().url()
-    if (url.includes('/events') || url.includes('/exec') || url.includes('/models')) {
+    if (url.includes('/events') || url.includes('/chat') || url.includes('/models')) {
       return route.fallback()
     }
     await route.fulfill({

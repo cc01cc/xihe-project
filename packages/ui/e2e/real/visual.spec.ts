@@ -6,7 +6,7 @@ test('register page 2x visual snapshot', async () => {
   const browser = await chromium.launch()
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 })
   const page = await ctx.newPage()
-  await page.goto(`http://localhost:${UI_PORT}/register`, { waitUntil: 'networkidle' })
+  await page.goto(`http://localhost:${UI_PORT}/register`, { waitUntil: 'load' })
   await page.waitForSelector('h1', { timeout: 10000 })
   const dpr = await page.evaluate(() => window.devicePixelRatio)
   // eslint-disable-next-line no-console

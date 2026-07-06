@@ -20,41 +20,28 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem('xihe-token', t)
     localStorage.setItem('xihe-user', JSON.stringify({ id: 'vis', name: 'Visual' }))
   }, authToken)
-  await page.goto('/settings/model', { waitUntil: 'networkidle' })
+  await page.goto('/settings/config', { waitUntil: 'load' })
 })
 
-test('settings model page with tab nav', async ({ page }) => {
-  await expect(page.locator('nav a:has-text("模型配置")')).toBeVisible({ timeout: 8000 })
-  await expect(page).toHaveScreenshot('settings-model.png')
+test('settings config page renders', async ({ page }) => {
+  await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({ timeout: 8000 })
+  await expect(page).toHaveScreenshot('settings-config.png')
 })
 
 test('settings knowledge page with tab nav', async ({ page }) => {
-  await page.click('nav a:has-text("知识库")')
-  await expect(page.locator('h3:has-text("知识库")')).toBeVisible()
+  await page.locator('[data-testid="settings-nav-settings-knowledge"]').click()
+  await expect(page.locator('[data-testid="settings-knowledge-heading"]')).toBeVisible()
   await expect(page).toHaveScreenshot('settings-knowledge.png')
 })
 
 test('settings data page with tab nav', async ({ page }) => {
-  await page.click('nav a:has-text("数据管理")')
-  await expect(page.locator('h3:has-text("数据管理")')).toBeVisible()
+  await page.locator('[data-testid="settings-nav-settings-data"]').click()
+  await expect(page.locator('[data-testid="settings-data-heading"]')).toBeVisible()
   await expect(page).toHaveScreenshot('settings-data.png')
 })
 
-test('settings mcp page with tab nav', async ({ page }) => {
-  await page.click('nav a:has-text("MCP 服务")')
-  await expect(page.locator('h2:has-text("MCP 服务")')).toBeVisible({ timeout: 8000 })
-  await expect(page.locator('textarea')).toBeVisible()
-  await expect(page).toHaveScreenshot('settings-mcp.png')
-})
-
-test('settings theme page with tab nav', async ({ page }) => {
-  await page.click('nav a:has-text("主题设置")')
-  await expect(page.locator('h2:has-text("主题设置")')).toBeVisible({ timeout: 8000 })
-  await expect(page).toHaveScreenshot('settings-theme.png')
-})
-
-test('settings config page with embedding panel', async ({ page }) => {
-  await page.goto('/settings/config', { waitUntil: 'networkidle' })
-  await expect(page.locator('text=Embedding')).toBeVisible({ timeout: 8000 })
-  await expect(page).toHaveScreenshot('settings-config.png')
+test('settings monitoring page with tab nav', async ({ page }) => {
+  await page.locator('[data-testid="settings-nav-settings-monitoring"]').click()
+  await expect(page.locator('[data-testid="settings-monitoring-heading"]')).toBeVisible()
+  await expect(page).toHaveScreenshot('settings-monitoring.png')
 })

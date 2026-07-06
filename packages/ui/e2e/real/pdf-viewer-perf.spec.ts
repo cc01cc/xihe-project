@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
-const REAL_PDF = path.resolve(__dirname, '../../../data/《基础过关660》-线代篇.pdf')
+const REAL_PDF = path.resolve(__dirname, '../assets/sample.pdf')
 
 test.describe.configure({ retries: 2 })
 
@@ -29,40 +29,34 @@ test.describe('PdfViewer — Performance Benchmark', () => {
       localStorage.setItem('xihe-token', t)
     }, authToken)
     await page.goto('/chat')
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('load')
   })
 
   test('首页渲染 < 750ms (500ms × 1.5 tolerance)', async ({ page }) => {
-    const pdfBytes = fs.readFileSync(REAL_PDF)
-    const b64 = pdfBytes.toString('base64')
+    const b64 = fs.readFileSync(REAL_PDF).toString('base64')
 
-    const renderTime = await page.evaluate(async (base64Data) => {
-      const pdfjsLib = await import('pdfjs-dist')
-      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs',
-        import.meta.url
-      ).toString()
-
+    const renderTime = await page.evaluate(`(async () => {
+      const pdfjsLib = await import('/node_modules/pdfjs-dist/build/pdf.min.mjs')
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs'
+      const base64Data = ${JSON.stringify(b64)}
       const binary = atob(base64Data)
       const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i)
-      }
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
+      const pdfDoc = await pdfjsLib.getDocument({ data: bytes }).promise
       performance.mark('pdf-render-start')
-      const pdfDoc = await (pdfjsLib.getDocument as any)({ data: bytes }).promise
       const page1 = await pdfDoc.getPage(1)
       const viewport = page1.getViewport({ scale: 1.0 })
       const canvas = document.createElement('canvas')
       canvas.width = viewport.width
       canvas.height = viewport.height
-      const ctx = canvas.getContext('2d')!
+      const ctx = canvas.getContext('2d')
       await page1.render({ canvasContext: ctx, viewport }).promise
       performance.mark('pdf-render-end')
 
       const measure = performance.measure('pdf-render', 'pdf-render-start', 'pdf-render-end')
       return measure.duration
-    }, b64)
+    })()`)
 
     test.info().annotations.push({
       type: 'benchmark',
@@ -72,29 +66,23 @@ test.describe('PdfViewer — Performance Benchmark', () => {
   })
 
   test('翻页延迟 < 300ms (200ms × 1.5 tolerance)', async ({ page }) => {
-    const pdfBytes = fs.readFileSync(REAL_PDF)
-    const b64 = pdfBytes.toString('base64')
+    const b64 = fs.readFileSync(REAL_PDF).toString('base64')
 
-    const turnTime = await page.evaluate(async (base64Data) => {
-      const pdfjsLib = await import('pdfjs-dist')
-      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs',
-        import.meta.url
-      ).toString()
-
+    const turnTime = await page.evaluate(`(async () => {
+      const pdfjsLib = await import('/node_modules/pdfjs-dist/build/pdf.min.mjs')
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs'
+      const base64Data = ${JSON.stringify(b64)}
       const binary = atob(base64Data)
       const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i)
-      }
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
-      const pdfDoc = await (pdfjsLib.getDocument as any)({ data: bytes }).promise
+      const pdfDoc = await pdfjsLib.getDocument({ data: bytes }).promise
       const page1 = await pdfDoc.getPage(1)
       const viewport = page1.getViewport({ scale: 1.0 })
       const canvas = document.createElement('canvas')
       canvas.width = viewport.width
       canvas.height = viewport.height
-      const ctx = canvas.getContext('2d')!
+      const ctx = canvas.getContext('2d')
       await page1.render({ canvasContext: ctx, viewport }).promise
 
       performance.mark('page-turn-start')
@@ -107,7 +95,7 @@ test.describe('PdfViewer — Performance Benchmark', () => {
 
       const measure = performance.measure('page-turn', 'page-turn-start', 'page-turn-end')
       return measure.duration
-    }, b64)
+    })()`)
 
     test.info().annotations.push({
       type: 'benchmark',

@@ -9,7 +9,7 @@ test.describe('ConfirmModal', () => {
 
   test('renders confirm dialog and captures snapshot', async ({ page }) => {
     await page.goto('/chat')
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('load')
 
     await page.evaluate(() => {
       const div = document.createElement('div')

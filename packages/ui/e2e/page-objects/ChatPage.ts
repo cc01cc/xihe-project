@@ -7,6 +7,8 @@ export class ChatPage {
   readonly stopButton: Locator
   readonly scrollerViewport: Locator
   readonly scrollerButton: Locator
+  readonly fileInput: Locator
+  readonly uploadIndicator: Locator
 
   constructor(page: Page) {
     this.page = page
@@ -15,11 +17,18 @@ export class ChatPage {
     this.stopButton = page.locator('[data-testid="chat-stop-button"]')
     this.scrollerViewport = page.locator('[data-testid="message-scroller-viewport"]')
     this.scrollerButton = page.locator('[data-testid="message-scroller-button"]')
+    this.fileInput = page.locator('[data-testid="file-upload-input"]')
+    this.uploadIndicator = page.locator('[data-testid="attachment-uploading-indicator"]')
   }
 
   async goto(sessionId?: string): Promise<void> {
     const path = sessionId ? `/chat/${sessionId}` : '/chat'
     await this.page.goto(path)
+    await this.input.waitFor({ state: 'visible' })
+  }
+
+  async attachFiles(filePaths: (string | { name: string; mimeType: string; buffer: Buffer })[]): Promise<void> {
+    await this.fileInput.setInputFiles(filePaths)
   }
 
   async sendMessage(text: string): Promise<void> {
@@ -29,6 +38,10 @@ export class ChatPage {
 
   messageLocator(text: string): Locator {
     return this.page.locator('text=' + text)
+  }
+
+  attachmentLocator(name: string): Locator {
+    return this.page.locator('[data-testid="message-attachment"]', { hasText: name })
   }
 
   async scrollToTop(): Promise<void> {

@@ -23,7 +23,7 @@ test.describe('Message Search', () => {
       localStorage.setItem('xihe-user', JSON.stringify({ id: 'real', name: 'Test' }))
     }, authToken)
     await page.reload()
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('load')
     // Chat page rendered
     await expect(page.locator('#app')).toBeAttached({ timeout: 10000 })
   })

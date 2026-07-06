@@ -30,7 +30,7 @@ test.describe('PdfViewer — Real Backend', () => {
 
   test('chat page loads with auth', async ({ page }) => {
     await page.goto('/chat')
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('load')
     await expect(page.locator('#app')).toBeAttached({ timeout: 10000 })
   })
 
@@ -41,7 +41,7 @@ test.describe('PdfViewer — Real Backend', () => {
     const dataUri = `data:application/pdf;base64,${b64}`
 
     await page.goto('/chat')
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('load')
 
     // Inject PdfViewer-like HTML structure to verify rendering
     await page.evaluate((src) => {

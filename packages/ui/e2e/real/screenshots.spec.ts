@@ -13,12 +13,10 @@ const allRoutes: Route[] = [
   { path: '/register', name: 'real-register', requiresAuth: false },
   { path: '/chat', name: 'real-chat-default', requiresAuth: true },
   { path: '/chat/test-session', name: 'real-chat-session', requiresAuth: true },
-  { path: '/settings/model', name: 'real-settings-model', requiresAuth: true },
-  { path: '/settings/theme', name: 'real-settings-theme', requiresAuth: true },
-  { path: '/settings/mcp', name: 'real-settings-mcp', requiresAuth: true },
+  { path: '/settings/config', name: 'real-settings-config', requiresAuth: true },
   { path: '/settings/knowledge', name: 'real-settings-knowledge', requiresAuth: true },
   { path: '/settings/data', name: 'real-settings-data', requiresAuth: true },
-  { path: '/settings/config', name: 'real-settings-config', requiresAuth: true },
+  { path: '/settings/monitoring', name: 'real-settings-monitoring', requiresAuth: true },
   { path: '/workspace', name: 'real-workspace', requiresAuth: true },
 ]
 

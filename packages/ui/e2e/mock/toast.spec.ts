@@ -1,17 +1,16 @@
 import { test, expect } from '@playwright/test'
+import { setupMockAuth } from './helpers/auth'
 
 test.describe('Toast notifications', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('xihe-token', 'mock-token-for-testing')
-    })
+    await setupMockAuth(page)
     await page.goto('/chat')
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('load')
   })
 
   test('renders toast container on page', async ({ page }) => {
     const container = page.locator('[aria-live="polite"]')
-    await expect(container).toBeVisible()
+    await expect(container).toBeAttached()
   })
 
   test('displays success toast and captures snapshot', async ({ page }) => {

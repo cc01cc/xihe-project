@@ -1,25 +1,14 @@
 import { test, expect } from '@playwright/test'
 import { ModelPopoverPage } from '../page-objects/ModelPopoverPage'
+import { setupMockAuth } from './helpers/auth'
 
 test.describe('Model Popover', () => {
   test.beforeEach(async ({ page }) => {
+    await setupMockAuth(page)
     await page.addInitScript(() => {
-      localStorage.setItem('xihe-token', 'mock-token')
       localStorage.setItem('xihe-sessions', JSON.stringify([
         { id: 'sid-1', title: 'Test Chat', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       ]))
-    })
-
-    await page.route('**/api/v1/events**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-        body: 'retry: 5000\n\n',
-      })
-    })
-
-    await page.route('**/api/v1/exec', async (route) => {
-      await route.fulfill({ status: 200, body: 'OK' })
     })
 
     await page.route('**/api/v1/models', async (route) => {

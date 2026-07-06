@@ -1,31 +1,13 @@
 import { test, expect } from '@playwright/test'
+import { setupMockAuth } from './helpers/auth'
 
 test.describe('Theme Switching', () => {
   test.beforeEach(async ({ page }) => {
+    await setupMockAuth(page)
     await page.addInitScript(() => {
-      localStorage.setItem('xihe-token', 'mock-token')
-    })
-    await page.route('**/api/v1/**', async (route) => {
-      const url = route.request().url()
-      if (url.includes('/exec')) {
-        await route.fulfill({
-          status: 200,
-          contentType: 'text/event-stream',
-          body: 'data: ' + JSON.stringify({ type: 'done', data: {} }) + '\n\n',
-        })
-      } else if (url.includes('/events')) {
-        await route.fulfill({
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-          body: new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode('retry: 5000\n\n'))
-            },
-          }),
-        })
-      } else {
-        await route.continue()
-      }
+      localStorage.setItem('xihe-sessions', JSON.stringify([
+        { id: 'test-session', title: 'Test Session', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      ]))
     })
   })
 

@@ -11,11 +11,10 @@ const allRoutes: Route[] = [
   { path: '/register', name: 'register', requiresAuth: false },
   { path: '/chat', name: 'chat-default', requiresAuth: true },
   { path: '/chat/test-session', name: 'chat-session', requiresAuth: true },
-  { path: '/settings/model', name: 'settings-model', requiresAuth: true },
-  { path: '/settings/theme', name: 'settings-theme', requiresAuth: true },
-  { path: '/settings/mcp', name: 'settings-mcp', requiresAuth: true },
+  { path: '/settings/config', name: 'settings-config', requiresAuth: true },
   { path: '/settings/knowledge', name: 'settings-knowledge', requiresAuth: true },
   { path: '/settings/data', name: 'settings-data', requiresAuth: true },
+  { path: '/settings/monitoring', name: 'settings-monitoring', requiresAuth: true },
   { path: '/workspace', name: 'workspace', requiresAuth: true },
 ]
 
@@ -65,7 +64,7 @@ for (const route of allRoutes) {
       })
     })
 
-    const resp = await page.goto(route.path, { waitUntil: 'networkidle', timeout: 15000 })
+    const resp = await page.goto(route.path, { waitUntil: 'load', timeout: 15000 })
     expect(resp?.status()).toBe(200)
     await page.waitForTimeout(1000)
     expect(errors).toEqual([])

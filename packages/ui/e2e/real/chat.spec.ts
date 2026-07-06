@@ -19,8 +19,8 @@ test.describe('Chat — Real Backend', () => {
     await page.addInitScript((t) => {
       localStorage.setItem('xihe-token', t)
     }, authToken)
-    await page.goto('/chat')
-    await page.waitForLoadState('networkidle')
+    await page.goto('/chat', { waitUntil: 'load' })
+    await page.locator('textarea').waitFor({ state: 'visible', timeout: 10000 })
   })
 
   test('chat page renders with sidebar and input area', async ({ page }) => {
@@ -29,7 +29,7 @@ test.describe('Chat — Real Backend', () => {
   })
 
   test('creates new session and shows in sidebar', async ({ page }) => {
-    const sidebar = page.locator('[class*="sidebar"]')
+    const sidebar = page.locator('aside').first()
     await expect(sidebar).toBeVisible({ timeout: 8000 })
     // New session button
     const newBtn = page.locator('button').filter({ hasText: /new|新建/i }).first()
