@@ -360,3 +360,46 @@ ChatView integration:
 - When SSE streaming starts, `chatStore.createStreamingMessage()` immediately creates a real assistant message; `appendToken()` appends directly to that message's `content`, eliminating the separate `streamingContent` pseudo-message
 
 See `plans/PLAN-024-XH-chat-components.md` and `plans/PLAN-025-XH-chat-integration.md` for details.
+
+## 7. Unified Session and Attachment Persistence Architecture
+
+As chat and workspace capabilities converge, Xihe introduces a **cross-view unified Session layer** to avoid duplicating concepts such as Agent, RAG, MCP, and attachments across chat and workspace.
+
+### 7.1 Unified Session Layer
+
+- chat and workspace are treated as **different views of the same Session**, accessed via `/chat/:sessionId` and `/workspace/:sessionId` respectively.
+- `useSessionStore` carries cross-view core state: session metadata, Agent orchestration, RAG/MCP context, attachment list, and file context.
+- `useChatStore` and `useWorkspaceStore` are reduced to view-layer state: the former retains message flow and UI state; the latter retains file tree, editor, and upload queue.
+- workspace reuses chat conversation capabilities through the embeddable `ChatPanel.vue` without duplicating the component tree.
+
+See detailed design in:
+- [RFC-001-session-domain-model.md](RFC-001-session-domain-model.md)
+- [ADR-001-session-store-boundary.md](ADR-001-session-store-boundary.md)
+- [DEV-015-session-views.md](DEV-015-session-views.md)
+- `plans/PLAN-029-XH-unified-session-architecture.md`
+
+### 7.2 Message Attachment Persistence
+
+Early chat attachments used `URL.createObjectURL` to produce Blob URLs, which expired after page refresh. PLAN-030/031 implement end-to-end attachment persistence:
+
+**Backend (PLAN-030)**
+
+- Extended `File` entity: added `sessionId`, `messageId`; `workspaceId` changed to nullable. Physical storage is at `{cp.attachments-base-path}/{sessionId}/{fileId}`, isolated from the workspace file tree.
+- Extended `Message` entity: added `attachments` JSON column storing `{ fileId, name, type, size }[]`.
+- New APIs:
+  - `POST /api/v1/sessions/{sessionId}/attachments` — batch multipart upload with partial-success response
+  - `GET /files/{fileId}` — serve historical attachment stream
+  - `GET /api/v1/sessions/{sessionId}/messages` — load message history (with attachments)
+  - `DELETE /api/v1/sessions/{sessionId}/messages/{messageId}` — delete a message
+- Security and lifecycle: whitelist extension validation, 500MB per-file limit, cross-session access protection, session-deletion cascade cleanup, and orphan attachment cleanup after 24 hours.
+- `/chat` receives `attachments: fileId[]` and forwards attachment metadata to the Agent.
+
+**Frontend (PLAN-031)**
+
+- `AttachmentService` centralizes batch upload, frontend whitelist/size validation, reactive upload task state, deletion, and metadata fetching.
+- `InputArea.vue` validates selected files and uploads them in batch; if text exists, it merges text and attachments into one message; otherwise it sends a pure-attachment message.
+- `MessageItem.vue` renders persisted attachments using `/files/{fileId}` and supports deleting messages.
+- `ChatView.vue` loads history from the backend on mount and overwrites localStorage, ensuring attachments remain visible after refresh.
+
+See `plans/PLAN-030-XH-chat-attachment-backend.md` and `plans/PLAN-031-XH-chat-attachment-frontend.md`.
+

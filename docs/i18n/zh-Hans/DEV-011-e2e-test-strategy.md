@@ -19,45 +19,50 @@ E2E 测试分 mock 和 real 两层，位于 `packages/ui/e2e/`：
 ```
 e2e/
 ├── playwright.config.ts      # Playwright 全局配置
+├── helpers/
+│   └── auth.ts              # setupMockAuth：统一 mock /api/v1/** 认证
 ├── mock/                     # Mock 模式：page.route() 拦截 API，无需后端
-│   ├── chat.spec.ts          # 聊天页面渲染
-│   ├── login.spec.ts         # 登录/注册页
-│   ├── theme.spec.ts         # 主题切换
-│   ├── model-settings.spec.ts
-│   ├── mcp-settings.spec.ts
-│   ├── config-settings.spec.ts
-│   ├── knowledge-base.spec.ts
-│   ├── session-management.spec.ts
-│   ├── data-controls.spec.ts
-│   ├── toast.spec.ts
+│   ├── aria-label.spec.ts
 │   ├── base-modal.spec.ts
+│   ├── chat-attachment.spec.ts
+│   ├── chat-scroll.spec.ts
+│   ├── chat.spec.ts
+│   ├── config-settings.spec.ts
 │   ├── confirm-modal.spec.ts
-│   ├── tab-navigation.spec.ts
+│   ├── data-controls.spec.ts
 │   ├── i18n-switch.spec.ts
-│   └── screenshots.spec.ts   # 全路由截图遍历
+│   ├── knowledge-base.spec.ts
+│   ├── login.spec.ts
+│   ├── model-popover.spec.ts
+│   ├── prefers-reduced-motion.spec.ts
+│   ├── screenshots.spec.ts   # 全路由截图遍历
+│   ├── session-management.spec.ts
+│   ├── session-switch.spec.ts
+│   ├── tab-navigation.spec.ts
+│   ├── theme.spec.ts
+│   └── toast.spec.ts
 ├── real/                     # Real 模式：需 Docker Compose 全栈
 │   ├── auth-login.spec.ts
 │   ├── chat.spec.ts
-│   ├── model-settings.spec.ts
-│   ├── pdf-viewer.spec.ts
-│   ├── pdf-viewer-perf.spec.ts
-│   ├── session-management.spec.ts
-│   ├── message-search.spec.ts
-│   ├── screenshots.spec.ts
-│   ├── visual.spec.ts
-│   ├── settings-visual.spec.ts
 │   ├── cross-module-auth-guard.spec.ts
 │   ├── cross-module-chat.spec.ts
 │   ├── cross-module-rag.spec.ts
-│   └── cross-module-workspace.spec.ts
+│   ├── cross-module-workspace.spec.ts
+│   ├── message-search.spec.ts
+│   ├── pdf-viewer-perf.spec.ts
+│   ├── pdf-viewer.spec.ts
+│   ├── screenshots.spec.ts
+│   ├── session-management.spec.ts
+│   ├── settings-visual.spec.ts
+│   └── visual.spec.ts
 └── assets/
     └── sample.pdf            # PDF viewer 测试 fixture
 ```
 
 | 层 | 外部依赖 | 启动方式 | 用例数 |
 |----|---------|---------|--------|
-| mock | 无 | `webServer` 自动启动 Vite dev | ~40 |
-| real | Docker Compose (CP/Agent/Runtime/PG) | 需先 `docker compose up -d` | ~32 |
+| mock | 无 | `webServer` 自动启动 Vite dev | 66 |
+| real | Docker Compose (CP/Agent/Runtime/PG) | 需先 `docker compose up -d` | 37 |
 
 ### 1.2 Playwright 配置
 
@@ -70,6 +75,8 @@ screenshot: 'only-on-failure'  // 仅失败时保存实际截图
 toHaveScreenshot: { threshold: 0.2, maxDiffPixelRatio: 0.01 }
 deviceScaleFactor: 2            // Retina 级别截图
 ```
+
+所有页面跳转使用 `load`/`domcontentloaded` 并配合具体 DOM 元素可见性断言；禁止 `networkidle` 等待策略，以避免 Vite HMR 和 SSE 长连接导致假死。
 
 ### 1.3 Project 策略
 

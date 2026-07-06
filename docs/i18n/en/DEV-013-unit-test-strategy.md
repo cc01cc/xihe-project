@@ -31,10 +31,10 @@ xihe is a four-module architecture, each with different tech stacks and test fra
 | Agent | 18 files | ~60 | ~70% | ≥ 80% |
 | CP | 26 test classes | ~90 | ~67% | ≥ 80% |
 | Runtime | 10 files | ~26 | ~55% | ≥ 70% |
-| E2E Mock | 19 spec | ~36 | — | — |
-| E2E Real | 12 spec | ~15 | — | — |
+| E2E Mock | 19 spec | ~66 | — | — |
+| E2E Real | 13 spec | ~37 | — | — |
 
-> Data source: PLAN-020 §1 baseline + file scan update. 9 UI api-integration tests fail (need backend), 3 E2E mock + 3 real failures are pre-existing issues.
+> Data source: PLAN-020 §1 baseline + file scan update. PLAN-034 fixed the E2E test debt; 66 mock + 37 real tests are green.
 
 ## 2. UI Unit Test Strategy
 

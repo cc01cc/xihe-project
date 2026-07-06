@@ -21,10 +21,16 @@
 - 打开聊天时默认滚动到 `last-anchor`，用户消息自动设为滚动锚点
 - 支持 CommonMark + GFM（表格、删除线、任务列表、自动链接、嵌套列表、引用块）
 - 支持 `<think>` reasoning 折叠块与行内 citation `[n]`
+- Chat 附件持久化前端链路：`AttachmentService` 批量上传、前端白名单/大小校验、自动发送、历史消息从后端加载、附件删除
+- `AttachmentFile` 类型扩展 `fileId`，消息发送时附带 `attachments: fileId[]`
+- `ChatView` 挂载时从后端 `GET /api/v1/sessions/{sessionId}/messages` 加载历史消息并回填本地状态
+- 新增 `FileUpload.vue` 通用附件选择/拖拽组件
+- Mock E2E 覆盖附件选择→批量上传→文本+附件合并发送→刷新仍可见的完整流程
 - 详见各包源码和 `docs/` 目录
 
 ### Fixed
 
+- 修复 `mise run test:e2e` 中全部 mock/real 用例失败：移除 `networkidle` 等待策略、补齐 `setupMockAuth` 认证 mock、更新 settings 路由选择器、替换 PDF 性能测试 fixture、重新生成截图基线
 - 登录页未认证时 `App.vue` 不再请求配置接口，避免 401 触发循环刷新页面
 - `request` 在 401 时若已在 `/login` 或 `/register` 页面则不再重复跳转，消除认证相关路由死循环
 - 代码块在 Shiki 异步高亮未完成或失败时正确回退显示原始代码，不再出现空代码块

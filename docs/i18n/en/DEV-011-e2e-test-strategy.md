@@ -19,45 +19,50 @@ E2E tests are split into mock and real layers, located in `packages/ui/e2e/`:
 ```
 e2e/
 ├── playwright.config.ts      # Playwright global configuration
+├── helpers/
+│   └── auth.ts              # setupMockAuth: uniform mock for /api/v1/** auth
 ├── mock/                     # Mock mode: page.route() intercepts APIs, no backend needed
-│   ├── chat.spec.ts          # Chat page rendering
-│   ├── login.spec.ts         # Login/register page
-│   ├── theme.spec.ts         # Theme switching
-│   ├── model-settings.spec.ts
-│   ├── mcp-settings.spec.ts
-│   ├── config-settings.spec.ts
-│   ├── knowledge-base.spec.ts
-│   ├── session-management.spec.ts
-│   ├── data-controls.spec.ts
-│   ├── toast.spec.ts
+│   ├── aria-label.spec.ts
 │   ├── base-modal.spec.ts
+│   ├── chat-attachment.spec.ts
+│   ├── chat-scroll.spec.ts
+│   ├── chat.spec.ts
+│   ├── config-settings.spec.ts
 │   ├── confirm-modal.spec.ts
-│   ├── tab-navigation.spec.ts
+│   ├── data-controls.spec.ts
 │   ├── i18n-switch.spec.ts
-│   └── screenshots.spec.ts   # Full route screenshot traversal
+│   ├── knowledge-base.spec.ts
+│   ├── login.spec.ts
+│   ├── model-popover.spec.ts
+│   ├── prefers-reduced-motion.spec.ts
+│   ├── screenshots.spec.ts   # Full route screenshot traversal
+│   ├── session-management.spec.ts
+│   ├── session-switch.spec.ts
+│   ├── tab-navigation.spec.ts
+│   ├── theme.spec.ts
+│   └── toast.spec.ts
 ├── real/                     # Real mode: requires Docker Compose full stack
 │   ├── auth-login.spec.ts
 │   ├── chat.spec.ts
-│   ├── model-settings.spec.ts
-│   ├── pdf-viewer.spec.ts
-│   ├── pdf-viewer-perf.spec.ts
-│   ├── session-management.spec.ts
-│   ├── message-search.spec.ts
-│   ├── screenshots.spec.ts
-│   ├── visual.spec.ts
-│   ├── settings-visual.spec.ts
 │   ├── cross-module-auth-guard.spec.ts
 │   ├── cross-module-chat.spec.ts
 │   ├── cross-module-rag.spec.ts
-│   └── cross-module-workspace.spec.ts
+│   ├── cross-module-workspace.spec.ts
+│   ├── message-search.spec.ts
+│   ├── pdf-viewer-perf.spec.ts
+│   ├── pdf-viewer.spec.ts
+│   ├── screenshots.spec.ts
+│   ├── session-management.spec.ts
+│   ├── settings-visual.spec.ts
+│   └── visual.spec.ts
 └── assets/
     └── sample.pdf            # PDF viewer test fixture
 ```
 
 | Layer | External Dependencies | Startup Method | Test Count |
 |-------|----------------------|----------------|------------|
-| mock | None | `webServer` auto-starts Vite dev | ~40 |
-| real | Docker Compose (CP/Agent/Runtime/PG) | Requires `docker compose up -d` first | ~32 |
+| mock | None | `webServer` auto-starts Vite dev | 66 |
+| real | Docker Compose (CP/Agent/Runtime/PG) | Requires `docker compose up -d` first | 37 |
 
 ### 1.2 Playwright Configuration
 
@@ -70,6 +75,8 @@ screenshot: 'only-on-failure'  # Save actual screenshots only on failure
 toHaveScreenshot: { threshold: 0.2, maxDiffPixelRatio: 0.01 }
 deviceScaleFactor: 2            # Retina-level screenshots
 ```
+
+All page navigations use `load`/`domcontentloaded` plus concrete DOM visibility assertions; `networkidle` is avoided because Vite HMR and SSE long-polling make it unreliable.
 
 ### 1.3 Project Strategy
 

@@ -368,3 +368,46 @@ ChatView 集成方式：
 - SSE 流式开始时 `chatStore.createStreamingMessage()` 立即创建真实 assistant 消息，`appendToken()` 直接追加到该消息的 `content`，无需独立的 `streamingContent` 伪消息
 
 详见 `plans/PLAN-024-XH-chat-components.md` 与 `plans/PLAN-025-XH-chat-integration.md`。
+
+## 7. 统一 Session 与附件持久化架构
+
+随着 chat 与 workspace 的能力趋同，Xihe 引入**跨视图统一 Session 层**，避免 Agent、RAG、MCP、附件等概念在 chat 与 workspace 中重复落地。
+
+### 7.1 统一 Session 层
+
+- chat 与 workspace 被视为**同一 Session 的不同视图**，分别通过 `/chat/:sessionId` 与 `/workspace/:sessionId` 访问。
+- `useSessionStore` 承载跨视图核心状态：session 元数据、Agent 编排、RAG/MCP 上下文、附件列表、文件上下文。
+- `useChatStore` 与 `useWorkspaceStore` 降级为视图层状态：前者保留消息流与 UI 状态，后者保留文件树、编辑器与上传队列。
+- workspace 通过可嵌入的 `ChatPanel.vue` 直接复用 chat 的对话能力，无需复制组件树。
+
+详细设计见：
+- [RFC-001-session-domain-model.md](RFC-001-session-domain-model.md)
+- [ADR-001-session-store-boundary.md](ADR-001-session-store-boundary.md)
+- [DEV-015-session-views.md](DEV-015-session-views.md)
+- `plans/PLAN-029-XH-unified-session-architecture.md`
+
+### 7.2 消息附件持久化
+
+早期 chat 附件仅使用 `URL.createObjectURL` 生成 Blob URL，刷新后失效。PLAN-030/031 实现了端到端附件持久化：
+
+**后端（PLAN-030）**
+
+- 扩展 `File` entity：新增 `sessionId`、`messageId`，`workspaceId` 改为 nullable；附件物理存储在 `{cp.attachments-base-path}/{sessionId}/{fileId}`，与 workspace 文件树隔离。
+- 扩展 `Message` entity：新增 `attachments` JSON 列保存 `{ fileId, name, type, size }[]`。
+- 新增 API：
+  - `POST /api/v1/sessions/{sessionId}/attachments` — 批量 multipart 上传，返回部分成功结果
+  - `GET /files/{fileId}` — 服务历史附件流
+  - `GET /api/v1/sessions/{sessionId}/messages` — 加载历史消息（含附件）
+  - `DELETE /api/v1/sessions/{sessionId}/messages/{messageId}` — 删除消息
+- 安全与生命周期：白名单扩展名校验、500MB 单文件上限、跨 session 访问防护、session 删除级联清理、orphan 附件 24h 后定时清理。
+- `/chat` 接收 `attachments: fileId[]` 并将附件元数据转发给 Agent。
+
+**前端（PLAN-031）**
+
+- `AttachmentService` 集中处理批量上传、前端白名单/大小校验、reactive 上传任务状态、删除与元数据查询。
+- `InputArea.vue` 选择文件后批量上传；若输入框有文本，文本与附件合并为一条消息发送；否则发送纯附件消息。
+- `MessageItem.vue` 使用 `/files/{fileId}` 渲染持久化附件，支持删除消息。
+- `ChatView.vue` 挂载时从后端加载历史消息并覆盖 localStorage，保证刷新后附件仍可见。
+
+详见 `plans/PLAN-030-XH-chat-attachment-backend.md` 与 `plans/PLAN-031-XH-chat-attachment-frontend.md`。
+
