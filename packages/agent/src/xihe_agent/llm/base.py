@@ -13,6 +13,8 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from xihe_agent.config_client import ConfigClient
 
+from xihe_agent.interfaces.llm import LLMProvider, LLMRequest, LLMToken
+
 ProviderName = Literal["deepseek", "openai", "anthropic", "ollama", "mock", "xiaomi"]
 
 PROVIDER_DEFAULTS: dict[ProviderName, dict[str, Any]] = {
@@ -148,9 +150,29 @@ class LLMConfig(BaseModel):
         )
 
 
-class XiheLiteLLM(ChatLiteLLM):
+def _to_langchain_messages(messages: list[dict[str, Any]]) -> list[BaseMessage]:
+    """Convert normalized LLMRequest messages into LangChain message objects."""
+    from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+
+    result: list[BaseMessage] = []
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "human":
+            result.append(HumanMessage(content=content))
+        elif role == "ai":
+            result.append(AIMessage(content=content))
+        elif role == "system":
+            result.append(SystemMessage(content=content))
+        elif role == "tool":
+            result.append(ToolMessage(content=content, tool_call_id=msg.get("tool_call_id", "")))
+    return result
+
+
+class XiheLiteLLM(ChatLiteLLM, LLMProvider):
     def __init__(self, config: LLMConfig | None = None, **kwargs: Any):
         cfg = config or LLMConfig.from_env()
+        self._config = cfg
         model = cfg.model
         if "/" not in model and cfg.provider and cfg.provider != "mock":
             model = f"{cfg.provider}/{model}"
@@ -165,8 +187,22 @@ class XiheLiteLLM(ChatLiteLLM):
         llm_kwargs = {k: v for k, v in llm_kwargs.items() if v is not None}
         super().__init__(**llm_kwargs)
 
+    async def complete(self, request: LLMRequest) -> str:
+        messages = _to_langchain_messages(request.messages)
+        result = await self.ainvoke(messages)
+        return str(result.content)
 
-class MockChatModel(BaseChatModel):
+    async def stream_complete(self, request: LLMRequest) -> AsyncIterator[LLMToken]:
+        messages = _to_langchain_messages(request.messages)
+        async for chunk in self.astream(messages):
+            if chunk.content:
+                yield LLMToken(content=chunk.content)
+
+    def with_model(self, model: str) -> LLMProvider:
+        return XiheLiteLLM(config=self._config.with_model(model))
+
+
+class MockChatModel(BaseChatModel, LLMProvider):
     _bound_tools: list[BaseTool] = []
 
     def bind_tools(
@@ -183,6 +219,20 @@ class MockChatModel(BaseChatModel):
         new = MockChatModel()
         new._bound_tools = valid_tools
         return new
+
+    async def complete(self, request: LLMRequest) -> str:
+        messages = _to_langchain_messages(request.messages)
+        result = await self.ainvoke(messages)
+        return str(result.content)
+
+    async def stream_complete(self, request: LLMRequest) -> AsyncIterator[LLMToken]:
+        messages = _to_langchain_messages(request.messages)
+        async for chunk in self.astream(messages):
+            if chunk.content:
+                yield LLMToken(content=chunk.content)
+
+    def with_model(self, model: str) -> LLMProvider:
+        return MockChatModel()
 
     def _generate(
         self,
@@ -223,7 +273,7 @@ class MockChatModel(BaseChatModel):
         return "xihe-mock"
 
 
-def create_llm(config: LLMConfig | None = None) -> BaseChatModel:
+def create_llm(config: LLMConfig | None = None) -> LLMProvider:
     cfg = config or LLMConfig.from_env()
     if cfg.provider == "mock":
         return MockChatModel()

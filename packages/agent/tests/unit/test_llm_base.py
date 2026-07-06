@@ -3,6 +3,7 @@
 
 import pytest
 
+from xihe_agent.interfaces.llm import LLMProvider, LLMRequest
 from xihe_agent.llm.base import LLMConfig, MockChatModel, create_llm
 
 
@@ -169,3 +170,40 @@ class TestMockChatModel:
 
         bound = model.bind_tools([FakeTool()])
         assert bound is not None
+
+
+class TestLLMProvider:
+    """XiheLiteLLM and MockChatModel implement the LLMProvider abstraction."""
+
+    def test_create_llm_returns_llm_provider(self):
+        cfg = LLMConfig(provider="mock")
+        model = create_llm(cfg)
+        assert isinstance(model, LLMProvider)
+        assert isinstance(model, MockChatModel)
+
+    @pytest.mark.asyncio
+    async def test_mock_complete(self):
+        model = MockChatModel()
+        result = await model.complete(LLMRequest(
+            model="mock",
+            messages=[{"role": "human", "content": "Hello"}],
+        ))
+        assert "Hello" in result
+
+    @pytest.mark.asyncio
+    async def test_mock_stream_complete(self):
+        model = MockChatModel()
+        tokens = []
+        async for token in model.stream_complete(LLMRequest(
+            model="mock",
+            messages=[{"role": "human", "content": "Test stream"}],
+        )):
+            tokens.append(token.content)
+        combined = "".join(tokens)
+        assert "Test stream" in combined
+
+    def test_mock_with_model(self):
+        model = MockChatModel()
+        switched = model.with_model("gpt-5")
+        assert isinstance(switched, LLMProvider)
+        assert isinstance(switched, MockChatModel)

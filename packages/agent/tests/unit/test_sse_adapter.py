@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import ToolMessage
 
-from xihe_agent.adapters.sse_adapter import translate_events
+from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter, translate_events
 
 
 class FakeChunk:
@@ -100,6 +100,50 @@ async def test_translate_tool_end_with_tool_message():
 
 
 @pytest.mark.asyncio
+async def test_translate_tool_start():
+    events = [
+        {
+            "event": "on_tool_start",
+            "name": "read_file",
+            "data": {"input": {"path": "test.txt"}},
+            "run_id": "run-2",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    assert len(results) == 1
+    payload = json.loads(results[0].removeprefix("event: tool_call\ndata: ").strip())
+    assert payload["tool"] == "read_file"
+    assert payload["arguments"] == {"path": "test.txt"}
+    assert payload["type"] == "tool_call"
+    assert payload["run_id"] == "run-2"
+
+
+@pytest.mark.asyncio
+async def test_translate_tool_end_with_tool_message():
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {"output": ToolMessage(content="file content", tool_call_id="call-1")},
+            "run_id": "run-3",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    assert len(results) == 1
+    payload = json.loads(results[0].removeprefix("event: tool_result\ndata: ").strip())
+    assert payload["tool"] == "read_file"
+    assert payload["result"] == "file content"
+    assert payload["type"] == "tool_result"
+    assert payload["run_id"] == "run-3"
+
+
+@pytest.mark.asyncio
 async def test_translate_tool_end_with_raw_output():
     events = [
         {
@@ -114,9 +158,25 @@ async def test_translate_tool_end_with_raw_output():
         results.append(sse)
 
     assert len(results) == 1
-    payload = json.loads(results[0].removeprefix("event: tool_exec_done\ndata: ").strip())
+    payload = json.loads(results[0].removeprefix("event: tool_result\ndata: ").strip())
     assert payload["tool"] == "list_dir"
     assert "src" in payload["result"]
+
+
+@pytest.mark.asyncio
+async def test_adapter_translate_returns_agent_event():
+    adapter = LangGraphEventAdapter()
+    event = {
+        "event": "on_tool_start",
+        "name": "read_file",
+        "data": {"input": {"path": "test.txt"}},
+        "run_id": "run-8",
+    }
+    result = adapter.translate(event)
+    assert result is not None
+    assert result.type == "tool_call"
+    assert result.data["tool"] == "read_file"
+    assert result.data["run_id"] == "run-8"
 
 
 @pytest.mark.asyncio
