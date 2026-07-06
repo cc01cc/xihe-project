@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
+import com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -24,11 +25,14 @@ public class ContextController {
     private static final Logger logger = LoggerFactory.getLogger(ContextController.class);
 
     private final ContextService contextService;
+    private final ContextSourceRefreshService sourceRefreshService;
     private final WorkspaceUserRepository workspaceUserRepository;
 
     public ContextController(ContextService contextService,
+                             ContextSourceRefreshService sourceRefreshService,
                              WorkspaceUserRepository workspaceUserRepository) {
         this.contextService = contextService;
+        this.sourceRefreshService = sourceRefreshService;
         this.workspaceUserRepository = workspaceUserRepository;
     }
 
@@ -83,6 +87,25 @@ public class ContextController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PostMapping("/{sessionId}/refresh-sources")
+    public ResponseEntity<?> refreshSources(@PathVariable String sessionId) {
+        if (!verifyAccess(sessionId)) {
+            return forbidden();
+        }
+        Optional<String> hash = sourceRefreshService.refresh(
+                sessionId, resolveWorkspaceId(), resolveUserId());
+        if (hash.isPresent()) {
+            return ResponseEntity.ok(Map.of(
+                    "status", "refreshed",
+                    "source_key", "AGENTS.md",
+                    "hash", hash.get()));
+        }
+        return ResponseEntity.ok(Map.of(
+                "status", "unchanged",
+                "source_key", "AGENTS.md"));
+    }
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @GetMapping("/{sessionId}/events")
     public ResponseEntity<?> readEvents(
             @PathVariable String sessionId,
@@ -102,6 +125,40 @@ public class ContextController {
         }
         Long sequence = contextService.getLatestSequence(sessionId);
         return ResponseEntity.ok(Map.of("sequence", sequence));
+    }
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PostMapping("/{sessionId}/replay")
+    public ResponseEntity<?> replay(
+            @PathVariable String sessionId,
+            @RequestBody Map<String, Object> body) {
+        if (!verifyAccess(sessionId)) {
+            return forbidden();
+        }
+        Long afterSequence = Long.valueOf(body.getOrDefault("afterSequence", "0").toString());
+        var result = contextService.replay(
+                sessionId, resolveWorkspaceId(), resolveUserId(), afterSequence);
+        return ResponseEntity.ok(result);
+    }
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PostMapping("/{sessionId}/compact")
+    public ResponseEntity<?> compact(
+            @PathVariable String sessionId,
+            @RequestBody Map<String, Object> body) {
+        if (!verifyAccess(sessionId)) {
+            return forbidden();
+        }
+        Long upToSequence = body.get("upToSequence") != null
+                ? Long.valueOf(body.get("upToSequence").toString())
+                : null;
+        var event = contextService.compact(
+                sessionId, resolveWorkspaceId(), resolveUserId(), upToSequence);
+        return ResponseEntity.ok(Map.of(
+                "sequence", event.getSequence(),
+                "event_type", event.getEventType(),
+                "created_at", event.getCreatedAt().toString()
+        ));
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")

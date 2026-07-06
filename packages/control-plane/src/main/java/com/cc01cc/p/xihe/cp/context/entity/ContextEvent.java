@@ -28,7 +28,7 @@ public class ContextEvent {
     @Column(name = "sequence", nullable = false)
     private Long sequence;
 
-    @Column(name = "payload", columnDefinition = "JSONB", nullable = false)
+    @Column(name = "payload", columnDefinition = "TEXT", nullable = false)
     private String payload;
 
     @Column(name = "correlation_id", length = 36)

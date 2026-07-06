@@ -33,6 +33,19 @@ public class ContextProjectionService {
     }
 
     @Transactional(readOnly = true)
+    public ObjectNode projectUpTo(String sessionId, long upToSequence) {
+        ObjectNode context = emptyContext(sessionId);
+        List<ContextEvent> events = eventStoreService.read(sessionId, 0L);
+        for (ContextEvent event : events) {
+            if (event.getSequence() > upToSequence) {
+                break;
+            }
+            context = apply(context, event);
+        }
+        return context;
+    }
+
+    @Transactional(readOnly = true)
     public ObjectNode project(String sessionId, Long afterSequence) {
         ObjectNode context = emptyContext(sessionId);
         List<ContextEvent> events = eventStoreService.read(sessionId, afterSequence);
@@ -43,8 +56,8 @@ public class ContextProjectionService {
     }
 
     @Transactional
-    public ObjectNode projectAndSave(String sessionId, String workspaceId, String userId) {
-        ObjectNode context = project(sessionId, 0L);
+    public ObjectNode projectAndSave(String sessionId, String workspaceId, String userId, long afterSequence) {
+        ObjectNode context = project(sessionId, afterSequence);
         long latestSequence = context.get("latest_sequence").asLong();
 
         Optional<ContextProjection> existing = projectionRepository.findBySessionId(sessionId);
@@ -73,6 +86,7 @@ public class ContextProjectionService {
             case "context.source_changed" -> addMessage(context, payload, "system");
             case "epoch.started", "epoch.replaced" -> setEpoch(context, payload);
             case "runtime.state_cleared" -> clearRuntimeState(context);
+            case "session.forked" -> recordFork(context, payload);
             case "compaction.applied" -> applyCompaction(context, payload);
             default -> logger.debug("Unhandled event type in projection: {}", type);
         }
@@ -144,6 +158,18 @@ public class ContextProjectionService {
 
     private void clearRuntimeState(ObjectNode context) {
         context.set("runtime_state", objectMapper.createObjectNode());
+    }
+
+    private void recordFork(ObjectNode context, ObjectNode payload) {
+        ObjectNode metadata = (ObjectNode) context.get("metadata");
+        ObjectNode forkInfo = objectMapper.createObjectNode();
+        if (payload.has("source_session_id")) {
+            forkInfo.put("source_session_id", payload.path("source_session_id").asText());
+        }
+        if (payload.has("at_sequence")) {
+            forkInfo.put("at_sequence", payload.path("at_sequence").asLong());
+        }
+        metadata.set("forked_from", forkInfo);
     }
 
     private void applyCompaction(ObjectNode context, ObjectNode payload) {
