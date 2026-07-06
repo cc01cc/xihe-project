@@ -8,11 +8,15 @@ Supported providers:
 import base64
 import os
 from abc import ABC, abstractmethod
+from typing import Any
 
 import httpx
 from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import BaseModel, Field
+
+from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 
 
 class ImageProvider(ABC):
@@ -150,7 +154,60 @@ class GenerateImageInput(BaseModel):
     quality: str = Field(default="medium", description="图片质量：low, medium, high")
 
 
+class GenerateImageAgentTool(BaseAgentTool):
+    """Agent-tool implementation of the image generation tool."""
+
+    def __init__(self, provider_manager: ProviderManager) -> None:
+        self._provider_manager = provider_manager
+
+    async def execute(self, input: dict[str, Any], context: AgentContext) -> dict[str, Any]:
+        prompt = input.get("prompt", "")
+        size = input.get("size", "1024x1024")
+        quality = input.get("quality", "medium")
+        provider = self._provider_manager.get()
+        logger.info(
+            "Generating image: provider=%s, prompt=%s, size=%s",
+            type(provider).__name__, prompt[:60], size,
+        )
+        try:
+            image_bytes = await provider.generate(prompt, size, quality)
+            b64 = base64.b64encode(image_bytes).decode()
+            logger.info("Image generated: %d bytes", len(image_bytes))
+            return {
+                "content": f"[IMAGE:{type(provider).__name__}:{size}]\ndata:image/png;base64,{b64}",
+            }
+        except Exception as e:
+            logger.error("Image generation failed: %s", e, exc_info=True)
+            return {"content": f"图片生成失败: {e}"}
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            name="generate_image",
+            description="根据文字描述生成图片。返回生成的图片。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "图片描述，越详细越好"},
+                    "size": {"type": "string", "default": "1024x1024"},
+                    "quality": {"type": "string", "default": "medium"},
+                },
+                "required": ["prompt"],
+            },
+        )
+
+    @property
+    def name(self) -> str:
+        return self.spec.name
+
+    @property
+    def description(self) -> str:
+        return self.spec.description
+
+
 class GenerateImageTool(BaseTool):
+    """Legacy LangChain BaseTool implementation kept for supervisor/registry compatibility."""
+
     name: str = "generate_image"
     description: str = "根据文字描述生成图片。返回生成的图片。"
     args_schema: type[BaseModel] = GenerateImageInput

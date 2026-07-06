@@ -6,8 +6,34 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from loguru import logger
 
+from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
+
 DEFAULT_RETRY_INTERVAL = 2.0
 DEFAULT_MAX_RETRIES = 0
+
+
+class MCPAgentTool(BaseAgentTool):
+    """Wraps a LangChain MCP `BaseTool` as a `BaseAgentTool`."""
+
+    def __init__(self, tool: BaseTool) -> None:
+        self._tool = tool
+
+    async def execute(self, input: dict[str, Any], context: AgentContext) -> dict[str, Any]:
+        try:
+            result = await self._tool.ainvoke(input)
+            return {"content": str(result)}
+        except Exception as e:
+            logger.warning("MCP tool {} failed: {}", self._tool.name, e)
+            return {"content": f"Tool error: {e}"}
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            name=self._tool.name,
+            description=self._tool.description or "",
+            input_schema=self._tool.args_schema.model_json_schema() if self._tool.args_schema else {},
+        )
 
 
 class MCPClientManager:

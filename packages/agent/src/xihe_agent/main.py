@@ -14,24 +14,30 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage
 from litellm import get_llm_provider
 from loguru import logger
 
-from xihe_agent.adapters.approval_tool import ApprovalTool
-from xihe_agent.adapters.mcp_client import MCPClientManager
-from xihe_agent.adapters.sse_adapter import render_sse, translate_events
-from xihe_agent.agent.executor import DEFAULT_MAX_ITERATIONS, stream_agent_events
-from xihe_agent.agent.supervisor import build_supervisor
+from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
+from xihe_agent.adapters.mcp_client import MCPAgentTool, MCPClientManager
+from xihe_agent.adapters.sse_adapter import render_sse
+from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.config_client import ConfigClient
+from xihe_agent.context import (
+    CPContextServiceClient,
+    CPEventStoreClient,
+    EventSourcedContextProvider,
+)
 from xihe_agent.dotenv_loader import load_project_env
+from xihe_agent.interfaces.agent_runner import RunnerConfig
+from xihe_agent.interfaces.message import Message
 from xihe_agent.llm.base import LLMConfig, create_llm
 from xihe_agent.llm.models import _models_router
 from xihe_agent.llm.models import router as models_router
 from xihe_agent.rag import EmbeddingService, LiteLLMEmbeddings, VectorStore
 from xihe_agent.rag import chunk_document as rag_chunk
 from xihe_agent.registry.registry import WorkerRegistry
-from xihe_agent.tools import GenerateImageTool, ProviderManager
+from xihe_agent.tools import GenerateImageAgentTool, GenerateImageTool, ProviderManager
 
 
 def get_env(name: str) -> str | None:
@@ -162,13 +168,20 @@ mcp_manager = MCPClientManager(
     workspace_id=get_env("XIHE_WORKSPACE_ID"),
     retry_interval=MCP_RETRY_INTERVAL,
 )
-approval_tool = ApprovalTool()
+approval_tool = ApprovalAgentTool()
+legacy_approval_tool = ApprovalTool()
 config_client = ConfigClient(cp_url=CP_URL, api_token=CP_API_TOKEN)
 _models_router.bind(config_client)
 
 llm_config = LLMConfig.from_config_client(config_client)
 image_provider_manager = ProviderManager.from_config_client(config_client)
-generate_image_tool = GenerateImageTool(provider_manager=image_provider_manager)
+generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
+legacy_generate_image_tool = GenerateImageTool(provider_manager=image_provider_manager)
+
+cp_context_service_client = CPContextServiceClient(base_url=CP_URL, api_token=CP_API_TOKEN)
+cp_event_store_client = CPEventStoreClient(base_url=CP_URL, api_token=CP_API_TOKEN)
+context_provider = EventSourcedContextProvider(cp_context_service_client)
+agent_runner = LangGraphRunner(model_factory=lambda model: create_llm(llm_config.with_model(model)), event_store=cp_event_store_client)
 
 # RAG
 PG_DSN = (
@@ -279,7 +292,7 @@ async def lifespan(app: FastAPI):
     await config_client.sync_with_retry()
     llm_config = LLMConfig.from_config_client(config_client)
     image_provider_manager = ProviderManager.from_config_client(config_client)
-    generate_image_tool = GenerateImageTool(provider_manager=image_provider_manager)
+    generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
     if cc_instructions := config_client.get("logging", "instructions"):
         AGENT_INSTRUCTIONS = cc_instructions
     if cc_user_name := config_client.get("logging", "userName"):
@@ -300,7 +313,7 @@ async def lifespan(app: FastAPI):
         from xihe_agent.registry.watcher import start_watcher
 
         model = create_llm(llm_config)
-        custom_tools = [approval_tool, generate_image_tool]
+        custom_tools = [legacy_approval_tool, legacy_generate_image_tool]
         _workers_dir = config_client.get("logging", "workersDir")
         worker_registry = WorkerRegistry(workers_dir=_workers_dir)
         worker_registry.load_all(model, mcp_manager.tools, custom_tools)
@@ -343,38 +356,50 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     # Enrich with RAG context if knowledge base has content
     instructions = await _enrich_with_rag_context(content, instructions)
 
-    chat_history = _deserialize_history(chat_history_raw)
+    chat_history = _deserialize_messages(chat_history_raw)
     cfg = llm_config.with_model(model_override) if model_override else llm_config
     model = create_llm(cfg)
-    all_tools = list(mcp_manager.tools) + [approval_tool, generate_image_tool]
 
     async def event_stream():
         try:
             if USE_SUPERVISOR:
-                custom_tools = [approval_tool, generate_image_tool]
+                # Supervisor path remains on legacy tools until full migration.
+                from langchain_core.messages import HumanMessage
+
+                from xihe_agent.agent.supervisor import build_supervisor
+
+                custom_tools = [legacy_approval_tool, legacy_generate_image_tool]
                 supervisor = build_supervisor(
                     model, mcp_manager.tools, custom_tools,
                     registry=worker_registry if USE_REGISTRY else None,
                 )
                 result = await supervisor.ainvoke({
-                    "messages": chat_history + [HumanMessage(content=content)]
+                    "messages": _to_langchain_messages(chat_history) + [HumanMessage(content=content)]
                 })
                 for msg in result["messages"]:
                     if hasattr(msg, "content") and msg.content:
                         yield render_sse("token", {"content": msg.content})
                 yield render_sse("done", {})
             else:
-                raw_events = stream_agent_events(
-                    model=model,
+                context = await context_provider.load(session_id, after_sequence=0)
+                context.runtime_state["user_name"] = user_name
+                context.runtime_state["instructions"] = instructions
+
+                all_tools = [MCPAgentTool(t) for t in mcp_manager.tools]
+                all_tools.extend([approval_tool, generate_image_tool])
+
+                messages = list(chat_history)
+                messages.append(Message(role="human", content=content))
+
+                config = RunnerConfig(
+                    model=model_override or llm_config.model,
+                    system_prompt=instructions,
                     tools=all_tools,
-                    input_text=content,
-                    chat_history=chat_history,
-                    user_name=user_name,
-                    instructions=instructions,
-                    max_iterations=DEFAULT_MAX_ITERATIONS,
+                    context=context,
                 )
-                async for sse_event in translate_events(raw_events):
-                    yield sse_event
+
+                async for event in agent_runner.stream(messages, config):
+                    yield render_sse(event.type, event.data)
         except Exception as e:
             logger.exception("Agent streaming error")
             yield render_sse("error", {"error": str(e)})
@@ -411,7 +436,17 @@ async def rag_delete(doc_id: str, _token: None = Depends(verify_api_token)):
     return {"deleted": ok}
 
 
-def _deserialize_history(raw: list[dict[str, Any]]) -> list[BaseMessage]:
+def _deserialize_messages(raw: list[dict[str, Any]]) -> list[Message]:
+    result: list[Message] = []
+    for item in raw:
+        role = item.get("role", "human")
+        if role not in ("human", "ai", "system", "tool"):
+            role = "human"
+        result.append(Message(role=role, content=item.get("content", "")))
+    return result
+
+
+def _to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
     from langchain_core.messages import (
         AIMessage,
         HumanMessage,
@@ -419,29 +454,16 @@ def _deserialize_history(raw: list[dict[str, Any]]) -> list[BaseMessage]:
         ToolMessage,
     )
 
-    type_map = {
-        "human": HumanMessage,
-        "ai": AIMessage,
-        "system": SystemMessage,
-        "tool": ToolMessage,
-    }
     result: list[BaseMessage] = []
-    for item in raw:
-        role = item.get("role", "user")
-        msg_cls = type_map.get(role, HumanMessage)
-        try:
-            if issubclass(msg_cls, ToolMessage):
-                result.append(
-                    ToolMessage(
-                        content=item.get("content", ""),
-                        tool_call_id=item.get("tool_call_id", ""),
-                    )
-                )
-            else:
-                result.append(msg_cls(content=item.get("content", "")))
-        except Exception as e:
-            logger.warning("Failed to deserialize chat history item, falling back to HumanMessage: {}", e)
-            result.append(HumanMessage(content=str(item)))
+    for msg in messages:
+        if msg.role == "human":
+            result.append(HumanMessage(content=msg.content))
+        elif msg.role == "ai":
+            result.append(AIMessage(content=msg.content))
+        elif msg.role == "system":
+            result.append(SystemMessage(content=msg.content))
+        elif msg.role == "tool":
+            result.append(ToolMessage(content=msg.content, tool_call_id=""))
     return result
 
 
@@ -500,7 +522,7 @@ async def registry_enable_worker(worker_id: str, _token: None = Depends(verify_a
     if not USE_REGISTRY or worker_registry is None:
         raise HTTPException(status_code=404, detail="Registry mode is not enabled")
     model = create_llm(llm_config)
-    custom_tools = [approval_tool, generate_image_tool]
+    custom_tools = [legacy_approval_tool, legacy_generate_image_tool]
     ok = worker_registry.enable(worker_id, model, mcp_manager.tools, custom_tools)
     if not ok:
         raise HTTPException(status_code=404, detail=f"Worker '{worker_id}' not found")
