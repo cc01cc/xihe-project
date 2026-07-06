@@ -5,10 +5,14 @@ from pydantic import BaseModel, Field
 
 from xihe_agent.agent.executor import (
     DEFAULT_MAX_ITERATIONS,
-    format_system_message,
+    DEFAULT_RETRY_COUNT,
     stream_agent_events,
 )
-from xihe_agent.llm.base import MockChatModel
+from xihe_agent.agent_runner import LangGraphRunner
+from xihe_agent.interfaces.agent_runner import RunnerConfig
+from xihe_agent.interfaces.message import Message, TextMessage
+from xihe_agent.interfaces.tool import ToolSpec
+from xihe_agent.llm.base import MockChatModel, create_llm
 
 
 class FakeToolSchema(BaseModel):
@@ -27,32 +31,57 @@ class FakeTool(BaseTool):
         return f"Result for: {query}"
 
 
-def test_format_system_message():
-    msg = format_system_message(
-        user_name="TestUser",
-        instructions="test instructions",
-    )
-    assert "TestUser" in msg.content
-    assert "test instructions" in msg.content
+class FakeAgentTool:
+    """Simple BaseAgentTool-like object for the new AgentRunner path."""
+
+    def __init__(self, tool: BaseTool):
+        self._tool = tool
+        from xihe_agent.interfaces.tool import ToolSpec
+        self._spec = ToolSpec(
+            name=tool.name,
+            description=tool.description,
+            input_schema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        )
+
+    @property
+    def spec(self) -> "ToolSpec":
+        return self._spec
+
+    async def execute(self, input: dict, context: dict) -> dict:
+        return {"content": self._tool._run(input.get("query", ""))}
+
+
+def _make_runner() -> LangGraphRunner:
+    return LangGraphRunner(model_factory=lambda _model: create_llm())
 
 
 def test_default_max_iterations():
     assert DEFAULT_MAX_ITERATIONS == 4
 
 
+def test_default_retry_count():
+    assert DEFAULT_RETRY_COUNT == 3
+
+
 @pytest.mark.asyncio
 async def test_agent_creation_with_tools():
-    model = MockChatModel()
-    tool = FakeTool()
+    runner = _make_runner()
+    config = RunnerConfig(
+        model="mock",
+        system_prompt="test",
+        tools=[FakeAgentTool(FakeTool())],
+    )
 
     events = []
     async for event in stream_agent_events(
-        model=model,
-        tools=[tool],
+        runner=runner,
+        config=config,
         input_text="Hello",
-        user_name="Tester",
-        instructions="test",
-        max_iterations=1,
+        retry_count=1,
     ):
         events.append(event)
 
@@ -61,36 +90,46 @@ async def test_agent_creation_with_tools():
 
 @pytest.mark.asyncio
 async def test_agent_stream_produces_events():
-    model = MockChatModel()
-    tool = FakeTool()
+    runner = _make_runner()
+    config = RunnerConfig(
+        model="mock",
+        system_prompt="testing",
+        tools=[FakeAgentTool(FakeTool())],
+    )
 
     events = []
     async for event in stream_agent_events(
-        model=model,
-        tools=[tool],
+        runner=runner,
+        config=config,
         input_text="What can you do?",
-        user_name="User",
-        instructions="testing",
-        max_iterations=2,
+        retry_count=1,
     ):
         events.append(event)
 
-    event_types = {e.get("event") for e in events}
     assert len(events) > 0
 
 
 @pytest.mark.asyncio
 async def test_agent_with_chat_history():
-    model = MockChatModel()
-    history = [HumanMessage(content="Previous question"), AIMessage(content="Previous answer")]
+    runner = _make_runner()
+    history = [
+        TextMessage(role="human", content="Previous question"),
+        TextMessage(role="ai", content="Previous answer"),
+    ]
+
+    config = RunnerConfig(
+        model="mock",
+        system_prompt="testing",
+        tools=[FakeAgentTool(FakeTool())],
+    )
 
     events = []
     async for event in stream_agent_events(
-        model=model,
-        tools=[],
+        runner=runner,
+        config=config,
         input_text="Follow up",
         chat_history=history,
-        max_iterations=1,
+        retry_count=1,
     ):
         events.append(event)
 
@@ -99,14 +138,19 @@ async def test_agent_with_chat_history():
 
 @pytest.mark.asyncio
 async def test_agent_no_tools():
-    model = MockChatModel()
+    runner = _make_runner()
+    config = RunnerConfig(
+        model="mock",
+        system_prompt="testing",
+        tools=[],
+    )
 
     events = []
     async for event in stream_agent_events(
-        model=model,
-        tools=[],
+        runner=runner,
+        config=config,
         input_text="Hello without tools",
-        max_iterations=1,
+        retry_count=1,
     ):
         events.append(event)
 

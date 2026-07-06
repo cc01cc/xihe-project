@@ -17,9 +17,11 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import BaseModel, create_model
 
+from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunnerConfig
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.event import Event
+from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.event_store import EventStore
 from xihe_agent.interfaces.message import Message
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
@@ -110,9 +112,11 @@ class LangGraphRunner(AgentRunner):
         self,
         model_factory,
         event_store: EventStore | None = None,
+        event_adapter: EventAdapter | None = None,
     ):
         self._model_factory = model_factory
         self._event_store = event_store
+        self._event_adapter = event_adapter or LangGraphEventAdapter()
 
     async def stream(
         self,
@@ -206,62 +210,21 @@ class LangGraphRunner(AgentRunner):
         raw_event: dict[str, Any],
         seen_tool_ids: set[str],
     ) -> list[AgentEvent]:
-        event_type = raw_event.get("event", "")
-        name = raw_event.get("name", "")
-        data = raw_event.get("data", {})
-        run_id = raw_event.get("run_id", "")
+        translated = self._event_adapter.translate(raw_event)
+        if translated is None:
+            return []
+        events = [translated] if isinstance(translated, AgentEvent) else translated
+
+        # Dedup parallel tool calls (DESIGN-013)
         result: list[AgentEvent] = []
-
-        if event_type == "on_chat_model_stream":
-            chunk = data.get("chunk")
-            if chunk and hasattr(chunk, "content") and chunk.content:
-                result.append(AgentEvent(
-                    type="token",
-                    data={"content": chunk.content, "type": "token", "run_id": run_id},
-                ))
-
-        elif event_type == "on_chat_model_end":
-            output = data.get("output")
-            if isinstance(output, BaseMessage) and output.content:
-                result.append(AgentEvent(
-                    type="token",
-                    data={"content": output.content, "type": "token", "run_id": run_id},
-                ))
-
-        elif event_type == "on_chain_end" and name == "LangGraph":
-            result.append(AgentEvent(type="done", data={"type": "done", "run_id": run_id}))
-
-        elif event_type == "on_tool_start":
-            if run_id and run_id in seen_tool_ids:
-                return result
-            if run_id:
-                seen_tool_ids.add(run_id)
-            tool_input = data.get("input", "")
-            result.append(AgentEvent(
-                type="tool_call",
-                data={
-                    "tool": name,
-                    "arguments": tool_input if isinstance(tool_input, dict) else {},
-                    "type": "tool_call",
-                    "run_id": run_id,
-                },
-            ))
-
-        elif event_type == "on_tool_end":
-            tool_output = data.get("output")
-            if isinstance(tool_output, ToolMessage):
-                formatted = tool_output.content
-            else:
-                formatted = str(tool_output or "")
-            result.append(AgentEvent(
-                type="tool_result",
-                data={"tool": name, "result": formatted, "type": "tool_result", "run_id": run_id},
-            ))
-
-        elif event_type == "on_llm_error":
-            error = data.get("error", str(data))
-            result.append(AgentEvent(type="error", data={"error": str(error), "type": "error", "run_id": run_id}))
-
+        for event in events:
+            if event.type == "tool_call":
+                run_id = event.data.get("run_id", "")
+                if run_id and run_id in seen_tool_ids:
+                    continue
+                if run_id:
+                    seen_tool_ids.add(run_id)
+            result.append(event)
         return result
 
 
