@@ -30,7 +30,7 @@ from xihe_agent.context import (
 )
 from xihe_agent.dotenv_loader import load_project_env
 from xihe_agent.interfaces.agent_runner import RunnerConfig
-from xihe_agent.interfaces.message import Message
+from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.llm.base import LLMConfig, create_llm
 from xihe_agent.llm.models import _models_router
 from xihe_agent.llm.models import router as models_router
@@ -113,7 +113,7 @@ async def _apply_cp_log_level():
                 level=level.upper(), serialize=True,
             )
     except Exception:
-        pass  # CP unreachable at startup, keep current level
+        logger.warning("CP unreachable at startup, keeping current log level", exc_info=True)
 
 
 async def _poll_log_level():
@@ -132,7 +132,7 @@ async def _poll_log_level():
                     level=level.upper(), serialize=True,
                 )
         except Exception:
-            pass  # Poll failure, keep current level
+            logger.warning("CP log-level poll failed, keeping current level", exc_info=True)
         await asyncio.sleep(30)
 
 
@@ -389,7 +389,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 all_tools.extend([approval_tool, generate_image_tool])
 
                 messages = list(chat_history)
-                messages.append(Message(role="human", content=content))
+                messages.append(TextMessage(role="human", content=content))
 
                 config = RunnerConfig(
                     model=model_override or llm_config.model,
@@ -442,7 +442,7 @@ def _deserialize_messages(raw: list[dict[str, Any]]) -> list[Message]:
         role = item.get("role", "human")
         if role not in ("human", "ai", "system", "tool"):
             role = "human"
-        result.append(Message(role=role, content=item.get("content", "")))
+        result.append(TextMessage(role=role, content=item.get("content", "")))
     return result
 
 
