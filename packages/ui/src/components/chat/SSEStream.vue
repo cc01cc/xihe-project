@@ -61,7 +61,7 @@ watch(
   { immediate: true },
 )
 
-async function handleSend(content: string) {
+async function handleSend(content: string, options?: { attachments?: string[] }) {
   const sessionId = props.sessionId
   if (!sessionId) return
 
@@ -78,7 +78,7 @@ async function handleSend(content: string) {
 
   const binding = configStore.getEffectiveModel(sessionId)
   const model = binding?.model ?? ''
-  await sendMessage({ content, model, sessionId })
+  await sendMessage({ content, model, sessionId, attachments: options?.attachments })
 }
 
 function waitForConnection(timeoutMs: number): Promise<boolean> {

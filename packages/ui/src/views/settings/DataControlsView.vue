@@ -89,7 +89,7 @@ function downloadBlob(blob: Blob, filename: string) {
   <BackToChatButton />
   <SettingsNav />
   <div class="space-y-4">
-    <h3 class="font-medium">{{ t('settings.dataControls') }}</h3>
+    <h3 data-testid="settings-data-heading" class="font-medium">{{ t('settings.dataControls') }}</h3>
 
     <div class="space-y-2">
       <button

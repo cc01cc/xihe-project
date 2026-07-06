@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted } from 'vue'
-import type { Message } from '../../types'
+import type { AttachmentFile, Message } from '../../types'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import VoiceOutput from '../multimodal/VoiceOutput.vue'
@@ -18,7 +18,7 @@ import {
   Bubble,
   BubbleContent,
 } from '@/components/ui/bubble'
-import { Download, Brain, LoaderCircle, Clock, Bot, User } from '@lucide/vue'
+import { Download, Brain, LoaderCircle, Clock, Bot, User, Trash2 } from '@lucide/vue'
 import {
   Message as MessageRoot,
   MessageAvatar,
@@ -38,6 +38,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   approve: [id: string]
   reject: [id: string]
+  delete: [id: string]
 }>()
 
 const isUser = computed(() => props.message.role === 'user')
@@ -88,6 +89,23 @@ function downloadAttachment(url: string, name: string) {
   a.click()
 }
 
+function attachmentUrl(attachment: AttachmentFile): string {
+  if (attachment.url) return attachment.url
+  if (attachment.fileId) return `/files/${attachment.fileId}`
+  return ''
+}
+
+function handleImageError(event: Event) {
+  const img = event.target as HTMLImageElement
+  img.style.display = 'none'
+}
+
+function handleDelete() {
+  emit('delete', props.message.id)
+}
+
+const canDelete = computed(() => !isMarker.value && props.message.role !== 'system')
+
 onUnmounted(() => {
   props.message.attachments?.forEach((attachment) => {
     if (attachment.url.startsWith('blob:')) {
@@ -126,14 +144,16 @@ onUnmounted(() => {
       <AttachmentGroup v-if="message.attachments?.length">
         <Attachment
           v-for="attachment in message.attachments"
-          :key="attachment.id"
+          :key="attachment.fileId ?? attachment.id"
+          data-testid="message-attachment"
           :class="isImage(attachment.type) ? 'w-32' : 'w-48'"
         >
           <AttachmentMedia v-if="isImage(attachment.type)">
             <img
-              :src="attachment.url"
+              :src="attachmentUrl(attachment)"
               :alt="attachment.name"
               class="size-full object-cover"
+              @error="handleImageError"
             />
           </AttachmentMedia>
           <AttachmentContent>
@@ -141,14 +161,14 @@ onUnmounted(() => {
             <AttachmentDescription>{{ (attachment.size / 1024).toFixed(1) }} KB</AttachmentDescription>
           </AttachmentContent>
           <AttachmentActions>
-            <AttachmentAction @click="downloadAttachment(attachment.url, attachment.name)">
+            <AttachmentAction @click="downloadAttachment(attachmentUrl(attachment), attachment.name)">
               <Download class="size-4" />
             </AttachmentAction>
           </AttachmentActions>
         </Attachment>
       </AttachmentGroup>
 
-      <Bubble :variant="bubbleVariant">
+      <Bubble v-if="message.content || isStreaming" :variant="bubbleVariant">
         <BubbleContent>
           <MarkdownRenderer
             v-if="!isUser && !isSystem"
@@ -178,6 +198,15 @@ onUnmounted(() => {
         :class="isUser ? 'justify-end' : 'justify-start'"
       >
         <span class="px-1 text-[10px] text-muted-foreground">{{ timestamp }}</span>
+        <button
+          v-if="canDelete"
+          data-testid="message-delete-button"
+          class="p-1 rounded text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+          :aria-label="'Delete message'"
+          @click="handleDelete"
+        >
+          <Trash2 class="size-3" />
+        </button>
         <VoiceOutput
           v-if="!isUser && !isSystem"
           :text="message.content"

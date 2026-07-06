@@ -49,6 +49,7 @@ export interface AttachmentFile {
   size: number
   url: string
   state: 'idle' | 'uploading' | 'processing' | 'error' | 'done'
+  fileId?: string
 }
 
 export interface Message {

@@ -25,8 +25,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// Bug 1: /exec 415 — useSSE 发送 FormData，后端期望 JSON
-describe('BUG-1: /exec Content-Type mismatch', () => {
+// Bug 1: /chat Content-Type mismatch — useSSE 发送 FormData，后端期望 JSON
+describe('BUG-1: /chat Content-Type mismatch', () => {
   it('sendMessage should send JSON body, not FormData', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', fetchSpy)
@@ -34,10 +34,10 @@ describe('BUG-1: /exec Content-Type mismatch', () => {
     const { sendMessage } = useSSE('test-session')
     await sendMessage({ content: 'Hello world' })
 
-    const [, options] = fetchSpy.mock.calls[0]
+    const [endpoint, options] = fetchSpy.mock.calls[0]
     const body = options.body
 
-    // Should be JSON string, not FormData
+    expect(endpoint).toBe('/api/v1/chat')
     expect(body).not.toBeInstanceOf(FormData)
     expect(typeof body).toBe('string')
     const parsed = JSON.parse(body)
@@ -68,7 +68,6 @@ describe('BUG-2: /telemetry/logs 404', () => {
     logger.info('test message')
     await logger.flush()
 
-    // If flush sends to /api/v1/telemetry/logs, the endpoint doesn't exist
     if (fetchSpy.mock.calls.length > 0) {
       const [endpoint] = fetchSpy.mock.calls[0]
       expect(endpoint).not.toBe('/api/v1/telemetry/logs')
@@ -94,31 +93,30 @@ describe('BUG-3: /events SSE connection', () => {
   })
 })
 
-// Bug 4: /exec FormData sends multipart/form-data instead of JSON
-describe('BUG-4: FormData vs JSON mismatch', () => {
-  it('sendMessage with attachments should send JSON with file URLs', async () => {
+// Bug 4: attachments 必须以 fileId[] 形式随 /chat JSON 发送
+describe('BUG-4: attachments must be sent as fileId array', () => {
+  it('sendMessage with attachments should send JSON with fileIds', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', fetchSpy)
 
-    const file = new File(['test'], 'test.txt', { type: 'text/plain' })
     const { sendMessage } = useSSE('test-session')
-    await sendMessage({ content: 'Analyze this', attachments: [file] })
+    await sendMessage({ content: 'Analyze this', attachments: ['file-id-1'] })
 
     const [, options] = fetchSpy.mock.calls[0]
     const body = options.body
 
-    // Should be JSON, not FormData
     expect(body).not.toBeInstanceOf(FormData)
     expect(typeof body).toBe('string')
     const parsed = JSON.parse(body)
     expect(parsed.content).toBe('Analyze this')
     expect(parsed.session_id).toBe('test-session')
     expect(parsed.stream).toBe(true)
+    expect(parsed.attachments).toEqual(['file-id-1'])
   })
 })
 
-// Bug 5: /exec 502 — error handling
-describe('BUG-5: /exec 502 error handling', () => {
+// Bug 5: /chat 502 — error handling
+describe('BUG-5: /chat 502 error handling', () => {
   it('sendMessage should handle 502 and set error', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: false, status: 502,
@@ -133,9 +131,9 @@ describe('BUG-5: /exec 502 error handling', () => {
   })
 })
 
-// Bug 6: /exec 409 — SSE disconnected then sendMessage returns 409,
+// Bug 6: /chat 409 — SSE disconnected then sendMessage returns 409,
 //        but onError callback is not invoked and isStreaming stays true.
-describe('BUG-6: /exec 409 when SSE subscription is missing', () => {
+describe('BUG-6: /chat 409 when SSE subscription is missing', () => {
   it('sendMessage should surface 409 error via onError callback from connect', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: false,

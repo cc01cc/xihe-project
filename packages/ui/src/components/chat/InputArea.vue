@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, markRaw } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Send, Square } from '@lucide/vue'
+import { toast } from 'vue-sonner'
+import { Send, Square, LoaderCircle } from '@lucide/vue'
 import ImageUpload from '../multimodal/ImageUpload.vue'
+import FileUpload from '../multimodal/FileUpload.vue'
 import ScreenshotCapture from '../multimodal/ScreenshotCapture.vue'
 import VoiceInput from '../multimodal/VoiceInput.vue'
 import ModelPopover from './ModelPopover.vue'
 import InputToolbar, { type ToolbarAction } from './InputToolbar.vue'
+import { uploadAttachments, validateAttachment } from '../../services/attachmentService'
+import type { AttachmentFile } from '../../types'
 
 interface SlashCommand {
   key: string
@@ -18,11 +22,12 @@ interface SlashCommand {
 const URL = window.URL
 
 const props = defineProps<{
+  sessionId: string
   isStreaming?: boolean
 }>()
 
 const emit = defineEmits<{
-  send: [content: string, attachments?: File[]]
+  send: [content: string, attachments?: AttachmentFile[]]
   stop: []
 }>()
 
@@ -33,6 +38,7 @@ const attachments = ref<File[]>([])
 const showSlashMenu = ref(false)
 const slashFilter = ref('')
 const selectedSlashIndex = ref(0)
+const isUploading = ref(false)
 
 const slashCommands: SlashCommand[] = [
   { key: '/search', label: '/search', description: 'Search messages', action: () => '' },
@@ -63,6 +69,12 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
     props: { onUpload: addAttachment },
   },
   {
+    key: 'file',
+    position: 'left',
+    component: markRaw(FileUpload),
+    props: { onUpload: addAttachment },
+  },
+  {
     key: 'screenshot',
     position: 'left',
     component: markRaw(ScreenshotCapture),
@@ -89,10 +101,30 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
   },
 ])
 
-function handleSend() {
+async function handleSend() {
   const text = input.value.trim()
   if (!text && attachments.value.length === 0) return
-  emit('send', text, attachments.value.length > 0 ? attachments.value : undefined)
+
+  if (attachments.value.length > 0) {
+    isUploading.value = true
+    try {
+      const { success, failed } = await uploadAttachments(props.sessionId, attachments.value)
+      if (failed.length > 0) {
+        for (const item of failed) {
+          toast.error(`${item.name}: ${item.reason}`)
+        }
+      }
+      if (success.length === 0) {
+        return
+      }
+      emit('send', text, success)
+    } finally {
+      isUploading.value = false
+    }
+  } else {
+    emit('send', text)
+  }
+
   input.value = ''
   attachments.value = []
 }
@@ -167,11 +199,21 @@ function handleInput() {
 }
 
 function addAttachment(files: File[]) {
-  attachments.value.push(...files)
+  const validFiles: File[] = []
+  for (const file of files) {
+    const validation = validateAttachment(file)
+    if (!validation.valid) {
+      toast.error(`${file.name}: ${validation.reason}`)
+      continue
+    }
+    validFiles.push(file)
+  }
+  attachments.value.push(...validFiles)
 }
 
 function addAttachmentBlob(blob: Blob) {
-  attachments.value.push(new File([blob], 'capture.png', { type: 'image/png' }))
+  const file = new File([blob], 'capture.png', { type: 'image/png' })
+  addAttachment([file])
 }
 
 function removeAttachment(index: number) {
@@ -180,6 +222,10 @@ function removeAttachment(index: number) {
 
 function handleTranscript(text: string) {
   input.value += text
+}
+
+function attachmentObjectUrl(file: File): string {
+  return URL.createObjectURL(file)
 }
 </script>
 
@@ -192,13 +238,14 @@ function handleTranscript(text: string) {
       >
         <div
           v-for="(file, i) in attachments"
-          :key="i"
+          :key="file.name + i"
           class="relative group"
+          data-testid="selected-attachment"
         >
           <div class="w-16 h-16 rounded border bg-muted/30 flex items-center justify-center text-xs text-muted-foreground overflow-hidden">
             <img
               v-if="file.type.startsWith('image/')"
-              :src="URL.createObjectURL(file)"
+              :src="attachmentObjectUrl(file)"
               class="w-full h-full object-cover"
             />
             <span
@@ -208,6 +255,7 @@ function handleTranscript(text: string) {
           </div>
           <button
             class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            data-testid="remove-attachment-button"
             @click="removeAttachment(i)"
           >×</button>
         </div>
@@ -247,7 +295,14 @@ function handleTranscript(text: string) {
           @keydown="handleKeydown"
           @input="handleInput"
         />
-        <InputToolbar :actions="toolbarActions" />
+        <div class="flex items-center justify-between">
+          <InputToolbar :actions="toolbarActions" />
+          <LoaderCircle
+            v-if="isUploading"
+            data-testid="attachment-uploading-indicator"
+            class="size-4 animate-spin text-muted-foreground"
+          />
+        </div>
       </div>
     </div>
   </div>

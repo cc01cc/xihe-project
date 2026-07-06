@@ -80,7 +80,7 @@ onUnmounted(() => {
   <div class="max-w-2xl mx-auto px-4 py-6">
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h2 class="text-lg font-semibold">{{ t('settings.monitoringTitle') }}</h2>
+        <h2 data-testid="settings-monitoring-heading" class="text-lg font-semibold">{{ t('settings.monitoringTitle') }}</h2>
         <p class="text-sm text-muted-foreground">{{ t('settings.monitoringDesc') }}</p>
       </div>
       <button

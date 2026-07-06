@@ -72,6 +72,12 @@ export const api = {
   deleteSession(id: string) {
     return fetch(`${API_BASE}/sessions/${id}`, { method: 'DELETE' })
   },
+  getMessages(sessionId: string) {
+    return request<Array<{ id: string; sessionId: string; role: string; content: string; createdAt: string; attachments?: Array<{ fileId: string; name: string; type: string; size: number }> }>>(`/sessions/${sessionId}/messages`)
+  },
+  deleteMessage(sessionId: string, messageId: string) {
+    return apiDelete(`${API_BASE}/sessions/${sessionId}/messages/${messageId}`)
+  },
   getHealth() {
     return request<{ status: string }>('/health')
   },

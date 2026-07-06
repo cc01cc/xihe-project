@@ -74,6 +74,7 @@ function handleLogout() {
 
 <template>
   <aside
+    data-testid="sidebar"
     class="fixed left-0 top-0 h-full z-40 flex flex-col bg-sidebar-background border-r border-sidebar-border transition-[width] duration-300"
     :class="{ 'shadow-lg': isMobile && open }"
     :style="sidebarStyle"

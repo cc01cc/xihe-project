@@ -20,6 +20,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   approve: [id: string]
   reject: [id: string]
+  delete: [id: string]
 }>()
 
 const showSearch = ref(false)
@@ -81,6 +82,7 @@ const entries = computed(() => {
                   :is-streaming="entry.msg.isStreaming"
                   @approve="emit('approve', $event)"
                   @reject="emit('reject', $event)"
+                  @delete="emit('delete', $event)"
                 />
               </MessageScrollerItem>
 

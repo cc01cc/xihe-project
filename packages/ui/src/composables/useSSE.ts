@@ -39,7 +39,7 @@ export interface SSECallbacks {
 
 export interface SendMessageOptions {
   content: string
-  attachments?: File[]
+  attachments?: string[]
   model?: string
   sessionId?: string
 }
@@ -221,7 +221,7 @@ export function useSSE(sessionId: string) {
     clearStreamTimeout()
   }
 
-  async function sendMessage({ content, model, sessionId: overrideSid }: SendMessageOptions) {
+  async function sendMessage({ content, attachments, model, sessionId: overrideSid }: SendMessageOptions) {
     error.value = null
     isStreaming.value = true
     const sid = overrideSid ?? sessionId
@@ -235,6 +235,9 @@ export function useSSE(sessionId: string) {
       if (model) {
         body.model = model
       }
+      if (attachments && attachments.length > 0) {
+        body.attachments = attachments
+      }
 
       const token = localStorage.getItem('xihe-token')
       const headers: Record<string, string> = {
@@ -244,7 +247,7 @@ export function useSSE(sessionId: string) {
         headers.Authorization = `Bearer ${token}`
       }
 
-      const response = await fetch('/api/v1/exec', {
+      const response = await fetch('/api/v1/chat', {
         method: 'POST',
         headers,
         body: JSON.stringify(body),

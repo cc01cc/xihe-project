@@ -19,6 +19,7 @@ const tabs = [
       v-for="tab in tabs"
       :key="tab.name"
       :to="tab.path"
+      :data-testid="`settings-nav-${tab.name}`"
       class="px-3 py-2 text-sm border-b-2 transition-colors"
       :class="route?.name === tab.name
         ? 'border-primary text-foreground font-medium'

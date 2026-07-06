@@ -2,7 +2,9 @@
 import { computed, ref } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
-import { useSessionStore } from '../../stores/session'
+import { api } from '../../composables/api'
+import { logger } from '../../lib/logger'
+import type { AttachmentFile } from '../../types'
 import MessageList from './MessageList.vue'
 import InputArea from './InputArea.vue'
 import SSEStream from './SSEStream.vue'
@@ -13,7 +15,6 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
-const sessionStore = useSessionStore()
 
 const messages = computed(() => chatStore.getMessages(props.sessionId))
 const isStreaming = computed(() => {
@@ -22,24 +23,9 @@ const isStreaming = computed(() => {
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null)
 
-function handleSend(content: string, files?: File[]) {
+function handleSend(content: string, attachments?: AttachmentFile[]) {
   const id = props.sessionId
   if (!id) return
-
-  const attachments = files?.map((file) => ({
-    id: crypto.randomUUID(),
-    name: file.name,
-    type: file.type,
-    size: file.size,
-    url: URL.createObjectURL(file),
-    state: 'done' as const,
-  }))
-
-  if (attachments && attachments.length > 0) {
-    for (const attachment of attachments) {
-      sessionStore.addAttachment(id, attachment)
-    }
-  }
 
   chatStore.addMessage(id, {
     id: crypto.randomUUID(),
@@ -50,7 +36,19 @@ function handleSend(content: string, files?: File[]) {
     attachments,
   })
   agentStore.setStatus('thinking')
-  streamComponent.value?.sendMessage(content)
+  const fileIds = attachments
+    ?.map((a) => a.fileId)
+    .filter((fileId): fileId is string => fileId !== undefined)
+  streamComponent.value?.sendMessage(content, { attachments: fileIds })
+}
+
+async function handleDeleteMessage(messageId: string) {
+  try {
+    await api.deleteMessage(props.sessionId, messageId)
+    chatStore.deleteMessage(props.sessionId, messageId)
+  } catch (err) {
+    logger.error('Failed to delete message', err)
+  }
 }
 
 function approveTool(toolId: string) {
@@ -73,6 +71,7 @@ function stopStreaming() {
       :messages="messages"
       @approve="approveTool"
       @reject="rejectTool"
+      @delete="handleDeleteMessage"
     />
 
     <div v-else class="flex-1 flex flex-col items-center justify-center gap-4 px-4">
@@ -91,6 +90,7 @@ function stopStreaming() {
     </div>
 
     <InputArea
+      :session-id="sessionId"
       :is-streaming="isStreaming"
       @send="handleSend"
       @stop="stopStreaming"

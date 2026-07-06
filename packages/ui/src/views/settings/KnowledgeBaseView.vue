@@ -67,7 +67,7 @@ async function removeDoc(id: string) {
   <BackToChatButton />
   <SettingsNav />
   <div class="space-y-4">
-    <h3 class="font-medium">{{ t('settings.knowledgeBase') }}</h3>
+    <h3 data-testid="settings-knowledge-heading" class="font-medium">{{ t('settings.knowledgeBase') }}</h3>
 
     <div v-if="loading" class="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
       <span class="i-lucide-loader-circle size-4 animate-spin" />

@@ -239,7 +239,7 @@ async function handleReset(domain: string, key: string) {
     <BackToChatButton />
     <SettingsNav />
     <div class="max-w-2xl mx-auto px-4 py-6">
-      <h2 class="text-lg font-semibold mb-4">{{ t('settings.configTab') }}</h2>
+      <h2 data-testid="settings-config-heading" class="text-lg font-semibold mb-4">{{ t('settings.configTab') }}</h2>
 
       <div v-if="fetchError" class="mb-3 px-3 py-2 text-sm bg-red-100 text-red-800 rounded">
         {{ t('common.error') }}: {{ t('settings.saveFailed') }}

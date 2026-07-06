@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
+import { api } from '../../composables/api'
+import { logger } from '../../lib/logger'
+import type { Message } from '../../types'
 import ChatPanel from './ChatPanel.vue'
 
 const route = useRoute()
@@ -23,12 +26,47 @@ const isStreaming = computed(() => {
   return agentStore.agentState.status === 'thinking' || agentStore.agentState.status === 'executing'
 })
 
-onMounted(() => {
-  if (!currentSessionId.value) {
-    const session = sessionStore.createSession()
-    chatStore.clearSession(session.id)
+async function loadSessionMessages(sessionId: string) {
+  try {
+    const rawMessages = await api.getMessages(sessionId)
+    if (!Array.isArray(rawMessages)) {
+      logger.debug('Messages response is not an array, falling back to localStorage')
+      return
+    }
+    const normalized: Message[] = rawMessages.map((msg) => ({
+      id: msg.id,
+      sessionId: msg.sessionId,
+      role: msg.role.toLowerCase() as 'user' | 'assistant' | 'system',
+      content: msg.content,
+      timestamp: msg.createdAt,
+      attachments: msg.attachments?.map((att) => ({
+        id: att.fileId,
+        fileId: att.fileId,
+        name: att.name,
+        type: att.type,
+        size: att.size,
+        url: `/files/${att.fileId}`,
+        state: 'done' as const,
+      })),
+    }))
+    chatStore.loadMessages(sessionId, normalized)
+  } catch (err) {
+    logger.error('Failed to load session messages', err)
   }
-})
+}
+
+watch(
+  currentSessionId,
+  (id) => {
+    if (!id) {
+      const session = sessionStore.createSession()
+      chatStore.clearSession(session.id)
+      return
+    }
+    loadSessionMessages(id)
+  },
+  { immediate: true },
+)
 </script>
 
 <template>

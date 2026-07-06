@@ -18,13 +18,22 @@ function createI18nInstance() {
 
 const stubs = {
   ImageUpload: { template: '<div />' },
+  FileUpload: { template: '<div />' },
   ScreenshotCapture: { template: '<div />' },
   VoiceInput: { template: '<div />' },
   ModelPopover: { template: '<div />' },
+  LoaderCircle: { template: '<span />' },
   Image: { template: '<span />' },
   Camera: { template: '<span />' },
   Mic: { template: '<span />' },
   Send: { template: '<span />' },
+}
+
+function mountInputArea(props = {}) {
+  return mount(InputArea, {
+    props: { sessionId: 'test-session', ...props },
+    global: { plugins: [createI18nInstance()], stubs },
+  })
 }
 
 describe('InputArea', () => {
@@ -32,23 +41,23 @@ describe('InputArea', () => {
     setActivePinia(createPinia())
   })
   it('renders textarea for input', () => {
-    const wrapper = mount(InputArea, { global: { plugins: [createI18nInstance()], stubs } })
+    const wrapper = mountInputArea()
     expect(wrapper.find('textarea').exists()).toBe(true)
   })
 
   it('renders multimodal action buttons', () => {
-    const wrapper = mount(InputArea, { global: { plugins: [createI18nInstance()], stubs } })
+    const wrapper = mountInputArea()
     expect(wrapper.find('textarea').exists()).toBe(true)
   })
 
   it('textarea has placeholder text', () => {
-    const wrapper = mount(InputArea, { global: { plugins: [createI18nInstance()], stubs } })
+    const wrapper = mountInputArea()
     const textarea = wrapper.find('textarea')
     expect(textarea.attributes('placeholder')).toBeDefined()
   })
 
   it('renders send button', () => {
-    const wrapper = mount(InputArea, { global: { plugins: [createI18nInstance()], stubs } })
+    const wrapper = mountInputArea()
     expect(wrapper.find('button').exists()).toBe(true)
   })
 })
