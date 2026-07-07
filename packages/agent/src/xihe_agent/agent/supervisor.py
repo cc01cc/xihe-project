@@ -11,6 +11,11 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from xihe_agent.adapters.mcp_client import MCPAgentTool
+from xihe_agent.agent_runner.langgraph_runner import LCToolAdapter
+from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.interfaces.tool import BaseAgentTool
+
 GENERAL_PROMPT = "You are the main xihe Agent assistant. Use available tools to help users."
 
 RESEARCH_PROMPT = """You are a research specialist. Use web_fetch and extract_pdf_text to gather information.
@@ -33,11 +38,22 @@ _BUILTIN_WORKERS: list[dict] = [
 
 def build_supervisor(
     model: BaseChatModel,
-    all_mcp_tools: list[BaseTool],
-    custom_tools: list[BaseTool],
+    all_mcp_tools: list[BaseAgentTool],
+    custom_tools: list[BaseAgentTool],
     registry: Optional["WorkerRegistry"] = None,
 ) -> StateGraph:
     from xihe_agent.registry.registry import _get_tools_for_worker
+
+    def _adapt(tools: list[BaseAgentTool]) -> list[BaseTool]:
+        adapted: list[BaseTool] = []
+        for tool in tools:
+            if isinstance(tool, MCPAgentTool):
+                adapted.append(tool.base_tool)
+            elif isinstance(tool, BaseTool):
+                adapted.append(tool)
+            else:
+                adapted.append(LCToolAdapter(tool, AgentContext.empty(""), None))
+        return adapted
 
     if registry is not None:
         workers = registry.list_enabled()
@@ -50,7 +66,7 @@ def build_supervisor(
             tools = _get_tools_for_worker(config, all_mcp_tools, custom_tools)
             sub_agents.append(
                 create_react_agent(
-                    model, tools=tools, name=config.id, system_prompt=config.system_prompt,
+                    model, tools=_adapt(tools), name=config.id, system_prompt=config.system_prompt,
                 )
             )
         descriptions = "\n".join(
@@ -63,7 +79,7 @@ def build_supervisor(
         for w in _BUILTIN_WORKERS:
             sub_agents.append(
                 create_react_agent(
-                    model, tools=list(all_mcp_tools) + list(custom_tools),
+                    model, tools=_adapt(list(all_mcp_tools) + list(custom_tools)),
                     name=w["id"], system_prompt=w["prompt"],
                 )
             )

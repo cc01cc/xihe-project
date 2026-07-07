@@ -1,5 +1,3 @@
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-
 XIHE_SYSTEM_PROMPT = """You are xihe Agent, an intelligent assistant powered by the xihe platform.
 
 ## Core Identity
@@ -44,12 +42,11 @@ PROMPT_LAYERS = [
 ]
 
 
-def build_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", XIHE_SYSTEM_PROMPT),
-            MessagesPlaceholder(variable_name="chat_history", optional=True),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ]
-    )
+def build_prompt() -> str:
+    """Return the xihe system prompt as a plain string template.
+
+    Callers must substitute the placeholders ``{user_name}``, ``{current_date}``,
+    and ``{instructions}`` before sending the prompt to an LLM.
+    """
+    return XIHE_SYSTEM_PROMPT
+

@@ -24,14 +24,14 @@ class ContextProjectionServiceTest extends AbstractH2Test {
     private ContextProjectionService projectionService;
 
     @Test
-    void project_emptySession_returnsEmptyContext() {
+    void projectEmptySessionReturnsEmptyContext() {
         ObjectNode ctx = projectionService.project("session-1", 0L);
         assertThat(ctx.get("aggregate_id").asText()).isEqualTo("session-1");
         assertThat(ctx.get("latest_sequence").asLong()).isEqualTo(0L);
     }
 
     @Test
-    void project_withEvents_buildsMessages() {
+    void projectWithEventsBuildsMessages() {
         String sessionId = "session-2";
         contextService.appendEvent(sessionId, "ws-1", "user-1", "session.created", Map.of(
             "workspace_id", "ws-1",
@@ -54,7 +54,7 @@ class ContextProjectionServiceTest extends AbstractH2Test {
     }
 
     @Test
-    void project_afterSequence_excludesEarlierEvents() {
+    void projectAfterSequenceExcludesEarlierEvents() {
         String sessionId = "session-3";
         contextService.appendEvent(sessionId, "ws-1", "user-1", "session.created", Map.of(
             "workspace_id", "ws-1",

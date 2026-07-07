@@ -19,6 +19,11 @@ class MCPAgentTool(BaseAgentTool):
     def __init__(self, tool: BaseTool) -> None:
         self._tool = tool
 
+    @property
+    def base_tool(self) -> BaseTool:
+        """Return the underlying LangChain tool for LangGraph adapters."""
+        return self._tool
+
     async def execute(self, input: dict[str, Any], context: AgentContext) -> dict[str, Any]:
         try:
             result = await self._tool.ainvoke(input)
@@ -38,7 +43,7 @@ class MCPAgentTool(BaseAgentTool):
 
 class MCPClientManager:
     _client: MultiServerMCPClient | None = None
-    _tools: list[BaseTool] = []
+    _tools: list[BaseAgentTool] = []
     _initialized: bool = False
     _lock: asyncio.Lock = asyncio.Lock()
 
@@ -57,7 +62,7 @@ class MCPClientManager:
         self.max_retries = max_retries
 
     @property
-    def tools(self) -> list[BaseTool]:
+    def tools(self) -> list[BaseAgentTool]:
         return self._tools
 
     @property
@@ -80,12 +85,13 @@ class MCPClientManager:
                     ),
                 }
             )
-            self._tools = await self._client.get_tools(server_name=self.server_name)
+            raw_tools = await self._client.get_tools(server_name=self.server_name)
+            self._tools = [MCPAgentTool(t) for t in raw_tools]
             self._initialized = True
             logger.info(
                 "MCP initialized: {} tools from {}",
                 len(self._tools),
-                [t.name for t in self._tools],
+                [t.spec.name for t in self._tools],
             )
 
     async def reinitialize(self) -> None:

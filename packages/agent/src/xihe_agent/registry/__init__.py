@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
-
-from langgraph.graph.state import CompiledStateGraph
+from typing import Any
 
 
 @dataclass
@@ -27,7 +26,9 @@ class WorkerStatus:
 @dataclass
 class RegistryEntry:
     config: WorkerConfig
-    graph: CompiledStateGraph | None = None
+    # Stores a LangGraph CompiledStateGraph in the current implementation.
+    # Typed as Any to avoid leaking LangGraph types through the registry API.
+    graph: Any | None = None
 
 
 __all__ = [

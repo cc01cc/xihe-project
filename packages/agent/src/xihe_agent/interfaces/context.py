@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.message import Message, TextMessage
 
 ContextSourceType = Literal[
@@ -61,6 +62,85 @@ class AgentContext:
     def clear_runtime_state(self) -> "AgentContext":
         self.runtime_state.clear()
         return self
+
+    def apply_event(self, event: Event) -> "AgentContext":
+        """Apply a domain event to reconstruct this context snapshot."""
+        self.set_latest_sequence(event.sequence)
+        payload = event.payload
+        event_type = event.type
+
+        if event_type == "session.created":
+            self.metadata.setdefault("workspace_id", payload.get("workspace_id"))
+            self.metadata.setdefault("user_id", payload.get("user_id"))
+            if payload.get("epoch_id"):
+                self.epoch = ContextEpoch(
+                    epoch_id=payload["epoch_id"],
+                    baseline_hash=payload.get("baseline_hash", ""),
+                    system_messages=payload.get("system_messages", []),
+                )
+        elif event_type == "prompt.admitted":
+            self._add_message_from_payload(payload, "human")
+        elif event_type == "llm.token":
+            self._add_message_from_payload(payload, "ai")
+        elif event_type == "tool.result":
+            self._add_message_from_payload(payload, "tool")
+        elif event_type == "tool.called":
+            self.runtime_state.setdefault("tool_calls", []).append({
+                "call_id": payload.get("call_id"),
+                "tool_name": payload.get("tool_name"),
+                "tool_input": payload.get("tool_input", {}),
+            })
+        elif event_type == "context.source_changed":
+            self._add_message_from_payload(payload, "system")
+        elif event_type in ("epoch.started", "epoch.replaced"):
+            self.epoch = ContextEpoch(
+                epoch_id=payload.get("epoch_id", ""),
+                baseline_hash=payload.get("baseline_hash", ""),
+                system_messages=payload.get("system_messages", []),
+                sources=[
+                    ContextSource(
+                        key=s["key"],
+                        source_type=s["source_type"],
+                        content=s["content"],
+                        content_hash=s["content_hash"],
+                    )
+                    for s in payload.get("sources", [])
+                ],
+            )
+        elif event_type == "runtime.state_cleared":
+            self.clear_runtime_state()
+        elif event_type == "session.forked":
+            self.metadata["forked_from"] = {
+                "source_session_id": payload.get("source_session_id"),
+                "at_sequence": payload.get("at_sequence"),
+            }
+        elif event_type == "compaction.applied":
+            self.messages.clear()
+            self.messages.append(TextMessage(role="system", content=payload.get("summary", "")))
+        return self
+
+    def _add_message_from_payload(self, payload: dict[str, Any], role: str) -> None:
+        content = ""
+        if isinstance(payload.get("message"), dict):
+            content = payload["message"].get("content", "")
+            role = payload["message"].get("role", role)
+        elif payload.get("content"):
+            content = payload["content"]
+        elif payload.get("result"):
+            result = payload["result"]
+            content = result.get("content", str(result)) if isinstance(result, dict) else str(result)
+        elif payload.get("token"):
+            content = payload["token"]
+        if content:
+            self.messages.append(TextMessage(role=role, content=content))
+
+    @classmethod
+    def from_events(cls, aggregate_id: str, events: list[Event]) -> "AgentContext":
+        """Reconstruct an AgentContext by replaying a list of events."""
+        context = cls.empty(aggregate_id)
+        for event in events:
+            context.apply_event(event)
+        return context
 
     def set_latest_sequence(self, sequence: int) -> "AgentContext":
         self.latest_sequence = sequence

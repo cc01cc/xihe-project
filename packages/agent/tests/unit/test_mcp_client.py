@@ -57,7 +57,7 @@ class TestMCPClientManager:
             await manager.initialize()
 
         assert len(manager.tools) == 1
-        assert manager.tools[0].name == "test_tool"
+        assert manager.tools[0].spec.name == "test_tool"
 
     @pytest.mark.asyncio
     async def test_initialize_logs_formatted_tool_count(self, manager, log_sink):

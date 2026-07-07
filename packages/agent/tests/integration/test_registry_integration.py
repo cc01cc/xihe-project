@@ -12,33 +12,24 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from langchain_core.tools import BaseTool, tool
 
 from xihe_agent.agent.supervisor import build_supervisor
+from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 from xihe_agent.registry.registry import WorkerRegistry
 
 
-@tool
-def mock_web_fetch(url: str) -> str:
-    """Fetch a web page."""
-    return f"content from {url}"
+class FakeAgentTool(BaseAgentTool):
+    def __init__(self, name: str, description: str = ""):
+        self._name = name
+        self._description = description
 
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(name=self._name, description=self._description, input_schema={})
 
-@tool
-def mock_edit_file(path: str, content: str) -> str:
-    """Edit a file."""
-    return f"edited {path}"
-
-
-class FakeCustomTool(BaseTool):
-    name: str = "generate_image"
-    description: str = "Generate an image"
-
-    def _run(self, **kwargs):
-        return "image"
-
-    async def _arun(self, **kwargs):
-        return "image"
+    async def execute(self, input: dict, context: AgentContext) -> dict:
+        return {"content": self._name}
 
 
 def _write_md(path: Path, content: str):
@@ -52,8 +43,8 @@ class TestRegistrySupervisorIntegration:
     def _setup(self):
         self.model = MagicMock()
         self.model.agenerate = MagicMock()
-        self.mcp_tools = [mock_web_fetch, mock_edit_file]
-        self.custom_tools = [FakeCustomTool()]
+        self.mcp_tools = [FakeAgentTool("mock_web_fetch", "Fetch a web page."), FakeAgentTool("mock_edit_file", "Edit a file.")]
+        self.custom_tools = [FakeAgentTool("generate_image", "Generate an image")]
 
     def test_registry_load_and_build_supervisor(self):
         """创建 markdown 文件 → load_all → build_supervisor_from_registry 成功."""
@@ -218,7 +209,7 @@ You are A.
 
             from xihe_agent.registry.registry import _get_tools_for_worker
             tools = _get_tools_for_worker(workers[0], self.mcp_tools, self.custom_tools)
-            tool_names = [t.name for t in tools]
+            tool_names = [t.spec.name for t in tools]
             assert "mock_web_fetch" in tool_names
             assert "mock_edit_file" not in tool_names
             assert "generate_image" in tool_names

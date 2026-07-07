@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.context.service;
 
+import com.cc01cc.p.xihe.cp.context.entity.ContextSourceHash;
+import com.cc01cc.p.xihe.cp.context.repository.ContextSourceHashRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,25 +19,28 @@ import java.util.Optional;
 
 /**
  * Refreshes context sources (e.g. AGENTS.md) for a session and emits
- * {@code context.source_changed} events when the source content is available.
+ * {@code context.source_changed} events when the source content has changed.
  *
- * <p>This is a minimal implementation of the opencode v2 "Refreshable Context Sources"
- * concept. Future iterations will persist the last observed hash to avoid emitting
- * events when the source has not actually changed.
+ * <p>This implementation persists the last observed hash per workspace/source
+ * to avoid emitting duplicate events when the source has not actually changed.
  */
 @Service
 public class ContextSourceRefreshService {
 
     private static final Logger logger = LoggerFactory.getLogger(ContextSourceRefreshService.class);
     private static final String AGENTS_MD = "AGENTS.md";
+    private static final String SOURCE_KEY = "AGENTS.md";
 
     private final ContextService contextService;
     private final WorkspaceService workspaceService;
+    private final ContextSourceHashRepository sourceHashRepository;
 
     public ContextSourceRefreshService(ContextService contextService,
-                                       WorkspaceService workspaceService) {
+                                       WorkspaceService workspaceService,
+                                       ContextSourceHashRepository sourceHashRepository) {
         this.contextService = contextService;
         this.workspaceService = workspaceService;
+        this.sourceHashRepository = sourceHashRepository;
     }
 
     @Transactional
@@ -59,11 +64,23 @@ public class ContextSourceRefreshService {
                 return Optional.empty();
             }
             String hash = sha256(content);
+            Optional<ContextSourceHash> existing = sourceHashRepository
+                    .findByWorkspaceIdAndSourceKey(workspaceId, SOURCE_KEY);
+            if (existing.isPresent() && hash.equals(existing.get().getHash())) {
+                logger.debug("AGENTS.md hash unchanged for workspace {}, skipping source refresh", workspaceId);
+                return Optional.of(hash);
+            }
+
             contextService.appendEvent(sessionId, workspaceId, userId, "context.source_changed", Map.of(
-                    "source_key", "AGENTS.md",
+                    "source_key", SOURCE_KEY,
                     "rendered_text", content,
                     "baseline_hash", hash
             ));
+
+            ContextSourceHash sourceHash = existing
+                    .orElseGet(() -> new ContextSourceHash(workspaceId, SOURCE_KEY, hash));
+            sourceHash.setHash(hash);
+            sourceHashRepository.save(sourceHash);
             return Optional.of(hash);
         } catch (Exception e) {
             logger.error("Failed to refresh AGENTS.md for session {} workspace {}", sessionId, workspaceId, e);

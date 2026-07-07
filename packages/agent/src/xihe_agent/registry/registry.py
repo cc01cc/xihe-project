@@ -1,15 +1,33 @@
 from pathlib import Path
+from typing import Any
 
 from langchain.agents import create_agent as create_react_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
 
+from xihe_agent.adapters.mcp_client import MCPAgentTool
+from xihe_agent.agent_runner.langgraph_runner import LCToolAdapter
+from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.interfaces.tool import BaseAgentTool
 from xihe_agent.registry import RegistryEntry, WorkerConfig, WorkerStatus
 from xihe_agent.registry.loader import parse_markdown_worker, scan_workers_dir
 
 DEFAULT_WORKERS_DIR = "./agents"
+
+
+def _adapt_tools(tools: list[BaseAgentTool]) -> list[BaseTool]:
+    """Adapt ``BaseAgentTool`` instances to LangChain ``BaseTool`` for create_react_agent."""
+    adapted: list[BaseTool] = []
+    for tool in tools:
+        if isinstance(tool, MCPAgentTool):
+            adapted.append(tool.base_tool)
+        elif isinstance(tool, BaseTool):
+            adapted.append(tool)
+        else:
+            adapted.append(LCToolAdapter(tool, AgentContext.empty(""), None))
+    return adapted
+
 
 
 class WorkerRegistry:
@@ -27,8 +45,8 @@ class WorkerRegistry:
     def load_all(
         self,
         model: BaseChatModel,
-        all_mcp_tools: list[BaseTool],
-        custom_tools: list[BaseTool],
+        all_mcp_tools: list[BaseAgentTool],
+        custom_tools: list[BaseAgentTool],
     ) -> None:
         configs = scan_workers_dir(self._workers_dir)
         for config in configs:
@@ -55,7 +73,7 @@ class WorkerRegistry:
             if entry.config.enabled and entry.graph is not None
         ]
 
-    def get_worker(self, worker_id: str) -> CompiledStateGraph | None:
+    def get_worker(self, worker_id: str) -> Any | None:
         entry = self._entries.get(worker_id)
         if entry is None:
             return None
@@ -67,8 +85,8 @@ class WorkerRegistry:
         self,
         worker_id: str,
         model: BaseChatModel,
-        all_mcp_tools: list[BaseTool],
-        custom_tools: list[BaseTool],
+        all_mcp_tools: list[BaseAgentTool],
+        custom_tools: list[BaseAgentTool],
     ) -> bool:
         entry = self._entries.get(worker_id)
         if entry is None:
@@ -97,8 +115,8 @@ class WorkerRegistry:
         self,
         worker_id: str,
         model: BaseChatModel,
-        all_mcp_tools: list[BaseTool],
-        custom_tools: list[BaseTool],
+        all_mcp_tools: list[BaseAgentTool],
+        custom_tools: list[BaseAgentTool],
     ) -> bool:
         entry = self._entries.get(worker_id)
         if entry is None:
@@ -117,8 +135,8 @@ class WorkerRegistry:
         self,
         config: WorkerConfig,
         model: BaseChatModel,
-        all_mcp_tools: list[BaseTool],
-        custom_tools: list[BaseTool],
+        all_mcp_tools: list[BaseAgentTool],
+        custom_tools: list[BaseAgentTool],
     ) -> None:
         if config.id in self._entries:
             logger.warning("Overwriting existing worker '%s'", config.id)
@@ -138,11 +156,11 @@ class WorkerRegistry:
 
 def _get_tools_for_worker(
     config: WorkerConfig,
-    all_mcp_tools: list[BaseTool],
-    custom_tools: list[BaseTool],
-) -> list[BaseTool]:
+    all_mcp_tools: list[BaseAgentTool],
+    custom_tools: list[BaseAgentTool],
+) -> list[BaseAgentTool]:
     if config.tool_keys:
-        mcp = [t for t in all_mcp_tools if t.name in config.tool_keys]
+        mcp = [t for t in all_mcp_tools if t.spec.name in config.tool_keys]
         return mcp + list(custom_tools)
     return list(all_mcp_tools) + list(custom_tools)
 
@@ -150,15 +168,15 @@ def _get_tools_for_worker(
 def _build_worker_graph(
     config: WorkerConfig,
     model: BaseChatModel,
-    all_mcp_tools: list[BaseTool],
-    custom_tools: list[BaseTool],
-) -> CompiledStateGraph | None:
+    all_mcp_tools: list[BaseAgentTool],
+    custom_tools: list[BaseAgentTool],
+) -> Any | None:
     tools = _get_tools_for_worker(config, all_mcp_tools, custom_tools)
     logger.debug("Building graph for '%s' with %d tool(s)", config.id, len(tools))
     try:
         return create_react_agent(
             model,
-            tools=tools,
+            tools=_adapt_tools(tools),
             name=config.id,
             system_prompt=config.system_prompt,
         )

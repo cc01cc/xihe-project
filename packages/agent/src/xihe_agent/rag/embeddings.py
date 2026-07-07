@@ -57,11 +57,13 @@ class EmbeddingService:
 
 
 class LiteLLMEmbeddings(Embeddings):
-    """LangChain Embeddings 适配器，包装 EmbeddingService。
+    """LangChain ``Embeddings`` adapter wrapping ``EmbeddingService``.
 
-    只实现 async 方法（PGVectorStore async API 使用）。
-    sync 方法抛出 NotImplementedError（FastAPI 环境中不应调用）。
+    The core embedding implementation is ``EmbeddingService``, which has no
+    LangChain dependency. This class only exists so ``langchain_postgres.PGVectorStore``
+    can consume it through the LangChain ``Embeddings`` interface.
     """
+
     def __init__(self, service: EmbeddingService):
         self._service = service
 

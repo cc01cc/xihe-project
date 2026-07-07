@@ -3,8 +3,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from langchain_core.tools import BaseTool, tool
-
+from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 from xihe_agent.registry import WorkerConfig
 from xihe_agent.registry.registry import (
     WorkerRegistry,
@@ -13,46 +13,36 @@ from xihe_agent.registry.registry import (
 )
 
 
-@tool
-def mock_tool_a() -> str:
-    """Mock tool A."""
-    return "a"
+class FakeAgentTool(BaseAgentTool):
+    def __init__(self, name: str, description: str = ""):
+        self._name = name
+        self._description = description
 
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(name=self._name, description=self._description, input_schema={})
 
-@tool
-def mock_tool_b() -> str:
-    """Mock tool B."""
-    return "b"
-
-
-class FakeCustomTool(BaseTool):
-    name: str = "custom_tool"
-    description: str = "A custom tool"
-
-    def _run(self, **kwargs):
-        return "custom"
-
-    async def _arun(self, **kwargs):
-        return "custom"
+    async def execute(self, input: dict, context: AgentContext) -> dict:
+        return {"content": self._name}
 
 
 def test_get_tools_for_worker_no_filter():
     config = WorkerConfig(id="t", name="t", description="t", tool_keys=[])
-    mcp = [mock_tool_a, mock_tool_b]
-    custom = [FakeCustomTool()]
+    mcp = [FakeAgentTool("mock_tool_a"), FakeAgentTool("mock_tool_b")]
+    custom = [FakeAgentTool("custom_tool")]
     result = _get_tools_for_worker(config, mcp, custom)
     assert len(result) == 3
-    assert mock_tool_a in result
-    assert mock_tool_b in result
-    assert any(t.name == "custom_tool" for t in result)
+    assert any(t.spec.name == "mock_tool_a" for t in result)
+    assert any(t.spec.name == "mock_tool_b" for t in result)
+    assert any(t.spec.name == "custom_tool" for t in result)
 
 
 def test_get_tools_for_worker_with_filter():
     config = WorkerConfig(id="t", name="t", description="t", tool_keys=["mock_tool_a"])
-    mcp = [mock_tool_a, mock_tool_b]
-    custom = [FakeCustomTool()]
+    mcp = [FakeAgentTool("mock_tool_a"), FakeAgentTool("mock_tool_b")]
+    custom = [FakeAgentTool("custom_tool")]
     result = _get_tools_for_worker(config, mcp, custom)
-    names = [t.name for t in result]
+    names = [t.spec.name for t in result]
     assert "mock_tool_a" in names
     assert "mock_tool_b" not in names
     assert "custom_tool" in names
@@ -60,10 +50,10 @@ def test_get_tools_for_worker_with_filter():
 
 def test_get_tools_for_worker_no_mcp_match():
     config = WorkerConfig(id="t", name="t", description="t", tool_keys=["nonexistent"])
-    mcp = [mock_tool_a]
-    custom = [FakeCustomTool()]
+    mcp = [FakeAgentTool("mock_tool_a")]
+    custom = [FakeAgentTool("custom_tool")]
     result = _get_tools_for_worker(config, mcp, custom)
-    names = [t.name for t in result]
+    names = [t.spec.name for t in result]
     assert "mock_tool_a" not in names
     assert "custom_tool" in names
 
@@ -71,19 +61,20 @@ def test_get_tools_for_worker_no_mcp_match():
 def test_build_worker_graph_success():
     model = MagicMock()
     config = WorkerConfig(id="g", name="g", description="g", system_prompt="You are G.")
-    graph = _build_worker_graph(config, model, [mock_tool_a], [])
+    graph = _build_worker_graph(config, model, [FakeAgentTool("mock_tool_a")], [])
     assert graph is not None
 
 
 def test_build_worker_graph_failure():
     model = MagicMock()
 
-    class BrokenTool(BaseTool):
-        name: str = "broken"
-        description: str = ""
+    class BrokenTool(BaseAgentTool):
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(name="broken", description="", input_schema={})
 
-        def _run(self, **kwargs):
-            return ""
+        async def execute(self, input: dict, context: AgentContext) -> dict:
+            return {}
 
     with patch("xihe_agent.registry.registry.create_react_agent", side_effect=ValueError("boom")):
         config = WorkerConfig(id="b", name="b", description="b")

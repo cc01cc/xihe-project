@@ -26,6 +26,7 @@ from xihe_agent.config_client import ConfigClient
 from xihe_agent.context import (
     CPContextServiceClient,
     CPEventStoreClient,
+    CrashRecovery,
     EventSourcedContextProvider,
 )
 from xihe_agent.dotenv_loader import load_project_env
@@ -156,6 +157,11 @@ MCP_RETRY_INTERVAL = 2.0
 CP_API_TOKEN = get_env("XIHE_CP_API_TOKEN") or "dev-token-not-secure"
 
 
+def _parse_recover_session_ids() -> list[str]:
+    raw = get_env("XIHE_RECOVER_SESSION_IDS") or ""
+    return [s.strip() for s in raw.split(",") if s.strip()]
+
+
 def verify_api_token(request: Request) -> None:
     token = request.headers.get("X-Api-Token")
     if token != CP_API_TOKEN:
@@ -181,6 +187,7 @@ legacy_generate_image_tool = GenerateImageTool(provider_manager=image_provider_m
 cp_context_service_client = CPContextServiceClient(base_url=CP_URL, api_token=CP_API_TOKEN)
 cp_event_store_client = CPEventStoreClient(base_url=CP_URL, api_token=CP_API_TOKEN)
 context_provider = EventSourcedContextProvider(cp_context_service_client)
+crash_recovery = CrashRecovery(cp_event_store_client)
 agent_runner = LangGraphRunner(model_factory=lambda model: create_llm(llm_config.with_model(model)), event_store=cp_event_store_client)
 
 # RAG
@@ -309,11 +316,27 @@ async def lifespan(app: FastAPI):
         logger.info("Agent will retry MCP init in the background")
         mcp_retry_task = asyncio.create_task(mcp_manager.ensure_ready())
 
+    # Recover any sessions configured for crash recovery before accepting traffic.
+    recover_ids = _parse_recover_session_ids()
+    if recover_ids:
+        try:
+            recovered = await crash_recovery.recover_many(recover_ids)
+            logger.info("Crash recovery complete: {} session(s)", len(recovered))
+            for sid, ctx in recovered.items():
+                logger.info(
+                    "Recovered session {} latest_sequence={} message_count={}",
+                    sid,
+                    ctx.latest_sequence,
+                    len(ctx.messages),
+                )
+        except Exception:
+            logger.warning("Crash recovery failed", exc_info=True)
+
     if USE_REGISTRY:
         from xihe_agent.registry.watcher import start_watcher
 
         model = create_llm(llm_config)
-        custom_tools = [legacy_approval_tool, legacy_generate_image_tool]
+        custom_tools = [approval_tool, generate_image_tool]
         _workers_dir = config_client.get("logging", "workersDir")
         worker_registry = WorkerRegistry(workers_dir=_workers_dir)
         worker_registry.load_all(model, mcp_manager.tools, custom_tools)
@@ -368,7 +391,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
 
                 from xihe_agent.agent.supervisor import build_supervisor
 
-                custom_tools = [legacy_approval_tool, legacy_generate_image_tool]
+                custom_tools = [approval_tool, generate_image_tool]
                 supervisor = build_supervisor(
                     model, mcp_manager.tools, custom_tools,
                     registry=worker_registry if USE_REGISTRY else None,
@@ -522,7 +545,7 @@ async def registry_enable_worker(worker_id: str, _token: None = Depends(verify_a
     if not USE_REGISTRY or worker_registry is None:
         raise HTTPException(status_code=404, detail="Registry mode is not enabled")
     model = create_llm(llm_config)
-    custom_tools = [legacy_approval_tool, legacy_generate_image_tool]
+    custom_tools = [approval_tool, generate_image_tool]
     ok = worker_registry.enable(worker_id, model, mcp_manager.tools, custom_tools)
     if not ok:
         raise HTTPException(status_code=404, detail=f"Worker '{worker_id}' not found")
