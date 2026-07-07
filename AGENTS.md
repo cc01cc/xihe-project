@@ -133,6 +133,18 @@ CP ConfigService 按 **三层所有权（System ⊃ Admin ⊃ User）+ 领域（
 | Image | `ProviderManager.from_config_client()` | `tools/__init__.py` |
 | Embedding | 初始化时从 `config_client.get_providers()` 解析 | `main.py:134-150` |
 
+### Agent 模块接口抽象
+
+Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在接口之后：
+
+- `AgentRunner` — 编排抽象，`LangGraphRunner` 为当前实现
+- `BaseAgentTool` / `ToolSpec` — 工具抽象，MCP/Approval/Image 工具均实现该接口
+- `EventAdapter` — 将框架原始事件翻译为 SSE `AgentEvent`
+- `LLMProvider` — LLM 后端抽象，`complete()` / `stream_complete()`
+- `EventStore` / `AgentContext` — Event Sourcing 上下文管理（PLAN-035）
+
+详见 [docs/i18n/zh-Hans/DEV-005-agent-architecture.md](docs/i18n/zh-Hans/DEV-005-agent-architecture.md)。
+
 ## Code Style
 
 - **Naming**: `camelCase` (TS/JS/Java), `snake_case` (Python/Rust)
@@ -187,6 +199,19 @@ CP ConfigService 按 **三层所有权（System ⊃ Admin ⊃ User）+ 领域（
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
 
 详见 `docs/i18n/zh-Hans/DEV-012-known-issues.md`。覆盖率缺口 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。
+
+## PLAN 实施收尾检查清单
+
+涉及 Agent 模块接口抽象、Event Sourcing 上下文架构等 PLAN 时，代码完成后按以下清单收尾：
+
+- [ ] 更新 `packages/agent/AGENTS.md` 的项目结构、接口约定与目录说明。
+- [ ] 更新 `A03-xihe/AGENTS.md` 的 Architecture 关键设计小节。
+- [ ] 新增或更新 `docs/i18n/zh-Hans/DEV-005-agent-architecture.md` 等设计文档。
+- [ ] 若系统架构有变，同步更新 `docs/i18n/zh-Hans/DEV-001-system-architecture.md`。
+- [ ] 同步更新 `plans/PLAN-XXX.md` 的 frontmatter、§7 完成状态、§8 收尾总结与决策日志。
+- [ ] 为新增接口/能力补充单元测试或集成测试。
+- [ ] 运行 `mise run test:agent && mise run test:cp && mise run lint:links`。
+- [ ] 新增文档必须包含完整 YAML frontmatter，且所有 Markdown 链接在 `docs/` 内解析。
 
 ## Branch & Release
 

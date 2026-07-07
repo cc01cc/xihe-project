@@ -4,7 +4,13 @@
 
 ### Added
 
-- 初始版本：四模块 Hub-Module 架构（ui + control-plane + agent + runtime）
+- 实现 Agent 崩溃恢复：启动时可通过 `XIHE_RECOVER_SESSION_IDS` 从 CP Event Store 重放事件并重建会话状态
+- CP 新增 `context_source_hashes` 表，`ContextSourceRefreshService` 持久化 AGENTS.md 最后哈希，避免重复生成 `context.source_changed` 事件
+- CP 新增事件存储性能测试 `EventStoreServicePerformanceTest`，验证批量写入远高于单条写入
+- Agent 新增 `AgentContext.apply_event()` / `from_events()` 事件重放能力，新增 `CrashRecovery` 服务与 `test_crash_recovery.py` 测试
+- Agent `MCPClientManager.tools` 现在返回 `list[BaseAgentTool]`，完成工具层 public API 与 LangChain 的解耦
+- Agent `supervisor.py` / `registry/registry.py` public API 已迁移到 `BaseAgentTool`，内部通过适配器继续使用 LangGraph 编排
+- Agent `agent/prompts.py` 的 `build_prompt()` 改为返回纯字符串模板，去除 `ChatPromptTemplate` 依赖
 - 基于 pnpm workspace 的 monorepo 项目结构
 - Docker Compose 全栈部署（4 服务 + PostgreSQL）
 - `mise run validate` 全量验证管道
@@ -30,6 +36,7 @@
 
 ### Fixed
 
+- 修复 `packages/agent/src/xihe_agent/main.py` 两处静默异常捕获，改为 `logger.warning(..., exc_info=True)`，确保异常可观测
 - 修复 `mise run test:e2e` 中全部 mock/real 用例失败：移除 `networkidle` 等待策略、补齐 `setupMockAuth` 认证 mock、更新 settings 路由选择器、替换 PDF 性能测试 fixture、重新生成截图基线
 - 登录页未认证时 `App.vue` 不再请求配置接口，避免 401 触发循环刷新页面
 - `request` 在 401 时若已在 `/login` 或 `/register` 页面则不再重复跳转，消除认证相关路由死循环

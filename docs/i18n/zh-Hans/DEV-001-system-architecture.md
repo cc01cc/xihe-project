@@ -5,6 +5,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 sidebar_order: 1
 created: 2026-05-28
+updated: 2026-07-07
 status: active
 ---
 
@@ -62,9 +63,10 @@ xihe 采用 **四模块 Hub-Module 架构**，核心设计理念是**解耦**—
 
 - 工具选择：通过 Control Plane 获取 Runtime 注册的工具清单，决策后发指令给 Control Plane
 - 多 Agent：支持 Agent 间的委派、并行、结果合并
-- 记忆/上下文：会话管理（Control Plane 辅助/自有存储）
+- 记忆/上下文：基于 Event Sourcing 的结构化上下文管理（PLAN-035）。Agent 只消费 CP 投影后的 `AgentContext` 快照，所有对话变更（prompt、tool_call、tool_result、context_update）以事件形式持久化到 CP Event Store，支持重放、fork、compaction 与崩溃恢复。AGENTS.md 等 Context Source 变更会生成 `context.source_changed` 事件，运行中的对话可安全感知
 - MCP 集成：Agent 通过 `langchain-mcp-adapters` 的 `StreamableHttpConnection` 将 CP 作为统一 MCP 入口，所有工具调用（Runtime 内置工具 + 用户配置的 STDIO MCP server）均经过 CP 三层路由（CP 认证 → Runtime Gateway per-workspace 分发 → 容器内 `xihe-mcp-bridge` STDIO 桥接）。Agent 仅需配置一个 MCP 端点（CP 地址），不感知后端工具分布。详见 [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md)
 - **LLM Provider 管理**：通过 `langchain-litellm`（`ChatLiteLLM(BaseChatModel)`）统一封装，底层由 `litellm` 自动路由到 100+ Provider（OpenAI、DeepSeek、Anthropic、小米 MiMo、Ollama 等）。新增 Provider 无需修改 Agent 代码——前端 `BUILTIN_PROVIDERS` 加一条记录即可。
+- **AgentRunner 接口抽象**（PLAN-033）：`AgentRunner` / `BaseAgentTool` / `EventAdapter` / `LLMProvider` 等接口将 LangChain/LangGraph 实现隔离在接口之后。`LangGraphRunner` 是当前实现，未来切换编排框架只需新增实现。详见 [DEV-005-agent-architecture.md](DEV-005-agent-architecture.md)
 - **内部可随意折腾**：LangChain 生态、自定义 Agent、新框架替换都不影响其他模块
 
 ### 2.3. Runtime 模块 — Rust
