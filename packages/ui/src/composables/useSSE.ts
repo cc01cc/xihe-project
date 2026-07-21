@@ -28,7 +28,7 @@ function normalizeTokenContent(content: unknown): string {
 
 export interface SSECallbacks {
   onStart?: () => void
-  onToken?: (token: string) => void
+  onToken?: (token: string, hint?: 'reasoning' | 'text') => void
   onToolCall?: (name: string, args: Record<string, unknown>) => void
   onToolResult?: (data: Record<string, unknown>) => void
   onApprovalRequest?: (data: Record<string, unknown>) => void
@@ -80,10 +80,11 @@ export function useSSE(sessionId: string) {
         }
         resetStreamTimeout()
         try {
-          const data = JSON.parse(msg.data) as { content?: unknown }
+          const data = JSON.parse(msg.data) as { content?: unknown; hint?: string }
           const content = normalizeTokenContent(data.content)
+          const hint = data.hint === 'reasoning' || data.hint === 'text' ? data.hint : undefined
           if (content) {
-            currentCallbacks.onToken?.(content)
+            currentCallbacks.onToken?.(content, hint)
           }
         } catch {
           logger.warn('Failed to parse SSE token event')

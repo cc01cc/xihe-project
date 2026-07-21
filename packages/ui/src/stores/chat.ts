@@ -1,9 +1,28 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
-import type { Message } from '../types'
+import type { Message, MessagePart } from '../types'
+
+export const XIHE_STORAGE_KEYS = ['xihe-messages', 'xihe-token', 'xihe-user', 'xihe-sessions', 'xihe-current-session'] as const
+
+/** Detect and clear old-format localStorage data on first access */
+let initialized = false
+
+function autoClearOldData() {
+  if (initialized) return
+  initialized = true
+  for (const key of XIHE_STORAGE_KEYS) {
+    if (localStorage.getItem(key)) {
+      for (const k of XIHE_STORAGE_KEYS) {
+        localStorage.removeItem(k)
+      }
+      break
+    }
+  }
+}
 
 export const useChatStore = defineStore('chat', () => {
+  autoClearOldData()
   const messages = useLocalStorage<Record<string, Message[]>>('xihe-messages', {})
   const streamingMessageId = ref<Record<string, string | null>>({})
 
@@ -59,18 +78,49 @@ export const useChatStore = defineStore('chat', () => {
     return id
   }
 
-  function appendToken(sessionId: string, token: string) {
+  function appendToParts(sessionId: string, part: MessagePart) {
     const messageId = streamingMessageId.value[sessionId]
-    if (!messageId) {
-      return
-    }
+    if (!messageId) return
 
     const msgs = messages.value[sessionId]
     const message = msgs?.find((msg) => msg.id === messageId)
+    if (!message) return
 
-    if (message) {
-      message.content += token
+    if (!message.parts) {
+      message.parts = []
     }
+
+    if (part.type === 'text') {
+      const lastText = message.parts.length > 0
+        ? message.parts[message.parts.length - 1]
+        : null
+      if (lastText?.type === 'text') {
+        lastText.content += part.content
+        return
+      }
+    }
+
+    if (part.type === 'reasoning') {
+      const lastReasoning = message.parts.length > 0
+        ? message.parts[message.parts.length - 1]
+        : null
+      if (lastReasoning?.type === 'reasoning') {
+        lastReasoning.content += part.content
+        return
+      }
+    }
+
+    if (part.type === 'artifact') {
+      const lastArtifact = message.parts.length > 0
+        ? message.parts[message.parts.length - 1]
+        : null
+      if (lastArtifact?.type === 'artifact' && lastArtifact.identifier === part.identifier) {
+        lastArtifact.content += part.content
+        return
+      }
+    }
+
+    message.parts.push(part)
   }
 
   function finalizeStreaming(sessionId: string) {
@@ -82,6 +132,12 @@ export const useChatStore = defineStore('chat', () => {
     const message = messages.value[sessionId]?.find((msg) => msg.id === messageId)
     if (message) {
       message.isStreaming = false
+      if (message.parts) {
+        message.content = message.parts
+          .filter((p) => p.type === 'text')
+          .map((p) => p.content)
+          .join('')
+      }
     }
 
     streamingMessageId.value[sessionId] = null
@@ -96,6 +152,18 @@ export const useChatStore = defineStore('chat', () => {
     clearSession(sessionId)
   }
 
+  function clearAllData() {
+    for (const key of XIHE_STORAGE_KEYS) {
+      try {
+        localStorage.removeItem(key)
+      } catch {
+        // ignore
+      }
+    }
+    messages.value = {}
+    streamingMessageId.value = {}
+  }
+
   return {
     messages,
     streamingMessageId,
@@ -107,9 +175,10 @@ export const useChatStore = defineStore('chat', () => {
     deleteMessage,
     addMarker,
     createStreamingMessage,
-    appendToken,
+    appendToParts,
     finalizeStreaming,
     clearSession,
     deleteSession,
+    clearAllData,
   }
 })

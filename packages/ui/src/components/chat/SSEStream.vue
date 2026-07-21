@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { watch } from 'vue'
 import { useSSE } from '../../composables/useSSE'
+import { useStreamParser } from '../../composables/useStreamParser'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
 import { useConfigStore } from '../../stores/config'
@@ -24,12 +25,29 @@ watch(
   () => props.sessionId,
   (id) => {
     if (id) {
+      let lastSentCount = 0
+      const parser = useStreamParser()
       connect({
         onStart: () => {
+          parser.reset()
+          lastSentCount = 0
           chatStore.createStreamingMessage(id)
         },
-        onToken: (token: string) => {
-          chatStore.appendToken(id, token)
+        onToken: (token: string, hint?) => {
+          if (hint === 'reasoning') {
+            chatStore.appendToParts(id, { type: 'reasoning', content: token })
+            return
+          }
+          if (hint === 'text') {
+            chatStore.appendToParts(id, { type: 'text', content: token })
+            return
+          }
+          parser.handleToken(token, hint)
+          const currentParts = parser.parts.value
+          for (let i = lastSentCount; i < currentParts.length; i++) {
+            chatStore.appendToParts(id, currentParts[i])
+          }
+          lastSentCount = currentParts.length
         },
         onStatus: (status: string) => {
           agentStore.setStatus(status as 'thinking' | 'executing' | 'idle')
@@ -44,8 +62,13 @@ watch(
           }
         },
         onDone: () => {
+          parser.finalize()
+          const finalParts = parser.parts.value
+          const msg = chatStore.getMessages(id).find(m => m.id === chatStore.getStreamingMessageId(id))
+          if (msg && finalParts.length > 0) {
+            msg.parts = [...finalParts]
+          }
           chatStore.finalizeStreaming(id)
-          agentStore.setStatus('idle')
         },
         onError: (msg: string) => {
           chatStore.finalizeStreaming(id)

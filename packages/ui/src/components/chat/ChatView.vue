@@ -5,6 +5,7 @@ import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
 import { api } from '../../composables/api'
+import { parseRawToParts } from '../../composables/useStreamParser'
 import { logger } from '../../lib/logger'
 import type { Message } from '../../types'
 import ChatPanel from './ChatPanel.vue'
@@ -38,6 +39,7 @@ async function loadSessionMessages(sessionId: string) {
       sessionId: msg.sessionId,
       role: msg.role.toLowerCase() as 'user' | 'assistant' | 'system',
       content: msg.content,
+      parts: msg.role.toLowerCase() === 'assistant' ? parseRawToParts(msg.content) : undefined,
       timestamp: msg.createdAt,
       attachments: msg.attachments?.map((att) => ({
         id: att.fileId,

@@ -52,11 +52,19 @@ export interface AttachmentFile {
   fileId?: string
 }
 
+export type MessagePart =
+  | { type: 'text'; content: string }
+  | { type: 'reasoning'; content: string }
+  | { type: 'citation'; index: number }
+  | { type: 'artifact'; identifier: string; artifactType: string; title: string; content: string }
+
 export interface Message {
   id: string
   sessionId: string
   role: 'user' | 'assistant' | 'system'
+  /** @deprecated Use `parts` instead. Kept for backward compat with old data. */
   content: string
+  parts?: MessagePart[]
   timestamp: string
   toolCalls?: ToolCall[]
   isStreaming?: boolean

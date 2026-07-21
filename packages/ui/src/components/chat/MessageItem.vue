@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onUnmounted } from 'vue'
 import type { AttachmentFile, Message } from '../../types'
-import MarkdownRenderer from './MarkdownRenderer.vue'
+import TextPart from './parts/TextPart.vue'
+import ReasoningPart from './parts/ReasoningPart.vue'
+import ArtifactPart from './parts/ArtifactPart.vue'
+import CitationPart from './parts/CitationPart.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import VoiceOutput from '../multimodal/VoiceOutput.vue'
 import {
@@ -60,12 +63,13 @@ const bubbleVariant = computed(() => {
   return 'muted'
 })
 
-const content = computed(() => {
-  if (props.isStreaming) {
-    return props.message.content + '▊'
+function getTextContent(): string {
+  if (!props.message.parts || props.message.parts.length === 0) {
+    return props.message.content
   }
-  return props.message.content
-})
+  const textParts = props.message.parts.filter((p) => p.type === 'text')
+  return textParts.map((p) => p.content).join('')
+}
 
 const statusIcon = computed(() => {
   switch (props.message.status) {
@@ -168,15 +172,22 @@ onUnmounted(() => {
         </Attachment>
       </AttachmentGroup>
 
-      <Bubble v-if="message.content || isStreaming" :variant="bubbleVariant">
+      <Bubble v-if="message.content || isStreaming || message.parts" :variant="bubbleVariant">
         <BubbleContent>
-          <MarkdownRenderer
-            v-if="!isUser && !isSystem"
-            :content="content"
-            :is-streaming="isStreaming"
-          />
-          <p v-else-if="isUser" class="whitespace-pre-wrap text-sm">{{ content }}</p>
-          <p v-else class="text-sm">{{ content }}</p>
+          <template v-if="message.parts && message.parts.length > 0">
+            <template v-for="(part, idx) in message.parts" :key="idx">
+              <TextPart
+                v-if="part.type === 'text'"
+                :content="part.content"
+                :is-streaming="isStreaming && idx === message.parts.length - 1"
+              />
+              <ReasoningPart v-if="part.type === 'reasoning'" :content="part.content" />
+              <ArtifactPart v-if="part.type === 'artifact'" :part="part" />
+              <CitationPart v-if="part.type === 'citation'" :index="part.index" />
+            </template>
+          </template>
+          <p v-else-if="isUser" class="whitespace-pre-wrap text-sm">{{ props.message.content }}</p>
+          <p v-else class="text-sm">{{ props.message.content }}</p>
         </BubbleContent>
       </Bubble>
 
@@ -209,7 +220,7 @@ onUnmounted(() => {
         </button>
         <VoiceOutput
           v-if="!isUser && !isSystem"
-          :text="message.content"
+          :text="message.parts ? getTextContent() : message.content"
         />
       </div>
     </MessageContent>

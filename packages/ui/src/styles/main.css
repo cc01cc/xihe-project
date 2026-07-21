@@ -4,6 +4,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn-vue/tailwind.css";
+@import "markstream-vue/index.tailwind.css" layer(components);
 @import "./scroll-fade.css";
 @import "./shimmer.css";
 

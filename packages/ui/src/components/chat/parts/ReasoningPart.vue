@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { MarkdownToken } from '@/services/markdownParser'
-import type { ThinkToken } from '@/services/markedThinkExtension'
 
-const props = defineProps<{
-  token: MarkdownToken
+defineProps<{
+  content: string
 }>()
 
 const expanded = ref(false)
-const think = props.token as ThinkToken
 </script>
 
 <template>
@@ -22,6 +19,6 @@ const think = props.token as ThinkToken
     >
       Reasoning
     </summary>
-    <div class="mt-2 text-sm leading-relaxed whitespace-pre-wrap">{{ think.text }}</div>
+    <div class="mt-2 text-sm leading-relaxed whitespace-pre-wrap">{{ content }}</div>
   </details>
 </template>

@@ -49,30 +49,59 @@ describe('useChatStore', () => {
     expect(store.isStreaming('s1')).toBe(true)
   })
 
-  it('appendToken appends to streaming message content', () => {
+  it('appendToParts appends text parts to streaming message content', () => {
     const store = useChatStore()
     store.createStreamingMessage('s1')
-    store.appendToken('s1', 'Hel')
-    store.appendToken('s1', 'lo')
-    const msgs = store.getMessages('s1')
-    expect(msgs[0].content).toBe('Hello')
+    store.appendToParts('s1', { type: 'text', content: 'Hel' })
+    store.appendToParts('s1', { type: 'text', content: 'lo' })
+    expect(store.getMessages('s1')[0].parts).toHaveLength(1)
+    expect(store.getMessages('s1')[0].parts![0]).toEqual({ type: 'text', content: 'Hello' })
   })
 
-  it('appendToken does nothing when no streaming message exists', () => {
+  it('appendToParts appends reasoning parts separately', () => {
     const store = useChatStore()
-    store.appendToken('s1', 'orphan')
+    store.createStreamingMessage('s1')
+    store.appendToParts('s1', { type: 'reasoning', content: '思考中' })
+    store.appendToParts('s1', { type: 'text', content: '答案' })
+    const parts = store.getMessages('s1')[0].parts!
+    expect(parts).toHaveLength(2)
+    expect(parts[0]).toEqual({ type: 'reasoning', content: '思考中' })
+    expect(parts[1]).toEqual({ type: 'text', content: '答案' })
+  })
+
+  it('appendToParts merges consecutive same-type parts', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.appendToParts('s1', { type: 'text', content: 'A' })
+    store.appendToParts('s1', { type: 'text', content: 'B' })
+    expect(store.getMessages('s1')[0].parts).toHaveLength(1)
+    expect(store.getMessages('s1')[0].parts![0].content).toBe('AB')
+  })
+
+  it('appendToParts does nothing when no streaming message exists', () => {
+    const store = useChatStore()
+    store.appendToParts('s1', { type: 'text', content: 'orphan' })
     expect(store.getMessages('s1')).toEqual([])
   })
 
   it('finalizeStreaming marks streaming message as completed', () => {
     const store = useChatStore()
     store.createStreamingMessage('s1')
-    store.appendToken('s1', 'streamed content')
+    store.appendToParts('s1', { type: 'text', content: 'streamed content' })
     store.finalizeStreaming('s1')
     const msgs = store.getMessages('s1')
     expect(msgs[0].content).toBe('streamed content')
     expect(msgs[0].isStreaming).toBe(false)
     expect(store.isStreaming('s1')).toBe(false)
+  })
+
+  it('finalizeStreaming merges parts into content', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.appendToParts('s1', { type: 'reasoning', content: '思考' })
+    store.appendToParts('s1', { type: 'text', content: '答案' })
+    store.finalizeStreaming('s1')
+    expect(store.getMessages('s1')[0].content).toBe('答案')
   })
 
   it('finalizeStreaming does nothing when no streaming message exists', () => {
@@ -92,5 +121,14 @@ describe('useChatStore', () => {
     expect(store.getMessages('s1')).toEqual([])
     expect(store.getStreamingMessageId('s1')).toBeNull()
     expect(store.isStreaming('s1')).toBe(false)
+  })
+
+  it('clearAllData removes all xihe localStorage keys', () => {
+    localStorage.setItem('xihe-messages', '{}')
+    localStorage.setItem('xihe-token', 'abc')
+    const store = useChatStore()
+    store.clearAllData()
+    expect(localStorage.getItem('xihe-messages')).toBeNull()
+    expect(localStorage.getItem('xihe-token')).toBeNull()
   })
 })

@@ -103,7 +103,7 @@ describe('useSSE', () => {
     connect({ onToken })
     await flushPromises()
     await transport.simulateMessage('token', JSON.stringify({ content: 'hello' }))
-    expect(onToken).toHaveBeenCalledWith('hello')
+    expect(onToken).toHaveBeenCalledWith('hello', undefined)
   })
 
   it('emits status via onStatus callback', async () => {

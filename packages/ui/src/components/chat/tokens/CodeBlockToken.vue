@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import hljs from 'highlight.js'
-import type { Tokens } from 'marked'
 import { logger } from '@/lib/logger'
 import CodeBlock from '../CodeBlock.vue'
 import { useMarkdownContext } from './markdownContext'
 
+export interface CodeToken {
+  lang: string
+  text: string
+}
+
 const props = defineProps<{
-  token: Tokens.Code
+  token: CodeToken
 }>()
 
 const { isStreaming } = useMarkdownContext()

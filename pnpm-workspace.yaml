@@ -1,7 +1,7 @@
 packages:
   - 'packages/*'
 
-minimumReleaseAge: 10080
+minimumReleaseAge: 0
 minimumReleaseAgeExclude:
   - "@vue/*"
   - vue
