@@ -12,13 +12,13 @@ updated: 2026-06-15
 
 ## 1. 快速开始
 
-### 1.1. 1.1 环境要求
+### 1.1. 环境要求
 
 - Docker Desktop（或 Docker Engine）
 - Node.js 22+（UI 前端）
 - 推荐安装 `mise`
 
-### 1.2. 1.2 安装
+### 1.2. 安装
 
 ```bash
 mise install
@@ -27,7 +27,7 @@ cp .env.example .env.dev
 # 编辑 .env.dev，设置 XIHE_DEEPSEEK_API_KEY
 ```
 
-### 1.3. 1.3 启动
+### 1.3. 启动
 
 ```bash
 # 一键启动（推荐）
@@ -41,7 +41,7 @@ mise run dev:full
 
 浏览器打开 `http://localhost:12630`。
 
-### 1.4. 1.4 注册与登录
+### 1.4. 注册与登录
 
 首次使用需要注册账号：
 1. 打开 `http://localhost:12630`
@@ -49,7 +49,7 @@ mise run dev:full
 3. 填写邮箱、密码（≥8 位）、名称
 4. 登录后自动跳转到聊天界面
 
-### 1.5. 1.5 测试
+### 1.5. 测试
 
 ```bash
 mise run validate       # 全部单元测试
@@ -58,14 +58,14 @@ mise run validate:full  # 单元 + 集成 + E2E
 
 ## 2. 功能使用
 
-### 2.1. 2.1 聊天
+### 2.1. 聊天
 
 1. 在侧边栏点击 "+" 创建新会话
 2. 在输入框输入消息，按 Enter 发送
 3. Agent 通过 SSE 流式回复
 4. 工具调用以卡片形式展示，可折叠查看详情
 
-### 2.2. 2.2 多模态
+### 2.2. 多模态
 
 | 功能 | 操作 | 说明 |
 |------|------|------|
@@ -75,7 +75,7 @@ mise run validate:full  # 单元 + 集成 + E2E
 | **语音输出** | AI 回复朗读 | 浏览器 TTS |
 | **PDF** | 拖拽上传 | pdfjs-dist 预览 + 文本提取 |
 
-### 2.3. 2.3 MCP 工具
+### 2.3. MCP 工具
 
 Agent 可通过 MCP 反向代理调用 Runtime 工具：
 
@@ -88,13 +88,13 @@ Agent 可通过 MCP 反向代理调用 Runtime 工具：
 | `grep` | 文本搜索 | "搜索包含 TODO 的文件" |
 | `execute_command` | 执行命令 | "运行 ls -la" |
 
-### 2.4. 2.4 Agent 审批
+### 2.4. Agent 审批
 
 当 Agent 需要执行高风险操作时，会弹出审批窗口：
 - **批准**：允许 Agent 继续
 - **拒绝**：阻止操作
 
-### 2.5. 2.5 设置
+### 2.5. 设置
 
 点击侧边栏底部的设置图标：
 - **模型**：LLM Provider（OpenAI / DeepSeek / 小米 MiMo / Anthropic 预设 + 自定义）、Model、API Key、Base URL
@@ -107,7 +107,7 @@ Agent 可通过 MCP 反向代理调用 Runtime 工具：
 
 ## 3. 配置
 
-### 3.1. 3.1 LLM 提供商
+### 3.1. LLM 提供商
 
 系统内置 5 个预设 Provider，也支持自定义任意 OpenAI-compatible Provider：
 
@@ -123,7 +123,7 @@ Agent 可通过 MCP 反向代理调用 Runtime 工具：
 
 Provider 可在设置页面的模型配置中管理，选择预设后自动填充模型名和 Base URL。
 
-### 3.2. 3.2 环境变量
+### 3.2. 环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|

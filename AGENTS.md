@@ -151,7 +151,10 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Agent 术语**: 代码包用 Agent 模块 (module)，运行进程用 Agent 服务 (server)，运行时单元用 Agent Worker (Worker)
 - **异常日志**: 每个 catch 必须有日志 + stacktrace，禁止 silent catch
 - **UI**: reka-ui + Tailwind v4；聊天组件使用自研 MessageScroller / Message / Bubble / Attachment / Marker 五个组件族；Toast 为唯一反馈渠道
-- **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；消息附件已持久化到后端 Session 专属空间，刷新后仍可渲染（详见 DEV-001 §7）
+- **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；消息附件已持久化到后端 Session 专属空间，刷新后仍可渲染（详见 DEV-001 §7）。
+  - 流式 token 通过 `useStreamParser` composable 实时分类为 `MessagePart[]`（支持 `text` / `reasoning` / `citation` / `artifact` 四类）
+  - `Message.parts` 替代旧 `marked` 扩展的 think/citation/artifact 嵌入方式；`useMarkdown` 仅处理纯 Markdown 渲染
+  - 后端 `sse_adapter.py` 透传 `reasoning_content` 信号，前端 `useSSE` 通过 `hint` 参数路由到对应 Part 类型
 - **配置**: 3-tier (system > admin > user)，CP ConfigService 统一管理
 - **Service 纯函数**: Service 不依赖 ConfigClient，配置由调用方解析后传入
 - **提交**: Conventional Commits，pass `mise run validate` 后可提交
