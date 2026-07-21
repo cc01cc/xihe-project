@@ -28,10 +28,16 @@ class LangGraphEventAdapter(EventAdapter):
             if chunk is None:
                 return None
             if hasattr(chunk, "content") and chunk.content:
-                return AgentEvent(
-                    type="token",
-                    data={"content": chunk.content, "type": "token", "run_id": run_id},
-                )
+                event_data: dict[str, Any] = {
+                    "content": chunk.content,
+                    "type": "token",
+                    "run_id": run_id,
+                }
+                if hasattr(chunk, "response_metadata") and chunk.response_metadata:
+                    reasoning = chunk.response_metadata.get("reasoning_content")
+                    if reasoning:
+                        event_data["hint"] = "reasoning"
+                return AgentEvent(type="token", data=event_data)
 
         if event_type == "on_chat_model_end":
             output = data.get("output")
