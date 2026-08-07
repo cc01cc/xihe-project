@@ -1,7 +1,13 @@
 packages:
   - 'packages/*'
 
-minimumReleaseAge: 0
+onlyBuiltDependencies:
+  - esbuild
+  - vue-demi
+  - msw
+
+minimumReleaseAge: 10080
+# 高频发布依赖豁免（2026-08-07 恢复冷却期时评估：现有锁定版本均已过冷却期，保留豁免便于未来升级）
 minimumReleaseAgeExclude:
   - "@vue/*"
   - vue
