@@ -198,6 +198,8 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Vite proxy rewrite**: CP `@RequestMapping` 不含 `/api/v1` 前缀，由 Vite rewrite 剥离
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
+- **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU（PLAN-097）。OOM 时按需上调
+- **runtime 测试现状**: `cargo test --lib` 为可用测试集（97 通过）；`tests/sandbox_test.rs` 引用不存在的 `SandboxManager`，全量 `cargo test` 编译失败（预存，PLAN-097 §7.2）。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
 - **Vue i18n JSON placeholder**: `t()` 消息中不可含 `{...}`
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
 

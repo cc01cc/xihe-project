@@ -178,6 +178,8 @@ docker compose up -d --build
 
 CP 通过 Docker 内部网络 `xihe-net` 连接 `postgres:5432`，PostgreSQL 用户密码由 `docker-compose.yml` 中 `POSTGRES_USER` / `POSTGRES_PASSWORD` 定义。
 
+**资源约束**（PLAN-097）：4 个服务均设有 `mem_limit`（postgres 512m / control-plane 768m / agent 640m / runtime 128m）。CP 镜像内置 JVM 调参（SerialGC + `-Xmx384m`），postgres 降配为 `max_connections=40`。沙盒容器另有 512MB 内存 + 2 CPU 上限。若服务因 OOM 被杀（`docker inspect <容器> --format '{{.State.OOMKilled}}'` 返回 true），按需上调对应 `mem_limit`。
+
 验证：
 
 ```bash
