@@ -14,8 +14,9 @@ RUN mkdir src && \
 
 # ── Layer 2: Real source build ───────────────────────────────────────
 # Only recompiles changed source files; dependencies stay cached.
+# touch 强制源码 mtime 新于 dummy 层指纹，否则 cargo 可能误判 fresh 而保留 stub 二进制
 COPY src ./src
-RUN cargo build --release
+RUN find src -name '*.rs' -exec touch {} + && cargo build --release
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*

@@ -8,5 +8,6 @@ RUN mvn package -DskipTests -q -Pnative || mvn package -DskipTests -q
 FROM eclipse-temurin:25-jre
 WORKDIR /app
 COPY --from=builder /app/target/*.jar app.jar
+ENV JAVA_TOOL_OPTIONS="-Xmx384m -Xss512k -XX:MaxMetaspaceSize=128m -XX:+UseSerialGC"
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -69,6 +69,7 @@ impl WorkspaceManager {
         let host_config = HostConfig {
             memory: Some(512 * 1024 * 1024),
             memory_swap: Some(512 * 1024 * 1024),
+            nano_cpus: Some(2_000_000_000),
             pids_limit: Some(100),
             cap_drop: Some(vec!["ALL".to_string()]),
             security_opt: Some(vec!["no-new-privileges:true".to_string()]),

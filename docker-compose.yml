@@ -2,6 +2,16 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     container_name: xihe-postgres
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=128MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "max_connections=40"
+      - "-c"
+      - "effective_cache_size=256MB"
     environment:
       POSTGRES_DB: xihe
       POSTGRES_USER: xihe
@@ -9,6 +19,7 @@ services:
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "${XIHE_PG_PORT:-12634}:5432"
+    mem_limit: 512m
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
@@ -40,6 +51,7 @@ services:
       SPRING_PROFILES_ACTIVE: "dev"
     volumes:
       - ./logs/cp:/logs
+    mem_limit: 768m
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,6 +75,7 @@ services:
       XIHE_CP_URL: "http://control-plane:8080"
     volumes:
       - ./logs/agent:/logs
+    mem_limit: 640m
     depends_on:
       control-plane:
         condition: service_started
@@ -84,6 +97,7 @@ services:
       XIHE_CP_URL: "http://control-plane:8080"
     volumes:
       - ./logs/runtime:/logs
+    mem_limit: 128m
     networks:
       - xihe-net
 
