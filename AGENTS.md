@@ -225,6 +225,10 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - 所有包均为私有（不发布 npm/pypi/crates.io），版本号仅用于内部追踪
 - 发布流程：更新 CHANGELOG.md → 运行 sync-versions.sh 统一 bump 四包版本号 → 提交版本变更 → 同步到 main → 审查后 push
 
+## Skills
+
+本项目特有的 Agent Skills 位于 `.agents/skills/`（开放标准位置，兼容工具在本项目根下自动发现）。具体清单见 `.agents/skills/AGENTS.md`（目录级索引：名称/用途/路径）；one 根会话按 one/AGENTS.md「Skills 体系」节导航协议使用。
+
 ## Permissions
 
 - **Allowed**: 任意代码变更（文档、源代码、配置），遵循项目规范
