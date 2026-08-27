@@ -87,11 +87,11 @@ flowchart LR
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| UI Framework | Vue 3 + Pinia + vue-router | ^3.5 / ^3.0 / ^5.1 |
-| UI Build | Vite + Tailwind CSS 4 + shadcn-vue | ^8 / ^4.3 / ^2.7 |
+| UI Framework | Vue 3 + Pinia + vue-router | ^3.5.41 / ^4.0.3 / ^5.2.0 |
+| UI Build | Vite + Tailwind CSS 4 + shadcn-vue | ^8.2.2 / ^4.3.3 / ^2.8.2 |
 | CP Framework | Spring Boot 4 + Spring Security + Spring Data JPA | 4.0.6 |
 | Agent Framework | FastAPI + LangChain + LangGraph + litellm | — |
-| Runtime Framework | rmcp + Axum + Tokio + bollard | 1.7.0 / 0.8.9 / 1.52.3 |
+| Runtime Framework | rmcp + Axum + Tokio + bollard | 1.8.0 / 0.8.9 / 1.53.1 / 0.21.1 |
 | Database | PostgreSQL 17 + pgvector | — |
 | Toolchain | Node 22 / pnpm 10 / Maven 3.9 / uv / Docker | — |
 

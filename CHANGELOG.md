@@ -36,6 +36,8 @@
 
 ### Fixed
 
+- 修复 Runtime Windows 本地构建与测试兼容性：隔离 Unix socket/symlink 代码，并统一 Windows canonical path 的 workspace 相对路径处理
+- 将 CP JSON Schema 校验迁移到 `json-schema-validator 3.0.7` 的 `SchemaRegistry`/`Schema`/`Error` API
 - 修复 `packages/agent/src/xihe_agent/main.py` 两处静默异常捕获，改为 `logger.warning(..., exc_info=True)`，确保异常可观测
 - 修复 `mise run test:e2e` 中全部 mock/real 用例失败：移除 `networkidle` 等待策略、补齐 `setupMockAuth` 认证 mock、更新 settings 路由选择器、替换 PDF 性能测试 fixture、重新生成截图基线
 - 登录页未认证时 `App.vue` 不再请求配置接口，避免 401 触发循环刷新页面
@@ -52,6 +54,8 @@
 
 ### Changed
 
+- 更新四模块稳定依赖与锁文件：UI、Agent、Control Plane、Runtime 均按两天冷却期刷新；TypeScript 7 因当前 vue-tsc API 链路不兼容暂保留 TypeScript 6
+- Agent LiteLLM 更新至 `1.98.0`，MiMo provider 兼容性验证使用原生 `xiaomi_mimo` 路由
 - 输入区域改为圆角卡片容器，textarea 使用 CSS `field-sizing: content` 自适应高度，焦点环在容器上
 - `InputToolbar.vue` 改为声明式 action map（`leftActions`/`rightActions`），模型选择器、附件、语音、发送按钮统一映射
 - 模型选择器整体改用 reka-ui `Combobox` + `Collapsible`，值使用 `provider/model` 复合格式，支持键盘导航、搜索过滤、分组折叠、收藏置顶
