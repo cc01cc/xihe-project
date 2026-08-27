@@ -177,7 +177,7 @@ CP 的 `AuditLogger` 记录所有 MCP 工具调用和策略决策：
 
 ## 6. 错误日志规范
 
-详见 `.kilo/rules/catch-logging.md`。
+异常日志约定维护在当前 workspace 的通用 skill 中。
 
 核心原则：
 - 每个 catch 必须有日志

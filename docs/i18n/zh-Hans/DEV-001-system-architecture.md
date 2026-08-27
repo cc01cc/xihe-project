@@ -35,7 +35,7 @@ xihe 采用 **四模块 Hub-Module 架构**，核心设计理念是**解耦**—
 | 图标 | @lucide/vue + @iconify/vue |
 | CSS 方案 | Tailwind CSS v4 + HSL 主题变量，支持暗色模式。辅助工具：class-variance-authority、clsx、tailwind-merge |
 | Markdown 渲染 | remark/rehype 管线 + Shiki 语法高亮 + KaTeX 数学公式 |
-| AI 集成 | Vercel AI SDK（用于与 Control Plane/Agent 的流式通信） |
+| AI 集成 | `fetch-event-source` + 自定义 SSE 传输层（UI 仅与 Control Plane 通信） |
 | 测试 | Vitest + @vue/test-utils |
 | 代码规范 | oxlint + oxfmt |
 | 通信 | 只与 Control Plane 对话（`EventSource` SSE + `fetch` POST），不直接调用 Agent 或 Runtime |
@@ -412,4 +412,3 @@ ChatView 集成方式：
 - `ChatView.vue` 挂载时从后端加载历史消息并覆盖 localStorage，保证刷新后附件仍可见。
 
 详见 `plans/PLAN-030-XH-chat-attachment-backend.md` 与 `plans/PLAN-031-XH-chat-attachment-frontend.md`。
-

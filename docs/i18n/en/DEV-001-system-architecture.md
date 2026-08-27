@@ -34,7 +34,7 @@ xihe adopts a **four-module Hub-Module architecture**. The core design philosoph
 | Icons | @lucide/vue + @iconify/vue |
 | CSS Solution | Tailwind CSS v4 + HSL theme variables, supports dark mode. Utilities: class-variance-authority, clsx, tailwind-merge |
 | Markdown Rendering | remark/rehype pipeline + Shiki syntax highlighting + KaTeX math formulas |
-| AI Integration | Vercel AI SDK (for streaming communication with Control Plane/Agent) |
+| AI Integration | `fetch-event-source` plus the custom SSE transport (the UI communicates only with the Control Plane) |
 | Testing | Vitest + @vue/test-utils |
 | Code Standards | oxlint + oxfmt |
 | Communication | Only communicates with Control Plane (`EventSource` SSE + `fetch` POST), does not directly call Agent or Runtime |
@@ -402,4 +402,3 @@ Early chat attachments used `URL.createObjectURL` to produce Blob URLs, which ex
 - `ChatView.vue` loads history from the backend on mount and overwrites localStorage, ensuring attachments remain visible after refresh.
 
 See `plans/PLAN-030-XH-chat-attachment-backend.md` and `plans/PLAN-031-XH-chat-attachment-frontend.md`.
-

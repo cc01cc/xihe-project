@@ -365,6 +365,6 @@ T3 不在 PR 中运行的原因：Docker partial stack 启动 + 测试 ≈ 2min�
 
 - `plans/PLAN-049-integration-test-design.md` — 实施 PLAN
 - `docs/i18n/zh-Hans/DEV-011-e2e-test-strategy.md` — E2E 测试策略
-- `.kilo/rules/test-strategy.md` — 测试策略决策框架
+- 测试策略决策框架 — 维护在 workspace skill 中
 - WireMock 文档：`http://wiremock.org/docs/`
 - pytest-httpx 文档：`https://github.com/Colin-b/pytest_httpx`

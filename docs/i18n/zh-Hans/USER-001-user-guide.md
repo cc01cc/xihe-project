@@ -135,7 +135,7 @@ Provider 可在设置页面的模型配置中管理，选择预设后自动填�
 | `XIHE_CP_PORT` | `12631` | CP 端口（宿主机映射，Docker 内为 8080） |
 | `XIHE_AGENT_PORT` | `12632` | Agent 端口（宿主机映射，Docker 内为 8000） |
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime 端口（宿主机映射，Docker 内为 8001） |
-| `XIHE_UI_PORT` | `5173` | UI 端口 |
+| `XIHE_UI_PORT` | `12630` | UI 端口（可通过环境变量覆盖） |
 | `XIHE_CP_DATASOURCE_URL` | `jdbc:postgresql://localhost:12634/xihe` | 数据库连接（宿主机映射，Docker 内为 5432） |
 | `XIHE_CP_JWT_SECRET` | — | JWT 签名密钥 |
 | `XIHE_LOG_LEVEL` | `info` | 日志等级 |

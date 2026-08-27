@@ -365,6 +365,6 @@ T3 doesn't run in PRs because: Docker partial stack startup + test ≈ 2min, whi
 
 - `plans/PLAN-049-integration-test-design.md` — Implementation PLAN
 - `docs/i18n/en/DEV-011-e2e-test-strategy.md` — E2E test strategy
-- `.kilo/rules/test-strategy.md` — Test strategy decision framework
+- Test strategy decision framework is maintained as a workspace skill.
 - WireMock documentation: `http://wiremock.org/docs/`
 - pytest-httpx documentation: `https://github.com/Colin-b/pytest_httpx`

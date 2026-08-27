@@ -83,7 +83,7 @@ packages/ui/src/
 - Spring Boot 4 `@WebMvcTest` / `@DataJpaTest`
 - `MockHttpServletRequest` / `MockHttpServletResponse`
 - H2 内存库（非 JSONB 字段的实体测试）
-- Testcontainers PostgreSQL（JSONB 字段的实体测试，见 `.kilo/rules/jpa-testcontainers-requirement.md`）
+- Testcontainers PostgreSQL（JSONB 字段的实体测试）
 
 ### 3.2 Mock 原则
 
@@ -96,7 +96,7 @@ packages/ui/src/
 
 ### 3.3 混凝土类测试注意事项
 
-- `@JdbcTypeCode(SqlTypes.JSON)` 必须用于 JSONB 列（见 `.kilo/rules/jpa-jsonb-mapping.md`）
+- `@JdbcTypeCode(SqlTypes.JSON)` 必须用于 JSONB 列
 - H2 测试不暴露 JSONB 问题，JSONB 实体必须用 Testcontainers PG
 - ConfigController 使用 `@Value` 注入依赖，测试时需 mock
 

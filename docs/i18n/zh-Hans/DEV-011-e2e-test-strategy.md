@@ -146,4 +146,4 @@ npx playwright test e2e/mock/ --update-snapshots
 
 ## 4. 参考
 
-- `.kilo/rules/test-strategy.md` — 测试策略决策框架
+- 测试策略决策框架 — 维护在 workspace skill 中

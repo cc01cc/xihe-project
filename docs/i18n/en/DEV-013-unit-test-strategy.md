@@ -83,7 +83,7 @@ packages/ui/src/
 - Spring Boot 4 `@WebMvcTest` / `@DataJpaTest`
 - `MockHttpServletRequest` / `MockHttpServletResponse`
 - H2 in-memory database (entity tests for non-JSONB fields)
-- Testcontainers PostgreSQL (entity tests for JSONB fields, see `.kilo/rules/jpa-testcontainers-requirement.md`)
+- Testcontainers PostgreSQL (entity tests for JSONB fields)
 
 ### 3.2 Mock Principles
 
@@ -96,7 +96,7 @@ packages/ui/src/
 
 ### 3.3 Concrete Class Test Notes
 
-- `@JdbcTypeCode(SqlTypes.JSON)` must be used for JSONB columns (see `.kilo/rules/jpa-jsonb-mapping.md`)
+- `@JdbcTypeCode(SqlTypes.JSON)` must be used for JSONB columns
 - H2 tests don't expose JSONB issues; JSONB entities must use Testcontainers PG
 - ConfigController uses `@Value` injection, tests need mocking
 

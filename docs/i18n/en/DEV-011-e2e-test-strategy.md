@@ -146,4 +146,4 @@ npx playwright test e2e/mock/ --update-snapshots
 
 ## 4. References
 
-- `.kilo/rules/test-strategy.md` — Test strategy decision framework
+- Test strategy decision framework is maintained as a workspace skill.

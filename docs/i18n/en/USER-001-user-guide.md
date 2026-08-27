@@ -135,7 +135,7 @@ Providers can be managed in the model configuration on the settings page. Select
 | `XIHE_CP_PORT` | `12631` | CP port (host mapping, Docker internal is 8080) |
 | `XIHE_AGENT_PORT` | `12632` | Agent port (host mapping, Docker internal is 8000) |
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime port (host mapping, Docker internal is 8001) |
-| `XIHE_UI_PORT` | `5173` | UI port |
+| `XIHE_UI_PORT` | `12630` | UI port (overridable by environment variable) |
 | `XIHE_CP_DATASOURCE_URL` | `jdbc:postgresql://localhost:12634/xihe` | Database connection (host mapping, Docker internal is 5432) |
 | `XIHE_CP_JWT_SECRET` | — | JWT signing key |
 | `XIHE_LOG_LEVEL` | `info` | Log level |

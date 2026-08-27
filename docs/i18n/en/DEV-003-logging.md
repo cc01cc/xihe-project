@@ -177,7 +177,7 @@ CP's `AuditLogger` records all MCP tool calls and policy decisions:
 
 ## 6. Error Logging Standards
 
-See `.kilo/rules/catch-logging.md`.
+Exception logging conventions are maintained in the workspace skills.
 
 Core principles:
 - Every catch must have logging
