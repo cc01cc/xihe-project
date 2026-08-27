@@ -15,6 +15,14 @@ const processEnv =
 const viteLogLevels = ["info", "warn", "error", "silent"] as const;
 type ViteLogLevel = (typeof viteLogLevels)[number];
 
+function rewriteApiPath(path: string): string {
+    // Session and file controllers retain the /api/v1 prefix in CP.
+    if (/^\/api\/v1\/(sessions|files)(\/|$)/.test(path)) {
+        return path;
+    }
+    return path.replace(/^\/api\/v1/, "");
+}
+
 function pickEnv(env: Record<string, string>, name: string): string | undefined {
     const processValue = processEnv[name];
     if (processValue && processValue.length > 0) {
@@ -71,11 +79,9 @@ export default defineConfig(({ mode }) => {
             exclude: ['e2e/**', 'node_modules/**'],
             testTimeout: 5000,
             pool: 'forks',
-            poolOptions: {
-                forks: {
-                    singleFork: true,
-                },
-            },
+            fileParallelism: false,
+            maxWorkers: 1,
+            minWorkers: 1,
         },
         resolve: {
             alias: {
@@ -90,7 +96,7 @@ export default defineConfig(({ mode }) => {
                     target: cpBaseUrl,
                     changeOrigin: true,
                     ws: true,
-                    rewrite: (_path) => _path.replace(/^\/api\/v1/, ""),
+                    rewrite: rewriteApiPath,
                     configure: (proxy) => {
                         proxy.on("proxyReq", (proxyReq, req) => {
                             if (req.url?.includes("/v1/events")) {
