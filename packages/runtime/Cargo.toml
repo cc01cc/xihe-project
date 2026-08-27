@@ -16,7 +16,7 @@ name = "xihe-mcp-bridge"
 path = "src/mcp_bridge.rs"
 
 [dependencies]
-rmcp = { version = "1.7.0", features = ["server", "transport-streamable-http-server", "schemars"] }
+rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server", "schemars", "request-state"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = "0.7.18"
 axum = "0.8.9"
@@ -132,3 +132,7 @@ path = "tests/cp_stub_integration_test.rs"
 [[test]]
 name = "cp_real_integration_test"
 path = "tests/cp_real_integration_test.rs"
+
+[[test]]
+name = "rmcp_protocol_test"
+path = "tests/rmcp_protocol_test.rs"

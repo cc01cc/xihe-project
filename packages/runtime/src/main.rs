@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -14,7 +15,8 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService,
 };
-use rmcp::{schemars, tool, tool_router};
+use rmcp::model::ProtocolVersion;
+use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 use tower::Service;
 use tower_http::cors::{Any, CorsLayer};
@@ -200,7 +202,7 @@ pub struct XiheRuntime {
     container_addr: Option<String>,
 }
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl XiheRuntime {
     pub fn new(ws_id: &str, workspace_path: &str, profile: SecurityProfile, container_addr: Option<String>) -> Self {
         Self {
@@ -548,6 +550,13 @@ impl XiheRuntime {
         sandbox::get_background_process(&pid)
             .map(Json)
             .ok_or_else(|| format!("Background process not found: {pid}"))
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for XiheRuntime {
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
     }
 }
 
