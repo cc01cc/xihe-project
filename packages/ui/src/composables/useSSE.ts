@@ -183,7 +183,8 @@ export function useSSE(sessionId: string) {
     currentCallbacks = callbacks
 
     const token = localStorage.getItem('xihe-token')
-    const url = `/api/v1/events?session_id=${encodeURIComponent(sessionId)}`
+    const query = token ? `&token=${encodeURIComponent(token)}` : ''
+    const url = `/api/v1/events?session_id=${encodeURIComponent(sessionId)}${query}`
 
     chatTransport
       .sendMessages(sessionId, {

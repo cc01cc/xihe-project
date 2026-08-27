@@ -75,7 +75,7 @@ describe('BUG-2: /telemetry/logs 404', () => {
   })
 })
 
-// Bug 3: /events SSE connection — token 改由 Authorization header 传递
+// Bug 3: /events SSE connection — token is sent via header and query fallback
 describe('BUG-3: /events SSE connection', () => {
   it('SSE connection should send token via Authorization header', async () => {
     localStorage.setItem('xihe-token', 'test-jwt-token')
@@ -86,7 +86,7 @@ describe('BUG-3: /events SSE connection', () => {
     expect(vi.mocked(chatTransport.sendMessages)).toHaveBeenCalledWith(
       'test-session',
       expect.objectContaining({
-        url: '/api/v1/events?session_id=test-session',
+        url: '/api/v1/events?session_id=test-session&token=test-jwt-token',
         headers: { Authorization: 'Bearer test-jwt-token' },
       }),
     )

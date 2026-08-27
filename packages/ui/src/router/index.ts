@@ -85,17 +85,17 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach((to) => {
   const token = localStorage.getItem('xihe-token')
   const requiresAuth = to.matched.some(r => r.meta?.requiresAuth)
 
   if (requiresAuth && !token) {
-    next({ name: 'login', query: { redirect: to.fullPath } })
+    return { name: 'login', query: { redirect: to.fullPath } }
   } else if ((to.name === 'login' || to.name === 'register') && token) {
-    next({ name: 'chat' })
-  } else {
-    next()
+    return { name: 'chat' }
   }
+
+  return true
 })
 
 export default router

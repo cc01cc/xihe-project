@@ -11,11 +11,11 @@ vi.mock('dexie', () => {
     clear: vi.fn().mockResolvedValue(undefined),
     limit: vi.fn().mockReturnThis(),
   }
-  const Dexie = vi.fn(() => ({
-    version: vi.fn().mockReturnThis(),
-    stores: vi.fn().mockReturnThis(),
-    logs: mockTable,
-  }))
+  class Dexie {
+    logs = mockTable
+    version = vi.fn().mockReturnThis()
+    stores = vi.fn().mockReturnThis()
+  }
   return { default: Dexie }
 })
 

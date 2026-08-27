@@ -5,24 +5,7 @@ import type { Message, MessagePart } from '../types'
 
 export const XIHE_STORAGE_KEYS = ['xihe-messages', 'xihe-token', 'xihe-user', 'xihe-sessions', 'xihe-current-session'] as const
 
-/** Detect and clear old-format localStorage data on first access */
-let initialized = false
-
-function autoClearOldData() {
-  if (initialized) return
-  initialized = true
-  for (const key of XIHE_STORAGE_KEYS) {
-    if (localStorage.getItem(key)) {
-      for (const k of XIHE_STORAGE_KEYS) {
-        localStorage.removeItem(k)
-      }
-      break
-    }
-  }
-}
-
 export const useChatStore = defineStore('chat', () => {
-  autoClearOldData()
   const messages = useLocalStorage<Record<string, Message[]>>('xihe-messages', {})
   const streamingMessageId = ref<Record<string, string | null>>({})
 

@@ -14,9 +14,15 @@ beforeEach(() => {
     configurable: true,
     writable: true,
   })
-  ;(globalThis as any).SpeechSynthesisUtterance = vi.fn((text: string) => ({
-    onstart: null, onend: null, onerror: null, lang: '', rate: 1, text,
-  }))
+  class MockSpeechSynthesisUtterance {
+    onstart = null
+    onend = null
+    onerror = null
+    lang = ''
+    rate = 1
+    constructor(public text: string) {}
+  }
+  ;(globalThis as any).SpeechSynthesisUtterance = MockSpeechSynthesisUtterance
 })
 
 describe('VoiceOutput', () => {

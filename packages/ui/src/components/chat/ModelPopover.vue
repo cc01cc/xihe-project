@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -30,6 +30,14 @@ const sessionStore = useSessionStore()
 const open = ref(false)
 const searchTerm = ref('')
 const collapsedProviders = ref<Set<string>>(new Set())
+
+watch(open, (isOpen) => {
+  if (isOpen) {
+    void nextTick(() => {
+      searchTerm.value = ''
+    })
+  }
+})
 
 watch(
   () => configStore.modelError,
@@ -243,6 +251,7 @@ onMounted(() => {
                 data-testid="model-popover-search"
                 class="w-full px-2 py-1 text-xs rounded border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 :placeholder="t('chat.searchModels')"
+                @focus="searchTerm = ''"
               />
             </div>
 
