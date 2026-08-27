@@ -104,15 +104,15 @@ impl ConfigClient {
     }
 
     pub fn get(&self, domain: &str, key: &str) -> Option<&str> {
-        if let Some(admin) = self.admin_cache.get(domain) {
-            if let Some(val) = admin.get(key) {
-                return Some(val.as_str());
-            }
+        if let Some(admin) = self.admin_cache.get(domain)
+            && let Some(val) = admin.get(key)
+        {
+            return Some(val.as_str());
         }
-        if let Some(system) = self.system_cache.get(domain) {
-            if let Some(val) = system.get(key) {
-                return Some(val.as_str());
-            }
+        if let Some(system) = self.system_cache.get(domain)
+            && let Some(val) = system.get(key)
+        {
+            return Some(val.as_str());
         }
         None
     }

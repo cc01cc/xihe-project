@@ -153,10 +153,10 @@ pub fn strip_workspace<'a>(full_path: &'a Path, workspace: &str) -> &'a Path {
     // Windows canonicalize() uses the extended \\?\ prefix. Compare against
     // a canonical workspace as well so callers still receive relative paths.
     #[cfg(windows)]
-    if let Ok(canonical_workspace) = Path::new(workspace).canonicalize() {
-        if let Ok(relative) = full_path.strip_prefix(canonical_workspace) {
-            return relative;
-        }
+    if let Ok(canonical_workspace) = Path::new(workspace).canonicalize()
+        && let Ok(relative) = full_path.strip_prefix(canonical_workspace)
+    {
+        return relative;
     }
 
     full_path

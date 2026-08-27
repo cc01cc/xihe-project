@@ -20,7 +20,6 @@ use tower::Service;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::interval;
@@ -76,11 +75,8 @@ tokio::task_local! {
 
 static MCP_SERVICE: OnceLock<StreamableHttpService<XiheRuntime, LocalSessionManager>> = OnceLock::new();
 
-fn resolve_security_profile() -> SecurityProfile {
-    match std::env::var("XIHE_WORKSPACE_PROFILE")
-        .as_deref()
-        .unwrap_or("strict")
-    {
+fn resolve_security_profile_value(value: Option<&str>) -> SecurityProfile {
+    match value.unwrap_or("strict") {
         "coding" => SecurityProfile::Coding,
         "isolated" => SecurityProfile::Isolated,
         _ => SecurityProfile::Strict,
@@ -555,10 +551,6 @@ impl XiheRuntime {
     }
 }
 
-fn get_non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|value| !value.trim().is_empty())
-}
-
 fn normalize_runtime_log_level(level_name: &str) -> String {
     let normalized = level_name.trim().to_ascii_lowercase();
     match normalized.as_str() {
@@ -569,15 +561,20 @@ fn normalize_runtime_log_level(level_name: &str) -> String {
     }
 }
 
-fn resolve_runtime_log_filter() -> EnvFilter {
-    if let Some(runtime_log_filter) = get_non_empty_env("XIHE_RUNTIME_LOG_FILTER") {
+fn resolve_runtime_log_filter_with(
+    runtime_log_filter: Option<&str>,
+    runtime_level: Option<&str>,
+    global_level: Option<&str>,
+) -> EnvFilter {
+    if let Some(runtime_log_filter) = runtime_log_filter.filter(|value| !value.is_empty()) {
         return EnvFilter::try_new(runtime_log_filter)
             .unwrap_or_else(|_| EnvFilter::new("xihe_runtime=info,rmcp=info"));
     }
 
-    let level = get_non_empty_env("XIHE_LOG_LEVEL_RUNTIME")
-        .or_else(|| get_non_empty_env("XIHE_LOG_LEVEL"))
-        .map(|value| normalize_runtime_log_level(&value))
+    let level = runtime_level
+        .filter(|value| !value.is_empty())
+        .or(global_level.filter(|value| !value.is_empty()))
+        .map(normalize_runtime_log_level)
         .unwrap_or_else(|| "info".to_string());
 
     EnvFilter::new(format!("xihe_runtime={level},rmcp={level}"))
@@ -823,29 +820,23 @@ async fn main() -> anyhow::Result<()> {
     // Initialize CP ConfigClient (non-blocking on failure, uses env fallback)
     config_client::init_global_config_client().await;
 
-    // Phase 3: override managed env vars from CP config after sync
-    let cp_overrides: HashMap<&str, &str> = HashMap::from([
-        ("XIHE_LOG_DIR", "logDir"),
-        ("XIHE_LOG_LEVEL", "logLevel"),
-        ("XIHE_LOG_LEVEL_RUNTIME", "levelRuntime"),
-        ("XIHE_RUNTIME_LOG_FILTER", "runtimeFilter"),
-        ("XIHE_WORKSPACE_PROFILE", "profile"),
-    ]);
-    for (env_key, config_key) in &cp_overrides {
-        if let Some(val) = config_client::get_cp("logging", config_key).await {
-            if !val.is_empty() {
-                std::env::set_var(env_key, &val);
-            }
-        }
-    }
-    if let Some(val) = config_client::get_cp("workspace-config", "profile").await {
-        if !val.is_empty() {
-            std::env::set_var("XIHE_WORKSPACE_PROFILE", &val);
-        }
-    }
-
-    let log_dir = std::env::var("XIHE_LOG_DIR")
-        .unwrap_or_else(|_| "logs".to_string());
+    // Resolve CP-managed values locally; changing process-wide environment is unsafe in edition 2024.
+    let log_dir = config_client::get_cp("logging", "logDir")
+        .await
+        .filter(|value| !value.is_empty())
+        .or_else(|| std::env::var("XIHE_LOG_DIR").ok())
+        .unwrap_or_else(|| "logs".to_string());
+    let log_level = config_client::get_cp("logging", "logLevel").await;
+    let runtime_log_level = config_client::get_cp("logging", "levelRuntime").await;
+    let runtime_log_filter = config_client::get_cp("logging", "runtimeFilter").await;
+    let profile_name = match config_client::get_cp("workspace-config", "profile").await {
+        Some(value) if !value.is_empty() => Some(value),
+        _ => match config_client::get_cp("logging", "profile").await {
+            Some(value) if !value.is_empty() => Some(value),
+            _ => std::env::var("XIHE_WORKSPACE_PROFILE").ok(),
+        },
+    };
+    let security_profile = resolve_security_profile_value(profile_name.as_deref());
     let log_path = PathBuf::from(&log_dir).join("runtime.log");
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).ok();
@@ -854,7 +845,11 @@ async fn main() -> anyhow::Result<()> {
     let (non_blocking_file, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::registry()
-        .with(resolve_runtime_log_filter())
+        .with(resolve_runtime_log_filter_with(
+            runtime_log_filter.as_deref(),
+            runtime_log_level.as_deref(),
+            log_level.as_deref(),
+        ))
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
         .with(tracing_subscriber::fmt::layer().with_writer(non_blocking_file).with_ansi(false).json())
         .init();
@@ -897,7 +892,7 @@ async fn main() -> anyhow::Result<()> {
         move || {
             let ws_id = CURRENT_WS_ID.try_with(|id| id.clone())
                 .unwrap_or_else(|_| "default".to_string());
-            let profile = resolve_security_profile();
+            let profile = security_profile;
             let container_addr = match profile {
                 SecurityProfile::Strict => None,
                 _ => tokio::runtime::Handle::current()

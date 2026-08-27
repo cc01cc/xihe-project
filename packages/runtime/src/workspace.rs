@@ -318,11 +318,11 @@ impl WorkspaceManager {
                     )
                     .await;
                 // If start_exec didn't error, the command ran — check exit via inspect
-                if let Ok(info) = docker.inspect_exec(&exec.id).await {
-                    if info.exit_code == Some(0) {
-                        info!("xihe-container-runtime ready for workspace {} (attempt {})", state.ws_id, i + 1);
-                        return Ok(());
-                    }
+                if let Ok(info) = docker.inspect_exec(&exec.id).await
+                    && info.exit_code == Some(0)
+                {
+                    info!("xihe-container-runtime ready for workspace {} (attempt {})", state.ws_id, i + 1);
+                    return Ok(());
                 }
             }
         }
@@ -452,20 +452,20 @@ impl WorkspaceManager {
         for container in containers {
             if let Some(names) = &container.names {
                 for name in names {
-                    if name.starts_with("/xihe-workspace-ws_") {
-                        if let Some(id) = &container.id {
-                            let _ = docker
-                                .remove_container(
-                                    id,
-                                    Some(RemoveContainerOptions {
-                                        force: true,
-                                        v: true,
-                                        link: false,
-                                    }),
-                                )
-                                .await;
-                            removed += 1;
-                        }
+                    if name.starts_with("/xihe-workspace-ws_")
+                        && let Some(id) = &container.id
+                    {
+                        let _ = docker
+                            .remove_container(
+                                id,
+                                Some(RemoveContainerOptions {
+                                    force: true,
+                                    v: true,
+                                    link: false,
+                                }),
+                            )
+                            .await;
+                        removed += 1;
                     }
                 }
             }
@@ -479,14 +479,14 @@ impl WorkspaceManager {
 async fn resolve_container_ip(docker: &Docker, container_name: &str) -> Result<String> {
     match docker.inspect_container(container_name, None).await {
         Ok(inspect) => {
-            if let Some(settings) = &inspect.network_settings {
-                if let Some(networks) = &settings.networks {
-                    for ep in networks.values() {
-                        if let Some(ip) = &ep.ip_address {
-                            if !ip.is_empty() {
-                                return Ok(ip.clone());
-                            }
-                        }
+            if let Some(settings) = &inspect.network_settings
+                && let Some(networks) = &settings.networks
+            {
+                for ep in networks.values() {
+                    if let Some(ip) = &ep.ip_address
+                        && !ip.is_empty()
+                    {
+                        return Ok(ip.clone());
                     }
                 }
             }
