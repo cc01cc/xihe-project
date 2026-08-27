@@ -10,6 +10,7 @@ const agentPort = process.env.XIHE_AGENT_PORT ?? '12632'
 const runtimePort = process.env.XIHE_RUNTIME_PORT ?? '12633'
 const projectName = `xihe-e2e-${Date.now()}-${process.pid}`
 const noBuild = process.argv.includes('--no-build')
+const noCache = process.argv.includes('--no-cache')
 const keep = process.argv.includes('--keep')
 
 const command = process.platform === 'win32' ? 'docker.exe' : 'docker'
@@ -117,11 +118,14 @@ async function main() {
   let testCode = 1
   try {
     console.log(`[e2e] starting Docker project ${projectName}`)
+    if (noCache) {
+      await runChecked(command, [...composeArgs, 'build', '--no-cache', ...composeServices])
+    }
     await runChecked(command, [
       ...composeArgs,
       'up',
       '-d',
-      noBuild ? '--no-build' : '--build',
+      noBuild || noCache ? '--no-build' : '--build',
       ...composeServices,
     ])
     await waitForPostgres(composeArgs)
