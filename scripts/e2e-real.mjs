@@ -12,6 +12,10 @@ const projectName = `xihe-e2e-${Date.now()}-${process.pid}`
 const noBuild = process.argv.includes('--no-build')
 const noCache = process.argv.includes('--no-cache')
 const keep = process.argv.includes('--keep')
+const playwrightArgs = process.argv.slice(2).filter(
+  (arg) => !['--no-build', '--no-cache', '--keep'].includes(arg),
+)
+const playwrightTestArgs = playwrightArgs.length > 0 ? playwrightArgs : ['e2e/real']
 
 const command = process.platform === 'win32' ? 'docker.exe' : 'docker'
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
@@ -142,7 +146,14 @@ async function main() {
     uiProcess.once('error', (error) => console.error(`[e2e] UI process error: ${error.message}`))
     await waitForHttp('UI', `http://localhost:${uiPort}`)
 
-    const result = await run(pnpmCommand, ['exec', 'playwright', 'test', '--config', 'e2e/playwright.config.ts', 'e2e/real'], {
+    const result = await run(pnpmCommand, [
+      'exec',
+      'playwright',
+      'test',
+      '--config',
+      'e2e/playwright.config.ts',
+      ...playwrightTestArgs,
+    ], {
       cwd: uiDir,
       env: {
         XIHE_UI_PORT: uiPort,

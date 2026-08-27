@@ -117,24 +117,37 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     expect(saveResp.status()).toBeLessThan(500)
   })
 
-  test('mcp session-id sign and verify via CP', async ({ page, request }) => {
+  test('mcp initialize negotiates 2026 protocol via CP', async ({ page, request }) => {
     const token = await registerAndGetToken('mcp-session')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
-    // MCP initialize request via CP should return a signed Mcp-Session-Id
+    // MCP 2026-07-28 discover lifecycle does not require a session-id.
     const initResp = await request.post(`${CP_URL}/mcp`, {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        'MCP-Protocol-Version': '2026-07-28',
         'X-Workspace-Id': 'default',
       },
-      data: { jsonrpc: '2.0', method: 'initialize', id: 1 },
+      data: {
+        jsonrpc: '2.0',
+        method: 'initialize',
+        id: 1,
+        params: {
+          protocolVersion: '2026-07-28',
+          capabilities: {},
+          clientInfo: { name: 'xihe-e2e', version: '0.1.0' },
+        },
+      },
     })
     expect(initResp.ok()).toBe(true)
 
-    const sessionId = initResp.headers()['mcp-session-id']
-    expect(sessionId).toBeTruthy()
-    // HMAC-signed session-id must contain a '.' separator
-    expect(sessionId).toContain('.')
+    const responseText = await initResp.text()
+    const jsonText = responseText.startsWith('data:')
+      ? responseText.split('\n').find(line => line.startsWith('data:'))!.slice(5).trim()
+      : responseText
+    const body = JSON.parse(jsonText)
+    expect(body.result.protocolVersion).toBe('2026-07-28')
   })
 })
