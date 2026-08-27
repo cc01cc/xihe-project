@@ -45,7 +45,7 @@ services:
       XIHE_CP_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/xihe"
       XIHE_AGENT_URL: "http://agent:8000/chat"
       XIHE_AGENT_BASE_URL: "http://agent:8000"
-      XIHE_RUNTIME_URL: "http://runtime:8001/mcp"
+      XIHE_RUNTIME_URL: "http://runtime:8001"
       SPRING_PROFILES_ACTIVE: "dev"
     volumes:
       - ./logs/cp:/logs

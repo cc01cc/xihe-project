@@ -31,19 +31,22 @@ public class WorkspaceService {
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
     private final String workspaceImage;
+    private final String serviceToken;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceUserRepository workspaceUserRepository,
                             RestTemplate restTemplate,
                             @Value("${cp.workspace-base-path:/data/xihe/workspaces}") String workspaceBasePath,
                             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
-                            @Value("${cp.workspace-image:xihe/workspace:latest}") String workspaceImage) {
+                            @Value("${cp.workspace-image:xihe/workspace:latest}") String workspaceImage,
+                            @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.restTemplate = restTemplate;
         this.workspaceBasePath = workspaceBasePath;
         this.runtimeUrl = runtimeUrl;
         this.workspaceImage = workspaceImage;
+        this.serviceToken = serviceToken;
     }
 
     @Transactional
@@ -106,8 +109,9 @@ public class WorkspaceService {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(serviceToken);
             Map<String, String> body = new java.util.LinkedHashMap<>();
-            body.put("workspace_id", workspaceId);
+            body.put("ws_id", workspaceId);
             body.put("workspace_path", workspacePath);
             body.put("image", workspaceImage);
             HttpEntity<Map<String, String>> request = new HttpEntity<>(body, headers);
@@ -122,8 +126,9 @@ public class WorkspaceService {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(serviceToken);
             Map<String, String> body = Map.of(
-                    "workspace_id", workspaceId,
+                    "ws_id", workspaceId,
                     "workspace_path", workspacePath
             );
             HttpEntity<Map<String, String>> request = new HttpEntity<>(body, headers);

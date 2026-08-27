@@ -43,7 +43,7 @@ public class McpProxyController {
     private final SseEmitterManager sse;
     private final ConfigJpaRepository configRepo;
 
-    @Value("${cp.mcp.runtime-base-url:http://localhost:12633}")
+    @Value("${cp.mcp.runtime-url:http://localhost:12633}")
     private String runtimeBaseUrl;
 
     private final Map<String, Map<String, String>> toolServerCache = new ConcurrentHashMap<>();
