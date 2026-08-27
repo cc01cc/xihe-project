@@ -57,6 +57,8 @@ tmp/
 playwright-report/
 test-results/
 screenshots/
+# Generated visual snapshots without repository consumers
+**/*-snapshots/*.png
 
 # Runtime data (generated, not committed)
 packages/control-plane/data/

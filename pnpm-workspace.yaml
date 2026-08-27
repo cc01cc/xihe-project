@@ -6,14 +6,7 @@ onlyBuiltDependencies:
   - vue-demi
   - msw
 
-minimumReleaseAge: 10080
-# 高频发布依赖豁免（2026-08-07 恢复冷却期时评估：现有锁定版本均已过冷却期，保留豁免便于未来升级）
+# 两天冷却期（2026-08-27 起；高频依赖不再永久豁免）
 minimumReleaseAgeExclude:
-  - "@vue/*"
-  - vue
-  - tailwindcss
-  - "@tailwindcss/*"
-  - reka-ui
-  - dompurify
-  - vitest
-  - "@lucide/*"
+  []
+minimumReleaseAge: 2880
