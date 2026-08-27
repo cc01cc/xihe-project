@@ -8,6 +8,7 @@ import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 import { api, request } from '../../composables/api'
 import { logger } from '../../lib/logger'
+import { getProviderInfo } from '../../types/provider'
 
 const { t } = useI18n()
 const configStore = useConfigStore()
@@ -167,7 +168,8 @@ function generateSummary(domain: string): string {
   const entries = configStore.mergedConfig[domain] || {}
   if (Object.keys(entries).length === 0) return ''
   if (domain === 'llm-provider') {
-    const provider = entries['defaultProvider'] || entries['deepseekApiKey'] ? 'DeepSeek' : ''
+    const providerId = entries['defaultProvider']
+    const provider = providerId ? getProviderInfo(providerId)?.name ?? providerId : ''
     return provider ? `${provider} (已配置)` : ''
   }
   if (domain === 'mcp') {
@@ -300,6 +302,7 @@ async function handleReset(domain: string, key: string) {
                 </div>
                 <textarea
                   v-model="mcpJson"
+                  data-testid="mcp-config-textarea"
                   class="w-full h-48 px-4 py-3 rounded-lg border bg-background font-mono text-sm resize-y"
                   :disabled="mcpReadonly"
                 />

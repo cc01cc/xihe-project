@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
 const UI_PORT = process.env.XIHE_UI_PORT || '12630'
+const externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === '1'
 
 export default defineConfig({
   testDir: '.',
@@ -22,10 +23,12 @@ export default defineConfig({
       maxDiffPixelRatio: 0.01,
     },
   },
-  webServer: {
-    command: 'pnpm dev',
-    port: Number(UI_PORT),
-    timeout: 120000,
-    reuseExistingServer: true,
-  },
+  webServer: externalServer
+    ? undefined
+    : {
+        command: 'pnpm dev',
+        port: Number(UI_PORT),
+        timeout: 120000,
+        reuseExistingServer: true,
+      },
 })

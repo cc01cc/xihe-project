@@ -132,7 +132,7 @@ dir = "packages/runtime"
 alias = "test:runtime:lib"
 
 [tasks."test:e2e"]
-run = "bash scripts/mise/e2e-test.sh"
+run = "node scripts/e2e-real.mjs"
 description = "Run end-to-end stack tests (auto-start/stop Docker Compose)"
 alias = "test:e2e"
 

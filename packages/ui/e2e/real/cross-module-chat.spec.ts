@@ -99,10 +99,9 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     // Verify it appears in the UI
     await page.goto('/settings/config')
     await expect(page.locator('text=MCP 服务').first()).toBeVisible({ timeout: 10000 })
-    const textarea = page.locator('textarea')
+    const textarea = page.locator('[data-testid="mcp-config-textarea"]')
     await expect(textarea).toBeVisible()
-    const textareaContent = await textarea.inputValue()
-    expect(textareaContent).toContain('test-echo')
+    await expect(textarea).toHaveValue(/test-echo/, { timeout: 10000 })
   })
 
   test('mcp config with invalid json shows error toast', async ({ page, request }) => {

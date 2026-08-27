@@ -66,7 +66,7 @@ echo ""
 
 # 6. Agent 日志检查
 echo "--- 6. Agent 日志（最近 5 行） ---"
-docker logs xihe-agent 2>&1 | tail -5
+docker compose logs --no-color --tail=5 agent
 echo ""
 
 echo "=== 验证完成 ==="

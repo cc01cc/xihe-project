@@ -1,7 +1,6 @@
 services:
   postgres:
     image: pgvector/pgvector:pg17
-    container_name: xihe-postgres
     command:
       - "postgres"
       - "-c"
@@ -35,7 +34,6 @@ services:
     build:
       context: packages/control-plane
       dockerfile: Dockerfile
-    container_name: xihe-cp
     ports:
       - "${XIHE_CP_PORT:-12631}:8080"
     env_file:
@@ -62,7 +60,6 @@ services:
     build:
       context: packages/agent
       dockerfile: Dockerfile
-    container_name: xihe-agent
     ports:
       - "${XIHE_AGENT_PORT:-12632}:8000"
     env_file:
@@ -86,7 +83,6 @@ services:
     build:
       context: packages/runtime
       dockerfile: Dockerfile
-    container_name: xihe-runtime
     ports:
       - "${XIHE_RUNTIME_PORT:-12633}:8001"
     env_file:

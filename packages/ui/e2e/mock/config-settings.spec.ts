@@ -85,7 +85,7 @@ test.describe('Config Settings', () => {
     await page.waitForTimeout(500)
     await expect(page.locator('text=DeepSeek API Key').first()).toBeVisible()
     const fields = page.locator(String.raw`.flex.items-center.gap-2 > .text-muted-foreground.w-1\/3`)
-    await expect(fields).toHaveCount(7)
+    await expect(fields).toHaveCount(9)
     await expect(page).toHaveScreenshot('config-domain-expanded.png')
   })
 

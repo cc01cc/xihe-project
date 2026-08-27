@@ -204,20 +204,7 @@ tasks:
   e2e:test:
     desc: Run end-to-end stack tests (auto-start/stop Docker Compose)
     cmds:
-      - bash -c '
-          docker compose up -d --build;
-          echo "Waiting for stack...";
-          CP_PORT="${XIHE_CP_PORT:-12631}";
-          for i in $(seq 1 30); do
-            curl -s "http://localhost:${CP_PORT}/actuator/health" >/dev/null 2>&1 &&
-            echo "Ready" && break;
-            sleep 2;
-          done;
-          cd packages/ui && npx playwright test --config e2e/playwright.config.ts;
-          rc=$?;
-          docker compose down;
-          exit $rc
-        '
+      - node scripts/e2e-real.mjs
 
   validate:full:
     desc: Run full validation + integration + E2E (requires Docker)

@@ -27,7 +27,7 @@ curl -s -X POST 'http://localhost:12631/exec' \
   -d '{"session_id":"test","content":"hi","stream":true}'
 
 # 3. 检查 Agent 日志
-docker logs xihe-agent 2>&1 | grep -i "error\|model\|deepseek" | tail -10
+docker compose logs --no-color agent 2>&1 | grep -i "error\|model\|deepseek" | tail -10
 ```
 
 ## 常见陷阱
