@@ -6,6 +6,8 @@ public class AuthResponse {
     private String refreshToken;
     private long expiresIn;
     private String tokenType;
+    private UserResponse user;
+    private String workspaceId;
 
     public AuthResponse() {}
 
@@ -14,6 +16,13 @@ public class AuthResponse {
         this.refreshToken = refreshToken;
         this.expiresIn = expiresIn;
         this.tokenType = "Bearer";
+    }
+
+    public AuthResponse(String accessToken, String refreshToken, long expiresIn,
+                        UserResponse user, String workspaceId) {
+        this(accessToken, refreshToken, expiresIn);
+        this.user = user;
+        this.workspaceId = workspaceId;
     }
 
     public String getAccessToken() { return accessToken; }
@@ -27,4 +36,10 @@ public class AuthResponse {
 
     public String getTokenType() { return tokenType; }
     public void setTokenType(String tokenType) { this.tokenType = tokenType; }
+
+    public UserResponse getUser() { return user; }
+    public void setUser(UserResponse user) { this.user = user; }
+
+    public String getWorkspaceId() { return workspaceId; }
+    public void setWorkspaceId(String workspaceId) { this.workspaceId = workspaceId; }
 }

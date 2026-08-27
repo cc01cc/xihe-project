@@ -45,6 +45,8 @@ const domainSchemas: Record<string, DomainField[]> = {
     { key: 'deepseekApiBase', label: t('settings.fieldDeepseekApiBase'), type: 'text' },
     { key: 'openaiApiKey', label: t('settings.fieldOpenaiApiKey'), type: 'password' },
     { key: 'xiaomiApiKey', label: t('settings.fieldXiaomiApiKey'), type: 'password' },
+    { key: 'xiaomiModel', label: t('settings.fieldXiaomiModel'), type: 'text' },
+    { key: 'xiaomiApiBase', label: t('settings.fieldXiaomiApiBase'), type: 'text' },
     { key: 'imageProvider', label: t('settings.fieldImageProvider'), type: 'select', options: [
       { label: 'DeepSeek', value: 'deepseek' },
       { label: 'OpenAI', value: 'openai' },

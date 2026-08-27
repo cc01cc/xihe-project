@@ -3,6 +3,7 @@
 
 import pytest
 
+from xihe_agent.config_client import ConfigClient
 from xihe_agent.interfaces.llm import LLMProvider, LLMRequest
 from xihe_agent.llm.base import LLMConfig, MockChatModel, create_llm
 
@@ -96,6 +97,24 @@ class TestLLMConfig:
         assert cfg.model == "mimo-v2-omni"
         assert cfg.api_base == "https://api.xiaomimimo.com/v1"
 
+    def test_from_config_client_uses_xiaomi_specific_values(self):
+        client = ConfigClient("http://test-cp", "test-token")
+        client._admin_cache["llm-provider"] = {
+            "defaultProvider": "xiaomi",
+            "xiaomiApiKey": "sk-mimo-test",
+            "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
+            "xiaomiModel": "mimo-v2.5",
+        }
+        client._admin_cache["user-preference"] = {
+            "defaultModel": "deepseek-chat",
+        }
+        cfg = LLMConfig.from_config_client(client)
+
+        assert cfg.provider == "xiaomi"
+        assert cfg.api_key == "sk-mimo-test"
+        assert cfg.api_base == "https://api.xiaomimimo.com/v1"
+        assert cfg.model == "mimo-v2.5"
+
 
 class TestCreateLLM:
     """Factory function create_llm()."""
@@ -130,6 +149,16 @@ class TestCreateLLM:
         from langchain_core.language_models.chat_models import BaseChatModel
 
         assert isinstance(model, BaseChatModel)
+
+    def test_xiaomi_uses_openai_litellm_adapter(self):
+        model = create_llm(LLMConfig(
+            provider="xiaomi",
+            api_key="sk-test-key",
+            api_base="https://api.xiaomimimo.com/v1",
+            model="mimo-v2.5",
+        ))
+
+        assert getattr(model, "model") == "openai/mimo-v2.5"
 
 
 class TestMockChatModel:

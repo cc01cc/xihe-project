@@ -131,9 +131,13 @@ class LLMConfig(BaseModel):
         api_key = cc.get("llm-provider", env_key_map.get(provider, "")) or ""
 
         defaults = PROVIDER_DEFAULTS.get(provider, {})
-        api_base = cc.get("llm-provider", "baseUrl") or defaults.get("api_base", "")
-        if not model:
-            model = cc.get("user-preference", "defaultModel") or defaults.get("model", "")
+        api_base = (
+            cc.get("llm-provider", f"{provider}ApiBase")
+            or cc.get("llm-provider", "baseUrl")
+            or defaults.get("api_base", "")
+        )
+        provider_model = cc.get("llm-provider", f"{provider}Model")
+        model = provider_model or model or defaults.get("model", "")
 
         timeout_str = cc.get("llm-provider", "timeout") or "60"
         max_tokens_str = cc.get("llm-provider", "maxTokens") or "4096"
@@ -175,7 +179,10 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
         self._config = cfg
         model = cfg.model
         if "/" not in model and cfg.provider and cfg.provider != "mock":
-            model = f"{cfg.provider}/{model}"
+            # MiMo exposes an OpenAI-compatible endpoint but is not a LiteLLM
+            # provider name, so route it through the OpenAI adapter.
+            litellm_provider = "openai" if cfg.provider == "xiaomi" else cfg.provider
+            model = f"{litellm_provider}/{model}"
         llm_kwargs: dict[str, Any] = {
             "model": model,
             "temperature": cfg.temperature,

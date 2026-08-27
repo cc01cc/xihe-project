@@ -5,6 +5,14 @@ from typing import Any
 import httpx
 from loguru import logger
 
+DEFAULT_PROVIDER_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "xiaomi": "https://api.xiaomimimo.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+}
+
 
 class ConfigClient:
     """Fetches and caches config from CP ConfigService (admin + system layers).
@@ -81,11 +89,16 @@ class ConfigClient:
                     or system_llm.get(f"{provider}ApiBase")
                     or admin_llm.get("baseUrl")
                     or system_llm.get("baseUrl", "")
+                    or DEFAULT_PROVIDER_BASE_URLS.get(provider, "")
                 )
                 merged[provider] = {
                     "provider": provider,
                     "apiKey": api_key,
                     "baseUrl": base_url,
+                    "model": (
+                        admin_llm.get(f"{provider}Model")
+                        or system_llm.get(f"{provider}Model", "")
+                    ),
                 }
         self._provider_cache = merged
 

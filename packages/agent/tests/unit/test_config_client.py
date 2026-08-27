@@ -118,6 +118,20 @@ class TestConfigClientProviders:
         assert provider["apiKey"] == "sk-test"
         assert client.get_provider("nonexistent") is None
 
+    def test_xiaomi_provider_uses_its_default_base_url(self, client):
+        client._admin_cache["llm-provider"] = {
+            "xiaomiApiKey": "sk-mimo-test",
+            "xiaomiModel": "mimo-v2.5",
+        }
+        client._rebuild_provider_cache()
+
+        assert client.get_provider("xiaomi") == {
+            "provider": "xiaomi",
+            "apiKey": "sk-mimo-test",
+            "baseUrl": "https://api.xiaomimimo.com/v1",
+            "model": "mimo-v2.5",
+        }
+
 
 def _mock_response(status_code=200, json_data=None):
     """Create a sync Mock that mimics httpx.Response for testing."""
