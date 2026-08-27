@@ -52,12 +52,14 @@ class MCPClientManager:
         cp_url: str,
         server_name: str = "cp",
         workspace_id: str | None = None,
+        api_token: str | None = None,
         retry_interval: float = DEFAULT_RETRY_INTERVAL,
         max_retries: int = DEFAULT_MAX_RETRIES,
     ):
         self.cp_url = cp_url
         self.server_name = server_name
         self.workspace_id = workspace_id
+        self.api_token = api_token
         self.retry_interval = retry_interval
         self.max_retries = max_retries
 
@@ -74,8 +76,12 @@ class MCPClientManager:
             if self._initialized:
                 return
             headers: dict[str, Any] | None = None
-            if self.workspace_id:
-                headers = {"X-Workspace-Id": self.workspace_id}
+            if self.workspace_id or self.api_token:
+                headers = {}
+                if self.workspace_id:
+                    headers["X-Workspace-Id"] = self.workspace_id
+                if self.api_token:
+                    headers["Authorization"] = f"Bearer {self.api_token}"
             self._client = MultiServerMCPClient(
                 {
                     self.server_name: StreamableHttpConnection(

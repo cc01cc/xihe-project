@@ -173,6 +173,7 @@ mcp_manager = MCPClientManager(
     cp_url=MCP_URL,
     server_name="cp",
     workspace_id=get_env("XIHE_WORKSPACE_ID"),
+    api_token=CP_API_TOKEN,
     retry_interval=MCP_RETRY_INTERVAL,
 )
 approval_tool = ApprovalAgentTool()

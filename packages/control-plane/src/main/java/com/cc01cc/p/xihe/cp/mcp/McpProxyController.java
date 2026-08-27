@@ -46,6 +46,9 @@ public class McpProxyController {
     @Value("${cp.mcp.runtime-url:http://localhost:12633}")
     private String runtimeBaseUrl;
 
+    @Value("${cp.agent-api-token:dev-token-not-secure}")
+    private String runtimeServiceToken;
+
     private final Map<String, Map<String, String>> toolServerCache = new ConcurrentHashMap<>();
     private final Map<String, Instant> cacheTimestamps = new ConcurrentHashMap<>();
     private final Map<String, String> runtimeSessionByGatewaySession = new ConcurrentHashMap<>();
@@ -220,10 +223,27 @@ public class McpProxyController {
                 path = "/workspace/" + wsId + "/mcp/stdio/" + serverId;
             }
 
+            String requestedAccept = headers.getFirst("Accept");
+            String forwardedAccept = requestedAccept != null
+                    && requestedAccept.contains(MediaType.APPLICATION_JSON_VALUE)
+                    && requestedAccept.contains(MediaType.TEXT_EVENT_STREAM_VALUE)
+                ? requestedAccept
+                : "application/json, text/event-stream";
+
             var requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(runtimeBaseUrl + path))
                 .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream");
+                .header("Accept", forwardedAccept)
+                .header("Authorization", "Bearer " + runtimeServiceToken);
+
+            for (String headerName : List.of(
+                    "MCP-Protocol-Version", "Last-Event-ID", "X-Workspace-Id", "X-Workspace-Path")) {
+                String headerValue = headers.getFirst(headerName);
+                if (headerValue != null && !headerValue.isEmpty()
+                        && !"Authorization".equalsIgnoreCase(headerName)) {
+                    requestBuilder.header(headerName, headerValue);
+                }
+            }
 
             String gatewaySessionId = headers.getFirst("mcp-session-id");
             if (gatewaySessionId != null && !gatewaySessionId.isEmpty()) {
@@ -255,7 +275,13 @@ public class McpProxyController {
                 runtimeSessionByGatewaySession.put(signedGatewaySessionId, runtimeSessionId);
                 responseHeaders.set("mcp-session-id", signedGatewaySessionId);
             }
-            responseHeaders.setContentType(MediaType.APPLICATION_JSON);
+            String contentType = response.headers().firstValue("content-type")
+                .orElse(MediaType.APPLICATION_JSON_VALUE);
+            responseHeaders.set("Content-Type", contentType);
+            response.headers().firstValue("MCP-Protocol-Version")
+                .ifPresent(value -> responseHeaders.set("MCP-Protocol-Version", value));
+            response.headers().firstValue("Last-Event-ID")
+                .ifPresent(value -> responseHeaders.set("Last-Event-ID", value));
             return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
 
         } catch (Exception e) {
