@@ -95,7 +95,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
 
         wireMock.verify(postRequestedFor(urlEqualTo("/chat"))
-                .withHeader("X-Api-Token", containing("dev-token-not-secure"))
+                .withHeader("Authorization", containing("Bearer dev-token-not-secure"))
                 .withHeader("Content-Type", containing("application/json"))
                 .withRequestBody(matchingJsonPath("$.session_id"))
                 .withRequestBody(matchingJsonPath("$.content"))

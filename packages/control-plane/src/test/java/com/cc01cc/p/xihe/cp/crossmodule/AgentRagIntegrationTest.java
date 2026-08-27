@@ -48,7 +48,7 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
         assertEquals("{\"documents\":5}", response.getBody());
 
         wireMock.verify(getRequestedFor(urlEqualTo("/rag/stats"))
-                .withHeader("X-Api-Token", containing("dev-token-not-secure")));
+                .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test
@@ -94,7 +94,7 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
         assertEquals("{\"chunks\":[\"chunk1\"]}", response.getBody());
 
         wireMock.verify(postRequestedFor(urlEqualTo("/rag/ingest"))
-                .withHeader("X-Api-Token", containing("dev-token-not-secure")));
+                .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test
@@ -114,7 +114,7 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
         wireMock.verify(postRequestedFor(urlEqualTo("/rag/search"))
-                .withHeader("X-Api-Token", containing("dev-token-not-secure")));
+                .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test
@@ -133,7 +133,7 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
         wireMock.verify(deleteRequestedFor(urlEqualTo("/rag/documents/" + docId))
-                .withHeader("X-Api-Token", containing("dev-token-not-secure")));
+                .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test

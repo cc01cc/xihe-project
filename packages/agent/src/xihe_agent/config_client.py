@@ -30,7 +30,7 @@ class ConfigClient:
 
     async def sync(self) -> None:
         async with httpx.AsyncClient() as client:
-            headers = {"X-Api-Token": self.api_token}
+            headers = {"Authorization": f"Bearer {self.api_token}"}
             admin_domains = [
                 "llm-provider", "logging", "embedding",
                 "workspace-config", "user-preference",

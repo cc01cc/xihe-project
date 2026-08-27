@@ -150,9 +150,15 @@ impl McpProcessManager {
         &self,
         ws_id: &str,
         cp_url: &str,
+        api_token: &str,
     ) -> Vec<(String, String, Vec<String>)> {
         let url = format!("{cp_url}/api/v1/workspaces/{ws_id}/mcp-config");
-        match reqwest::get(&url).await {
+        match reqwest::Client::new()
+            .get(&url)
+            .bearer_auth(api_token)
+            .send()
+            .await
+        {
             Ok(resp) if resp.status().is_success() => {
                 match resp.json::<serde_json::Value>().await {
                     Ok(config) => {

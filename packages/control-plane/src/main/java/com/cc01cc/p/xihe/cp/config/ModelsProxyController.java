@@ -44,7 +44,7 @@ public class ModelsProxyController {
             String targetUrl = agentBaseUrl + "/v1/models";
             HttpRequest request = HttpRequest.newBuilder(URI.create(targetUrl))
                 .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
-                .header("X-Api-Token", agentApiToken)
+                .header("Authorization", "Bearer " + agentApiToken)
                 .timeout(Duration.ofSeconds(30))
                 .GET()
                 .build();

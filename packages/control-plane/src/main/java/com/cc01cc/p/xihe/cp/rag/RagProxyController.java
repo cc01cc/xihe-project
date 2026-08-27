@@ -33,7 +33,7 @@ public class RagProxyController {
 
     private HttpHeaders headersWithToken() {
         HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Api-Token", agentApiToken);
+        headers.setBearerAuth(agentApiToken);
         return headers;
     }
 

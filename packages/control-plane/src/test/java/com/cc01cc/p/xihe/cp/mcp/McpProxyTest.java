@@ -70,11 +70,11 @@ class McpProxyTest {
     }
 
     @Test
-    void extractSessionId_parsesBearerToken() {
+    void extractSessionId_doesNotReuseBearerToken() {
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.set("Authorization", "Bearer test-token-123");
         String sessionId = (String) ReflectionTestUtils.invokeMethod(controller, "extractSessionId", headers);
-        assertEquals("test-token-123", sessionId);
+        assertTrue(sessionId.startsWith("default-"));
     }
 
     @Test

@@ -163,7 +163,8 @@ def _parse_recover_session_ids() -> list[str]:
 
 
 def verify_api_token(request: Request) -> None:
-    token = request.headers.get("X-Api-Token")
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.removeprefix("Bearer ") if auth_header.startswith("Bearer ") else None
     if token != CP_API_TOKEN:
         logger.warning("Agent API token mismatch")
         raise HTTPException(status_code=403, detail="Forbidden: invalid API token")

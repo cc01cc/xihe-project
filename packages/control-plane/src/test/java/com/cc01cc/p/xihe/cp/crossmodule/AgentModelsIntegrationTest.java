@@ -47,7 +47,7 @@ class AgentModelsIntegrationTest extends AbstractWireMockTest {
         assertNotNull(response.getBody());
 
         wireMock.verify(getRequestedFor(urlEqualTo("/v1/models"))
-                .withHeader("X-Api-Token", containing("dev-token-not-secure")));
+                .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test

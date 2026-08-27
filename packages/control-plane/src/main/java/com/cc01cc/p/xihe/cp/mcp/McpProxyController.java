@@ -48,6 +48,7 @@ public class McpProxyController {
 
     private final Map<String, Map<String, String>> toolServerCache = new ConcurrentHashMap<>();
     private final Map<String, Instant> cacheTimestamps = new ConcurrentHashMap<>();
+    private final Map<String, String> runtimeSessionByGatewaySession = new ConcurrentHashMap<>();
 
     public McpProxyController(
             RequestRewriter rewriter,
@@ -97,16 +98,7 @@ public class McpProxyController {
         if (token == null) {
             return ResponseEntity.status(401).body("{\"error\": \"Missing JWT\"}");
         }
-        try {
-            String signedSessionId = signSessionId(wsId, sessionId);
-            HttpHeaders responseHeaders = new HttpHeaders();
-            responseHeaders.set("Mcp-Session-Id", signedSessionId);
-            responseHeaders.setContentType(MediaType.APPLICATION_JSON);
-            return new ResponseEntity<>("{\"jsonrpc\":\"2.0\",\"result\":{\"protocolVersion\":\"2025-06-18\"},\"id\":1}", responseHeaders, HttpStatus.OK);
-        } catch (Exception e) {
-            logger.error("Initialize failed: {}", e.getMessage(), e);
-            return ResponseEntity.status(500).body("{\"error\": \"Initialization failed\"}");
-        }
+        return forwardToRuntime(wsId, null, body, headers, sessionId);
     }
 
     private ResponseEntity<String> handleToolsList(String wsId, String body, HttpHeaders headers, String sessionId) {
@@ -233,11 +225,14 @@ public class McpProxyController {
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream");
 
-            String mcpSessionId = headers.getFirst("mcp-session-id");
-            if (mcpSessionId != null && !mcpSessionId.isEmpty()) {
-                requestBuilder.header("mcp-session-id", mcpSessionId);
+            String gatewaySessionId = headers.getFirst("mcp-session-id");
+            if (gatewaySessionId != null && !gatewaySessionId.isEmpty()) {
+                String runtimeSessionId = runtimeSessionByGatewaySession
+                    .getOrDefault(gatewaySessionId, gatewaySessionId);
+                requestBuilder.header("mcp-session-id", runtimeSessionId);
             }
 
+            requestBuilder.header("X-Workspace-Id", wsId);
             String workspacePath = TenantContext.getWorkspacePath();
             if (workspacePath != null && !workspacePath.isEmpty()) {
                 requestBuilder.header("X-Workspace-Path", workspacePath);
@@ -256,7 +251,9 @@ public class McpProxyController {
             HttpHeaders responseHeaders = new HttpHeaders();
             String runtimeSessionId = response.headers().firstValue("mcp-session-id").orElse(null);
             if (runtimeSessionId != null && !runtimeSessionId.isEmpty()) {
-                responseHeaders.set("mcp-session-id", runtimeSessionId);
+                String signedGatewaySessionId = signSessionId(wsId, runtimeSessionId);
+                runtimeSessionByGatewaySession.put(signedGatewaySessionId, runtimeSessionId);
+                responseHeaders.set("mcp-session-id", signedGatewaySessionId);
             }
             responseHeaders.setContentType(MediaType.APPLICATION_JSON);
             return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
@@ -391,10 +388,6 @@ public class McpProxyController {
     }
 
     private String extractSessionId(HttpHeaders headers) {
-        String auth = headers.getFirst("Authorization");
-        if (auth != null && auth.startsWith("Bearer ")) {
-            return auth.substring(7);
-        }
         String token = headers.getFirst("mcp-session-id");
         if (token != null && !token.isEmpty()) {
             return token;

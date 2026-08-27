@@ -1003,6 +1003,8 @@ async fn mcp_config_poll_loop(
 ) {
     let cp_url = std::env::var("XIHE_CP_URL")
         .unwrap_or_else(|_| "http://localhost:12631".into());
+    let cp_api_token = std::env::var("XIHE_CP_API_TOKEN")
+        .unwrap_or_else(|_| "dev-token-not-secure".into());
     let docker = match Docker::connect_with_local_defaults() {
         Ok(d) => Some(d),
         Err(e) => {
@@ -1019,7 +1021,7 @@ async fn mcp_config_poll_loop(
                 let instances = registry.all_instances().await;
                 for instance in &instances {
                     let ws_id = &instance.ws_id;
-                    let servers = manager.poll_config(ws_id, &cp_url).await;
+                    let servers = manager.poll_config(ws_id, &cp_url, &cp_api_token).await;
                     let existing = manager.list(ws_id).await;
                     for (server_id, command, args) in &servers {
                         if existing.iter().any(|b| b.server_id == *server_id) {

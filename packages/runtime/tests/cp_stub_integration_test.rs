@@ -4,6 +4,7 @@ use mockito::Server;
 use xihe_runtime::config_client::ConfigClient;
 
 const TEST_TOKEN: &str = "test-token";
+const TEST_AUTHORIZATION: &str = "Bearer test-token";
 
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Runtime::new().expect("create tokio runtime")
@@ -80,7 +81,7 @@ fn test_sync_sends_auth_header() {
     let mut server = Server::new();
     let mock = server
         .mock("GET", admin_url("llm-provider").as_str())
-        .match_header("X-Api-Token", TEST_TOKEN)
+        .match_header("Authorization", TEST_AUTHORIZATION)
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(&empty_hashmap_body())
@@ -101,7 +102,7 @@ fn test_sync_sends_auth_header_on_all_system_requests() {
     let mut server = Server::new();
     let mock = server
         .mock("GET", system_url("llm-provider").as_str())
-        .match_header("X-Api-Token", TEST_TOKEN)
+        .match_header("Authorization", TEST_AUTHORIZATION)
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(&empty_hashmap_body())
@@ -134,6 +135,7 @@ fn test_mcp_poll_config_parses_mcp_servers() {
     }"#;
     let _mock = server
         .mock("GET", "/api/v1/workspaces/ws-1/mcp-config")
+        .match_header("Authorization", "Bearer test-token")
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(body)
@@ -143,7 +145,7 @@ fn test_mcp_poll_config_parses_mcp_servers() {
     let rt = runtime();
     rt.block_on(async {
         let mgr = xihe_runtime::mcp_process::McpProcessManager::new();
-        let servers = mgr.poll_config("ws-1", &url).await;
+        let servers = mgr.poll_config("ws-1", &url, "test-token").await;
 
         assert_eq!(servers.len(), 2);
 

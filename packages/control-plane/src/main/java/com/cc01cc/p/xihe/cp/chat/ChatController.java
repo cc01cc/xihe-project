@@ -267,7 +267,7 @@ public class ChatController {
                 HttpRequest agentRequestMessage = HttpRequest.newBuilder(URI.create(agentUrl))
                     .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                     .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
-                    .header("X-Api-Token", agentApiToken)
+                    .header("Authorization", "Bearer " + agentApiToken)
                     .timeout(Duration.ofMinutes(5))
                     .POST(HttpRequest.BodyPublishers.ofString(
                         objectMapper.writeValueAsString(agentRequest), StandardCharsets.UTF_8))

@@ -31,7 +31,10 @@ public class InternalTokenFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String token = request.getHeader("X-Api-Token");
+        String authHeader = request.getHeader("Authorization");
+        String token = authHeader != null && authHeader.startsWith("Bearer ")
+            ? authHeader.substring(7)
+            : null;
         if (token != null && token.equals(expectedToken)) {
             SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(

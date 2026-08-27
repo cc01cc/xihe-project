@@ -214,7 +214,7 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void internalConfig_wrongToken_rejected() {
         HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Api-Token", "wrong-token");
+        headers.setBearerAuth("wrong-token");
 
         ResponseEntity<Map> resp = restTemplate.exchange(
             url("/internal/config/system/infrastructure"), HttpMethod.GET,
@@ -251,7 +251,7 @@ class ConfigControllerTest extends AbstractH2Test {
 
     private HttpHeaders internalApiHeaders() {
         HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Api-Token", "dev-token-not-secure");
+        headers.setBearerAuth("dev-token-not-secure");
         return headers;
     }
 

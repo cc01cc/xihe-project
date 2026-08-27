@@ -119,8 +119,8 @@ impl ConfigClient {
 
     fn auth_headers(api_token: &str) -> reqwest::header::HeaderMap {
         let mut headers = reqwest::header::HeaderMap::new();
-        if let Ok(v) = reqwest::header::HeaderValue::from_str(api_token) {
-            headers.insert("X-Api-Token", v);
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {api_token}")) {
+            headers.insert(reqwest::header::AUTHORIZATION, v);
         }
         headers
     }
@@ -234,8 +234,8 @@ mod tests {
     fn test_auth_headers() {
         let headers = ConfigClient::auth_headers("test-token");
         assert_eq!(
-            headers.get("X-Api-Token").and_then(|v| v.to_str().ok()),
-            Some("test-token")
+            headers.get(reqwest::header::AUTHORIZATION).and_then(|v| v.to_str().ok()),
+            Some("Bearer test-token")
         );
     }
 }

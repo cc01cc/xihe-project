@@ -106,7 +106,7 @@ class TestConfigClientStubIntegration:
         requests = httpx_mock.get_requests()
         admin_reqs = [r for r in requests if re.search(r"/admin/llm-provider", str(r.url))]
         assert len(admin_reqs) >= 1
-        assert admin_reqs[0].headers.get("X-Api-Token") == "my-secret-token"
+        assert admin_reqs[0].headers.get("Authorization") == "Bearer my-secret-token"
 
     async def test_sync_populates_multiple_domains(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:

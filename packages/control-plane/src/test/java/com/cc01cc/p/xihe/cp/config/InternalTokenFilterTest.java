@@ -23,7 +23,7 @@ class InternalTokenFilterTest {
         var request = mock(HttpServletRequest.class);
         var response = mock(HttpServletResponse.class);
         var chain = mock(FilterChain.class);
-        when(request.getHeader("X-Api-Token")).thenReturn("test-token");
+        when(request.getHeader("Authorization")).thenReturn("Bearer test-token");
 
         filter.doFilterInternal(request, response, chain);
 
@@ -39,7 +39,7 @@ class InternalTokenFilterTest {
         var request = mock(HttpServletRequest.class);
         var response = mock(HttpServletResponse.class);
         var chain = mock(FilterChain.class);
-        when(request.getHeader("X-Api-Token")).thenReturn("wrong-token");
+        when(request.getHeader("Authorization")).thenReturn("Bearer wrong-token");
 
         filter.doFilterInternal(request, response, chain);
 
@@ -51,7 +51,7 @@ class InternalTokenFilterTest {
         var request = mock(HttpServletRequest.class);
         var response = mock(HttpServletResponse.class);
         var chain = mock(FilterChain.class);
-        when(request.getHeader("X-Api-Token")).thenReturn(null);
+        when(request.getHeader("Authorization")).thenReturn(null);
 
         filter.doFilterInternal(request, response, chain);
 
@@ -63,7 +63,7 @@ class InternalTokenFilterTest {
         var request = mock(HttpServletRequest.class);
         var response = mock(HttpServletResponse.class);
         var chain = mock(FilterChain.class);
-        when(request.getHeader("X-Api-Token")).thenReturn(null);
+        when(request.getHeader("Authorization")).thenReturn(null);
 
         filter.doFilterInternal(request, response, chain);
 

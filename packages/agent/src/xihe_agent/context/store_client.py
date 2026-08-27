@@ -36,7 +36,7 @@ class CPContextServiceClient:
     def _headers(self) -> dict[str, str]:
         return {
             "Accept": "application/json",
-            "X-Api-Token": self._api_token,
+            "Authorization": f"Bearer {self._api_token}",
         }
 
 
@@ -110,7 +110,7 @@ class CPEventStoreClient(EventStore):
         return {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "X-Api-Token": self._api_token,
+            "Authorization": f"Bearer {self._api_token}",
         }
 
     def _event_to_dict(self, event: Event) -> dict[str, Any]:
