@@ -8,9 +8,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import java.util.UUID;
 
 class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
+
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -89,7 +94,8 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
     void mcpReturns400WhenMissingWorkspaceId() {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(token);
+        headers.setBearerAuth(jwtTokenProvider.createAccessToken(
+                "no-workspace-user", "no-workspace@test.com", "USER", null));
         HttpEntity<String> entity = new HttpEntity<>(TOOLS_LIST_BODY, headers);
 
         ResponseEntity<String> response = restTemplate.postForEntity(

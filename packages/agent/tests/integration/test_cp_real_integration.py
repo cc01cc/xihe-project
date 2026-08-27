@@ -57,7 +57,7 @@ class TestAgentCPRealIntegration:
         assert "accessToken" in r.json()
 
     def test_chat_endpoint_requires_auth(self):
-        r = httpx.post(f"{CP_URL}/v1/chat", json={"content": "hi"}, timeout=5)
+        r = httpx.post(f"{CP_URL}/chat", json={"content": "hi"}, timeout=5)
         assert r.status_code == 401
 
     def test_chat_endpoint_accepts_authenticated_request(self):
@@ -71,7 +71,7 @@ class TestAgentCPRealIntegration:
         token = r.json()["accessToken"]
 
         r = httpx.post(
-            f"{CP_URL}/v1/chat",
+            f"{CP_URL}/chat",
             json={"content": "hello", "session_id": "test"},
             headers={"Authorization": f"Bearer {token}"},
             timeout=10,

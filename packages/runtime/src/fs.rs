@@ -7,7 +7,9 @@ use notify::Watcher;
 use regex::Regex;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use walkdir::WalkDir;
 
@@ -144,7 +146,20 @@ pub fn resolve_write_path(path: &str, workspace: &str) -> Result<PathBuf> {
 }
 
 pub fn strip_workspace<'a>(full_path: &'a Path, workspace: &str) -> &'a Path {
-    full_path.strip_prefix(workspace).unwrap_or(full_path)
+    if let Ok(relative) = full_path.strip_prefix(workspace) {
+        return relative;
+    }
+
+    // Windows canonicalize() uses the extended \\?\ prefix. Compare against
+    // a canonical workspace as well so callers still receive relative paths.
+    #[cfg(windows)]
+    if let Ok(canonical_workspace) = Path::new(workspace).canonicalize() {
+        if let Ok(relative) = full_path.strip_prefix(canonical_workspace) {
+            return relative;
+        }
+    }
+
+    full_path
 }
 
 fn to_rfc3339(time: std::time::SystemTime) -> String {
@@ -160,6 +175,7 @@ fn file_socket_path(workspace: &str) -> PathBuf {
 /// Send a line-based request to the container file service via Unix socket.
 /// Protocol: first line = action, second line = path, optional third line = content.
 /// Response: first line = "ok" or "error", remaining lines = payload.
+#[cfg(unix)]
 async fn call_file_service(
     socket_path: &Path,
     action: &str,
@@ -209,6 +225,18 @@ async fn call_file_service(
         )));
     }
     Ok(lines[1..].to_vec())
+}
+
+#[cfg(not(unix))]
+async fn call_file_service(
+    _socket_path: &Path,
+    _action: &str,
+    _path: &str,
+    _content: Option<&str>,
+) -> Result<Vec<String>> {
+    Err(RuntimeError::InvalidPath(
+        "file service Unix socket is unavailable on this platform".into(),
+    ))
 }
 
 pub async fn read_file(path: &str, workspace: &str) -> Result<String> {
@@ -712,7 +740,7 @@ mod tests {
         let ws = dir.path().to_str().unwrap();
         fs::write(dir.path().join("bar.txt"), "data").unwrap();
         let result = resolve_read_path("bar.txt", ws).unwrap();
-        assert_eq!(result, dir.path().join("bar.txt"));
+        assert_eq!(result, fs::canonicalize(dir.path().join("bar.txt")).unwrap());
     }
 
     #[test]
@@ -722,7 +750,7 @@ mod tests {
         fs::create_dir(dir.path().join("sub")).unwrap();
         fs::write(dir.path().join("sub/file.md"), "data").unwrap();
         let result = resolve_read_path("sub/file.md", ws).unwrap();
-        assert_eq!(result, dir.path().join("sub/file.md"));
+        assert_eq!(result, fs::canonicalize(dir.path().join("sub/file.md")).unwrap());
     }
 
     #[test]
@@ -757,6 +785,7 @@ mod tests {
         assert!(matches!(err, RuntimeError::PathTraversal { .. }));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_symlink_escape_rejected() {
         let dir = tempfile::tempdir().unwrap();
@@ -770,6 +799,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_symlink_to_other_workspace_rejected() {
         let ws1 = tempfile::tempdir().unwrap();
@@ -783,6 +813,7 @@ mod tests {
         assert!(matches!(err, RuntimeError::SymlinkEscape { .. }));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_symlink_chain_rejected() {
         let dir = tempfile::tempdir().unwrap();
@@ -797,6 +828,7 @@ mod tests {
         assert!(matches!(err, RuntimeError::SymlinkEscape { .. }));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_write_path_parent_symlink_escape_rejected() {
         let dir = tempfile::tempdir().unwrap();

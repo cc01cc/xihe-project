@@ -72,6 +72,7 @@ def test_load_project_env_skip_when_disabled():
 
 def test_load_project_env_override_false(monkeypatch):
     key = "XIHE_TEST_EXISTING"
+    original_cwd = Path.cwd()
     old = os.environ.get(key)
     os.environ[key] = "existing"
     try:
@@ -82,6 +83,7 @@ def test_load_project_env_override_false(monkeypatch):
             result = load_project_env()
             assert result
             assert os.environ[key] == "existing"
+            monkeypatch.chdir(original_cwd)
     finally:
         if old is None:
             os.environ.pop(key, None)
@@ -91,6 +93,7 @@ def test_load_project_env_override_false(monkeypatch):
 
 def test_load_project_env_honors_override_true(monkeypatch):
     key = "XIHE_TEST_OVERRIDE"
+    original_cwd = Path.cwd()
     old = os.environ.get(key)
     os.environ[key] = "existing"
     try:
@@ -101,6 +104,7 @@ def test_load_project_env_honors_override_true(monkeypatch):
             result = load_project_env(override=True)
             assert result
             assert os.environ[key] == "from_dotenv"
+            monkeypatch.chdir(original_cwd)
     finally:
         if old is None:
             os.environ.pop(key, None)
@@ -109,15 +113,18 @@ def test_load_project_env_honors_override_true(monkeypatch):
 
 
 def test_load_project_env_missing_file(monkeypatch):
+    original_cwd = Path.cwd()
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         monkeypatch.chdir(root)
         result = load_project_env()
         assert not result
+        monkeypatch.chdir(original_cwd)
 
 
 def test_load_project_env_env_then_dev(monkeypatch):
     key = "XIHE_TEST_LAYER"
+    original_cwd = Path.cwd()
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / ".env").write_text(f"{key}=from_env\n")
@@ -126,3 +133,4 @@ def test_load_project_env_env_then_dev(monkeypatch):
         result = load_project_env()
         assert result
         assert os.environ[key] == "from_env"
+        monkeypatch.chdir(original_cwd)

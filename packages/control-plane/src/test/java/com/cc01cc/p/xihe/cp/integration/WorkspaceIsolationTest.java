@@ -175,13 +175,13 @@ class WorkspaceIsolationTest {
     }
 
     @Test
-    void registeredUserTokenHasNullWorkspace() throws Exception {
+    void registeredUserTokenHasDefaultWorkspace() throws Exception {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         String email = "token-null-ws-" + suffix + "@test.com";
         String token = registerAndExtractToken(email, "Test1234!", "Token Test");
         assertNotNull(token);
         assertTrue(TestDataFactory.tokenProvider().validateToken(token));
-        assertNull(TestDataFactory.tokenProvider().getWorkspaceIdFromToken(token));
+        assertNotNull(TestDataFactory.tokenProvider().getWorkspaceIdFromToken(token));
     }
 
     @Test

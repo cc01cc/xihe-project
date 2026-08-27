@@ -126,6 +126,7 @@ class ChatControllerTest extends AbstractH2Test {
         Workspace ws = workspaceRepository.save(new Workspace("chat-test-workspace", userId));
         workspaceId = ws.getId();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Chat Test");
