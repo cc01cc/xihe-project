@@ -40,6 +40,21 @@ paths:
       operationId: oauthCallback
       parameters: [{ in: query, name: state, required: true, schema: { type: string } }, { in: query, name: code, required: true, schema: { type: string } }]
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Problem' } }
+  /api/v1/oauth/revoke:
+    post:
+      operationId: revokeOAuthSession
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OAuthBindingRequest' }
+      responses:
+        '200':
+          description: Revoked
+          content: { application/json: { schema: { $ref: '#/components/schemas/StatusResponse' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /internal/v1/oauth/token:
     post:
       operationId: brokerOAuthToken
@@ -56,6 +71,12 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: layer, required: true, schema: { type: string } }, { in: path, name: domain, required: true, schema: { type: string } }]
       responses: { '200': { description: Configuration map }, '401': { $ref: '#/components/responses/Problem' } }
+  /internal/v1/config/workspaces/{workspaceId}/mcp-config:
+    get:
+      operationId: getInternalWorkspaceMcpConfig
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      responses: { '200': { description: MCP configuration }, '401': { $ref: '#/components/responses/Problem' } }
   /api/v1/chat:
     post: { operationId: chat, security: [{ bearerAuth: [] }], responses: { '202': { description: Accepted }, '401': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
   /api/v1/events:
@@ -124,17 +145,21 @@ paths:
   /internal/v1/agent/chat:
     post: { operationId: agentChat, security: [{ bearerAuth: [] }], responses: { '200': { description: SSE stream, content: { text/event-stream: {} } } } }
   /internal/v1/agent/rag/ingest:
-    post: { operationId: agentRagIngest, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG result } } }
+    post: { operationId: agentRagIngest, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { multipart/form-data: { schema: { $ref: '#/components/schemas/RagIngestRequest' } } } }, responses: { '200': { description: RAG result, content: { application/json: { schema: { $ref: '#/components/schemas/RagIngestResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/rag/search:
     post: { operationId: agentRagSearch, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG result } } }
   /internal/v1/agent/rag/stats:
-    get: { operationId: agentRagStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics } } }
+    get: { operationId: agentRagStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics, content: { application/json: { schema: { $ref: '#/components/schemas/RagStatsResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/rag/documents/{docId}:
-    delete: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+    delete: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/DeletedResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/models:
     get: { operationId: agentModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Models } } }
   /internal/v1/agent/embedding-models:
     get: { operationId: agentEmbeddingModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Embedding models } } }
+  /internal/v1/agent/health:
+    get: { operationId: agentHealth, responses: { '200': { description: Agent health, content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string }, mcpInitialized: { type: boolean }, toolsCount: { type: integer } }, additionalProperties: true } } } } } }
+  /internal/v1/agent/tools:
+    get: { operationId: agentTools, security: [{ bearerAuth: [] }], responses: { '200': { description: Agent tools, content: { application/json: { schema: { type: object, required: [tools], properties: { tools: { type: array, items: { type: object } }, customTools: { type: array, items: { type: object } } } } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/approval/respond:
     post: { operationId: respondApproval, security: [{ bearerAuth: [] }], responses: { '200': { description: Resolved } } }
   /internal/v1/agent/approval/pending:
@@ -169,7 +194,7 @@ paths:
     get: { operationId: listMcpBridges, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Bridges } } }
     post: { operationId: spawnMcpBridge, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '201': { description: Spawned } } }
   /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId}:
-    delete: { operationId: killMcpBridge, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '204': { description: Stopped } } }
+    delete: { operationId: killMcpBridge, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: Stopped, content: { application/json: { schema: { $ref: '#/components/schemas/StatusResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}:
     post: { operationId: stdioMcp, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: MCP response } } }
   /internal/v1/runtime/workspaces/{workspaceId}/files/read:
@@ -195,7 +220,13 @@ components:
     RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object } } }
+    OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
+    StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }
+    DeletedResponse: { type: object, required: [deleted], properties: { deleted: { type: boolean } } }
+    RagIngestRequest: { type: object, required: [file], properties: { file: { type: string, format: binary }, chunkSize: { type: integer, default: 1000 }, chunkOverlap: { type: integer, default: 200 } } }
+    RagIngestResponse: { type: object, required: [status, chunks, docIds], properties: { status: { type: string }, chunks: { type: integer }, docIds: { type: array, items: { type: string } } } }
+    RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
     ProblemDetails:
       type: object
       required: [type, title, status, code, requestId]

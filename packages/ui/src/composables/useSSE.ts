@@ -2,7 +2,7 @@ import { ref, onUnmounted, getCurrentInstance } from 'vue'
 import { useAgentStore } from '../stores/agent'
 import { logger } from '../lib/logger'
 import { chatTransport } from '../services/chatTransport'
-import { apiRaw } from './api'
+import { apiAuthHeaders, apiRaw } from './api'
 import type { EventSourceMessage } from '@microsoft/fetch-event-source'
 
 interface LangChainTextBlock {
@@ -183,13 +183,12 @@ export function useSSE(sessionId: string) {
     disconnect()
     currentCallbacks = callbacks
 
-    const token = localStorage.getItem('xihe-token')
     const url = `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}`
 
     chatTransport
       .sendMessages(sessionId, {
         url,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: apiAuthHeaders(undefined, false),
         onopen: () => {
           isConnected.value = true
           error.value = null
@@ -241,17 +240,8 @@ export function useSSE(sessionId: string) {
         body.attachments = attachments
       }
 
-      const token = localStorage.getItem('xihe-token')
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-      if (token) {
-        headers.Authorization = `Bearer ${token}`
-      }
-
       await apiRaw('/chat', {
         method: 'POST',
-        headers,
         body: JSON.stringify(body),
       })
 

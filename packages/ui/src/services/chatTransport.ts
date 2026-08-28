@@ -1,5 +1,6 @@
 import { fetchEventSource, type EventSourceMessage } from '@microsoft/fetch-event-source'
 import { logger } from '@/lib/logger'
+import { apiAuthHeaders, apiErrorFromResponse } from '@/composables/api'
 
 export interface ChatTransportOptions {
   url: string
@@ -51,7 +52,7 @@ class ChatTransportImpl {
         headers: {
           Accept: 'text/event-stream',
           ...(body ? { 'Content-Type': 'application/json' } : {}),
-          ...options.headers,
+          ...apiAuthHeaders(options.headers, Boolean(body)),
         },
         body,
         signal: controller.signal,
@@ -63,7 +64,7 @@ class ChatTransportImpl {
             return
           }
           if (!response.ok) {
-            const err = new Error(`SSE connection failed: HTTP ${response.status}`)
+            const err = await apiErrorFromResponse(response)
             logger.warn('SSE onopen error', err)
             await options.onerror?.(err)
             return

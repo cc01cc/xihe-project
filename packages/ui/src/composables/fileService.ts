@@ -1,8 +1,6 @@
 import { decideReadMode, FILE_SIZE_THRESHOLDS } from '../lib/fileSize'
 import { apiRaw } from './api'
 
-const WORKSPACE_API = '/internal/v1/runtime'
-
 export interface ReadFilePreviewResult {
   content: string
   truncated: boolean
@@ -12,13 +10,12 @@ async function runtimeReadFile(
   path: string,
   opts?: { max_bytes?: number },
 ): Promise<ReadFilePreviewResult> {
-  const body = JSON.stringify({ path, ...(opts?.max_bytes !== undefined ? { maxBytes: opts.max_bytes } : {}) })
-  const res = await apiRaw(`${WORKSPACE_API}/workspaces/{workspaceId}/files/read`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  })
-  return res.json()
+  const res = await apiRaw(`/files/${encodeURIComponent(path)}`)
+  const content = await res.text()
+  const maxBytes = opts?.max_bytes
+  return maxBytes !== undefined && content.length > maxBytes
+    ? { content: content.slice(0, maxBytes), truncated: true }
+    : { content, truncated: false }
 }
 
 export async function readFilePreview(

@@ -14,6 +14,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import BaseMessage
 from litellm import get_llm_provider
@@ -370,7 +371,8 @@ app.include_router(models_router)
 @app.exception_handler(HTTPException)
 async def problem_details_handler(request: Request, exc: HTTPException) -> JSONResponse:
     request_id = request.headers.get("X-Request-Id") or str(uuid4())
-    detail = str(exc.detail)
+    # Do not expose dependency, validation, or internal exception messages.
+    detail = "Agent request failed"
     return JSONResponse(
         status_code=exc.status_code,
         media_type="application/problem+json",
@@ -381,6 +383,43 @@ async def problem_details_handler(request: Request, exc: HTTPException) -> JSONR
             "status": exc.status_code,
             "code": "AGENT_REQUEST_FAILED",
             "detail": detail,
+            "requestId": request_id,
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_problem_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    return JSONResponse(
+        status_code=400,
+        media_type="application/problem+json",
+        headers={"X-Request-Id": request_id},
+        content={
+            "type": "https://xihe.dev/problems/invalid-request",
+            "title": "Invalid request",
+            "status": 400,
+            "code": "INVALID_REQUEST",
+            "detail": "Request validation failed",
+            "requestId": request_id,
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def internal_problem_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled Agent request failure")
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    return JSONResponse(
+        status_code=500,
+        media_type="application/problem+json",
+        headers={"X-Request-Id": request_id},
+        content={
+            "type": "https://xihe.dev/problems/internal-error",
+            "title": "Internal server error",
+            "status": 500,
+            "code": "INTERNAL_ERROR",
+            "detail": "Agent request failed",
             "requestId": request_id,
         },
     )
@@ -445,7 +484,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
 
                 async for event in agent_runner.stream(messages, config):
                     yield render_sse(event.type, event.data)
-        except Exception as e:
+        except Exception:
             logger.exception("Agent streaming error")
             yield render_sse("error", {
                 "code": "AGENT_STREAM_FAILED",
@@ -464,7 +503,7 @@ async def rag_ingest(file: UploadFile = File(...), chunk_size: int = Form(1000, 
     for chunk in chunks:
         doc_id = await vector_store.add(chunk["text"], chunk["metadata"])
         doc_ids.append(doc_id)
-    return {"status": "ok", "chunks": len(chunks), "doc_ids": doc_ids}
+    return {"status": "ok", "chunks": len(chunks), "docIds": doc_ids}
 
 
 @app.post("/internal/v1/agent/rag/search")
@@ -476,7 +515,7 @@ async def rag_search(query: str = Form(...), top_k: int = Form(5, alias="topK"),
 
 @app.get("/internal/v1/agent/rag/stats")
 async def rag_stats(_token: None = Depends(verify_api_token)):
-    return {"total_documents": await vector_store.count()}
+    return {"totalDocuments": await vector_store.count()}
 
 
 @app.delete("/internal/v1/agent/rag/documents/{doc_id}")
@@ -610,7 +649,7 @@ async def list_tools(_token: None = Depends(verify_api_token)):
             {"name": t.name, "description": t.description}
             for t in mcp_manager.tools
         ],
-        "custom_tools": [
+        "customTools": [
             {"name": approval_tool.name, "description": approval_tool.description}
         ],
     }

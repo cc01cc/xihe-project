@@ -100,20 +100,20 @@ Both interfaces share underlying core functions like `fs.rs` — the same busine
 
 | Endpoint | Consumer | Purpose |
 |----------|----------|---------|
-| `POST /workspace/{ws_id}/files/read` | UI → CP | Read file content (optional `max_bytes` truncation) |
-| `POST /workspace/{ws_id}/files/write/{*path}` | UI → CP | Write file (binary body) |
-| `POST /workspace/{ws_id}/files/list` | UI → CP | List directory |
-| `POST /workspace/{ws_id}/files/delete` | UI → CP | Delete file |
-| `POST /workspace/{ws_id}/files/mkdir` | UI → CP | Create directory |
-| `POST /workspace/{ws_id}/files/stat` | UI → CP | File metadata |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/read` | CP → Runtime | Read file content (optional `max_bytes` truncation) |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/write/{path}` | CP → Runtime | Write file (binary body) |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/list` | CP → Runtime | List directory |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/delete` | CP → Runtime | Delete file |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/mkdir` | CP → Runtime | Create directory |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/stat` | CP → Runtime | File metadata |
 | `GET /health` | CP | Health check |
-| `POST /workspace/{ws_id}/mcp` | Agent (via CP) | System MCP tool invocation (per-workspace) |
-| `POST /workspace/{ws_id}/mcp/spawn` | CP | Start in-container STDIO MCP bridge |
-| `DELETE /workspace/{ws_id}/mcp/spawn/{server_id}` | CP | Stop STDIO MCP bridge |
-| `GET /workspace/{ws_id}/mcp/spawn` | CP | List active STDIO servers |
-| `POST /workspace/{ws_id}/mcp/stdio/{server_id}` | Agent (via CP) | Route to in-container STDIO bridge |
-| `POST /workspace/create` | CP | Create workspace |
-| `POST /workspace/delete` | CP | Delete workspace (including bridge cleanup) |
+| `POST /api/v1/mcp` | Agent/UI | CP logical MCP tool invocation |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` | CP → Runtime | Start in-container STDIO MCP bridge |
+| `DELETE /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId}` | CP → Runtime | Stop STDIO MCP bridge |
+| `GET /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` | CP → Runtime | List active STDIO servers |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}` | CP → Runtime | Route to in-container STDIO bridge |
+| `POST /internal/v1/runtime/workspaces` | CP → Runtime | Create workspace |
+| `POST /internal/v1/runtime/workspaces/delete` | CP → Runtime | Delete workspace (including bridge cleanup) |
 
 **MCP Server** (`rmcp` SDK + `#[tool]` macro): Automatically generates JSON Schema. Runtime has three binaries:
 - `xihe-runtime`: Gateway main process, registers `/workspace/{ws_id}/mcp` series routes

@@ -31,11 +31,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             token = authHeader.substring(7);
-        } else {
-            String uri = request.getRequestURI();
-            if (uri != null && uri.contains("/events")) {
-                token = request.getParameter("token");
-            }
         }
 
         if (token != null && jwtTokenProvider.validateToken(token)) {

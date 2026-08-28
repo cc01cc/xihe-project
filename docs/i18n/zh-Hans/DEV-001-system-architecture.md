@@ -102,20 +102,20 @@ Runtime
 
 | 端点 | 消费者 | 用途 |
 |------|--------|------|
-| `POST /workspace/{ws_id}/files/read` | UI → CP | 读取文件内容（可选 `max_bytes` 截断） |
-| `POST /workspace/{ws_id}/files/write/{*path}` | UI → CP | 写入文件（二进制 body） |
-| `POST /workspace/{ws_id}/files/list` | UI → CP | 列出目录 |
-| `POST /workspace/{ws_id}/files/delete` | UI → CP | 删除文件 |
-| `POST /workspace/{ws_id}/files/mkdir` | UI → CP | 创建目录 |
-| `POST /workspace/{ws_id}/files/stat` | UI → CP | 文件元信息 |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/read` | CP → Runtime | 读取文件内容（可选 `max_bytes` 截断） |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/write/{path}` | CP → Runtime | 写入文件（二进制 body） |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/list` | CP → Runtime | 列出目录 |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/delete` | CP → Runtime | 删除文件 |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/mkdir` | CP → Runtime | 创建目录 |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/stat` | CP → Runtime | 文件元信息 |
 | `GET /health` | CP | 健康检查 |
-| `POST /workspace/{ws_id}/mcp` | Agent (via CP) | 系统 MCP 工具调用（per-workspace） |
-| `POST /workspace/{ws_id}/mcp/spawn` | CP | 启动容器内 STDIO MCP bridge |
-| `DELETE /workspace/{ws_id}/mcp/spawn/{server_id}` | CP | 停止 STDIO MCP bridge |
-| `GET /workspace/{ws_id}/mcp/spawn` | CP | 列出活跃 STDIO server |
-| `POST /workspace/{ws_id}/mcp/stdio/{server_id}` | Agent (via CP) | 路由到容器内 STDIO bridge |
-| `POST /workspace/create` | CP | 创建工作区 |
-| `POST /workspace/delete` | CP | 删除工作区（含 bridge 清理） |
+| `POST /api/v1/mcp` | Agent/UI | CP logical MCP 工具调用 |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` | CP → Runtime | 启动容器内 STDIO MCP bridge |
+| `DELETE /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId}` | CP → Runtime | 停止 STDIO MCP bridge |
+| `GET /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` | CP → Runtime | 列出活跃 STDIO server |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}` | CP → Runtime | 路由到容器内 STDIO bridge |
+| `POST /internal/v1/runtime/workspaces` | CP → Runtime | 创建工作区 |
+| `POST /internal/v1/runtime/workspaces/delete` | CP → Runtime | 删除工作区（含 bridge 清理） |
 
 **MCP Server**（`rmcp` SDK + `#[tool]` macro）：自动生成 JSON Schema。Runtime 有三个 binary：
 - `xihe-runtime`：Gateway 主进程，注册 `/workspace/{ws_id}/mcp` 系列路由

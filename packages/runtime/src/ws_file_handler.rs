@@ -27,7 +27,21 @@ pub struct ReadFileResult {
 
 // ---- Error mapping ----
 
-fn map_error(e: RuntimeError) -> (StatusCode, String) {
+fn problem(status: StatusCode, code: &str, detail: &str) -> (StatusCode, Json<Value>) {
+    (
+        status,
+        Json(serde_json::json!({
+            "type": format!("https://xihe.dev/problems/{}", code.to_ascii_lowercase()),
+            "title": status.canonical_reason().unwrap_or("Request failed"),
+            "status": status.as_u16(),
+            "code": code,
+            "detail": detail,
+            "requestId": uuid::Uuid::new_v4().to_string(),
+        })),
+    )
+}
+
+fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
     let status = match &e {
         RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => {
             StatusCode::FORBIDDEN
@@ -38,7 +52,13 @@ fn map_error(e: RuntimeError) -> (StatusCode, String) {
         RuntimeError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    (status, e.to_string())
+    let code = match status {
+        StatusCode::FORBIDDEN => "FORBIDDEN",
+        StatusCode::NOT_FOUND => "FILE_NOT_FOUND",
+        StatusCode::BAD_REQUEST => "INVALID_REQUEST",
+        _ => "RUNTIME_ERROR",
+    };
+    problem(status, code, "Runtime file operation failed")
 }
 
 // ---- Handlers ----
@@ -47,11 +67,14 @@ pub async fn handle_read_file(
     State(registry): State<Arc<WorkspaceRegistry>>,
     Path(ws_id): Path<String>,
     Json(req): Json<ReadFileRestRequest>,
-) -> Result<Json<ReadFileResult>, (StatusCode, String)> {
-    let ws = registry
-        .get(&ws_id)
-        .await
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "workspace not found".into()))?;
+) -> Result<Json<ReadFileResult>, (StatusCode, Json<Value>)> {
+    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+        problem(
+            StatusCode::NOT_FOUND,
+            "WORKSPACE_NOT_FOUND",
+            "Workspace not found",
+        )
+    })?;
     let mut content = fs::read_file(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -72,17 +95,27 @@ pub async fn handle_write_binary(
     State(registry): State<Arc<WorkspaceRegistry>>,
     Path((ws_id, raw_path)): Path<(String, String)>,
     body: Bytes,
-) -> Result<Json<Value>, (StatusCode, String)> {
-    let ws = registry
-        .get(&ws_id)
-        .await
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "workspace not found".into()))?;
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+        problem(
+            StatusCode::NOT_FOUND,
+            "WORKSPACE_NOT_FOUND",
+            "Workspace not found",
+        )
+    })?;
     let path = percent_encoding::percent_decode_str(&raw_path)
         .decode_utf8()
         .map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
-                "invalid percent encoding in path".into(),
+                Json(serde_json::json!({
+                    "type": "https://xihe.dev/problems/invalid-request",
+                    "title": "Bad Request",
+                    "status": 400,
+                    "code": "INVALID_REQUEST",
+                    "detail": "Invalid file path",
+                    "requestId": uuid::Uuid::new_v4().to_string(),
+                })),
             )
         })?;
     let msg = fs::write_file_binary(&path, &body, &ws.workspace_path)
@@ -95,11 +128,14 @@ pub async fn handle_list_directory(
     State(registry): State<Arc<WorkspaceRegistry>>,
     Path(ws_id): Path<String>,
     Json(req): Json<ListDirectoryRequest>,
-) -> Result<Json<fs::DirectoryListing>, (StatusCode, String)> {
-    let ws = registry
-        .get(&ws_id)
-        .await
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "workspace not found".into()))?;
+) -> Result<Json<fs::DirectoryListing>, (StatusCode, Json<Value>)> {
+    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+        problem(
+            StatusCode::NOT_FOUND,
+            "WORKSPACE_NOT_FOUND",
+            "Workspace not found",
+        )
+    })?;
     let entries = fs::list_directory(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(fs::DirectoryListing { entries }))
 }
@@ -108,11 +144,14 @@ pub async fn handle_delete_file(
     State(registry): State<Arc<WorkspaceRegistry>>,
     Path(ws_id): Path<String>,
     Json(req): Json<DeleteFileRequest>,
-) -> Result<Json<Value>, (StatusCode, String)> {
-    let ws = registry
-        .get(&ws_id)
-        .await
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "workspace not found".into()))?;
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+        problem(
+            StatusCode::NOT_FOUND,
+            "WORKSPACE_NOT_FOUND",
+            "Workspace not found",
+        )
+    })?;
     let msg = fs::delete_file(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -123,11 +162,14 @@ pub async fn handle_mkdir(
     State(registry): State<Arc<WorkspaceRegistry>>,
     Path(ws_id): Path<String>,
     Json(req): Json<MkdirRequest>,
-) -> Result<Json<Value>, (StatusCode, String)> {
-    let ws = registry
-        .get(&ws_id)
-        .await
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "workspace not found".into()))?;
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+        problem(
+            StatusCode::NOT_FOUND,
+            "WORKSPACE_NOT_FOUND",
+            "Workspace not found",
+        )
+    })?;
     let msg = fs::mkdir(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -138,11 +180,14 @@ pub async fn handle_stat(
     State(registry): State<Arc<WorkspaceRegistry>>,
     Path(ws_id): Path<String>,
     Json(req): Json<GetFileInfoRequest>,
-) -> Result<Json<fs::FileInfo>, (StatusCode, String)> {
-    let ws = registry
-        .get(&ws_id)
-        .await
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "workspace not found".into()))?;
+) -> Result<Json<fs::FileInfo>, (StatusCode, Json<Value>)> {
+    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+        problem(
+            StatusCode::NOT_FOUND,
+            "WORKSPACE_NOT_FOUND",
+            "Workspace not found",
+        )
+    })?;
     let info = fs::get_file_info(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(info))
 }

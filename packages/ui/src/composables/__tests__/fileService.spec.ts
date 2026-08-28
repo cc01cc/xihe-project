@@ -11,10 +11,10 @@ describe('readFilePreview', () => {
     expect(result).toEqual({ content: '', truncated: true })
   })
 
-  it('calls runtime API for full read', async () => {
+  it('calls the CP file API for full read', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ content: 'file content', truncated: false }),
+      text: () => Promise.resolve('file content'),
     } as Response)
     const result = await readFilePreview('/small/file', 100)
     expect(result.content).toBe('file content')

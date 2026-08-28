@@ -15,7 +15,7 @@ public class ConfigEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, length = 32)
+    @Column(nullable = false, length = 64)
     private String environment = "default";
 
     @Column(nullable = false, length = 16)

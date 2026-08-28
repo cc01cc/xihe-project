@@ -15,7 +15,7 @@ TOKEN=$(curl -s -X POST 'http://localhost:12631/auth/login' \
   python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
 
 # SSE 连接
-curl -s "http://localhost:12631/events?session_id=test&token=$TOKEN" --max-time 3
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/events?sessionId=test" --max-time 3
 
 # 模型列表
 curl -s 'http://localhost:12631/models' -H "Authorization: Bearer $TOKEN"

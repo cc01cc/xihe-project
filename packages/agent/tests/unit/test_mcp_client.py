@@ -70,10 +70,10 @@ class TestMCPClientManager:
 
         config = mock_client_cls.call_args.args[0]
         connection = config["cp"]
-        assert connection.url == "http://localhost:12631"
-        assert connection.url.endswith("12631")
-        assert "remote" not in connection.url
-        assert connection.headers["X-Workspace-Id"] == "ws-1"
+        assert connection["url"] == "http://localhost:12631"
+        assert connection["url"].endswith("12631")
+        assert "remote" not in connection["url"]
+        assert connection["headers"]["X-Workspace-Id"] == "ws-1"
 
     @pytest.mark.asyncio
     async def test_initialize_logs_formatted_tool_count(self, manager, log_sink):

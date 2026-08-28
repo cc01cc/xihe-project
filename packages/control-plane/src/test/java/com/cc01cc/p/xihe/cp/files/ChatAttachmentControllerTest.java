@@ -138,7 +138,7 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
         Map<String, Object> file = (Map<String, Object>) success.get(0);
         assertNotNull(file.get("id"));
         assertEquals("test.png", file.get("name"));
-        assertEquals("/files/" + file.get("id"), file.get("url"));
+        assertEquals("/api/v1/files/" + file.get("id"), file.get("url"));
         assertEquals(0, ((List<?>) result.get("failed")).size());
 
         assertFalse(fileRepository.findBySessionId(sessionId).isEmpty());

@@ -20,7 +20,7 @@ function endpoint(path: string): string {
   return path.startsWith('/api/v1/') || path.startsWith('/internal/v1/') ? path : `${API_BASE}${path}`
 }
 
-function authHeaders(headers?: HeadersInit, includeContentType = true): Record<string, string> {
+export function apiAuthHeaders(headers?: HeadersInit, includeContentType = true): Record<string, string> {
   const result: Record<string, string> = {}
   if (headers instanceof Headers) headers.forEach((value, key) => { result[key] = value })
   else if (Array.isArray(headers)) headers.forEach(([key, value]) => { result[key] = value })
@@ -31,7 +31,7 @@ function authHeaders(headers?: HeadersInit, includeContentType = true): Record<s
   return result
 }
 
-async function throwApiError(res: Response): Promise<never> {
+export async function apiErrorFromResponse(res: Response): Promise<never> {
   let problem: Partial<ProblemDetails> = {}
   try { problem = await res.json() as Partial<ProblemDetails> } catch { /* non-JSON upstream error */ }
   throw new ApiError({
@@ -47,14 +47,14 @@ async function throwApiError(res: Response): Promise<never> {
 async function checkedFetch(path: string, options?: RequestInit): Promise<Response> {
   const hasBody = options?.body !== undefined && options.body !== null
   const includeContentType = hasBody && !(options?.body instanceof FormData)
-  const res = await fetch(endpoint(path), { ...options, headers: authHeaders(options?.headers, includeContentType) })
+  const res = await fetch(endpoint(path), { ...options, headers: apiAuthHeaders(options?.headers, includeContentType) })
   if (res.status === 401) {
     localStorage.removeItem('xihe-token')
     localStorage.removeItem('xihe-user')
     if (!['/login', '/register'].includes(window.location.pathname)) window.location.href = '/login'
     throw new ApiError({ status: 401, code: 'AUTHORIZATION_REQUIRED', detail: 'Session expired', requestId: res.headers?.get('X-Request-Id') || 'unknown' })
   }
-  if (!res.ok) return throwApiError(res)
+  if (!res.ok) return apiErrorFromResponse(res)
   return res
 }
 
@@ -69,7 +69,7 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
 }
 
 export async function apiPost<T = unknown>(path: string, body?: BodyInit | null, headers?: Record<string, string>): Promise<T> {
-  const requestHeaders = authHeaders(headers)
+  const requestHeaders = apiAuthHeaders(headers)
   if (body instanceof FormData) delete requestHeaders['Content-Type']
   const res = await checkedFetch(path, {
     method: 'POST',
@@ -82,7 +82,7 @@ export async function apiPost<T = unknown>(path: string, body?: BodyInit | null,
 
 export async function apiGet<T = unknown>(path: string): Promise<T> {
   const res = await checkedFetch(path, {
-    headers: authHeaders(undefined, false),
+    headers: apiAuthHeaders(undefined, false),
   })
   if (res.status === 204) return undefined as T
   return res.json()
@@ -91,7 +91,7 @@ export async function apiGet<T = unknown>(path: string): Promise<T> {
 export async function apiDelete(path: string): Promise<void> {
   await checkedFetch(path, {
     method: 'DELETE',
-    headers: authHeaders(undefined, false),
+    headers: apiAuthHeaders(undefined, false),
   })
 }
 

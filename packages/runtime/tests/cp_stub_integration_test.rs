@@ -137,7 +137,7 @@ fn test_mcp_poll_config_parses_mcp_servers() {
         }
     }"#;
     let _mock = server
-        .mock("GET", "/api/v1/workspaces/ws-1/mcp-config")
+        .mock("GET", "/internal/v1/config/workspaces/ws-1/mcp-config")
         .match_header("Authorization", "Bearer test-token")
         .with_status(200)
         .with_header("content-type", "application/json")

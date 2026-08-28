@@ -51,9 +51,6 @@ export default defineConfig(({ mode }) => {
         pickEnv(env, "XIHE_CP_BASE_URL") ||
         pickEnv(env, "XIHE_CP_URL") ||
         `http://localhost:${pickEnv(env, "XIHE_CP_PORT") || "12631"}`;
-    const agentBaseUrl =
-        pickEnv(env, "XIHE_AGENT_URL") ||
-        `http://localhost:${pickEnv(env, "XIHE_AGENT_PORT") || "12632"}`;
     const uiLogLevel = resolveUiLogLevel(env);
 
     return {
@@ -95,11 +92,6 @@ export default defineConfig(({ mode }) => {
                             }
                         });
                     },
-                },
-                "/agent-proxy": {
-                    target: agentBaseUrl,
-                    changeOrigin: true,
-                    rewrite: (_path) => _path.replace(/^\/agent-proxy/, ""),
                 },
             },
         },

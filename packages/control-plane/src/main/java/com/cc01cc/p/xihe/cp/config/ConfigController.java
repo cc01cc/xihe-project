@@ -176,6 +176,16 @@ public class ConfigController {
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @GetMapping("/api/v1/workspaces/{workspaceId}/mcp-config")
     public ResponseEntity<Map<String, Object>> getMcpConfig(@PathVariable("workspaceId") String wsId) {
+        return getMcpConfigForWorkspace(wsId);
+    }
+
+    @GetMapping("/internal/v1/config/workspaces/{workspaceId}/mcp-config")
+    public ResponseEntity<Map<String, Object>> getInternalMcpConfig(
+            @PathVariable("workspaceId") String wsId) {
+        return getMcpConfigForWorkspace(wsId);
+    }
+
+    private ResponseEntity<Map<String, Object>> getMcpConfigForWorkspace(String wsId) {
         Optional<ConfigEntity> opt = configRepo
             .findByEnvironmentAndLayerAndDomainAndConfigKey(wsId, "workspace", "mcp", "mcpServers");
         if (opt.isPresent() && opt.get().getMcpConfig() != null) {

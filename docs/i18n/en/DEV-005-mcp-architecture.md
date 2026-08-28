@@ -39,18 +39,17 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 │  4. System tools take priority (same-name user tools skipped + warned) │
 │                                                             │
 │  Routing rules:                                             │
-│  ├─ System tools → POST /workspace/{ws_id}/mcp              │
-│  └─ User tools → POST /workspace/{ws_id}/mcp/stdio/{sid}   │
+│  ├─ System tools → POST /api/v1/mcp (CP logical endpoint)   │
+│  └─ User tools → POST /api/v1/mcp (CP tool routing)         │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
 │  Runtime Gateway (Rust / Axum, configured by XIHE_RUNTIME_PORT) │
 │                                                             │
-│  ├─ /workspace/{ws_id}/mcp          → XiheRuntime factory   │
-│  ├─ /workspace/{ws_id}/mcp/spawn    → docker exec bridge    │
-│  ├─ /workspace/{ws_id}/mcp/spawn/{id}→ docker exec kill     │
-│  ├─ /workspace/{ws_id}/mcp/spawn    → List active servers   │
-│  └─ /workspace/{ws_id}/mcp/stdio/{id}→ Forward to in-container bridge │
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp      │
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn │
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │
+│  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │
 │                                                             │
 │  Config polling: Reads mcpServers JSON from CP every 30s,   │
 │  diff then manage                                           │
@@ -82,8 +81,8 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 ```
 Agent → CP /mcp
   CP: Verify session-id → Read DB mcpServers JSON
-  CP → Runtime: GET /workspace/{ws_id}/mcp (system tools/list)
-  CP → Runtime: POST /workspace/{ws_id}/mcp/stdio/{sid} (each STDIO tools/list)
+  CP → Runtime: GET /internal/v1/runtime/workspaces/{workspaceId}/mcp (system tools/list)
+  CP → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} (each STDIO tools/list)
   CP: Merge tool lists + Build tool_name → server_id mapping (cached)
   CP → Agent: Return merged tool list
 ```
@@ -93,9 +92,9 @@ Agent → CP /mcp
 ```
 Agent → CP /mcp (tool_name, args)
   CP: Lookup tool_name → server_id mapping
-  ├─ System tools → Runtime: POST /workspace/{ws_id}/mcp
+  ├─ System tools → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp
   │               → XiheRuntime executes Rust function
-  └─ User tools → Runtime: POST /workspace/{ws_id}/mcp/stdio/{sid}
+  └─ User tools → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}
                   → xihe-mcp-bridge: STDIN → STDOUT → Result returned
   CP → Agent: Passthrough result
 ```
@@ -131,7 +130,7 @@ Agent → CP /mcp (tool_name, args)
 ```
 User → UI textarea → PUT /api/v1/workspaces/{wsId}/mcp-config
   → CP: Validate JSON → Write to config table (JSONB)
-  → Runtime every 30s: GET /api/v1/workspaces/{ws_id}/mcp-config
+  → Runtime every 30s: GET /internal/v1/config/workspaces/{workspaceId}/mcp-config (Bearer service token)
   → Runtime: Diff current bridge list → spawn/stop
 ```
 

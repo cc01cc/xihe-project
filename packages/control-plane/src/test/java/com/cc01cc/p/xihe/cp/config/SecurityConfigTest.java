@@ -47,7 +47,8 @@ class SecurityConfigTest extends AbstractH2Test {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
-        HttpEntity<Void> entity = new HttpEntity<>(headers);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(Map.of("sessionId", "default"), headers);
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/exec", HttpMethod.POST, entity, Map.class);
@@ -67,7 +68,8 @@ class SecurityConfigTest extends AbstractH2Test {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
-        HttpEntity<Void> entity = new HttpEntity<>(headers);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(Map.of("sessionId", "default"), headers);
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST, entity, Map.class);

@@ -18,7 +18,8 @@ routes found in source before the one-shot migration and their frozen target.
 | CP | `/mcp` | `/api/v1/mcp` | user Bearer | Agent, UI |
 | CP | `/config/**`, `/providers` | `/api/v1/config/**`, `/api/v1/providers` | user/admin Bearer | UI |
 | CP | `/internal/config/**` | `/internal/v1/config/**` | service Bearer | Agent, Runtime |
-| CP | `/workspaces/{id}/mcp-config` | `/api/v1/workspaces/{workspaceId}/mcp-config` | user Bearer | UI, Runtime config read |
+| CP | `/workspaces/{id}/mcp-config` | `/api/v1/workspaces/{workspaceId}/mcp-config` | user Bearer | UI |
+| CP | `/workspaces/{id}/mcp-config` | `/internal/v1/config/workspaces/{workspaceId}/mcp-config` | service Bearer | Runtime config read |
 | CP | `/files/**`, `/rag/**`, `/chat`, `/events`, `/exec` | `/api/v1/...` equivalent | user Bearer | UI |
 | CP | `/api/v1/status`, `/api/v1/health`, `/api/v1/logs`, `/api/v1/telemetry/*` | unchanged `/api/v1/...` | public/user Bearer | UI/telemetry |
 | CP | `/api/v1/sessions/{sessionId}/messages[/{messageId}]` | unchanged `/api/v1/...` | user Bearer | UI |

@@ -1,9 +1,8 @@
+import os
 from typing import Any
 
 import httpx
 import litellm
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 

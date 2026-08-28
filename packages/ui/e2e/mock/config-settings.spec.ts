@@ -26,7 +26,6 @@ test.describe('Config Settings', () => {
     }
     await page.route('**/api/v1/events**', (route) => route.fulfill({ status: 200, headers: { 'Content-Type': 'text/event-stream' }, body: 'retry: 5000\n\n' }))
     await page.route('**/api/v1/exec', (route) => route.fulfill({ status: 200, body: 'OK' }))
-    await page.route('**/agent-proxy/v1/embedding-models', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ models: [] }) }))
   }
 
   test('shows loading state', async ({ page }) => {

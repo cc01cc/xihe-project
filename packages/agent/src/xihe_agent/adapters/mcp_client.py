@@ -34,10 +34,17 @@ class MCPAgentTool(BaseAgentTool):
 
     @property
     def spec(self) -> ToolSpec:
+        args_schema = self._tool.args_schema
+        if isinstance(args_schema, dict):
+            input_schema = args_schema
+        elif args_schema:
+            input_schema = args_schema.model_json_schema()
+        else:
+            input_schema = {}
         return ToolSpec(
             name=self._tool.name,
             description=self._tool.description or "",
-            input_schema=self._tool.args_schema.model_json_schema() if self._tool.args_schema else {},
+            input_schema=input_schema,
         )
 
 

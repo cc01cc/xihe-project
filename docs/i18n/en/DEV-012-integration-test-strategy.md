@@ -100,8 +100,8 @@ class AgentChatIntegrationTest {
             String.class);
 
         // Assert: WireMock verifies CP's outgoing request format
-        verify(postRequestedFor(urlEqualTo("/chat"))
-            .withHeader("X-Api-Token", equalTo("dev-token-not-secure"))
+        verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
+            .withHeader("Authorization", equalTo("Bearer dev-token-not-secure"))
             .withRequestBody(matchingJsonPath("$.content", equalTo("hello"))));
     }
 }
@@ -311,8 +311,8 @@ ResponseEntity<String> resp = restTemplate.exchange(
     url("/v1/chat"), POST, httpEntity(request, token), String.class);
 
 // STEP 3: Assert — Verify CP's outgoing request format
-verify(postRequestedFor(urlEqualTo("/chat"))
-    .withHeader("X-Api-Token", equalTo("dev-token-not-secure"))
+verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
+    .withHeader("Authorization", equalTo("Bearer dev-token-not-secure"))
     .withRequestBody(matchingJsonPath("$.content", equalTo("hello"))));
 ```
 

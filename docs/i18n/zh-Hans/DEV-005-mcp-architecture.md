@@ -39,18 +39,17 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 │  4. 系统工具优先（同名用户工具被跳过 + 告警）               │
 │                                                             │
 │  路由规则：                                                  │
-│  ├─ 系统工具 → POST /workspace/{ws_id}/mcp                  │
-│  └─ 用户工具 → POST /workspace/{ws_id}/mcp/stdio/{sid}     │
+│  ├─ 系统工具 → POST /api/v1/mcp（CP logical endpoint）       │
+│  └─ 用户工具 → POST /api/v1/mcp（CP 按 tool 路由）            │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
 │  Runtime Gateway (Rust / Axum, 由 XIHE_RUNTIME_PORT 配置)   │
 │                                                             │
-│  ├─ /workspace/{ws_id}/mcp          → XiheRuntime 工厂      │
-│  ├─ /workspace/{ws_id}/mcp/spawn    → docker exec bridge    │
-│  ├─ /workspace/{ws_id}/mcp/spawn/{id}→ docker exec kill     │
-│  ├─ /workspace/{ws_id}/mcp/spawn    → 列出活跃 server       │
-│  └─ /workspace/{ws_id}/mcp/stdio/{id}→ 转发到容器内 bridge  │
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp       │
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn  │
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │
+│  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │
 │                                                             │
 │  配置轮询：每 30s 从 CP 读取 mcpServers JSON，diff 后管理   │
 └────────────────────────┬────────────────────────────────────┘
@@ -81,8 +80,8 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 ```
 Agent → CP /mcp
   CP: 验证 session-id → 读 DB mcpServers JSON
-  CP → Runtime: GET /workspace/{ws_id}/mcp (系统 tools/list)
-  CP → Runtime: POST /workspace/{ws_id}/mcp/stdio/{sid} (各 STDIO tools/list)
+  CP → Runtime: GET /internal/v1/runtime/workspaces/{workspaceId}/mcp (系统 tools/list)
+  CP → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} (各 STDIO tools/list)
   CP: 合并工具列表 + 构建 tool_name → server_id 映射（缓存）
   CP → Agent: 返回合并后的工具列表
 ```
@@ -92,9 +91,9 @@ Agent → CP /mcp
 ```
 Agent → CP /mcp (tool_name, args)
   CP: 查 tool_name → server_id 映射
-  ├─ 系统工具 → Runtime: POST /workspace/{ws_id}/mcp
+  ├─ 系统工具 → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp
   │               → XiheRuntime 执行 Rust 函数
-  └─ 用户工具 → Runtime: POST /workspace/{ws_id}/mcp/stdio/{sid}
+  └─ 用户工具 → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}
                   → xihe-mcp-bridge: STDIN → STDOUT → 结果返回
   CP → Agent: 透传结果
 ```
@@ -130,7 +129,7 @@ Agent → CP /mcp (tool_name, args)
 ```
 用户 → UI textarea → PUT /api/v1/workspaces/{wsId}/mcp-config
   → CP: 校验 JSON → 写入 config 表 (JSONB)
-  → Runtime 每 30s: GET /api/v1/workspaces/{ws_id}/mcp-config
+  → Runtime 每 30s: GET /internal/v1/config/workspaces/{workspaceId}/mcp-config（Bearer service token）
   → Runtime: diff 当前 bridge 列表 → spawn/stop
 ```
 

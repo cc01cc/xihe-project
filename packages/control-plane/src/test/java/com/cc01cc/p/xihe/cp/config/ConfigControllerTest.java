@@ -60,7 +60,7 @@ class ConfigControllerTest extends AbstractH2Test {
             url("/api/v1/config/admin/logging"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("logLevel", "INVALID"), headers), Map.class);
 
-        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
     }
 
     @Test
