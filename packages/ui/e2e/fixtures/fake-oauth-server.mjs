@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 
 const port = Number(process.env.XIHE_FAKE_OAUTH_PORT ?? 13640)
+const accessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? 'fixture-token'
 const codes = new Map()
 const tokens = new Map()
 
@@ -39,6 +40,7 @@ const server = createServer(async (request, response) => {
       clientId: url.searchParams.get('client_id'),
       redirectUri,
       scope: url.searchParams.get('scope') ?? '',
+      createdAt: Date.now(),
     })
     const callback = new URL(redirectUri)
     callback.searchParams.set('code', code)
@@ -59,7 +61,7 @@ const server = createServer(async (request, response) => {
       tokens.set(nextRefreshToken, true)
       return json(response, 200, {
         token_type: 'Bearer',
-        access_token: 'fixture-token',
+        access_token: accessToken,
         refresh_token: nextRefreshToken,
         expires_in: 300,
         scope: 'mcp:tools',
@@ -71,18 +73,17 @@ const server = createServer(async (request, response) => {
     const expectedChallenge = verifier
       ? createHash('sha256').update(verifier).digest('base64url')
       : ''
-    if (!code || !verifier || code.codeChallenge !== expectedChallenge
+    if (!code || Date.now() - code.createdAt > 30_000 || !verifier || code.codeChallenge !== expectedChallenge
         || code.clientId !== params.get('client_id')
         || code.redirectUri !== params.get('redirect_uri')) {
       return json(response, 400, { error: 'invalid_grant' })
     }
     codes.delete(params.get('code'))
-    const accessToken = `fake-access-${randomUUID()}`
     const refreshToken = `fake-refresh-${randomUUID()}`
     tokens.set(refreshToken, true)
     return json(response, 200, {
       token_type: 'Bearer',
-      access_token: 'fixture-token',
+      access_token: accessToken,
       refresh_token: refreshToken,
       expires_in: 300,
       scope: code.scope,

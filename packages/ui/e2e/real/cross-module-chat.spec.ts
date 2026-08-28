@@ -187,7 +187,10 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     })
     expect(save.ok()).toBe(true)
 
-    await page.addInitScript((token) => localStorage.setItem('xihe-token', token), auth.accessToken)
+    await page.addInitScript(({ token, user }) => {
+      localStorage.setItem('xihe-token', token)
+      localStorage.setItem('xihe-user', JSON.stringify(user))
+    }, { token: auth.accessToken, user: { ...auth.user, workspaceId: auth.workspaceId } })
     await page.goto('/settings/config')
     const serverRow = page.locator(`[data-testid="remote-mcp-${serverId}"]`)
     await expect(serverRow).toBeVisible({ timeout: 10000 })
@@ -323,15 +326,42 @@ test.describe('Cross-Module — Full Chain Chat', () => {
       data: { jsonrpc: '2.0', method: 'tools/call', id: 2, params: { name: 'remote_echo', arguments: { mode: 'input_required' } } },
     })
     const inputBody = await inputRequired.json()
+    const inputState = inputBody.result.requestState
     expect(inputRequired.ok()).toBe(true)
-    expect(inputBody.result.requestState.required).toEqual(['value'])
+    expect(inputState.required).toEqual(['value'])
 
     const sse = await request.get(endpoint, {
-      headers: { Authorization: 'Bearer fixture-token', Accept: 'text/event-stream', 'mcp-session-id': sessionId, 'Last-Event-ID': 'ready-0' },
+      headers: { Authorization: 'Bearer fixture-token', Accept: 'text/event-stream', 'mcp-session-id': sessionId },
     })
     expect(sse.ok()).toBe(true)
     expect(sse.headers()['content-type']).toContain('text/event-stream')
     expect(await sse.text()).toContain('id: ready-1')
+    expect(sse.headers()['last-event-id']).toBe('ready-1')
+
+    const resumed = await request.get(endpoint, {
+      headers: { Authorization: 'Bearer fixture-token', Accept: 'text/event-stream', 'mcp-session-id': sessionId, 'Last-Event-ID': 'ready-1' },
+    })
+    expect(resumed.ok()).toBe(true)
+    expect(resumed.headers()['last-event-id']).toBe('ready-2')
+
+    const invalidState = await request.post(endpoint, {
+      headers: sessionHeaders,
+      data: { jsonrpc: '2.0', method: 'tools/call', id: 5, params: { name: 'remote_echo', requestState: { nonce: 'invalid' }, arguments: {} } },
+    })
+    expect(invalidState.status()).toBe(422)
+
+    const wrongSession = await request.post(endpoint, {
+      headers: { ...headers, 'mcp-session-id': `${sessionId}-other` },
+      data: { jsonrpc: '2.0', method: 'tools/list', id: 6, params: {} },
+    })
+    expect(wrongSession.status()).toBe(404)
+
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    const expiredState = await request.post(endpoint, {
+      headers: sessionHeaders,
+      data: { jsonrpc: '2.0', method: 'tools/call', id: 7, params: { name: 'remote_echo', requestState: inputState, arguments: {} } },
+    })
+    expect(expiredState.status()).toBe(422)
 
     const timeout = await request.post(endpoint, {
       headers: sessionHeaders,

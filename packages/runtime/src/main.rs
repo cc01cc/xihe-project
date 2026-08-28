@@ -42,13 +42,15 @@ use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
 use xihe_runtime::remote_mcp::{
-    RemoteMcpConnector, RemoteMcpError, validate_endpoint, validate_endpoint_dns,
+    RemoteMcpConnector, RemoteMcpError, RequestStateBinding, RequestStateStore,
+    validate_endpoint_dns, validate_endpoint_with_allowlist,
 };
 use xihe_runtime::sandbox;
 
 const CONTAINER_RUNTIME_PORT: u16 = 39001;
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static REMOTE_REQUEST_STATES: OnceLock<RequestStateStore> = OnceLock::new();
 
 fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
@@ -707,6 +709,8 @@ struct RemoteMcpCallRequest {
     #[serde(rename = "userId")]
     user_id: String,
     scope: String,
+    #[serde(rename = "requestState")]
+    request_state: Option<serde_json::Value>,
 }
 
 fn runtime_service_token() -> String {
@@ -744,7 +748,11 @@ async fn internal_auth_middleware(request: Request<axum::body::Body>, next: Next
 
 fn remote_mcp_error_response(
     error: RemoteMcpError,
-) -> (StatusCode, [(axum::http::HeaderName, &'static str); 1], AxumJson<serde_json::Value>) {
+) -> (
+    StatusCode,
+    [(axum::http::HeaderName, &'static str); 1],
+    AxumJson<serde_json::Value>,
+) {
     let (status, code) = match error {
         RemoteMcpError::AuthorizationRequired => {
             (StatusCode::UNAUTHORIZED, "authorization_required")
@@ -782,29 +790,57 @@ async fn remote_mcp_call_handler(
     State(registry): State<Arc<WorkspaceRegistry>>,
     headers: HeaderMap,
     AxumJson(request): AxumJson<RemoteMcpCallRequest>,
-) -> Result<AxumJson<serde_json::Value>, (StatusCode, [(axum::http::HeaderName, &'static str); 1], AxumJson<serde_json::Value>)> {
+) -> Result<
+    AxumJson<serde_json::Value>,
+    (
+        StatusCode,
+        [(axum::http::HeaderName, &'static str); 1],
+        AxumJson<serde_json::Value>,
+    ),
+> {
     if !has_runtime_service_auth(&headers) {
         return Err((
             StatusCode::UNAUTHORIZED,
             [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
-            AxumJson(serde_json::json!({"type":"https://xihe.dev/problems/authorization-required","title":"Authorization required","status":401,"code":"AUTHORIZATION_REQUIRED","detail":"A service Bearer token is required","requestId":uuid::Uuid::new_v4().to_string()})),
+            AxumJson(
+                serde_json::json!({"type":"https://xihe.dev/problems/authorization-required","title":"Authorization required","status":401,"code":"AUTHORIZATION_REQUIRED","detail":"A service Bearer token is required","requestId":uuid::Uuid::new_v4().to_string()}),
+            ),
         ));
     }
     if registry.get(&workspace_id).await.is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
-            AxumJson(serde_json::json!({"type":"https://xihe.dev/problems/workspace-not-found","title":"Workspace not found","status":404,"code":"WORKSPACE_NOT_FOUND","detail":"Workspace is not registered","requestId":uuid::Uuid::new_v4().to_string()})),
+            AxumJson(
+                serde_json::json!({"type":"https://xihe.dev/problems/workspace-not-found","title":"Workspace not found","status":404,"code":"WORKSPACE_NOT_FOUND","detail":"Workspace is not registered","requestId":uuid::Uuid::new_v4().to_string()}),
+            ),
         ));
     }
-    if request.user_id.trim().is_empty() || request.tool.trim().is_empty() {
+    if request.user_id.trim().is_empty()
+        || request.tool.trim().is_empty()
+        || request.scope.trim().is_empty()
+    {
         return Err((
             StatusCode::BAD_REQUEST,
             [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
-            AxumJson(serde_json::json!({"type":"https://xihe.dev/problems/invalid-request","title":"Invalid request","status":400,"code":"INVALID_REQUEST","detail":"userId and tool are required","requestId":uuid::Uuid::new_v4().to_string()})),
+            AxumJson(
+                serde_json::json!({"type":"https://xihe.dev/problems/invalid-request","title":"Invalid request","status":400,"code":"INVALID_REQUEST","detail":"userId and tool are required","requestId":uuid::Uuid::new_v4().to_string()}),
+            ),
         ));
     }
-    let endpoint = validate_endpoint(&request.endpoint).map_err(remote_mcp_error_response)?;
+    let allowed_hosts = std::env::var("XIHE_REMOTE_MCP_ALLOWED_HOSTS")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|host| !host.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let endpoint = validate_endpoint_with_allowlist(&request.endpoint, &allowed_hosts)
+        .map_err(remote_mcp_error_response)?;
     validate_endpoint_dns(&endpoint)
         .await
         .map_err(remote_mcp_error_response)?;
@@ -812,9 +848,13 @@ async fn remote_mcp_call_handler(
     let cp_url =
         std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://localhost:12631".to_string());
     let service_token = runtime_service_token();
-    let connector = RemoteMcpConnector::new(
-        &request.endpoint,
-        fetch_remote_mcp_token(
+    let binding = RequestStateBinding {
+        user_id: request.user_id.clone(),
+        workspace_id: workspace_id.clone(),
+        server_id: server_id.clone(),
+        scope: request.scope.clone(),
+    };
+    let token = fetch_remote_mcp_token(
             &cp_url,
             &service_token,
             &request.user_id,
@@ -831,25 +871,70 @@ async fn remote_mcp_call_handler(
                 _ => (StatusCode::BAD_GATEWAY, "token_broker_unavailable"),
             };
             (status, [(axum::http::header::CONTENT_TYPE, "application/problem+json")], AxumJson(serde_json::json!({"type":format!("https://xihe.dev/problems/{code}"),"title":"Token broker failed","status":status.as_u16(),"code":code.to_ascii_uppercase(),"detail":"Token broker request failed","requestId":uuid::Uuid::new_v4().to_string()})))
-        })?,
-        Duration::from_secs(30),
+        })?;
+    let store = REMOTE_REQUEST_STATES
+        .get_or_init(RequestStateStore::default)
+        .clone();
+    let result = run_remote_mcp_call(
+        &request.endpoint,
+        token,
+        binding.clone(),
+        store.clone(),
+        &request.tool,
+        request.arguments.clone(),
+        request.request_state.clone(),
     )
-    .map_err(remote_mcp_error_response)?;
+    .await;
+    let result = match result {
+        Err(RemoteMcpError::AuthorizationRequired) => {
+            let refreshed = fetch_remote_mcp_token(
+                &cp_url,
+                &service_token,
+                &request.user_id,
+                &workspace_id,
+                &server_id,
+                &request.scope,
+            )
+            .await
+            .map_err(remote_mcp_error_response)?;
+            run_remote_mcp_call(
+                &request.endpoint,
+                refreshed,
+                binding,
+                store,
+                &request.tool,
+                request.arguments,
+                request.request_state,
+            )
+            .await
+        }
+        other => other,
+    };
+    result.map(AxumJson).map_err(remote_mcp_error_response)
+}
 
+async fn run_remote_mcp_call(
+    endpoint: &str,
+    token: String,
+    binding: RequestStateBinding,
+    request_states: RequestStateStore,
+    tool: &str,
+    arguments: serde_json::Value,
+    request_state: Option<serde_json::Value>,
+) -> Result<serde_json::Value, RemoteMcpError> {
+    let connector = RemoteMcpConnector::new_with_context(
+        endpoint,
+        token,
+        Duration::from_secs(30),
+        binding,
+        request_states,
+    )?;
     let cancellation = tokio_util::sync::CancellationToken::new();
+    connector.initialize(&cancellation).await?;
+    connector.tools_list(&cancellation).await?;
     connector
-        .initialize(&cancellation)
+        .tools_call_with_state(tool, arguments, request_state, &cancellation)
         .await
-        .map_err(remote_mcp_error_response)?;
-    connector
-        .tools_list(&cancellation)
-        .await
-        .map_err(remote_mcp_error_response)?;
-    connector
-        .tools_call(&request.tool, request.arguments, &cancellation)
-        .await
-        .map(AxumJson)
-        .map_err(remote_mcp_error_response)
 }
 
 async fn fetch_remote_mcp_token(
@@ -861,7 +946,10 @@ async fn fetch_remote_mcp_token(
     scope: &str,
 ) -> Result<String, RemoteMcpError> {
     let response = http_client()
-        .post(format!("{}/internal/v1/oauth/token", cp_url.trim_end_matches('/')))
+        .post(format!(
+            "{}/internal/v1/oauth/token",
+            cp_url.trim_end_matches('/')
+        ))
         .bearer_auth(service_token)
         .json(&serde_json::json!({
             "userId": user_id,
@@ -1199,15 +1287,30 @@ async fn main() -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/health", get(health))
-        .route("/internal/v1/runtime/workspaces/{ws_id}/mcp", any(workspace_mcp_handler))
-        .route("/internal/v1/runtime/workspaces", post(create_workspace_handler))
-        .route("/internal/v1/runtime/workspaces/delete", post(delete_workspace_handler))
-        .route("/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn", post(mcp_spawn_handler))
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/mcp",
+            any(workspace_mcp_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces",
+            post(create_workspace_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/delete",
+            post(delete_workspace_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn",
+            post(mcp_spawn_handler),
+        )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn/{server_id}",
             delete(mcp_kill_handler),
         )
-        .route("/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn", get(mcp_list_handler))
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn",
+            get(mcp_list_handler),
+        )
         .route(
             "/internal/v1/runtime/remote-mcp/{workspace_id}/{server_id}/call",
             post(remote_mcp_call_handler),

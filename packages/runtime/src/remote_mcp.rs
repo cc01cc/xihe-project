@@ -35,27 +35,113 @@ pub enum RemoteMcpError {
     RequestStateInvalid,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RequestStateBinding {
+    pub user_id: String,
+    pub workspace_id: String,
+    pub server_id: String,
+    pub scope: String,
+}
+
+#[derive(Clone)]
+struct RequestStateEntry {
+    expires_at: Instant,
+    binding: RequestStateBinding,
+    state: Value,
+}
+
 /// Business-level request state is deliberately one-shot, in addition to the
 /// authenticated/TTL-protected rmcp codec used for wire state.
 #[derive(Clone, Default)]
 pub struct RequestStateStore {
-    states: Arc<Mutex<HashMap<String, Instant>>>,
+    states: Arc<Mutex<HashMap<String, RequestStateEntry>>>,
 }
 
 impl RequestStateStore {
-    pub fn issue(&self, state: impl Into<String>, ttl: Duration) {
+    pub fn issue_for(&self, binding: RequestStateBinding, state: Value, ttl: Duration) {
+        let key = state_key(&binding, &state);
         let mut states = self.states.lock().expect("request state mutex poisoned");
-        states.retain(|_, expires_at| *expires_at > Instant::now());
-        states.insert(state.into(), Instant::now() + ttl);
+        states.retain(|_, entry| entry.expires_at > Instant::now());
+        states.insert(
+            key,
+            RequestStateEntry {
+                expires_at: Instant::now() + ttl,
+                binding,
+                state,
+            },
+        );
     }
 
-    pub fn consume(&self, state: &str) -> Result<(), RemoteMcpError> {
+    pub fn consume_for(
+        &self,
+        binding: &RequestStateBinding,
+        state: &Value,
+    ) -> Result<(), RemoteMcpError> {
+        let key = state_key(binding, state);
         let mut states = self.states.lock().expect("request state mutex poisoned");
-        match states.remove(state) {
-            Some(expires_at) if expires_at > Instant::now() => Ok(()),
+        match states.remove(&key) {
+            Some(entry)
+                if entry.binding == *binding
+                    && entry.state == *state
+                    && entry.expires_at > Instant::now() =>
+            {
+                Ok(())
+            }
             _ => Err(RemoteMcpError::RequestStateInvalid),
         }
     }
+
+    pub fn validate_for(
+        &self,
+        binding: &RequestStateBinding,
+        state: &Value,
+    ) -> Result<(), RemoteMcpError> {
+        let states = self.states.lock().expect("request state mutex poisoned");
+        match states.get(&state_key(binding, state)) {
+            Some(entry)
+                if entry.binding == *binding
+                    && entry.state == *state
+                    && entry.expires_at > Instant::now() =>
+            {
+                Ok(())
+            }
+            _ => Err(RemoteMcpError::RequestStateInvalid),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn issue(&self, state: impl Into<String>, ttl: Duration) {
+        self.issue_for(
+            RequestStateBinding {
+                user_id: "test-user".into(),
+                workspace_id: "test-workspace".into(),
+                server_id: "test-server".into(),
+                scope: "test-scope".into(),
+            },
+            Value::String(state.into()),
+            ttl,
+        );
+    }
+
+    #[cfg(test)]
+    pub fn consume(&self, state: &str) -> Result<(), RemoteMcpError> {
+        self.consume_for(
+            &RequestStateBinding {
+                user_id: "test-user".into(),
+                workspace_id: "test-workspace".into(),
+                server_id: "test-server".into(),
+                scope: "test-scope".into(),
+            },
+            &Value::String(state.into()),
+        )
+    }
+}
+
+fn state_key(binding: &RequestStateBinding, state: &Value) -> String {
+    format!(
+        "{}\0{}\0{}\0{}\0{}",
+        binding.user_id, binding.workspace_id, binding.server_id, binding.scope, state
+    )
 }
 
 pub struct RemoteMcpConnector {
@@ -66,6 +152,7 @@ pub struct RemoteMcpConnector {
     session_id: Mutex<Option<String>>,
     last_event_id: Mutex<Option<String>>,
     pub request_states: RequestStateStore,
+    request_state_binding: RequestStateBinding,
 }
 
 impl RemoteMcpConnector {
@@ -73,6 +160,27 @@ impl RemoteMcpConnector {
         endpoint: &str,
         bearer_token: impl Into<String>,
         timeout: Duration,
+    ) -> Result<Self, RemoteMcpError> {
+        Self::new_with_context(
+            endpoint,
+            bearer_token,
+            timeout,
+            RequestStateBinding {
+                user_id: "unknown".into(),
+                workspace_id: "unknown".into(),
+                server_id: "unknown".into(),
+                scope: "unknown".into(),
+            },
+            RequestStateStore::default(),
+        )
+    }
+
+    pub fn new_with_context(
+        endpoint: &str,
+        bearer_token: impl Into<String>,
+        timeout: Duration,
+        request_state_binding: RequestStateBinding,
+        request_states: RequestStateStore,
     ) -> Result<Self, RemoteMcpError> {
         let endpoint = validate_endpoint(endpoint)?;
         let bearer_token = bearer_token.into();
@@ -95,7 +203,8 @@ impl RemoteMcpConnector {
             next_id: AtomicU64::new(1),
             session_id: Mutex::new(None),
             last_event_id: Mutex::new(None),
-            request_states: RequestStateStore::default(),
+            request_states,
+            request_state_binding,
         })
     }
 
@@ -132,12 +241,31 @@ impl RemoteMcpConnector {
         arguments: Value,
         cancellation: &CancellationToken,
     ) -> Result<Value, RemoteMcpError> {
-        self.call(
-            "tools/call",
-            json!({"name": name, "arguments": arguments}),
-            cancellation,
-        )
-        .await
+        self.tools_call_with_state(name, arguments, None, cancellation)
+            .await
+    }
+
+    pub async fn tools_call_with_state(
+        &self,
+        name: &str,
+        arguments: Value,
+        request_state: Option<Value>,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, RemoteMcpError> {
+        if let Some(state) = request_state.as_ref() {
+            self.request_states
+                .validate_for(&self.request_state_binding, state)?;
+        }
+        let mut params = json!({"name": name, "arguments": arguments});
+        if let Some(state) = request_state.as_ref() {
+            params["requestState"] = state.clone();
+        }
+        let result = self.call("tools/call", params, cancellation).await?;
+        if let Some(state) = request_state.as_ref() {
+            self.request_states
+                .consume_for(&self.request_state_binding, state)?;
+        }
+        Ok(result)
     }
 
     /// Reconnects to the server's resumable SSE channel.
@@ -170,10 +298,9 @@ impl RemoteMcpConnector {
             .lock()
             .expect("event mutex poisoned")
             .is_none()
+            && let Some(event_id) = last_sse_event_id(&body)
         {
-            if let Some(event_id) = last_sse_event_id(&body) {
-                *self.last_event_id.lock().expect("event mutex poisoned") = Some(event_id);
-            }
+            *self.last_event_id.lock().expect("event mutex poisoned") = Some(event_id);
         }
         parse_sse_events(&body)
     }
@@ -210,7 +337,18 @@ impl RemoteMcpConnector {
                 cancellation,
             )
             .await?;
-        parse_response_body(response).await
+        let result = parse_response_body(response).await?;
+        if let Some(state) = result.get("requestState") {
+            if !state.is_object() {
+                return Err(RemoteMcpError::RequestStateInvalid);
+            }
+            self.request_states.issue_for(
+                self.request_state_binding.clone(),
+                state.clone(),
+                Duration::from_secs(300),
+            );
+        }
+        Ok(result)
     }
 
     async fn notify(
@@ -328,6 +466,13 @@ fn last_sse_event_id(body: &str) -> Option<String> {
 }
 
 pub fn validate_endpoint(endpoint: &str) -> Result<Url, RemoteMcpError> {
+    validate_endpoint_with_allowlist(endpoint, &[])
+}
+
+pub fn validate_endpoint_with_allowlist(
+    endpoint: &str,
+    allowed_hosts: &[String],
+) -> Result<Url, RemoteMcpError> {
     let url =
         Url::parse(endpoint).map_err(|error| RemoteMcpError::InvalidEndpoint(error.to_string()))?;
     let allow_local_http =
@@ -360,6 +505,15 @@ pub fn validate_endpoint(endpoint: &str) -> Result<Url, RemoteMcpError> {
         .host_str()
         .ok_or_else(|| RemoteMcpError::InvalidEndpoint("endpoint must include a host".into()))?;
     let host_lower = host.to_ascii_lowercase();
+    if !allowed_hosts.is_empty()
+        && !allowed_hosts
+            .iter()
+            .any(|allowed| host_matches_allowlist(&host_lower, allowed))
+    {
+        return Err(RemoteMcpError::EndpointNotAllowed(
+            "host is not in the configured allowlist".into(),
+        ));
+    }
     if host_lower == "localhost"
         || host_lower.ends_with(".localhost")
         || host_lower == "localhost.localdomain"
@@ -381,6 +535,14 @@ pub fn validate_endpoint(endpoint: &str) -> Result<Url, RemoteMcpError> {
         ));
     }
     Ok(url)
+}
+
+fn host_matches_allowlist(host: &str, allowed: &str) -> bool {
+    let allowed = allowed.trim().trim_end_matches('.').to_ascii_lowercase();
+    if allowed.is_empty() {
+        return false;
+    }
+    host == allowed || (allowed.starts_with("*.") && host.ends_with(&allowed[1..]))
 }
 
 pub async fn validate_endpoint_dns(endpoint: &Url) -> Result<(), RemoteMcpError> {
@@ -457,6 +619,255 @@ fn parse_response(body: Value) -> Result<Value, RemoteMcpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
+    use axum::extract::State;
+    use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode as AxumStatusCode};
+    use axum::routing::any;
+    use axum::{Router, body::Body, http::Request, response::Response};
+    use std::sync::atomic::AtomicBool;
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+
+    #[derive(Clone, Default)]
+    struct WireFixture {
+        requests: Arc<Mutex<Vec<(Method, HeaderMap, Value)>>>,
+        delay: Arc<AtomicBool>,
+    }
+
+    async fn wire_handler(
+        State(fixture): State<WireFixture>,
+        request: Request<Body>,
+    ) -> Response<Body> {
+        let (parts, body) = request.into_parts();
+        let bytes = to_bytes(body, usize::MAX).await.expect("read fixture body");
+        let payload = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).expect("fixture received JSON")
+        };
+        fixture
+            .requests
+            .lock()
+            .expect("fixture mutex poisoned")
+            .push((parts.method.clone(), parts.headers.clone(), payload.clone()));
+
+        if fixture.delay.load(Ordering::Relaxed) {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+        match (parts.method, payload.get("method").and_then(Value::as_str)) {
+            (Method::POST, Some("initialize")) => json_response(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": payload["id"],
+                    "result": {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {}, "requestState": {"nonce": "live-1"}}
+                }),
+                Some(("mcp-session-id", "session-live")),
+            ),
+            (Method::POST, Some("notifications/initialized")) => json_response(
+                serde_json::json!({}),
+                Some(("mcp-session-id", "session-live")),
+            ),
+            (Method::POST, Some("tools/list")) => json_response(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": payload["id"],
+                    "result": {"tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}]}
+                }),
+                Some(("mcp-session-id", "session-live")),
+            ),
+            (Method::POST, Some("tools/call")) => json_response(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": payload["id"],
+                    "result": {"content": [{"type": "text", "text": "wire-ok"}]}
+                }),
+                Some(("mcp-session-id", "session-live")),
+            ),
+            (Method::GET, None) => {
+                let mut response = Response::new(Body::from(
+                    "id: evt-2\ndata: {\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}\n\n",
+                ));
+                response.headers_mut().insert(
+                    "content-type",
+                    "text/event-stream".parse().expect("content type"),
+                );
+                response
+                    .headers_mut()
+                    .insert("last-event-id", "evt-2".parse().expect("event id"));
+                response
+            }
+            (Method::DELETE, None) => Response::builder()
+                .status(AxumStatusCode::NO_CONTENT)
+                .body(Body::empty())
+                .expect("build delete response"),
+            _ => Response::builder()
+                .status(AxumStatusCode::BAD_REQUEST)
+                .body(Body::empty())
+                .expect("build bad request response"),
+        }
+    }
+
+    fn json_response(body: Value, session: Option<(&str, &str)>) -> Response<Body> {
+        let mut response = Response::new(Body::from(body.to_string()));
+        response.headers_mut().insert(
+            "content-type",
+            "application/json".parse().expect("content type"),
+        );
+        if let Some((_name, value)) = session {
+            response.headers_mut().insert(
+                HeaderName::from_static("mcp-session-id"),
+                HeaderValue::from_str(value).expect("session id"),
+            );
+        }
+        response
+    }
+
+    async fn fixture() -> (WireFixture, String, oneshot::Sender<()>) {
+        let fixture = WireFixture::default();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture");
+        let endpoint = format!(
+            "http://{}/mcp",
+            listener.local_addr().expect("fixture address")
+        );
+        let (shutdown, signal) = oneshot::channel();
+        let router = Router::new()
+            .fallback(any(wire_handler))
+            .with_state(fixture.clone());
+        tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    signal.await.ok();
+                })
+                .await
+                .expect("serve fixture");
+        });
+        (fixture, endpoint, shutdown)
+    }
+
+    fn local_connector(endpoint: &str, states: RequestStateStore) -> RemoteMcpConnector {
+        RemoteMcpConnector {
+            client: Client::builder()
+                .timeout(Duration::from_secs(1))
+                .redirect(Policy::none())
+                .build()
+                .expect("build test client"),
+            endpoint: Url::parse(endpoint).expect("parse fixture endpoint"),
+            bearer_token: "access-live".into(),
+            next_id: AtomicU64::new(1),
+            session_id: Mutex::new(None),
+            last_event_id: Mutex::new(None),
+            request_states: states,
+            request_state_binding: RequestStateBinding {
+                user_id: "user-1".into(),
+                workspace_id: "ws-1".into(),
+                server_id: "server-1".into(),
+                scope: "mcp:tools".into(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn wire_protocol_preserves_auth_session_state_sse_and_disconnect() {
+        let (fixture, endpoint, shutdown) = fixture().await;
+        let connector = local_connector(&endpoint, RequestStateStore::default());
+        let cancellation = CancellationToken::new();
+
+        let initialized = connector
+            .initialize(&cancellation)
+            .await
+            .expect("initialize");
+        assert_eq!(initialized["requestState"]["nonce"], "live-1");
+        connector
+            .tools_list(&cancellation)
+            .await
+            .expect("tools/list");
+        let result = connector
+            .tools_call_with_state(
+                "echo",
+                json!({"value": "hello"}),
+                Some(json!({"nonce": "live-1"})),
+                &cancellation,
+            )
+            .await
+            .expect("tools/call");
+        assert_eq!(result["content"][0]["text"], "wire-ok");
+
+        connector
+            .get_events(&cancellation)
+            .await
+            .expect("SSE reconnect");
+        connector
+            .get_events(&cancellation)
+            .await
+            .expect("SSE resume");
+        connector
+            .disconnect(&cancellation)
+            .await
+            .expect("disconnect");
+
+        let requests = fixture.requests.lock().expect("fixture mutex poisoned");
+        assert_eq!(requests.len(), 7);
+        assert_eq!(requests[0].0, Method::POST);
+        assert_eq!(requests[0].1["authorization"], "Bearer access-live");
+        assert_eq!(requests[0].1["mcp-protocol-version"], MCP_PROTOCOL_VERSION);
+        assert_eq!(
+            requests[0].2["params"]["protocolVersion"],
+            MCP_PROTOCOL_VERSION
+        );
+        assert!(requests[1].2.get("id").is_none());
+        assert_eq!(requests[2].2["method"], "tools/list");
+        assert_eq!(requests[3].2["params"]["requestState"]["nonce"], "live-1");
+        assert!(requests[4].1.get("last-event-id").is_none());
+        assert_eq!(requests[5].1["last-event-id"], "evt-2");
+        assert_eq!(requests[6].0, Method::DELETE);
+        assert_eq!(requests[6].1["mcp-session-id"], "session-live");
+        drop(requests);
+        shutdown.send(()).expect("stop fixture");
+    }
+
+    #[tokio::test]
+    async fn wire_cancellation_is_observable_and_401_is_not_silently_retried() {
+        let (fixture, endpoint, shutdown) = fixture().await;
+        fixture.delay.store(true, Ordering::Relaxed);
+        let connector = local_connector(&endpoint, RequestStateStore::default());
+        let cancellation = CancellationToken::new();
+        let task = tokio::spawn({
+            let cancellation = cancellation.clone();
+            async move { connector.tools_list(&cancellation).await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cancellation.cancel();
+        assert!(matches!(
+            task.await.expect("join request"),
+            Err(RemoteMcpError::Cancelled)
+        ));
+        shutdown.send(()).expect("stop fixture");
+    }
+
+    #[test]
+    fn request_state_rejects_expired_and_wrong_bindings_without_consuming_valid_state() {
+        let store = RequestStateStore::default();
+        let binding = RequestStateBinding {
+            user_id: "u".into(),
+            workspace_id: "w".into(),
+            server_id: "s".into(),
+            scope: "read".into(),
+        };
+        let state = json!({"nonce": "one"});
+        store.issue_for(binding.clone(), state.clone(), Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(matches!(
+            store.validate_for(&binding, &state),
+            Err(RemoteMcpError::RequestStateInvalid)
+        ));
+        store.issue_for(binding.clone(), state.clone(), Duration::from_secs(1));
+        let mut wrong = binding.clone();
+        wrong.scope = "write".into();
+        assert!(matches!(
+            store.consume_for(&wrong, &state),
+            Err(RemoteMcpError::RequestStateInvalid)
+        ));
+        assert!(store.consume_for(&binding, &state).is_ok());
+    }
 
     #[test]
     fn endpoint_policy_rejects_insecure_private_and_unapproved_urls() {
@@ -497,6 +908,41 @@ mod tests {
             store.consume("state-1"),
             Err(RemoteMcpError::RequestStateInvalid)
         ));
+    }
+
+    #[test]
+    fn request_state_is_bound_to_all_context_fields() {
+        let store = RequestStateStore::default();
+        let binding = RequestStateBinding {
+            user_id: "user-1".into(),
+            workspace_id: "workspace-1".into(),
+            server_id: "server-1".into(),
+            scope: "read".into(),
+        };
+        let state = json!({"required": ["value"]});
+        store.issue_for(binding.clone(), state.clone(), Duration::from_secs(60));
+
+        let mut wrong = binding.clone();
+        wrong.workspace_id = "workspace-2".into();
+        assert!(matches!(
+            store.consume_for(&wrong, &state),
+            Err(RemoteMcpError::RequestStateInvalid)
+        ));
+        assert!(store.consume_for(&binding, &state).is_ok());
+        assert!(matches!(
+            store.consume_for(&binding, &state),
+            Err(RemoteMcpError::RequestStateInvalid)
+        ));
+    }
+
+    #[test]
+    fn endpoint_allowlist_supports_exact_and_subdomain_entries() {
+        let allowed = vec!["example.com".to_string(), "*.trusted.example".to_string()];
+        assert!(validate_endpoint_with_allowlist("https://example.com/mcp", &allowed).is_ok());
+        assert!(
+            validate_endpoint_with_allowlist("https://mcp.trusted.example/mcp", &allowed).is_ok()
+        );
+        assert!(validate_endpoint_with_allowlist("https://evil.example", &allowed).is_err());
     }
 
     #[test]

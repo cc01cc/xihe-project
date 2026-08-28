@@ -38,6 +38,9 @@ public class OAuthCredentialService {
     private final WorkspaceUserRepository workspaceUserRepository;
     private final McpServerRepository mcpServerRepository;
 
+    @org.springframework.beans.factory.annotation.Value("${cp.oauth.allowed-hosts:}")
+    private String allowedEndpointHosts;
+
     public OAuthCredentialService(
             PkceSessionService pkce,
             OAuthCredentialRepository repository,
@@ -248,6 +251,9 @@ public class OAuthCredentialService {
         }
         String scheme = uri.getScheme().toLowerCase();
         boolean localHost = isLoopbackHost(uri.getHost()) || "host.docker.internal".equalsIgnoreCase(uri.getHost());
+        if (!isAllowedHost(uri.getHost())) {
+            throw new IllegalArgumentException(kind + " endpoint host is not in the configured allowlist");
+        }
         boolean localHttp = "http".equals(scheme) && localHost;
         if (kind == EndpointKind.REMOTE && isLoopbackHost(uri.getHost())) {
             throw new IllegalArgumentException("remote endpoint must not target localhost");
@@ -271,6 +277,19 @@ public class OAuthCredentialService {
                 throw new IllegalArgumentException(kind + " endpoint DNS lookup failed", e);
             }
         }
+    }
+
+    private boolean isAllowedHost(String host) {
+        if (allowedEndpointHosts == null || allowedEndpointHosts.isBlank()) return true;
+        String normalized = host.toLowerCase();
+        for (String configured : allowedEndpointHosts.split(",")) {
+            String allowed = configured.trim().toLowerCase();
+            if (normalized.equals(allowed)
+                    || (allowed.startsWith("*.") && normalized.endsWith(allowed.substring(1)))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static URI parseUri(String value, String name) {
