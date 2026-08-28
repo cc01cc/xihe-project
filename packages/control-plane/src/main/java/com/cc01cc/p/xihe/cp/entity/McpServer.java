@@ -8,7 +8,6 @@ import java.time.Instant;
 public class McpServer {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", length = 36)
     private String id;
 
@@ -43,6 +42,7 @@ public class McpServer {
 
     @PrePersist
     protected void onCreate() {
+        if (id == null) id = java.util.UUID.randomUUID().toString();
         createdAt = Instant.now();
         updatedAt = Instant.now();
     }

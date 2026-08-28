@@ -5,6 +5,7 @@ pub mod fetch;
 pub mod fs;
 pub mod gateway;
 pub mod mcp_process;
+pub mod remote_mcp;
 pub mod sandbox;
 pub mod workspace;
 

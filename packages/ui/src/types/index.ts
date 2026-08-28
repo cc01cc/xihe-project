@@ -148,6 +148,7 @@ export interface User {
   id: string
   email: string
   name?: string
+  workspaceId?: string
 }
 
 export interface FileNode {

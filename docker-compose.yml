@@ -46,6 +46,7 @@ services:
       XIHE_AGENT_URL: "http://agent:8000/chat"
       XIHE_AGENT_BASE_URL: "http://agent:8000"
       XIHE_RUNTIME_URL: "http://runtime:8001"
+      XIHE_CP_API_TOKEN: "${XIHE_CP_API_TOKEN:-dev-token-not-secure}"
       SPRING_PROFILES_ACTIVE: "dev"
     volumes:
       - ./logs/cp:/logs
@@ -91,6 +92,8 @@ services:
     environment:
       XIHE_RUNTIME_PORT: "8001"
       XIHE_CP_URL: "http://control-plane:8080"
+      XIHE_CP_API_TOKEN: "${XIHE_CP_API_TOKEN:-dev-token-not-secure}"
+      XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL: "${XIHE_E2E_EXTERNAL_SERVER:-false}"
     volumes:
       - ./logs/runtime:/logs
     mem_limit: 128m

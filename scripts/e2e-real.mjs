@@ -8,6 +8,11 @@ const uiPort = process.env.XIHE_UI_PORT ?? '12630'
 const cpPort = process.env.XIHE_CP_PORT ?? '12631'
 const agentPort = process.env.XIHE_AGENT_PORT ?? '12632'
 const runtimePort = process.env.XIHE_RUNTIME_PORT ?? '12633'
+const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? '13640'
+const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? '13641'
+process.env.XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL ??= 'true'
+process.env.XIHE_CP_API_TOKEN = 'dev-token-change-me'
+process.env.XIHE_E2E_EXTERNAL_SERVER = 'true'
 const projectName = `xihe-e2e-${Date.now()}-${process.pid}`
 const noBuild = process.argv.includes('--no-build')
 const noCache = process.argv.includes('--no-cache')
@@ -20,6 +25,7 @@ const playwrightTestArgs = playwrightArgs.length > 0 ? playwrightArgs : ['e2e/re
 const command = process.platform === 'win32' ? 'docker.exe' : 'docker'
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 let uiProcess
+const fixtureProcesses = []
 let cleaned = false
 let activeCleanup
 let shuttingDown = false
@@ -103,6 +109,7 @@ async function cleanup(composeArgs) {
   if (cleaned) return
   cleaned = true
   await stopProcess(uiProcess)
+  await Promise.all(fixtureProcesses.map((child) => stopProcess(child)))
   if (!keep) {
     await run(command, [...composeArgs, 'down', '--volumes', '--remove-orphans'], { stdio: 'inherit' })
   } else {
@@ -137,6 +144,24 @@ async function main() {
     await waitForHttp('Agent', `http://localhost:${agentPort}/health`)
     await waitForHttp('Runtime', `http://localhost:${runtimePort}/health`)
 
+    for (const [name, script, port, env] of [
+      ['Fake OAuth', 'fake-oauth-server.mjs', fakeOAuthPort, { XIHE_FAKE_OAUTH_PORT: fakeOAuthPort }],
+      ['Fake MCP', 'fake-mcp-server.mjs', fakeMcpPort, {
+        XIHE_FAKE_MCP_PORT: fakeMcpPort,
+        XIHE_FAKE_MCP_ACCESS_TOKEN: 'fixture-token',
+      }],
+    ]) {
+      const fixture = spawnCommand(process.execPath, [join(uiDir, 'e2e', 'fixtures', script)], {
+        cwd: projectDir,
+        env: { ...process.env, ...env },
+        stdio: 'inherit',
+        windowsHide: true,
+      })
+      fixtureProcesses.push(fixture)
+      fixture.once('error', (error) => console.error(`[e2e] ${name} process error: ${error.message}`))
+      await waitForHttp(name, `http://localhost:${port}/health`)
+    }
+
     uiProcess = spawnCommand(pnpmCommand, ['run', 'dev'], {
       cwd: uiDir,
       env: { ...process.env, XIHE_UI_PORT: uiPort },
@@ -160,6 +185,9 @@ async function main() {
         XIHE_CP_PORT: cpPort,
         XIHE_AGENT_PORT: agentPort,
         XIHE_RUNTIME_PORT: runtimePort,
+        XIHE_FAKE_OAUTH_PORT: fakeOAuthPort,
+        XIHE_FAKE_MCP_PORT: fakeMcpPort,
+        XIHE_FAKE_MCP_ACCESS_TOKEN: 'fixture-token',
         XIHE_E2E_EXTERNAL_SERVER: '1',
       },
     })

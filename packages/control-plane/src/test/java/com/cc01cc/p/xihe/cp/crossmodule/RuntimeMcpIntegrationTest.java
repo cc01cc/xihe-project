@@ -19,7 +19,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        registry.add("cp.mcp.runtime-base-url", () -> "http://localhost:" + wireMock.port());
+        registry.add("cp.mcp.runtime-url", () -> "http://localhost:" + wireMock.port());
     }
 
     private static final String TOOLS_LIST_BODY = """
@@ -46,16 +46,16 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void mcpToolsListForwardsToRuntime() {
-        String runtimePath = "/workspace/" + wsId + "/mcp";
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
 
-        wireMock.stubFor(post(urlPathMatching("/workspace/.*/mcp"))
+        wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/mcp"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}")));
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
+                url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
@@ -66,7 +66,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void mcpToolsListForwardsSessionIdHeader() {
-        String runtimePath = "/workspace/" + wsId + "/mcp";
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
 
         wireMock.stubFor(post(urlEqualTo(runtimePath))
                 .willReturn(aResponse()
@@ -82,7 +82,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         HttpEntity<String> entity = new HttpEntity<>(TOOLS_LIST_BODY, headers);
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/mcp"), entity, String.class);
+                url("/api/v1/mcp"), entity, String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
@@ -99,22 +99,72 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         HttpEntity<String> entity = new HttpEntity<>(TOOLS_LIST_BODY, headers);
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/mcp"), entity, String.class);
+                url("/api/v1/mcp"), entity, String.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
 
     @Test
     void mcpToolsListHandlesRuntimeErrorGracefully() {
-        wireMock.stubFor(post(urlPathMatching("/workspace/.*/mcp"))
+        wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/mcp"))
                 .willReturn(aResponse().withStatus(500)));
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
+                url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertTrue(response.getBody().contains("\"tools\""));
 
-        wireMock.verify(postRequestedFor(urlPathMatching("/workspace/.*/mcp")));
+        wireMock.verify(postRequestedFor(urlPathMatching("/internal/v1/runtime/workspaces/.*/mcp")));
+    }
+
+    @Test
+    void mcpGetForwardsSseHeadersAndBody() {
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        wireMock.stubFor(get(urlEqualTo(runtimePath))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "text/event-stream")
+                        .withHeader("Last-Event-ID", "evt-2")
+                        .withBody("event: message\ndata: {\"ok\":true}\n\n")));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.set("X-Workspace-Id", wsId);
+        headers.set("MCP-Protocol-Version", "2026-07-28");
+        headers.set("Last-Event-ID", "evt-1");
+        ResponseEntity<String> response = restTemplate.exchange(
+                url("/api/v1/mcp"), HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("text/event-stream", response.getHeaders().getFirst("Content-Type"));
+        assertEquals("evt-2", response.getHeaders().getFirst("Last-Event-ID"));
+        assertTrue(response.getBody().contains("event: message"));
+        wireMock.verify(getRequestedFor(urlEqualTo(runtimePath))
+                .withHeader("Last-Event-ID", equalTo("evt-1"))
+                .withHeader("MCP-Protocol-Version", equalTo("2026-07-28")));
+    }
+
+    @Test
+    void mcpDeleteForwardsSessionToRuntime() {
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        wireMock.stubFor(delete(urlEqualTo(runtimePath))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"disconnected\":true}}")));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.set("X-Workspace-Id", wsId);
+        headers.set("mcp-session-id", "session-to-close");
+        ResponseEntity<String> response = restTemplate.exchange(
+                url("/api/v1/mcp"), HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertTrue(response.getBody().contains("disconnected"));
+        wireMock.verify(deleteRequestedFor(urlEqualTo(runtimePath))
+                .withHeader("mcp-session-id", equalTo("session-to-close"))
+                .withHeader("MCP-Protocol-Version", equalTo("2026-07-28")));
     }
 }

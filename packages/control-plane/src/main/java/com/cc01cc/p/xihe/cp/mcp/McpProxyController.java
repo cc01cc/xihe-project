@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
@@ -71,7 +72,7 @@ public class McpProxyController {
         this.configRepo = configRepo;
     }
 
-    @PostMapping("/mcp")
+    @PostMapping("/api/v1/mcp")
     public ResponseEntity<String> proxy(
             @RequestBody String body,
             @RequestHeader HttpHeaders headers) {
@@ -81,7 +82,7 @@ public class McpProxyController {
         String wsId = extractWorkspaceId(headers, sessionId);
 
         if (wsId == null) {
-            return ResponseEntity.badRequest().body("{\"error\": \"Missing workspace ID\"}");
+            return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Workspace context is required");
         }
 
         if ("initialize".equals(method)) {
@@ -96,10 +97,93 @@ public class McpProxyController {
         return forwardToRuntime(wsId, null, body, headers, sessionId);
     }
 
+    @GetMapping("/api/v1/mcp")
+    public ResponseEntity<String> stream(
+            @RequestHeader HttpHeaders headers) {
+        String sessionId = extractSessionId(headers);
+        String wsId = extractWorkspaceId(headers, sessionId);
+        if (wsId == null) {
+            return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Workspace context is required");
+        }
+        return forwardGetToRuntime(wsId, headers, sessionId);
+    }
+
+    @DeleteMapping("/api/v1/mcp")
+    public ResponseEntity<String> disconnect(
+            @RequestHeader HttpHeaders headers) {
+        String sessionId = extractSessionId(headers);
+        String wsId = extractWorkspaceId(headers, sessionId);
+        if (wsId == null) {
+            return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Workspace context is required");
+        }
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(runtimeBaseUrl + "/internal/v1/runtime/workspaces/" + wsId + "/mcp"))
+                    .timeout(Duration.ofSeconds(30))
+                    .header("MCP-Protocol-Version", "2026-07-28")
+                    .header("Authorization", "Bearer " + runtimeServiceToken)
+                    .header("Accept", "application/json")
+                    .DELETE();
+            copySessionHeaders(headers, builder);
+            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpHeaders responseHeaders = new HttpHeaders();
+            response.headers().firstValue("content-type").ifPresent(value -> responseHeaders.set("Content-Type", value));
+            audit.record(sessionId, "mcp/disconnect", "allow", "session disconnected");
+            return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
+        } catch (Exception e) {
+            logger.error("MCP disconnect failed: wsId={} sessionId={}", wsId, sessionId, e);
+            return problem(HttpStatus.BAD_GATEWAY, "MCP_DISCONNECT_UNAVAILABLE", "MCP disconnect unavailable");
+        }
+    }
+
+    private void copySessionHeaders(HttpHeaders headers, HttpRequest.Builder builder) {
+        for (String name : List.of("mcp-session-id", "Last-Event-ID", "X-Workspace-Id", "X-Workspace-Path")) {
+            String value = headers.getFirst(name);
+            if (value != null && !value.isBlank()) {
+                if ("mcp-session-id".equalsIgnoreCase(name)) {
+                    value = runtimeSessionByGatewaySession.getOrDefault(value, value);
+                }
+                builder.header(name, value);
+            }
+        }
+    }
+
+    private ResponseEntity<String> forwardGetToRuntime(String wsId, HttpHeaders headers, String sessionId) {
+        try {
+            String requestedAccept = headers.getFirst("Accept");
+            String accept = requestedAccept != null && requestedAccept.contains(MediaType.TEXT_EVENT_STREAM_VALUE)
+                    ? requestedAccept : MediaType.TEXT_EVENT_STREAM_VALUE;
+            var builder = HttpRequest.newBuilder()
+                    .uri(URI.create(runtimeBaseUrl + "/internal/v1/runtime/workspaces/" + wsId + "/mcp"))
+                    .timeout(Duration.ofSeconds(30))
+                    .header("Accept", accept)
+                    .header("MCP-Protocol-Version", "2026-07-28")
+                    .header("Authorization", "Bearer " + runtimeServiceToken)
+                    .GET();
+            for (String name : List.of("Last-Event-ID", "X-Workspace-Id", "X-Workspace-Path", "mcp-session-id")) {
+                String value = headers.getFirst(name);
+                if ("mcp-session-id".equalsIgnoreCase(name) && value != null) {
+                    value = runtimeSessionByGatewaySession.getOrDefault(value, value);
+                }
+                if (value != null && !value.isBlank()) builder.header(name, value);
+            }
+            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpHeaders responseHeaders = new HttpHeaders();
+            response.headers().firstValue("content-type").ifPresent(value -> responseHeaders.set("Content-Type", value));
+            response.headers().firstValue("mcp-session-id").ifPresent(value -> responseHeaders.set("mcp-session-id", value));
+            response.headers().firstValue("last-event-id").ifPresent(value -> responseHeaders.set("Last-Event-ID", value));
+            audit.record(sessionId, "mcp/stream", "allow", "SSE response");
+            return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
+        } catch (Exception e) {
+            logger.error("MCP GET stream failed: wsId={} sessionId={}", wsId, sessionId, e);
+            return problem(HttpStatus.BAD_GATEWAY, "MCP_STREAM_UNAVAILABLE", "MCP stream unavailable");
+        }
+    }
+
     private ResponseEntity<String> handleInitialize(String wsId, String body, HttpHeaders headers, String sessionId) {
         String token = extractBearerToken(headers);
         if (token == null) {
-            return ResponseEntity.status(401).body("{\"error\": \"Missing JWT\"}");
+            return problem(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authorization required");
         }
         return forwardToRuntime(wsId, null, body, headers, sessionId);
     }
@@ -177,14 +261,14 @@ public class McpProxyController {
                 .body(mergedJson);
         } catch (Exception e) {
             logger.error("tools/list merge failed: {}", e.getMessage(), e);
-            return ResponseEntity.status(502).body("{\"error\": \"Failed to merge tools\"}");
+            return problem(HttpStatus.BAD_GATEWAY, "MCP_TOOLS_UNAVAILABLE", "MCP tools unavailable");
         }
     }
 
     private ResponseEntity<String> handleToolsCall(String wsId, String body, HttpHeaders headers, String sessionId) {
         String toolName = extractToolName(body);
         if (toolName == null) {
-            return ResponseEntity.badRequest().body("{\"error\": \"Missing tool name\"}");
+            return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Tool name is required");
         }
 
         refreshCacheIfNeeded(wsId);
@@ -192,7 +276,7 @@ public class McpProxyController {
         String serverId = mapping.get(toolName);
 
         if (serverId == null) {
-            return ResponseEntity.badRequest().body("{\"error\": \"Unknown tool: " + toolName + "\"}");
+            return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL", "Requested tool is unavailable");
         }
 
         if ("__system__".equals(serverId)) {
@@ -207,7 +291,7 @@ public class McpProxyController {
             sse.send(sessionId, "tool_exec_denied",
                 Map.of("tool", toolName, "reason", decision.getReason()));
             audit.record(sessionId, toolName, "deny", decision.getReason());
-            return ResponseEntity.status(403).body("{\"error\": \"Permission denied: " + decision.getReason() + "\"}");
+            return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
         }
 
         body = rewritten;
@@ -218,9 +302,9 @@ public class McpProxyController {
         try {
             String path;
             if (serverId == null) {
-                path = "/workspace/" + wsId + "/mcp";
+                path = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
             } else {
-                path = "/workspace/" + wsId + "/mcp/stdio/" + serverId;
+                path = "/internal/v1/runtime/workspaces/" + wsId + "/mcp/stdio/" + serverId;
             }
 
             String requestedAccept = headers.getFirst("Accept");
@@ -234,10 +318,11 @@ public class McpProxyController {
                 .uri(URI.create(runtimeBaseUrl + path))
                 .header("Content-Type", "application/json")
                 .header("Accept", forwardedAccept)
+                .header("MCP-Protocol-Version", "2026-07-28")
                 .header("Authorization", "Bearer " + runtimeServiceToken);
 
             for (String headerName : List.of(
-                    "MCP-Protocol-Version", "Last-Event-ID", "X-Workspace-Id", "X-Workspace-Path")) {
+                    "Last-Event-ID", "X-Workspace-Id", "X-Workspace-Path")) {
                 String headerValue = headers.getFirst(headerName);
                 if (headerValue != null && !headerValue.isEmpty()
                         && !"Authorization".equalsIgnoreCase(headerName)) {
@@ -260,7 +345,7 @@ public class McpProxyController {
             }
 
             HttpRequest forwardRequest = requestBuilder
-                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .POST(HttpRequest.BodyPublishers.ofString(normalizeRuntimeBody(body)))
                 .timeout(Duration.ofSeconds(30))
                 .build();
 
@@ -287,7 +372,39 @@ public class McpProxyController {
         } catch (Exception e) {
             logger.error("MCP forward failed: wsId={} serverId={} method={}", wsId, serverId, extractMethod(body), e);
             audit.record(sessionId, extractMethod(body), "error", e.getMessage());
-            return ResponseEntity.status(502).body("{\"error\": \"Runtime error: " + e.getMessage() + "\"}");
+            return problem(HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime MCP request failed");
+        }
+    }
+
+    private String normalizeRuntimeBody(String body) {
+        try {
+            JsonNode parsed = objectMapper.readTree(body);
+            if (!(parsed instanceof ObjectNode request)) {
+                return body;
+            }
+            String method = request.path("method").asText();
+            if ("initialize".equals(method) || "server/discover".equals(method)) {
+                return body;
+            }
+
+            ObjectNode params = request.get("params") instanceof ObjectNode existing
+                ? existing
+                : objectMapper.createObjectNode();
+            ObjectNode meta = params.get("_meta") instanceof ObjectNode existing
+                ? existing
+                : objectMapper.createObjectNode();
+            if (!meta.has("io.modelcontextprotocol/protocolVersion")) {
+                meta.put("io.modelcontextprotocol/protocolVersion", "2026-07-28");
+            }
+            meta.set("io.modelcontextprotocol/clientInfo", objectMapper.valueToTree(
+                Map.of("name", "xihe-cp-gateway", "version", "0.1.0")));
+            meta.set("io.modelcontextprotocol/clientCapabilities", objectMapper.createObjectNode());
+            params.set("_meta", meta);
+            request.set("params", params);
+            return objectMapper.writeValueAsString(request);
+        } catch (Exception e) {
+            logger.warn("Failed to normalize MCP request metadata: {}", e.getMessage());
+            return body;
         }
     }
 
@@ -319,9 +436,7 @@ public class McpProxyController {
             return payloadB64 + "." + sigB64;
         } catch (Exception e) {
             logger.error("Failed to sign session-id: {}", e.getMessage(), e);
-            // Fallback: unsigned (should not happen)
-            String payload = wsId + ":" + rawSessionId + ":" + Instant.now().getEpochSecond();
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes());
+            throw new IllegalStateException("Unable to sign MCP session id", e);
         }
     }
 
@@ -341,7 +456,7 @@ public class McpProxyController {
             mac.init(key);
             byte[] expectedSig = mac.doFinal(Base64.getUrlDecoder().decode(payloadB64));
             String expectedSigB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(expectedSig);
-            if (!expectedSigB64.equals(sigB64)) {
+            if (!MessageDigest.isEqual(expectedSigB64.getBytes(StandardCharsets.US_ASCII), sigB64.getBytes(StandardCharsets.US_ASCII))) {
                 return null;
             }
 
@@ -351,7 +466,11 @@ public class McpProxyController {
             if (fields.length < 3) {
                 return null;
             }
-            return fields[0]; // ws_id
+            long timestamp = Long.parseLong(fields[2]);
+            if (Math.abs(Instant.now().getEpochSecond() - timestamp) > Duration.ofDays(1).getSeconds()) {
+                return null;
+            }
+            return fields[0]; // workspace id
         } catch (Exception e) {
             logger.debug("Session-id verification failed: {}", e.getMessage());
             return null;
@@ -427,5 +546,17 @@ public class McpProxyController {
             return auth.substring(7);
         }
         return null;
+    }
+
+    private ResponseEntity<String> problem(HttpStatus status, String code, String detail) {
+        String requestId = UUID.randomUUID().toString();
+        String body = "{\"type\":\"https://xihe.dev/problems/" + code.toLowerCase(Locale.ROOT)
+                + "\",\"title\":\"Request failed\",\"status\":" + status.value()
+                + ",\"code\":\"" + code + "\",\"detail\":\"" + detail
+                + "\",\"requestId\":\"" + requestId + "\"}";
+        return ResponseEntity.status(status)
+                .contentType(MediaType.parseMediaType("application/problem+json"))
+                .header("X-Request-Id", requestId)
+                .body(body);
     }
 }

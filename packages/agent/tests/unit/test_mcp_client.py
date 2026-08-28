@@ -60,6 +60,22 @@ class TestMCPClientManager:
         assert manager.tools[0].spec.name == "test_tool"
 
     @pytest.mark.asyncio
+    async def test_initialize_configures_only_the_cp_logical_endpoint(self, manager):
+        with patch(
+            "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
+        ) as mock_client_cls:
+            mock_client_cls.return_value.get_tools = AsyncMock(return_value=[])
+
+            await manager.initialize()
+
+        config = mock_client_cls.call_args.args[0]
+        connection = config["cp"]
+        assert connection.url == "http://localhost:12631"
+        assert connection.url.endswith("12631")
+        assert "remote" not in connection.url
+        assert connection.headers["X-Workspace-Id"] == "ws-1"
+
+    @pytest.mark.asyncio
     async def test_initialize_logs_formatted_tool_count(self, manager, log_sink):
         mock_tool = MagicMock()
         mock_tool.name = "test_tool"

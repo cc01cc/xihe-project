@@ -3,28 +3,32 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
 
-use axum::extract::State;
-use axum::routing::{any, delete, get, post};
 use axum::Json as AxumJson;
-use axum::{extract::Path, http::StatusCode, Router};
-use bollard::query_parameters::{RemoveContainerOptions, StopContainerOptions};
+use axum::extract::State;
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{any, delete, get, post};
+use axum::{
+    Router,
+    extract::Path,
+    http::{HeaderMap, Request, StatusCode},
+};
 use bollard::Docker;
+use bollard::query_parameters::{RemoveContainerOptions, StopContainerOptions};
 use rmcp::handler::server::wrapper::Json;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService,
-};
 use rmcp::model::ProtocolVersion;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
-use tower::Service;
-use tower_http::cors::{Any, CorsLayer};
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::interval;
+use tower::Service;
+use tower_http::cors::{Any, CorsLayer};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 mod config_client;
 mod ws_file_handler;
@@ -34,9 +38,12 @@ use xihe_runtime::fetch;
 use xihe_runtime::fetch::WebFetchResult;
 use xihe_runtime::fs;
 use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
-use xihe_runtime::gateway::{WorkspaceRegistry, InstanceState};
+use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
+use xihe_runtime::remote_mcp::{
+    RemoteMcpConnector, RemoteMcpError, validate_endpoint, validate_endpoint_dns,
+};
 use xihe_runtime::sandbox;
 
 const CONTAINER_RUNTIME_PORT: u16 = 39001;
@@ -75,7 +82,8 @@ tokio::task_local! {
     static CURRENT_WS_ID: String;
 }
 
-static MCP_SERVICE: OnceLock<StreamableHttpService<XiheRuntime, LocalSessionManager>> = OnceLock::new();
+static MCP_SERVICE: OnceLock<StreamableHttpService<XiheRuntime, LocalSessionManager>> =
+    OnceLock::new();
 
 fn resolve_security_profile_value(value: Option<&str>) -> SecurityProfile {
     match value.unwrap_or("strict") {
@@ -204,7 +212,12 @@ pub struct XiheRuntime {
 
 #[tool_router]
 impl XiheRuntime {
-    pub fn new(ws_id: &str, workspace_path: &str, profile: SecurityProfile, container_addr: Option<String>) -> Self {
+    pub fn new(
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        container_addr: Option<String>,
+    ) -> Self {
         Self {
             workspace: workspace_path.to_string(),
             ws_id: ws_id.to_string(),
@@ -215,8 +228,15 @@ impl XiheRuntime {
 
     /// POST to container-runtime endpoint.
     /// If successful, returns the raw JSON body. On HTTP error, returns the error body text.
-    async fn container_post(&self, endpoint: &str, body: &impl serde::Serialize) -> Result<serde_json::Value, String> {
-        let base = self.container_addr.as_ref().ok_or_else(|| "no container".to_string())?;
+    async fn container_post(
+        &self,
+        endpoint: &str,
+        body: &impl serde::Serialize,
+    ) -> Result<serde_json::Value, String> {
+        let base = self
+            .container_addr
+            .as_ref()
+            .ok_or_else(|| "no container".to_string())?;
         let url = format!("{base}{endpoint}");
         let resp = http_client()
             .post(&url)
@@ -240,9 +260,15 @@ impl XiheRuntime {
     ) -> Result<String, String> {
         if self.container_addr.is_some() {
             #[derive(serde::Serialize)]
-            struct Req { path: String }
-            let resp = self.container_post("/fs/read", &Req { path: path.clone() }).await?;
-            return resp["content"].as_str().map(|s| s.to_string())
+            struct Req {
+                path: String,
+            }
+            let resp = self
+                .container_post("/fs/read", &Req { path: path.clone() })
+                .await?;
+            return resp["content"]
+                .as_str()
+                .map(|s| s.to_string())
                 .ok_or_else(|| "invalid response from container-runtime".to_string());
         }
         fs::read_file(&path, &self.workspace)
@@ -253,16 +279,23 @@ impl XiheRuntime {
     #[tool(description = "Read file with line range support, binary detection, and line numbers")]
     async fn read_file_range(
         &self,
-        Parameters(ReadFileRangeRequest { path, offset, limit }): Parameters<ReadFileRangeRequest>,
+        Parameters(ReadFileRangeRequest {
+            path,
+            offset,
+            limit,
+        }): Parameters<ReadFileRangeRequest>,
     ) -> Result<Json<ReadFileRangeResult>, String> {
         if self.container_addr.is_some() {
             let resp = self
-                .container_post("/fs/read_range", &serde_json::json!({
-                    "path": path, "offset": offset, "limit": limit
-                }))
+                .container_post(
+                    "/fs/read_range",
+                    &serde_json::json!({
+                        "path": path, "offset": offset, "limit": limit
+                    }),
+                )
                 .await?;
-            let result: ReadFileRangeResult = serde_json::from_value(resp)
-                .map_err(|e| format!("deserialize read_range: {e}"))?;
+            let result: ReadFileRangeResult =
+                serde_json::from_value(resp).map_err(|e| format!("deserialize read_range: {e}"))?;
             return Ok(Json(result));
         }
         fs::read_file_range(&path, offset, limit, &self.workspace)
@@ -277,9 +310,14 @@ impl XiheRuntime {
         Parameters(WriteFileRequest { path, content }): Parameters<WriteFileRequest>,
     ) -> Result<String, String> {
         if self.container_addr.is_some() {
-            let _ = self.container_post("/fs/write", &serde_json::json!({
-                "path": path, "content": content
-            })).await?;
+            let _ = self
+                .container_post(
+                    "/fs/write",
+                    &serde_json::json!({
+                        "path": path, "content": content
+                    }),
+                )
+                .await?;
             return Ok(format!("Written {} bytes to {}", content.len(), path));
         }
         fs::write_file(&path, &content, &self.workspace)
@@ -296,8 +334,8 @@ impl XiheRuntime {
             let resp = self
                 .container_post("/fs/list", &serde_json::json!({ "path": path }))
                 .await?;
-            let entries: Vec<fs::FileInfo> = serde_json::from_value(resp)
-                .map_err(|e| format!("deserialize list: {e}"))?;
+            let entries: Vec<fs::FileInfo> =
+                serde_json::from_value(resp).map_err(|e| format!("deserialize list: {e}"))?;
             return Ok(Json(fs::DirectoryListing { entries }));
         }
         let entries = fs::list_directory(&path, &self.workspace).map_err(|e| e.to_string())?;
@@ -311,13 +349,17 @@ impl XiheRuntime {
     ) -> Result<Json<fs::GlobResults>, String> {
         if self.container_addr.is_some() {
             let resp = self
-                .container_post("/fs/glob", &serde_json::json!({ "pattern": pattern, "path": path }))
+                .container_post(
+                    "/fs/glob",
+                    &serde_json::json!({ "pattern": pattern, "path": path }),
+                )
                 .await?;
             let matches: Vec<String> = serde_json::from_value(resp["matches"].clone())
                 .map_err(|e| format!("deserialize glob: {e}"))?;
             return Ok(Json(fs::GlobResults { matches }));
         }
-        let matches = fs::glob_files(&pattern, &path, &self.workspace).map_err(|e| e.to_string())?;
+        let matches =
+            fs::glob_files(&pattern, &path, &self.workspace).map_err(|e| e.to_string())?;
         Ok(Json(fs::GlobResults { matches }))
     }
 
@@ -328,13 +370,17 @@ impl XiheRuntime {
     ) -> Result<Json<fs::GrepResults>, String> {
         if self.container_addr.is_some() {
             let resp = self
-                .container_post("/fs/grep", &serde_json::json!({ "pattern": pattern, "path": path }))
+                .container_post(
+                    "/fs/grep",
+                    &serde_json::json!({ "pattern": pattern, "path": path }),
+                )
                 .await?;
             let matches: Vec<fs::MatchResult> = serde_json::from_value(resp["matches"].clone())
                 .map_err(|e| format!("deserialize grep: {e}"))?;
             return Ok(Json(fs::GrepResults { matches }));
         }
-        let matches = fs::grep_files(&pattern, &path, &self.workspace).map_err(|e| e.to_string())?;
+        let matches =
+            fs::grep_files(&pattern, &path, &self.workspace).map_err(|e| e.to_string())?;
         Ok(Json(fs::GrepResults { matches }))
     }
 
@@ -350,11 +396,19 @@ impl XiheRuntime {
     ) -> Result<Json<CommandResult>, String> {
         if self.container_addr.is_some() {
             #[derive(serde::Serialize)]
-            struct Req { command: String, timeout_secs: Option<u64> }
-            let resp = self.container_post("/exec", &Req {
-                command: command.clone(),
-                timeout_secs: timeout,
-            }).await?;
+            struct Req {
+                command: String,
+                timeout_secs: Option<u64>,
+            }
+            let resp = self
+                .container_post(
+                    "/exec",
+                    &Req {
+                        command: command.clone(),
+                        timeout_secs: timeout,
+                    },
+                )
+                .await?;
             let mut result = CommandResult {
                 stdout: resp["stdout"].as_str().unwrap_or_default().to_string(),
                 stderr: resp["stderr"].as_str().unwrap_or_default().to_string(),
@@ -408,16 +462,16 @@ impl XiheRuntime {
         Parameters(WatchDirectoryRequest { path }): Parameters<WatchDirectoryRequest>,
     ) -> Result<Json<fs::FileEventList>, String> {
         let workspace = self.workspace.clone();
-        let events = tokio::task::spawn_blocking(move || {
-            fs::watch_directory(&path, &workspace)
-        })
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
-        .map_err(|e| e.to_string())?;
+        let events = tokio::task::spawn_blocking(move || fs::watch_directory(&path, &workspace))
+            .await
+            .map_err(|e| format!("Task failed: {e}"))?
+            .map_err(|e| e.to_string())?;
         Ok(Json(fs::FileEventList { events }))
     }
 
-    #[tool(description = "Search and replace text in a file (single by default, all with replace_all=true)")]
+    #[tool(
+        description = "Search and replace text in a file (single by default, all with replace_all=true)"
+    )]
     async fn edit_file(
         &self,
         Parameters(EditFileRequest {
@@ -502,7 +556,11 @@ impl XiheRuntime {
     #[tool(description = "Fetch a URL and return its content as text or markdown")]
     async fn web_fetch(
         &self,
-        Parameters(WebFetchRequest { url, format, timeout }): Parameters<WebFetchRequest>,
+        Parameters(WebFetchRequest {
+            url,
+            format,
+            timeout,
+        }): Parameters<WebFetchRequest>,
     ) -> Result<Json<WebFetchResult>, String> {
         fetch::web_fetch(&url, format.as_deref(), timeout)
             .await
@@ -526,7 +584,8 @@ impl XiheRuntime {
             tokio::spawn(async move {
                 let client = http_client();
                 let url = format!("{base}/exec");
-                let _ = client.post(&url)
+                let _ = client
+                    .post(&url)
                     .json(&serde_json::json!({ "command": cmd, "timeout_secs": null }))
                     .send()
                     .await;
@@ -595,7 +654,9 @@ async fn health() -> &'static str {
 
 #[derive(Debug, Deserialize)]
 struct CreateWorkspaceRequest {
+    #[serde(rename = "workspaceId")]
     ws_id: String,
+    #[serde(rename = "workspacePath")]
     workspace_path: String,
     profile: Option<String>,
 }
@@ -603,22 +664,26 @@ struct CreateWorkspaceRequest {
 #[derive(Debug, Serialize)]
 struct CreateWorkspaceResponse {
     status: String,
+    #[serde(rename = "workspaceId")]
     ws_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct DeleteWorkspaceRequest {
+    #[serde(rename = "workspaceId")]
     ws_id: String,
 }
 
 #[derive(Debug, Serialize)]
 struct DeleteWorkspaceResponse {
     status: String,
+    #[serde(rename = "workspaceId")]
     ws_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct McpSpawnRequest {
+    #[serde(rename = "serverId")]
     server_id: String,
     command: String,
     #[serde(default)]
@@ -628,8 +693,206 @@ struct McpSpawnRequest {
 #[derive(Debug, Serialize)]
 struct McpSpawnResponse {
     status: String,
+    #[serde(rename = "serverId")]
     server_id: String,
     url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteMcpCallRequest {
+    endpoint: String,
+    tool: String,
+    #[serde(default)]
+    arguments: serde_json::Value,
+    #[serde(rename = "userId")]
+    user_id: String,
+    scope: String,
+}
+
+fn runtime_service_token() -> String {
+    std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-not-secure".to_string())
+}
+
+fn has_runtime_service_auth(headers: &HeaderMap) -> bool {
+    let expected = runtime_service_token();
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|token| !token.is_empty() && token == expected)
+}
+
+async fn internal_auth_middleware(request: Request<axum::body::Body>, next: Next) -> Response {
+    if request.uri().path() == "/health" || has_runtime_service_auth(request.headers()) {
+        return next.run(request).await;
+    }
+    let request_id = uuid::Uuid::new_v4().to_string();
+    (
+        StatusCode::UNAUTHORIZED,
+        [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+        AxumJson(serde_json::json!({
+            "type": "https://xihe.dev/problems/authorization-required",
+            "title": "Authorization required",
+            "status": 401,
+            "code": "AUTHORIZATION_REQUIRED",
+            "detail": "A service Bearer token is required",
+            "requestId": request_id
+        })),
+    )
+        .into_response()
+}
+
+fn remote_mcp_error_response(
+    error: RemoteMcpError,
+) -> (StatusCode, [(axum::http::HeaderName, &'static str); 1], AxumJson<serde_json::Value>) {
+    let (status, code) = match error {
+        RemoteMcpError::AuthorizationRequired => {
+            (StatusCode::UNAUTHORIZED, "authorization_required")
+        }
+        RemoteMcpError::Cancelled => (StatusCode::from_u16(499).unwrap(), "cancelled"),
+        RemoteMcpError::Timeout => (StatusCode::REQUEST_TIMEOUT, "timeout"),
+        RemoteMcpError::EndpointNotAllowed(_) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "endpoint_not_allowed")
+        }
+        RemoteMcpError::InvalidEndpoint(_) => (StatusCode::BAD_REQUEST, "invalid_endpoint"),
+        RemoteMcpError::HttpStatus(_)
+        | RemoteMcpError::InvalidJson(_)
+        | RemoteMcpError::Request(_) => (StatusCode::BAD_GATEWAY, "remote_mcp_unavailable"),
+        RemoteMcpError::JsonRpc(_) => (StatusCode::BAD_GATEWAY, "remote_mcp_error"),
+        RemoteMcpError::RequestStateInvalid => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "request_state_invalid")
+        }
+    };
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+        AxumJson(serde_json::json!({
+            "type": format!("https://xihe.dev/problems/{code}"),
+            "title": "Remote MCP request failed",
+            "status": status.as_u16(),
+            "code": code.to_ascii_uppercase(),
+            "detail": "Remote MCP request failed",
+            "requestId": uuid::Uuid::new_v4().to_string()
+        })),
+    )
+}
+
+async fn remote_mcp_call_handler(
+    Path((workspace_id, server_id)): Path<(String, String)>,
+    State(registry): State<Arc<WorkspaceRegistry>>,
+    headers: HeaderMap,
+    AxumJson(request): AxumJson<RemoteMcpCallRequest>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, [(axum::http::HeaderName, &'static str); 1], AxumJson<serde_json::Value>)> {
+    if !has_runtime_service_auth(&headers) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            AxumJson(serde_json::json!({"type":"https://xihe.dev/problems/authorization-required","title":"Authorization required","status":401,"code":"AUTHORIZATION_REQUIRED","detail":"A service Bearer token is required","requestId":uuid::Uuid::new_v4().to_string()})),
+        ));
+    }
+    if registry.get(&workspace_id).await.is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            AxumJson(serde_json::json!({"type":"https://xihe.dev/problems/workspace-not-found","title":"Workspace not found","status":404,"code":"WORKSPACE_NOT_FOUND","detail":"Workspace is not registered","requestId":uuid::Uuid::new_v4().to_string()})),
+        ));
+    }
+    if request.user_id.trim().is_empty() || request.tool.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            AxumJson(serde_json::json!({"type":"https://xihe.dev/problems/invalid-request","title":"Invalid request","status":400,"code":"INVALID_REQUEST","detail":"userId and tool are required","requestId":uuid::Uuid::new_v4().to_string()})),
+        ));
+    }
+    let endpoint = validate_endpoint(&request.endpoint).map_err(remote_mcp_error_response)?;
+    validate_endpoint_dns(&endpoint)
+        .await
+        .map_err(remote_mcp_error_response)?;
+
+    let cp_url =
+        std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://localhost:12631".to_string());
+    let service_token = runtime_service_token();
+    let connector = RemoteMcpConnector::new(
+        &request.endpoint,
+        fetch_remote_mcp_token(
+            &cp_url,
+            &service_token,
+            &request.user_id,
+            &workspace_id,
+            &server_id,
+            &request.scope,
+        )
+        .await
+        .map_err(|error| {
+            let (status, code) = match error {
+                RemoteMcpError::AuthorizationRequired => {
+                    (StatusCode::UNAUTHORIZED, "authorization_required")
+                }
+                _ => (StatusCode::BAD_GATEWAY, "token_broker_unavailable"),
+            };
+            (status, [(axum::http::header::CONTENT_TYPE, "application/problem+json")], AxumJson(serde_json::json!({"type":format!("https://xihe.dev/problems/{code}"),"title":"Token broker failed","status":status.as_u16(),"code":code.to_ascii_uppercase(),"detail":"Token broker request failed","requestId":uuid::Uuid::new_v4().to_string()})))
+        })?,
+        Duration::from_secs(30),
+    )
+    .map_err(remote_mcp_error_response)?;
+
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    connector
+        .initialize(&cancellation)
+        .await
+        .map_err(remote_mcp_error_response)?;
+    connector
+        .tools_list(&cancellation)
+        .await
+        .map_err(remote_mcp_error_response)?;
+    connector
+        .tools_call(&request.tool, request.arguments, &cancellation)
+        .await
+        .map(AxumJson)
+        .map_err(remote_mcp_error_response)
+}
+
+async fn fetch_remote_mcp_token(
+    cp_url: &str,
+    service_token: &str,
+    user_id: &str,
+    workspace_id: &str,
+    server_id: &str,
+    scope: &str,
+) -> Result<String, RemoteMcpError> {
+    let response = http_client()
+        .post(format!("{}/internal/v1/oauth/token", cp_url.trim_end_matches('/')))
+        .bearer_auth(service_token)
+        .json(&serde_json::json!({
+            "userId": user_id,
+            "workspaceId": workspace_id,
+            "serverId": server_id,
+            "scope": scope,
+        }))
+        .send()
+        .await
+        .map_err(|error| {
+            if error.is_timeout() {
+                RemoteMcpError::Timeout
+            } else {
+                RemoteMcpError::Request(error)
+            }
+        })?;
+    if response.status() == StatusCode::UNAUTHORIZED || response.status() == StatusCode::FORBIDDEN {
+        return Err(RemoteMcpError::AuthorizationRequired);
+    }
+    if !response.status().is_success() {
+        return Err(RemoteMcpError::HttpStatus(response.status()));
+    }
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(RemoteMcpError::InvalidJson)?;
+    body.get("access_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|token| !token.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| RemoteMcpError::JsonRpc("token broker response has no access token".into()))
 }
 
 static NEXT_BRIDGE_PORT: AtomicU16 = AtomicU16::new(39000);
@@ -650,14 +913,11 @@ async fn mcp_spawn_handler(
     State(registry): State<Arc<WorkspaceRegistry>>,
     AxumJson(req): AxumJson<McpSpawnRequest>,
 ) -> Result<AxumJson<McpSpawnResponse>, StatusCode> {
-    registry
-        .get(&ws_id)
-        .await
-        .ok_or(StatusCode::NOT_FOUND)?;
+    registry.get(&ws_id).await.ok_or(StatusCode::NOT_FOUND)?;
 
     let container_name = format!("xihe-workspace-ws_{ws_id}");
-    let docker = Docker::connect_with_local_defaults()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let docker =
+        Docker::connect_with_local_defaults().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let port = allocate_bridge_port();
     let bridge_cmd = format!(
@@ -689,16 +949,27 @@ async fn mcp_spawn_handler(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let container_ip = resolve_container_ip(&docker, &container_name).await
+    let container_ip = resolve_container_ip(&docker, &container_name)
+        .await
         .unwrap_or_else(|_| "127.0.0.1".to_string());
 
     let manager = mcp_manager();
     manager
-        .spawn(&ws_id, &req.server_id, &req.command, &req.args, &container_ip, port)
+        .spawn(
+            &ws_id,
+            &req.server_id,
+            &req.command,
+            &req.args,
+            &container_ip,
+            port,
+        )
         .await;
 
     let url = format!("http://{}:{}/{}", container_ip, port, req.server_id);
-    tracing::info!("MCP bridge spawned: ws={ws_id} server={} at {url}", req.server_id);
+    tracing::info!(
+        "MCP bridge spawned: ws={ws_id} server={} at {url}",
+        req.server_id
+    );
     Ok(AxumJson(McpSpawnResponse {
         status: "ok".into(),
         server_id: req.server_id,
@@ -714,9 +985,7 @@ async fn mcp_kill_handler(
     AxumJson(serde_json::json!({"status": "ok"}))
 }
 
-async fn mcp_list_handler(
-    Path(ws_id): Path<String>,
-) -> AxumJson<serde_json::Value> {
+async fn mcp_list_handler(Path(ws_id): Path<String>) -> AxumJson<serde_json::Value> {
     let manager = mcp_manager();
     let bridges = manager.list(&ws_id).await;
     AxumJson(serde_json::json!({
@@ -760,7 +1029,10 @@ async fn workspace_mcp_handler(
 ) -> axum::response::Response {
     CURRENT_WS_ID
         .scope(ws_id, async {
-            let mut svc = MCP_SERVICE.get().expect("MCP_SERVICE not initialized").clone();
+            let mut svc = MCP_SERVICE
+                .get()
+                .expect("MCP_SERVICE not initialized")
+                .clone();
             let response = svc.call(req).await.unwrap();
             response.map(axum::body::Body::new)
         })
@@ -860,11 +1132,15 @@ async fn main() -> anyhow::Result<()> {
             log_level.as_deref(),
         ))
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
-        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking_file).with_ansi(false).json())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking_file)
+                .with_ansi(false)
+                .json(),
+        )
         .init();
 
-    let runtime_host =
-        std::env::var("XIHE_RUNTIME_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let runtime_host = std::env::var("XIHE_RUNTIME_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let runtime_port = std::env::var("XIHE_RUNTIME_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
@@ -893,19 +1169,19 @@ async fn main() -> anyhow::Result<()> {
         mcp_config_poll_loop(mcp_manager, cp_poll_registry, poll_ct).await;
     });
 
-    let workspace_path = std::env::var("XIHE_WORKSPACE")
-        .unwrap_or_else(|_| "/tmp/xihe-workspace".to_string());
+    let workspace_path =
+        std::env::var("XIHE_WORKSPACE").unwrap_or_else(|_| "/tmp/xihe-workspace".to_string());
     let wp = workspace_path.clone();
 
     let service = StreamableHttpService::new(
         move || {
-            let ws_id = CURRENT_WS_ID.try_with(|id| id.clone())
+            let ws_id = CURRENT_WS_ID
+                .try_with(|id| id.clone())
                 .unwrap_or_else(|_| "default".to_string());
             let profile = security_profile;
             let container_addr = match profile {
                 SecurityProfile::Strict => None,
-                _ => tokio::runtime::Handle::current()
-                    .block_on(resolve_container_addr(&ws_id)),
+                _ => tokio::runtime::Handle::current().block_on(resolve_container_addr(&ws_id)),
             };
             Ok(XiheRuntime::new(&ws_id, &wp, profile, container_addr))
         },
@@ -923,49 +1199,48 @@ async fn main() -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/health", get(health))
-        .route("/workspace/{ws_id}/mcp", any(workspace_mcp_handler))
-        .route("/workspace/create", post(create_workspace_handler))
-        .route("/workspace/delete", post(delete_workspace_handler))
+        .route("/internal/v1/runtime/workspaces/{ws_id}/mcp", any(workspace_mcp_handler))
+        .route("/internal/v1/runtime/workspaces", post(create_workspace_handler))
+        .route("/internal/v1/runtime/workspaces/delete", post(delete_workspace_handler))
+        .route("/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn", post(mcp_spawn_handler))
         .route(
-            "/workspace/{ws_id}/mcp/spawn",
-            post(mcp_spawn_handler),
-        )
-        .route(
-            "/workspace/{ws_id}/mcp/spawn/{server_id}",
+            "/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn/{server_id}",
             delete(mcp_kill_handler),
         )
+        .route("/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn", get(mcp_list_handler))
         .route(
-            "/workspace/{ws_id}/mcp/spawn",
-            get(mcp_list_handler),
+            "/internal/v1/runtime/remote-mcp/{workspace_id}/{server_id}/call",
+            post(remote_mcp_call_handler),
         )
         .route(
-            "/workspace/{ws_id}/mcp/stdio/{server_id}",
+            "/internal/v1/runtime/workspaces/{ws_id}/mcp/stdio/{server_id}",
             post(mcp_stdio_handler),
         )
         .route(
-            "/workspace/{ws_id}/files/read",
+            "/internal/v1/runtime/workspaces/{ws_id}/files/read",
             post(ws_file_handler::handle_read_file),
         )
         .route(
-            "/workspace/{ws_id}/files/write/{*path}",
+            "/internal/v1/runtime/workspaces/{ws_id}/files/write/{*path}",
             post(ws_file_handler::handle_write_binary),
         )
         .route(
-            "/workspace/{ws_id}/files/list",
+            "/internal/v1/runtime/workspaces/{ws_id}/files/list",
             post(ws_file_handler::handle_list_directory),
         )
         .route(
-            "/workspace/{ws_id}/files/delete",
+            "/internal/v1/runtime/workspaces/{ws_id}/files/delete",
             post(ws_file_handler::handle_delete_file),
         )
         .route(
-            "/workspace/{ws_id}/files/mkdir",
+            "/internal/v1/runtime/workspaces/{ws_id}/files/mkdir",
             post(ws_file_handler::handle_mkdir),
         )
         .route(
-            "/workspace/{ws_id}/files/stat",
+            "/internal/v1/runtime/workspaces/{ws_id}/files/stat",
             post(ws_file_handler::handle_stat),
         )
+        .layer(middleware::from_fn(internal_auth_middleware))
         .layer(cors)
         .with_state(registry);
 
@@ -1001,10 +1276,9 @@ async fn mcp_config_poll_loop(
     registry: Arc<WorkspaceRegistry>,
     ct: tokio_util::sync::CancellationToken,
 ) {
-    let cp_url = std::env::var("XIHE_CP_URL")
-        .unwrap_or_else(|_| "http://localhost:12631".into());
-    let cp_api_token = std::env::var("XIHE_CP_API_TOKEN")
-        .unwrap_or_else(|_| "dev-token-not-secure".into());
+    let cp_url = std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://localhost:12631".into());
+    let cp_api_token =
+        std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-not-secure".into());
     let docker = match Docker::connect_with_local_defaults() {
         Ok(d) => Some(d),
         Err(e) => {
@@ -1111,7 +1385,10 @@ async fn mcp_config_poll_loop(
     tracing::info!("MCP config polling stopped");
 }
 
-async fn idle_reaper_loop(registry: Arc<WorkspaceRegistry>, ct: tokio_util::sync::CancellationToken) {
+async fn idle_reaper_loop(
+    registry: Arc<WorkspaceRegistry>,
+    ct: tokio_util::sync::CancellationToken,
+) {
     let docker = match Docker::connect_with_local_defaults() {
         Ok(d) => d,
         Err(e) => {

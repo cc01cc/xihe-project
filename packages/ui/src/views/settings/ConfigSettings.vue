@@ -9,9 +9,11 @@ import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 import { api, request } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { getProviderInfo } from '../../types/provider'
+import { useAuthStore } from '../../stores/auth'
 
 const { t } = useI18n()
 const configStore = useConfigStore()
+const authStore = useAuthStore()
 
 type LayerTab = 'system' | 'admin' | 'user'
 const activeTab = ref<LayerTab>('admin')
@@ -92,8 +94,8 @@ const domainSchemas: Record<string, DomainField[]> = {
     { key: 'profile', label: t('settings.fieldProfile'), type: 'text' },
   ],
   'rag': [
-    { key: 'chunk_size', label: t('settings.fieldChunkSize'), type: 'number' },
-    { key: 'top_k', label: t('settings.fieldTopK'), type: 'number' },
+    { key: 'chunkSize', label: t('settings.fieldChunkSize'), type: 'number' },
+    { key: 'topK', label: t('settings.fieldTopK'), type: 'number' },
   ],
   'infrastructure': [
     { key: 'dbUrl', label: t('settings.fieldDbUrl'), type: 'password' },
@@ -109,8 +111,27 @@ const fetchError = ref(false)
 const mcpJson = ref('')
 const mcpError = ref('')
 const mcpSaving = ref(false)
+type RemoteMcpServer = {
+  id: string
+  name: string
+  url: string
+  oauth: {
+    clientId: string
+    authorizationEndpoint: string
+    tokenEndpoint: string
+    scope: string
+    redirectUri?: string
+  }
+}
+type AuthorizationStatus = 'required' | 'authorizing' | 'authorized' | 'failed'
+const oauthStatus = ref<Record<string, AuthorizationStatus>>({})
+const oauthError = ref('')
 
 const mcpReadonly = computed(() => activeTab.value === 'system')
+
+function currentWorkspaceId(): string {
+  return String(configStore.mergedConfig['workspace-config']?.workspaceId || authStore.user?.workspaceId || 'default')
+}
 
 const builtInTools = [
   'read_file', 'write_file', 'list_directory', 'execute_command',
@@ -122,6 +143,7 @@ const builtInTools = [
 ]
 
 onMounted(async () => {
+  await handleOAuthCallback()
   try {
     await configStore.loadAllDomains()
     await loadMcpConfig()
@@ -134,9 +156,10 @@ onMounted(async () => {
 
 async function loadMcpConfig() {
   try {
-    const resp = await api.getMcpConfig('default') as { mcpServers?: string }
+    const resp = await api.getMcpConfig(currentWorkspaceId())
     if (resp.mcpServers) {
-      mcpJson.value = JSON.stringify(resp.mcpServers, null, 2)
+      const value = typeof resp.mcpServers === 'string' ? JSON.parse(resp.mcpServers) : resp.mcpServers
+      mcpJson.value = JSON.stringify(value.mcpServers ? value : { mcpServers: value }, null, 2)
     } else {
       mcpJson.value = JSON.stringify({ mcpServers: {} }, null, 2)
     }
@@ -146,12 +169,99 @@ async function loadMcpConfig() {
   }
 }
 
+function getRemoteServers(): RemoteMcpServer[] {
+  try {
+    const parsed = JSON.parse(mcpJson.value) as Record<string, unknown>
+    const servers = (parsed.mcpServers && typeof parsed.mcpServers === 'object' ? parsed.mcpServers : parsed) as Record<string, Record<string, unknown>>
+    return Object.entries(servers).flatMap(([id, server]) => {
+      if (typeof server.url !== 'string' || !server.url) return []
+      const oauth = (typeof server.oauth === 'object' && server.oauth !== null ? server.oauth : {}) as Record<string, unknown>
+      const value = (key: string) => oauth[key] ?? server[key]
+      const clientId = value('clientId') ?? value('client_id')
+      const authorizationEndpoint = value('authorizationEndpoint') ?? value('authorization_endpoint')
+      const tokenEndpoint = value('tokenEndpoint') ?? value('token_endpoint')
+      const scope = value('scope')
+      if ([clientId, authorizationEndpoint, tokenEndpoint, scope].some(item => typeof item !== 'string' || !item)) return []
+      const redirectUri = value('redirectUri') ?? value('redirect_uri')
+      return [{
+        id,
+        name: typeof server.name === 'string' ? server.name : id,
+        url: server.url,
+        oauth: {
+          clientId: clientId as string,
+          authorizationEndpoint: authorizationEndpoint as string,
+          tokenEndpoint: tokenEndpoint as string,
+          scope: scope as string,
+          redirectUri: typeof redirectUri === 'string' ? redirectUri : undefined,
+        },
+      }]
+    })
+  } catch (e) {
+    logger.warn('Failed to parse remote MCP OAuth configuration', e)
+    return []
+  }
+}
+
+function oauthStatusFor(serverId: string): AuthorizationStatus {
+  return oauthStatus.value[serverId] ?? (sessionStorage.getItem(`xihe-oauth-authorized:${serverId}`) === 'true' ? 'authorized' : 'required')
+}
+
+async function handleOAuthCallback() {
+  const params = new URLSearchParams(window.location.search)
+  const state = params.get('state')
+  const code = params.get('code')
+  const error = params.get('error')
+  if (!state || (!code && !error)) return
+  const pendingKey = `xihe-oauth-pending:${state}`
+  const serverId = sessionStorage.getItem(pendingKey)
+  if (!serverId) return
+  oauthStatus.value[serverId] = 'authorizing'
+  try {
+    if (error) throw new Error(error)
+    const result = await api.completeOAuthSession(state, code as string)
+    if (result.status !== 'authorized') throw new Error('OAuth callback was not authorized')
+    sessionStorage.setItem(`xihe-oauth-authorized:${serverId}`, 'true')
+    oauthStatus.value[serverId] = 'authorized'
+  } catch (e) {
+    logger.warn('Remote MCP OAuth callback failed', e)
+    oauthStatus.value[serverId] = 'failed'
+    oauthError.value = t('settings.authorizationFailed')
+  } finally {
+    sessionStorage.removeItem(pendingKey)
+    window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.hash}`)
+  }
+}
+
+async function authorizeRemoteServer(server: RemoteMcpServer) {
+  oauthError.value = ''
+  oauthStatus.value[server.id] = 'authorizing'
+  try {
+    const redirectUri = server.oauth.redirectUri || `${window.location.origin}${window.location.pathname}`
+    const result = await api.startOAuthSession({
+      workspaceId: currentWorkspaceId(),
+      serverId: server.id,
+      remoteEndpoint: server.url,
+      clientId: server.oauth.clientId,
+      authorizationEndpoint: server.oauth.authorizationEndpoint,
+      tokenEndpoint: server.oauth.tokenEndpoint,
+      redirectUri,
+      scope: server.oauth.scope,
+    })
+    sessionStorage.setItem(`xihe-oauth-pending:${result.state}`, server.id)
+    window.location.assign(result.authorizationUrl)
+  } catch (e) {
+    logger.warn(`Failed to start OAuth for remote MCP server ${server.id}`, e)
+    oauthStatus.value[server.id] = 'failed'
+    oauthError.value = t('settings.authorizationFailed')
+  }
+}
+
 async function saveMcpConfig() {
   mcpSaving.value = true
   mcpError.value = ''
   try {
     const parsed = JSON.parse(mcpJson.value)
-    await api.saveMcpConfig('default', parsed.mcpServers)
+    await api.saveMcpConfig(currentWorkspaceId(), parsed.mcpServers)
     toast.success(t('common.saved'))
   } catch (e) {
     if (e instanceof SyntaxError) {
@@ -177,9 +287,9 @@ function generateSummary(domain: string): string {
     return serverCount > 0 ? `${serverCount} 个服务器已配置` : ''
   }
   if (domain === 'rag') {
-    const cs = entries['chunk_size']
-    const tk = entries['top_k']
-    return [cs && `chunk: ${cs}`, tk && `top_k: ${tk}`].filter(Boolean).join(', ')
+    const cs = entries['chunkSize']
+    const tk = entries['topK']
+    return [cs && `chunk: ${cs}`, tk && `topK: ${tk}`].filter(Boolean).join(', ')
   }
   if (domain === 'embedding') {
     const model = entries['model']
@@ -315,6 +425,30 @@ async function handleReset(domain: string, key: string) {
                   >
                     {{ mcpSaving ? t('common.saving') : t('common.save') }}
                   </button>
+                </div>
+                <div v-if="getRemoteServers().length" class="border-t pt-3 space-y-2">
+                  <div class="text-sm font-medium">{{ t('settings.remoteMcp') }}</div>
+                  <div
+                    v-for="server in getRemoteServers()"
+                    :key="server.id"
+                    class="flex items-center justify-between gap-3 text-sm"
+                    :data-testid="`remote-mcp-${server.id}`"
+                  >
+                    <span>{{ server.name }}</span>
+                    <span class="flex items-center gap-2">
+                      <span class="text-xs text-muted-foreground">
+                        {{ oauthStatusFor(server.id) === 'authorized' ? t('settings.authorized') : oauthStatusFor(server.id) === 'authorizing' ? t('settings.authorizing') : oauthStatusFor(server.id) === 'failed' ? t('settings.authorizationFailed') : t('settings.authorizationRequired') }}
+                      </span>
+                      <button
+                        class="px-3 py-1 text-xs border rounded hover:bg-muted disabled:opacity-50"
+                        :disabled="oauthStatusFor(server.id) === 'authorizing'"
+                        @click="authorizeRemoteServer(server)"
+                      >
+                        {{ oauthStatusFor(server.id) === 'authorized' ? t('settings.authorized') : t('settings.authorize') }}
+                      </button>
+                    </span>
+                  </div>
+                  <p v-if="oauthError" class="text-xs text-destructive">{{ oauthError }}</p>
                 </div>
               </div>
             </div>

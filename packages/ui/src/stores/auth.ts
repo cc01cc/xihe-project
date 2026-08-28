@@ -35,7 +35,7 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null
     try {
       const res = await api.login(email, password)
-      _saveToken(res.accessToken, res.user)
+      _saveToken(res.accessToken, { ...res.user, workspaceId: res.workspaceId })
       return true
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Login failed'
@@ -52,7 +52,7 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null
     try {
       const res = await api.register(email, password, name)
-      _saveToken(res.accessToken, res.user)
+      _saveToken(res.accessToken, { ...res.user, workspaceId: res.workspaceId })
       return true
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Registration failed'
