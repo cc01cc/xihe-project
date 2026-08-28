@@ -5,6 +5,12 @@
 ### Added
 
 - 统一 HTTP API 契约：公开 API 使用 `/api/v1`、服务间 API 使用 `/internal/v1`，统一 Bearer 鉴权、camelCase 和 Problem Details；MCP/OAuth 协议字段保持原样。
+- Remote MCP 最小闭环：UI OAuth（Authorization Code + PKCE）→ CP callback/加密 credential → Agent 只连 CP logical endpoint → Runtime 短期 token 调用远程 MCP，401 经 CP broker 单次 refresh/retry；requestState 绑定/TTL/一次性消费。
+- 日志安全与可观测性：四模块序列化层统一脱敏（token/JWT/Bearer/PEM → `***redacted***`），`X-Request-Id` 由 CP 生成并向 Runtime/Agent 贯通，审计日志持久化至 `logs/audit.log`，新增 `scripts/scan-log-secrets.mjs` 泄露扫描门禁。
+
+### Changed
+
+- Runtime 迁移至 Rust edition 2024 与 rmcp 3.1.4（MCP protocol `2026-07-28`）；测试基础设施修复：`e2e-real.mjs` 隔离端口全量生效，Runtime 全量测试可编译执行（201 passed / 3 ignored）。
 
 - 实现 Agent 崩溃恢复：启动时可通过 `XIHE_RECOVER_SESSION_IDS` 从 CP Event Store 重放事件并重建会话状态
 - CP 新增 `context_source_hashes` 表，`ContextSourceRefreshService` 持久化 AGENTS.md 最后哈希，避免重复生成 `context.source_changed` 事件

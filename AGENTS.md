@@ -9,7 +9,7 @@
 | `packages/ui/` | 前端界面 (Vue 3 + Vite) | TypeScript |
 | `packages/control-plane/` | 路由 + 认证 + MCP 反向代理 | Java 25 / Spring Boot 4 |
 | `packages/agent/` | LLM 编排 + 工具调用 + RAG | Python 3.12 / LangChain |
-| `packages/runtime/` | 文件系统 + 沙盒 + 进程管理 | Rust 1.88 / rmcp |
+| `packages/runtime/` | 文件系统 + 沙盒 + 进程管理 | Rust 1.97 / rmcp 3.1.4 (edition 2024) |
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@
 | UI 构建 | Vite + Tailwind CSS 4 + shadcn-vue | ^8.2.2 / ^4.3.3 / ^2.8.2 |
 | CP 框架 | Spring Boot 4 + Spring Security + Spring Data JPA | 4.0.6 |
 | Agent 框架 | FastAPI + LangChain + LangGraph + litellm | — |
-| Runtime 框架 | rmcp + Axum + Tokio + bollard | 1.8.0 / 0.8.9 / 1.53.1 / 0.21.1 |
+| Runtime 框架 | rmcp + Axum + Tokio + bollard | 3.1.4 / 0.8.9 / 1.53.1 / 0.21.1 |
 | Runtime binary | `xihe-runtime`（Gateway）、`xihe-container-runtime`（容器内文件服务）、`xihe-mcp-bridge`（容器内 STDIO bridge） | 统一 `xihe-` 前缀 |
 | 数据库 | PostgreSQL 17 + pgvector | — |
 | 工具链 | Node 22 / pnpm 10 / Maven 3.9 / uv / task 3 / Docker | — |
@@ -191,7 +191,20 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 ## Telemetry & Logging
 
-日志通过 `XIHE_LOG_LEVEL_<MODULE>` → `XIHE_LOG_LEVEL` 回退链设定，支持 ConfigService 动态调级。JSONL 格式，`mise run clean` 清空。详见 `docs/i18n/zh-Hans/DEV-003-logging.md`。
+日志通过 `XIHE_LOG_LEVEL_<MODULE>` → `XIHE_LOG_LEVEL` 回退链设定，支持 ConfigService 动态调级。JSONL 格式，`mise run clean` 清空。四模块在序列化层统一脱敏（token/JWT/Bearer/PEM → `***redacted***`），`X-Request-Id` 经 CP filter 生成并向 Runtime/Agent 贯通；泄露扫描门禁 `node scripts/scan-log-secrets.mjs`。详见 `docs/i18n/zh-Hans/DEV-003-logging.md`。
+
+### Real E2E readiness
+
+- 默认开发端口：UI `12630`、CP `12631`、Agent `12632`、Runtime `12633`、PostgreSQL `12634`；临时 E2E 必须使用隔离端口并显式传入 Compose。
+- Agent readiness 使用 `/internal/v1/agent/health`；CP 使用 `/actuator/health`；Runtime 使用 `/health`。
+- Real E2E 必须启动当前源码镜像、Fake OAuth/MCP 和 UI，失败时清理容器、网络、卷、子进程和端口。
+- 不可达依赖必须让测试失败，禁止以静默 `return` 计为通过。完整测试真实性规则见根池 `.agents/skills/test/references/integration-test-realism/` skill。
+
+### Remote MCP minimal boundary
+
+最小闭环固定为单 provider、单 workspace、单 remote server、单工具：UI OAuth → CP callback/encrypted credential → Agent→CP→Runtime → Remote MCP；Runtime 仅允许一次 401 refresh/retry。SSE 恢复、多 server 聚合、动态 provider registration、生产 KMS 和完整生命周期属于后续生产化范围，不得在最小闭环中隐式扩大。
+
+日志安全与可观测性要求见根池 `logging-observability-security` skill；XH 具体 endpoint 和 schema 以 `docs/api/openapi.yaml` 为准。
 
 ## MCP/OAuth Boundary
 
@@ -201,7 +214,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - CP 负责 OAuth Authorization Code + PKCE、workspace/server 授权、refresh token envelope encryption、refresh/revoke 和 token broker。
 - Runtime host-side connector 只接收短期 access token，负责远程 MCP 出网、HTTPS/allowlist/私网校验；workspace sandbox 不承载远程 OAuth。
 - Fake OAuth/Fake MCP 只用于真实 integration/E2E，必须验证 PKCE、Bearer、MCP protocol、refresh/revoke 和清理，不得把 mock-only 测试作为链路完成证据。
-- 远程 MCP 相关实施与 API 统一迁移分别见 `plans/PLAN-190-XH-remote-mcp-oauth-egress.md` 和 `plans/PLAN-191-XH-unified-stable-api.md`。
+- 远程 MCP 相关实施与 API 统一迁移分别见 `plans/archive/20260828/PLAN-190-XH-remote-mcp-oauth-egress.md`（已归档为架构基线，最小闭环由 PLAN-195 承接完成）和 `plans/PLAN-191-XH-unified-stable-api.md`。
 
 ## Known Issues
 
@@ -209,7 +222,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
 - **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU（PLAN-097）。OOM 时按需上调
-- **runtime 测试现状**: `cargo test --lib` 为可用测试集（97 通过）；`tests/sandbox_test.rs` 引用不存在的 `SandboxManager`，全量 `cargo test` 编译失败（预存，PLAN-097 §7.2）。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
+- **runtime 测试现状**: 全量 `cargo test` 可编译执行（198 通过、3 ignored——ignored 为需真实 CP 的 T3 集成测试）；`sandbox_test.rs` 历史 `SandboxManager` 编译失败已修复。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
 - **Vue i18n JSON placeholder**: `t()` 消息中不可含 `{...}`
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
 
