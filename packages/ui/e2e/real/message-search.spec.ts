@@ -6,7 +6,7 @@ test.describe('Message Search', () => {
   let authToken = ''
 
   test.beforeAll(async ({ request }) => {
-    const r = await request.post(`${CP_URL}/auth/register`, {
+    const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
       data: { email: `msg-${Date.now()}@test.com`, password: 'Test1234!', name: 'Test' },
     })
     if (r.ok()) {

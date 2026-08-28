@@ -59,7 +59,7 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
     void setUp() {
         String email = "msg-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         ResponseEntity<AuthResponse> reg = restTemplate.postForEntity(
-                baseUrl + "/auth/register", new RegisterRequest(email, "Test1234!", "MsgInt"), AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, "Test1234!", "MsgInt"), AuthResponse.class);
         String baseToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();

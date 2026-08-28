@@ -32,14 +32,14 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void ragStatsForwardsToAgent() {
-        wireMock.stubFor(get(urlEqualTo("/rag/stats"))
+        wireMock.stubFor(get(urlEqualTo("/internal/v1/agent/rag/stats"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"documents\":5}")));
 
         ResponseEntity<String> response = restTemplate.exchange(
-                url("/rag/stats"),
+                url("/api/v1/rag/stats"),
                 HttpMethod.GET,
                 entityWithAuth(null, token),
                 String.class);
@@ -47,17 +47,17 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("{\"documents\":5}", response.getBody());
 
-        wireMock.verify(getRequestedFor(urlEqualTo("/rag/stats"))
+        wireMock.verify(getRequestedFor(urlEqualTo("/internal/v1/agent/rag/stats"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test
     void ragStatsHandlesAgentError() {
-        wireMock.stubFor(get(urlEqualTo("/rag/stats"))
+        wireMock.stubFor(get(urlEqualTo("/internal/v1/agent/rag/stats"))
                 .willReturn(aResponse().withStatus(500)));
 
         HttpServerErrorException ex = assertThrows(HttpServerErrorException.class, () ->
-                restTemplate.exchange(url("/rag/stats"), HttpMethod.GET,
+                restTemplate.exchange(url("/api/v1/rag/stats"), HttpMethod.GET,
                         entityWithAuth(null, token), String.class));
 
         assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatusCode());
@@ -65,7 +65,7 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void ragIngestForwardsToAgent() {
-        wireMock.stubFor(post(urlEqualTo("/rag/ingest"))
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/rag/ingest"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
@@ -78,8 +78,8 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
                 return "test.txt";
             }
         });
-        parts.add("chunk_size", "1000");
-        parts.add("chunk_overlap", "200");
+        parts.add("chunkSize", "1000");
+        parts.add("chunkOverlap", "200");
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
@@ -88,32 +88,32 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
         HttpEntity<LinkedMultiValueMap<String, Object>> entity = new HttpEntity<>(parts, headers);
 
         ResponseEntity<String> response = restTemplate.exchange(
-                url("/rag/ingest"), HttpMethod.POST, entity, String.class);
+                url("/api/v1/rag/ingest"), HttpMethod.POST, entity, String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("{\"chunks\":[\"chunk1\"]}", response.getBody());
 
-        wireMock.verify(postRequestedFor(urlEqualTo("/rag/ingest"))
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/rag/ingest"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test
     void ragSearchForwardsQueryParams() {
-        wireMock.stubFor(post(urlEqualTo("/rag/search"))
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/rag/search"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"results\":[]}")));
 
         ResponseEntity<String> response = restTemplate.exchange(
-                url("/rag/search?query=hello&top_k=3&min_score=0.5"),
+                url("/api/v1/rag/search?query=hello&topK=3&minScore=0.5"),
                 HttpMethod.POST,
                 entityWithAuth(null, token),
                 String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
-        wireMock.verify(postRequestedFor(urlEqualTo("/rag/search"))
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/rag/search"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
@@ -121,25 +121,25 @@ class AgentRagIntegrationTest extends AbstractWireMockTest {
     void ragDeleteForwardsDocId() {
         String docId = "doc-" + UUID.randomUUID().toString().substring(0, 8);
 
-        wireMock.stubFor(delete(urlPathMatching("/rag/documents/.*"))
+        wireMock.stubFor(delete(urlPathMatching("/internal/v1/agent/rag/documents/.*"))
                 .willReturn(aResponse().withStatus(200)));
 
         ResponseEntity<String> response = restTemplate.exchange(
-                url("/rag/documents/" + docId),
+                url("/api/v1/rag/documents/" + docId),
                 HttpMethod.DELETE,
                 entityWithAuth(null, token),
                 String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
-        wireMock.verify(deleteRequestedFor(urlEqualTo("/rag/documents/" + docId))
+        wireMock.verify(deleteRequestedFor(urlEqualTo("/internal/v1/agent/rag/documents/" + docId))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test
     void ragHandlesAuthRequired() {
         ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/rag/search?query=test"), null, String.class);
+                url("/api/v1/rag/search?query=test"), null, String.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
     }

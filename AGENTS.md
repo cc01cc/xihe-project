@@ -193,9 +193,19 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 日志通过 `XIHE_LOG_LEVEL_<MODULE>` → `XIHE_LOG_LEVEL` 回退链设定，支持 ConfigService 动态调级。JSONL 格式，`mise run clean` 清空。详见 `docs/i18n/zh-Hans/DEV-003-logging.md`。
 
+## MCP/OAuth Boundary
+
+- Agent 只连接 CP logical MCP endpoint，不直接访问 Runtime、workspace bridge 或远程 MCP。
+- Canonical HTTP contract is `docs/api/openapi.yaml`; public routes use `/api/v1`, service routes use `/internal/v1`, and all service calls use `Authorization: Bearer`.
+- Xihe-owned JSON uses camelCase and RFC 9457 Problem Details (`code` and `requestId`); MCP JSON-RPC and OAuth wire fields remain protocol-defined.
+- CP 负责 OAuth Authorization Code + PKCE、workspace/server 授权、refresh token envelope encryption、refresh/revoke 和 token broker。
+- Runtime host-side connector 只接收短期 access token，负责远程 MCP 出网、HTTPS/allowlist/私网校验；workspace sandbox 不承载远程 OAuth。
+- Fake OAuth/Fake MCP 只用于真实 integration/E2E，必须验证 PKCE、Bearer、MCP protocol、refresh/revoke 和清理，不得把 mock-only 测试作为链路完成证据。
+- 远程 MCP 相关实施与 API 统一迁移分别见 `plans/PLAN-190-XH-remote-mcp-oauth-egress.md` 和 `plans/PLAN-191-XH-unified-stable-api.md`。
+
 ## Known Issues
 
-- **Vite proxy rewrite**: CP `@RequestMapping` 不含 `/api/v1` 前缀，由 Vite rewrite 剥离
+- **API migration**: Vite no longer rewrites API paths; callers must use the canonical `/api/v1` and `/internal/v1` contracts.
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
 - **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU（PLAN-097）。OOM 时按需上调

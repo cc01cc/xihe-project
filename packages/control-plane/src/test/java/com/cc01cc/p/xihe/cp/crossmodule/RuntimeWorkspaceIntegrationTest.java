@@ -51,7 +51,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void createWorkspaceNotifiesRuntime() {
-        wireMock.stubFor(post(urlEqualTo("/workspace/create"))
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces"))
                 .willReturn(aResponse().withStatus(200)));
 
         createdWorkspace = workspaceService.createWorkspace(
@@ -61,9 +61,9 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertNotNull(createdWorkspace.getId());
         assertNotNull(createdWorkspace.getStoragePath());
 
-        wireMock.verify(postRequestedFor(urlEqualTo("/workspace/create"))
-                .withRequestBody(matchingJsonPath("$.workspace_id"))
-                .withRequestBody(matchingJsonPath("$.workspace_path"))
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces"))
+                .withRequestBody(matchingJsonPath("$.workspaceId"))
+                .withRequestBody(matchingJsonPath("$.workspacePath"))
                 .withRequestBody(matchingJsonPath("$.image")));
     }
 
@@ -71,25 +71,25 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     void deleteWorkspaceNotifiesRuntime() {
         String wsName = "del-ws-" + UUID.randomUUID().toString().substring(0, 8);
 
-        wireMock.stubFor(post(urlEqualTo("/workspace/create"))
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces"))
                 .willReturn(aResponse().withStatus(200)));
-        wireMock.stubFor(post(urlEqualTo("/workspace/delete"))
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
                 .willReturn(aResponse().withStatus(200)));
 
         createdWorkspace = workspaceService.createWorkspace(wsName, "test-owner");
 
         workspaceService.deleteWorkspace(createdWorkspace.getId());
 
-        wireMock.verify(postRequestedFor(urlEqualTo("/workspace/delete"))
-                .withRequestBody(matchingJsonPath("$.workspace_id", containing(createdWorkspace.getId())))
-                .withRequestBody(matchingJsonPath("$.workspace_path")));
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
+                .withRequestBody(matchingJsonPath("$.workspaceId", containing(createdWorkspace.getId())))
+                .withRequestBody(matchingJsonPath("$.workspacePath")));
 
         createdWorkspace = null;
     }
 
     @Test
     void createWorkspaceSucceedsEvenWhenRuntimeUnavailable() {
-        wireMock.stubFor(post(urlEqualTo("/workspace/create"))
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces"))
                 .willReturn(aResponse().withStatus(500)));
 
         createdWorkspace = workspaceService.createWorkspace(
@@ -97,6 +97,6 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 "test-owner");
 
         assertNotNull(createdWorkspace.getId());
-        wireMock.verify(postRequestedFor(urlEqualTo("/workspace/create")));
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces")));
     }
 }

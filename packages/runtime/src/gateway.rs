@@ -80,12 +80,11 @@ impl WorkspaceRegistry {
     }
 
     pub async fn register(&self, ws_id: &str, workspace_path: &str) {
-        let instance = XiheRuntimeInstance::new(
-            ws_id,
-            workspace_path,
-            SecurityProfile::Strict,
-        );
-        self.instances.write().await.insert(ws_id.to_string(), instance);
+        let instance = XiheRuntimeInstance::new(ws_id, workspace_path, SecurityProfile::Strict);
+        self.instances
+            .write()
+            .await
+            .insert(ws_id.to_string(), instance);
     }
 
     pub async fn register_with_profile(
@@ -95,7 +94,10 @@ impl WorkspaceRegistry {
         profile: SecurityProfile,
     ) {
         let instance = XiheRuntimeInstance::new(ws_id, workspace_path, profile);
-        self.instances.write().await.insert(ws_id.to_string(), instance);
+        self.instances
+            .write()
+            .await
+            .insert(ws_id.to_string(), instance);
     }
 
     pub async fn unregister(&self, ws_id: &str) {
@@ -228,7 +230,11 @@ mod tests {
     #[tokio::test]
     async fn test_is_idle_unknown_ws() {
         let registry = WorkspaceRegistry::new();
-        assert!(!registry.is_idle("ws-nonexistent", Duration::from_secs(10)).await);
+        assert!(
+            !registry
+                .is_idle("ws-nonexistent", Duration::from_secs(10))
+                .await
+        );
     }
 
     #[tokio::test]
@@ -282,8 +288,7 @@ mod tests {
 
     #[test]
     fn test_instance_update_last_active() {
-        let mut instance =
-            XiheRuntimeInstance::new("ws-1", "/tmp/ws-1", SecurityProfile::Strict);
+        let mut instance = XiheRuntimeInstance::new("ws-1", "/tmp/ws-1", SecurityProfile::Strict);
         let before = instance.last_active;
         instance.update_last_active();
         assert!(instance.last_active >= before);
@@ -291,8 +296,7 @@ mod tests {
 
     #[test]
     fn test_instance_is_idle() {
-        let mut instance =
-            XiheRuntimeInstance::new("ws-1", "/tmp/ws-1", SecurityProfile::Strict);
+        let mut instance = XiheRuntimeInstance::new("ws-1", "/tmp/ws-1", SecurityProfile::Strict);
         // Immediately after creation, should not be idle
         assert!(!instance.is_idle(Duration::from_secs(3600)));
         // Fake the last_active to be far in the past

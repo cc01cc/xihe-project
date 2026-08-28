@@ -1,8 +1,10 @@
 {
   "type": "object",
   "properties": {
-    "chunk_size": { "type": ["integer", "string"] },
-    "top_k": { "type": ["integer", "string"] }
+    "chunkSize": { "type": ["integer", "string"] },
+    "chunkOverlap": { "type": ["integer", "string"] },
+    "topK": { "type": ["integer", "string"] },
+    "minScore": { "type": ["number", "string"] }
   },
   "additionalProperties": false
 }

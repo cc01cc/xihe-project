@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, RwLock};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{error, info, warn};
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::prelude::*;
@@ -86,8 +86,17 @@ async fn main() {
 
     tracing_subscriber::registry()
         .with(EnvFilter::new(env_filter))
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout).with_ansi(false))
-        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking_file).with_ansi(false).json())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_ansi(false),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking_file)
+                .with_ansi(false)
+                .json(),
+        )
         .init();
 
     let state = BridgeState {
@@ -169,9 +178,10 @@ async fn restart_process(
         .stderr(std::process::Stdio::inherit());
 
     let mut new_child = cmd.spawn()?;
-    let new_stdin = new_child.stdin.take().ok_or_else(|| {
-        std::io::Error::other("failed to capture stdin")
-    })?;
+    let new_stdin = new_child
+        .stdin
+        .take()
+        .ok_or_else(|| std::io::Error::other("failed to capture stdin"))?;
 
     let new_proc = Arc::new(ManagedProcess {
         child: Mutex::new(new_child),
@@ -227,9 +237,7 @@ async fn kill_handler(
     }
 }
 
-async fn health_handler(
-    State(state): State<BridgeState>,
-) -> Json<HealthResponse> {
+async fn health_handler(State(state): State<BridgeState>) -> Json<HealthResponse> {
     let procs = state.processes.read().await;
     let servers: Vec<String> = procs.keys().cloned().collect();
     Json(HealthResponse {
@@ -246,7 +254,10 @@ async fn mcp_call_handler(
 ) -> Result<Response, StatusCode> {
     let proc = {
         let procs = state.processes.read().await;
-        procs.get(&server_id).cloned().ok_or(StatusCode::NOT_FOUND)?
+        procs
+            .get(&server_id)
+            .cloned()
+            .ok_or(StatusCode::NOT_FOUND)?
     };
 
     let mut child = proc.child.lock().await;
@@ -323,9 +334,10 @@ fn spawn_managed_process(req: &SpawnRequest) -> std::io::Result<ManagedProcess> 
         .stderr(std::process::Stdio::inherit());
 
     let mut child = cmd.spawn()?;
-    let stdin = child.stdin.take().ok_or_else(|| {
-        std::io::Error::other("failed to capture stdin")
-    })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| std::io::Error::other("failed to capture stdin"))?;
 
     Ok(ManagedProcess {
         child: Mutex::new(child),
@@ -392,8 +404,12 @@ mod tests {
             .unwrap();
         assert_eq!(health_resp.status(), StatusCode::OK);
 
-        let health_body: HealthResponse =
-            serde_json::from_slice(&axum::body::to_bytes(health_resp.into_body(), 4096).await.unwrap()).unwrap();
+        let health_body: HealthResponse = serde_json::from_slice(
+            &axum::body::to_bytes(health_resp.into_body(), 4096)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(health_body.count, 1);
         assert!(health_body.servers.contains(&"test-cat".to_string()));
     }

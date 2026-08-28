@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
@@ -21,7 +22,7 @@ import java.util.Map;
 import java.util.Optional;
 
 @RestController
-@RequestMapping("/api/v1/context")
+    @RequestMapping("/internal/v1/context")
 public class ContextController {
 
     private static final Logger logger = LoggerFactory.getLogger(ContextController.class);
@@ -55,7 +56,7 @@ public class ContextController {
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), eventType, payload);
         return ResponseEntity.ok(Map.of(
                 "sequence", event.getSequence(),
-                "event_type", event.getEventType(),
+                "eventType", event.getEventType(),
                 "created_at", event.getCreatedAt().toString()
         ));
     }
@@ -107,12 +108,12 @@ public class ContextController {
         if (hash.isPresent()) {
             return ResponseEntity.ok(Map.of(
                     "status", "refreshed",
-                    "source_key", "AGENTS.md",
+                "sourceKey", "AGENTS.md",
                     "hash", hash.get()));
         }
         return ResponseEntity.ok(Map.of(
                 "status", "unchanged",
-                "source_key", "AGENTS.md"));
+                "sourceKey", "AGENTS.md"));
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
@@ -166,7 +167,7 @@ public class ContextController {
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), upToSequence);
         return ResponseEntity.ok(Map.of(
                 "sequence", event.getSequence(),
-                "event_type", event.getEventType(),
+                "eventType", event.getEventType(),
                 "created_at", event.getCreatedAt().toString()
         ));
     }
@@ -212,7 +213,6 @@ public class ContextController {
     }
 
     private ResponseEntity<?> forbidden() {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(Map.of("status", "error", "message", "Access denied"));
+        return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Access denied");
     }
 }

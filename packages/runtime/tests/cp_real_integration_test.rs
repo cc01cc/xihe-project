@@ -12,8 +12,7 @@ fn cp_port() -> u16 {
 }
 
 fn cp_api_token() -> String {
-    std::env::var("XIHE_CP_API_TOKEN")
-        .unwrap_or_else(|_| "dev-token-change-me".into())
+    std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-change-me".into())
 }
 
 fn cp_url() -> String {
@@ -51,8 +50,7 @@ async fn test_config_client_sync_with_real_cp() {
         return;
     }
 
-    let mut client =
-        xihe_runtime::config_client::ConfigClient::new(&cp_url(), &cp_api_token());
+    let mut client = xihe_runtime::config_client::ConfigClient::new(&cp_url(), &cp_api_token());
     let result = client.sync().await;
 
     assert!(result.is_ok());
@@ -70,10 +68,13 @@ async fn test_cp_auth_register_login() {
         return;
     }
 
-    let email = format!("test-integration-{}@xihe.local", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos());
+    let email = format!(
+        "test-integration-{}@xihe.local",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
 
     let client = reqwest::Client::new();
 
@@ -84,7 +85,7 @@ async fn test_cp_auth_register_login() {
     });
 
     let reg_resp = client
-        .post(format!("{}/auth/register", cp_url()))
+        .post(format!("{}/api/v1/auth/register", cp_url()))
         .json(&register_body)
         .send()
         .await;
@@ -109,7 +110,7 @@ async fn test_cp_auth_register_login() {
     });
 
     let login_resp = client
-        .post(format!("{}/auth/login", cp_url()))
+        .post(format!("{}/api/v1/auth/login", cp_url()))
         .json(&login_body)
         .send()
         .await
@@ -123,5 +124,8 @@ async fn test_cp_auth_register_login() {
         token.is_some(),
         "login response should contain accessToken: {login_body:?}"
     );
-    assert!(!token.unwrap().is_empty(), "accessToken should not be empty");
+    assert!(
+        !token.unwrap().is_empty(),
+        "accessToken should not be empty"
+    );
 }

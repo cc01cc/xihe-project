@@ -128,7 +128,7 @@ public class ChatAttachmentService {
                 entity.setStoragePath(finalPath.toString());
                 fileRepository.save(entity);
 
-                success.add(new AttachmentInfo(fileId, originalName, mimeType, file.getSize(), "/files/" + fileId));
+                success.add(new AttachmentInfo(fileId, originalName, mimeType, file.getSize(), "/api/v1/files/" + fileId));
                 logger.info("Attachment uploaded session={} fileId={} name={} size={}", sessionId, fileId, originalName, file.getSize());
             } catch (Exception e) {
                 String reason = e.getMessage() != null ? e.getMessage() : "Upload failed";

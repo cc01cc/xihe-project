@@ -99,7 +99,7 @@ class ChatControllerTest extends AbstractH2Test {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-        registry.add("cp.agent-url", () -> "http://localhost:" + agentPort + "/chat");
+        registry.add("cp.agent-url", () -> "http://localhost:" + agentPort + "/internal/v1/agent/chat");
     }
 
     @BeforeEach
@@ -118,7 +118,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         String email = "chat-ctrl-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         ResponseEntity<AuthResponse> reg = restTemplate.postForEntity(
-                baseUrl + "/auth/register", new RegisterRequest(email, "Test1234!", "ChatCtrl"), AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, "Test1234!", "ChatCtrl"), AuthResponse.class);
         authToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
@@ -149,7 +149,7 @@ class ChatControllerTest extends AbstractH2Test {
         }
         if (agentServer != null) {
             try {
-                agentServer.removeContext("/chat");
+                agentServer.removeContext("/internal/v1/agent/chat");
             } catch (IllegalArgumentException e) {
                 // context may not exist; ignore
             }
@@ -168,7 +168,7 @@ class ChatControllerTest extends AbstractH2Test {
         file = fileRepository.save(file);
 
         String sseBody = "data: {\"content\":\"hello\"}\n\n";
-        agentServer.createContext("/chat", exchange -> {
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
             try {
                 exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
                 exchange.sendResponseHeaders(200, 0);
@@ -181,10 +181,10 @@ class ChatControllerTest extends AbstractH2Test {
         });
 
         Map<String, Object> request = Map.of(
-                "session_id", sessionId,
+                "sessionId", sessionId,
                 "content", "Message with attachment",
-                "workspace_id", workspaceId,
-                "user_id", userId,
+                "workspaceId", workspaceId,
+                "userId", userId,
                 "attachments", List.of(file.getId())
         );
         HttpHeaders headers = new HttpHeaders();
@@ -193,7 +193,7 @@ class ChatControllerTest extends AbstractH2Test {
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/chat", HttpMethod.POST, entity, Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, entity, Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         assertEquals("accepted", response.getBody().get("status"));
@@ -226,7 +226,7 @@ class ChatControllerTest extends AbstractH2Test {
         file = fileRepository.save(file);
 
         final String[] capturedBody = new String[1];
-        agentServer.createContext("/chat", exchange -> {
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
             try {
                 capturedBody[0] = new String(exchange.getRequestBody().readAllBytes());
                 exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
@@ -240,10 +240,10 @@ class ChatControllerTest extends AbstractH2Test {
         });
 
         Map<String, Object> request = Map.of(
-                "session_id", sessionId,
+                "sessionId", sessionId,
                 "content", "Please analyze",
-                "workspace_id", workspaceId,
-                "user_id", userId,
+                "workspaceId", workspaceId,
+                "userId", userId,
                 "attachments", List.of(file.getId())
         );
         HttpHeaders headers = new HttpHeaders();
@@ -251,7 +251,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
 
-        restTemplate.exchange(baseUrl + "/chat", HttpMethod.POST, entity, Map.class);
+        restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST, entity, Map.class);
 
         // Wait for request to be captured
         long deadline = System.currentTimeMillis() + 5000;
@@ -264,7 +264,7 @@ class ChatControllerTest extends AbstractH2Test {
         List<Map<String, Object>> attachments = (List<Map<String, Object>>) agentRequest.get("attachments");
         assertEquals(1, attachments.size());
         assertEquals(file.getId(), attachments.get(0).get("fileId"));
-        assertEquals("/files/" + file.getId(), attachments.get(0).get("url"));
+        assertEquals("/api/v1/files/" + file.getId(), attachments.get(0).get("url"));
     }
 
     @TestConfiguration

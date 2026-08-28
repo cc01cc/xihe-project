@@ -6,7 +6,7 @@ test.describe('Auth — Real Backend', () => {
   let _authToken = ''
 
   test.beforeAll(async ({ request }) => {
-    const r = await request.post(`${CP_URL}/auth/register`, {
+    const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
       data: { email: `real-auth-${Date.now()}@test.com`, password: 'Test1234!', name: 'RealAuth' },
     })
     if (r.ok()) {
@@ -30,7 +30,7 @@ test.describe('Auth — Real Backend', () => {
   test('navigates to chat after successful login', async ({ page }) => {
     const email = `real-login-${Date.now()}@test.com`
     // Register first
-    const reg = await fetch(`${CP_URL}/auth/register`, {
+    const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password: 'Test1234!', name: 'LoginTest' }),

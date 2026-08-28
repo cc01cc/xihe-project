@@ -104,7 +104,9 @@ mod tests {
         fs::write(dir.path().join("lines.txt"), "line1\nline2\nline3\n").unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(xihe_fs::read_file_range("lines.txt", None, None, &ws)).unwrap();
+        let result = rt
+            .block_on(xihe_fs::read_file_range("lines.txt", None, None, &ws))
+            .unwrap();
 
         assert_eq!(result.total_lines, 3);
         assert!(!result.is_binary);
@@ -120,7 +122,9 @@ mod tests {
         fs::write(dir.path().join("lines.txt"), "a\nb\nc\nd\ne\n").unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(xihe_fs::read_file_range("lines.txt", Some(2), Some(2), &ws)).unwrap();
+        let result = rt
+            .block_on(xihe_fs::read_file_range("lines.txt", Some(2), Some(2), &ws))
+            .unwrap();
 
         assert_eq!(result.total_lines, 5);
         assert!(result.content.contains("2 | b"));
@@ -136,7 +140,14 @@ mod tests {
         fs::write(dir.path().join("small.txt"), "only\n").unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(xihe_fs::read_file_range("small.txt", Some(100), Some(10), &ws)).unwrap();
+        let result = rt
+            .block_on(xihe_fs::read_file_range(
+                "small.txt",
+                Some(100),
+                Some(10),
+                &ws,
+            ))
+            .unwrap();
 
         assert_eq!(result.total_lines, 1);
         assert!(result.content.is_empty());
@@ -150,7 +161,9 @@ mod tests {
         fs::write(dir.path().join("binary.bin"), &binary_content).unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(xihe_fs::read_file_range("binary.bin", None, None, &ws)).unwrap();
+        let result = rt
+            .block_on(xihe_fs::read_file_range("binary.bin", None, None, &ws))
+            .unwrap();
 
         assert!(result.is_binary);
         assert_eq!(result.total_lines, 0);
@@ -187,18 +200,26 @@ mod tests {
             Some("text"),
             Some(2),
         ));
-        assert!(result.is_err(), "invalid URL should return error, got: {:?}", result);
+        assert!(
+            result.is_err(),
+            "invalid URL should return error, got: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_web_fetch_unreachable_host_returns_error() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(xihe_runtime::fetch::web_fetch(
-            "http://192.0.2.1:1",  // TEST-NET, unreachable
+            "http://192.0.2.1:1", // TEST-NET, unreachable
             Some("text"),
             Some(2),
         ));
-        assert!(result.is_err(), "unreachable host should return error, got: {:?}", result);
+        assert!(
+            result.is_err(),
+            "unreachable host should return error, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -219,9 +240,17 @@ mod tests {
             Some("text"),
             Some(5),
         ));
-        assert!(result.is_ok(), "localhost fetch should succeed, got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "localhost fetch should succeed, got: {:?}",
+            result
+        );
         let fetch_result = result.unwrap();
-        assert!(fetch_result.content.contains("Hello, world!"), "content mismatch: {}", fetch_result.content);
+        assert!(
+            fetch_result.content.contains("Hello, world!"),
+            "content mismatch: {}",
+            fetch_result.content
+        );
         assert!(!fetch_result.truncated);
         assert_eq!(fetch_result.url, format!("http://127.0.0.1:{}", port));
     }

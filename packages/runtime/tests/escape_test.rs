@@ -1,6 +1,6 @@
-use xihe_runtime::fs as xihe_fs;
 use std::fs;
 use tempfile::TempDir;
+use xihe_runtime::fs as xihe_fs;
 
 #[cfg(test)]
 mod tests {
@@ -143,7 +143,10 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(xihe_fs::write_file("output.txt", "data", &ws));
         assert!(result.is_ok());
-        assert_eq!(fs::read_to_string(dir.path().join("output.txt")).unwrap(), "data");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("output.txt")).unwrap(),
+            "data"
+        );
     }
 
     #[test]
@@ -152,7 +155,10 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(xihe_fs::write_file("sub/deep/file.txt", "deep", &ws));
         assert!(result.is_ok());
-        assert_eq!(fs::read_to_string(dir.path().join("sub/deep/file.txt")).unwrap(), "deep");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("sub/deep/file.txt")).unwrap(),
+            "deep"
+        );
     }
 
     // --- Valid path allowed ---

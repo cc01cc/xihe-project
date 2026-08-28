@@ -28,7 +28,11 @@ fn request_state_rejects_tampering_and_wrong_associated_data() {
             .ttl(Duration::from_secs(60)),
     );
 
-    assert!(codec.open_with(&format!("{sealed}x"), b"workspace=ws-1").is_err());
+    assert!(
+        codec
+            .open_with(&format!("{sealed}x"), b"workspace=ws-1")
+            .is_err()
+    );
     assert!(codec.open_with(&sealed, b"workspace=ws-2").is_err());
 }
 

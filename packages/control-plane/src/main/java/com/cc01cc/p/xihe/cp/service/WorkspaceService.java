@@ -111,11 +111,11 @@ public class WorkspaceService {
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(serviceToken);
             Map<String, String> body = new java.util.LinkedHashMap<>();
-            body.put("ws_id", workspaceId);
-            body.put("workspace_path", workspacePath);
+            body.put("workspaceId", workspaceId);
+            body.put("workspacePath", workspacePath);
             body.put("image", workspaceImage);
             HttpEntity<Map<String, String>> request = new HttpEntity<>(body, headers);
-            restTemplate.postForEntity(runtimeUrl + "/workspace/create", request, String.class);
+            restTemplate.postForEntity(runtimeUrl + "/internal/v1/runtime/workspaces", request, String.class);
             logger.debug("Runtime notified of workspace creation: {}", workspaceId);
         } catch (Exception e) {
             logger.warn("Failed to notify Runtime for workspace create (workspaceId={}): {}", workspaceId, e.getMessage());
@@ -128,11 +128,11 @@ public class WorkspaceService {
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(serviceToken);
             Map<String, String> body = Map.of(
-                    "ws_id", workspaceId,
-                    "workspace_path", workspacePath
+                    "workspaceId", workspaceId,
+                    "workspacePath", workspacePath
             );
             HttpEntity<Map<String, String>> request = new HttpEntity<>(body, headers);
-            restTemplate.postForEntity(runtimeUrl + "/workspace/delete", request, String.class);
+            restTemplate.postForEntity(runtimeUrl + "/internal/v1/runtime/workspaces/delete", request, String.class);
             logger.debug("Runtime notified of workspace deletion: {}", workspaceId);
         } catch (Exception e) {
             logger.warn("Failed to notify Runtime for workspace delete (workspaceId={}): {}", workspaceId, e.getMessage());

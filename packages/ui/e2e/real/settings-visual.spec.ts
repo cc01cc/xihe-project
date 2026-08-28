@@ -4,7 +4,7 @@ const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 let authToken = ''
 
 test.beforeAll(async () => {
-  const r = await fetch(`${CP_URL}/auth/register`, {
+  const r = await fetch(`${CP_URL}/api/v1/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: `vis-${Date.now()}@test.com`, password: 'Test1234!', name: 'Visual' }),

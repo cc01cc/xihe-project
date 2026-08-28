@@ -5,8 +5,7 @@ import { logger } from '../../lib/logger'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 import ImportPreview, { type ImportData } from '../../components/settings/ImportPreview.vue'
-
-const CP_BASE = import.meta.env.VITE_XIHE_CP_BASE_URL || `http://localhost:${import.meta.env.VITE_XIHE_CP_PORT || '12631'}`
+import { apiRaw } from '../../composables/api'
 
 const { t } = useI18n()
 const exporting = ref(false)
@@ -15,16 +14,10 @@ const importFile = ref<File | null>(null)
 const showImportPreview = ref(false)
 const result = ref<string | null>(null)
 
-async function cpFetch(path: string, init?: RequestInit) {
-  const res = await fetch(`${CP_BASE}${path}`, init)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res
-}
-
 async function exportSettings() {
   exporting.value = true
   try {
-    const res = await cpFetch('/api/export/settings')
+    const res = await apiRaw('/config/export')
     const blob = await res.blob()
     downloadBlob(blob, 'xihe-settings.json')
   } catch (e) {
@@ -37,7 +30,7 @@ async function exportSettings() {
 async function exportChats() {
   exporting.value = true
   try {
-    const res = await cpFetch('/api/export/chats')
+    const res = await apiRaw('/config/export')
     const blob = await res.blob()
     downloadBlob(blob, 'xihe-chats.json')
   } catch (e) {
@@ -58,10 +51,10 @@ async function handleConfirmImport(data: ImportData) {
   importing.value = true
   try {
     const text = await data.file.text()
-    const res = await cpFetch('/api/import/chats', {
+    const res = await apiRaw('/config/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: text }),
+      body: text,
     })
     const resultData = await res.json()
     result.value = `Imported: ${resultData.imported}, Skipped: ${resultData.skipped}`

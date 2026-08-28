@@ -40,7 +40,9 @@ fn stop_bridge(mut child: Child) {
 
 fn skip_if_no_binary() -> bool {
     if !std::path::Path::new(BINARY).exists() {
-        eprintln!("skipping: binary {BINARY} not found — run 'cargo build --bin xihe-mcp-bridge' first");
+        eprintln!(
+            "skipping: binary {BINARY} not found — run 'cargo build --bin xihe-mcp-bridge' first"
+        );
         return true;
     }
     false
@@ -48,14 +50,19 @@ fn skip_if_no_binary() -> bool {
 
 #[test]
 fn test_health_endpoint() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
 
     let port = find_free_port();
     let child = start_bridge(port);
     wait_for_ready(port);
 
     let client = reqwest::blocking::Client::new();
-    let resp = client.get(format!("http://127.0.0.1:{port}/_health")).send().unwrap();
+    let resp = client
+        .get(format!("http://127.0.0.1:{port}/_health"))
+        .send()
+        .unwrap();
     assert_eq!(resp.status(), 200);
     assert!(resp.text().unwrap().contains("ok"));
 
@@ -64,7 +71,9 @@ fn test_health_endpoint() {
 
 #[test]
 fn test_spawn_and_health() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
 
     let port = find_free_port();
     let child = start_bridge(port);
@@ -78,7 +87,11 @@ fn test_spawn_and_health() {
         "command": "echo",
         "args": ["hello"]
     });
-    let resp = client.post(format!("{base}/_spawn")).json(&req).send().unwrap();
+    let resp = client
+        .post(format!("{base}/_spawn"))
+        .json(&req)
+        .send()
+        .unwrap();
     assert_eq!(resp.status(), 200);
 
     let resp = client.get(format!("{base}/_health")).send().unwrap();
@@ -90,7 +103,9 @@ fn test_spawn_and_health() {
 
 #[test]
 fn test_spawn_conflict() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
 
     let port = find_free_port();
     let child = start_bridge(port);
@@ -105,10 +120,18 @@ fn test_spawn_conflict() {
         "args": ["ok"]
     });
 
-    let resp = client.post(format!("{base}/_spawn")).json(&req).send().unwrap();
+    let resp = client
+        .post(format!("{base}/_spawn"))
+        .json(&req)
+        .send()
+        .unwrap();
     assert_eq!(resp.status(), 200);
 
-    let resp = client.post(format!("{base}/_spawn")).json(&req).send().unwrap();
+    let resp = client
+        .post(format!("{base}/_spawn"))
+        .json(&req)
+        .send()
+        .unwrap();
     assert_eq!(resp.status(), 409);
 
     stop_bridge(child);
@@ -116,14 +139,19 @@ fn test_spawn_conflict() {
 
 #[test]
 fn test_kill_not_found() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
 
     let port = find_free_port();
     let child = start_bridge(port);
     wait_for_ready(port);
 
     let client = reqwest::blocking::Client::new();
-    let resp = client.post(format!("http://127.0.0.1:{port}/_kill/nonexistent")).send().unwrap();
+    let resp = client
+        .post(format!("http://127.0.0.1:{port}/_kill/nonexistent"))
+        .send()
+        .unwrap();
     assert_eq!(resp.status(), 404);
 
     stop_bridge(child);
@@ -131,14 +159,17 @@ fn test_kill_not_found() {
 
 #[test]
 fn test_mcp_call_not_found() {
-    if skip_if_no_binary() { return; }
+    if skip_if_no_binary() {
+        return;
+    }
 
     let port = find_free_port();
     let child = start_bridge(port);
     wait_for_ready(port);
 
     let client = reqwest::blocking::Client::new();
-    let resp = client.post(format!("http://127.0.0.1:{port}/nonexistent"))
+    let resp = client
+        .post(format!("http://127.0.0.1:{port}/nonexistent"))
         .json(&serde_json::json!({"jsonrpc": "2.0", "method": "tools/list", "id": 1}))
         .send()
         .unwrap();

@@ -1,15 +1,15 @@
+use axum::body::Bytes;
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
-use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
-use xihe_runtime::{error::RuntimeError, fs, gateway::WorkspaceRegistry};
 use crate::{DeleteFileRequest, GetFileInfoRequest, ListDirectoryRequest, MkdirRequest};
+use xihe_runtime::{error::RuntimeError, fs, gateway::WorkspaceRegistry};
 
 // ---- Request / Response types ----
 
@@ -79,7 +79,12 @@ pub async fn handle_write_binary(
         .ok_or_else(|| (StatusCode::NOT_FOUND, "workspace not found".into()))?;
     let path = percent_encoding::percent_decode_str(&raw_path)
         .decode_utf8()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "invalid percent encoding in path".into()))?;
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "invalid percent encoding in path".into(),
+            )
+        })?;
     let msg = fs::write_file_binary(&path, &body, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -95,8 +100,7 @@ pub async fn handle_list_directory(
         .get(&ws_id)
         .await
         .ok_or_else(|| (StatusCode::NOT_FOUND, "workspace not found".into()))?;
-    let entries =
-        fs::list_directory(&req.path, &ws.workspace_path).map_err(map_error)?;
+    let entries = fs::list_directory(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(fs::DirectoryListing { entries }))
 }
 
@@ -148,9 +152,9 @@ pub async fn handle_stat(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xihe_runtime::gateway::WorkspaceRegistry;
     use std::sync::Arc;
     use tempfile::TempDir;
+    use xihe_runtime::gateway::WorkspaceRegistry;
 
     /// Helper: create a temp workspace dir, register it, return (registry, ws_id, _dir_guard)
     async fn setup_ws() -> (Arc<WorkspaceRegistry>, String, TempDir) {
@@ -209,7 +213,13 @@ mod tests {
         let path = Path((ws_id, "test%2Fhello.txt".to_string()));
         let body = Bytes::from("Hello, Binary!");
         let result = handle_write_binary(state, path, body).await.unwrap();
-        assert!(result.get("message").and_then(|v| v.as_str()).unwrap().contains("Written"));
+        assert!(
+            result
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap()
+                .contains("Written")
+        );
     }
 
     #[tokio::test]
@@ -271,7 +281,9 @@ mod tests {
         // Delete via handler
         let state = State(reg);
         let path = Path(ws_id);
-        let json = Json(DeleteFileRequest { path: "del.txt".into() });
+        let json = Json(DeleteFileRequest {
+            path: "del.txt".into(),
+        });
         let result = handle_delete_file(state, path, json).await.unwrap();
         assert!(result.get("message").and_then(|v| v.as_str()).is_some());
     }
@@ -282,7 +294,9 @@ mod tests {
 
         let state = State(reg);
         let path = Path(ws_id);
-        let json = Json(MkdirRequest { path: "sub/dir".into() });
+        let json = Json(MkdirRequest {
+            path: "sub/dir".into(),
+        });
         let result = handle_mkdir(state, path, json).await.unwrap();
         assert!(result.get("message").and_then(|v| v.as_str()).is_some());
     }
@@ -300,7 +314,9 @@ mod tests {
         // Stat via handler
         let state = State(reg);
         let path = Path(ws_id);
-        let json = Json(GetFileInfoRequest { path: "metrics.txt".into() });
+        let json = Json(GetFileInfoRequest {
+            path: "metrics.txt".into(),
+        });
         let result = handle_stat(state, path, json).await.unwrap();
         assert_eq!(result.name, "metrics.txt");
         assert!(!result.is_dir);
@@ -320,7 +336,9 @@ mod tests {
         // Stat via handler
         let state = State(reg);
         let path = Path(ws_id);
-        let json = Json(GetFileInfoRequest { path: "binary.bin".into() });
+        let json = Json(GetFileInfoRequest {
+            path: "binary.bin".into(),
+        });
         let result = handle_stat(state, path, json).await.unwrap();
         assert_eq!(result.size as usize, bin_data.len());
     }

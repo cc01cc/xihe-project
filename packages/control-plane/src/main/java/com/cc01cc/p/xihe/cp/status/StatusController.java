@@ -42,7 +42,7 @@ public class StatusController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping("/status")
+    @GetMapping("/api/v1/status")
     public Map<String, Object> getStatus() {
         List<Future<Map<String, Object>>> futures = new ArrayList<>();
 
@@ -60,7 +60,7 @@ public class StatusController {
                 err.put("name", "unknown");
                 err.put("key", "unknown");
                 err.put("status", "unreachable");
-                err.put("error", e.getMessage() != null ? e.getMessage() : "Timeout");
+                err.put("errorCode", "SERVICE_CHECK_FAILED");
                 services.add(err);
             }
         }
@@ -107,7 +107,7 @@ public class StatusController {
             }
         } catch (Exception e) {
             result.put("status", "down");
-            result.put("error", e.getMessage() != null ? e.getMessage() : "Connection refused");
+            result.put("errorCode", "AGENT_UNAVAILABLE");
             result.put("url", baseUrl);
         }
         return result;
@@ -132,7 +132,7 @@ public class StatusController {
             result.put("url", baseUrl);
         } catch (Exception e) {
             result.put("status", "down");
-            result.put("error", e.getMessage() != null ? e.getMessage() : "Connection refused");
+            result.put("errorCode", "RUNTIME_UNAVAILABLE");
             result.put("url", baseUrl);
         }
         return result;
@@ -162,7 +162,7 @@ public class StatusController {
             result.put("connections", connCount != null ? connCount : 0);
         } catch (Exception e) {
             result.put("status", "down");
-            result.put("error", e.getMessage() != null ? e.getMessage() : "Connection refused");
+            result.put("errorCode", "DATABASE_UNAVAILABLE");
         }
         return result;
     }

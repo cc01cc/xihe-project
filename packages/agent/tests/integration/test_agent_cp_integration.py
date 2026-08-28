@@ -38,7 +38,7 @@ class TestAgentCPIntegration:
         email = f"test-{time.time():.0f}@test.com"
         # Register
         r = httpx.post(
-            f"{CP_URL}/auth/register",
+            f"{CP_URL}/api/v1/auth/register",
             json={"email": email, "password": "Pass1234!", "name": "Test"},
             timeout=10,
         )
@@ -50,7 +50,7 @@ class TestAgentCPIntegration:
 
         # Login
         r = httpx.post(
-            f"{CP_URL}/auth/login",
+            f"{CP_URL}/api/v1/auth/login",
             json={"email": email, "password": "Pass1234!"},
             timeout=10,
         )
@@ -60,7 +60,7 @@ class TestAgentCPIntegration:
     def test_chat_endpoint_requires_auth(self):
         """CP /v1/chat returns 401 without auth token."""
         r = httpx.post(
-            f"{CP_URL}/v1/chat", json={"content": "hi"}, timeout=5
+            f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5
         )
         assert r.status_code == 401
 
@@ -69,7 +69,7 @@ class TestAgentCPIntegration:
         email = f"chat-{time.time():.0f}@test.com"
         # Register
         r = httpx.post(
-            f"{CP_URL}/auth/register",
+            f"{CP_URL}/api/v1/auth/register",
             json={"email": email, "password": "Pass1234!", "name": "Test"},
             timeout=10,
         )
@@ -79,7 +79,7 @@ class TestAgentCPIntegration:
     def test_chat_endpoint_requires_auth(self):
         """CP /v1/chat returns 401 without auth token."""
         r = httpx.post(
-            f"{CP_URL}/v1/chat", json={"content": "hi"}, timeout=5
+            f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5
         )
         assert r.status_code == 401
 
@@ -88,7 +88,7 @@ class TestAgentCPIntegration:
         email = f"chat-{time.time():.0f}@test.com"
         # Register
         r = httpx.post(
-            f"{CP_URL}/auth/register",
+            f"{CP_URL}/api/v1/auth/register",
             json={"email": email, "password": "Pass1234!", "name": "Test"},
             timeout=10,
         )
@@ -96,17 +96,17 @@ class TestAgentCPIntegration:
 
         # Chat
         r = httpx.post(
-            f"{CP_URL}/v1/chat",
-            json={"content": "hello", "session_id": "test"},
+            f"{CP_URL}/api/v1/chat",
+            json={"content": "hello", "sessionId": "test"},
             headers={"Authorization": f"Bearer {token}"},
             timeout=10,
         )
         assert r.status_code in [200, 202, 409]  # 202 Accepted, 409 = no SSE session
 
     def test_mcp_endpoint_returns_tools(self):
-        """CP /mcp tools/list returns tool list."""
+        """CP /api/v1/mcp tools/list returns tool list."""
         r = httpx.post(
-            f"{CP_URL}/mcp",
+            f"{CP_URL}/api/v1/mcp",
             json={
                 "jsonrpc": "2.0",
                 "method": "tools/list",

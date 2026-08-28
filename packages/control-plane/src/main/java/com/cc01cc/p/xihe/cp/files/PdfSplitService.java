@@ -97,7 +97,7 @@ public class PdfSplitService {
     void uploadChunk(String wsId, String chunkName, byte[] data) {
         String encodedPath = URLEncoder.encode(chunkName, StandardCharsets.UTF_8)
                 .replace("+", "%20");
-        String url = runtimeUrl + "/workspace/" + wsId + "/files/write/" + encodedPath;
+        String url = runtimeUrl + "/internal/v1/runtime/workspaces/" + wsId + "/files/write/" + encodedPath;
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
@@ -112,7 +112,7 @@ public class PdfSplitService {
     void cleanupChunks(String wsId, List<String> chunks) {
         for (String chunk : chunks) {
             try {
-                String url = runtimeUrl + "/workspace/" + wsId + "/files/delete";
+                String url = runtimeUrl + "/internal/v1/runtime/workspaces/" + wsId + "/files/delete";
                 HttpHeaders headers = new HttpHeaders();
                 headers.setContentType(MediaType.APPLICATION_JSON);
                 HttpEntity<String> req = new HttpEntity<>("{\"path\":\"" + chunk + "\"}", headers);

@@ -39,7 +39,7 @@ class TestAgentCPRealIntegration:
     def test_auth_register_and_login(self):
         email = f"test-{time.time():.0f}@test.com"
         r = httpx.post(
-            f"{CP_URL}/auth/register",
+            f"{CP_URL}/api/v1/auth/register",
             json={"email": email, "password": "Pass1234!", "name": "Test"},
             timeout=10,
         )
@@ -49,7 +49,7 @@ class TestAgentCPRealIntegration:
             pytest.skip("Register did not return token")
 
         r = httpx.post(
-            f"{CP_URL}/auth/login",
+            f"{CP_URL}/api/v1/auth/login",
             json={"email": email, "password": "Pass1234!"},
             timeout=10,
         )
@@ -57,13 +57,13 @@ class TestAgentCPRealIntegration:
         assert "accessToken" in r.json()
 
     def test_chat_endpoint_requires_auth(self):
-        r = httpx.post(f"{CP_URL}/chat", json={"content": "hi"}, timeout=5)
+        r = httpx.post(f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5)
         assert r.status_code == 401
 
     def test_chat_endpoint_accepts_authenticated_request(self):
         email = f"chat-{time.time():.0f}@test.com"
         r = httpx.post(
-            f"{CP_URL}/auth/register",
+            f"{CP_URL}/api/v1/auth/register",
             json={"email": email, "password": "Pass1234!", "name": "Test"},
             timeout=10,
         )
@@ -71,8 +71,8 @@ class TestAgentCPRealIntegration:
         token = r.json()["accessToken"]
 
         r = httpx.post(
-            f"{CP_URL}/chat",
-            json={"content": "hello", "session_id": "test"},
+            f"{CP_URL}/api/v1/chat",
+            json={"content": "hello", "sessionId": "test"},
             headers={"Authorization": f"Bearer {token}"},
             timeout=10,
         )
@@ -80,7 +80,7 @@ class TestAgentCPRealIntegration:
 
     def test_mcp_endpoint_returns_response(self):
         r = httpx.post(
-            f"{CP_URL}/mcp",
+            f"{CP_URL}/api/v1/mcp",
             json={
                 "jsonrpc": "2.0",
                 "method": "tools/list",

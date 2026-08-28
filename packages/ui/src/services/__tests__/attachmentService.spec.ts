@@ -181,7 +181,7 @@ describe('uploadAttachments', () => {
     const fetchSpy = mockFetch({
       ok: false,
       status: 413,
-      json: async () => ({ error: 'Payload Too Large' }),
+      json: async () => ({ detail: 'Payload Too Large', code: 'PAYLOAD_TOO_LARGE', requestId: 'test' }),
     })
     vi.stubGlobal('fetch', fetchSpy)
 
@@ -252,7 +252,7 @@ describe('deleteAttachment', () => {
     const fetchSpy = mockFetch({
       ok: false,
       status: 404,
-      json: async () => ({ error: 'Attachment not found' }),
+      json: async () => ({ detail: 'Attachment not found', code: 'ATTACHMENT_NOT_FOUND', requestId: 'test' }),
     })
     vi.stubGlobal('fetch', fetchSpy)
 
@@ -303,7 +303,7 @@ describe('getAttachmentMetadata', () => {
     const fetchSpy = mockFetch({
       ok: false,
       status: 403,
-      json: async () => ({ error: 'Forbidden' }),
+      json: async () => ({ detail: 'Forbidden', code: 'FORBIDDEN', requestId: 'test' }),
     })
     vi.stubGlobal('fetch', fetchSpy)
 

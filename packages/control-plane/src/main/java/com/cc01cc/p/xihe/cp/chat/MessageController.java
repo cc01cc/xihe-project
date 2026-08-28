@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
@@ -52,7 +53,7 @@ public class MessageController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Missing workspace context"));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
         try {
             Session session = sessionRepository.findById(sessionId)
@@ -67,10 +68,10 @@ public class MessageController {
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             logger.warn("List messages failed session={} reason={}", sessionId, e.getMessage());
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "MESSAGE_NOT_FOUND", "Message not found");
         } catch (Exception e) {
             logger.error("List messages failed session={}", sessionId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "MESSAGE_FAILED", "Message request failed");
         }
     }
 
@@ -80,7 +81,7 @@ public class MessageController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Missing workspace context"));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
         try {
             Session session = sessionRepository.findById(sessionId)
@@ -90,17 +91,17 @@ public class MessageController {
             Message message = messageRepository.findById(messageId)
                     .orElseThrow(() -> new IllegalArgumentException("Message not found: " + messageId));
             if (!sessionId.equals(message.getSessionId())) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Message does not belong to session"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Message does not belong to session");
             }
             messageRepository.delete(message);
             logger.info("Message deleted session={} messageId={} userId={}", sessionId, messageId, userId);
             return ResponseEntity.ok(Map.of("deleted", messageId));
         } catch (IllegalArgumentException e) {
             logger.warn("Delete message failed session={} messageId={} reason={}", sessionId, messageId, e.getMessage());
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "MESSAGE_NOT_FOUND", "Message not found");
         } catch (Exception e) {
             logger.error("Delete message failed session={} messageId={}", sessionId, messageId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "MESSAGE_FAILED", "Message request failed");
         }
     }
 

@@ -47,7 +47,7 @@ async function loadSessionMessages(sessionId: string) {
         name: att.name,
         type: att.type,
         size: att.size,
-        url: `/files/${att.fileId}`,
+        url: `/api/v1/files/${att.fileId}`,
         state: 'done' as const,
       })),
     }))

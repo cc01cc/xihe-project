@@ -24,7 +24,7 @@ for (const route of allRoutes) {
   test(`${route.name} renders and captures screenshot`, async ({ page }) => {
     if (route.requiresAuth) {
       const email = `screenshot-${Date.now()}@test.com`
-      const reg = await fetch(`${CP_URL}/auth/register`, {
+      const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: 'Test1234!', name: 'Screenshot' }),

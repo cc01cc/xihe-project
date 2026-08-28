@@ -23,7 +23,7 @@ class CPContextServiceClient:
         after_sequence: int = 0,
     ) -> dict[str, Any]:
         """Fetch the projected `AgentContext` snapshot for a session."""
-        url = f"{self._base_url}/api/v1/context/{session_id}/snapshot"
+        url = f"{self._base_url}/internal/v1/context/{session_id}/snapshot"
         params = {"afterSequence": after_sequence}
         response = await self._client.get(
             url,
@@ -49,7 +49,7 @@ class CPEventStoreClient(EventStore):
         self._client = httpx.AsyncClient(timeout=30.0)
 
     async def append(self, event: Event) -> Event:
-        url = f"{self._base_url}/api/v1/context/{event.aggregate_id}/events"
+        url = f"{self._base_url}/internal/v1/context/{event.aggregate_id}/events"
         payload = self._event_to_dict(event)
         response = await self._client.post(
             url,
@@ -61,7 +61,7 @@ class CPEventStoreClient(EventStore):
         return event.with_sequence(data["sequence"])
 
     async def append_many(self, aggregate_id: str, events: list[Event]) -> list[Event]:
-        url = f"{self._base_url}/api/v1/context/{aggregate_id}/events/batch"
+        url = f"{self._base_url}/internal/v1/context/{aggregate_id}/events/batch"
         payload = [self._event_to_dict(e) for e in events]
         response = await self._client.post(
             url,
@@ -74,7 +74,7 @@ class CPEventStoreClient(EventStore):
         return [e.with_sequence(seq) for e, seq in zip(events, sequences)]
 
     async def read(self, aggregate_id: str, after_sequence: int = 0):
-        url = f"{self._base_url}/api/v1/context/{aggregate_id}/events"
+        url = f"{self._base_url}/internal/v1/context/{aggregate_id}/events"
         params = {"afterSequence": after_sequence}
         response = await self._client.get(
             url,
@@ -86,7 +86,7 @@ class CPEventStoreClient(EventStore):
             yield self._event_from_dict(raw)
 
     async def get_latest_sequence(self, aggregate_id: str) -> int:
-        url = f"{self._base_url}/api/v1/context/{aggregate_id}/events/latest"
+        url = f"{self._base_url}/internal/v1/context/{aggregate_id}/events/latest"
         response = await self._client.get(url, headers=self._headers())
         response.raise_for_status()
         return response.json()["sequence"]
@@ -97,7 +97,7 @@ class CPEventStoreClient(EventStore):
         at_sequence: int,
         new_aggregate_id: str,
     ) -> int:
-        url = f"{self._base_url}/api/v1/context/{source_aggregate_id}/fork"
+        url = f"{self._base_url}/internal/v1/context/{source_aggregate_id}/fork"
         payload = {
             "atSequence": at_sequence,
             "newAggregateId": new_aggregate_id,

@@ -201,7 +201,7 @@ class WorkspaceIsolationTest {
 
     private void registerUser(String email, String password, String name) throws Exception {
         RegisterRequest request = new RegisterRequest(email, password, name);
-        mockMvc.perform(post("/auth/register")
+        mockMvc.perform(post("/api/v1/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated());
@@ -209,7 +209,7 @@ class WorkspaceIsolationTest {
 
     private String registerAndExtractToken(String email, String password, String name) throws Exception {
         RegisterRequest request = new RegisterRequest(email, password, name);
-        String json = mockMvc.perform(post("/auth/register")
+        String json = mockMvc.perform(post("/api/v1/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())

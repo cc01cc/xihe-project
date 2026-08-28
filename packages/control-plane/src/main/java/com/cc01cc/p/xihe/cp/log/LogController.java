@@ -12,7 +12,7 @@ public class LogController {
 
     private static final Logger logger = LoggerFactory.getLogger("xihe.ui");
 
-    @PostMapping("/logs")
+    @PostMapping("/api/v1/logs")
     public ResponseEntity<Map<String, String>> ingest(@RequestBody LogEntry.BatchRequest request) {
         if (request.getEntries() == null || request.getEntries().isEmpty()) {
             return ResponseEntity.ok(Map.of("status", "ok"));

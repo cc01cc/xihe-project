@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { logger } from '../../lib/logger'
+import { apiDelete, apiGet, apiPost } from '../../composables/api'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 
@@ -20,9 +21,7 @@ async function loadDocuments() {
   loading.value = true
   loadError.value = null
   try {
-    const res = await fetch('/api/v1/rag/stats')
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
+    const data = await apiGet<{ documents?: Array<{ id: string; filename: string; chunks: number }> }>('/rag/stats')
     documents.value = data.documents ?? []
   } catch (e) {
     logger.warn('Failed to load documents: ' + (e instanceof Error ? e.message : String(e)))
@@ -37,11 +36,7 @@ async function handleUpload() {
   try {
     const form = new FormData()
     form.append('file', files.value[0])
-    form.append('chunk_size', '1000')
-    form.append('chunk_overlap', '200')
-    const res = await fetch('/api/v1/rag/ingest', { method: 'POST', body: form })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    await res.json()
+    await apiPost('/rag/ingest', form)
     files.value = []
     await loadDocuments()
   } catch (e) {
@@ -53,8 +48,7 @@ async function handleUpload() {
 
 async function removeDoc(id: string) {
   try {
-    const res = await fetch(`/api/v1/rag/documents/${id}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    await apiDelete(`/rag/documents/${id}`)
     await loadDocuments()
   } catch (e) {
     logger.warn('Document delete failed: ' + (e instanceof Error ? e.message : String(e)))

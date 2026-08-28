@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
@@ -28,7 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/files")
+    @RequestMapping("/api/v1/files")
 public class WorkspaceFileController {
 
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceFileController.class);
@@ -64,33 +65,33 @@ public class WorkspaceFileController {
 
     @GetMapping("/{fileId:[a-fA-F0-9\\\\-]{36}}")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    public ResponseEntity<Resource> serveAttachment(@PathVariable String fileId) {
+    public ResponseEntity<?> serveAttachment(@PathVariable String fileId) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
             logger.warn("Attachment serve rejected: missing tenant context fileId={}", fileId);
-            return ResponseEntity.status(403).build();
+            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
         }
         try {
             File file = fileRepository.findById(fileId).orElse(null);
             if (file == null) {
                 logger.warn("Attachment not found: {}", fileId);
-                return ResponseEntity.notFound().build();
+                return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "File not found");
             }
             Session session = sessionRepository.findById(file.getSessionId()).orElse(null);
             if (session == null || !workspaceId.equals(session.getWorkspaceId())) {
                 logger.warn("Attachment access denied fileId={} session={}", fileId, file.getSessionId());
-                return ResponseEntity.status(403).build();
+                return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
             }
             if (!workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent()) {
                 logger.warn("Attachment access denied for user fileId={} userId={}", fileId, userId);
-                return ResponseEntity.status(403).build();
+                return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
             }
 
             java.io.File physical = new java.io.File(file.getStoragePath());
             if (!physical.exists() || !physical.isFile()) {
                 logger.warn("Attachment physical file missing: {}", file.getStoragePath());
-                return ResponseEntity.notFound().build();
+                return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "File not found");
             }
 
             Resource resource = new FileSystemResource(physical);
@@ -101,24 +102,24 @@ public class WorkspaceFileController {
                     .body(resource);
         } catch (Exception e) {
             logger.error("Failed to serve attachment fileId={}", fileId, e);
-            return ResponseEntity.status(500).build();
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "FILE_READ_FAILED", "File read failed");
         }
     }
 
     @GetMapping("/{*path}")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    public ResponseEntity<Resource> serveFile(@PathVariable String path) {
+    public ResponseEntity<?> serveFile(@PathVariable String path) {
         try {
             String resolved = Paths.get(workspaceBasePath, path).normalize().toString();
             if (!resolved.startsWith(Paths.get(workspaceBasePath).normalize().toString())) {
                 logger.warn("Path traversal attempt: {}", path);
-                return ResponseEntity.status(403).build();
+                return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
             }
 
             java.io.File file = new java.io.File(resolved);
             if (!file.exists() || !file.isFile()) {
                 logger.warn("File not found: {}", resolved);
-                return ResponseEntity.notFound().build();
+                return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "File not found");
             }
 
             Resource resource = new FileSystemResource(file);
@@ -129,7 +130,7 @@ public class WorkspaceFileController {
                     .body(resource);
         } catch (Exception e) {
             logger.error("Failed to serve file: {}", path, e);
-            return ResponseEntity.status(500).build();
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "FILE_READ_FAILED", "File read failed");
         }
     }
 
@@ -141,18 +142,18 @@ public class WorkspaceFileController {
             String wsId = TenantContext.getWorkspaceId();
             String wsPath = TenantContext.getWorkspacePath();
             if (wsId == null || wsPath == null) {
-                return ResponseEntity.status(401).body(Map.of("error", "workspace not in context"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
             }
 
             long size = file.getSize();
             if (size > MAX_UPLOAD_SIZE) {
                 logger.warn("Upload rejected: file too large ({} bytes)", size);
-                return ResponseEntity.status(413).body(Map.of("error", "file too large, max " + MAX_UPLOAD_SIZE + " bytes"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", "File exceeds the upload limit");
             }
 
             String originalName = file.getOriginalFilename();
             if (originalName == null || originalName.isBlank()) {
-                return ResponseEntity.badRequest().body(Map.of("error", "filename required"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Filename is required");
             }
 
             boolean isPdf = originalName.toLowerCase().endsWith(".pdf");
@@ -177,7 +178,7 @@ public class WorkspaceFileController {
             }
         } catch (Exception e) {
             logger.error("Upload failed", e);
-            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "UPLOAD_FAILED", "File upload failed");
         }
     }
 
@@ -187,17 +188,17 @@ public class WorkspaceFileController {
             String wsId = TenantContext.getWorkspaceId();
             String wsPath = TenantContext.getWorkspacePath();
             if (wsId == null || wsPath == null) {
-                return ResponseEntity.status(401).body(Map.of("error", "workspace not in context"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
             }
 
             String path = body.get("path");
             if (path == null || path.isBlank()) {
-                return ResponseEntity.badRequest().body(Map.of("error", "path required"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Path is required");
             }
 
             Path pdfPath = Paths.get(wsPath, path).normalize();
             if (!pdfPath.startsWith(Paths.get(wsPath).normalize())) {
-                return ResponseEntity.status(403).body(Map.of("error", "path traversal"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Path access denied");
             }
 
             java.io.File pdfFile = pdfPath.toFile();
@@ -207,7 +208,7 @@ public class WorkspaceFileController {
 
             long fileSize = pdfFile.length();
             if (fileSize > MAX_UPLOAD_SIZE) {
-                return ResponseEntity.status(413).body(Map.of("error", "file too large for splitting, max " + MAX_UPLOAD_SIZE + " bytes"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", "File exceeds the split limit");
             }
 
             List<String> chunks = pdfSplitService.splitPdf(pdfPath, path, wsId);
@@ -215,7 +216,7 @@ public class WorkspaceFileController {
             return ResponseEntity.ok(Map.of("chunks", chunks));
         } catch (Exception e) {
             logger.error("Split failed", e);
-            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "SPLIT_FAILED", "PDF split failed");
         }
     }
 
@@ -226,13 +227,13 @@ public class WorkspaceFileController {
             String resolved = Paths.get(workspaceBasePath, path).normalize().toString();
             if (!resolved.startsWith(Paths.get(workspaceBasePath).normalize().toString())) {
                 logger.warn("Path traversal attempt: {}", path);
-                return ResponseEntity.status(403).build();
+                return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
             }
 
             java.io.File file = new java.io.File(resolved);
             if (!file.exists()) {
                 logger.warn("File not found: {}", resolved);
-                return ResponseEntity.notFound().build();
+                return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "File not found");
             }
 
             if (file.isFile()) {
@@ -264,7 +265,7 @@ public class WorkspaceFileController {
                 logger.info("Deleted file: {}", path);
                 return ResponseEntity.ok(Map.of("deleted", path));
             } else {
-                return ResponseEntity.status(500).body(Map.of("error", "delete failed"));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "DELETE_FAILED", "File deletion failed");
             }
         } catch (Exception e) {
             logger.error("Failed to delete file: {}", path, e);
@@ -277,7 +278,7 @@ public class WorkspaceFileController {
             String wsId = TenantContext.getWorkspaceId();
             if (wsId == null) return false;
 
-            String url = runtimeUrl + "/workspace/" + wsId + "/files/delete";
+            String url = runtimeUrl + "/internal/v1/runtime/workspaces/" + wsId + "/files/delete";
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             org.springframework.http.HttpEntity<String> req =

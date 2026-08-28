@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -54,7 +55,7 @@ public class ConfigController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping("/config/{domain}")
+    @GetMapping("/api/v1/config/{domain}")
     public ResponseEntity<Map<String, String>> getConfig(@PathVariable String domain) {
         Map<String, String> resolved = configService.resolveDomain("default", domain);
         if (SENSITIVE_DOMAINS.contains(domain)) {
@@ -68,7 +69,7 @@ public class ConfigController {
     }
 
     @PreAuthorize("hasRole('ADMIN')")
-    @PutMapping("/config/admin/{domain}")
+    @PutMapping("/api/v1/config/admin/{domain}")
     public ResponseEntity<Map<String, Object>> putAdminConfig(
             @PathVariable String domain,
             @RequestBody Map<String, String> body) {
@@ -77,8 +78,7 @@ public class ConfigController {
             log.info("Admin config updated: domain={}, keys={}", domain, body.size());
             return ResponseEntity.ok(Map.of("status", "ok", "keys", body.size()));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "status", "error", "message", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Configuration update is invalid");
         }
     }
 
@@ -86,44 +86,40 @@ public class ConfigController {
         "user-preference", "llm-provider", "embedding", "logging", "workspace-config", "rag");
 
     @PreAuthorize("hasRole('USER')")
-    @PutMapping("/config/user/{domain}")
+    @PutMapping("/api/v1/config/user/{domain}")
     public ResponseEntity<Map<String, Object>> putUserConfig(
             @PathVariable String domain,
             @RequestBody Map<String, String> body) {
         if (!USER_WRITABLE_DOMAINS.contains(domain)) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "status", "error", "message", "User cannot write domain: " + domain));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration domain is not writable");
         }
         try {
             configService.putLayer("default", "user", domain, body, "user");
             log.info("User config updated: domain={}, keys={}", domain, body.size());
             return ResponseEntity.ok(Map.of("status", "ok", "keys", body.size()));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "status", "error", "message", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Configuration update is invalid");
         }
     }
 
     @PreAuthorize("hasRole('ADMIN')")
-    @PostMapping("/config/import")
+    @PostMapping("/api/v1/config/import")
     public ResponseEntity<Map<String, Object>> importConfig(
             @RequestBody String jsoncContent) {
         if (jsoncContent.length() > 1_048_576) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "status", "error", "message", "Import content exceeds 1MB limit"));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", "Import content exceeds the size limit");
         }
         try {
             configService.importJsonc(jsoncContent, "admin");
             log.info("Config imported via POST body ({} chars)", jsoncContent.length());
             return ResponseEntity.ok(Map.of("status", "ok"));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "status", "error", "message", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Configuration import is invalid");
         }
     }
 
     @PreAuthorize("hasRole('ADMIN')")
-    @GetMapping("/config/export")
+    @GetMapping("/api/v1/config/export")
     public ResponseEntity<String> exportConfig(
             @RequestParam(value = "layer", defaultValue = "admin") String layer) {
         String jsonc = configService.exportJsonc(layer);
@@ -132,7 +128,7 @@ public class ConfigController {
             .body(jsonc);
     }
 
-    @GetMapping("/internal/config/{layer}/{domain}")
+    @GetMapping("/internal/v1/config/{layer}/{domain}")
     public ResponseEntity<Map<String, String>> getInternalConfig(
             @PathVariable String layer,
             @PathVariable String domain) {
@@ -148,7 +144,7 @@ public class ConfigController {
         return ResponseEntity.ok(entries);
     }
 
-    @GetMapping("/providers")
+    @GetMapping("/api/v1/providers")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     public ResponseEntity<List<ProviderConfig>> getProvidersCompat() {
         Map<String, String> merged = configService.resolveDomain("default", "llm-provider");
@@ -164,7 +160,7 @@ public class ConfigController {
         return ResponseEntity.ok(result);
     }
 
-    @PutMapping("/providers")
+    @PutMapping("/api/v1/providers")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> updateProvidersCompat(
             @RequestBody List<ProviderConfig> configs) {
@@ -178,8 +174,8 @@ public class ConfigController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping("/workspaces/{wsId}/mcp-config")
-    public ResponseEntity<Map<String, Object>> getMcpConfig(@PathVariable String wsId) {
+    @GetMapping("/api/v1/workspaces/{workspaceId}/mcp-config")
+    public ResponseEntity<Map<String, Object>> getMcpConfig(@PathVariable("workspaceId") String wsId) {
         Optional<ConfigEntity> opt = configRepo
             .findByEnvironmentAndLayerAndDomainAndConfigKey(wsId, "workspace", "mcp", "mcpServers");
         if (opt.isPresent() && opt.get().getMcpConfig() != null) {
@@ -189,21 +185,19 @@ public class ConfigController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @PutMapping("/workspaces/{wsId}/mcp-config")
+    @PutMapping("/api/v1/workspaces/{workspaceId}/mcp-config")
     public ResponseEntity<Map<String, Object>> putMcpConfig(
-            @PathVariable String wsId,
+            @PathVariable("workspaceId") String wsId,
             @RequestBody Map<String, Object> body) {
         Object raw = body.get("mcpServers");
         if (raw == null) {
-            return ResponseEntity.badRequest().body(
-                Map.of("status", "error", "message", "Missing 'mcpServers' key"));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "mcpServers is required");
         }
         String jsonStr;
         try {
             jsonStr = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(raw);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(
-                Map.of("status", "error", "message", "Invalid JSON: " + e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "MCP configuration is invalid");
         }
 
         Optional<ConfigEntity> opt = configRepo

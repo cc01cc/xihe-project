@@ -402,3 +402,11 @@ Early chat attachments used `URL.createObjectURL` to produce Blob URLs, which ex
 - `ChatView.vue` loads history from the backend on mount and overwrites localStorage, ensuring attachments remain visible after refresh.
 
 See `plans/PLAN-030-XH-chat-attachment-backend.md` and `plans/PLAN-031-XH-chat-attachment-frontend.md`.
+
+## 8. Remote MCP and OAuth Boundaries
+
+- The UI starts Authorization Code + PKCE. The Control Plane stores encrypted refresh tokens and issues short-lived access tokens scoped to user, workspace, and server.
+- The Agent connects only to the Control Plane logical MCP endpoint. It does not connect directly to Runtime, workspace bridges, or remote MCP servers.
+- The Runtime host-side connector performs remote MCP initialize, tools/list, tools/call, and controlled egress. Workspace sandboxes do not directly access the public network.
+- Fake OAuth and Fake MCP are real integration/E2E fixtures. They must verify PKCE, Bearer authentication, refresh/revoke, MCP protocol behavior, and cleanup.
+- PLAN-190 owns the remote MCP/OAuth data path. PLAN-191 owns the later unified API paths, fields, errors, and service boundaries.

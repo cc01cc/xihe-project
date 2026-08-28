@@ -59,9 +59,9 @@ class RuntimeFileIntegrationTest extends AbstractWireMockTest {
         String chunkName = PdfSplitService.generateChunkName("test-split.pdf", 1, 1);
         String encodedPath = URLEncoder.encode(chunkName, StandardCharsets.UTF_8)
                 .replace("+", "%20");
-        String expectedUrl = "/workspace/" + tempWsId + "/files/write/" + encodedPath;
+        String expectedUrl = "/internal/v1/runtime/workspaces/" + tempWsId + "/files/write/" + encodedPath;
 
-        wireMock.stubFor(post(urlPathMatching("/workspace/.*/files/write/.*"))
+        wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/files/write/.*"))
                 .willReturn(aResponse().withStatus(200)));
 
         try {
@@ -86,9 +86,9 @@ class RuntimeFileIntegrationTest extends AbstractWireMockTest {
         String chunkName = PdfSplitService.generateChunkName("ct-test.pdf", 1, 1);
         String encodedPath = URLEncoder.encode(chunkName, StandardCharsets.UTF_8)
                 .replace("+", "%20");
-        String expectedUrl = "/workspace/" + tempWsId + "/files/write/" + encodedPath;
+        String expectedUrl = "/internal/v1/runtime/workspaces/" + tempWsId + "/files/write/" + encodedPath;
 
-        wireMock.stubFor(post(urlPathMatching("/workspace/.*/files/write/.*"))
+        wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/files/write/.*"))
                 .willReturn(aResponse().withStatus(200)));
 
         try {
@@ -111,7 +111,7 @@ class RuntimeFileIntegrationTest extends AbstractWireMockTest {
             throw new RuntimeException("Failed to create test PDF", e);
         }
 
-        wireMock.stubFor(post(urlPathMatching("/workspace/.*/files/write/.*"))
+        wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/files/write/.*"))
                 .willReturn(aResponse().withStatus(500)));
 
         Exception ex = assertThrows(Exception.class, () ->

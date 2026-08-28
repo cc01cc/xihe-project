@@ -42,14 +42,26 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .exceptionHandling(exceptions -> exceptions
                 .authenticationEntryPoint((request, response, authException) -> {
-                    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                    response.setContentType("application/problem+json");
                     response.setCharacterEncoding(StandardCharsets.UTF_8.name());
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                    response.getWriter().write("{\"error\":\"Not authenticated\"}");
+                    String requestId = java.util.UUID.randomUUID().toString();
+                    response.setHeader("X-Request-Id", requestId);
+                    response.getWriter().write("{\"type\":\"https://xihe.dev/problems/authorization-required\",\"title\":\"Authorization required\",\"status\":401,\"code\":\"AUTHORIZATION_REQUIRED\",\"detail\":\"Authorization required\",\"requestId\":\"" + requestId + "\"}");
+                })
+                .accessDeniedHandler((request, response, accessDeniedException) -> {
+                    response.setContentType("application/problem+json");
+                    response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    String requestId = java.util.UUID.randomUUID().toString();
+                    response.setHeader("X-Request-Id", requestId);
+                    response.getWriter().write("{\"type\":\"https://xihe.dev/problems/forbidden\",\"title\":\"Forbidden\",\"status\":403,\"code\":\"FORBIDDEN\",\"detail\":\"Access denied\",\"requestId\":\"" + requestId + "\"}");
                 })
             )
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/**").permitAll()
+                .requestMatchers("/api/v1/auth/**").permitAll()
+                .requestMatchers("/api/v1/oauth/callback").permitAll()
+                .requestMatchers("/api/v1/health").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
                 .requestMatchers("/v3/api-docs/**").permitAll()
                 .requestMatchers("/swagger-ui/**").permitAll()
@@ -57,9 +69,8 @@ public class SecurityConfig {
                 .requestMatchers("/health").permitAll()
                 .requestMatchers("/error").permitAll()
                 .requestMatchers("/logs").permitAll()
-                .requestMatchers("/v1/**").authenticated()
-                .requestMatchers("/mcp/**").authenticated()
-                .requestMatchers("/internal/**").hasRole("INTERNAL_SERVICE")
+                .requestMatchers("/api/v1/**").authenticated()
+                .requestMatchers("/internal/v1/**").hasRole("INTERNAL_SERVICE")
                 .anyRequest().authenticated()
             )
             .addFilterBefore(internalTokenFilter, UsernamePasswordAuthenticationFilter.class)

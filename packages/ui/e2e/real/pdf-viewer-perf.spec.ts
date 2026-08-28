@@ -16,7 +16,7 @@ test.describe('PdfViewer — Performance Benchmark', () => {
 
   test.beforeAll(async ({ request }) => {
     expect(fs.existsSync(REAL_PDF)).toBeTruthy()
-    const r = await request.post(`${CP_URL}/auth/register`, {
+    const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
       data: { email: `perf-${Date.now()}@test.com`, password: 'Test1234!', name: 'PerfTest' },
     })
     expect(r.ok()).toBeTruthy()

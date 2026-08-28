@@ -109,10 +109,7 @@ impl McpProcessManager {
 
     pub async fn mark_failed(&self, ws_id: &str, server_id: &str, reason: &str) {
         let mut workspaces = self.bridges.write().await;
-        if let Some(info) = workspaces
-            .get_mut(ws_id)
-            .and_then(|s| s.get_mut(server_id))
-        {
+        if let Some(info) = workspaces.get_mut(ws_id).and_then(|s| s.get_mut(server_id)) {
             info.status = BridgeStatus::Failed(reason.to_string());
             error!("bridge {ws_id}/{server_id} failed: {reason}");
         }
@@ -136,9 +133,7 @@ impl McpProcessManager {
                     match reqwest::get(&format!("{url}/_health")).await {
                         Ok(resp) if resp.status().is_success() => {}
                         _ => {
-                            warn!(
-                                "bridge health check failed: ws={ws_id} server={server_id}"
-                            );
+                            warn!("bridge health check failed: ws={ws_id} server={server_id}");
                         }
                     }
                 }
@@ -163,7 +158,9 @@ impl McpProcessManager {
                 match resp.json::<serde_json::Value>().await {
                     Ok(config) => {
                         let mut servers = Vec::new();
-                        if let Some(servers_obj) = config.get("mcpServers").and_then(|v| v.as_object()) {
+                        if let Some(servers_obj) =
+                            config.get("mcpServers").and_then(|v| v.as_object())
+                        {
                             for (sid, srv) in servers_obj {
                                 let cmd = srv.get("command").and_then(|v| v.as_str()).unwrap_or("");
                                 let args: Vec<String> = srv
@@ -205,7 +202,8 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_and_list() {
         let mgr = McpProcessManager::new();
-        mgr.spawn("ws-1", "github", "npx", &[], "172.17.0.2", 39001).await;
+        mgr.spawn("ws-1", "github", "npx", &[], "172.17.0.2", 39001)
+            .await;
         let bridges = mgr.list("ws-1").await;
         assert_eq!(bridges.len(), 1);
         assert_eq!(bridges[0].server_id, "github");
@@ -216,7 +214,8 @@ mod tests {
     #[tokio::test]
     async fn test_stop_removes_bridge() {
         let mgr = McpProcessManager::new();
-        mgr.spawn("ws-1", "filesystem", "npx", &[], "172.17.0.2", 39002).await;
+        mgr.spawn("ws-1", "filesystem", "npx", &[], "172.17.0.2", 39002)
+            .await;
         assert_eq!(mgr.list("ws-1").await.len(), 1);
         let removed = mgr.stop("ws-1", "filesystem").await;
         assert!(removed);
@@ -232,7 +231,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_bridge_url() {
         let mgr = McpProcessManager::new();
-        mgr.spawn("ws-1", "github", "npx", &[], "10.0.0.1", 39000).await;
+        mgr.spawn("ws-1", "github", "npx", &[], "10.0.0.1", 39000)
+            .await;
         let url = mgr.get_bridge_url("ws-1", "github").await;
         assert_eq!(url, Some("http://10.0.0.1:39000/github".to_string()));
     }

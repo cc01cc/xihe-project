@@ -76,7 +76,7 @@ class MessageControllerTest extends AbstractH2Test {
 
         String email = "msg-ctrl-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         ResponseEntity<AuthResponse> reg = restTemplate.postForEntity(
-                baseUrl + "/auth/register", new RegisterRequest(email, "Test1234!", "MsgCtrl"), AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, "Test1234!", "MsgCtrl"), AuthResponse.class);
         String baseToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();

@@ -11,9 +11,10 @@ import os
 import sys
 from contextlib import asynccontextmanager, suppress
 from typing import Any
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import BaseMessage
 from litellm import get_llm_provider
 from loguru import logger
@@ -150,7 +151,7 @@ def get_int_env(name: str, default: int) -> int:
 CP_URL = (
     get_env("XIHE_CP_URL") or f"http://localhost:{get_int_env('XIHE_CP_PORT', 12631)}"
 )
-MCP_URL = f"{CP_URL}/mcp"
+MCP_URL = f"{CP_URL}/api/v1/mcp"
 AGENT_HOST = get_env("XIHE_AGENT_HOST") or "0.0.0.0"
 AGENT_PORT = get_int_env("XIHE_AGENT_PORT", 12632)
 MCP_RETRY_INTERVAL = 2.0
@@ -366,12 +367,31 @@ app = FastAPI(title="xihe-agent", version="0.1.0", lifespan=lifespan)
 app.include_router(models_router)
 
 
-@app.post("/chat")
+@app.exception_handler(HTTPException)
+async def problem_details_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    detail = str(exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        media_type="application/problem+json",
+        headers={"X-Request-Id": request_id},
+        content={
+            "type": "https://xihe.dev/problems/agent-error",
+            "title": "Agent request failed",
+            "status": exc.status_code,
+            "code": "AGENT_REQUEST_FAILED",
+            "detail": detail,
+            "requestId": request_id,
+        },
+    )
+
+
+@app.post("/internal/v1/agent/chat")
 async def chat(request: Request, _token: None = Depends(verify_api_token)):
     data = await request.json()
     content: str = data.get("content", "")
-    session_id: str = data.get("session_id", "default")
-    user_name: str = data.get("user_name", AGENT_USER_NAME)
+    session_id: str = data.get("sessionId", "default")
+    user_name: str = data.get("userName", AGENT_USER_NAME)
     model_override: str | None = data.get("model")
     instructions: str = data.get("instructions", AGENT_INSTRUCTIONS)
     chat_history_raw: list[dict[str, Any]] = data.get("history", [])
@@ -427,13 +447,17 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                     yield render_sse(event.type, event.data)
         except Exception as e:
             logger.exception("Agent streaming error")
-            yield render_sse("error", {"error": str(e)})
+            yield render_sse("error", {
+                "code": "AGENT_STREAM_FAILED",
+                "requestId": str(uuid4()),
+                "detail": "Agent stream failed",
+            })
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.post("/rag/ingest")
-async def rag_ingest(file: UploadFile = File(...), chunk_size: int = Form(1000), chunk_overlap: int = Form(200), _token: None = Depends(verify_api_token)):
+@app.post("/internal/v1/agent/rag/ingest")
+async def rag_ingest(file: UploadFile = File(...), chunk_size: int = Form(1000, alias="chunkSize"), chunk_overlap: int = Form(200, alias="chunkOverlap"), _token: None = Depends(verify_api_token)):
     content = (await file.read()).decode("utf-8", errors="replace")
     chunks = rag_chunk(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap, metadata={"filename": file.filename})
     doc_ids = []
@@ -443,19 +467,19 @@ async def rag_ingest(file: UploadFile = File(...), chunk_size: int = Form(1000),
     return {"status": "ok", "chunks": len(chunks), "doc_ids": doc_ids}
 
 
-@app.post("/rag/search")
-async def rag_search(query: str = Form(...), top_k: int = Form(5), min_score: float = Form(0.0), _token: None = Depends(verify_api_token)):
+@app.post("/internal/v1/agent/rag/search")
+async def rag_search(query: str = Form(...), top_k: int = Form(5, alias="topK"), min_score: float = Form(0.0, alias="minScore"), _token: None = Depends(verify_api_token)):
     query_emb = await embedding_service.embed(query)
     results = await vector_store.search(query_emb, top_k=top_k, min_score=min_score)
     return {"results": results}
 
 
-@app.get("/rag/stats")
+@app.get("/internal/v1/agent/rag/stats")
 async def rag_stats(_token: None = Depends(verify_api_token)):
     return {"total_documents": await vector_store.count()}
 
 
-@app.delete("/rag/documents/{doc_id}")
+@app.delete("/internal/v1/agent/rag/documents/{doc_id}")
 async def rag_delete(doc_id: str, _token: None = Depends(verify_api_token)):
     ok = await vector_store.delete(doc_id)
     return {"deleted": ok}
@@ -492,37 +516,37 @@ def _to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
     return result
 
 
-@app.post("/approval/respond")
+@app.post("/internal/v1/agent/approval/respond")
 async def approval_respond(request: Request, _token: None = Depends(verify_api_token)):
     data = await request.json()
-    request_id = data.get("request_id", "")
+    request_id = data.get("requestId", "")
     approved = data.get("approved", False)
     success = approval_tool.resolve_approval(request_id, bool(approved))
     if success:
         return {"status": "ok"}
-    return {"status": "not_found", "error": f"No pending approval: {request_id}"}
+    raise HTTPException(status_code=404, detail=f"No pending approval: {request_id}")
 
 
-@app.get("/approval/pending")
+@app.get("/internal/v1/agent/approval/pending")
 async def approval_pending(_token: None = Depends(verify_api_token)):
     return {"pending": approval_tool.get_pending()}
 
 
-@app.post("/mcp/reinit")
+@app.post("/internal/v1/agent/mcp/reinit")
 async def reinit_mcp(_token: None = Depends(verify_api_token)):
     try:
         await mcp_manager.reinitialize()
         return {
             "status": "ok",
-            "tools_count": len(mcp_manager.tools),
+            "toolsCount": len(mcp_manager.tools),
             "tools": [t.name for t in mcp_manager.tools],
         }
     except Exception as e:
         logger.error("MCP reinit failed", exc_info=e)
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "code": "MCP_REINITIALIZE_FAILED", "requestId": str(uuid4())}
 
 
-@app.get("/registry/workers")
+@app.get("/internal/v1/agent/registry/workers")
 async def registry_list_workers(_token: None = Depends(verify_api_token)):
     if not USE_REGISTRY or worker_registry is None:
         raise HTTPException(status_code=404, detail="Registry mode is not enabled")
@@ -534,15 +558,15 @@ async def registry_list_workers(_token: None = Depends(verify_api_token)):
                 "name": w.name,
                 "description": w.description,
                 "enabled": w.enabled,
-                "file_path": w.file_path,
-                "error": w.error,
+                "filePath": w.file_path,
+                "errorCode": "WORKER_INITIALIZATION_FAILED" if w.error else None,
             }
             for w in workers
         ],
     }
 
 
-@app.post("/registry/workers/{worker_id}/enable")
+@app.post("/internal/v1/agent/registry/workers/{worker_id}/enable")
 async def registry_enable_worker(worker_id: str, _token: None = Depends(verify_api_token)):
     if not USE_REGISTRY or worker_registry is None:
         raise HTTPException(status_code=404, detail="Registry mode is not enabled")
@@ -551,35 +575,35 @@ async def registry_enable_worker(worker_id: str, _token: None = Depends(verify_a
     ok = worker_registry.enable(worker_id, model, mcp_manager.tools, custom_tools)
     if not ok:
         raise HTTPException(status_code=404, detail=f"Worker '{worker_id}' not found")
-    return {"status": "ok", "worker_id": worker_id, "enabled": True}
+    return {"status": "ok", "workerId": worker_id, "enabled": True}
 
 
-@app.post("/registry/workers/{worker_id}/disable")
+@app.post("/internal/v1/agent/registry/workers/{worker_id}/disable")
 async def registry_disable_worker(worker_id: str, _token: None = Depends(verify_api_token)):
     if not USE_REGISTRY or worker_registry is None:
         raise HTTPException(status_code=404, detail="Registry mode is not enabled")
     ok = worker_registry.disable(worker_id)
     if not ok:
         raise HTTPException(status_code=404, detail=f"Worker '{worker_id}' not found")
-    return {"status": "ok", "worker_id": worker_id, "enabled": False}
+    return {"status": "ok", "workerId": worker_id, "enabled": False}
 
 
-@app.get("/health")
+@app.get("/internal/v1/agent/health")
 async def health():
     llm_status = get_llm_initialization_status()
     return {
         "status": "ok" if mcp_manager.initialized else "degraded",
         "llm": llm_status,
-        "cp_url": CP_URL,
-        "mcp_initialized": mcp_manager.initialized,
-        "tools_count": len(mcp_manager.tools),
+        "cpUrl": CP_URL,
+        "mcpInitialized": mcp_manager.initialized,
+        "toolsCount": len(mcp_manager.tools),
         "tools": [t.name for t in mcp_manager.tools],
         "version": "0.1.0",
         "framework": "langgraph",
     }
 
 
-@app.get("/tools")
+@app.get("/internal/v1/agent/tools")
 async def list_tools(_token: None = Depends(verify_api_token)):
     return {
         "tools": [

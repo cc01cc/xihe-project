@@ -1,4 +1,6 @@
-use xihe_runtime::sandbox::{register_background_process, get_background_process, list_background_processes};
+use xihe_runtime::sandbox::{
+    get_background_process, list_background_processes, register_background_process,
+};
 
 #[cfg(test)]
 mod tests {

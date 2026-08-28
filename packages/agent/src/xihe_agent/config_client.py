@@ -38,7 +38,7 @@ class ConfigClient:
             for domain in admin_domains:
                 try:
                     resp = await client.get(
-                        f"{self.cp_url}/internal/config/admin/{domain}",
+                        f"{self.cp_url}/internal/v1/config/admin/{domain}",
                         headers=headers,
                         timeout=3,
                     )
@@ -53,7 +53,7 @@ class ConfigClient:
             for domain in system_domains:
                 try:
                     resp = await client.get(
-                        f"{self.cp_url}/internal/config/system/{domain}",
+                        f"{self.cp_url}/internal/v1/config/system/{domain}",
                         headers=headers,
                         timeout=3,
                     )

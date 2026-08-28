@@ -30,7 +30,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        registry.add("cp.agent-url", () -> "http://localhost:" + wireMock.port() + "/chat");
+        registry.add("cp.agent-url", () -> "http://localhost:" + wireMock.port() + "/internal/v1/agent/chat");
         registry.add("cp.agent-base-url", () -> "http://localhost:" + wireMock.port());
     }
 
@@ -71,21 +71,21 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     void chatForwardsToAgentWithCorrectHeadersAndBody() {
         String sessionId = "chat-" + UUID.randomUUID().toString().substring(0, 8);
 
-        wireMock.stubFor(post(urlEqualTo("/chat"))
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "text/event-stream")
                         .withBody("event: done\ndata: {\"content\":\"Hello!\"}\n\n")));
 
         Map<String, Object> body = Map.of(
-                "session_id", sessionId,
+                "sessionId", sessionId,
                 "content", "Hello",
-                "user_id", "test-user",
-                "workspace_id", workspaceId
+                "userId", "test-user",
+                "workspaceId", workspaceId
         );
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/chat"),
+                url("/api/v1/chat"),
                 HttpMethod.POST,
                 entityWithAuth(body, token),
                 Map.class);
@@ -94,10 +94,10 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
 
-        wireMock.verify(postRequestedFor(urlEqualTo("/chat"))
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure"))
                 .withHeader("Content-Type", containing("application/json"))
-                .withRequestBody(matchingJsonPath("$.session_id"))
+                .withRequestBody(matchingJsonPath("$.sessionId"))
                 .withRequestBody(matchingJsonPath("$.content"))
                 .withRequestBody(matchingJsonPath("$.stream")));
     }
@@ -106,32 +106,32 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     void chatReturns202EvenWhenAgentFails() {
         String sessionId = "fail-" + UUID.randomUUID().toString().substring(0, 8);
 
-        wireMock.stubFor(post(urlEqualTo("/chat"))
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse().withStatus(500)));
 
         Map<String, Object> body = Map.of(
-                "session_id", sessionId,
+                "sessionId", sessionId,
                 "content", "Hi",
-                "user_id", "test-user",
-                "workspace_id", workspaceId
+                "userId", "test-user",
+                "workspaceId", workspaceId
         );
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/chat"),
+                url("/api/v1/chat"),
                 HttpMethod.POST,
                 entityWithAuth(body, token),
                 Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
-        wireMock.verify(postRequestedFor(urlEqualTo("/chat")));
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat")));
     }
 
     @Test
     void chatWithoutAuthReturns401() {
-        Map<String, Object> body = Map.of("session_id", "no-auth", "content", "Hello");
+        Map<String, Object> body = Map.of("sessionId", "no-auth", "content", "Hello");
 
         ResponseEntity<Map> response = restTemplate.postForEntity(
-                url("/chat"), body, Map.class);
+                url("/api/v1/chat"), body, Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
     }

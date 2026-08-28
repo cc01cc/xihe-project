@@ -2,6 +2,7 @@ import { ref, onUnmounted, getCurrentInstance } from 'vue'
 import { useAgentStore } from '../stores/agent'
 import { logger } from '../lib/logger'
 import { chatTransport } from '../services/chatTransport'
+import { apiRaw } from './api'
 import type { EventSourceMessage } from '@microsoft/fetch-event-source'
 
 interface LangChainTextBlock {
@@ -183,8 +184,7 @@ export function useSSE(sessionId: string) {
     currentCallbacks = callbacks
 
     const token = localStorage.getItem('xihe-token')
-    const query = token ? `&token=${encodeURIComponent(token)}` : ''
-    const url = `/api/v1/events?session_id=${encodeURIComponent(sessionId)}${query}`
+    const url = `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}`
 
     chatTransport
       .sendMessages(sessionId, {
@@ -231,7 +231,7 @@ export function useSSE(sessionId: string) {
     try {
       const body: Record<string, unknown> = {
         content,
-        session_id: sid,
+        sessionId: sid,
         stream: true,
       }
       if (model) {
@@ -249,22 +249,12 @@ export function useSSE(sessionId: string) {
         headers.Authorization = `Bearer ${token}`
       }
 
-      const response = await fetch('/api/v1/chat', {
+      await apiRaw('/chat', {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
       })
 
-      if (response.status === 401) {
-        localStorage.removeItem('xihe-token')
-        localStorage.removeItem('xihe-user')
-        window.location.href = '/login'
-        throw new Error('Session expired')
-      }
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => null) as { message?: string } | null
-        throw new Error(errBody?.message ?? `HTTP ${response.status}`)
-      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('Failed to send message via SSE: ' + msg)

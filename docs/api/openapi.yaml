@@ -1,0 +1,208 @@
+openapi: 3.1.0
+info:
+  title: Xihe API
+  version: 1.0.0
+  description: Canonical HTTP contract for Xihe public and service APIs.
+servers:
+  - url: /
+paths:
+  /api/v1/auth/register:
+    post:
+      operationId: register
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RegisterRequest' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '400': { $ref: '#/components/responses/Problem' } }
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/auth/refresh:
+    post:
+      operationId: refresh
+      responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/auth/me:
+    get:
+      operationId: currentUser
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/sessions:
+    get: { operationId: listSessions, security: [{ bearerAuth: [] }], responses: { '200': { description: Sessions } } }
+    post: { operationId: createSession, security: [{ bearerAuth: [] }], responses: { '201': { description: Created }, '401': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/sessions/{sessionId}:
+    delete: { operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+  /api/v1/oauth/sessions:
+    post:
+      operationId: startOAuthSession
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Created }, '400': { $ref: '#/components/responses/Problem' } }
+  /api/v1/oauth/callback:
+    get:
+      operationId: oauthCallback
+      parameters: [{ in: query, name: state, required: true, schema: { type: string } }, { in: query, name: code, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Problem' } }
+  /internal/v1/oauth/token:
+    post:
+      operationId: brokerOAuthToken
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OAuthTokenRequest' } } } }
+      responses: { '200': { description: OAuth token response }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/mcp:
+    post: { operationId: mcpPost, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP JSON-RPC response } } }
+    get: { operationId: mcpStream, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP SSE stream, content: { text/event-stream: {} } } } }
+    delete: { operationId: mcpDisconnect, security: [{ bearerAuth: [] }], responses: { '204': { description: Disconnected } } }
+  /internal/v1/config/{layer}/{domain}:
+    get:
+      operationId: getInternalConfig
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: layer, required: true, schema: { type: string } }, { in: path, name: domain, required: true, schema: { type: string } }]
+      responses: { '200': { description: Configuration map }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/chat:
+    post: { operationId: chat, security: [{ bearerAuth: [] }], responses: { '202': { description: Accepted }, '401': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/events:
+    get: { operationId: chatEvents, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: sessionId, schema: { type: string } }], responses: { '200': { description: SSE stream, content: { text/event-stream: {} } }, '401': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/exec:
+    post: { operationId: executeChat, security: [{ bearerAuth: [] }], responses: { '202': { description: Accepted }, '401': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/health:
+    get: { operationId: health, responses: { '200': { description: Healthy } } }
+  /api/v1/status:
+    get: { operationId: serviceStatus, security: [{ bearerAuth: [] }], responses: { '200': { description: Service status } } }
+  /api/v1/logs:
+    post: { operationId: ingestLogs, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
+  /api/v1/telemetry/logs:
+    post: { operationId: ingestTelemetry, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
+  /api/v1/telemetry/anonymous:
+    post: { operationId: ingestAnonymousTelemetry, responses: { '200': { description: Accepted } } }
+  /api/v1/config/{domain}:
+    get: { operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Configuration map } } }
+  /api/v1/config/admin/{domain}:
+    put: { operationId: putAdminConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  /api/v1/config/user/{domain}:
+    put: { operationId: putUserConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  /api/v1/config/import:
+    post: { operationId: importConfig, security: [{ bearerAuth: [] }], responses: { '200': { description: Imported } } }
+  /api/v1/config/export:
+    get: { operationId: exportConfig, security: [{ bearerAuth: [] }], responses: { '200': { description: JSON configuration } } }
+  /api/v1/providers:
+    get: { operationId: listProviders, security: [{ bearerAuth: [] }], responses: { '200': { description: Providers } } }
+    put: { operationId: updateProviders, security: [{ bearerAuth: [] }], responses: { '200': { description: Updated } } }
+  /api/v1/models:
+    get: { operationId: listModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Models } } }
+  /api/v1/sessions/{sessionId}/messages:
+    get: { operationId: listMessages, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Messages } } }
+  /api/v1/sessions/{sessionId}/messages/{messageId}:
+    delete: { operationId: deleteMessage, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+  /api/v1/sessions/{sessionId}/attachments:
+    post: { operationId: uploadAttachments, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Upload result } } }
+  /api/v1/sessions/{sessionId}/attachments/{fileId}:
+    get: { operationId: getAttachment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: fileId, required: true, schema: { type: string } }], responses: { '200': { description: Attachment metadata } } }
+    delete: { operationId: deleteAttachment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+  /api/v1/files/{fileId}:
+    get: { operationId: getFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '200': { description: File content } } }
+    delete: { operationId: deleteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+  /api/v1/files/upload:
+    post: { operationId: uploadFile, security: [{ bearerAuth: [] }], responses: { '201': { description: Uploaded } } }
+  /api/v1/files/split-pdf:
+    post: { operationId: splitPdf, security: [{ bearerAuth: [] }], responses: { '200': { description: Split result } } }
+  /api/v1/rag/stats:
+    get: { operationId: ragStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics } } }
+  /api/v1/rag/ingest:
+    post: { operationId: ragIngest, security: [{ bearerAuth: [] }], responses: { '200': { description: Ingest result } } }
+  /api/v1/rag/search:
+    post: { operationId: ragSearch, security: [{ bearerAuth: [] }], responses: { '200': { description: Search result } } }
+  /api/v1/rag/documents/{docId}:
+    delete: { operationId: ragDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+  /api/v1/workspaces/{workspaceId}/mcp-config:
+     get: { operationId: getMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP configuration } } }
+     put: { operationId: putMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  /internal/v1/context/{sessionId}/events:
+    get: { operationId: readContextEvents, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Events } } }
+    post: { operationId: appendContextEvent, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '201': { description: Appended } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/mcp:
+    post: { operationId: runtimeMcp, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP JSON-RPC response } } }
+  /internal/v1/runtime/remote-mcp/{workspaceId}/{serverId}/call:
+    post: { operationId: runtimeRemoteMcpCall, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: MCP response }, '401': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/agent/chat:
+    post: { operationId: agentChat, security: [{ bearerAuth: [] }], responses: { '200': { description: SSE stream, content: { text/event-stream: {} } } } }
+  /internal/v1/agent/rag/ingest:
+    post: { operationId: agentRagIngest, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG result } } }
+  /internal/v1/agent/rag/search:
+    post: { operationId: agentRagSearch, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG result } } }
+  /internal/v1/agent/rag/stats:
+    get: { operationId: agentRagStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics } } }
+  /internal/v1/agent/rag/documents/{docId}:
+    delete: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+  /internal/v1/agent/models:
+    get: { operationId: agentModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Models } } }
+  /internal/v1/agent/embedding-models:
+    get: { operationId: agentEmbeddingModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Embedding models } } }
+  /internal/v1/agent/approval/respond:
+    post: { operationId: respondApproval, security: [{ bearerAuth: [] }], responses: { '200': { description: Resolved } } }
+  /internal/v1/agent/approval/pending:
+    get: { operationId: pendingApprovals, security: [{ bearerAuth: [] }], responses: { '200': { description: Pending approvals } } }
+  /internal/v1/agent/mcp/reinit:
+    post: { operationId: reinitializeAgentMcp, security: [{ bearerAuth: [] }], responses: { '200': { description: Reinitialized } } }
+  /internal/v1/agent/registry/workers:
+    get: { operationId: listWorkers, security: [{ bearerAuth: [] }], responses: { '200': { description: Workers } } }
+  /internal/v1/agent/registry/workers/{workerId}/enable:
+    post: { operationId: enableWorker, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workerId, required: true, schema: { type: string } }], responses: { '200': { description: Enabled } } }
+  /internal/v1/agent/registry/workers/{workerId}/disable:
+    post: { operationId: disableWorker, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workerId, required: true, schema: { type: string } }], responses: { '200': { description: Disabled } } }
+  /internal/v1/context/{sessionId}/snapshot:
+    get: { operationId: contextSnapshot, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Snapshot } } }
+  /internal/v1/context/{sessionId}/events/batch:
+    post: { operationId: appendContextEvents, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '201': { description: Appended } } }
+  /internal/v1/context/{sessionId}/events/latest:
+    get: { operationId: latestContextSequence, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Sequence } } }
+  /internal/v1/context/{sessionId}/refresh-sources:
+    post: { operationId: refreshContextSources, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '202': { description: Accepted } } }
+  /internal/v1/context/{sessionId}/replay:
+    post: { operationId: replayContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Replayed } } }
+  /internal/v1/context/{sessionId}/compact:
+    post: { operationId: compactContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Compacted } } }
+  /internal/v1/context/{sourceSessionId}/fork:
+    post: { operationId: forkContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sourceSessionId, required: true, schema: { type: string } }], responses: { '201': { description: Forked } } }
+  /internal/v1/runtime/workspaces:
+    post: { operationId: registerRuntimeWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Registered } } }
+  /internal/v1/runtime/workspaces/delete:
+    post: { operationId: deleteRuntimeWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Deleted } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn:
+    get: { operationId: listMcpBridges, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Bridges } } }
+    post: { operationId: spawnMcpBridge, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '201': { description: Spawned } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId}:
+    delete: { operationId: killMcpBridge, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '204': { description: Stopped } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}:
+    post: { operationId: stdioMcp, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: MCP response } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/files/read:
+    post: { operationId: runtimeReadFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: File content } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/files/list:
+    post: { operationId: runtimeListFiles, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Directory listing } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/files/delete:
+    post: { operationId: runtimeDeleteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Deleted } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/files/mkdir:
+    post: { operationId: runtimeMkdir, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Created } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/files/stat:
+    post: { operationId: runtimeStat, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Metadata } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/files/write/{path}:
+    post: { operationId: runtimeWriteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: path, required: true, schema: { type: string } }], responses: { '200': { description: Written } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  responses:
+    Problem:
+      description: RFC 9457 Problem Details
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+  schemas:
+    RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }
+    LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
+    AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object } } }
+    OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
+    ProblemDetails:
+      type: object
+      required: [type, title, status, code, requestId]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string }
+        detail: { type: string }
+        requestId: { type: string }

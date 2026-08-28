@@ -67,7 +67,7 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
     void setUp() {
         String email = "attach-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         ResponseEntity<AuthResponse> reg = restTemplate.postForEntity(
-                baseUrl + "/auth/register", new RegisterRequest(email, "Test1234!", "AttachInt"), AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, "Test1234!", "AttachInt"), AuthResponse.class);
         String baseToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
@@ -131,7 +131,7 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
         String fileId = (String) file.get("id");
 
         ResponseEntity<byte[]> fileResponse = restTemplate.exchange(
-                baseUrl + "/files/" + fileId,
+                baseUrl + "/api/v1/files/" + fileId,
                 HttpMethod.GET, new HttpEntity<>(authHeaders()), byte[].class);
         assertEquals(HttpStatus.OK, fileResponse.getStatusCode());
         assertEquals("integration test content", new String(fileResponse.getBody()));

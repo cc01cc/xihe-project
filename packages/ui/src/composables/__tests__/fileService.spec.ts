@@ -26,6 +26,6 @@ describe('readFilePreview', () => {
       ok: false,
       status: 500,
     } as Response)
-    await expect(readFilePreview('/bad/file', 100)).rejects.toThrow('Read file failed')
+    await expect(readFilePreview('/bad/file', 100)).rejects.toThrow('API error 500')
   })
 })

@@ -95,7 +95,7 @@ function downloadAttachment(url: string, name: string) {
 
 function attachmentUrl(attachment: AttachmentFile): string {
   if (attachment.url) return attachment.url
-  if (attachment.fileId) return `/files/${attachment.fileId}`
+  if (attachment.fileId) return `/api/v1/files/${attachment.fileId}`
   return ''
 }
 

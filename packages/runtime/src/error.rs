@@ -62,7 +62,9 @@ mod tests {
 
     #[test]
     fn runtime_error_into_rmcp_error_data() {
-        let err = RuntimeError::PathTraversal { path: "/etc/passwd".into() };
+        let err = RuntimeError::PathTraversal {
+            path: "/etc/passwd".into(),
+        };
         let data: rmcp::ErrorData = err.into();
         assert!(data.message.contains("Path traversal"));
     }
@@ -78,10 +80,16 @@ mod tests {
         let cases = vec![
             (RuntimeError::InvalidPath("x".into()), "Invalid path"),
             (RuntimeError::Timeout, "Operation timed out"),
-            (RuntimeError::Command("fail".into()), "Command execution error"),
+            (
+                RuntimeError::Command("fail".into()),
+                "Command execution error",
+            ),
         ];
         for (err, expected_prefix) in cases {
-            assert!(err.to_string().starts_with(expected_prefix), "unexpected: {err}");
+            assert!(
+                err.to_string().starts_with(expected_prefix),
+                "unexpected: {err}"
+            );
         }
     }
 }

@@ -10,6 +10,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
@@ -70,27 +71,24 @@ public class ChatController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping(path = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter events(@RequestParam(name = "session_id", defaultValue = "default") String sessionId) {
+    @GetMapping(path = "/api/v1/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter events(@RequestParam(name = "sessionId", defaultValue = "default") String sessionId) {
         SseEmitter emitter = sseManager.createEmitter(sessionId);
-        sseManager.send(sessionId, "connected", Map.of("session_id", sessionId, "type", "connected"));
+        sseManager.send(sessionId, "connected", Map.of("sessionId", sessionId, "type", "connected"));
         logger.info("SSE stream connected session={}", sessionId);
         return emitter;
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @PostMapping("/exec")
+    @PostMapping("/api/v1/exec")
     public ResponseEntity<Map<String, Object>> exec(@RequestBody Map<String, Object> request) {
-        String sessionId = (String) request.getOrDefault("session_id", "default");
+        String sessionId = (String) request.getOrDefault("sessionId", "default");
         String content = (String) request.getOrDefault("content", "");
         String model = (String) request.get("model");
 
         if (!sseManager.hasEmitter(sessionId)) {
             logger.warn("Rejected chat request without SSE subscription session={}", sessionId);
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                "status", "error",
-                "message", "No active SSE subscription for session"
-            ));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "SSE_SUBSCRIPTION_REQUIRED", "An active SSE subscription is required");
         }
 
         logger.info("Received chat request session={} contentLength={}", sessionId, content.length());
@@ -98,18 +96,18 @@ public class ChatController {
         execAsync(sessionId, content, model);
         return ResponseEntity.accepted().body(Map.of(
             "status", "accepted",
-            "session_id", sessionId
+            "sessionId", sessionId
         ));
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @PostMapping("/chat")
+    @PostMapping("/api/v1/chat")
     public ResponseEntity<Map<String, Object>> chat(@RequestBody Map<String, Object> request) {
-        String sessionId = (String) request.getOrDefault("session_id", "default");
+        String sessionId = (String) request.getOrDefault("sessionId", "default");
         String content = (String) request.getOrDefault("content", "");
         String model = (String) request.get("model");
-        String userId = (String) request.getOrDefault("user_id", "anonymous");
-        String workspaceId = (String) request.getOrDefault("workspace_id", "default");
+        String userId = (String) request.getOrDefault("userId", "anonymous");
+        String workspaceId = (String) request.getOrDefault("workspaceId", "default");
 
         String tokenUserId = TenantContext.getUserId();
         String tokenWorkspaceId = TenantContext.getWorkspaceId();
@@ -124,10 +122,7 @@ public class ChatController {
 
         if (!sseManager.hasEmitter(sessionId)) {
             logger.warn("Rejected chat request without SSE subscription session={}", sessionId);
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                "status", "error",
-                "message", "No active SSE subscription for session"
-            ));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "SSE_SUBSCRIPTION_REQUIRED", "An active SSE subscription is required");
         }
 
         Session session = sessionRepository.findById(sessionId)
@@ -141,17 +136,11 @@ public class ChatController {
 
         if (!session.getWorkspaceId().equals(effectiveWorkspaceId)) {
             logger.warn("Rejected chat request for session outside workspace session={} workspace={}", sessionId, effectiveWorkspaceId);
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
-                "status", "error",
-                "message", "Session does not belong to workspace"
-            ));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Session does not belong to workspace");
         }
 
         if (!workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(effectiveWorkspaceId, effectiveUserId).isPresent()) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
-                "status", "error",
-                "message", "User is not a member of the workspace"
-            ));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "User is not a member of the workspace");
         }
 
         List<String> attachmentIds = extractAttachmentIds(request);
@@ -160,19 +149,13 @@ public class ChatController {
             for (String fileId : attachmentIds) {
                 File file = fileRepository.findById(fileId).orElse(null);
                 if (file == null) {
-                    return ResponseEntity.badRequest().body(Map.of(
-                        "status", "error",
-                        "message", "Attachment not found: " + fileId
-                    ));
+                    return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "ATTACHMENT_NOT_FOUND", "Attachment not found");
                 }
                 if (!sessionId.equals(file.getSessionId())) {
-                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
-                        "status", "error",
-                        "message", "Attachment does not belong to session: " + fileId
-                    ));
+                    return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Attachment does not belong to session");
                 }
                 attachmentInfos.add(new com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo(
-                    file.getId(), file.getFilename(), file.getMimeType(), file.getSizeBytes(), "/files/" + file.getId()
+                    file.getId(), file.getFilename(), file.getMimeType(), file.getSizeBytes(), "/api/v1/files/" + file.getId()
                 ));
             }
         }
@@ -192,10 +175,7 @@ public class ChatController {
                 attachmentsJson = objectMapper.writeValueAsString(refs);
             } catch (Exception e) {
                 logger.error("Failed to serialize attachments session={}", sessionId, e);
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
-                    "status", "error",
-                    "message", "Failed to serialize attachments"
-                ));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "SERIALIZATION_FAILED", "Attachment serialization failed");
             }
         }
 
@@ -218,12 +198,12 @@ public class ChatController {
         execAsync(sessionId, content, model, attachmentInfos);
         return ResponseEntity.accepted().body(Map.of(
             "status", "accepted",
-            "session_id", sessionId,
-            "message_id", userMessage.getId()
+            "sessionId", sessionId,
+            "messageId", userMessage.getId()
         ));
     }
 
-    @GetMapping("/health")
+    @GetMapping("/api/v1/health")
     public Map<String, Object> health() {
         return Map.of(
             "status", "UP",
@@ -245,7 +225,7 @@ public class ChatController {
         new Thread(() -> {
             try {
                 Map<String, Object> agentRequest = new java.util.HashMap<>();
-                agentRequest.put("session_id", sessionId);
+                agentRequest.put("sessionId", sessionId);
                 agentRequest.put("content", content);
                 agentRequest.put("stream", true);
                 if (model != null && !model.isEmpty()) {
@@ -287,8 +267,9 @@ public class ChatController {
                     logger.error("Agent request failed session={} status={} body={}",
                             sessionId, response.statusCode(), errorBody);
                     sseManager.send(sessionId, "error", Map.of(
-                        "error", "Agent request failed: HTTP " + response.statusCode(),
-                        "details", errorBody,
+                        "code", "AGENT_UNAVAILABLE",
+                        "requestId", java.util.UUID.randomUUID().toString(),
+                        "detail", "Agent service unavailable",
                         "type", "error"
                     ));
                     return;
@@ -308,9 +289,12 @@ public class ChatController {
                 }
 
             } catch (Exception e) {
-                String errorMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
-                logger.error("Chat request failed session={} error={}", sessionId, errorMsg, e);
-                sseManager.send(sessionId, "error", Map.of("error", errorMsg, "type", "error"));
+                logger.error("Chat request failed session={}", sessionId, e);
+                sseManager.send(sessionId, "error", Map.of(
+                    "code", "CHAT_EXECUTION_FAILED",
+                    "requestId", java.util.UUID.randomUUID().toString(),
+                    "detail", "Chat execution failed",
+                    "type", "error"));
             }
         }).start();
     }

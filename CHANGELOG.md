@@ -4,6 +4,8 @@
 
 ### Added
 
+- 统一 HTTP API 契约：公开 API 使用 `/api/v1`、服务间 API 使用 `/internal/v1`，统一 Bearer 鉴权、camelCase 和 Problem Details；MCP/OAuth 协议字段保持原样。
+
 - 实现 Agent 崩溃恢复：启动时可通过 `XIHE_RECOVER_SESSION_IDS` 从 CP Event Store 重放事件并重建会话状态
 - CP 新增 `context_source_hashes` 表，`ContextSourceRefreshService` 持久化 AGENTS.md 最后哈希，避免重复生成 `context.source_changed` 事件
 - CP 新增事件存储性能测试 `EventStoreServicePerformanceTest`，验证批量写入远高于单条写入

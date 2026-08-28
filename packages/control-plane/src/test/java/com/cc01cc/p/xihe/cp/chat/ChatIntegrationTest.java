@@ -57,7 +57,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         String email = "chat-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         RegisterRequest register = new RegisterRequest(email, "password123", "ChatIntTest");
         ResponseEntity<AuthResponse> regResponse = restTemplate.postForEntity(
-                baseUrl + "/auth/register", register, AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
         authToken = regResponse.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
@@ -72,12 +72,12 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     @Test
     void postChatWithoutAuthReturns401() {
         Map<String, Object> request = Map.of(
-                "session_id", "no-auth-session",
+                "sessionId", "no-auth-session",
                 "content", "Hello"
         );
 
         ResponseEntity<Map> response = restTemplate.postForEntity(
-                baseUrl + "/chat", request, Map.class);
+                baseUrl + "/api/v1/chat", request, Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED.value(), response.getStatusCode().value());
     }
@@ -86,10 +86,10 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     void postChatWithAuthReturnsAccepted() {
         String sessionId = "auth-session-" + UUID.randomUUID().toString().substring(0, 8);
         Map<String, Object> request = Map.of(
-                "session_id", sessionId,
+                "sessionId", sessionId,
                 "content", "Hello, this is a test message",
-                "user_id", userId,
-                "workspace_id", workspaceId
+                "userId", userId,
+                "workspaceId", workspaceId
         );
 
         HttpHeaders headers = new HttpHeaders();
@@ -97,31 +97,31 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/chat", HttpMethod.POST, entity, Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, entity, Map.class);
 
         assertEquals(HttpStatus.ACCEPTED.value(), response.getStatusCode().value());
         Map<String, Object> body = response.getBody();
         assertNotNull(body);
         assertEquals("accepted", body.get("status"));
-        assertEquals(sessionId, body.get("session_id"));
-        assertNotNull(body.get("message_id"));
+        assertEquals(sessionId, body.get("sessionId"));
+        assertNotNull(body.get("messageId"));
     }
 
     @Test
     void messageIsPersistedToDatabase() {
         String sessionId = "persist-session-" + UUID.randomUUID().toString().substring(0, 8);
         Map<String, Object> request = Map.of(
-                "session_id", sessionId,
+                "sessionId", sessionId,
                 "content", "This message must be persisted",
-                "user_id", userId,
-                "workspace_id", workspaceId
+                "userId", userId,
+                "workspaceId", workspaceId
         );
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
 
-        restTemplate.exchange(baseUrl + "/chat", HttpMethod.POST, entity, Map.class);
+        restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST, entity, Map.class);
 
         List<Message> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         assertFalse(messages.isEmpty());

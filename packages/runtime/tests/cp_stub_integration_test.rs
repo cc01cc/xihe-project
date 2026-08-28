@@ -11,11 +11,11 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 fn admin_url(domain: &str) -> String {
-    format!("/internal/config/admin/{domain}")
+    format!("/internal/v1/config/admin/{domain}")
 }
 
 fn system_url(domain: &str) -> String {
-    format!("/internal/config/system/{domain}")
+    format!("/internal/v1/config/system/{domain}")
 }
 
 fn empty_hashmap_body() -> String {
@@ -40,7 +40,10 @@ fn test_sync_populates_cache() {
         let result = client.sync().await;
 
         assert!(result.is_ok());
-        assert_eq!(client.get("llm-provider", "openaiApiKey"), Some("sk-test123"));
+        assert_eq!(
+            client.get("llm-provider", "openaiApiKey"),
+            Some("sk-test123")
+        );
         assert_eq!(client.get("llm-provider", "model"), Some("gpt-4"));
     });
 }

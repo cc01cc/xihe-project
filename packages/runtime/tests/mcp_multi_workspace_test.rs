@@ -8,9 +8,12 @@ fn setup() -> McpProcessManager {
 async fn test_multi_workspace_isolated_bridges() {
     let mgr = setup();
 
-    mgr.spawn("ws-alpha", "git", "npx", &[], "172.17.0.2", 39001).await;
-    mgr.spawn("ws-alpha", "db", "python", &[], "172.17.0.2", 39002).await;
-    mgr.spawn("ws-beta", "slack", "npx", &[], "172.17.0.3", 39003).await;
+    mgr.spawn("ws-alpha", "git", "npx", &[], "172.17.0.2", 39001)
+        .await;
+    mgr.spawn("ws-alpha", "db", "python", &[], "172.17.0.2", 39002)
+        .await;
+    mgr.spawn("ws-beta", "slack", "npx", &[], "172.17.0.3", 39003)
+        .await;
 
     // ws-alpha has 2 bridges
     let alpha = mgr.list("ws-alpha").await;
@@ -41,7 +44,15 @@ async fn test_dynamic_port_allocation_no_conflict() {
 
     let ports = [39010, 39011, 39012, 39013, 39014];
     for (i, port) in ports.iter().enumerate() {
-        mgr.spawn("ws-port", &format!("srv-{i}"), "cmd", &[], "10.0.0.1", *port).await;
+        mgr.spawn(
+            "ws-port",
+            &format!("srv-{i}"),
+            "cmd",
+            &[],
+            "10.0.0.1",
+            *port,
+        )
+        .await;
     }
 
     let bridges = mgr.list("ws-port").await;
@@ -69,21 +80,29 @@ async fn test_cleanup_workspace_removes_all_bridges() {
 #[tokio::test]
 async fn test_bridge_status_tracking() {
     let mgr = setup();
-    mgr.spawn("ws-status", "healthy", "cmd", &[], "ip", 39030).await;
+    mgr.spawn("ws-status", "healthy", "cmd", &[], "ip", 39030)
+        .await;
     mgr.mark_failed("ws-status", "healthy", "OOM killed").await;
 
     let bridges = mgr.list("ws-status").await;
     assert_eq!(bridges.len(), 1);
-    assert_eq!(bridges[0].status, BridgeStatus::Failed("OOM killed".to_string()));
+    assert_eq!(
+        bridges[0].status,
+        BridgeStatus::Failed("OOM killed".to_string())
+    );
 }
 
 #[tokio::test]
 async fn test_get_bridge_url_after_spawn() {
     let mgr = setup();
-    mgr.spawn("ws-url", "my-server", "node", &[], "192.168.1.100", 39100).await;
+    mgr.spawn("ws-url", "my-server", "node", &[], "192.168.1.100", 39100)
+        .await;
 
     let url = mgr.get_bridge_url("ws-url", "my-server").await;
-    assert_eq!(url, Some("http://192.168.1.100:39100/my-server".to_string()));
+    assert_eq!(
+        url,
+        Some("http://192.168.1.100:39100/my-server".to_string())
+    );
 
     assert!(mgr.get_bridge_url("ws-url", "nonexistent").await.is_none());
     assert!(mgr.get_bridge_url("ws-other", "my-server").await.is_none());

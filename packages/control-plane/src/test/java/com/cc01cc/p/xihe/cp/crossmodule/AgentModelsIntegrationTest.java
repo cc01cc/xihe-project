@@ -29,7 +29,7 @@ class AgentModelsIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void modelListForwardsToAgentAndReturnsModels() {
-        wireMock.stubFor(get(urlEqualTo("/v1/models"))
+        wireMock.stubFor(get(urlEqualTo("/internal/v1/agent/models"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
@@ -38,7 +38,7 @@ class AgentModelsIntegrationTest extends AbstractWireMockTest {
                                 """)));
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/models"),
+                url("/api/v1/models"),
                 HttpMethod.GET,
                 entityWithAuth(null, token),
                 Map.class);
@@ -46,17 +46,17 @@ class AgentModelsIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
 
-        wireMock.verify(getRequestedFor(urlEqualTo("/v1/models"))
+        wireMock.verify(getRequestedFor(urlEqualTo("/internal/v1/agent/models"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure")));
     }
 
     @Test
     void modelListHandlesAgentError() {
-        wireMock.stubFor(get(urlEqualTo("/v1/models"))
+        wireMock.stubFor(get(urlEqualTo("/internal/v1/agent/models"))
                 .willReturn(aResponse().withStatus(500)));
 
         HttpServerErrorException ex = assertThrows(HttpServerErrorException.class, () ->
-                restTemplate.exchange(url("/models"), HttpMethod.GET,
+                restTemplate.exchange(url("/api/v1/models"), HttpMethod.GET,
                         entityWithAuth(null, token), String.class));
 
         assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatusCode());
@@ -65,7 +65,7 @@ class AgentModelsIntegrationTest extends AbstractWireMockTest {
     @Test
     void modelListWithoutAuthReturns401() {
         ResponseEntity<String> response = restTemplate.exchange(
-                url("/models"), HttpMethod.GET, null, String.class);
+                url("/api/v1/models"), HttpMethod.GET, null, String.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
     }

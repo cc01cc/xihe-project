@@ -71,24 +71,28 @@ pub struct FileEventList {
 /// and ensures the normalized path stays within the workspace root.
 fn lexically_safe(path: &str, workspace: &Path) -> Result<PathBuf> {
     if Path::new(path).is_absolute() {
-        return Err(RuntimeError::PathTraversal { path: path.to_string() });
+        return Err(RuntimeError::PathTraversal {
+            path: path.to_string(),
+        });
     }
 
     let joined = workspace.join(path);
 
-    let normalized: PathBuf = joined
-        .components()
-        .fold(PathBuf::new(), |mut acc, c| {
-            match c {
-                Component::ParentDir => { acc.pop(); }
-                Component::CurDir => {}
-                other => acc.push(other.as_os_str()),
+    let normalized: PathBuf = joined.components().fold(PathBuf::new(), |mut acc, c| {
+        match c {
+            Component::ParentDir => {
+                acc.pop();
             }
-            acc
-        });
+            Component::CurDir => {}
+            other => acc.push(other.as_os_str()),
+        }
+        acc
+    });
 
     if !normalized.starts_with(workspace) {
-        return Err(RuntimeError::PathTraversal { path: path.to_string() });
+        return Err(RuntimeError::PathTraversal {
+            path: path.to_string(),
+        });
     }
 
     Ok(normalized)
@@ -103,9 +107,9 @@ fn resolve_canonical(path: &Path, workspace: &Path) -> Result<PathBuf> {
             path: path.to_string_lossy().to_string(),
         })?;
 
-    let ws_canonical = workspace.canonicalize().map_err(|_| {
-        RuntimeError::WorkspaceNotFound(workspace.to_string_lossy().to_string())
-    })?;
+    let ws_canonical = workspace
+        .canonicalize()
+        .map_err(|_| RuntimeError::WorkspaceNotFound(workspace.to_string_lossy().to_string()))?;
 
     if !canonical.starts_with(&ws_canonical) {
         return Err(RuntimeError::SymlinkEscape {
@@ -192,9 +196,10 @@ async fn call_file_service(
         buf.push_str(c);
         buf.push('\n');
     }
-    writer.write_all(buf.as_bytes()).await.map_err(|e| {
-        RuntimeError::InvalidPath(format!("file service write: {e}"))
-    })?;
+    writer
+        .write_all(buf.as_bytes())
+        .await
+        .map_err(|e| RuntimeError::InvalidPath(format!("file service write: {e}")))?;
     writer.shutdown().await.ok();
 
     let mut lines = Vec::new();
@@ -213,7 +218,9 @@ async fn call_file_service(
     }
 
     if lines.is_empty() {
-        return Err(RuntimeError::InvalidPath("empty response from file service".into()));
+        return Err(RuntimeError::InvalidPath(
+            "empty response from file service".into(),
+        ));
     }
     if lines[0] == "error" && lines.len() > 1 {
         return Err(RuntimeError::InvalidPath(lines[1..].join("\n")));
@@ -360,7 +367,9 @@ pub async fn edit_file(
     let content = tokio::fs::read_to_string(&full_path).await?;
 
     if old_string.is_empty() {
-        return Err(RuntimeError::InvalidPath("old_string cannot be empty".into()));
+        return Err(RuntimeError::InvalidPath(
+            "old_string cannot be empty".into(),
+        ));
     }
 
     let replacements: Vec<String> = content
@@ -402,9 +411,7 @@ pub async fn edit_file(
     Ok(EditFileResult {
         success: true,
         replacements: replacement_count,
-        message: format!(
-            "Replaced {replacement_count} occurrence(s) in {file_path}"
-        ),
+        message: format!("Replaced {replacement_count} occurrence(s) in {file_path}"),
     })
 }
 
@@ -416,7 +423,9 @@ pub async fn delete_file(path: &str, workspace: &str) -> Result<String> {
     }
     let full_path = resolve_write_path(path, workspace)?;
     if !full_path.exists() {
-        return Err(RuntimeError::FileNotFound(format!("File not found: {path}")));
+        return Err(RuntimeError::FileNotFound(format!(
+            "File not found: {path}"
+        )));
     }
     if !full_path.is_file() {
         return Err(RuntimeError::InvalidPath(format!("Not a file: {path}")));
@@ -430,17 +439,27 @@ pub async fn delete_directory(path: &str, recursive: bool, workspace: &str) -> R
     if socket.exists() {
         let action = if recursive { "rmdir" } else { "rm" };
         call_file_service(&socket, action, path, None).await?;
-        return Ok(format!("Deleted directory{}: {}", if recursive { " (recursive)" } else { "" }, path));
+        return Ok(format!(
+            "Deleted directory{}: {}",
+            if recursive { " (recursive)" } else { "" },
+            path
+        ));
     }
     let full_path = resolve_write_path(path, workspace)?;
     if !full_path.exists() {
-        return Err(RuntimeError::FileNotFound(format!("Directory not found: {path}")));
+        return Err(RuntimeError::FileNotFound(format!(
+            "Directory not found: {path}"
+        )));
     }
     if !full_path.is_dir() {
-        return Err(RuntimeError::InvalidPath(format!("Not a directory: {path}")));
+        return Err(RuntimeError::InvalidPath(format!(
+            "Not a directory: {path}"
+        )));
     }
     if full_path == Path::new(workspace) {
-        return Err(RuntimeError::InvalidPath("Cannot delete workspace root".into()));
+        return Err(RuntimeError::InvalidPath(
+            "Cannot delete workspace root".into(),
+        ));
     }
     if recursive {
         tokio::fs::remove_dir_all(&full_path).await?;
@@ -455,7 +474,9 @@ pub async fn move_file(from: &str, to: &str, workspace: &str) -> Result<String> 
     let src = resolve_write_path(from, workspace)?;
     let dst = resolve_write_path(to, workspace)?;
     if !src.exists() {
-        return Err(RuntimeError::FileNotFound(format!("Source not found: {from}")));
+        return Err(RuntimeError::FileNotFound(format!(
+            "Source not found: {from}"
+        )));
     }
     if let Some(parent) = dst.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -468,7 +489,9 @@ pub async fn copy_file(from: &str, to: &str, workspace: &str) -> Result<String> 
     let src = resolve_read_path(from, workspace)?;
     let dst = resolve_write_path(to, workspace)?;
     if !src.exists() {
-        return Err(RuntimeError::FileNotFound(format!("Source not found: {from}")));
+        return Err(RuntimeError::FileNotFound(format!(
+            "Source not found: {from}"
+        )));
     }
     if let Some(parent) = dst.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -526,7 +549,9 @@ pub fn list_directory(path: &str, workspace: &str) -> Result<Vec<FileInfo>> {
     let full_path = resolve_read_path(path, workspace)?;
 
     if !full_path.is_dir() {
-        return Err(RuntimeError::InvalidPath(format!("Not a directory: {path}")));
+        return Err(RuntimeError::InvalidPath(format!(
+            "Not a directory: {path}"
+        )));
     }
 
     let ws_str = workspace.to_string();
@@ -571,7 +596,11 @@ pub fn glob_files(pattern: &str, path: &str, workspace: &str) -> Result<Vec<Stri
             let rel = strip_workspace(e.path(), &ws_str);
             glob.is_match(rel)
         })
-        .map(|e| strip_workspace(e.path(), &ws_str).to_string_lossy().to_string())
+        .map(|e| {
+            strip_workspace(e.path(), &ws_str)
+                .to_string_lossy()
+                .to_string()
+        })
         .collect();
 
     Ok(matches)
@@ -740,7 +769,10 @@ mod tests {
         let ws = dir.path().to_str().unwrap();
         fs::write(dir.path().join("bar.txt"), "data").unwrap();
         let result = resolve_read_path("bar.txt", ws).unwrap();
-        assert_eq!(result, fs::canonicalize(dir.path().join("bar.txt")).unwrap());
+        assert_eq!(
+            result,
+            fs::canonicalize(dir.path().join("bar.txt")).unwrap()
+        );
     }
 
     #[test]
@@ -750,7 +782,10 @@ mod tests {
         fs::create_dir(dir.path().join("sub")).unwrap();
         fs::write(dir.path().join("sub/file.md"), "data").unwrap();
         let result = resolve_read_path("sub/file.md", ws).unwrap();
-        assert_eq!(result, fs::canonicalize(dir.path().join("sub/file.md")).unwrap());
+        assert_eq!(
+            result,
+            fs::canonicalize(dir.path().join("sub/file.md")).unwrap()
+        );
     }
 
     #[test]
@@ -856,9 +891,7 @@ mod tests {
         fs::write(dir.path().join("hello.txt"), "Hello, World!").unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let content = rt
-            .block_on(read_file("hello.txt", ws))
-            .unwrap();
+        let content = rt.block_on(read_file("hello.txt", ws)).unwrap();
         assert_eq!(content, "Hello, World!");
     }
 
@@ -1096,9 +1129,7 @@ mod tests {
         let ws = dir.path().to_str().unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let err = rt
-            .block_on(delete_file("nonexistent.txt", ws))
-            .unwrap_err();
+        let err = rt.block_on(delete_file("nonexistent.txt", ws)).unwrap_err();
         assert!(matches!(err, RuntimeError::FileNotFound(_)));
     }
 
@@ -1108,9 +1139,7 @@ mod tests {
         let ws = dir.path().to_str().unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let err = rt
-            .block_on(delete_file("../outside.txt", ws))
-            .unwrap_err();
+        let err = rt.block_on(delete_file("../outside.txt", ws)).unwrap_err();
         assert!(matches!(err, RuntimeError::PathTraversal { .. }));
     }
 
@@ -1121,7 +1150,9 @@ mod tests {
         std::fs::create_dir(dir.path().join("emptydir")).unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(delete_directory("emptydir", false, ws)).unwrap();
+        let result = rt
+            .block_on(delete_directory("emptydir", false, ws))
+            .unwrap();
         assert!(result.contains("Deleted"));
     }
 
@@ -1221,7 +1252,8 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
 
         // Write
-        rt.block_on(write_file("life.txt", "hello world", ws)).unwrap();
+        rt.block_on(write_file("life.txt", "hello world", ws))
+            .unwrap();
         assert!(dir.path().join("life.txt").exists());
 
         // Edit
@@ -1235,11 +1267,13 @@ mod tests {
         );
 
         // Copy
-        rt.block_on(copy_file("life.txt", "life_copy.txt", ws)).unwrap();
+        rt.block_on(copy_file("life.txt", "life_copy.txt", ws))
+            .unwrap();
         assert!(dir.path().join("life_copy.txt").exists());
 
         // Move
-        rt.block_on(move_file("life_copy.txt", "life_moved.txt", ws)).unwrap();
+        rt.block_on(move_file("life_copy.txt", "life_moved.txt", ws))
+            .unwrap();
         assert!(!dir.path().join("life_copy.txt").exists());
         assert!(dir.path().join("life_moved.txt").exists());
 
@@ -1252,11 +1286,16 @@ mod tests {
     fn test_read_file_range() {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_str().unwrap();
-        let content = (1..=100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let content = (1..=100)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         std::fs::write(dir.path().join("range.txt"), &content).unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(read_file_range("range.txt", Some(5), Some(3), ws)).unwrap();
+        let result = rt
+            .block_on(read_file_range("range.txt", Some(5), Some(3), ws))
+            .unwrap();
         assert!(!result.is_binary);
         assert_eq!(result.total_lines, 100);
         assert_eq!(result.content, "5 | line 5\n6 | line 6\n7 | line 7");
@@ -1270,7 +1309,9 @@ mod tests {
         std::fs::write(dir.path().join("defaults.txt"), content).unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(read_file_range("defaults.txt", None, None, ws)).unwrap();
+        let result = rt
+            .block_on(read_file_range("defaults.txt", None, None, ws))
+            .unwrap();
         assert_eq!(result.total_lines, 3);
         assert!(result.content.contains("1 | line a"));
         assert!(result.content.contains("3 | line c"));
@@ -1284,7 +1325,9 @@ mod tests {
         std::fs::write(dir.path().join("binary.bin"), &bin).unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(read_file_range("binary.bin", None, None, ws)).unwrap();
+        let result = rt
+            .block_on(read_file_range("binary.bin", None, None, ws))
+            .unwrap();
         assert!(result.is_binary);
         assert!(result.content.len() > 4);
     }
@@ -1296,7 +1339,9 @@ mod tests {
         std::fs::write(dir.path().join("short.txt"), "only one line").unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(read_file_range("short.txt", Some(999), Some(10), ws)).unwrap();
+        let result = rt
+            .block_on(read_file_range("short.txt", Some(999), Some(10), ws))
+            .unwrap();
         assert_eq!(result.content, ""); // offset past end → empty
         assert_eq!(result.total_lines, 1);
     }
@@ -1307,7 +1352,9 @@ mod tests {
         let ws = dir.path().to_str().unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let err = rt.block_on(read_file_range("../outside.txt", None, None, ws)).unwrap_err();
+        let err = rt
+            .block_on(read_file_range("../outside.txt", None, None, ws))
+            .unwrap_err();
         assert!(matches!(err, RuntimeError::PathTraversal { .. }));
     }
 

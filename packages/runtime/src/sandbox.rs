@@ -53,7 +53,10 @@ pub fn register_background_process(ws_id: &str, command: &str) -> String {
             .unwrap_or_else(|_| "0".to_string()),
         status: "running".to_string(),
     };
-    background_processes().lock().unwrap().insert(pid.clone(), proc);
+    background_processes()
+        .lock()
+        .unwrap()
+        .insert(pid.clone(), proc);
     pid
 }
 

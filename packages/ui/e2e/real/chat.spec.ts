@@ -6,7 +6,7 @@ test.describe('Chat — Real Backend', () => {
   let authToken = ''
 
   test.beforeAll(async ({ request }) => {
-    const r = await request.post(`${CP_URL}/auth/register`, {
+    const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
       data: { email: `real-chat-${Date.now()}@test.com`, password: 'Test1234!', name: 'ChatTest' },
     })
     if (r.ok()) {

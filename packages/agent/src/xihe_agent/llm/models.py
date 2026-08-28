@@ -2,10 +2,18 @@ from typing import Any
 
 import httpx
 import litellm
-from fastapi import APIRouter
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 
 router = APIRouter()
+
+
+def verify_service_token(request: Request) -> None:
+    expected = os.getenv("XIHE_CP_API_TOKEN", "dev-token-not-secure")
+    if request.headers.get("Authorization") != f"Bearer {expected}":
+        raise HTTPException(status_code=401, detail="Authorization required")
 
 
 class _ModelsRouter:
@@ -21,8 +29,8 @@ class _ModelsRouter:
 _models_router = _ModelsRouter()
 
 
-@router.get("/v1/models")
-async def list_models():
+@router.get("/internal/v1/agent/models")
+async def list_models(_token: None = Depends(verify_service_token)):
     """Proxy to each provider's /v1/models, merge and return."""
     cc = _models_router.config_client
     if cc is None:
@@ -62,8 +70,8 @@ async def list_models():
     return {"models": results}
 
 
-@router.get("/v1/embedding-models")
-async def list_embedding_models():
+@router.get("/internal/v1/agent/embedding-models")
+async def list_embedding_models(_token: None = Depends(verify_service_token)):
     """List available embedding models from litellm, filtered by configured providers."""
     cc = _models_router.config_client
     if cc is None:

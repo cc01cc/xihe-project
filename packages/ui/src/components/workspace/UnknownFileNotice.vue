@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { apiRaw } from '../../composables/api'
 const props = defineProps<{
   fileName: string
   filePath: string
@@ -8,14 +9,16 @@ function copyPath() {
   navigator.clipboard.writeText(props.filePath)
 }
 
-function download() {
+async function download() {
   // Downloads through CP proxy
-  const token = localStorage.getItem('xihe-token')
   const url = `/api/v1/files/${encodeURIComponent(props.filePath)}`
+  const response = await apiRaw(url)
+  const blobUrl = URL.createObjectURL(await response.blob())
   const a = document.createElement('a')
-  a.href = token ? `${url}?token=${encodeURIComponent(token)}` : url
+  a.href = blobUrl
   a.download = props.fileName
   a.click()
+  URL.revokeObjectURL(blobUrl)
 }
 </script>
 

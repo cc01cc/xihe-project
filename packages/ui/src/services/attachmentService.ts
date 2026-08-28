@@ -1,6 +1,7 @@
 import { reactive, readonly } from 'vue'
 import { logger } from '../lib/logger'
 import type { AttachmentFile } from '../types'
+import { apiDelete, apiGet, apiPost } from '../composables/api'
 
 export type UploadState = 'pending' | 'uploading' | 'done' | 'error'
 
@@ -102,23 +103,10 @@ export async function uploadAttachments(sessionId: string, files: File[]): Promi
       formData.append('files', task.file)
     }
 
-    const token = localStorage.getItem('xihe-token')
-    const response = await fetch(`/api/v1/sessions/${sessionId}/attachments`, {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: formData,
-    })
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({} as Record<string, unknown>))
-      const message = typeof body.error === 'string' ? body.error : `Upload failed: HTTP ${response.status}`
-      throw new Error(message)
-    }
-
-    const result = await response.json() as {
+    const result = await apiPost<{
       success?: Array<{ id: string; name: string; type: string; size: number; url: string }>
       failed?: Array<{ fileName: string; reason: string }>
-    }
+    }>(`/sessions/${sessionId}/attachments`, formData)
 
     if (result.failed) {
       for (const item of result.failed) {
@@ -165,29 +153,11 @@ export async function uploadAttachments(sessionId: string, files: File[]): Promi
 }
 
 export async function deleteAttachment(sessionId: string, fileId: string): Promise<void> {
-  const token = localStorage.getItem('xihe-token')
-  const response = await fetch(`/api/v1/sessions/${sessionId}/attachments/${fileId}`, {
-    method: 'DELETE',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({} as Record<string, unknown>))
-    const message = typeof body.error === 'string' ? body.error : `Delete failed: HTTP ${response.status}`
-    throw new Error(message)
-  }
+  await apiDelete(`/sessions/${sessionId}/attachments/${fileId}`)
 }
 
 export async function getAttachmentMetadata(sessionId: string, fileId: string): Promise<AttachmentFile> {
-  const token = localStorage.getItem('xihe-token')
-  const response = await fetch(`/api/v1/sessions/${sessionId}/attachments/${fileId}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({} as Record<string, unknown>))
-    const message = typeof body.error === 'string' ? body.error : `Metadata failed: HTTP ${response.status}`
-    throw new Error(message)
-  }
-  const info = await response.json() as { id: string; name: string; type: string; size: number; url: string }
+  const info = await apiGet<{ id: string; name: string; type: string; size: number; url: string }>(`/sessions/${sessionId}/attachments/${fileId}`)
   return {
     id: info.id,
     fileId: info.id,

@@ -13,7 +13,7 @@ test.describe('PdfViewer — Real Backend', () => {
   let authToken = ''
 
   test.beforeAll(async ({ request }) => {
-    const r = await request.post(`${CP_URL}/auth/register`, {
+    const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
       data: { email: `pdf-${Date.now()}@test.com`, password: 'Test1234!', name: 'PdfTest' },
     })
     expect(r.ok()).toBeTruthy()

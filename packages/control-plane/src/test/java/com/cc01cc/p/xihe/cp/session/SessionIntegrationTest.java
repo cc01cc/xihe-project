@@ -57,7 +57,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         String email = "session-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         RegisterRequest register = new RegisterRequest(email, "password123", "SessionIntTest");
         ResponseEntity<AuthResponse> regResponse = restTemplate.postForEntity(
-                baseUrl + "/auth/register", register, AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
         authToken = regResponse.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
@@ -164,7 +164,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     void sessionIsolation_betweenUsers() {
         String emailB = "session-int-b-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         RegisterRequest registerB = new RegisterRequest(emailB, "password123", "UserB");
-        restTemplate.postForEntity(baseUrl + "/auth/register", registerB, AuthResponse.class);
+        restTemplate.postForEntity(baseUrl + "/api/v1/auth/register", registerB, AuthResponse.class);
 
         User userB = userRepository.findByEmail(emailB).orElseThrow();
         String userIdB = userB.getId();

@@ -69,7 +69,7 @@ describe('useSSE', () => {
     expect(chatTransport.sendMessages).toHaveBeenCalledWith(
       'test-session-id',
       expect.objectContaining({
-        url: '/api/v1/events?session_id=test-session-id',
+        url: '/api/v1/events?sessionId=test-session-id',
       }),
     )
   })
@@ -91,7 +91,7 @@ describe('useSSE', () => {
     expect(chatTransport.sendMessages).toHaveBeenCalledWith(
       'test-session-id',
       expect.objectContaining({
-        url: '/api/v1/events?session_id=test-session-id&token=my-token',
+        url: '/api/v1/events?sessionId=test-session-id',
         headers: { Authorization: 'Bearer my-token' },
       }),
     )

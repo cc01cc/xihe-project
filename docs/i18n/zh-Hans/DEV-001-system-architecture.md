@@ -412,3 +412,11 @@ ChatView 集成方式：
 - `ChatView.vue` 挂载时从后端加载历史消息并覆盖 localStorage，保证刷新后附件仍可见。
 
 详见 `plans/PLAN-030-XH-chat-attachment-backend.md` 与 `plans/PLAN-031-XH-chat-attachment-frontend.md`。
+
+## 8. 远程 MCP 与 OAuth 边界
+
+- UI 发起 Authorization Code + PKCE，Control Plane 保存加密 refresh token，并按 user/workspace/server 发放短期 access token。
+- Agent 只连接 Control Plane 的 logical MCP endpoint，不直接访问 Runtime、workspace bridge 或远程 MCP。
+- Runtime host-side connector 负责远程 MCP initialize、tools/list、tools/call 和受控出网；workspace sandbox 不直接出网。
+- Fake OAuth/Fake MCP 只作为真实 integration/E2E fixture，必须验证 PKCE、Bearer、refresh/revoke、MCP protocol 和清理。
+- PLAN-190 负责 remote MCP/OAuth 数据链路，PLAN-191 负责后续统一 API 路径、字段、错误和服务间边界。

@@ -68,7 +68,7 @@ public abstract class AbstractWireMockTest {
     protected String registerAndLogin() {
         String email = "test-" + System.currentTimeMillis() + "@test.com";
         ResponseEntity<Map> reg = restTemplate.postForEntity(
-                url("/auth/register"),
+                url("/api/v1/auth/register"),
                 Map.of("email", email, "password", "Test1234!", "name", "Test"),
                 Map.class);
         Map regBody = reg.getBody();
@@ -76,7 +76,7 @@ public abstract class AbstractWireMockTest {
             return (String) regBody.get("accessToken");
         }
         ResponseEntity<Map> login = restTemplate.postForEntity(
-                url("/auth/login"),
+                url("/api/v1/auth/login"),
                 Map.of("email", email, "password", "Test1234!"),
                 Map.class);
         Map loginBody = login.getBody();

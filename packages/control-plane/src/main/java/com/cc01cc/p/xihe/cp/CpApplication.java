@@ -24,8 +24,8 @@ public class CpApplication {
     @Bean
     public ApplicationRunner logStartup(
             @Value("${server.port:12631}") String serverPort,
-            @Value("${cp.agent-url:http://localhost:12632/chat}") String agentUrl,
-            @Value("${cp.mcp.runtime-url:http://localhost:12633/mcp}") String runtimeUrl) {
+            @Value("${cp.agent-url:http://localhost:12632/internal/v1/agent/chat}") String agentUrl,
+            @Value("${cp.mcp.runtime-url:http://localhost:12633/internal/v1/runtime/workspaces/default/mcp}") String runtimeUrl) {
         return args -> logger.info(
             "xihe Control Plane listening on http://localhost:{} (agent={}, runtime={})",
             serverPort,

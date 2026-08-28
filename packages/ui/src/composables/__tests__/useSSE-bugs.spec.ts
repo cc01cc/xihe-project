@@ -42,7 +42,7 @@ describe('BUG-1: /chat Content-Type mismatch', () => {
     expect(typeof body).toBe('string')
     const parsed = JSON.parse(body)
     expect(parsed.content).toBe('Hello world')
-    expect(parsed.session_id).toBe('test-session')
+    expect(parsed.sessionId).toBe('test-session')
   })
 
   it('sendMessage should set Content-Type: application/json', async () => {
@@ -86,7 +86,7 @@ describe('BUG-3: /events SSE connection', () => {
     expect(vi.mocked(chatTransport.sendMessages)).toHaveBeenCalledWith(
       'test-session',
       expect.objectContaining({
-        url: '/api/v1/events?session_id=test-session&token=test-jwt-token',
+        url: '/api/v1/events?sessionId=test-session',
         headers: { Authorization: 'Bearer test-jwt-token' },
       }),
     )
@@ -109,7 +109,7 @@ describe('BUG-4: attachments must be sent as fileId array', () => {
     expect(typeof body).toBe('string')
     const parsed = JSON.parse(body)
     expect(parsed.content).toBe('Analyze this')
-    expect(parsed.session_id).toBe('test-session')
+    expect(parsed.sessionId).toBe('test-session')
     expect(parsed.stream).toBe(true)
     expect(parsed.attachments).toEqual(['file-id-1'])
   })
@@ -147,8 +147,8 @@ describe('BUG-6: /chat 409 when SSE subscription is missing', () => {
     connect({ onError })
     await sendMessage({ content: 'Hello' })
 
-    expect(error.value).toBe('No active SSE subscription for session')
-    expect(onError).toHaveBeenCalledWith('No active SSE subscription for session')
+    expect(error.value).toBe('API error 409')
+    expect(onError).toHaveBeenCalledWith('API error 409')
   })
 
   it('sendMessage should reset streaming state on 409', async () => {

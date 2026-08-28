@@ -2,13 +2,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use bollard::Docker;
 use bollard::exec::CreateExecOptions;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{
-    CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
-    StopContainerOptions,
+    CreateContainerOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
 };
-use bollard::Docker;
 use tokio::fs;
 use tracing::{info, warn};
 
@@ -44,9 +43,8 @@ impl WorkspaceManager {
 
     async fn get_docker(&mut self) -> Result<&Docker> {
         if self.docker.is_none() {
-            let docker =
-                Docker::connect_with_local_defaults()
-                    .map_err(|e| RuntimeError::Docker(e.to_string()))?;
+            let docker = Docker::connect_with_local_defaults()
+                .map_err(|e| RuntimeError::Docker(e.to_string()))?;
             self.docker = Some(docker);
         }
         Ok(self.docker.as_ref().unwrap())
@@ -73,9 +71,7 @@ impl WorkspaceManager {
             pids_limit: Some(100),
             cap_drop: Some(vec!["ALL".to_string()]),
             security_opt: Some(vec!["no-new-privileges:true".to_string()]),
-            binds: Some(vec![
-                format!("{}:/workspace:rw", workspace_path),
-            ]),
+            binds: Some(vec![format!("{}:/workspace:rw", workspace_path)]),
             network_mode: match profile {
                 SecurityProfile::Strict => Some("none".to_string()),
                 SecurityProfile::Coding => Some("bridge".to_string()),
@@ -130,7 +126,10 @@ impl WorkspaceManager {
         self.start_container_runtime(&state).await?;
 
         self.workspaces.insert(ws_id.to_string(), state.clone());
-        info!("Workspace created: ws_id={}, path={}", ws_id, workspace_path);
+        info!(
+            "Workspace created: ws_id={}, path={}",
+            ws_id, workspace_path
+        );
         Ok(state)
     }
 
@@ -246,7 +245,10 @@ impl WorkspaceManager {
             .map_err(|e| RuntimeError::Docker(format!("start container: {e}")))?;
 
         self.start_container_runtime(state).await?;
-        info!("Container started and container-runtime restarted: ws_id={}", ws_id);
+        info!(
+            "Container started and container-runtime restarted: ws_id={}",
+            ws_id
+        );
         Ok(())
     }
 
@@ -321,7 +323,11 @@ impl WorkspaceManager {
                 if let Ok(info) = docker.inspect_exec(&exec.id).await
                     && info.exit_code == Some(0)
                 {
-                    info!("xihe-container-runtime ready for workspace {} (attempt {})", state.ws_id, i + 1);
+                    info!(
+                        "xihe-container-runtime ready for workspace {} (attempt {})",
+                        state.ws_id,
+                        i + 1
+                    );
                     return Ok(());
                 }
             }
@@ -383,9 +389,7 @@ impl WorkspaceManager {
 
         let container_ip = resolve_container_ip(docker, &state.container_name).await?;
 
-        info!(
-            "MCP bridge started: ws={ws_id} server={server_id} at {container_ip}:{port}"
-        );
+        info!("MCP bridge started: ws={ws_id} server={server_id} at {container_ip}:{port}");
 
         Ok((container_ip, port))
     }

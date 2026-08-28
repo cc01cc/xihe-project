@@ -15,7 +15,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/logging"), HttpMethod.GET,
+            url("/api/v1/config/logging"), HttpMethod.GET,
             new HttpEntity<>(headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -24,7 +24,7 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void getConfig_rejectsNoAuth() {
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/logging"), HttpMethod.GET,
+            url("/api/v1/config/logging"), HttpMethod.GET,
             HttpEntity.EMPTY, Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, resp.getStatusCode());
@@ -35,7 +35,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/admin/logging"), HttpMethod.PUT,
+            url("/api/v1/config/admin/logging"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("logLevel", "INFO"), headers), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
@@ -46,7 +46,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(adminToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/admin/logging"), HttpMethod.PUT,
+            url("/api/v1/config/admin/logging"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("logLevel", "WARN"), headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -57,10 +57,10 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(adminToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/admin/logging"), HttpMethod.PUT,
+            url("/api/v1/config/admin/logging"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("logLevel", "INVALID"), headers), Map.class);
 
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
     }
 
     @Test
@@ -68,7 +68,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/user/llm-provider"), HttpMethod.PUT,
+            url("/api/v1/config/user/llm-provider"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("imageProvider", "deepseek"), headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -79,7 +79,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/user/embedding"), HttpMethod.PUT,
+            url("/api/v1/config/user/embedding"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("model", "text-embedding-3-small", "dimensions", "1536"), headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -90,8 +90,8 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/user/rag"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("chunk_size", "512"), headers), Map.class);
+            url("/api/v1/config/user/rag"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("chunkSize", "512"), headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
     }
@@ -101,7 +101,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/user/logging"), HttpMethod.PUT,
+            url("/api/v1/config/user/logging"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("logLevel", "DEBUG"), headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -112,7 +112,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/user/workspace-config"), HttpMethod.PUT,
+            url("/api/v1/config/user/workspace-config"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("profile", "default"), headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -123,10 +123,10 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(userToken());
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/user/infrastructure"), HttpMethod.PUT,
+            url("/api/v1/config/user/infrastructure"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("dbUrl", "jdbc:h2:mem:test"), headers), Map.class);
 
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
     }
 
     @Test
@@ -135,7 +135,7 @@ class ConfigControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/import"), HttpMethod.POST,
+            url("/api/v1/config/import"), HttpMethod.POST,
             new HttpEntity<>("{\"logging\":{\"logLevel\":\"ERROR\"}}", headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -147,7 +147,7 @@ class ConfigControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/import"), HttpMethod.POST,
+            url("/api/v1/config/import"), HttpMethod.POST,
             new HttpEntity<>("{\"logging\":{\"logLevel\":\"ERROR\"}}", headers), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
@@ -156,12 +156,12 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void getConfig_masksApiKeysForUser() {
         HttpHeaders adminHeaders = authHeaders(adminToken());
-        restTemplate.exchange(url("/config/admin/llm-provider"), HttpMethod.PUT,
+        restTemplate.exchange(url("/api/v1/config/admin/llm-provider"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("openaiApiKey", "sk-abcdefghijklmnopqrst"), adminHeaders), Map.class);
 
         HttpHeaders userHeaders = authHeaders(userToken());
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/llm-provider"), HttpMethod.GET,
+            url("/api/v1/config/llm-provider"), HttpMethod.GET,
             new HttpEntity<>(userHeaders), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -176,11 +176,11 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void getConfig_returnsFullKeysForAdmin() {
         HttpHeaders adminHeaders = authHeaders(adminToken());
-        restTemplate.exchange(url("/config/admin/llm-provider"), HttpMethod.PUT,
+        restTemplate.exchange(url("/api/v1/config/admin/llm-provider"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("openaiApiKey", "sk-abcdefghijklmnopqrst"), adminHeaders), Map.class);
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/config/llm-provider"), HttpMethod.GET,
+            url("/api/v1/config/llm-provider"), HttpMethod.GET,
             new HttpEntity<>(adminHeaders), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -194,7 +194,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(adminToken());
 
         ResponseEntity<String> resp = restTemplate.exchange(
-            url("/config/export?layer=admin"), HttpMethod.GET,
+            url("/api/v1/config/export?layer=admin"), HttpMethod.GET,
             new HttpEntity<>(headers), String.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -205,7 +205,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = internalApiHeaders();
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/internal/config/system/infrastructure"), HttpMethod.GET,
+            url("/internal/v1/config/system/infrastructure"), HttpMethod.GET,
             new HttpEntity<>(headers), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
@@ -217,7 +217,7 @@ class ConfigControllerTest extends AbstractH2Test {
         headers.setBearerAuth("wrong-token");
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/internal/config/system/infrastructure"), HttpMethod.GET,
+            url("/internal/v1/config/system/infrastructure"), HttpMethod.GET,
             new HttpEntity<>(headers), Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, resp.getStatusCode());
@@ -226,7 +226,7 @@ class ConfigControllerTest extends AbstractH2Test {
     @Test
     void internalConfig_noToken_rejected() {
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/internal/config/system/infrastructure"), HttpMethod.GET,
+            url("/internal/v1/config/system/infrastructure"), HttpMethod.GET,
             HttpEntity.EMPTY, Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, resp.getStatusCode());
@@ -237,7 +237,7 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = internalApiHeaders();
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/internal/config/badlayer/logging"), HttpMethod.GET,
+            url("/internal/v1/config/badlayer/logging"), HttpMethod.GET,
             new HttpEntity<>(headers), Map.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
@@ -257,7 +257,7 @@ class ConfigControllerTest extends AbstractH2Test {
 
     private String userToken() {
         ResponseEntity<Map> reg = restTemplate.postForEntity(
-            url("/auth/register"),
+            url("/api/v1/auth/register"),
             Map.of("email", "config-user-" + System.nanoTime() + "@test.com",
                 "password", "Test1234!", "name", "TestUser"),
             Map.class);
@@ -269,7 +269,7 @@ class ConfigControllerTest extends AbstractH2Test {
 
     private String adminToken() {
         ResponseEntity<Map> login = restTemplate.postForEntity(
-            url("/auth/login"),
+            url("/api/v1/auth/login"),
             Map.of("email", "admin@xihe.local", "password", "admin123"),
             Map.class);
         assertEquals(HttpStatus.OK, login.getStatusCode());

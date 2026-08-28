@@ -31,8 +31,17 @@ async fn main() {
 
     tracing_subscriber::registry()
         .with(EnvFilter::new(env_filter))
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout).with_ansi(false))
-        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking_file).with_ansi(false).json())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_ansi(false),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking_file)
+                .with_ansi(false)
+                .json(),
+        )
         .init();
 
     let app = Router::new()
@@ -57,9 +66,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(LISTEN_ADDR)
         .await
         .expect("failed to bind");
-    axum::serve(listener, app)
-        .await
-        .expect("server error");
+    axum::serve(listener, app).await.expect("server error");
 }
 
 async fn health() -> &'static str {
@@ -72,7 +79,12 @@ struct ErrorResponse {
 }
 
 fn err_response(e: impl ToString) -> (StatusCode, Json<ErrorResponse>) {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            error: e.to_string(),
+        }),
+    )
 }
 
 // ── /fs/read ───────────────────────────────────────────────────────────────
@@ -87,7 +99,9 @@ struct ReadResponse {
     content: String,
 }
 
-async fn fs_read(Json(req): Json<ReadRequest>) -> Result<Json<ReadResponse>, (StatusCode, Json<ErrorResponse>)> {
+async fn fs_read(
+    Json(req): Json<ReadRequest>,
+) -> Result<Json<ReadResponse>, (StatusCode, Json<ErrorResponse>)> {
     fs::read_file(&req.path, WORKSPACE)
         .await
         .map(|content| Json(ReadResponse { content }))
@@ -115,11 +129,13 @@ async fn fs_read_range(
 ) -> Result<Json<ReadRangeResponse>, (StatusCode, Json<ErrorResponse>)> {
     fs::read_file_range(&req.path, req.offset, req.limit, WORKSPACE)
         .await
-        .map(|r| Json(ReadRangeResponse {
-            content: r.content,
-            total_lines: r.total_lines,
-            is_binary: r.is_binary,
-        }))
+        .map(|r| {
+            Json(ReadRangeResponse {
+                content: r.content,
+                total_lines: r.total_lines,
+                is_binary: r.is_binary,
+            })
+        })
         .map_err(err_response)
 }
 
@@ -167,10 +183,21 @@ struct EditResponse {
 async fn fs_edit(
     Json(req): Json<EditRequest>,
 ) -> Result<Json<EditResponse>, (StatusCode, Json<ErrorResponse>)> {
-    fs::edit_file(&req.path, &req.old_string, &req.new_string, req.replace_all.unwrap_or(false), WORKSPACE)
-        .await
-        .map(|r| Json(EditResponse { replacements: r.replacements, message: r.message }))
-        .map_err(err_response)
+    fs::edit_file(
+        &req.path,
+        &req.old_string,
+        &req.new_string,
+        req.replace_all.unwrap_or(false),
+        WORKSPACE,
+    )
+    .await
+    .map(|r| {
+        Json(EditResponse {
+            replacements: r.replacements,
+            message: r.message,
+        })
+    })
+    .map_err(err_response)
 }
 
 // ── /fs/delete ─────────────────────────────────────────────────────────────
@@ -192,12 +219,20 @@ async fn fs_delete(
     if req.recursive.unwrap_or(false) {
         fs::delete_directory(&req.path, true, WORKSPACE)
             .await
-            .map(|_| Json(DeleteResponse { status: "deleted".into() }))
+            .map(|_| {
+                Json(DeleteResponse {
+                    status: "deleted".into(),
+                })
+            })
             .map_err(err_response)
     } else {
         fs::delete_file(&req.path, WORKSPACE)
             .await
-            .map(|_| Json(DeleteResponse { status: "deleted".into() }))
+            .map(|_| {
+                Json(DeleteResponse {
+                    status: "deleted".into(),
+                })
+            })
             .map_err(err_response)
     }
 }
@@ -219,7 +254,11 @@ async fn fs_mkdir(
 ) -> Result<Json<MkdirResponse>, (StatusCode, Json<ErrorResponse>)> {
     fs::mkdir(&req.path, WORKSPACE)
         .await
-        .map(|_| Json(MkdirResponse { status: "created".into() }))
+        .map(|_| {
+            Json(MkdirResponse {
+                status: "created".into(),
+            })
+        })
         .map_err(err_response)
 }
 
@@ -360,7 +399,11 @@ async fn fs_move(
 ) -> Result<Json<MoveResponse>, (StatusCode, Json<ErrorResponse>)> {
     fs::move_file(&req.from, &req.to, WORKSPACE)
         .await
-        .map(|_| Json(MoveResponse { status: "moved".into() }))
+        .map(|_| {
+            Json(MoveResponse {
+                status: "moved".into(),
+            })
+        })
         .map_err(err_response)
 }
 
@@ -382,7 +425,11 @@ async fn fs_copy(
 ) -> Result<Json<CopyResponse>, (StatusCode, Json<ErrorResponse>)> {
     fs::copy_file(&req.from, &req.to, WORKSPACE)
         .await
-        .map(|_| Json(CopyResponse { status: "copied".into() }))
+        .map(|_| {
+            Json(CopyResponse {
+                status: "copied".into(),
+            })
+        })
         .map_err(err_response)
 }
 

@@ -8,6 +8,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
@@ -36,22 +37,17 @@ public class ChatAttachmentController {
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
             logger.warn("Attachment upload rejected: missing tenant context session={}", sessionId);
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
-                    "error", "Missing workspace context"
-            ));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
         if (files == null || files.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "No files provided"));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "No files provided");
         }
         try {
             BatchUploadResult result = chatAttachmentService.upload(sessionId, files, userId, workspaceId);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             logger.error("Attachment upload failed session={}", sessionId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
-                    "error", "Upload failed",
-                    "message", e.getMessage()
-            ));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "UPLOAD_FAILED", "Attachment upload failed");
         }
     }
 
@@ -63,17 +59,17 @@ public class ChatAttachmentController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Missing workspace context"));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
         try {
             chatAttachmentService.delete(sessionId, fileId, userId, workspaceId);
             return ResponseEntity.ok(Map.of("deleted", fileId));
         } catch (IllegalArgumentException e) {
             logger.warn("Attachment delete failed session={} fileId={} reason={}", sessionId, fileId, e.getMessage());
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "ATTACHMENT_NOT_FOUND", "Attachment not found");
         } catch (Exception e) {
             logger.error("Attachment delete failed session={} fileId={}", sessionId, fileId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "DELETE_FAILED", "Attachment deletion failed");
         }
     }
 
@@ -85,7 +81,7 @@ public class ChatAttachmentController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Missing workspace context"));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
         try {
             File file = chatAttachmentService.getMetadata(sessionId, fileId, userId, workspaceId);
@@ -99,10 +95,10 @@ public class ChatAttachmentController {
             return ResponseEntity.ok(info);
         } catch (IllegalArgumentException e) {
             logger.warn("Attachment metadata request failed session={} fileId={} reason={}", sessionId, fileId, e.getMessage());
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "ATTACHMENT_NOT_FOUND", "Attachment not found");
         } catch (Exception e) {
             logger.error("Attachment metadata request failed session={} fileId={}", sessionId, fileId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "ATTACHMENT_FAILED", "Attachment request failed");
         }
     }
 }

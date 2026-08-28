@@ -38,10 +38,10 @@ public class ModelsProxyController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping("/models")
+    @GetMapping("/api/v1/models")
     public ResponseEntity<?> listModels() {
         try {
-            String targetUrl = agentBaseUrl + "/v1/models";
+            String targetUrl = agentBaseUrl + "/internal/v1/agent/models";
             HttpRequest request = HttpRequest.newBuilder(URI.create(targetUrl))
                 .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
                 .header("Authorization", "Bearer " + agentApiToken)
@@ -54,16 +54,14 @@ public class ModelsProxyController {
 
             if (response.statusCode() >= 400) {
                 logger.error("Models proxy: Agent returned {}", response.statusCode());
-                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                    .body(Map.of("error", "Agent request failed: HTTP " + response.statusCode()));
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_GATEWAY, "AGENT_UNAVAILABLE", "Agent model service unavailable");
             }
 
             Object body = objectMapper.readValue(response.body(), Object.class);
             return ResponseEntity.ok(body);
         } catch (Exception e) {
             logger.error("Models proxy failed", e);
-            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(Map.of("error", "Models proxy failed: " + e.getMessage()));
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_GATEWAY, "AGENT_UNAVAILABLE", "Agent model service unavailable");
         }
     }
 }

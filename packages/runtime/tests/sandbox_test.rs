@@ -19,7 +19,12 @@ impl SandboxTest {
         fs::write(dir.path().join("test.txt"), "hello").unwrap();
         let mut mgr = SandboxManager::new();
         let _ = mgr.remove_container(&ws_id).await;
-        Self { _dir: dir, ws_id, ws_path: ws, mgr }
+        Self {
+            _dir: dir,
+            ws_id,
+            ws_path: ws,
+            mgr,
+        }
     }
 
     async fn ensure(&mut self) {
@@ -38,7 +43,12 @@ impl SandboxTest {
 async fn test_sandbox_manager_ensure_container() {
     let mut t = SandboxTest::new().await;
     t.ensure().await;
-    assert!(t.mgr.ensure_container(&t.ws_id, SecurityProfile::Strict, &t.ws_path).await.is_ok());
+    assert!(
+        t.mgr
+            .ensure_container(&t.ws_id, SecurityProfile::Strict, &t.ws_path)
+            .await
+            .is_ok()
+    );
     t.cleanup().await;
 }
 
@@ -47,7 +57,8 @@ async fn test_sandbox_echo_command() {
     let mut t = SandboxTest::new().await;
     t.ensure().await;
 
-    let result = t.mgr
+    let result = t
+        .mgr
         .exec(&t.ws_id, "echo hello from docker", &[], Some(10))
         .await
         .expect("echo should succeed");
@@ -63,7 +74,8 @@ async fn test_sandbox_failing_command() {
     let mut t = SandboxTest::new().await;
     t.ensure().await;
 
-    let result = t.mgr
+    let result = t
+        .mgr
         .exec(&t.ws_id, "exit 42", &[], Some(10))
         .await
         .expect("command should complete");
@@ -78,7 +90,8 @@ async fn test_sandbox_stderr_captured() {
     let mut t = SandboxTest::new().await;
     t.ensure().await;
 
-    let result = t.mgr
+    let result = t
+        .mgr
         .exec(&t.ws_id, "echo stderr output >&2", &[], Some(10))
         .await
         .expect("command should complete");
@@ -92,7 +105,8 @@ async fn test_sandbox_no_sudo() {
     let mut t = SandboxTest::new().await;
     t.ensure().await;
 
-    let result = t.mgr
+    let result = t
+        .mgr
         .exec(&t.ws_id, "sudo echo ok", &[], Some(10))
         .await
         .expect("command should complete");
@@ -123,7 +137,12 @@ async fn test_sandbox_workspace_isolation() {
     .expect("create ws1 container");
 
     let result = mgr
-        .exec(&ws1_id, &format!("cat {}/secret.txt 2>&1 || true", ws2_dir.path().display()), &[], Some(5))
+        .exec(
+            &ws1_id,
+            &format!("cat {}/secret.txt 2>&1 || true", ws2_dir.path().display()),
+            &[],
+            Some(5),
+        )
         .await
         .expect("command should complete");
 
@@ -141,8 +160,14 @@ async fn test_sandbox_no_network() {
     let mut t = SandboxTest::new().await;
     t.ensure().await;
 
-    let result = t.mgr
-        .exec(&t.ws_id, "curl --max-time 3 http://example.com 2>&1 || true", &[], Some(10))
+    let result = t
+        .mgr
+        .exec(
+            &t.ws_id,
+            "curl --max-time 3 http://example.com 2>&1 || true",
+            &[],
+            Some(10),
+        )
         .await
         .expect("command should complete");
 
@@ -159,9 +184,7 @@ async fn test_sandbox_timeout() {
     let mut t = SandboxTest::new().await;
     t.ensure().await;
 
-    let result = t.mgr
-        .exec(&t.ws_id, "sleep 10", &[], Some(1))
-        .await;
+    let result = t.mgr.exec(&t.ws_id, "sleep 10", &[], Some(1)).await;
 
     assert!(result.is_err(), "Sleep should time out");
     t.cleanup().await;
@@ -176,12 +199,26 @@ async fn test_sandbox_write_isolation() {
     let ws1_id = format!("ws1w_{}", Uuid::new_v4());
     let _ = mgr.remove_container(&ws1_id).await;
 
-    mgr.ensure_container(&ws1_id, SecurityProfile::Strict, ws1_dir.path().to_str().unwrap())
-        .await.expect("create ws1");
+    mgr.ensure_container(
+        &ws1_id,
+        SecurityProfile::Strict,
+        ws1_dir.path().to_str().unwrap(),
+    )
+    .await
+    .expect("create ws1");
 
     let result = mgr
-        .exec(&ws1_id, &format!("echo hacked > {}/owned.txt 2>&1 || echo BLOCKED", ws2_dir.path().display()), &[], Some(5))
-        .await.expect("command should complete");
+        .exec(
+            &ws1_id,
+            &format!(
+                "echo hacked > {}/owned.txt 2>&1 || echo BLOCKED",
+                ws2_dir.path().display()
+            ),
+            &[],
+            Some(5),
+        )
+        .await
+        .expect("command should complete");
 
     assert!(
         !ws2_dir.path().join("owned.txt").exists(),
@@ -201,12 +238,23 @@ async fn test_sandbox_list_isolation() {
     let ws1_id = format!("ws1l_{}", Uuid::new_v4());
     let _ = mgr.remove_container(&ws1_id).await;
 
-    mgr.ensure_container(&ws1_id, SecurityProfile::Strict, ws1_dir.path().to_str().unwrap())
-        .await.expect("create ws1");
+    mgr.ensure_container(
+        &ws1_id,
+        SecurityProfile::Strict,
+        ws1_dir.path().to_str().unwrap(),
+    )
+    .await
+    .expect("create ws1");
 
     let result = mgr
-        .exec(&ws1_id, &format!("ls {} 2>&1 || echo BLOCKED", ws2_dir.path().display()), &[], Some(5))
-        .await.expect("command should complete");
+        .exec(
+            &ws1_id,
+            &format!("ls {} 2>&1 || echo BLOCKED", ws2_dir.path().display()),
+            &[],
+            Some(5),
+        )
+        .await
+        .expect("command should complete");
 
     assert!(
         !result.stdout.contains("hidden.txt"),
@@ -227,12 +275,26 @@ async fn test_sandbox_grep_isolation() {
     let ws1_id = format!("ws1g_{}", Uuid::new_v4());
     let _ = mgr.remove_container(&ws1_id).await;
 
-    mgr.ensure_container(&ws1_id, SecurityProfile::Strict, ws1_dir.path().to_str().unwrap())
-        .await.expect("create ws1");
+    mgr.ensure_container(
+        &ws1_id,
+        SecurityProfile::Strict,
+        ws1_dir.path().to_str().unwrap(),
+    )
+    .await
+    .expect("create ws1");
 
     let result = mgr
-        .exec(&ws1_id, &format!("grep -r 'password' {} 2>&1 || echo BLOCKED", ws2_dir.path().display()), &[], Some(5))
-        .await.expect("command should complete");
+        .exec(
+            &ws1_id,
+            &format!(
+                "grep -r 'password' {} 2>&1 || echo BLOCKED",
+                ws2_dir.path().display()
+            ),
+            &[],
+            Some(5),
+        )
+        .await
+        .expect("command should complete");
 
     assert!(
         !result.stdout.contains("abc123"),
@@ -252,15 +314,28 @@ async fn test_sandbox_exec_cannot_escape_workspace() {
     let ws_id = format!("ws1e_{}", Uuid::new_v4());
     let _ = mgr.remove_container(&ws_id).await;
 
-    mgr.ensure_container(&ws_id, SecurityProfile::Strict, ws_dir.path().to_str().unwrap())
-        .await.expect("create ws");
+    mgr.ensure_container(
+        &ws_id,
+        SecurityProfile::Strict,
+        ws_dir.path().to_str().unwrap(),
+    )
+    .await
+    .expect("create ws");
 
     let result = mgr
-        .exec(&ws_id, "cat /etc/hostname 2>&1 || echo BLOCKED", &[], Some(5))
-        .await.expect("command should complete");
+        .exec(
+            &ws_id,
+            "cat /etc/hostname 2>&1 || echo BLOCKED",
+            &[],
+            Some(5),
+        )
+        .await
+        .expect("command should complete");
 
     assert!(
-        result.success || result.stdout.contains("BLOCKED") || result.stderr.contains("Permission denied"),
+        result.success
+            || result.stdout.contains("BLOCKED")
+            || result.stderr.contains("Permission denied"),
         "exec should not allow reading host files outside workspace"
     );
 

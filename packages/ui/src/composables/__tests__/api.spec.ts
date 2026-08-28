@@ -192,16 +192,15 @@ describe('api.deleteSession', () => {
       status: 204,
     } as Response)
 
-    const res = await api.deleteSession('session-123')
+    await api.deleteSession('session-123')
 
     expect(fetchSpy).toHaveBeenCalledWith(
       '/api/v1/sessions/session-123',
-      { method: 'DELETE' },
+      expect.objectContaining({ method: 'DELETE', headers: expect.any(Object) }),
     )
-    expect(res.status).toBe(204)
   })
 
-  it('does not include Authorization header (direct fetch)', async () => {
+  it('includes Authorization header for every HTTP request', async () => {
     localStorage.setItem('xihe-token', 'some-token')
     fetchSpy.mockResolvedValueOnce({
       ok: true,
@@ -211,7 +210,7 @@ describe('api.deleteSession', () => {
     await api.deleteSession('s1')
 
     const callOptions = fetchSpy.mock.calls[0][1] as RequestInit
-    expect(callOptions.headers).toBeUndefined()
+    expect((callOptions.headers as Record<string, string>).Authorization).toBe('Bearer some-token')
   })
 })
 
