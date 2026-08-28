@@ -372,8 +372,8 @@ mod tests {
 
         let spawn_req = serde_json::json!({
             "server_id": "test-cat",
-            "command": "cat",
-            "args": []
+            "command": test_process_command().0,
+            "args": test_process_command().1
         });
 
         let response = app
@@ -423,8 +423,8 @@ mod tests {
 
         let spawn_req = serde_json::json!({
             "server_id": "dup",
-            "command": "echo",
-            "args": ["hello"]
+            "command": test_process_command().0,
+            "args": test_process_command().1
         });
 
         let resp1 = app
@@ -516,8 +516,8 @@ mod tests {
         // Spawn
         let spawn_req = serde_json::json!({
             "server_id": "to-kill",
-            "command": "sh",
-            "args": ["-c", "sleep 60"]
+            "command": test_process_command().0,
+            "args": test_process_command().1
         });
 
         let resp = app
@@ -577,5 +577,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(health_after.status(), StatusCode::OK);
+    }
+
+    fn test_process_command() -> (&'static str, Vec<&'static str>) {
+        #[cfg(windows)]
+        {
+            ("cmd.exe", vec!["/D", "/C", "more"])
+        }
+        #[cfg(not(windows))]
+        {
+            ("cat", vec![])
+        }
     }
 }

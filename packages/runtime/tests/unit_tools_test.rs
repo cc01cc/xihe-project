@@ -224,14 +224,25 @@ mod tests {
 
     #[test]
     fn test_web_fetch_localhost_returns_content() {
-        use std::io::Write;
+        use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
 
         std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let response = b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!";
-            stream.write_all(response).unwrap();
+            // Accept more than one connection because clients may retry while
+            // negotiating a local connection on different Windows stacks.
+            for _ in 0..3 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut request = [0u8; 1024];
+                let _ = stream.read(&mut request);
+                let response =
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!";
+                if stream.write_all(response).is_err() {
+                    continue;
+                }
+            }
         });
 
         let rt = tokio::runtime::Runtime::new().unwrap();

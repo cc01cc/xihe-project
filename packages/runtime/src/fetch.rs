@@ -21,9 +21,20 @@ pub async fn web_fetch(
     timeout: Option<u64>,
 ) -> Result<WebFetchResult, String> {
     let timeout_duration = std::time::Duration::from_secs(timeout.unwrap_or(30));
-    let client = reqwest::Client::builder()
+    let parsed_url = reqwest::Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
+    let is_loopback = parsed_url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    });
+    let mut client_builder = reqwest::Client::builder()
         .timeout(timeout_duration)
-        .user_agent("xihe-runtime/1.0")
+        .user_agent("xihe-runtime/1.0");
+    if is_loopback {
+        client_builder = client_builder.no_proxy();
+    }
+    let client = client_builder
         .build()
         .map_err(|e| format!("HTTP client init: {e}"))?;
 

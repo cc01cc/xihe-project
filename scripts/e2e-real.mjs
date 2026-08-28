@@ -4,15 +4,18 @@ import { spawn } from 'node:child_process'
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
 const composeFile = join(projectDir, 'docker-compose.yml')
-const uiPort = process.env.XIHE_UI_PORT ?? '12630'
-const cpPort = process.env.XIHE_CP_PORT ?? '12631'
-const agentPort = process.env.XIHE_AGENT_PORT ?? '12632'
-const runtimePort = process.env.XIHE_RUNTIME_PORT ?? '12633'
-const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? '13640'
-const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? '13641'
+const portSeed = 20000 + ((process.pid * 7) % 10000)
+const uiPort = process.env.XIHE_UI_PORT ?? String(portSeed)
+const cpPort = process.env.XIHE_CP_PORT ?? String(portSeed + 1)
+const agentPort = process.env.XIHE_AGENT_PORT ?? String(portSeed + 2)
+const runtimePort = process.env.XIHE_RUNTIME_PORT ?? String(portSeed + 3)
+const pgPort = process.env.XIHE_PG_PORT ?? String(portSeed + 4)
+const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? String(portSeed + 10)
+const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portSeed + 11)
 process.env.XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL ??= 'true'
 process.env.XIHE_CP_API_TOKEN = 'dev-token-change-me'
 process.env.XIHE_E2E_EXTERNAL_SERVER = 'true'
+process.env.XIHE_PG_PORT = pgPort
 const projectName = `xihe-e2e-${Date.now()}-${process.pid}`
 const noBuild = process.argv.includes('--no-build')
 const noCache = process.argv.includes('--no-cache')
@@ -141,7 +144,7 @@ async function main() {
     ])
     await waitForPostgres(composeArgs)
     await waitForHttp('Control Plane', `http://localhost:${cpPort}/actuator/health`)
-    await waitForHttp('Agent', `http://localhost:${agentPort}/health`)
+    await waitForHttp('Agent', `http://localhost:${agentPort}/internal/v1/agent/health`)
     await waitForHttp('Runtime', `http://localhost:${runtimePort}/health`)
 
     for (const [name, script, port, env] of [

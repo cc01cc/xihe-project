@@ -15,6 +15,10 @@ path = "src/container_runtime.rs"
 name = "xihe-mcp-bridge"
 path = "src/mcp_bridge.rs"
 
+[[bin]]
+name = "xihe-stdio-fixture"
+path = "src/stdio_fixture.rs"
+
 [dependencies]
 rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server", "schemars", "request-state"] }
 tokio = { version = "1.52.3", features = ["full"] }

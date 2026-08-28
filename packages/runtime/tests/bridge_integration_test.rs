@@ -3,6 +3,16 @@ use std::time::Duration;
 
 const BINARY: &str = "target/debug/xihe-mcp-bridge";
 
+fn fixture_binary() -> String {
+    std::env::var("CARGO_BIN_EXE_xihe-stdio-fixture").unwrap_or_else(|_| {
+        let mut path = std::path::PathBuf::from("target/debug/xihe-stdio-fixture");
+        if cfg!(windows) {
+            path.set_extension("exe");
+        }
+        path.to_string_lossy().into_owned()
+    })
+}
+
 fn find_free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -84,8 +94,8 @@ fn test_spawn_and_health() {
 
     let req = serde_json::json!({
         "server_id": "test-srv",
-        "command": "echo",
-        "args": ["hello"]
+        "command": fixture_binary(),
+        "args": []
     });
     let resp = client
         .post(format!("{base}/_spawn"))
@@ -116,8 +126,8 @@ fn test_spawn_conflict() {
 
     let req = serde_json::json!({
         "server_id": "dup",
-        "command": "echo",
-        "args": ["ok"]
+        "command": fixture_binary(),
+        "args": []
     });
 
     let resp = client

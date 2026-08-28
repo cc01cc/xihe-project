@@ -61,6 +61,7 @@ mod tests {
     #[test]
     fn find_project_root_returns_none_when_not_found() {
         let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".git"), "").unwrap();
         let result = in_dir(dir.path(), find_project_root);
         assert_eq!(result, None);
     }
