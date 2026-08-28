@@ -21,6 +21,38 @@ interface TelemetryEntry {
   data?: unknown
 }
 
+const SENSITIVE_KEY_PATTERN = /^(token|key|secret|password|passwd|authorization|auth|cookie|accesstoken|refreshtoken|apikey|api_key|servicetoken|clientsecret|client_secret|pkce|verifier)$/i
+const REDACTED = '***redacted***'
+const SECRET_VALUE_PATTERNS: RegExp[] = [
+  /Bearer\s+[A-Za-z0-9._~+/=-]+/gi,
+  /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+]
+
+function redactString(value: string): string {
+  let result = value
+  for (const pattern of SECRET_VALUE_PATTERNS) {
+    result = result.replace(pattern, REDACTED)
+  }
+  return result
+}
+
+function redactDeep(value: unknown, depth: number): unknown {
+  if (depth > 6) return value
+  if (typeof value === 'string') return redactString(value)
+  if (Array.isArray(value)) return value.map(item => redactDeep(item, depth + 1))
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      result[k] = SENSITIVE_KEY_PATTERN.test(k)
+        ? REDACTED
+        : redactDeep(v, depth + 1)
+    }
+    return result
+  }
+  return value
+}
+
 class LogDatabase extends Dexie {
   logs!: Table<LogEntry, number>
 
@@ -68,16 +100,14 @@ class Logger {
       if (data instanceof Error || isDomException) {
         return {
           name: (data as Error).name,
-          message: (data as Error).message,
-          stack: (data as Error).stack,
+          message: redactString((data as Error).message),
+          stack: redactString((data as Error).stack ?? ''),
           ...(isDomException ? { code: (data as DOMException).code } : {}),
         }
       }
-      const sanitized = { ...data as Record<string, unknown> }
-      if ('token' in sanitized) sanitized.token = '[REDACTED]'
-      if ('key' in sanitized) sanitized.key = '[REDACTED]'
-      return sanitized
+      return redactDeep(data, 0)
     }
+    if (typeof data === 'string') return redactString(data)
     return data
   }
 
@@ -147,15 +177,12 @@ class Logger {
     if (!this.isEnabled) return
 
     const deviceTag = this.context.deviceId ? ` [${this.context.deviceId}]` : ''
-    const sanitize = typeof process !== 'undefined' && process.env.NODE_ENV === 'test'
-      ? true
-      : !import.meta.env.DEV
 
     const entry: LogEntry = {
       timestamp: Date.now(),
       level,
-      message,
-      data: data ? (sanitize ? this.sanitizeData(data) : data) : undefined,
+      message: redactString(message),
+      data: data ? this.sanitizeData(data) : undefined,
     }
 
     const ts = new Date(entry.timestamp).toLocaleTimeString('zh-CN')
@@ -168,7 +195,7 @@ class Logger {
       : level === 'debug' ? console.debug
       // oxlint-disable-next-line no-console
       : console.log
-    cfn(prefix, message, data, this.context)
+    cfn(prefix, entry.message, entry.data, this.context)
 
     this.persist(entry).catch(() => {})
 

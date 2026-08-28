@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod mcp_process;
 pub mod remote_mcp;
 pub mod sandbox;
+pub mod log_redact;
 pub mod workspace;
 
 #[cfg(test)]

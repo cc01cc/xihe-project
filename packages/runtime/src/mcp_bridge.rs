@@ -88,12 +88,16 @@ async fn main() {
         .with(EnvFilter::new(env_filter))
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(std::io::stdout)
+                .with_writer(|| {
+                    xihe_runtime::log_redact::RedactingWriter::new(std::io::stdout())
+                })
                 .with_ansi(false),
         )
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking_file)
+                .with_writer(xihe_runtime::log_redact::RedactingMakeWriter::new(
+                    non_blocking_file,
+                ))
                 .with_ansi(false)
                 .json(),
         )

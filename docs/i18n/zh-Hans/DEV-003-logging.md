@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 3
 created: 2026-06-03
 status: active
-updated: 2026-06-16
+updated: 2026-08-28
 ---
 
 # DEV-003: 日志系统设计
@@ -173,9 +173,40 @@ CP 的 `AuditLogger` 记录所有 MCP 工具调用和策略决策：
 
 - 字段: `sessionId | toolName | action | detail | timestamp`
 - 控制台输出通过 `XIHE_CP_AUDIT_LOG_TO_CONSOLE` 控制
-- MVP 存储在内存 `ConcurrentHashMap` 中
+- **持久化**：通过 logback `AUDIT` logger 写入 `{XIHE_LOG_DIR}/audit.log`（日轮转，30d / 1GB / 100MB，JSONL，经脱敏 encoder），重启后可复盘
+- 内存 `recentRecords` 仅保留最近 1000 条作为查询视图
 
-## 6. 错误日志规范
+## 6. 日志安全（脱敏 / 关联 ID / 泄露扫描）
+
+### 6.1 序列化层统一脱敏
+
+各模块在日志序列化边界统一 redact，不依赖调用点自觉处理（PLAN-196）：
+
+| 模块 | 脱敏位置 | 实现 |
+|------|---------|------|
+| CP | Logback encoder | `RedactingLogstashEncoder` / `RedactingPatternLayoutEncoder`（`LogRedactor`） |
+| Runtime | tracing writer | `log_redact::RedactingWriter` / `RedactingMakeWriter` 包装 stdout 与文件层 |
+| Agent | loguru patcher | `log_redact.patch_record`（`logger.configure(patcher=...)`） |
+| UI | logger emit | `sanitizeData` / `redactDeep`（`lib/logger.ts`） |
+
+统一规则：敏感 key（`token/secret/password/authorization/cookie/accessToken/refreshToken/apiKey/serviceToken/clientSecret/pkce/verifier` 等，大小写不敏感）值替换为 `***redacted***`；Bearer token、JWT（`eyJ...`）、PEM 私钥模式在任意字符串中也会被替换。
+
+### 6.2 关联 ID 贯通
+
+- CP 入口 `RequestIdFilter` 生成或透传 `X-Request-Id`（超长/缺失时重新生成 UUID），写入 MDC `requestId` 并回写响应头；共享 `RestTemplate` 拦截器自动向下游透传。
+- Runtime axum `request_id_middleware` 读取/生成 `X-Request-Id`，注入 `tracing` span（`request_id` 字段）并回写响应头。
+- Agent FastAPI middleware 读取/生成 `X-Request-Id`，通过 `logger.contextualize(request_id=...)` 写入结构化日志并回写响应头。
+- `workspaceId` 预留 MDC 键位（`RequestIdFilter.MDC_WORKSPACE`），由控制器在解析 workspace 后写入。
+
+### 6.3 泄露扫描门禁
+
+```bash
+node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
+```
+
+扫描 Bearer/JWT/PEM/JSON 敏感字段模式，命中即退出码 1。该命令是 PLAN-195 M6 安全验收的门禁。
+
+## 7. 错误日志规范
 
 异常日志约定维护在当前 workspace 的通用 skill 中。
 

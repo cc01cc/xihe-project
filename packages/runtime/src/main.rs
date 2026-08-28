@@ -746,6 +746,22 @@ async fn internal_auth_middleware(request: Request<axum::body::Body>, next: Next
         .into_response()
 }
 
+async fn request_id_middleware(request: Request<axum::body::Body>, next: Next) -> Response {
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let span = tracing::info_span!("request", request_id = %request_id);
+    let mut response = tracing::Instrument::instrument(next.run(request), span).await;
+    if let Ok(value) = axum::http::HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
+    response
+}
+
 fn remote_mcp_error_response(
     error: RemoteMcpError,
 ) -> (
@@ -1219,10 +1235,16 @@ async fn main() -> anyhow::Result<()> {
             runtime_log_level.as_deref(),
             log_level.as_deref(),
         ))
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
+        .with(
+            tracing_subscriber::fmt::layer().with_writer(|| {
+                xihe_runtime::log_redact::RedactingWriter::new(std::io::stdout())
+            }),
+        )
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking_file)
+                .with_writer(xihe_runtime::log_redact::RedactingMakeWriter::new(
+                    non_blocking_file,
+                ))
                 .with_ansi(false)
                 .json(),
         )
@@ -1344,6 +1366,7 @@ async fn main() -> anyhow::Result<()> {
             post(ws_file_handler::handle_stat),
         )
         .layer(middleware::from_fn(internal_auth_middleware))
+        .layer(middleware::from_fn(request_id_middleware))
         .layer(cors)
         .with_state(registry);
 

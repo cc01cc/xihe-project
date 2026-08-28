@@ -6,7 +6,7 @@ sidebar_group: "Developer Guide"
 sidebar_order: 3
 created: 2026-06-03
 status: active
-updated: 2026-06-16
+updated: 2026-08-28
 ---
 
 # DEV-003: Logging System Design
@@ -173,9 +173,40 @@ CP's `AuditLogger` records all MCP tool calls and policy decisions:
 
 - Fields: `sessionId | toolName | action | detail | timestamp`
 - Console output controlled by `XIHE_CP_AUDIT_LOG_TO_CONSOLE`
-- MVP stores in in-memory `ConcurrentHashMap`
+- **Persistence**: written to `{XIHE_LOG_DIR}/audit.log` via the logback `AUDIT` logger (daily rotation, 30d / 1GB / 100MB, JSONL, redacted encoder); replayable after restarts
+- In-memory `recentRecords` keeps only the latest 1000 entries as a query view
 
-## 6. Error Logging Standards
+## 6. Log Security (Redaction / Correlation IDs / Leak Scan)
+
+### 6.1 Redaction at the Serialization Boundary
+
+Every module redacts at the log serialization boundary rather than relying on call-site discipline (PLAN-196):
+
+| Module | Boundary | Implementation |
+|--------|----------|----------------|
+| CP | Logback encoder | `RedactingLogstashEncoder` / `RedactingPatternLayoutEncoder` (`LogRedactor`) |
+| Runtime | tracing writer | `log_redact::RedactingWriter` / `RedactingMakeWriter` wrapping stdout and file layers |
+| Agent | loguru patcher | `log_redact.patch_record` (`logger.configure(patcher=...)`) |
+| UI | logger emit | `sanitizeData` / `redactDeep` (`lib/logger.ts`) |
+
+Rules: sensitive keys (`token/secret/password/authorization/cookie/accessToken/refreshToken/apiKey/serviceToken/clientSecret/pkce/verifier`, case-insensitive) are replaced with `***redacted***`; Bearer tokens, JWTs (`eyJ...`), and PEM private-key patterns are replaced anywhere in strings.
+
+### 6.2 Correlation ID Propagation
+
+- CP entry `RequestIdFilter` generates or propagates `X-Request-Id` (regenerates a UUID when missing/oversized), binds it to MDC `requestId`, and echoes it in the response header; the shared `RestTemplate` interceptor forwards it downstream.
+- Runtime axum `request_id_middleware` reads/generates `X-Request-Id`, injects a `tracing` span (`request_id` field), and echoes the header.
+- Agent FastAPI middleware reads/generates `X-Request-Id`, binds it via `logger.contextualize(request_id=...)`, and echoes the header.
+- `workspaceId` has a reserved MDC key (`RequestIdFilter.MDC_WORKSPACE`), set by controllers after workspace resolution.
+
+### 6.3 Leak Scan Gate
+
+```bash
+node scripts/scan-log-secrets.mjs [path ...]   # defaults to logs/
+```
+
+Scans for Bearer/JWT/PEM/JSON sensitive-field patterns; any hit exits 1. This command is the gate for PLAN-195 M6 security acceptance.
+
+## 7. Error Logging Standards
 
 Exception logging conventions are maintained in the workspace skills.
 

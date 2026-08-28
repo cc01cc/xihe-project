@@ -3,14 +3,14 @@
     <springProperty name="LOG_DIR" source="logging.file.dir" defaultValue="logs"/>
     <springProperty name="APP_NAME" source="spring.application.name" defaultValue="cp"/>
 
-    <!-- Console appender (human-readable) -->
+    <!-- Console appender (human-readable, redacted) -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        <encoder class="com.cc01cc.p.xihe.cp.logging.RedactingPatternLayoutEncoder">
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} [rid=%X{requestId:-}] - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <!-- File appender (JSONL) -->
+    <!-- File appender (JSONL, redacted) -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_DIR}/cp.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
@@ -19,8 +19,22 @@
             <maxHistory>7</maxHistory>
             <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
-        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-            <excludeMdcKey>sessionId</excludeMdcKey>
+        <encoder class="com.cc01cc.p.xihe.cp.logging.RedactingLogstashEncoder">
+            <excludeMdcKeyName>sessionId</excludeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <!-- Audit appender (JSONL, redacted, persistent) -->
+    <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/audit.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/audit.log.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="com.cc01cc.p.xihe.cp.logging.RedactingLogstashEncoder">
+            <excludeMdcKeyName>sessionId</excludeMdcKeyName>
         </encoder>
     </appender>
 
@@ -28,6 +42,11 @@
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
     </root>
+
+    <!-- Audit trail: persistent file only, no console noise -->
+    <logger name="AUDIT" level="INFO" additivity="false">
+        <appender-ref ref="AUDIT_FILE"/>
+    </logger>
 
     <!-- CP package level -->
     <logger name="com.cc01cc.p.xihe.cp" level="${XIHE_LOG_LEVEL_CP:-${XIHE_LOG_LEVEL:-INFO}}"/>

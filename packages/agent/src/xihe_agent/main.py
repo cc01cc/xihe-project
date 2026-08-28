@@ -90,6 +90,9 @@ class _InterceptHandler(logging.Handler):
 logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
 
 logger.remove(0)  # Remove default stderr handler
+from xihe_agent.log_redact import patch_record as _redact_patch  # noqa: E402
+
+logger.configure(patcher=_redact_patch)
 logger.add(sys.stderr, level=AGENT_LOG_LEVEL.upper())
 logger.add(
     os.path.join(_log_dir, "agent.log"),
@@ -366,6 +369,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="xihe-agent", version="0.1.0", lifespan=lifespan)
 app.include_router(models_router)
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    with logger.contextualize(request_id=request_id):
+        response = await call_next(request)
+    response.headers["X-Request-Id"] = request_id
+    return response
 
 
 @app.exception_handler(HTTPException)

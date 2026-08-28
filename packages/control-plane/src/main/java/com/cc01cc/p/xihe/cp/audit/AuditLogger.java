@@ -10,12 +10,15 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * AuditLogger records all MCP tool calls and policy decisions.
- * MVP: console + file stub. Future: ELK integration.
+ * Persists to a dedicated audit JSONL file (logback logger "AUDIT") and keeps
+ * a bounded in-memory recent-records view. Future: DB/ELK integration.
  */
 @Component
 public class AuditLogger {
 
     private static final Logger logger = LoggerFactory.getLogger(AuditLogger.class);
+    private static final Logger auditLog = LoggerFactory.getLogger("AUDIT");
+    private static final int MAX_RECENT_RECORDS = 1000;
 
     private final Map<String, AuditRecord> recentRecords = new ConcurrentHashMap<>();
     private final boolean logToConsole;
@@ -32,7 +35,22 @@ public class AuditLogger {
             detail,
             Instant.now()
         );
+        if (recentRecords.size() >= MAX_RECENT_RECORDS) {
+            recentRecords.keySet().stream().findAny().ifPresent(recentRecords::remove);
+        }
         recentRecords.put(sessionId + ":" + toolName + ":" + action, record);
+
+        String truncatedDetail = detail != null && detail.length() > 100
+            ? detail.substring(0, 100) + "..."
+            : detail;
+        // Persistent audit trail (file appender, survives restarts)
+        auditLog.info(
+            "session={} | tool={} | action={} | detail={}",
+            sessionId,
+            toolName,
+            action,
+            truncatedDetail
+        );
 
         if (logToConsole) {
             logger.info(
@@ -41,7 +59,7 @@ public class AuditLogger {
                 sessionId,
                 toolName,
                 action,
-                detail.length() > 100 ? detail.substring(0, 100) + "..." : detail
+                truncatedDetail
             );
         }
     }
