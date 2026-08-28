@@ -9,6 +9,7 @@ RUN mkdir src && \
     echo '' > src/lib.rs && \
     echo 'fn main() {}' > src/container_runtime.rs && \
     echo 'fn main() {}' > src/mcp_bridge.rs && \
+    echo 'fn main() {}' > src/stdio_fixture.rs && \
     cargo build --release && \
     rm -rf src
 

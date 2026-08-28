@@ -2,8 +2,6 @@
 // Use `#[ignore]` to exclude from default `cargo test`; run explicitly with
 // `cargo test -- --ignored` when CP is available.
 
-use std::time::Duration;
-
 fn cp_port() -> u16 {
     std::env::var("XIHE_CP_PORT")
         .ok()
@@ -19,21 +17,9 @@ fn cp_url() -> String {
     format!("http://127.0.0.1:{}", cp_port())
 }
 
-fn is_cp_reachable() -> bool {
-    std::net::TcpStream::connect_timeout(
-        &format!("127.0.0.1:{}", cp_port()).parse().unwrap(),
-        Duration::from_secs(2),
-    )
-    .is_ok()
-}
-
 #[tokio::test]
 #[ignore = "requires running Control Plane — set XIHE_CP_PORT and start CP first"]
 async fn test_cp_health_endpoint() {
-    if !is_cp_reachable() {
-        return;
-    }
-
     let resp = reqwest::get(format!("{}/actuator/health", cp_url()))
         .await
         .expect("CP health endpoint should be reachable");
@@ -46,10 +32,6 @@ async fn test_cp_health_endpoint() {
 #[tokio::test]
 #[ignore = "requires running Control Plane — set XIHE_CP_PORT and start CP first"]
 async fn test_config_client_sync_with_real_cp() {
-    if !is_cp_reachable() {
-        return;
-    }
-
     let mut client = xihe_runtime::config_client::ConfigClient::new(&cp_url(), &cp_api_token());
     let result = client.sync().await;
 
@@ -64,10 +46,6 @@ async fn test_config_client_sync_with_real_cp() {
 #[tokio::test]
 #[ignore = "requires running Control Plane — set XIHE_CP_PORT and start CP first"]
 async fn test_cp_auth_register_login() {
-    if !is_cp_reachable() {
-        return;
-    }
-
     let email = format!(
         "test-integration-{}@xihe.local",
         std::time::SystemTime::now()

@@ -15,6 +15,11 @@ const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portSeed + 11)
 process.env.XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL ??= 'true'
 process.env.XIHE_CP_API_TOKEN = 'dev-token-change-me'
 process.env.XIHE_E2E_EXTERNAL_SERVER = 'true'
+// Export resolved isolated ports so docker-compose port bindings use them too
+process.env.XIHE_UI_PORT = uiPort
+process.env.XIHE_CP_PORT = cpPort
+process.env.XIHE_AGENT_PORT = agentPort
+process.env.XIHE_RUNTIME_PORT = runtimePort
 process.env.XIHE_PG_PORT = pgPort
 const projectName = `xihe-e2e-${Date.now()}-${process.pid}`
 const noBuild = process.argv.includes('--no-build')
