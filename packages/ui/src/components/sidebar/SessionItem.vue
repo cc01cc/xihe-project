@@ -56,6 +56,7 @@ function handleRenameKeydown(e: KeyboardEvent) {
 
 <template>
   <div
+    data-testid="session-item"
     class="group relative flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
     :class="isActive ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50 text-sidebar-foreground'"
     @click="handleClick"

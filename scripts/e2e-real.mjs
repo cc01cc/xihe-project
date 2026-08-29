@@ -127,7 +127,7 @@ async function cleanup(composeArgs) {
 
 async function dumpLogs(composeArgs) {
   console.error('[e2e] collecting Docker service logs')
-  await run(command, [...composeArgs, 'logs', '--no-color', '--timestamps'], { stdio: 'inherit' })
+  await run(command, [...composeArgs, 'logs', '--no-color', '--timestamps', '--tail', '300'], { stdio: 'inherit' })
 }
 
 async function main() {
