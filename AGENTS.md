@@ -243,7 +243,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 ## Branch & Release
 
-- `internal/develop` — 日常开发分支
+- `develop` — 日常开发分支
 - `main` — 公开发布分支
 - 所有包均为私有（不发布 npm/pypi/crates.io），版本号仅用于内部追踪
 - 发布流程：更新 CHANGELOG.md → 运行 sync-versions.sh 统一 bump 四包版本号 → 提交版本变更 → 同步到 main → 审查后 push

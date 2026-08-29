@@ -12,7 +12,7 @@ lang: zh-Hans
 
 ## 技术栈
 
-- **Java 21** + **Spring Boot 4.x**
+- **Java 25** + **Spring Boot 4.x**
 - **PostgreSQL** — 数据存储
 - **Maven** — 构建工具
 

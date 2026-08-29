@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 5
 status: active
 created: 2026-06-03
-updated: 2026-06-15
+updated: 2026-08-29
 ---
 
 # DEV-005: MCP 三层路由架构
@@ -19,6 +19,8 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 1. **CP McpProxyController** — 认证 + tool-name-based 路由
 2. **Runtime Gateway** — per-workspace 分发
 3. **容器内 bridge** — STDIO 子进程管理
+
+> **协议版本说明**：当前采用 MCP `Protocol-Version: 2026-07-28`（rmcp 3.1.4，SEP-2567），Runtime 侧按该协议全程**无会话（stateless）**。因此 CP 转发 `tools/list` / `tools/call` 到 Runtime 时必须携带 `Mcp-Method` 与 `Mcp-Name` HTTP 头（见提交 `a9923e3`）；缺失会导致系统工具列表为空、`UNKNOWN_TOOL`。会话态仍存在的是 CP↔Agent 之间的 `mcp-session-id` HMAC 签名（见 §2 与根 `AGENTS.md` Known Issues），二者不冲突。
 
 ## 2. 架构图
 
@@ -46,10 +48,10 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 ┌────────────────────────▼────────────────────────────────────┐
 │  Runtime Gateway (Rust / Axum, 由 XIHE_RUNTIME_PORT 配置)   │
 │                                                             │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp       │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn  │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │
-│  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp             │  POST 系统工具调用
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn       │  POST 启动 bridge（无 serverId）
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │  DELETE 停止 bridge（kill，带 serverId）
+│  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │  POST 用户 STDIO 工具调用
 │                                                             │
 │  配置轮询：每 30s 从 CP 读取 mcpServers JSON，diff 后管理   │
 └────────────────────────┬────────────────────────────────────┘

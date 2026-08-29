@@ -57,9 +57,9 @@ watchdog 自动监控 `agents/` 目录（0.5s 防抖）：
 
 | 端点 | 说明 |
 |------|------|
-| `GET /registry/workers` | 列出所有 worker 及状态 |
-| `POST /registry/workers/{id}/enable` | 启用 worker |
-| `POST /registry/workers/{id}/disable` | 禁用 worker |
+| `GET /internal/v1/agent/registry/workers` | 列出所有 worker 及状态 |
+| `POST /internal/v1/agent/registry/workers/{id}/enable` | 启用 worker |
+| `POST /internal/v1/agent/registry/workers/{id}/disable` | 禁用 worker |
 
 ### 环境变量
 

@@ -28,12 +28,21 @@
 
 ```
 src/
-├── main.rs          # 入口
-├── sandbox/         # 沙盒实现
-├── filesystem/      # 文件系统操作
-├── process/         # 进程管理
-├── config_client.rs # CP 配置客户端（Rust）
-└── mcp_server.rs    # MCP 协议实现
+├── main.rs            # 入口（路由注册 + 配置轮询）
+├── lib.rs             # 库根
+├── gateway.rs         # Runtime Gateway（per-workspace 分发）
+├── fs.rs              # 文件系统操作
+├── sandbox.rs         # 沙盒实现
+├── workspace.rs       # 容器 + bridge 生命周期
+├── mcp_process.rs     # Gateway 侧 STDIO 管理
+├── mcp_bridge.rs      # 容器内 xihe-mcp-bridge binary
+├── container_runtime.rs # 容器内 xihe-container-runtime binary（文件 + 命令执行）
+├── remote_mcp.rs      # 远程 MCP 出网
+├── ws_file_handler.rs # workspace 文件处理
+├── config_client.rs   # CP 配置客户端（Rust）
+├── fetch.rs           # HTTP 出网
+├── log_redact.rs      # 日志脱敏
+└── error.rs           # 错误处理
 ```
 
 ## Key Conventions

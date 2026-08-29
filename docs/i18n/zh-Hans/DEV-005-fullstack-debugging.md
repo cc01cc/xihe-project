@@ -5,11 +5,11 @@ Xihe 是四模块架构（UI → CP → Agent → Runtime），单看代码无�
 ## 调试流程
 
 ```bash
-# 1. 启动全栈
-docker compose up -d && sleep 15
+# 1. 启动全栈（mise 统一管理 Docker Compose 后端 + UI，自动等待 CP ready 并导入 config）
+mise run dev:full
 
-# 2. 验证每个端点
-TOKEN=$(curl -s -X POST 'http://localhost:12631/auth/login' \
+# 2. 验证每个端点（全部走规范契约：公开 /api/v1，服务间 /internal/v1）
+TOKEN=$(curl -s -X POST 'http://localhost:12631/api/v1/auth/login' \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@xihe.local","password":"admin123"}' | \
   python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
@@ -18,13 +18,13 @@ TOKEN=$(curl -s -X POST 'http://localhost:12631/auth/login' \
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/events?sessionId=test" --max-time 3
 
 # 模型列表
-curl -s 'http://localhost:12631/models' -H "Authorization: Bearer $TOKEN"
+curl -s 'http://localhost:12631/api/v1/models' -H "Authorization: Bearer $TOKEN"
 
-# 发送消息
-curl -s -X POST 'http://localhost:12631/exec' \
+# 发送消息（请求体字段为 camelCase：sessionId）
+curl -s -X POST 'http://localhost:12631/api/v1/exec' \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"session_id":"test","content":"hi","stream":true}'
+  -d '{"sessionId":"test","content":"hi","stream":true}'
 
 # 3. 检查 Agent 日志
 docker compose logs --no-color agent 2>&1 | grep -i "error\|model\|deepseek" | tail -10
@@ -34,7 +34,7 @@ docker compose logs --no-color agent 2>&1 | grep -i "error\|model\|deepseek" | t
 
 | 陷阱 | 症状 | 排查方法 |
 |------|------|---------|
-| CP 端点路径不一致 | Vite proxy rewrite 后 404 | 对比 `@GetMapping` 路径 vs Vite proxy rewrite 规则 |
+| CP 端点路径不一致 | 调用方用了旧别名/缺 `/api/v1`、`/internal/v1` 前缀导致 404 | Vite 已不再重写 API 路径；统一使用规范契约 `docs/api/openapi.yaml` 中的 `/api/v1`（公开）与 `/internal/v1`（服务间）路径 |
 | Docker 网络配置缺失 | CP→Agent 连接拒绝 | 检查 `docker-compose.yml` 环境变量是否完整 |
 | JWT 认证方式不匹配 | SSE 401 | 检查 JWT filter 是否支持 query param token |
 | 属性名不一致 | 配置读取为空 | 对比 `application.properties` 中的 key 名 vs docker-compose 环境变量名 |
@@ -46,7 +46,7 @@ docker compose logs --no-color agent 2>&1 | grep -i "error\|model\|deepseek" | t
 
 | 修改层 | 检查项 |
 |--------|--------|
-| **CP Controller** | Vite proxy rewrite 后路径是否匹配？`@RequestBody` 的 Content-Type 是否与前端请求一致？ |
+| **CP Controller** | 端点是否直接使用规范契约 `/api/v1` / `/internal/v1`？`@RequestBody` 的 Content-Type 是否与前端请求一致？ |
 | **CP JWT Filter** | SSE 端点是否支持 query param token？其他端点是否只接受 header？ |
 | **前端 useSSE** | 发送格式（JSON/FormData）是否与 CP `@RequestBody` 匹配？EventSource URL 是否正确？ |
 | **Agent ConfigClient** | `get_providers()` 返回的 key 名（`apiKey`/`baseUrl`）是否与 `_rebuild_provider_cache()` 读取的 key 一致？ |
@@ -56,8 +56,8 @@ docker compose logs --no-color agent 2>&1 | grep -i "error\|model\|deepseek" | t
 ## E2E 验证 (Docker Compose)
 
 ```bash
-# 构建并启动全栈
-docker compose build && docker compose up -d
+# 构建并启动全栈（mise 统一管理 Docker Compose，自动等待 CP ready）
+mise run dev:full
 # 等待 CP 就绪
 sleep 15
 # 测试 CP 配置 API

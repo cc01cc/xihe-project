@@ -7,7 +7,7 @@ sidebar_group: "Developer Guide"
 sidebar_order: 5
 status: active
 created: 2026-06-03
-updated: 2026-06-15
+updated: 2026-08-29
 ---
 
 # DEV-005: MCP Three-Layer Routing Architecture
@@ -19,6 +19,8 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 1. **CP McpProxyController** — Authentication + tool-name-based routing
 2. **Runtime Gateway** — Per-workspace dispatch
 3. **In-container bridge** — STDIO subprocess management
+
+> **Protocol version note**: The current MCP `Protocol-Version: 2026-07-28` (rmcp 3.1.4, SEP-2567) is fully **sessionless (stateless)** on the Runtime side. Therefore CP must carry the `Mcp-Method` and `Mcp-Name` HTTP headers when forwarding `tools/list` / `tools/call` to Runtime (see commit `a9923e3`); omitting them yields an empty system tool list and `UNKNOWN_TOOL`. The sessionful `mcp-session-id` HMAC signing between CP↔Agent (see §2 and root `AGENTS.md` Known Issues) is orthogonal and still applies.
 
 ## 2. Architecture Diagram
 
@@ -46,10 +48,10 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 ┌────────────────────────▼────────────────────────────────────┐
 │  Runtime Gateway (Rust / Axum, configured by XIHE_RUNTIME_PORT) │
 │                                                             │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp      │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │
-│  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp             │  POST system tool call
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn       │  POST spawn bridge (no serverId)
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │  DELETE stop bridge (kill, with serverId)
+│  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │  POST user STDIO tool call
 │                                                             │
 │  Config polling: Reads mcpServers JSON from CP every 30s,   │
 │  diff then manage                                           │
