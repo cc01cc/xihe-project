@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
-import { api } from '../../composables/api'
+import { api, ApiError } from '../../composables/api'
 import { parseRawToParts } from '../../composables/useStreamParser'
 import { logger } from '../../lib/logger'
 import type { Message } from '../../types'
@@ -53,6 +53,10 @@ async function loadSessionMessages(sessionId: string) {
     }))
     chatStore.loadMessages(sessionId, normalized)
   } catch (err) {
+    if (err instanceof ApiError && err.problem.code === 'MESSAGE_NOT_FOUND') {
+      logger.debug('Session has no persisted messages yet', err)
+      return
+    }
     logger.error('Failed to load session messages', err)
   }
 }

@@ -11,11 +11,12 @@ describe('readFilePreview', () => {
     expect(result).toEqual({ content: '', truncated: true })
   })
 
-  it('calls the CP file API for full read', async () => {
+  it('calls the runtime read_file tool via MCP for full read', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
-      text: () => Promise.resolve('file content'),
-    } as Response)
+      headers: new Headers(),
+      text: () => Promise.resolve('data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"file content"}]}}'),
+    } as unknown as Response)
     const result = await readFilePreview('/small/file', 100)
     expect(result.content).toBe('file content')
     expect(result.truncated).toBe(false)

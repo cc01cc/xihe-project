@@ -1,5 +1,5 @@
 import { decideReadMode, FILE_SIZE_THRESHOLDS } from '../lib/fileSize'
-import { apiRaw } from './api'
+import { api } from './api'
 
 export interface ReadFilePreviewResult {
   content: string
@@ -10,8 +10,7 @@ async function runtimeReadFile(
   path: string,
   opts?: { max_bytes?: number },
 ): Promise<ReadFilePreviewResult> {
-  const res = await apiRaw(`/files/${encodeURIComponent(path)}`)
-  const content = await res.text()
+  const { content } = await api.readFile(path)
   const maxBytes = opts?.max_bytes
   return maxBytes !== undefined && content.length > maxBytes
     ? { content: content.slice(0, maxBytes), truncated: true }

@@ -92,7 +92,7 @@ router.beforeEach((to) => {
   if (requiresAuth && !token) {
     return { name: 'login', query: { redirect: to.fullPath } }
   } else if ((to.name === 'login' || to.name === 'register') && token) {
-    return { name: 'chat' }
+    return { path: '/chat' }
   }
 
   return true

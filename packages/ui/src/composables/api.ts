@@ -95,6 +95,57 @@ export async function apiDelete(path: string): Promise<void> {
   })
 }
 
+function runtimeMcpHeaders(): Record<string, string> {
+  const userRaw = localStorage.getItem('xihe-user')
+  const workspaceId = userRaw ? (JSON.parse(userRaw).workspaceId as string | undefined) : undefined
+  return {
+    Accept: 'application/json, text/event-stream',
+    'MCP-Protocol-Version': '2026-07-28',
+    ...(workspaceId ? { 'X-Workspace-Id': workspaceId } : {}),
+  }
+}
+
+async function callRuntimeTool<T>(tool: string, args: Record<string, unknown>): Promise<T> {
+  const res = await checkedFetch('/mcp', {
+    method: 'POST',
+    headers: runtimeMcpHeaders(),
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      id: Date.now(),
+      params: { name: tool, arguments: args },
+    }),
+  })
+  const text = await res.text()
+  const jsonLine = text.startsWith('data:')
+    ? text.split('\n').find((line) => line.startsWith('data:'))!.slice(5).trim()
+    : text
+  const body = JSON.parse(jsonLine)
+  if (body.error) {
+    throw new ApiError({
+      status: 502,
+      code: 'MCP_TOOL_ERROR',
+      detail: body.error.message || 'MCP tool call failed',
+      requestId: res.headers.get('X-Request-Id') || 'unknown',
+    })
+  }
+  const result = body.result
+  if (result?.isError) {
+    throw new ApiError({
+      status: 502,
+      code: 'MCP_TOOL_ERROR',
+      detail: result.content?.[0]?.text || 'MCP tool error',
+      requestId: res.headers.get('X-Request-Id') || 'unknown',
+    })
+  }
+  if (result?.structuredContent !== undefined) return result.structuredContent as T
+  const textContent = result?.content?.[0]?.text
+  if (typeof textContent === 'string') {
+    try { return JSON.parse(textContent) as T } catch { return textContent as T }
+  }
+  return result as T
+}
+
 export const api = {
   login(email: string, password: string) {
     return request<{ accessToken: string; user: { id: string; email: string }; workspaceId?: string }>('/auth/login', {
@@ -148,25 +199,30 @@ export const api = {
       }>
     }>('/status')
   },
-  listDirectory(path: string) {
-    return request<{ entries: Array<{ name: string; path: string; type: string; size?: number; modified?: string }> }>(
-      `/mcp/runtime__list_directory`, { method: 'POST', body: JSON.stringify({ path }) }
+  async listDirectory(path: string) {
+    const raw = await callRuntimeTool<{ entries?: Array<{ name: string; path: string; is_dir?: boolean; type?: string; size?: number; modified?: string }> }>(
+      'list_directory', { path }
     )
+    const entries = (raw.entries ?? []).map((e) => ({
+      name: e.name,
+      path: e.path,
+      type: e.type ?? (e.is_dir ? 'directory' : 'file'),
+      size: e.size,
+      modified: e.modified,
+    }))
+    return { entries }
   },
-  readFile(path: string) {
-    return request<{ content: string }>(
-      `/mcp/runtime__read_file`, { method: 'POST', body: JSON.stringify({ path }) }
-    )
+  async readFile(path: string) {
+    const content = await callRuntimeTool<string>('read_file', { path })
+    return { content: typeof content === 'string' ? content : String(content) }
   },
-  writeFile(path: string, content: string) {
-    return request<{ success: boolean }>(
-      `/mcp/runtime__write_file`, { method: 'POST', body: JSON.stringify({ path, content }) }
-    )
+  async writeFile(path: string, content: string) {
+    await callRuntimeTool<string>('write_file', { path, content })
+    return { success: true }
   },
-  deleteFile(path: string) {
-    return request<{ success: boolean }>(
-      `/mcp/runtime__delete_file`, { method: 'POST', body: JSON.stringify({ path }) }
-    )
+  async deleteFile(path: string) {
+    await callRuntimeTool<string>('delete_file', { path })
+    return { success: true }
   },
   getMcpConfig(wsId: string) {
     return request<{ mcpServers?: string | Record<string, unknown> }>(`/workspaces/${wsId}/mcp-config`)
