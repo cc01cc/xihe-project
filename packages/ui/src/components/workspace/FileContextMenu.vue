@@ -22,6 +22,8 @@ const showNewFileModal = ref(false)
 const deleteLoading = ref(false)
 const newFileName = ref('')
 
+const menuRef = ref<HTMLElement | null>(null)
+
 onMounted(() => {
   isDir.value = !props.path.includes('.')
   document.addEventListener('click', handleOutsideClick)
@@ -31,7 +33,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleOutsideClick)
 })
 
-function handleOutsideClick() {
+function handleOutsideClick(e: MouseEvent) {
+  if (showDeleteModal.value || showNewFileModal.value) return
+  if (menuRef.value && e.target instanceof Node && menuRef.value.contains(e.target)) return
   emit('close')
 }
 
@@ -73,6 +77,7 @@ function confirmNewFile() {
 
 <template>
   <div
+    ref="menuRef"
     class="fixed z-50 min-w-40 py-1 rounded-lg border bg-popover text-popover-foreground shadow-md text-sm"
     :style="{ left: `${x}px`, top: `${y}px` }"
   >

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import MarkdownRender from 'markstream-vue'
 
 const props = defineProps<{
   modelValue: string
@@ -89,7 +90,7 @@ function onInput() {
       />
     </div>
     <div v-else class="flex-1 overflow-y-auto p-4 prose prose-sm max-w-none">
-      <div v-text="text" />
+      <MarkdownRender mode="chat" :content="text" :final="true" custom-id="xihe-workspace-md" />
     </div>
 
     <div class="px-3 py-1 text-[10px] text-muted-foreground border-t shrink-0 flex justify-between">
