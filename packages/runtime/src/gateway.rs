@@ -108,6 +108,10 @@ impl WorkspaceRegistry {
         self.instances.read().await.get(ws_id).cloned()
     }
 
+    pub fn try_get(&self, ws_id: &str) -> Option<XiheRuntimeInstance> {
+        self.instances.try_read().ok()?.get(ws_id).cloned()
+    }
+
     pub async fn contains(&self, ws_id: &str) -> bool {
         self.instances.read().await.contains_key(ws_id)
     }

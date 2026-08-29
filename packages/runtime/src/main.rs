@@ -1173,6 +1173,13 @@ async fn create_workspace_handler(
     registry
         .register_with_profile(&req.ws_id, &req.workspace_path, profile)
         .await;
+    if let Err(err) = std::fs::create_dir_all(&req.workspace_path) {
+        tracing::error!(
+            "Failed to create workspace directory {}: {}",
+            req.workspace_path,
+            err
+        );
+    }
     tracing::info!(
         "Workspace registered via API: ws_id={}, path={}",
         req.ws_id,
@@ -1283,6 +1290,7 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("XIHE_WORKSPACE").unwrap_or_else(|_| "/tmp/xihe-workspace".to_string());
     let wp = workspace_path.clone();
 
+    let service_registry = registry.clone();
     let service = StreamableHttpService::new(
         move || {
             let ws_id = CURRENT_WS_ID
@@ -1293,7 +1301,11 @@ async fn main() -> anyhow::Result<()> {
                 SecurityProfile::Strict => None,
                 _ => tokio::runtime::Handle::current().block_on(resolve_container_addr(&ws_id)),
             };
-            Ok(XiheRuntime::new(&ws_id, &wp, profile, container_addr))
+            let ws_root = service_registry
+                .try_get(&ws_id)
+                .map(|instance| instance.workspace_path.clone())
+                .unwrap_or_else(|| wp.clone());
+            Ok(XiheRuntime::new(&ws_id, &ws_root, profile, container_addr))
         },
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default()
