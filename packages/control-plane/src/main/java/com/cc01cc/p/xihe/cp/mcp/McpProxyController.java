@@ -193,22 +193,7 @@ public class McpProxyController {
         Map<String, String> mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
 
         try {
-            List<Map<String, Object>> allTools = new ArrayList<>();
-
-            // 1. Call system MCP tools/list
-            ResponseEntity<String> sysResp = forwardToRuntime(wsId, null, body, headers, sessionId);
-            if (sysResp.getStatusCode().is2xxSuccessful()) {
-                List<Map<String, Object>> sysTools = extractToolsFromResponse(sysResp.getBody());
-                if (sysTools != null) {
-                    for (Map<String, Object> tool : sysTools) {
-                        String name = (String) tool.get("name");
-                        if (name != null) {
-                            mapping.put(name, "__system__");
-                            allTools.add(tool);
-                        }
-                    }
-                }
-            }
+            List<Map<String, Object>> allTools = new ArrayList<>(populateSystemTools(wsId, headers));
 
             // 2. Call each STDIO server's tools/list
             Set<String> seenNames = new HashSet<>();
@@ -265,6 +250,33 @@ public class McpProxyController {
         }
     }
 
+    private List<Map<String, Object>> populateSystemTools(String wsId, HttpHeaders headers) {
+        Map<String, String> mapping = toolServerCache.computeIfAbsent(wsId, k -> new ConcurrentHashMap<>());
+        String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
+        ResponseEntity<String> sysResp = forwardToRuntime(wsId, null, listBody, headers, null);
+        if (!sysResp.getStatusCode().is2xxSuccessful()) {
+            logger.warn("System tools/list failed: wsId={} status={}", wsId, sysResp.getStatusCode());
+            return Collections.emptyList();
+        }
+        List<Map<String, Object>> sysTools = extractToolsFromResponse(sysResp.getBody());
+        if (sysTools == null || sysTools.isEmpty()) {
+            String bodyPreview = sysResp.getBody() == null ? "null"
+                    : sysResp.getBody().substring(0, Math.min(500, sysResp.getBody().length()));
+            logger.warn("System tools/list returned no tools: wsId={} status={} body={}",
+                    wsId, sysResp.getStatusCode(), bodyPreview);
+            return Collections.emptyList();
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> tool : sysTools) {
+            String name = (String) tool.get("name");
+            if (name != null) {
+                mapping.put(name, "__system__");
+                result.add(tool);
+            }
+        }
+        return result;
+    }
+
     private ResponseEntity<String> handleToolsCall(String wsId, String body, HttpHeaders headers, String sessionId) {
         String toolName = extractToolName(body);
         if (toolName == null) {
@@ -274,6 +286,12 @@ public class McpProxyController {
         refreshCacheIfNeeded(wsId);
         Map<String, String> mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
         String serverId = mapping.get(toolName);
+
+        if (serverId == null) {
+            populateSystemTools(wsId, headers);
+            mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
+            serverId = mapping.get(toolName);
+        }
 
         if (serverId == null) {
             return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL", "Requested tool is unavailable");
@@ -342,6 +360,17 @@ public class McpProxyController {
             if (workspacePath != null && !workspacePath.isEmpty()) {
                 requestBuilder.header("X-Workspace-Path", workspacePath);
                 requestBuilder.header("X-Workspace-Id", TenantContext.getWorkspaceId());
+            }
+
+            String requestMethod = extractMethod(body);
+            if (requestMethod != null && !requestMethod.isEmpty()) {
+                requestBuilder.header("Mcp-Method", requestMethod);
+            }
+            if ("tools/call".equals(requestMethod)) {
+                String toolName = extractToolName(body);
+                if (toolName != null && !toolName.isEmpty()) {
+                    requestBuilder.header("Mcp-Name", toolName);
+                }
             }
 
             HttpRequest forwardRequest = requestBuilder
@@ -497,7 +526,7 @@ public class McpProxyController {
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> extractToolsFromResponse(String responseBody) {
         try {
-            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode root = objectMapper.readTree(extractJsonPayload(responseBody));
             JsonNode result = root.get("result");
             if (result != null && result.has("tools")) {
                 return objectMapper.convertValue(result.get("tools"), List.class);
@@ -506,6 +535,25 @@ public class McpProxyController {
             logger.debug("Failed to extract tools from response: {}", e.getMessage());
         }
         return null;
+    }
+
+    private String extractJsonPayload(String body) {
+        if (body == null) {
+            return "{}";
+        }
+        String trimmed = body.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return trimmed;
+        }
+        for (String line : trimmed.split("\n")) {
+            if (line.startsWith("data:")) {
+                String data = line.substring(5).trim();
+                if (data.startsWith("{")) {
+                    return data;
+                }
+            }
+        }
+        return trimmed;
     }
 
     private String extractMethod(String body) {
