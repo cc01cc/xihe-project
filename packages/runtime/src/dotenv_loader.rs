@@ -39,6 +39,9 @@ fn find_project_root() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Mutex;
+
+    static CURRENT_DIR_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn find_project_root_finds_env_dev() {
@@ -67,6 +70,7 @@ mod tests {
     }
 
     fn in_dir<T>(d: &std::path::Path, f: fn() -> T) -> T {
+        let _guard = CURRENT_DIR_LOCK.lock().unwrap();
         let orig = std::env::current_dir().unwrap();
         std::env::set_current_dir(d).unwrap();
         let r = f();

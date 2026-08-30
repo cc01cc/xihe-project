@@ -21,7 +21,7 @@ use rmcp::model::ProtocolVersion;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::interval;
@@ -123,9 +123,50 @@ pub struct GrepRequest {
     pub path: String,
 }
 
+fn deserialize_args<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(deserializer)?;
+    match v {
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() || t == "[]" || t == "None" || t == "null" {
+                Ok(Vec::new())
+            } else if t.starts_with('[') {
+                // LLM sometimes sends array as JSON-encoded string, e.g. "[\"-c\", \"date\"]"
+                let parsed: Vec<String> = serde_json::from_str::<Vec<String>>(t).unwrap_or_else(|_| {
+                    serde_json::from_str::<Vec<serde_json::Value>>(t)
+                        .map(|arr| {
+                            arr.into_iter()
+                                .map(|x| {
+                                    x.as_str()
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| x.to_string().trim_matches('"').to_string())
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_else(|_| vec![s.clone()])
+                });
+                Ok(parsed)
+            } else {
+                Ok(vec![s])
+            }
+        }
+        serde_json::Value::Array(arr) => Ok(arr
+            .into_iter()
+            .filter_map(|x| x.as_str().map(|s| s.to_string()).or_else(|| Some(x.to_string())))
+            .collect()),
+        serde_json::Value::Null => Ok(Vec::new()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ExecuteCommandRequest {
     pub command: String,
+    #[serde(default, deserialize_with = "deserialize_args")]
+    #[schemars(default)]
     pub args: Vec<String>,
     pub timeout: Option<u64>,
     pub truncate_limit: Option<u64>,
@@ -617,7 +658,12 @@ impl XiheRuntime {
 #[tool_handler]
 impl ServerHandler for XiheRuntime {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+        Cow::Borrowed(&[
+            ProtocolVersion::V_2026_07_28,
+            ProtocolVersion::V_2025_11_25,
+            ProtocolVersion::V_2025_06_18,
+            ProtocolVersion::V_2025_03_26,
+        ])
     }
 }
 
@@ -660,6 +706,8 @@ struct CreateWorkspaceRequest {
     ws_id: String,
     #[serde(rename = "workspacePath")]
     workspace_path: String,
+    #[serde(rename = "storageRef")]
+    storage_ref: Option<String>,
     profile: Option<String>,
 }
 
@@ -1170,20 +1218,37 @@ async fn create_workspace_handler(
         Some("isolated") => SecurityProfile::Isolated,
         _ => SecurityProfile::Strict,
     };
+    // v1 minimal: CP is canonical for storageRef; Runtime resolves host path locally.
+    // If XIHE_WORKSPACE_HOST_ROOT is set and storageRef is present, derive host path from it.
+    let effective_path = if let Some(ref sref) = req.storage_ref {
+        if let Ok(host_root) = std::env::var("XIHE_WORKSPACE_HOST_ROOT") {
+            let trimmed = host_root.trim_end_matches('/').trim_end_matches('\\');
+            let path = PathBuf::from(trimmed).join(sref);
+            path.to_string_lossy().to_string()
+        } else {
+            req.workspace_path.clone()
+        }
+    } else {
+        req.workspace_path.clone()
+    };
     registry
-        .register_with_profile(&req.ws_id, &req.workspace_path, profile)
+        .register_with_profile(&req.ws_id, &effective_path, profile)
         .await;
-    if let Err(err) = std::fs::create_dir_all(&req.workspace_path) {
+    if let Err(err) = std::fs::create_dir_all(&effective_path) {
         tracing::error!(
-            "Failed to create workspace directory {}: {}",
+            "Failed to create workspace directory {} (resolved from {:?} / {:?}): {}",
+            effective_path,
             req.workspace_path,
+            req.storage_ref,
             err
         );
     }
     tracing::info!(
-        "Workspace registered via API: ws_id={}, path={}",
+        "Workspace registered via API: ws_id={}, path={}, storageRef={:?}, effective_path={}",
         req.ws_id,
-        req.workspace_path
+        req.workspace_path,
+        req.storage_ref,
+        effective_path
     );
     AxumJson(CreateWorkspaceResponse {
         status: "ok".to_string(),
