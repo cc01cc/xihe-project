@@ -155,6 +155,14 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 详见 [docs/i18n/zh-Hans/DEV-005-agent-architecture.md](docs/i18n/zh-Hans/DEV-005-agent-architecture.md)。
 
+### Runtime / Sandbox 生命周期边界
+
+- 当前 v1 的控制面与执行面保持分离：CP 负责 workspace 元数据、授权、健康状态和降级；Runtime 负责实际文件、命令、容器和 MCP bridge 执行；进程保活由外部 orchestrator（Docker/mise watcher）负责。
+- `WorkspaceRegistry` 与真正的 `WorkspaceManager` 若同时存在，必须先收敛为一条可恢复的 workspace 状态机，统一覆盖 create、exec、MCP、pause/resume、restart 和 delete；不要在双路径上继续堆叠功能。
+- 单 Runtime/单设备 v1 不把 registration、heartbeat、generation、warm pool、microVM 或多设备接管设为运行前置条件；这些属于后续 runtime hardening/生产化范围。
+- 隔离引擎升级应排在生命周期状态机、持久化恢复和 fail-closed 边界之后。未知 workspace、Docker 不可用和执行超时必须显式失败，不能用默认目录或静默降级掩盖状态丢失。
+- 远程 MCP 仍只经 CP logical endpoint；多 workspace MCP client 缓存和清理属于独立后续工作，不应复用另一个 workspace 的已发现工具。
+
 ## Code Style
 
 - **Naming**: `camelCase` (TS/JS/Java), `snake_case` (Python/Rust)
