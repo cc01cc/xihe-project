@@ -15,8 +15,6 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -57,15 +55,12 @@ public class WorkspaceService {
 
         workspaceUserRepository.save(new WorkspaceUser(ws.getId(), ownerId, WorkspaceRole.OWNER));
 
-        try {
-            Files.createDirectories(Path.of(ws.getStoragePath()));
-        } catch (Exception e) {
-            logger.error("Failed to create workspace directory: {}", ws.getStoragePath(), e);
-        }
+        // Runtime is the sole writer of workspace files (PLAN-197 v1 minimal).
+        // CP no longer creates the host directory; it only persists logical metadata.
+        String storageRef = "workspace/" + ws.getId();
+        notifyRuntimeCreate(ws.getId(), ws.getStoragePath(), storageRef);
 
-        notifyRuntimeCreate(ws.getId(), ws.getStoragePath());
-
-        logger.info("Workspace created: id={} name={} path={}", ws.getId(), name, ws.getStoragePath());
+        logger.info("Workspace created: id={} name={} path={} storageRef={}", ws.getId(), name, ws.getStoragePath(), storageRef);
         return ws;
     }
 
@@ -105,7 +100,7 @@ public class WorkspaceService {
                 .orElse(null);
     }
 
-    private void notifyRuntimeCreate(String workspaceId, String workspacePath) {
+    private void notifyRuntimeCreate(String workspaceId, String workspacePath, String storageRef) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -113,10 +108,11 @@ public class WorkspaceService {
             Map<String, String> body = new java.util.LinkedHashMap<>();
             body.put("workspaceId", workspaceId);
             body.put("workspacePath", workspacePath);
+            body.put("storageRef", storageRef);
             body.put("image", workspaceImage);
             HttpEntity<Map<String, String>> request = new HttpEntity<>(body, headers);
             restTemplate.postForEntity(runtimeUrl + "/internal/v1/runtime/workspaces", request, String.class);
-            logger.debug("Runtime notified of workspace creation: {}", workspaceId);
+            logger.debug("Runtime notified of workspace creation: {} storageRef={}", workspaceId, storageRef);
         } catch (Exception e) {
             logger.warn("Failed to notify Runtime for workspace create (workspaceId={}): {}", workspaceId, e.getMessage());
         }

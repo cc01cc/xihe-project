@@ -1,14 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.File;
@@ -19,6 +11,17 @@ import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.status.HealthMonitor;
+import com.cc01cc.p.xihe.cp.status.RequestQueue;
+import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -30,6 +33,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -45,6 +49,8 @@ public class ChatController {
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
+    private final HealthMonitor healthMonitor;
+    private final RequestQueue requestQueue;
 
     @Value("${cp.agent-url:http://localhost:12632/chat}")
     private String agentUrl;
@@ -58,7 +64,9 @@ public class ChatController {
             SessionRepository sessionRepository,
             MessageRepository messageRepository,
             FileRepository fileRepository,
-            WorkspaceUserRepository workspaceUserRepository) {
+            WorkspaceUserRepository workspaceUserRepository,
+            HealthMonitor healthMonitor,
+            RequestQueue requestQueue) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -68,6 +76,18 @@ public class ChatController {
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
         this.workspaceUserRepository = workspaceUserRepository;
+        this.healthMonitor = healthMonitor;
+        this.requestQueue = requestQueue;
+
+        // Wire drain callback: when agent recovers, drain queued requests
+        healthMonitor.setOnServiceRecovered(serviceName -> {
+            if ("agent".equals(serviceName)) {
+                requestQueue.drain(req -> {
+                    logger.info("[LIFECYCLE] service=cp event=requestRedelivered sessionId={}", req.sessionId());
+                    execAsync(req.sessionId(), req.content(), req.model(), List.of(), req.workspaceId());
+                });
+            }
+        });
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
@@ -123,6 +143,39 @@ public class ChatController {
         if (!sseManager.hasEmitter(sessionId)) {
             logger.warn("Rejected chat request without SSE subscription session={}", sessionId);
             return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "SSE_SUBSCRIPTION_REQUIRED", "An active SSE subscription is required");
+        }
+
+        // Circuit breaker check
+        CircuitBreaker agentBreaker = healthMonitor.getAgentBreaker();
+        if (!agentBreaker.allowRequest()) {
+            logger.warn("[LIFECYCLE] service=cp event=chatRejectedCircuitOpen session={}", sessionId);
+            String requestId = java.util.UUID.randomUUID().toString();
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "30")
+                .contentType(MediaType.parseMediaType("application/problem+json"))
+                .header("X-Request-Id", requestId)
+                .body(Map.of(
+                    "type", "https://xihe.dev/problems/agent-circuit-open",
+                    "title", "Agent service temporarily unavailable",
+                    "status", 503,
+                    "code", "AGENT_CIRCUIT_OPEN",
+                    "detail", "Agent service is temporarily unavailable, retry after 30 seconds",
+                    "requestId", requestId
+                ));
+        }
+
+        // Agent down → queue request
+        HealthMonitor.ServiceHealth agentHealth = healthMonitor.getAgentHealth();
+        if ("down".equals(agentHealth.status())) {
+            boolean queued = requestQueue.enqueue(sessionId, content, model, effectiveUserId, effectiveWorkspaceId);
+            if (queued) {
+                return ResponseEntity.accepted().body(Map.of(
+                    "status", "queued",
+                    "sessionId", sessionId,
+                    "reason", "agent_down"
+                ));
+            }
+            // Queue full → fall through to attempt direct call
         }
 
         Session session = sessionRepository.findById(sessionId)
@@ -195,7 +248,7 @@ public class ChatController {
 
         logger.info("Persisted message session={} messageId={} attachments={}", sessionId, userMessage.getId(), attachmentIds.size());
 
-        execAsync(sessionId, content, model, attachmentInfos);
+        execAsync(sessionId, content, model, attachmentInfos, effectiveWorkspaceId);
         return ResponseEntity.accepted().body(Map.of(
             "status", "accepted",
             "sessionId", sessionId,
@@ -213,20 +266,27 @@ public class ChatController {
     }
 
     private void execAsync(String sessionId, String content) {
-        execAsync(sessionId, content, null, List.of());
+        execAsync(sessionId, content, null, List.of(), "default");
     }
 
     private void execAsync(String sessionId, String content, String model) {
-        execAsync(sessionId, content, model, List.of());
+        execAsync(sessionId, content, model, List.of(), "default");
     }
 
     private void execAsync(String sessionId, String content, String model,
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments) {
+        execAsync(sessionId, content, model, attachments, "default");
+    }
+
+    private void execAsync(String sessionId, String content, String model,
+                           List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
+                           String workspaceId) {
         new Thread(() -> {
             try {
-                Map<String, Object> agentRequest = new java.util.HashMap<>();
+                Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);
                 agentRequest.put("content", content);
+                agentRequest.put("workspaceId", workspaceId);
                 agentRequest.put("stream", true);
                 if (model != null && !model.isEmpty()) {
                     agentRequest.put("model", model);
@@ -248,15 +308,17 @@ public class ChatController {
                     .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                     .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
                     .header("Authorization", "Bearer " + agentApiToken)
-                    .timeout(Duration.ofMinutes(5))
+                    .timeout(Duration.ofSeconds(30))
                     .POST(HttpRequest.BodyPublishers.ofString(
                         objectMapper.writeValueAsString(agentRequest), StandardCharsets.UTF_8))
                     .build();
 
+                long startMs = System.currentTimeMillis();
                 HttpResponse<InputStream> response = agentHttpClient.send(
                     agentRequestMessage,
                     HttpResponse.BodyHandlers.ofInputStream()
                 );
+                long elapsedMs = System.currentTimeMillis() - startMs;
 
                 if (response.statusCode() >= 400) {
                     String errorBody;
@@ -264,8 +326,9 @@ public class ChatController {
                         errorBody = new String(errorStream.readAllBytes(), StandardCharsets.UTF_8);
                     }
 
-                    logger.error("Agent request failed session={} status={} body={}",
-                            sessionId, response.statusCode(), errorBody);
+                    logger.error("[LIFECYCLE] service=cp event=chatForwardFailed session={} status={} elapsedMs={} body={}",
+                            sessionId, response.statusCode(), elapsedMs, errorBody);
+                    healthMonitor.getAgentBreaker().recordFailure();
                     sseManager.send(sessionId, "error", Map.of(
                         "code", "AGENT_UNAVAILABLE",
                         "requestId", java.util.UUID.randomUUID().toString(),
@@ -275,7 +338,8 @@ public class ChatController {
                     return;
                 }
 
-                logger.info("Streaming agent response session={} status={}", sessionId, response.statusCode());
+                healthMonitor.getAgentBreaker().recordSuccess();
+                logger.info("[LIFECYCLE] service=cp event=chatForwarded session={} status={} elapsedMs={}", sessionId, response.statusCode(), elapsedMs);
                 String assistantContent;
                 try (InputStream agentStream = response.body()) {
                     assistantContent = relayAgentStream(sessionId, agentStream);
@@ -288,13 +352,27 @@ public class ChatController {
                     logger.info("Persisted assistant reply session={} messageId={}", sessionId, assistantMessage.getId());
                 }
 
+            } catch (java.net.http.HttpTimeoutException e) {
+                logger.warn("[LIFECYCLE] service=cp event=chatTimeout session={} timeoutMs=30000", sessionId);
+                healthMonitor.getAgentBreaker().recordFailure();
+                sseManager.send(sessionId, "error", Map.of(
+                    "code", "AGENT_TIMEOUT",
+                    "requestId", java.util.UUID.randomUUID().toString(),
+                    "detail", "Agent request timed out after 30 seconds",
+                    "type", "error"
+                ));
             } catch (Exception e) {
-                logger.error("Chat request failed session={}", sessionId, e);
+                logger.error("[LIFECYCLE] service=cp event=chatForwardFailed session={} error={}", sessionId, e.getMessage(), e);
+                healthMonitor.getAgentBreaker().recordFailure();
                 sseManager.send(sessionId, "error", Map.of(
                     "code", "CHAT_EXECUTION_FAILED",
                     "requestId", java.util.UUID.randomUUID().toString(),
                     "detail", "Chat execution failed",
                     "type", "error"));
+            } finally {
+                // The Agent may close without emitting the terminal event.
+                // Always release the UI stream after relay success or failure.
+                sseManager.complete(sessionId);
             }
         }).start();
     }
@@ -315,6 +393,8 @@ public class ChatController {
 
     private String relayAgentStream(String sessionId, InputStream agentStream) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
+        Map<String, Integer> eventCounts = new LinkedHashMap<>();
+        boolean doneSeen = false;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
             String eventName = "message";
             StringBuilder data = new StringBuilder();
@@ -322,6 +402,8 @@ public class ChatController {
 
             while ((line = reader.readLine()) != null) {
                 if (line.isBlank()) {
+                    recordStreamEvent(eventCounts, eventName, data.length());
+                    doneSeen = doneSeen || "done".equals(eventName);
                     collectEventContent(assistantContent, eventName, data.toString());
                     dispatchEvent(sessionId, eventName, data.toString());
                     eventName = "message";
@@ -342,21 +424,59 @@ public class ChatController {
                 }
             }
 
+            recordStreamEvent(eventCounts, eventName, data.length());
+            doneSeen = doneSeen || "done".equals(eventName);
             collectEventContent(assistantContent, eventName, data.toString());
             dispatchEvent(sessionId, eventName, data.toString());
         }
+        if (!doneSeen) {
+            logger.warn("Agent SSE stream missing done event session={}; emitting relay fallback", sessionId);
+            dispatchEvent(sessionId, "done", "{\"type\":\"done\",\"synthetic\":true}");
+            eventCounts.put("done", 1);
+        }
+        logger.info("Agent SSE relay completed session={} events={} assistantChars={}",
+                sessionId, eventCounts, assistantContent.length());
         return assistantContent.toString();
     }
 
+    private void recordStreamEvent(Map<String, Integer> eventCounts, String eventName, int payloadLength) {
+        if (payloadLength <= 0) {
+            return;
+        }
+        eventCounts.merge(eventName, 1, Integer::sum);
+        logger.debug("Agent SSE event received event={} payloadLength={}", eventName, payloadLength);
+    }
+
     private void collectEventContent(StringBuilder builder, String eventName, String payload) {
-        if (!"message".equals(eventName) || payload == null || payload.isBlank()) {
+        if (payload == null || payload.isBlank()) {
+            return;
+        }
+        // Agent emits token/tool_call/tool_result/done; UI expects token for text.
+        // Accumulate assistant text from token and legacy message events; ignore tool/status/done.
+        if (!"token".equals(eventName) && !"message".equals(eventName)) {
             return;
         }
         Object parsed = parsePayload(eventName, payload);
         if (parsed instanceof Map<?, ?> map) {
+            // Reasoning tokens are separate parts (hint=reasoning), not final assistant text.
+            Object hint = map.get("hint");
+            if ("reasoning".equals(hint)) {
+                return;
+            }
             Object content = map.get("content");
             if (content instanceof String s && !s.isBlank()) {
                 builder.append(s);
+            } else if (content instanceof java.util.List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof String str) {
+                        builder.append(str);
+                    } else if (item instanceof Map<?, ?> block) {
+                        Object text = block.get("text");
+                        if (text instanceof String t && !t.isBlank()) {
+                            builder.append(t);
+                        }
+                    }
+                }
             }
         } else if (parsed instanceof String s) {
             builder.append(s);

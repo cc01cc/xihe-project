@@ -332,11 +332,19 @@ public class McpProxyController {
                 ? requestedAccept
                 : "application/json, text/event-stream";
 
+            String protocolVersion = extractProtocolVersion(body);
+            if (protocolVersion == null) {
+                protocolVersion = headers.getFirst("MCP-Protocol-Version");
+            }
+            if (protocolVersion == null || protocolVersion.isEmpty()) {
+                protocolVersion = "2026-07-28";
+            }
+
             var requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(runtimeBaseUrl + path))
                 .header("Content-Type", "application/json")
                 .header("Accept", forwardedAccept)
-                .header("MCP-Protocol-Version", "2026-07-28")
+                .header("MCP-Protocol-Version", protocolVersion)
                 .header("Authorization", "Bearer " + runtimeServiceToken);
 
             for (String headerName : List.of(
@@ -374,7 +382,7 @@ public class McpProxyController {
             }
 
             HttpRequest forwardRequest = requestBuilder
-                .POST(HttpRequest.BodyPublishers.ofString(normalizeRuntimeBody(body)))
+                .POST(HttpRequest.BodyPublishers.ofString(normalizeRuntimeBody(body, protocolVersion)))
                 .timeout(Duration.ofSeconds(30))
                 .build();
 
@@ -405,7 +413,7 @@ public class McpProxyController {
         }
     }
 
-    private String normalizeRuntimeBody(String body) {
+    private String normalizeRuntimeBody(String body, String protocolVersion) {
         try {
             JsonNode parsed = objectMapper.readTree(body);
             if (!(parsed instanceof ObjectNode request)) {
@@ -423,7 +431,7 @@ public class McpProxyController {
                 ? existing
                 : objectMapper.createObjectNode();
             if (!meta.has("io.modelcontextprotocol/protocolVersion")) {
-                meta.put("io.modelcontextprotocol/protocolVersion", "2026-07-28");
+                meta.put("io.modelcontextprotocol/protocolVersion", protocolVersion);
             }
             meta.set("io.modelcontextprotocol/clientInfo", objectMapper.valueToTree(
                 Map.of("name", "xihe-cp-gateway", "version", "0.1.0")));
@@ -576,6 +584,20 @@ public class McpProxyController {
             return null;
         } catch (Exception e) {
             logger.debug("Failed to extract tool name: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String extractProtocolVersion(String body) {
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            if ("initialize".equals(root.path("method").asText())) {
+                String version = root.path("params").path("protocolVersion").asText();
+                return version.isEmpty() ? null : version;
+            }
+            return null;
+        } catch (Exception e) {
+            logger.debug("Failed to extract protocol version: {}", e.getMessage());
             return null;
         }
     }

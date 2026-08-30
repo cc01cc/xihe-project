@@ -37,19 +37,23 @@ public class SseEmitterManager {
         return emitter;
     }
 
-    public void send(String sessionId, String eventName, Object data) {
+    public boolean send(String sessionId, String eventName, Object data) {
         SseEmitter emitter = emitters.get(sessionId);
         if (emitter != null) {
             try {
                 emitter.send(SseEmitter.event()
                     .name(eventName)
                     .data(data));
+                logger.debug("SSE event delivered session={} event={}", sessionId, eventName);
+                return true;
             } catch (IOException e) {
                 logger.warn("Failed to send SSE event session={} event={} error={}", sessionId, eventName, e.getMessage());
                 emitters.remove(sessionId);
+                return false;
             }
         } else {
             logger.debug("No active SSE emitter for session={} event={}", sessionId, eventName);
+            return false;
         }
     }
 
