@@ -165,3 +165,33 @@ describe('BUG-6: /chat 409 when SSE subscription is missing', () => {
     expect(isStreaming.value).toBe(false)
   })
 })
+
+describe('BUG-7: streaming lifecycle callbacks', () => {
+  it('sendMessage invokes onStart before the first token arrives', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 202 })
+    vi.stubGlobal('fetch', fetchSpy)
+    const onStart = vi.fn()
+
+    const { connect, sendMessage } = useSSE('test-session')
+    connect({ onStart })
+    await sendMessage({ content: 'Hello' })
+
+    expect(onStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('maps problem detail payloads to a visible error message', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve({ code: 'AGENT_UNAVAILABLE', detail: 'Agent is unavailable' }),
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+    const onError = vi.fn()
+
+    const { connect, sendMessage } = useSSE('test-session')
+    connect({ onError })
+    await sendMessage({ content: 'Hello' })
+
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining('Agent'))
+  })
+})

@@ -16,7 +16,8 @@ const chatStore = useChatStore()
 const agentStore = useAgentStore()
 
 const currentSessionId = computed(() => {
-  const id = (route.params.sessionId as string) || sessionStore.currentSessionId
+  const routeId = route.params.sessionId as string
+  const id = (routeId && routeId !== 'default' ? routeId : '') || sessionStore.currentSessionId
   if (id && !sessionStore.currentSessionId) {
     sessionStore.selectSession(id)
   }
@@ -76,7 +77,7 @@ watch(
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex h-full min-w-0 flex-col">
     <header class="flex items-center justify-between px-4 h-12 border-b shrink-0 bg-background/80 backdrop-blur-sm">
       <h2 class="text-sm font-medium truncate">
         {{ sessionStore.currentSession?.title || 'xihe' }}

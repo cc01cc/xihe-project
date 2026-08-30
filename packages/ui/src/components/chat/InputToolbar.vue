@@ -28,7 +28,7 @@ function isVisible(action: ToolbarAction): boolean {
 </script>
 
 <template>
-  <div class="flex items-center gap-1">
+  <div class="flex min-w-0 flex-1 items-center gap-1">
     <template
       v-for="action in leftActions"
       :key="action.key"
@@ -45,7 +45,7 @@ function isVisible(action: ToolbarAction): boolean {
       </component>
     </template>
 
-    <div class="flex-1" />
+    <div class="min-w-2 flex-1" />
 
     <template
       v-for="action in rightActions"

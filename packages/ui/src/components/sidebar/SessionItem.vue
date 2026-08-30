@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { MessageSquareText } from '@lucide/vue'
 import type { Session } from '../../types'
 
 const props = defineProps<{
@@ -62,7 +63,7 @@ function handleRenameKeydown(e: KeyboardEvent) {
     @click="handleClick"
     @contextmenu="handleContextMenu"
   >
-    <span class="i-lucide-message-square-text size-4 shrink-0 opacity-70" />
+    <MessageSquareText class="size-4 shrink-0 opacity-70" />
     <div v-if="isRenaming" class="flex-1 min-w-0">
       <input
         v-model="renameValue"

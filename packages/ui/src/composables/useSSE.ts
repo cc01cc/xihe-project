@@ -1,4 +1,4 @@
-import { ref, onUnmounted, getCurrentInstance } from 'vue'
+import { ref, onUnmounted, getCurrentInstance, toValue, type MaybeRefOrGetter } from 'vue'
 import { useAgentStore } from '../stores/agent'
 import { logger } from '../lib/logger'
 import { chatTransport } from '../services/chatTransport'
@@ -47,13 +47,14 @@ export interface SendMessageOptions {
 
 const STREAM_TIMEOUT_MS = 30000
 
-export function useSSE(sessionId: string) {
+export function useSSE(sessionId: MaybeRefOrGetter<string>) {
   const isConnected = ref(false)
   const isStreaming = ref(false)
   const error = ref<string | null>(null)
   let currentCallbacks: SSECallbacks = {}
   let streamTimeout: ReturnType<typeof setTimeout> | null = null
   let connectionErrorReported = false
+  let activeSessionId: string | null = null
 
   function resetStreamTimeout() {
     if (streamTimeout) clearTimeout(streamTimeout)
@@ -157,8 +158,14 @@ export function useSSE(sessionId: string) {
 
       case 'error':
         try {
-          const data = JSON.parse(msg.data) as { error?: string; details?: string }
-          const msgText = data.details ? `${data.error}: ${data.details}` : (data.error ?? 'Unknown error')
+          const data = JSON.parse(msg.data) as {
+            error?: string
+            details?: string
+            detail?: string
+            code?: string
+          }
+          const message = data.error ?? data.detail ?? data.code ?? 'Unknown error'
+          const msgText = data.details ? `${message}: ${data.details}` : message
           error.value = msgText
           currentCallbacks.onError?.(msgText)
         } catch {
@@ -183,10 +190,13 @@ export function useSSE(sessionId: string) {
     disconnect()
     currentCallbacks = callbacks
 
-    const url = `/api/v1/events?sessionId=${encodeURIComponent(sessionId)}`
+    const currentSessionId = toValue(sessionId)
+    activeSessionId = currentSessionId
+
+    const url = `/api/v1/events?sessionId=${encodeURIComponent(currentSessionId)}`
 
     chatTransport
-      .sendMessages(sessionId, {
+      .sendMessages(currentSessionId, {
         url,
         headers: apiAuthHeaders(undefined, false),
         onopen: () => {
@@ -216,7 +226,9 @@ export function useSSE(sessionId: string) {
   }
 
   function disconnect() {
-    chatTransport.stop(sessionId)
+    const sessionToStop = activeSessionId ?? toValue(sessionId)
+    chatTransport.stop(sessionToStop)
+    activeSessionId = null
     isConnected.value = false
     isStreaming.value = false
     clearStreamTimeout()
@@ -225,7 +237,8 @@ export function useSSE(sessionId: string) {
   async function sendMessage({ content, attachments, model, sessionId: overrideSid }: SendMessageOptions) {
     error.value = null
     isStreaming.value = true
-    const sid = overrideSid ?? sessionId
+    currentCallbacks.onStart?.()
+    const sid = overrideSid ?? toValue(sessionId)
 
     try {
       const body: Record<string, unknown> = {

@@ -230,8 +230,8 @@ function attachmentObjectUrl(file: File): string {
 </script>
 
 <template>
-  <div class="border-t bg-background px-4 py-3">
-    <div class="max-w-4xl mx-auto space-y-2">
+  <div class="min-w-0 border-t bg-background px-4 py-3">
+    <div class="mx-auto w-full max-w-4xl space-y-2">
       <div
         v-if="attachments.length"
         class="flex gap-2 flex-wrap"

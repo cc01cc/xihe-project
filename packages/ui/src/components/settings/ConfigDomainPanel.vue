@@ -56,19 +56,19 @@ function handleReset(key: string) {
       @click="toggle"
     >
       <span class="truncate">{{ title }}</span>
-      <span class="flex items-center gap-2 shrink-0">
+      <span class="flex min-w-0 items-center gap-2 shrink-0">
         <span v-if="!expanded && summary" class="text-xs text-muted-foreground truncate max-w-[200px]">{{ summary }}</span>
         <span class="text-muted-foreground">{{ expanded ? '▾' : '▸' }}</span>
       </span>
     </button>
     <div v-if="expanded" class="px-4 pb-3 space-y-2">
-      <div v-for="field in schema" :key="field.key" class="flex items-center gap-2">
+      <div v-for="field in schema" :key="field.key" class="flex min-w-0 items-center gap-2">
         <span class="text-xs text-muted-foreground w-1/3 truncate">{{ field.label }}</span>
 
         <select
           v-if="!readonly && field.type === 'select'"
           v-model="editing[field.key]"
-          class="flex-1 px-2 py-1 text-sm border rounded bg-background"
+          class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
         >
           <option
             v-for="opt in field.options ?? []"
@@ -82,11 +82,11 @@ function handleReset(key: string) {
         <input
           v-else-if="!readonly"
           v-model="editing[field.key]"
-          class="flex-1 px-2 py-1 text-sm border rounded bg-background"
+          class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
           :type="field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text'"
         />
 
-        <span v-else class="flex-1 text-sm truncate">
+        <span v-else class="min-w-0 flex-1 text-sm truncate">
           {{ field.type === 'password'
             ? editing[field.key] ? editing[field.key].substring(0, 3) + '****' + editing[field.key].slice(-4) : t('settings.notSet')
             : editing[field.key] || t('settings.empty') }}

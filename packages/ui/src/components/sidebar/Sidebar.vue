@@ -2,6 +2,15 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import {
+  CircleUser,
+  FolderTree,
+  LogOut,
+  PanelLeftClose,
+  Plus,
+  Search,
+  Settings,
+} from '@lucide/vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAuthStore } from '../../stores/auth'
@@ -25,7 +34,7 @@ const chatStore = useChatStore()
 const auth = useAuthStore()
 
 const sidebarStyle = computed(() => ({
-  width: props.open ? `${props.width}px` : '0px',
+  width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : '0px',
 }))
 
 function startNewChat() {
@@ -75,17 +84,22 @@ function handleLogout() {
 <template>
   <aside
     data-testid="sidebar"
-    class="fixed left-0 top-0 h-full z-40 flex flex-col bg-sidebar-background border-r border-sidebar-border transition-[width] duration-300"
+    :aria-hidden="!open"
+    :inert="!open"
+    class="fixed left-0 top-0 z-40 flex h-full flex-col overflow-hidden bg-sidebar-background border-r border-sidebar-border transition-[width] duration-300"
     :class="{ 'shadow-lg': isMobile && open }"
     :style="sidebarStyle"
   >
     <div class="flex items-center justify-between px-4 h-14 shrink-0">
       <span class="font-semibold text-sidebar-foreground">xihe</span>
       <button
+        type="button"
+        aria-label="Close navigation"
+        title="Close navigation"
         class="p-1.5 rounded-md hover:bg-sidebar-accent text-sidebar-foreground transition-colors"
         @click="toggleSidebar"
       >
-        <span class="i-lucide-panel-left-close size-4" />
+        <PanelLeftClose class="size-4" />
       </button>
     </div>
 
@@ -94,14 +108,14 @@ function handleLogout() {
         class="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-sidebar-border text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
         @click="startNewChat"
       >
-        <span class="i-lucide-plus size-4" />
+        <Plus class="size-4" />
         {{ t('sidebar.newChat') }}
       </button>
     </div>
 
     <div class="px-3 pb-2">
       <div class="relative">
-        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 i-lucide-search size-4 text-muted-foreground" />
+        <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
         <input
           v-model="sessionStore.searchQuery"
           class="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border bg-sidebar-accent/50 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-sidebar-ring"
@@ -117,28 +131,28 @@ function handleLogout() {
         class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
         @click="navigateToWorkspace"
       >
-        <span class="i-lucide-folder-tree size-4" />
+        <FolderTree class="size-4" />
         {{ t('sidebar.workspace') }}
       </button>
     </div>
 
     <div class="px-3 py-3 border-t border-sidebar-border space-y-1">
       <div class="flex items-center gap-2 px-3 py-2 text-sm text-sidebar-foreground/70">
-        <span class="i-lucide-circle-user size-4" />
+        <CircleUser class="size-4" />
         <span class="truncate">{{ auth.userName }}</span>
       </div>
       <button
         class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
         @click="navigateSettings"
       >
-        <span class="i-lucide-settings size-4" />
+        <Settings class="size-4" />
         {{ t('sidebar.settings') }}
       </button>
       <button
         class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
         @click="handleLogout"
       >
-        <span class="i-lucide-log-out size-4" />
+        <LogOut class="size-4" />
         {{ t('sidebar.logout') }}
       </button>
     </div>

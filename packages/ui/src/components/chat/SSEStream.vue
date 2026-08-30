@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useSSE } from '../../composables/useSSE'
 import { useStreamParser } from '../../composables/useStreamParser'
 import { useChatStore } from '../../stores/chat'
@@ -19,7 +19,9 @@ const agentStore = useAgentStore()
 const configStore = useConfigStore()
 const { handleToolCall } = useWorkspaceAgentSync()
 
-const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(props.sessionId)
+const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(
+  computed(() => props.sessionId),
+)
 
 watch(
   () => props.sessionId,
@@ -69,6 +71,7 @@ watch(
             msg.parts = [...finalParts]
           }
           chatStore.finalizeStreaming(id)
+          agentStore.setStatus('idle')
         },
         onError: (msg: string) => {
           chatStore.finalizeStreaming(id)

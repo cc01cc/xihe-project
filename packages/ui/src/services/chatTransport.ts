@@ -38,6 +38,7 @@ class ChatTransportImpl {
     const controller = new AbortController()
     this.controllers.set(sessionId, controller)
     this.setState(sessionId, { isConnecting: true, isConnected: false })
+    logger.info('SSE connection started', { sessionId, url: options.url })
 
     if (options.signal) {
       options.signal.addEventListener('abort', () => controller.abort())
@@ -58,6 +59,11 @@ class ChatTransportImpl {
         signal: controller.signal,
         openWhenHidden: false,
         onopen: async (response) => {
+          logger.info('SSE connection opened', {
+            sessionId,
+            status: response.status,
+            contentType: response.headers.get('content-type'),
+          })
           if (response.status === 401) {
             this.handleUnauthorized()
             controller.abort()
@@ -73,9 +79,11 @@ class ChatTransportImpl {
           await options.onopen?.(response)
         },
         onmessage: (msg) => {
+          logger.debug('SSE event received', { sessionId, event: msg.event, dataLength: msg.data.length })
           void options.onmessage?.(msg)
         },
         onerror: (err) => {
+          logger.warn('SSE stream error', { sessionId, error: err.message })
           if (this.isUnauthorizedError(err)) {
             this.handleUnauthorized()
             controller.abort()
@@ -85,6 +93,7 @@ class ChatTransportImpl {
           void options.onerror?.(err)
         },
         onclose: () => {
+          logger.info('SSE connection closed', { sessionId })
           this.setState(sessionId, { isConnected: false, isConnecting: false })
           void options.onclose?.()
         },

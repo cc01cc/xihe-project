@@ -14,7 +14,7 @@ const tabs = [
 </script>
 
 <template>
-  <nav class="flex gap-1 border-b mb-4 px-1">
+  <nav class="flex gap-1 overflow-x-auto border-b mb-4 px-1 whitespace-nowrap">
     <router-link
       v-for="tab in tabs"
       :key="tab.name"
