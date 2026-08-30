@@ -1,4 +1,9 @@
 
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from xihe_agent import main
 from xihe_agent.rag.chunking import chunk_document, split_into_paragraphs
 
 
@@ -23,3 +28,16 @@ class TestChunking:
     def test_split_paragraphs(self):
         result = split_into_paragraphs("a\n\nb\n\nc")
         assert result == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_rag_enrichment_skips_unconfigured_embedding(monkeypatch):
+    embedding_service = MagicMock()
+    embedding_service.embed = AsyncMock()
+    monkeypatch.setattr(main, "embedding_enabled", False)
+    monkeypatch.setattr(main, "embedding_service", embedding_service)
+
+    result = await main._enrich_with_rag_context("question", "instructions")
+
+    assert result == "instructions"
+    embedding_service.embed.assert_not_awaited()

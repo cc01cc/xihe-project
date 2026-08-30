@@ -150,7 +150,7 @@ class TestCreateLLM:
 
         assert isinstance(model, BaseChatModel)
 
-    def test_xiaomi_uses_openai_litellm_adapter(self):
+    def test_xiaomi_uses_native_litellm_adapter(self):
         model = create_llm(LLMConfig(
             provider="xiaomi",
             api_key="sk-test-key",
@@ -158,7 +158,29 @@ class TestCreateLLM:
             model="mimo-v2.5",
         ))
 
-        assert getattr(model, "model") == "openai/mimo-v2.5"
+        assert getattr(model, "model") == "xiaomi_mimo/mimo-v2.5"
+        assert getattr(model, "request_timeout") == 60.0
+
+    def test_xiaomi_uses_openai_compat_route_when_tools_are_bound(self):
+        model = create_llm(LLMConfig(
+            provider="xiaomi",
+            api_key="sk-test-key",
+            api_base="https://api.xiaomimimo.com/v1",
+            model="mimo-v2.5",
+        ))
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "noop",
+                "description": "No-op test tool",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+        bound = model.bind_tools([tool])
+
+        assert getattr(model, "model") == "xiaomi_mimo/mimo-v2.5"
+        assert getattr(bound.bound, "model") == "openai/mimo-v2.5"
 
 
 class TestMockChatModel:

@@ -1,10 +1,14 @@
 """Tests for xihe_agent.agent_runner.langgraph_runner."""
 
+from datetime import UTC
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
+from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
@@ -79,3 +83,22 @@ async def test_langgraph_runner_uses_custom_event_adapter():
 async def test_langgraph_runner_default_adapter_is_langgraph_adapter():
     runner = LangGraphRunner(model_factory=lambda _model: create_llm())
     assert isinstance(runner._event_adapter, LangGraphEventAdapter)
+
+
+@pytest.mark.asyncio
+async def test_prompt_event_uses_timezone_aware_utc_timestamp():
+    event_store = MagicMock()
+    event_store.append = AsyncMock()
+    runner = LangGraphRunner(
+        model_factory=lambda _model: create_llm(),
+        event_store=event_store,
+    )
+
+    await runner._append_prompt_admitted(
+        [TextMessage(role="human", content="Hello")],
+        AgentContext.empty("session-1"),
+    )
+
+    event = event_store.append.await_args.args[0]
+    assert event.created_at.tzinfo is UTC
+    assert event.created_at.utcoffset().total_seconds() == 0

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from loguru import logger
 
+from xihe_agent import main
 from xihe_agent.adapters.mcp_client import MCPClientManager
 
 
@@ -60,6 +61,23 @@ class TestMCPClientManager:
         assert manager.tools[0].spec.name == "test_tool"
 
     @pytest.mark.asyncio
+    async def test_initialize_can_bind_request_workspace_before_discovery(self):
+        manager = MCPClientManager(
+            cp_url="http://localhost:12631",
+            server_name="cp",
+        )
+        with patch(
+            "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
+        ) as mock_client_cls:
+            mock_client_cls.return_value.get_tools = AsyncMock(return_value=[])
+
+            await manager.initialize(workspace_id="request-workspace")
+
+        connection = mock_client_cls.call_args.args[0]["cp"]
+        assert manager.workspace_id == "request-workspace"
+        assert connection["headers"]["X-Workspace-Id"] == "request-workspace"
+
+    @pytest.mark.asyncio
     async def test_initialize_configures_only_the_cp_logical_endpoint(self, manager):
         with patch(
             "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
@@ -103,10 +121,47 @@ class TestMCPClientManager:
                 side_effect=ConnectionError("refused")
             )
 
-            with pytest.raises(ConnectionError):
-                await manager.ensure_ready()
+            # ensure_ready now returns (gives up) instead of raising
+            await manager.ensure_ready()
 
         text = "\n".join(log_sink)
-        assert "MCP init attempt 1 failed: refused" in text
-        assert "%d" not in text
-        assert "%s" not in text
+        assert "[LIFECYCLE] service=agent event=mcp_init_failed" in text
+        assert "attempt=1/1" in text
+        assert "[LIFECYCLE] service=agent event=mcp_giving_up" in text
+        assert "maxRetries=1" in text
+
+    @pytest.mark.asyncio
+    async def test_chat_without_workspace_does_not_initialize_mcp(self, monkeypatch):
+        mock_manager = MagicMock()
+        mock_manager.initialized = False
+        mock_manager.workspace_id = None
+        mock_manager.initialize = AsyncMock()
+        mock_manager.tools = []
+        monkeypatch.setattr(main, "mcp_manager", mock_manager)
+
+        assert await main._get_mcp_tools(None) == []
+        mock_manager.initialize.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_chat_with_workspace_initializes_mcp_on_demand(self, monkeypatch):
+        mock_manager = MagicMock()
+        mock_manager.initialized = False
+        mock_manager.workspace_id = None
+        mock_manager.initialize = AsyncMock()
+        mock_manager.tools = []
+        monkeypatch.setattr(main, "mcp_manager", mock_manager)
+
+        assert await main._get_mcp_tools("request-workspace") == []
+        mock_manager.initialize.assert_awaited_once_with(workspace_id="request-workspace")
+
+    @pytest.mark.asyncio
+    async def test_chat_skips_mcp_for_a_different_bound_workspace(self, monkeypatch):
+        mock_manager = MagicMock()
+        mock_manager.initialized = True
+        mock_manager.workspace_id = "bound-workspace"
+        mock_manager.initialize = AsyncMock()
+        mock_manager.tools = []
+        monkeypatch.setattr(main, "mcp_manager", mock_manager)
+
+        assert await main._get_mcp_tools("other-workspace") == []
+        mock_manager.initialize.assert_not_awaited()

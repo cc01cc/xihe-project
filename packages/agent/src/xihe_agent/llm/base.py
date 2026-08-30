@@ -8,7 +8,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_litellm import ChatLiteLLM
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 if TYPE_CHECKING:
     from xihe_agent.config_client import ConfigClient
@@ -174,25 +174,52 @@ def _to_langchain_messages(messages: list[dict[str, Any]]) -> list[BaseMessage]:
 
 
 class XiheLiteLLM(ChatLiteLLM, LLMProvider):
-    def __init__(self, config: LLMConfig | None = None, **kwargs: Any):
+    _config: LLMConfig = PrivateAttr()
+    _use_openai_compat_for_tools: bool = PrivateAttr(default=False)
+
+    def __init__(
+        self,
+        config: LLMConfig | None = None,
+        *,
+        use_openai_compat_for_tools: bool = False,
+        **kwargs: Any,
+    ):
         cfg = config or LLMConfig.from_env()
-        self._config = cfg
         model = cfg.model
         if "/" not in model and cfg.provider and cfg.provider != "mock":
-            # MiMo exposes an OpenAI-compatible endpoint but is not a LiteLLM
-            # provider name, so route it through the OpenAI adapter.
-            litellm_provider = "openai" if cfg.provider == "xiaomi" else cfg.provider
+            # LiteLLM has a native openai-compatible Xiaomi provider. Keep the
+            # provider prefix so LiteLLM selects the correct adapter instead of
+            # treating MiMo as an arbitrary OpenAI-compatible endpoint.
+            litellm_provider = (
+                "openai"
+                if cfg.provider == "xiaomi" and use_openai_compat_for_tools
+                else "xiaomi_mimo"
+                if cfg.provider == "xiaomi"
+                else cfg.provider
+            )
             model = f"{litellm_provider}/{model}"
         llm_kwargs: dict[str, Any] = {
             "model": model,
             "temperature": cfg.temperature,
             "max_tokens": cfg.max_tokens,
+            "request_timeout": cfg.timeout,
             "api_key": cfg.api_key or None,
             "api_base": cfg.api_base or None,
             "max_retries": 0,
         }
         llm_kwargs = {k: v for k, v in llm_kwargs.items() if v is not None}
         super().__init__(**llm_kwargs)
+        self._config = cfg
+        self._use_openai_compat_for_tools = use_openai_compat_for_tools
+
+    def bind_tools(self, tools: Sequence[BaseTool | dict[str, Any] | type | Any], **kwargs: Any) -> Runnable:
+        if self._config.provider == "xiaomi" and tools and not self._use_openai_compat_for_tools:
+            compatible = XiheLiteLLM(
+                config=self._config,
+                use_openai_compat_for_tools=True,
+            )
+            return compatible.bind_tools(tools, **kwargs)
+        return super().bind_tools(tools, **kwargs)
 
     async def complete(self, request: LLMRequest) -> str:
         messages = _to_langchain_messages(request.messages)
@@ -206,7 +233,10 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
                 yield LLMToken(content=chunk.content)
 
     def with_model(self, model: str) -> LLMProvider:
-        return XiheLiteLLM(config=self._config.with_model(model))
+        return XiheLiteLLM(
+            config=self._config.with_model(model),
+            use_openai_compat_for_tools=self._use_openai_compat_for_tools,
+        )
 
 
 class MockChatModel(BaseChatModel, LLMProvider):

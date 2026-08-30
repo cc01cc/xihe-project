@@ -21,7 +21,7 @@ from litellm import get_llm_provider
 from loguru import logger
 
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
-from xihe_agent.adapters.mcp_client import MCPAgentTool, MCPClientManager
+from xihe_agent.adapters.mcp_client import MCPClientManager
 from xihe_agent.adapters.sse_adapter import render_sse
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.config_client import ConfigClient
@@ -89,7 +89,8 @@ class _InterceptHandler(logging.Handler):
 
 logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
 
-logger.remove(0)  # Remove default stderr handler
+with suppress(ValueError):
+    logger.remove(0)  # Remove default stderr handler
 from xihe_agent.log_redact import patch_record as _redact_patch  # noqa: E402
 
 logger.configure(patcher=_redact_patch)
@@ -203,28 +204,51 @@ PG_DSN = (
     or config_client.get("workspace-config", "pgDsn")
     or "postgresql+psycopg://xihe:xihe123@postgres:5432/xihe"
 )
-embedding_model = config_client.get("embedding", "model")
+embedding_model: str | None = None
 _embedding_api_key: str | None = None
 _embedding_api_base: str | None = None
-if embedding_model:
-    try:
-        _, provider, _, api_base = get_llm_provider(embedding_model)
-        provider_cfg = config_client.get_providers().get(provider, {})
-        _embedding_api_key = provider_cfg.get("apiKey")
-        _embedding_api_base = api_base
-    except Exception as e:
-        logger.warning("Failed to resolve embedding provider: {}", e)
-embedding_service = EmbeddingService(
-    model=embedding_model,
-    api_key=_embedding_api_key,
-    api_base=_embedding_api_base,
-)
-embedding_adapter = LiteLLMEmbeddings(service=embedding_service)
-_dim = config_client.get("embedding", "dimensions")
-vector_store = VectorStore(
-    dsn=PG_DSN, embedding_service=embedding_adapter,
-    vector_size=int(_dim) if _dim else None,
-)
+embedding_enabled = False
+
+
+def _refresh_embedding_config() -> None:
+    global embedding_model, _embedding_api_key, _embedding_api_base
+    global embedding_enabled, embedding_service, embedding_adapter, vector_store
+
+    embedding_model = config_client.get("embedding", "model")
+    _embedding_api_key = None
+    _embedding_api_base = None
+
+    if embedding_model:
+        try:
+            _, provider, _, resolved_api_base = get_llm_provider(embedding_model)
+            provider_cfg = config_client.get_providers().get(provider, {})
+            _embedding_api_key = provider_cfg.get("apiKey") or None
+            _embedding_api_base = provider_cfg.get("baseUrl") or resolved_api_base
+        except Exception as e:
+            logger.warning("Failed to resolve embedding provider: {}", e)
+
+    # The default OpenAI embedding model must not create a request without credentials.
+    embedding_enabled = bool(embedding_model and _embedding_api_key)
+    if embedding_model and not embedding_enabled:
+        logger.warning(
+            "[LIFECYCLE] service=agent event=rag_embedding_disabled model={} reason=missing_api_key",
+            embedding_model,
+        )
+
+    embedding_service = EmbeddingService(
+        model=embedding_model or "mock",
+        api_key=_embedding_api_key,
+        api_base=_embedding_api_base,
+    )
+    embedding_adapter = LiteLLMEmbeddings(service=embedding_service)
+    dimensions = config_client.get("embedding", "dimensions")
+    vector_store = VectorStore(
+        dsn=PG_DSN,
+        embedding_service=embedding_adapter,
+        vector_size=int(dimensions) if dimensions else None,
+    )
+
+_refresh_embedding_config()
 
 AGENT_INSTRUCTIONS = (
     config_client.get("logging", "instructions")
@@ -242,6 +266,7 @@ USE_REGISTRY = config_client.get_bool("logging", "useRegistry")
 worker_registry: WorkerRegistry | None = None
 _watcher_observer: Any = None
 _watcher_event_handler: Any = None
+_agent_status: str = "starting"  # starting | ok | degraded
 
 
 def _log_token_usage(result: Any) -> None:
@@ -259,6 +284,9 @@ def _log_token_usage(result: Any) -> None:
 
 async def _enrich_with_rag_context(content: str, instructions: str) -> str:
     """Search RAG knowledge base and append relevant context to instructions."""
+    if not embedding_enabled:
+        return instructions
+
     try:
         query_emb = await embedding_service.embed(content)
         results = await vector_store.search(query_emb, top_k=3, min_score=0.3)
@@ -271,6 +299,27 @@ async def _enrich_with_rag_context(content: str, instructions: str) -> str:
     except Exception:
         logger.warning("RAG enrichment failed", exc_info=True)
     return instructions
+
+
+async def _get_mcp_tools(workspace_id: str | None) -> list[Any]:
+    """Load MCP tools only for a workspace-bound request."""
+    if not workspace_id:
+        return []
+    if mcp_manager.initialized and mcp_manager.workspace_id != workspace_id:
+        # This process owns one MCP workspace in the minimal boundary. Never
+        # reuse tools discovered for a different workspace.
+        return []
+
+    try:
+        await mcp_manager.initialize(workspace_id=workspace_id)
+    except Exception as e:
+        logger.warning(
+            "[LIFECYCLE] service=agent event=mcp_request_init_failed workspaceId={} error={}",
+            workspace_id,
+            e,
+        )
+        return []
+    return mcp_manager.tools
 
 
 def get_llm_initialization_status() -> dict[str, Any]:
@@ -286,14 +335,13 @@ def get_llm_initialization_status() -> dict[str, Any]:
 async def lifespan(app: FastAPI):
     global worker_registry, _watcher_observer, _watcher_event_handler
     global llm_config, image_provider_manager, generate_image_tool, AGENT_INSTRUCTIONS, AGENT_USER_NAME, USE_SUPERVISOR, USE_REGISTRY
+    global _agent_status
 
     logger.info(
-        "Starting xihe Agent (provider={}, model={}, cp={}, supervisor={}, registry={})",
+        "[LIFECYCLE] service=agent event=startup_begin provider={} model={} cp_url={}",
         llm_config.provider,
         llm_config.model,
         CP_URL,
-        USE_SUPERVISOR,
-        USE_REGISTRY,
     )
 
     # Override log level from CP ConfigService at startup
@@ -303,25 +351,32 @@ async def lifespan(app: FastAPI):
     poll_task = asyncio.create_task(_poll_log_level())
 
     # Sync CP config and re-initialize after sync
-    await config_client.sync_with_retry()
-    llm_config = LLMConfig.from_config_client(config_client)
-    image_provider_manager = ProviderManager.from_config_client(config_client)
-    generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
-    if cc_instructions := config_client.get("logging", "instructions"):
-        AGENT_INSTRUCTIONS = cc_instructions
-    if cc_user_name := config_client.get("logging", "userName"):
-        AGENT_USER_NAME = cc_user_name
-    USE_SUPERVISOR = config_client.get_bool("logging", "useSupervisor")
-    USE_REGISTRY = config_client.get_bool("logging", "useRegistry")
-    logger.info("Re-initialized from CP config after sync")
-    mcp_retry_task: asyncio.Task[None] | None = None
+    config_sync_succeeded = False
     try:
-        await mcp_manager.initialize()
-        logger.info("MCP initialized successfully on startup")
+        await config_client.sync_with_retry()
+        llm_config = LLMConfig.from_config_client(config_client)
+        image_provider_manager = ProviderManager.from_config_client(config_client)
+        generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
+        _refresh_embedding_config()
+        if cc_instructions := config_client.get("logging", "instructions"):
+            AGENT_INSTRUCTIONS = cc_instructions
+        if cc_user_name := config_client.get("logging", "userName"):
+            AGENT_USER_NAME = cc_user_name
+        USE_SUPERVISOR = config_client.get_bool("logging", "useSupervisor")
+        USE_REGISTRY = config_client.get_bool("logging", "useRegistry")
+        config_sync_succeeded = True
+        logger.info("[LIFECYCLE] service=agent event=config_sync_ok provider={} model={}", llm_config.provider, llm_config.model)
     except Exception as e:
-        logger.warning("MCP init failed (CP may be offline): {}", e)
-        logger.info("Agent will retry MCP init in the background")
-        mcp_retry_task = asyncio.create_task(mcp_manager.ensure_ready())
+        logger.error("[LIFECYCLE] service=agent event=config_sync_failed error={}", e, exc_info=True)
+        # Keep status as "starting" — health endpoint will report starting
+
+    # MCP is request-scoped; pure chat must not trigger remote discovery at startup.
+    logger.info("[LIFECYCLE] service=agent event=mcp_init_deferred reason=lazy_request")
+
+    # Mark agent as ready only after config sync (MCP is optional).
+    if config_sync_succeeded:
+        _agent_status = "ok"
+        logger.info("[LIFECYCLE] service=agent event=status_change from=starting to=ok reason=config_sync_complete")
 
     # Recover any sessions configured for crash recovery before accepting traffic.
     recover_ids = _parse_recover_session_ids()
@@ -344,23 +399,21 @@ async def lifespan(app: FastAPI):
 
         model = create_llm(llm_config)
         custom_tools = [approval_tool, generate_image_tool]
+        mcp_tools = await _get_mcp_tools(get_env("XIHE_WORKSPACE_ID"))
         _workers_dir = config_client.get("logging", "workersDir")
         worker_registry = WorkerRegistry(workers_dir=_workers_dir)
-        worker_registry.load_all(model, mcp_manager.tools, custom_tools)
+        worker_registry.load_all(model, mcp_tools, custom_tools)
         _watcher_observer, _watcher_event_handler = start_watcher(
-            worker_registry, model, mcp_manager.tools, custom_tools,
+            worker_registry, model, mcp_tools, custom_tools,
         )
         logger.info("Worker registry initialized with {} worker(s)", len(worker_registry.list_workers()))
 
     yield
 
+    logger.info("[LIFECYCLE] service=agent event=shutdown reason=lifespan_exit")
     if _watcher_observer is not None:
         _watcher_observer.stop()
         _watcher_observer.join()
-    if mcp_retry_task is not None:
-        mcp_retry_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await mcp_retry_task
     if poll_task is not None:
         poll_task.cancel()
         with suppress(asyncio.CancelledError):
@@ -442,6 +495,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     data = await request.json()
     content: str = data.get("content", "")
     session_id: str = data.get("sessionId", "default")
+    workspace_id: str | None = data.get("workspaceId") or None
     user_name: str = data.get("userName", AGENT_USER_NAME)
     model_override: str | None = data.get("model")
     instructions: str = data.get("instructions", AGENT_INSTRUCTIONS)
@@ -458,6 +512,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
 
     async def event_stream():
         try:
+            mcp_tools = await _get_mcp_tools(workspace_id)
             if USE_SUPERVISOR:
                 # Supervisor path remains on legacy tools until full migration.
                 from langchain_core.messages import HumanMessage
@@ -466,7 +521,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
 
                 custom_tools = [approval_tool, generate_image_tool]
                 supervisor = build_supervisor(
-                    model, mcp_manager.tools, custom_tools,
+                    model, mcp_tools, custom_tools,
                     registry=worker_registry if USE_REGISTRY else None,
                 )
                 result = await supervisor.ainvoke({
@@ -481,8 +536,9 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 context.runtime_state["user_name"] = user_name
                 context.runtime_state["instructions"] = instructions
 
-                all_tools = [MCPAgentTool(t) for t in mcp_manager.tools]
-                all_tools.extend([approval_tool, generate_image_tool])
+                all_tools = [approval_tool, generate_image_tool]
+                if mcp_tools:
+                    all_tools = list(mcp_tools) + all_tools
 
                 messages = list(chat_history)
                 messages.append(TextMessage(role="human", content=content))
@@ -509,6 +565,8 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
 
 @app.post("/internal/v1/agent/rag/ingest")
 async def rag_ingest(file: UploadFile = File(...), chunk_size: int = Form(1000, alias="chunkSize"), chunk_overlap: int = Form(200, alias="chunkOverlap"), _token: None = Depends(verify_api_token)):
+    if not embedding_enabled:
+        raise HTTPException(status_code=503, detail="RAG embedding provider is not configured")
     content = (await file.read()).decode("utf-8", errors="replace")
     chunks = rag_chunk(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap, metadata={"filename": file.filename})
     doc_ids = []
@@ -520,6 +578,8 @@ async def rag_ingest(file: UploadFile = File(...), chunk_size: int = Form(1000, 
 
 @app.post("/internal/v1/agent/rag/search")
 async def rag_search(query: str = Form(...), top_k: int = Form(5, alias="topK"), min_score: float = Form(0.0, alias="minScore"), _token: None = Depends(verify_api_token)):
+    if not embedding_enabled:
+        raise HTTPException(status_code=503, detail="RAG embedding provider is not configured")
     query_emb = await embedding_service.embed(query)
     results = await vector_store.search(query_emb, top_k=top_k, min_score=min_score)
     return {"results": results}
@@ -590,7 +650,7 @@ async def reinit_mcp(_token: None = Depends(verify_api_token)):
         return {
             "status": "ok",
             "toolsCount": len(mcp_manager.tools),
-            "tools": [t.name for t in mcp_manager.tools],
+            "tools": [t.spec.name for t in mcp_manager.tools],
         }
     except Exception as e:
         logger.error("MCP reinit failed", exc_info=e)
@@ -643,12 +703,12 @@ async def registry_disable_worker(worker_id: str, _token: None = Depends(verify_
 async def health():
     llm_status = get_llm_initialization_status()
     return {
-        "status": "ok" if mcp_manager.initialized else "degraded",
+        "status": _agent_status,
         "llm": llm_status,
         "cpUrl": CP_URL,
         "mcpInitialized": mcp_manager.initialized,
         "toolsCount": len(mcp_manager.tools),
-        "tools": [t.name for t in mcp_manager.tools],
+        "tools": [t.spec.name for t in mcp_manager.tools],
         "version": "0.1.0",
         "framework": "langgraph",
     }
@@ -658,7 +718,7 @@ async def health():
 async def list_tools(_token: None = Depends(verify_api_token)):
     return {
         "tools": [
-            {"name": t.name, "description": t.description}
+            {"name": t.spec.name, "description": t.spec.description}
             for t in mcp_manager.tools
         ],
         "customTools": [

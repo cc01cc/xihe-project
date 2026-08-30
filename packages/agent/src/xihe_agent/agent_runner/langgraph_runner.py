@@ -1,7 +1,7 @@
 """LangGraph-based AgentRunner implementation."""
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -78,7 +78,7 @@ class LCToolAdapter(BaseTool):
                         "tool_name": self._tool.spec.name,
                         "tool_input": input,
                     },
-                    created_at=datetime.now(datetime.UTC),
+                    created_at=datetime.now(UTC),
                 )
             )
         except Exception as e:
@@ -98,7 +98,7 @@ class LCToolAdapter(BaseTool):
                         "tool_name": self._tool.spec.name,
                         "result": result,
                     },
-                    created_at=datetime.now(datetime.UTC),
+                    created_at=datetime.now(UTC),
                 )
             )
         except Exception as e:
@@ -166,7 +166,7 @@ class LangGraphRunner(AgentRunner):
                     sequence=0,
                     type="runtime.state_cleared",
                     payload={"agent_id": agent_id, "reason": "reset"},
-                    created_at=datetime.now(datetime.UTC),
+                    created_at=datetime.now(UTC),
                 )
             )
         except Exception as e:
@@ -183,7 +183,7 @@ class LangGraphRunner(AgentRunner):
                         sequence=0,
                         type="prompt.admitted",
                         payload={"message": {"role": message.role, "content": message.content}},
-                        created_at=datetime.now(datetime.UTC),
+                        created_at=datetime.now(UTC),
                     )
                 )
             except Exception as e:

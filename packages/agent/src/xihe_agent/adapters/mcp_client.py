@@ -49,11 +49,6 @@ class MCPAgentTool(BaseAgentTool):
 
 
 class MCPClientManager:
-    _client: MultiServerMCPClient | None = None
-    _tools: list[BaseAgentTool] = []
-    _initialized: bool = False
-    _lock: asyncio.Lock = asyncio.Lock()
-
     def __init__(
         self,
         cp_url: str,
@@ -69,6 +64,10 @@ class MCPClientManager:
         self.api_token = api_token
         self.retry_interval = retry_interval
         self.max_retries = max_retries
+        self._client: MultiServerMCPClient | None = None
+        self._tools: list[BaseAgentTool] = []
+        self._initialized = False
+        self._lock = asyncio.Lock()
 
     @property
     def tools(self) -> list[BaseAgentTool]:
@@ -78,10 +77,16 @@ class MCPClientManager:
     def initialized(self) -> bool:
         return self._initialized
 
-    async def initialize(self) -> None:
+    async def initialize(self, workspace_id: str | None = None) -> None:
         async with self._lock:
             if self._initialized:
+                if workspace_id and workspace_id != self.workspace_id:
+                    raise ValueError("MCP client is already initialized for another workspace")
                 return
+            if workspace_id:
+                self.workspace_id = workspace_id
+            if not self.workspace_id:
+                raise ValueError("XIHE_WORKSPACE_ID is required for MCP initialization")
             headers: dict[str, Any] | None = None
             if self.workspace_id or self.api_token:
                 headers = {}
@@ -116,18 +121,22 @@ class MCPClientManager:
 
     async def ensure_ready(self) -> None:
         attempt = 0
+        max_retries = self.max_retries if self.max_retries > 0 else 5
+        backoff = self.retry_interval
+        max_backoff = 30.0
         while True:
             try:
                 await self.initialize()
+                logger.info("[LIFECYCLE] service=agent event=mcp_init_ok toolsCount={} attempt={}", len(self._tools), attempt + 1)
                 return
             except Exception as exc:
                 attempt += 1
-                if self.max_retries > 0 and attempt > self.max_retries:
-                    raise
+                if attempt > max_retries:
+                    logger.warning("[LIFECYCLE] service=agent event=mcp_giving_up maxRetries={} lastError={}", max_retries, exc)
+                    return
                 logger.warning(
-                    "MCP init attempt {} failed: {}. Retrying in {:.1f}s...",
-                    attempt,
-                    exc,
-                    self.retry_interval,
+                    "[LIFECYCLE] service=agent event=mcp_init_failed error={} attempt={}/{} retryIn={:.1f}s",
+                    exc, attempt, max_retries, backoff,
                 )
-                await asyncio.sleep(self.retry_interval)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
