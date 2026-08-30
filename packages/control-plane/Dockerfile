@@ -7,6 +7,9 @@ RUN mvn package -DskipTests -q -Pnative || mvn package -DskipTests -q
 
 FROM eclipse-temurin:25-jre
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/*.jar app.jar
 ENV JAVA_TOOL_OPTIONS="-Xmx384m -Xss512k -XX:MaxMetaspaceSize=128m -XX:+UseSerialGC"
 EXPOSE 8080

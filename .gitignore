@@ -54,6 +54,7 @@ tmp/
 **/out/
 
 # Playwright E2E artifacts
+.playwright-cli/
 playwright-report/
 test-results/
 screenshots/

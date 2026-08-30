@@ -20,7 +20,9 @@ COPY src ./src
 RUN find src -name '*.rs' -exec touch {} + && cargo build --release
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/xihe-runtime /usr/local/bin/
 COPY --from=builder /app/target/release/xihe-container-runtime /usr/local/bin/
 COPY --from=builder /app/target/release/xihe-mcp-bridge /usr/local/bin/

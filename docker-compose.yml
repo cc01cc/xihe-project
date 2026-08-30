@@ -1,6 +1,7 @@
 services:
   postgres:
     image: pgvector/pgvector:pg17
+    restart: unless-stopped
     command:
       - "postgres"
       - "-c"
@@ -34,6 +35,7 @@ services:
     build:
       context: packages/control-plane
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${XIHE_CP_PORT:-12631}:8080"
     env_file:
@@ -43,7 +45,7 @@ services:
       XIHE_CP_PORT: "8080"
       XIHE_LOG_DIR: "/logs"
       XIHE_CP_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/xihe"
-      XIHE_AGENT_URL: "http://agent:8000/chat"
+      XIHE_AGENT_URL: "http://agent:8000/internal/v1/agent/chat"
       XIHE_AGENT_BASE_URL: "http://agent:8000"
       XIHE_RUNTIME_URL: "http://runtime:8001"
       XIHE_CP_API_TOKEN: "${XIHE_CP_API_TOKEN:-dev-token-not-secure}"
@@ -51,6 +53,12 @@ services:
     volumes:
       - ./logs/cp:/logs
     mem_limit: 768m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,6 +69,7 @@ services:
     build:
       context: packages/agent
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${XIHE_AGENT_PORT:-12632}:8000"
     env_file:
@@ -74,9 +83,15 @@ services:
     volumes:
       - ./logs/agent:/logs
     mem_limit: 640m
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/internal/v1/agent/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       control-plane:
-        condition: service_started
+        condition: service_healthy
     networks:
       - xihe-net
 
@@ -84,6 +99,7 @@ services:
     build:
       context: packages/runtime
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${XIHE_RUNTIME_PORT:-12633}:8001"
     env_file:
@@ -97,6 +113,15 @@ services:
     volumes:
       - ./logs/runtime:/logs
     mem_limit: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      control-plane:
+        condition: service_healthy
     networks:
       - xihe-net
 

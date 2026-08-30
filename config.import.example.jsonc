@@ -20,6 +20,8 @@
     "deepseekApiBase": "https://api.deepseek.com/v1",
     "openaiApiKey": "",
     "xiaomiApiKey": "",
+    "xiaomiModel": "mimo-v2.5",
+    "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
     "defaultProvider": "deepseek",
     "imageProvider": ""
   },
