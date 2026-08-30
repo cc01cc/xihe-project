@@ -244,6 +244,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Vue i18n JSON placeholder**: `t()` 消息中不可含 `{...}`
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
 - **Agent MCP init 按需执行**: 纯 chat 启动不连接 CP MCP；带 workspace 的请求才按 `X-Workspace-Id` 触发工具发现。`MCPClientManager.initialize()` 在没有 workspace 时仍 fail-fast，且不会把已绑定 workspace 的工具复用于其他 workspace。
+- **Runtime 生命周期技术债**: `WorkspaceRegistry` 与 `WorkspaceManager` 若继续形成双路径，会使 create/exec/MCP/pause-resume/restart/delete 的状态不可恢复；后续应先收敛为单一生命周期状态机，再推进 warm pool、microVM 或多设备接管等隔离增强。
 - **`dev:host` 原生编排**: `mise run dev:host` 先以 Docker 启动并等待 PostgreSQL，再由 mise 并行管理原生 CP/Agent/Runtime/UI；`mise run dev:host:watch` 通过 Node watcher 检查四个健康端点并在任务组失败后重启。`scripts/dev-host.ps1` 仅保留兼容的检查/包装入口。`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根，默认 `A03-xihe\.xihe-workspaces`
 
 详见 `docs/i18n/zh-Hans/DEV-012-known-issues.md`。覆盖率缺口 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。

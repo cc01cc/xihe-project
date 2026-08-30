@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
-use crate::{DeleteFileRequest, GetFileInfoRequest, ListDirectoryRequest, MkdirRequest};
-use xihe_runtime::{error::RuntimeError, fs, gateway::WorkspaceRegistry};
+use crate::{AppState, DeleteFileRequest, GetFileInfoRequest, ListDirectoryRequest, MkdirRequest};
+use xihe_runtime::{error::RuntimeError, fs};
 
 // ---- Request / Response types ----
 
@@ -64,11 +64,11 @@ fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
 // ---- Handlers ----
 
 pub async fn handle_read_file(
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
     Json(req): Json<ReadFileRestRequest>,
 ) -> Result<Json<ReadFileResult>, (StatusCode, Json<Value>)> {
-    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
         problem(
             StatusCode::NOT_FOUND,
             "WORKSPACE_NOT_FOUND",
@@ -92,11 +92,11 @@ pub async fn handle_read_file(
 }
 
 pub async fn handle_write_binary(
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     Path((ws_id, raw_path)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
         problem(
             StatusCode::NOT_FOUND,
             "WORKSPACE_NOT_FOUND",
@@ -125,11 +125,11 @@ pub async fn handle_write_binary(
 }
 
 pub async fn handle_list_directory(
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
     Json(req): Json<ListDirectoryRequest>,
 ) -> Result<Json<fs::DirectoryListing>, (StatusCode, Json<Value>)> {
-    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
         problem(
             StatusCode::NOT_FOUND,
             "WORKSPACE_NOT_FOUND",
@@ -141,11 +141,11 @@ pub async fn handle_list_directory(
 }
 
 pub async fn handle_delete_file(
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
     Json(req): Json<DeleteFileRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
         problem(
             StatusCode::NOT_FOUND,
             "WORKSPACE_NOT_FOUND",
@@ -159,11 +159,11 @@ pub async fn handle_delete_file(
 }
 
 pub async fn handle_mkdir(
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
     Json(req): Json<MkdirRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
         problem(
             StatusCode::NOT_FOUND,
             "WORKSPACE_NOT_FOUND",
@@ -177,11 +177,11 @@ pub async fn handle_mkdir(
 }
 
 pub async fn handle_stat(
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
     Json(req): Json<GetFileInfoRequest>,
 ) -> Result<Json<fs::FileInfo>, (StatusCode, Json<Value>)> {
-    let ws = registry.get(&ws_id).await.ok_or_else(|| {
+    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
         problem(
             StatusCode::NOT_FOUND,
             "WORKSPACE_NOT_FOUND",
@@ -197,31 +197,38 @@ pub async fn handle_stat(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AppState;
     use std::sync::Arc;
     use tempfile::TempDir;
+    use tokio::sync::Mutex;
     use xihe_runtime::gateway::WorkspaceRegistry;
+    use xihe_runtime::workspace::WorkspaceManager;
 
-    /// Helper: create a temp workspace dir, register it, return (registry, ws_id, _dir_guard)
-    async fn setup_ws() -> (Arc<WorkspaceRegistry>, String, TempDir) {
+    /// Helper: create a temp workspace dir, register it, return (app_state, ws_id, _dir_guard)
+    async fn setup_ws() -> (Arc<AppState>, String, TempDir) {
         let dir = TempDir::new().unwrap();
         let ws_id = uuid::Uuid::new_v4().to_string();
         let reg = WorkspaceRegistry::new();
         reg.register(&ws_id, dir.path().to_str().unwrap()).await;
-        (Arc::new(reg), ws_id, dir)
+        let app = Arc::new(AppState {
+            registry: Arc::new(reg),
+            manager: Arc::new(Mutex::new(WorkspaceManager::new())),
+        });
+        (app, ws_id, dir)
     }
 
     #[tokio::test]
     async fn test_read_write_roundtrip() {
-        let (reg, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir) = setup_ws().await;
 
         // Write a file directly via the fs module to validate the workspace works
-        let ws = reg.get(&ws_id).await.unwrap();
+        let ws = app.registry.get(&ws_id).await.unwrap();
         fs::write_file_binary("hello.txt", b"Hello, REST!", &ws.workspace_path)
             .await
             .unwrap();
 
         // Now call the handler
-        let state = State(reg);
+        let state = State(app);
         let path = Path(ws_id);
         let json = Json(ReadFileRestRequest {
             path: "hello.txt".into(),
@@ -234,9 +241,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_workspace_not_found() {
-        let (reg, _own_ws_id, _dir) = setup_ws().await;
+        let (app, _own_ws_id, _dir) = setup_ws().await;
 
-        let state = State(reg);
+        let state = State(app);
         let path = Path("ws-nonexistent".to_string());
         let json = Json(ReadFileRestRequest {
             path: "x.txt".into(),
@@ -251,10 +258,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_binary_handler() {
-        let (reg, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir) = setup_ws().await;
 
         // URL-encoded path "test/hello.txt"
-        let state = State(reg);
+        let state = State(app);
         let path = Path((ws_id, "test%2Fhello.txt".to_string()));
         let body = Bytes::from("Hello, Binary!");
         let result = handle_write_binary(state, path, body).await.unwrap();
@@ -269,17 +276,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_max_bytes_truncation() {
-        let (reg, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir) = setup_ws().await;
 
         // Write a 100-byte file via fs
-        let ws = reg.get(&ws_id).await.unwrap();
+        let ws = app.registry.get(&ws_id).await.unwrap();
         let content = "A".repeat(100);
         fs::write_file_binary("large.txt", content.as_bytes(), &ws.workspace_path)
             .await
             .unwrap();
 
         // Read with max_bytes=10
-        let state = State(reg);
+        let state = State(app);
         let path = Path(ws_id);
         let json = Json(ReadFileRestRequest {
             path: "large.txt".into(),
@@ -292,10 +299,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_directory_handler() {
-        let (reg, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir) = setup_ws().await;
 
         // Write two files via fs
-        let ws = reg.get(&ws_id).await.unwrap();
+        let ws = app.registry.get(&ws_id).await.unwrap();
         fs::write_file_binary("a.txt", b"data", &ws.workspace_path)
             .await
             .unwrap();
@@ -304,7 +311,7 @@ mod tests {
             .unwrap();
 
         // List via handler
-        let state = State(reg);
+        let state = State(app);
         let path = Path(ws_id);
         let json = Json(ListDirectoryRequest { path: ".".into() });
         let result = handle_list_directory(state, path, json).await.unwrap();
@@ -315,16 +322,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_file_handler() {
-        let (reg, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir) = setup_ws().await;
 
         // Write via fs
-        let ws = reg.get(&ws_id).await.unwrap();
+        let ws = app.registry.get(&ws_id).await.unwrap();
         fs::write_file_binary("del.txt", b"to delete", &ws.workspace_path)
             .await
             .unwrap();
 
         // Delete via handler
-        let state = State(reg);
+        let state = State(app);
         let path = Path(ws_id);
         let json = Json(DeleteFileRequest {
             path: "del.txt".into(),
@@ -335,9 +342,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_mkdir_handler() {
-        let (reg, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir) = setup_ws().await;
 
-        let state = State(reg);
+        let state = State(app);
         let path = Path(ws_id);
         let json = Json(MkdirRequest {
             path: "sub/dir".into(),
@@ -348,16 +355,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_stat_handler() {
-        let (reg, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir) = setup_ws().await;
 
         // Write via fs
-        let ws = reg.get(&ws_id).await.unwrap();
+        let ws = app.registry.get(&ws_id).await.unwrap();
         fs::write_file_binary("metrics.txt", b"metrics data", &ws.workspace_path)
             .await
             .unwrap();
 
         // Stat via handler
-        let state = State(reg);
+        let state = State(app);
         let path = Path(ws_id);
         let json = Json(GetFileInfoRequest {
             path: "metrics.txt".into(),
@@ -369,17 +376,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_binary_write_and_stat() {
-        let (reg, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir) = setup_ws().await;
 
         // Write via handler
-        let state = State(reg.clone());
+        let state = State(app.clone());
         let path = Path((ws_id.clone(), "binary.bin".to_string()));
         let bin_data: Vec<u8> = vec![0x00, 0x01, 0x02, 0xFF, 0xFE];
         let body = Bytes::from(bin_data.clone());
         let _ = handle_write_binary(state, path, body).await.unwrap();
 
         // Stat via handler
-        let state = State(reg);
+        let state = State(app);
         let path = Path(ws_id);
         let json = Json(GetFileInfoRequest {
             path: "binary.bin".into(),

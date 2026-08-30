@@ -41,6 +41,8 @@ use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
 use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
+use xihe_runtime::workspace::WorkspaceManager;
+use tokio::sync::Mutex;
 use xihe_runtime::remote_mcp::{
     RemoteMcpConnector, RemoteMcpError, RequestStateBinding, RequestStateStore,
     validate_endpoint_dns, validate_endpoint_with_allowlist,
@@ -48,6 +50,16 @@ use xihe_runtime::remote_mcp::{
 use xihe_runtime::sandbox;
 
 const CONTAINER_RUNTIME_PORT: u16 = 39001;
+
+/// Shared runtime state for Axum handlers — holds the routing registry
+/// and the Docker-backed WorkspaceManager. This converges the former dual
+/// path (registry vs manager) into a single handler-owned state: every
+/// create/delete updates both, fail-closed on Docker errors.
+#[derive(Clone)]
+pub struct AppState {
+    pub registry: Arc<WorkspaceRegistry>,
+    pub manager: Arc<Mutex<WorkspaceManager>>,
+}
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static REMOTE_REQUEST_STATES: OnceLock<RequestStateStore> = OnceLock::new();
@@ -851,7 +863,7 @@ fn remote_mcp_error_response(
 
 async fn remote_mcp_call_handler(
     Path((workspace_id, server_id)): Path<(String, String)>,
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumJson(request): AxumJson<RemoteMcpCallRequest>,
 ) -> Result<
@@ -871,7 +883,7 @@ async fn remote_mcp_call_handler(
             ),
         ));
     }
-    if registry.get(&workspace_id).await.is_none() {
+    if app.registry.get(&workspace_id).await.is_none() {
         return Err((
             StatusCode::NOT_FOUND,
             [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
@@ -1062,10 +1074,10 @@ fn allocate_bridge_port() -> u16 {
 
 async fn mcp_spawn_handler(
     Path(ws_id): Path<String>,
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<McpSpawnRequest>,
 ) -> Result<AxumJson<McpSpawnResponse>, StatusCode> {
-    registry.get(&ws_id).await.ok_or(StatusCode::NOT_FOUND)?;
+    app.registry.get(&ws_id).await.ok_or(StatusCode::NOT_FOUND)?;
 
     let container_name = format!("xihe-workspace-ws_{ws_id}");
     let docker =
@@ -1210,7 +1222,7 @@ async fn resolve_container_ip(docker: &Docker, container_name: &str) -> Result<S
 }
 
 async fn create_workspace_handler(
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<CreateWorkspaceRequest>,
 ) -> AxumJson<CreateWorkspaceResponse> {
     let profile = match req.profile.as_deref() {
@@ -1219,7 +1231,6 @@ async fn create_workspace_handler(
         _ => SecurityProfile::Strict,
     };
     // v1 minimal: CP is canonical for storageRef; Runtime resolves host path locally.
-    // If XIHE_WORKSPACE_HOST_ROOT is set and storageRef is present, derive host path from it.
     let effective_path = if let Some(ref sref) = req.storage_ref {
         if let Ok(host_root) = std::env::var("XIHE_WORKSPACE_HOST_ROOT") {
             let trimmed = host_root.trim_end_matches('/').trim_end_matches('\\');
@@ -1231,39 +1242,136 @@ async fn create_workspace_handler(
     } else {
         req.workspace_path.clone()
     };
-    registry
-        .register_with_profile(&req.ws_id, &effective_path, profile)
-        .await;
-    if let Err(err) = std::fs::create_dir_all(&effective_path) {
-        tracing::error!(
-            "Failed to create workspace directory {} (resolved from {:?} / {:?}): {}",
-            effective_path,
-            req.workspace_path,
-            req.storage_ref,
-            err
+
+    // Strict profile: no container (network none, read-only rootfs, 127.0.0.1:39001 unreachable).
+    // Keep host-direct fallback for Strict; fail-closed only applies to Coding/Isolated.
+    if profile == SecurityProfile::Strict {
+        app.registry
+            .register_with_profile(&req.ws_id, &effective_path, profile)
+            .await;
+        if let Err(err) = std::fs::create_dir_all(&effective_path) {
+            tracing::error!(
+                "Failed to create workspace directory {} (resolved from {:?} / {:?}): {}",
+                effective_path, req.workspace_path, req.storage_ref, err
+            );
+        }
+        tracing::info!(
+            "Workspace registered via API (Strict, no container): ws_id={}, path={}, storageRef={:?}, effective_path={}",
+            req.ws_id, req.workspace_path, req.storage_ref, effective_path
         );
+        return AxumJson(CreateWorkspaceResponse {
+            status: "ok".to_string(),
+            ws_id: req.ws_id,
+        });
     }
-    tracing::info!(
-        "Workspace registered via API: ws_id={}, path={}, storageRef={:?}, effective_path={}",
-        req.ws_id,
-        req.workspace_path,
-        req.storage_ref,
-        effective_path
-    );
-    AxumJson(CreateWorkspaceResponse {
-        status: "ok".to_string(),
-        ws_id: req.ws_id,
-    })
+
+    // Coding/Isolated: must create Docker container — fail-closed on Docker errors.
+    let image = std::env::var("XIHE_WORKSPACE_IMAGE").unwrap_or_else(|_| "xihe/workspace".to_string());
+    let mut mgr = app.manager.lock().await;
+
+    // Idempotency: if manager already tracks this ws, just ensure registry and return.
+    if mgr.get_state(&req.ws_id).is_some() {
+        app.registry
+            .register_with_profile(&req.ws_id, &effective_path, profile)
+            .await;
+        tracing::info!(
+            "Workspace already tracked in manager, re-registered: ws_id={}, path={}",
+            req.ws_id, effective_path
+        );
+        return AxumJson(CreateWorkspaceResponse {
+            status: "ok".to_string(),
+            ws_id: req.ws_id,
+        });
+    }
+
+    match mgr
+        .create_workspace(&req.ws_id, &effective_path, profile, &image)
+        .await
+    {
+        Ok(state) => {
+            // Also register in routing registry so MCP factory can resolve workspace_path.
+            app.registry
+                .register_with_profile(&req.ws_id, &effective_path, profile)
+                .await;
+            tracing::info!(
+                "Workspace created with container: ws_id={}, path={}, container={}, image={}, profile={:?}",
+                req.ws_id, effective_path, state.container_name, image, profile
+            );
+            AxumJson(CreateWorkspaceResponse {
+                status: "ok".to_string(),
+                ws_id: req.ws_id,
+            })
+        }
+        Err(err) => {
+            let msg = err.to_string();
+            // Docker name conflict after restart (manager HashMap empty but container exists externally) → treat as ok, re-register.
+            let is_conflict = msg.contains("already exists")
+                || msg.contains("Conflict")
+                || msg.contains("is already in use")
+                || msg.contains("already in use");
+            if is_conflict {
+                tracing::warn!(
+                    "Workspace container already exists externally, re-registering: ws_id={}, err={}",
+                    req.ws_id, msg
+                );
+                app.registry
+                    .register_with_profile(&req.ws_id, &effective_path, profile)
+                    .await;
+                // Ensure host dir exists even if container existed
+                let _ = std::fs::create_dir_all(&effective_path);
+                return AxumJson(CreateWorkspaceResponse {
+                    status: "ok".to_string(),
+                    ws_id: req.ws_id,
+                });
+            }
+            tracing::error!(
+                "Failed to create workspace container ws_id={}, path={}, image={}, err={}",
+                req.ws_id, effective_path, image, msg
+            );
+            // Fail-closed: do NOT register, do NOT create fallback dir. Return error status so caller can observe.
+            AxumJson(CreateWorkspaceResponse {
+                status: format!("error: {msg}"),
+                ws_id: req.ws_id,
+            })
+        }
+    }
 }
 
 async fn delete_workspace_handler(
-    State(registry): State<Arc<WorkspaceRegistry>>,
+    State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<DeleteWorkspaceRequest>,
 ) -> AxumJson<DeleteWorkspaceResponse> {
     let ws_id = &req.ws_id;
     mcp_manager().cleanup_workspace(ws_id).await;
-    registry.unregister(ws_id).await;
-    tracing::info!("Workspace deleted: ws_id={}, bridges cleaned up", ws_id);
+    // Try to remove via manager (stops container + removes dir) if tracked; ignore not-found.
+    {
+        let mut mgr = app.manager.lock().await;
+        if mgr.get_state(ws_id).is_some() {
+            if let Err(e) = mgr.delete_workspace(ws_id).await {
+                tracing::warn!("Manager delete failed for ws_id={}: {}", ws_id, e);
+            } else {
+                tracing::info!("Workspace container removed via manager: ws_id={}", ws_id);
+            }
+        } else {
+            // Manager not tracking (e.g. Strict or post-restart orphan). Try best-effort docker removal
+            // via a temporary Docker connect to avoid leaking containers with the known name.
+            let name = format!("xihe-workspace-ws_{ws_id}");
+            if let Ok(docker) = Docker::connect_with_local_defaults() {
+                let _ = docker
+                    .remove_container(
+                        &name,
+                        Some(RemoveContainerOptions {
+                            force: true,
+                            v: true,
+                            link: false,
+                        }),
+                    )
+                    .await;
+            }
+        }
+    }
+    app.registry.unregister(ws_id).await;
+    tracing::info!("Workspace deleted: ws_id={}, registry + manager cleaned", ws_id);
     AxumJson(DeleteWorkspaceResponse {
         status: "ok".to_string(),
         ws_id: ws_id.clone(),
@@ -1330,6 +1438,11 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = format!("{runtime_host}:{runtime_port}");
 
     let registry = Arc::new(WorkspaceRegistry::new());
+    let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+    let app_state = Arc::new(AppState {
+        registry: registry.clone(),
+        manager: manager.clone(),
+    });
 
     tracing::info!(
         "Starting xihe Runtime MCP Server (Gateway mode) on {}",
@@ -1445,7 +1558,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(middleware::from_fn(internal_auth_middleware))
         .layer(middleware::from_fn(request_id_middleware))
         .layer(cors)
-        .with_state(registry);
+        .with_state(app_state);
 
     let tcp_listener = match tokio::net::TcpListener::bind(&bind_addr).await {
         Ok(listener) => listener,
