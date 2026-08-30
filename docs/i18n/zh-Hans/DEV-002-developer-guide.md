@@ -447,12 +447,15 @@ mvn -Pnative native:compile
 
 ### 6.1. 6.1 CP 日志
 
-默认情况下，根目录的每个 `task *:dev` 都会把进程日志同时写入 `logs/<module>.log`。四个默认文件名分别是：
+日常 host 开发（`mise run dev:host` / `mise run dev:host:watch`）下，日志约定为：
 
-- `logs/ui.log`
-- `logs/agent.log`
 - `logs/cp.log`
-- `logs/runtime.log`
+- `logs/agent.log`
+- `logs/runtime.log.<YYYY-MM-DD>`（Runtime 按日滚动）
+- `logs/ui.log`
+- `logs/host.log`（host watcher 自身日志）
+
+UI host 任务通过 `scripts/dev-ui-host.mjs` 将 Vite stdout/stderr 同时写入 `logs/ui.log`；Runtime 的每日文件名带日期后缀。若使用旧的根目录 `task *:dev`，也会写入 `logs/<module>.log`，但日常 host 开发以 `dev:host` 为准。
 
 日志等级也建议统一从根 `.env` 配：
 
@@ -504,7 +507,7 @@ Agent 使用 `langchain-litellm`（`ChatLiteLLM(BaseChatModel)`）作为统一�
 XIHE_LLM_PROVIDER=deepseek \
 XIHE_DEEPSEEK_API_KEY=your-deepseek-api-key-here \
 uv run python -m xihe_agent.main
-# 直接启动时日志输出到终端；通过根 task 启动时还会默认写入 logs/agent.log
+# 直接启动时日志输出到终端；host 启动时还会默认写入 logs/agent.log
 ```
 
 或通过设置页添加 Provider：OpenAI、DeepSeek、小米 MiMo、Anthropic 预设 + 自定义。

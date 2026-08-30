@@ -4,9 +4,19 @@
 
 ### Added
 
+- 服务韧性架构：CP 新增 HealthMonitor（10s 轮询 Agent/Runtime 健康）、CircuitBreaker（3 次失败 → open → 30s half-open）、RequestQueue（Agent 故障时暂存 chat 请求，60s TTL，恢复后自动 drain 重发）。
+- 外部进程保活：Docker Compose 所有服务加 `restart: unless-stopped` + healthcheck；`dev-host.ps1` 新增 `-Watch` 模式（health loop + 自动重启）。
+- Agent readiness gate：config sync 完成后才将 health 从 `starting` 改为 `ok`，config sync 失败时保持 `starting`。
+- Agent MCP lazy init：MCP 初始化从 Agent 启动阶段移到带 workspace 的请求路径，不阻塞纯 chat 启动；工具发现失败时不复用其他 workspace 的工具。
+- 结构化生命周期日志：所有服务统一 `[LIFECYCLE]` 前缀（CP 10 个事件、Agent 9 个事件、Runtime 4 个事件），支持 `grep [LIFECYCLE] logs/` 排查。
+- E2E 前置治理：确立 `dev:host` 为日常 host 开发主入口（host-only Postgres），统一 `logs/<module>.log` + `logs/runtime.log.<date>` + `logs/host.log`，固定配置生效链路，并建立 Playwright 视觉审查与 chat 前置验收流程。
+- Chat endpoint 条件化 MCP tools 注入：带 workspace_id 时按需发现并注入 MCP tools，否则仅 approval + image tools。
+- MCPClientManager workspace_id fail-fast：实际执行 MCP 初始化时缺少 workspace 会明确失败，纯 chat 启动不触发该路径。
 - 统一 HTTP API 契约：公开 API 使用 `/api/v1`、服务间 API 使用 `/internal/v1`，统一 Bearer 鉴权、camelCase 和 Problem Details；MCP/OAuth 协议字段保持原样。
 - Remote MCP 最小闭环：UI OAuth（Authorization Code + PKCE）→ CP callback/加密 credential → Agent 只连 CP logical endpoint → Runtime 短期 token 调用远程 MCP，401 经 CP broker 单次 refresh/retry；requestState 绑定/TTL/一次性消费。
 - 日志安全与可观测性：四模块序列化层统一脱敏（token/JWT/Bearer/PEM → `***redacted***`），`X-Request-Id` 由 CP 生成并向 Runtime/Agent 贯通，审计日志持久化至 `logs/audit.log`，新增 `scripts/scan-log-secrets.mjs` 泄露扫描门禁。
+- UI 响应式修复：移动端根据 viewport 使用侧栏抽屉，收起时隐藏内部内容，补充移动导航入口；侧栏背景和导航图标改用有效的主题变量与 `@lucide/vue` 组件。
+- Agent 非致命路径治理：无 embedding 凭据时跳过 RAG enrichment 并让 RAG ingest/search 返回 503；MCP 初始化延迟到 workspace 请求；事件存储时间统一使用带时区 UTC。
 
 ### Changed
 

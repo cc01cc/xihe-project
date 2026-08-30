@@ -30,7 +30,13 @@
 # 1. Install dependencies (all modules)
 mise run setup
 
-# 2. Start all modules (Docker Compose backend + UI on host)
+# 2. Start all modules for daily host development
+#    Host-only Postgres rule: daily host development only runs PostgreSQL in Docker;
+#    CP / Agent / Runtime / UI run as native mise tasks.
+#    dev:host 先启动并等待 Postgres，再并行启动原生服务。
+mise run dev:host
+
+# 3. (Only for one-off full-stack container scenarios)
 #    dev:full 会自动等待 CP ready 后导入 config.import.local.jsonc（如存在）
 mise run dev:full
 
@@ -44,12 +50,16 @@ mise run validate
 |------|------|------|
 | `mise run setup` | 安装所有模块依赖 | — |
 | `mise run dev` | 启动 UI dev server（需后端已运行） | 等价于 `mise run dev:ui` |
-| `mise run dev:full` | 启动全部服务 (Docker + UI) | 自动导入 `config.import.local.jsonc` |
+| `mise run dev:host` | 日常 host 开发主入口：PostgreSQL Docker + CP/Agent/Runtime/UI 原生并行启动 | 推荐用于日常开发 |
+| `mise run dev:full` | 一次性全容器场景（Docker + UI on host） | 自动导入 `config.import.local.jsonc`，不用于日常 host 开发 |
 | `mise run dev:backend` | 启动 Docker 后端服务（无 UI） | — |
 | `mise run dev:ui` | 启动 UI dev server | — |
 | `mise run dev:agent` | 启动 Agent 服务 | — |
 | `mise run dev:cp` | 启动 Control Plane | — |
 | `mise run dev:runtime` | 启动 Runtime 服务 | — |
+| `mise run dev:host` | PostgreSQL Docker + CP/Agent/Runtime/UI 原生并行启动 | Ctrl+C 由 mise 清理原生任务 |
+| `mise run dev:host:watch` | 启动 host 栈并监控健康端点，故障后重启任务组 | Node watcher；不启动 CP/Agent/Runtime 容器 |
+| `mise run dev:host:stop` | 停止 host 栈 PostgreSQL | 日常场景先 Ctrl+C 停止原生任务，再执行本命令 |
 | `mise run build` | 构建 UI + Runtime | — |
 | `mise run build:ui` | 构建 UI bundle | — |
 | `mise run build:runtime` | 构建 Runtime binaries | — |
@@ -168,7 +178,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 | **环境变量** | 运行前固定（端口/DB/JWT） | `.env.example` → `.env.dev`（gitignore） | ❌ |
 | **ConfigService** | 运行时可改（API key/模型/日志） | `config.import.example.jsonc` → `config.import.local.jsonc`（gitignore） | ✅ UI / API |
 
-`mise run dev:full` 自动导入 `config.import.local.jsonc`；CP 配置统一走 `config.import.*.jsonc`，内部种子已移除。
+日常 host 开发推荐 `mise run dev:host`；`mise run dev:full` 仅用于一次性全容器场景，会自动导入 `config.import.local.jsonc`。配置生效优先级推荐为：OS 引导变量 → `.env.dev` → ConfigService / UI Settings。
 
 ## Testing
 
@@ -222,9 +232,11 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
 - **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU（PLAN-097）。OOM 时按需上调
-- **runtime 测试现状**: 全量 `cargo test` 可编译执行（198 通过、3 ignored——ignored 为需真实 CP 的 T3 集成测试）；`sandbox_test.rs` 历史 `SandboxManager` 编译失败已修复。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
+- **runtime 测试现状**: 全量 `cargo test` 可编译执行；默认并行 `cargo test --lib` 已覆盖 CWD 测试锁，当前库测试 105 通过。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
 - **Vue i18n JSON placeholder**: `t()` 消息中不可含 `{...}`
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
+- **Agent MCP init 按需执行**: 纯 chat 启动不连接 CP MCP；带 workspace 的请求才按 `X-Workspace-Id` 触发工具发现。`MCPClientManager.initialize()` 在没有 workspace 时仍 fail-fast，且不会把已绑定 workspace 的工具复用于其他 workspace。
+- **`dev:host` 原生编排**: `mise run dev:host` 先以 Docker 启动并等待 PostgreSQL，再由 mise 并行管理原生 CP/Agent/Runtime/UI；`mise run dev:host:watch` 通过 Node watcher 检查四个健康端点并在任务组失败后重启。`scripts/dev-host.ps1` 仅保留兼容的检查/包装入口。`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根，默认 `A03-xihe\.xihe-workspaces`
 
 详见 `docs/i18n/zh-Hans/DEV-012-known-issues.md`。覆盖率缺口 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。
 
