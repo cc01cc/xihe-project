@@ -1469,6 +1469,7 @@ async fn main() -> anyhow::Result<()> {
     let wp = workspace_path.clone();
 
     let service_registry = registry.clone();
+    let wp_for_single = wp.clone();
     let service = StreamableHttpService::new(
         move || {
             let ws_id = CURRENT_WS_ID
@@ -1479,10 +1480,30 @@ async fn main() -> anyhow::Result<()> {
                 SecurityProfile::Strict => None,
                 _ => tokio::runtime::Handle::current().block_on(resolve_container_addr(&ws_id)),
             };
-            let ws_root = service_registry
-                .try_get(&ws_id)
-                .map(|instance| instance.workspace_path.clone())
-                .unwrap_or_else(|| wp.clone());
+            let ws_root = match service_registry.try_get(&ws_id) {
+                Some(instance) => instance.workspace_path.clone(),
+                None => {
+                    // Fail-closed: unknown workspace must not silently use default directory.
+                    // Only explicit single-workspace mode may fall back, and must be logged.
+                    let single_mode =
+                        std::env::var("XIHE_SINGLE_WORKSPACE_MODE").as_deref() == Ok("true");
+                    if single_mode {
+                        tracing::warn!(
+                            "single_workspace_fallback: ws_id={} not registered, using XIHE_WORKSPACE={}",
+                            ws_id, wp_for_single
+                        );
+                        wp_for_single.clone()
+                    } else {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!(
+                                "workspace not registered: {} (WORKSPACE_NOT_REGISTERED)",
+                                ws_id
+                            ),
+                        ));
+                    }
+                }
+            };
             Ok(XiheRuntime::new(&ws_id, &ws_root, profile, container_addr))
         },
         LocalSessionManager::default().into(),
@@ -1558,7 +1579,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(middleware::from_fn(internal_auth_middleware))
         .layer(middleware::from_fn(request_id_middleware))
         .layer(cors)
-        .with_state(app_state);
+        .with_state(Arc::clone(&app_state));
 
     let tcp_listener = match tokio::net::TcpListener::bind(&bind_addr).await {
         Ok(listener) => listener,
@@ -1583,6 +1604,49 @@ async fn main() -> anyhow::Result<()> {
             ct.cancel();
         })
         .await?;
+
+    // Cold shutdown: stop all managed sandboxes (keep host storage). PLAN-201 M2.6 / M3.6.
+    // This is bounded: each stop has 10s timeout inside WorkspaceManager::stop_container.
+    tracing::info!("runtime_shutdown_started: draining and stopping managed sandboxes");
+    {
+        let ids: Vec<String> = {
+            let mgr = app_state.manager.lock().await;
+            mgr.list_workspaces().iter().map(|s| s.ws_id.clone()).collect()
+        };
+        if ids.is_empty() {
+            tracing::info!("runtime_shutdown_draining: no managed sandboxes");
+        } else {
+            tracing::info!(
+                "runtime_shutdown_draining: stopping {} sandbox(es)",
+                ids.len()
+            );
+        }
+        for ws_id in ids {
+            let res = {
+                let mgr = app_state.manager.lock().await;
+                mgr.stop_container(&ws_id).await
+            };
+            match res {
+                Ok(_) => tracing::info!("sandbox_stopped: ws_id={}", ws_id),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("SandboxNotFound") || msg.contains("not found") {
+                        tracing::info!("sandbox_stop_skipped: ws_id={} not tracked", ws_id);
+                    } else {
+                        tracing::warn!("sandbox_stop_failed: ws_id={} err={}", ws_id, msg);
+                    }
+                }
+            }
+            // Best-effort: also try to stop any orphan docker container by name (manager HashMap may be empty after restart).
+            let name = format!("xihe-workspace-ws_{ws_id}");
+            if let Ok(docker) = Docker::connect_with_local_defaults() {
+                let _ = docker
+                    .stop_container(&name, Some(StopContainerOptions { t: Some(10), ..Default::default() }))
+                    .await;
+            }
+        }
+    }
+    tracing::info!("runtime_shutdown_finished: managed sandboxes drained, host storage preserved");
 
     Ok(())
 }
