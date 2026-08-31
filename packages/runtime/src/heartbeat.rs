@@ -24,9 +24,11 @@ pub async fn heartbeat_loop(ready: Arc<AtomicBool>, ct: tokio_util::sync::Cancel
                 } else {
                     missed += 1;
                     warn!("heartbeat: not ready, missed={}", missed);
-                    if missed >= 3 {
-                        // 90s without ready → would be marked stale in real CP
-                        warn!("heartbeat: stale threshold reached (90s)");
+                    if missed == 3 {
+                        warn!("heartbeat: stale threshold reached (90s) per Q22 A");
+                    }
+                    if missed >= 6 {
+                        warn!("heartbeat: blocked threshold reached (180s) per Q22 A");
                     }
                 }
             }
