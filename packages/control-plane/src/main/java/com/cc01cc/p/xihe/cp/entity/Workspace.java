@@ -27,6 +27,21 @@ public class Workspace {
     @Column(name = "storage_path", length = 512)
     private String storagePath;
 
+    @Column(name = "storage_backend", length = 32)
+    private String storageBackend = "host_directory";
+
+    @Column(name = "storage_ref", length = 64)
+    private String storageRef;
+
+    @Column(name = "generation")
+    private Integer generation = 0;
+
+    @Column(name = "sandbox_spec_hash", length = 64)
+    private String sandboxSpecHash;
+
+    @Column(name = "sandbox_spec", columnDefinition = "JSONB")
+    private String sandboxSpec;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -68,6 +83,21 @@ public class Workspace {
 
     public String getStoragePath() { return storagePath; }
     public void setStoragePath(String storagePath) { this.storagePath = storagePath; }
+
+    public String getStorageBackend() { return storageBackend; }
+    public void setStorageBackend(String storageBackend) { this.storageBackend = storageBackend; }
+
+    public String getStorageRef() { return storageRef; }
+    public void setStorageRef(String storageRef) { this.storageRef = storageRef; }
+
+    public Integer getGeneration() { return generation; }
+    public void setGeneration(Integer generation) { this.generation = generation; }
+
+    public String getSandboxSpecHash() { return sandboxSpecHash; }
+    public void setSandboxSpecHash(String sandboxSpecHash) { this.sandboxSpecHash = sandboxSpecHash; }
+
+    public String getSandboxSpec() { return sandboxSpec; }
+    public void setSandboxSpec(String sandboxSpec) { this.sandboxSpec = sandboxSpec; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
