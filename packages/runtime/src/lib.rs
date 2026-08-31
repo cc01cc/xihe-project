@@ -10,6 +10,7 @@ pub mod sandbox;
 pub mod log_redact;
 pub mod workspace;
 pub mod storage;
+pub mod device;
 
 #[cfg(test)]
 mod tests {

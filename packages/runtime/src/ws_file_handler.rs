@@ -199,6 +199,7 @@ mod tests {
     use super::*;
     use crate::AppState;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
     use tempfile::TempDir;
     use tokio::sync::Mutex;
     use xihe_runtime::gateway::WorkspaceRegistry;
@@ -213,6 +214,8 @@ mod tests {
         let app = Arc::new(AppState {
             registry: Arc::new(reg),
             manager: Arc::new(Mutex::new(WorkspaceManager::new())),
+            device_id: "test-device".to_string(),
+            ready: Arc::new(AtomicBool::new(true)),
         });
         (app, ws_id, dir)
     }

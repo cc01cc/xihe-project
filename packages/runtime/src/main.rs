@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use axum::Json as AxumJson;
 use axum::extract::State;
@@ -39,6 +39,7 @@ use xihe_runtime::fetch::WebFetchResult;
 use xihe_runtime::fs;
 use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
 use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
+use xihe_runtime::device;
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
 use xihe_runtime::storage;
@@ -60,6 +61,10 @@ const CONTAINER_RUNTIME_PORT: u16 = 39001;
 pub struct AppState {
     pub registry: Arc<WorkspaceRegistry>,
     pub manager: Arc<Mutex<WorkspaceManager>>,
+    pub device_id: String,
+    /// Readiness: false until first successful hydrate (for now, set true after device_id ensured).
+    /// In future, this will be set true only after `GET assignments` succeeds.
+    pub ready: Arc<AtomicBool>,
 }
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -711,6 +716,24 @@ fn resolve_runtime_log_filter_with(
 
 async fn health() -> &'static str {
     "OK"
+}
+
+/// M2-3.5: readiness probe — grill B double endpoint.
+/// `/health` is always 200 (liveness), `/ready` is 200 only after `ready` flag true.
+async fn ready(State(app): State<Arc<AppState>>) -> impl IntoResponse {
+    if app.ready.load(Ordering::Relaxed) {
+        (
+            StatusCode::OK,
+            AxumJson(serde_json::json!({"status":"ready","deviceId": app.device_id})),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            AxumJson(serde_json::json!({"status":"not_ready","deviceId": app.device_id})),
+        )
+            .into_response()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1458,15 +1481,30 @@ async fn main() -> anyhow::Result<()> {
 
     let registry = Arc::new(WorkspaceRegistry::new());
     let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+    // M2-3.1: device_id persistence (grill A random UUID file)
+    let state_dir = device::resolve_state_dir();
+    let device_id = match device::ensure_device_id(&state_dir).await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!("device_id init failed (state_dir={:?}): {}, using ephemeral", state_dir, e);
+            uuid::Uuid::new_v4().to_string()
+        }
+    };
+    let readiness = Arc::new(AtomicBool::new(false));
     let app_state = Arc::new(AppState {
         registry: registry.clone(),
         manager: manager.clone(),
+        device_id: device_id.clone(),
+        ready: readiness.clone(),
     });
 
     tracing::info!(
-        "Starting xihe Runtime MCP Server (Gateway mode) on {}",
-        bind_addr
+        "Starting xihe Runtime MCP Server (Gateway mode) on {} (device_id={})",
+        bind_addr, device_id
     );
+    // For v1, readiness is true after device_id ensured. Future hydrate will gate it.
+    readiness.store(true, Ordering::Relaxed);
+    tracing::info!("readiness: true (device_id ready, hydrate not yet required for v1)");
 
     let ct = tokio_util::sync::CancellationToken::new();
 
@@ -1539,6 +1577,7 @@ async fn main() -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/mcp",
             any(workspace_mcp_handler),
