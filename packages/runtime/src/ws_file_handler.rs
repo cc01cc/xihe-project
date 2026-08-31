@@ -61,6 +61,22 @@ fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
     problem(status, code, "Runtime file operation failed")
 }
 
+fn workspace_not_found(app: &AppState) -> (StatusCode, Json<Value>) {
+    if !app.registry.is_hydrated() {
+        problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "WORKSPACE_REGISTRY_NOT_READY",
+            "Registry not hydrated",
+        )
+    } else {
+        problem(
+            StatusCode::NOT_FOUND,
+            "WORKSPACE_NOT_FOUND",
+            "Workspace not found",
+        )
+    }
+}
+
 // ---- Handlers ----
 
 pub async fn handle_read_file(
@@ -68,13 +84,11 @@ pub async fn handle_read_file(
     Path(ws_id): Path<String>,
     Json(req): Json<ReadFileRestRequest>,
 ) -> Result<Json<ReadFileResult>, (StatusCode, Json<Value>)> {
-    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
-        problem(
-            StatusCode::NOT_FOUND,
-            "WORKSPACE_NOT_FOUND",
-            "Workspace not found",
-        )
-    })?;
+    let ws = app
+        .registry
+        .get(&ws_id)
+        .await
+        .ok_or_else(|| workspace_not_found(&app))?;
     let mut content = fs::read_file(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -96,13 +110,11 @@ pub async fn handle_write_binary(
     Path((ws_id, raw_path)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
-        problem(
-            StatusCode::NOT_FOUND,
-            "WORKSPACE_NOT_FOUND",
-            "Workspace not found",
-        )
-    })?;
+    let ws = app
+        .registry
+        .get(&ws_id)
+        .await
+        .ok_or_else(|| workspace_not_found(&app))?;
     let path = percent_encoding::percent_decode_str(&raw_path)
         .decode_utf8()
         .map_err(|_| {
@@ -129,13 +141,11 @@ pub async fn handle_list_directory(
     Path(ws_id): Path<String>,
     Json(req): Json<ListDirectoryRequest>,
 ) -> Result<Json<fs::DirectoryListing>, (StatusCode, Json<Value>)> {
-    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
-        problem(
-            StatusCode::NOT_FOUND,
-            "WORKSPACE_NOT_FOUND",
-            "Workspace not found",
-        )
-    })?;
+    let ws = app
+        .registry
+        .get(&ws_id)
+        .await
+        .ok_or_else(|| workspace_not_found(&app))?;
     let entries = fs::list_directory(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(fs::DirectoryListing { entries }))
 }
@@ -145,13 +155,11 @@ pub async fn handle_delete_file(
     Path(ws_id): Path<String>,
     Json(req): Json<DeleteFileRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
-        problem(
-            StatusCode::NOT_FOUND,
-            "WORKSPACE_NOT_FOUND",
-            "Workspace not found",
-        )
-    })?;
+    let ws = app
+        .registry
+        .get(&ws_id)
+        .await
+        .ok_or_else(|| workspace_not_found(&app))?;
     let msg = fs::delete_file(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -163,13 +171,11 @@ pub async fn handle_mkdir(
     Path(ws_id): Path<String>,
     Json(req): Json<MkdirRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
-        problem(
-            StatusCode::NOT_FOUND,
-            "WORKSPACE_NOT_FOUND",
-            "Workspace not found",
-        )
-    })?;
+    let ws = app
+        .registry
+        .get(&ws_id)
+        .await
+        .ok_or_else(|| workspace_not_found(&app))?;
     let msg = fs::mkdir(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -181,13 +187,11 @@ pub async fn handle_stat(
     Path(ws_id): Path<String>,
     Json(req): Json<GetFileInfoRequest>,
 ) -> Result<Json<fs::FileInfo>, (StatusCode, Json<Value>)> {
-    let ws = app.registry.get(&ws_id).await.ok_or_else(|| {
-        problem(
-            StatusCode::NOT_FOUND,
-            "WORKSPACE_NOT_FOUND",
-            "Workspace not found",
-        )
-    })?;
+    let ws = app
+        .registry
+        .get(&ws_id)
+        .await
+        .ok_or_else(|| workspace_not_found(&app))?;
     let info = fs::get_file_info(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(info))
 }

@@ -911,12 +911,30 @@ async fn remote_mcp_call_handler(
         ));
     }
     if app.registry.get(&workspace_id).await.is_none() {
+        let (status, code, detail) = if !app.registry.is_hydrated() {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "WORKSPACE_REGISTRY_NOT_READY",
+                "Registry not hydrated",
+            )
+        } else {
+            (
+                StatusCode::NOT_FOUND,
+                "WORKSPACE_NOT_FOUND",
+                "Workspace is not registered",
+            )
+        };
         return Err((
-            StatusCode::NOT_FOUND,
+            status,
             [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
-            AxumJson(
-                serde_json::json!({"type":"https://xihe.dev/problems/workspace-not-found","title":"Workspace not found","status":404,"code":"WORKSPACE_NOT_FOUND","detail":"Workspace is not registered","requestId":uuid::Uuid::new_v4().to_string()}),
-            ),
+            AxumJson(serde_json::json!({
+                "type": format!("https://xihe.dev/problems/{}", code.to_ascii_lowercase()),
+                "title": if status == StatusCode::SERVICE_UNAVAILABLE { "Registry not ready" } else { "Workspace not found" },
+                "status": status.as_u16(),
+                "code": code,
+                "detail": detail,
+                "requestId": uuid::Uuid::new_v4().to_string()
+            })),
         ));
     }
     if request.user_id.trim().is_empty()
@@ -1104,7 +1122,13 @@ async fn mcp_spawn_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<McpSpawnRequest>,
 ) -> Result<AxumJson<McpSpawnResponse>, StatusCode> {
-    app.registry.get(&ws_id).await.ok_or(StatusCode::NOT_FOUND)?;
+    if app.registry.get(&ws_id).await.is_none() {
+        if !app.registry.is_hydrated() {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        } else {
+            return Err(StatusCode::NOT_FOUND);
+        }
+    }
 
     let container_name = format!("xihe-workspace-ws_{ws_id}");
     let docker =
@@ -1555,7 +1579,16 @@ async fn main() -> anyhow::Result<()> {
                 Some(instance) => instance.workspace_path.clone(),
                 None => {
                     // Fail-closed: unknown workspace must not silently use default directory.
-                    // Only explicit single-workspace mode may fall back, and must be logged.
+                    // Distinguish not hydrated (registry empty) vs not registered (known empty after hydrate).
+                    if !service_registry.is_hydrated() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::WouldBlock,
+                            format!(
+                                "workspace not registered: {} (WORKSPACE_REGISTRY_NOT_READY)",
+                                ws_id
+                            ),
+                        ));
+                    }
                     let single_mode =
                         std::env::var("XIHE_SINGLE_WORKSPACE_MODE").as_deref() == Ok("true");
                     if single_mode {

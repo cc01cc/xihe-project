@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::RwLock;
@@ -72,6 +73,7 @@ impl XiheRuntimeInstance {
 #[derive(Debug, Default)]
 pub struct WorkspaceRegistry {
     instances: Arc<RwLock<HashMap<String, XiheRuntimeInstance>>>,
+    hydrated: AtomicBool,
 }
 
 impl WorkspaceRegistry {
@@ -85,6 +87,7 @@ impl WorkspaceRegistry {
             .write()
             .await
             .insert(ws_id.to_string(), instance);
+        self.hydrated.store(true, Ordering::Relaxed);
     }
 
     pub async fn register_with_profile(
@@ -98,6 +101,16 @@ impl WorkspaceRegistry {
             .write()
             .await
             .insert(ws_id.to_string(), instance);
+        self.hydrated.store(true, Ordering::Relaxed);
+    }
+
+    /// M2-3.3: registry as cache — distinguish not ready vs not registered.
+    pub fn is_hydrated(&self) -> bool {
+        self.hydrated.load(Ordering::Relaxed)
+    }
+
+    pub fn set_hydrated(&self, v: bool) {
+        self.hydrated.store(v, Ordering::Relaxed);
     }
 
     pub async fn unregister(&self, ws_id: &str) {
@@ -151,10 +164,13 @@ pub async fn get_instance_for_request(
     registry: &WorkspaceRegistry,
     workspace_id: &str,
 ) -> Result<XiheRuntimeInstance, String> {
-    let instance = registry
-        .get(workspace_id)
-        .await
-        .ok_or_else(|| format!("workspace not registered: {workspace_id}"))?;
+    let instance = registry.get(workspace_id).await.ok_or_else(|| {
+        if !registry.is_hydrated() {
+            format!("workspace not registered: {workspace_id} (WORKSPACE_REGISTRY_NOT_READY)")
+        } else {
+            format!("workspace not registered: {workspace_id} (WORKSPACE_NOT_REGISTERED)")
+        }
+    })?;
     registry.update_last_active(workspace_id).await;
     Ok(instance)
 }
