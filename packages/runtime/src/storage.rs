@@ -19,6 +19,18 @@ pub fn is_valid_storage_ref(s: &str) -> bool {
     storage_ref_regex().is_match(s)
 }
 
+/// Strip Windows `\\?\` extended-length prefix that `canonicalize` may return.
+/// Docker bind parsing fails on `\\?\H:\...:/workspace:rw` ("too many colons"),
+/// but `H:\...:/workspace:rw` is correct.
+fn strip_unc_prefix(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if s.starts_with(r"\\?\") {
+        PathBuf::from(s.trim_start_matches(r"\\?\").to_string())
+    } else {
+        p
+    }
+}
+
 /// Resolve `hostRoot + storageRef` to a validated host directory.
 ///
 /// Validation per grill B1/B2/B6:
@@ -62,18 +74,20 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
             .map_err(RuntimeError::Io)?;
     }
 
-    let host_root_canonical = host_root_path
-        .canonicalize()
-        .map_err(|e| RuntimeError::InvalidPath(format!("hostRoot canonicalize failed {:?}: {}", host_root, e)))?;
+    let host_root_canonical = strip_unc_prefix(
+        host_root_path
+            .canonicalize()
+            .map_err(|e| RuntimeError::InvalidPath(format!("hostRoot canonicalize failed {:?}: {}", host_root, e)))?,
+    );
 
     // Join (lexically) — regex already guarantees no traversal, but we still canonical-check.
     let joined = host_root_path.join(storage_ref);
 
     // If joined exists, canonicalize it; otherwise canonicalize its first existing ancestor (hostRoot) and append remaining.
     let joined_canonical = if joined.exists() {
-        joined
-            .canonicalize()
-            .map_err(|e| RuntimeError::InvalidPath(format!("joined canonicalize failed {:?}: {}", joined.display(), e)))?
+        strip_unc_prefix(joined.canonicalize().map_err(|e| {
+            RuntimeError::InvalidPath(format!("joined canonicalize failed {:?}: {}", joined.display(), e))
+        })?)
     } else {
         // Parent (hostRoot) is guaranteed to exist after above; canonicalize parent + push child name lexically then check.
         // We still need to ensure no symlink escape via parent: hostRoot_canonical is already canonical.
@@ -132,14 +146,14 @@ pub fn resolve_host_path_sync(host_root: &str, storage_ref: &str, ws_id: &str) -
         )));
     }
     let host_root_path = Path::new(host_root);
-    let host_root_canonical = host_root_path.canonicalize().map_err(|e| {
+    let host_root_canonical = strip_unc_prefix(host_root_path.canonicalize().map_err(|e| {
         RuntimeError::InvalidPath(format!("hostRoot canonicalize failed {:?}: {}", host_root, e))
-    })?;
+    })?);
     let joined = host_root_path.join(storage_ref);
     let joined_canonical = if joined.exists() {
-        joined.canonicalize().map_err(|e| {
+        strip_unc_prefix(joined.canonicalize().map_err(|e| {
             RuntimeError::InvalidPath(format!("joined canonicalize failed {:?}: {}", joined.display(), e))
-        })?
+        })?)
     } else {
         host_root_canonical.join(storage_ref)
     };
