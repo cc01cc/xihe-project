@@ -177,6 +177,25 @@ impl WorkspaceManager {
             return Err(e);
         }
 
+        // M1c: Strict isolation probes — grill B5 direct Engine exec, B6 STRICT_PROBE_FAILED
+        if profile == SecurityProfile::Strict {
+            if let Err(e) = self.verify_strict_isolation(&state).await {
+                if let Some(docker) = self.docker.as_ref() {
+                    let _ = docker
+                        .remove_container(
+                            &state.container_name,
+                            Some(RemoveContainerOptions {
+                                force: true,
+                                v: true,
+                                link: false,
+                            }),
+                        )
+                        .await;
+                }
+                return Err(e);
+            }
+        }
+
         self.workspaces.insert(ws_id.to_string(), state.clone());
         info!(
             "Workspace created: ws_id={}, path={}",
@@ -460,6 +479,78 @@ impl WorkspaceManager {
                 state.ws_id
             ))),
         }
+    }
+
+    /// M1c: Strict isolation probes — grill B5 direct Engine exec, B6 STRICT_PROBE_FAILED.
+    /// Verifies external egress and lateral access are blocked via `curl`/`wget`.
+    async fn verify_strict_isolation(&self, state: &WorkspaceState) -> Result<()> {
+        let docker = self
+            .docker
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
+        // Probes: (label, shell command that exits 0 when isolated (blocked), 1 when not isolated)
+        let probes = [
+            (
+                "external_egress",
+                "curl --connect-timeout 2 -s http://1.1.1.1:80 > /dev/null 2>&1 && exit 1; wget -qO- --timeout=2 http://1.1.1.1:80 > /dev/null 2>&1 && exit 1; exit 0",
+            ),
+            (
+                "lateral_postgres",
+                "curl --connect-timeout 2 -s http://postgres:5432 > /dev/null 2>&1 && exit 1; wget -qO- --timeout=2 http://postgres:5432 > /dev/null 2>&1 && exit 1; exit 0",
+            ),
+        ];
+        for (label, cmd) in probes {
+            let exec = docker
+                .create_exec(
+                    &state.container_name,
+                    CreateExecOptions {
+                        cmd: Some(vec!["sh".to_string(), "-c".to_string(), cmd.to_string()]),
+                        attach_stdout: Some(false),
+                        attach_stderr: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|e| RuntimeError::Docker(format!("strict probe {label} create exec: {e}")))?;
+            docker
+                .start_exec(
+                    &exec.id,
+                    Some(bollard::exec::StartExecOptions {
+                        detach: false,
+                        tty: false,
+                        output_capacity: Some(64),
+                    }),
+                )
+                .await
+                .map_err(|e| RuntimeError::Docker(format!("strict probe {label} start exec: {e}")))?;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let info = docker
+                .inspect_exec(&exec.id)
+                .await
+                .map_err(|e| RuntimeError::Docker(format!("strict probe {label} inspect: {e}")))?;
+            match info.exit_code {
+                Some(0) => {
+                    info!("strict probe passed: ws_id={} probe={}", state.ws_id, label);
+                }
+                Some(code) => {
+                    return Err(RuntimeError::Io(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!(
+                            "STRICT_PROBE_FAILED: {} probe failed for {}: exit code {} (isolation broken)",
+                            label, state.ws_id, code
+                        ),
+                    )));
+                }
+                None => {
+                    return Err(RuntimeError::Docker(format!(
+                        "strict probe {label}: no exit code for {}",
+                        state.ws_id
+                    )));
+                }
+            }
+        }
+        info!("strict isolation verified for workspace {}", state.ws_id);
+        Ok(())
     }
 
     pub async fn start_mcp_bridge(
