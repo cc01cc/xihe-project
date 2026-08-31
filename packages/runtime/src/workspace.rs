@@ -64,6 +64,40 @@ impl WorkspaceManager {
             .await
             .map_err(RuntimeError::Io)?;
 
+        // M1b: host writability probe — fail with STORAGE_UNAVAILABLE if not writable
+        {
+            let probe_file = PathBuf::from(workspace_path).join(".xihe-probe-writable");
+            let content = format!("probe-{}", ws_id);
+            if let Err(e) = fs::write(&probe_file, content.as_bytes()).await {
+                return Err(RuntimeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("STORAGE_UNAVAILABLE: host writability probe failed for {}: {}", workspace_path, e),
+                )));
+            }
+            let _ = fs::remove_file(&probe_file).await;
+        }
+        // M1b: available space check (>64MB) — fs2
+        {
+            let available = fs2::available_space(workspace_path).map_err(|e| {
+                RuntimeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!(
+                        "STORAGE_UNAVAILABLE: available_space check failed for {}: {}",
+                        workspace_path, e
+                    ),
+                ))
+            })?;
+            if available < 64 * 1024 * 1024 {
+                return Err(RuntimeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::StorageFull,
+                    format!(
+                        "STORAGE_UNAVAILABLE: insufficient space for {}: {} bytes available",
+                        workspace_path, available
+                    ),
+                )));
+            }
+        }
+
         let host_config = HostConfig {
             memory: Some(512 * 1024 * 1024),
             memory_swap: Some(512 * 1024 * 1024),
@@ -124,6 +158,24 @@ impl WorkspaceManager {
 
         // Start xihe-container-runtime inside the container
         self.start_container_runtime(&state).await?;
+
+        // M1b: verify mount via sentinel (host -> container) — grill B3/B4
+        if let Err(e) = self.verify_mount(&state).await {
+            // Clean up container on mount verification failure to avoid orphan
+            if let Some(docker) = self.docker.as_ref() {
+                let _ = docker
+                    .remove_container(
+                        &state.container_name,
+                        Some(RemoveContainerOptions {
+                            force: true,
+                            v: true,
+                            link: false,
+                        }),
+                    )
+                    .await;
+            }
+            return Err(e);
+        }
 
         self.workspaces.insert(ws_id.to_string(), state.clone());
         info!(
@@ -339,6 +391,75 @@ impl WorkspaceManager {
         );
         // Continue anyway — container-runtime may start serving after health check window
         Ok(())
+    }
+
+    /// M1b: verify host -> container mount via fixed sentinel (grill B3/B4).
+    /// Writes `.xihe-sentinel` on host, then `cat | grep -q` inside container.
+    async fn verify_mount(&self, state: &WorkspaceState) -> Result<()> {
+        let docker = self
+            .docker
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
+        let sentinel_path = PathBuf::from(&state.workspace_path).join(".xihe-sentinel");
+        let expected = format!("sentinel-{}", state.ws_id);
+        // Write sentinel on host (fixed single file per workspace)
+        fs::write(&sentinel_path, expected.as_bytes())
+            .await
+            .map_err(|e| {
+                RuntimeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("STORAGE_UNAVAILABLE: sentinel write failed for {}: {}", state.workspace_path, e),
+                ))
+            })?;
+        // Verify inside container: cat + grep
+        let check_cmd = format!("cat /workspace/.xihe-sentinel | grep -q \"{}\"", expected);
+        let exec = docker
+            .create_exec(
+                &state.container_name,
+                CreateExecOptions {
+                    cmd: Some(vec!["sh".to_string(), "-c".to_string(), check_cmd]),
+                    attach_stdout: Some(false),
+                    attach_stderr: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| RuntimeError::Docker(format!("verify mount create exec: {e}")))?;
+        docker
+            .start_exec(
+                &exec.id,
+                Some(bollard::exec::StartExecOptions {
+                    detach: false,
+                    tty: false,
+                    output_capacity: Some(128),
+                }),
+            )
+            .await
+            .map_err(|e| RuntimeError::Docker(format!("verify mount start exec: {e}")))?;
+        // Small delay to let inspect populate exit_code (bollard quirk on Windows)
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Check exit code via inspect
+        let info = docker
+            .inspect_exec(&exec.id)
+            .await
+            .map_err(|e| RuntimeError::Docker(format!("verify mount inspect: {e}")))?;
+        match info.exit_code {
+            Some(0) => {
+                info!("mount verified via sentinel for workspace {}", state.ws_id);
+                Ok(())
+            }
+            Some(code) => Err(RuntimeError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!(
+                    "STORAGE_UNAVAILABLE: sentinel mismatch for {}: expected {:?}, exit code {}",
+                    state.ws_id, expected, code
+                ),
+            ))),
+            None => Err(RuntimeError::Docker(format!(
+                "verify mount: no exit code for {}",
+                state.ws_id
+            ))),
+        }
     }
 
     pub async fn start_mcp_bridge(

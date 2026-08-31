@@ -60,6 +60,9 @@ dotenvy = "0.15"
 # === NEW: Docker sandbox (MVP) ===
 bollard = "0.21.0"
 
+# === NEW: Disk space probing (M1b) ===
+fs2 = "0.4"
+
 # === NEW: Unix sandbox (optional, for future) ===
 # nix = "0.29.0"
 
