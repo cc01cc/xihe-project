@@ -11,6 +11,7 @@ pub mod log_redact;
 pub mod workspace;
 pub mod storage;
 pub mod device;
+pub mod environment;
 
 #[cfg(test)]
 mod tests {
