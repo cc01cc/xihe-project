@@ -12,6 +12,7 @@ pub mod workspace;
 pub mod storage;
 pub mod device;
 pub mod environment;
+pub mod hydrate;
 
 #[cfg(test)]
 mod tests {

@@ -40,6 +40,7 @@ use xihe_runtime::fs;
 use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
 use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::device;
+use xihe_runtime::hydrate;
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
 use xihe_runtime::storage;
@@ -1551,6 +1552,8 @@ async fn main() -> anyhow::Result<()> {
     // For v1, readiness is true after device_id ensured. Future hydrate will gate it.
     readiness.store(true, Ordering::Relaxed);
     tracing::info!("readiness: true (device_id ready, hydrate not yet required for v1)");
+    // M2-3.2 minimal hydrate stub — for v1, just log; future will fetch assignments and compare generation/hash
+    hydrate::hydrate_once(registry.clone(), readiness.clone()).await;
 
     let ct = tokio_util::sync::CancellationToken::new();
 
@@ -1565,6 +1568,13 @@ async fn main() -> anyhow::Result<()> {
     let poll_ct = ct.child_token();
     tokio::spawn(async move {
         mcp_config_poll_loop(mcp_manager, cp_poll_registry, poll_ct).await;
+    });
+
+    let hydrate_registry = registry.clone();
+    let hydrate_ready = readiness.clone();
+    let hydrate_ct = ct.child_token();
+    tokio::spawn(async move {
+        hydrate::hydrate_loop(hydrate_registry, hydrate_ready, hydrate_ct).await;
     });
 
     let workspace_path =
