@@ -9,6 +9,7 @@ pub mod remote_mcp;
 pub mod sandbox;
 pub mod log_redact;
 pub mod workspace;
+pub mod storage;
 
 #[cfg(test)]
 mod tests {

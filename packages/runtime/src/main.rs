@@ -41,6 +41,7 @@ use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
 use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
+use xihe_runtime::storage;
 use xihe_runtime::workspace::WorkspaceManager;
 use tokio::sync::Mutex;
 use xihe_runtime::remote_mcp::{
@@ -1230,16 +1231,34 @@ async fn create_workspace_handler(
         Some("isolated") => SecurityProfile::Isolated,
         _ => SecurityProfile::Strict,
     };
-    // v1 minimal: CP is canonical for storageRef; Runtime resolves host path locally.
+    // M1a: storageRef → hostRoot resolver with strict allowlist + canonical + ownership check (grill B1/B2).
     let effective_path = if let Some(ref sref) = req.storage_ref {
         if let Ok(host_root) = std::env::var("XIHE_WORKSPACE_HOST_ROOT") {
-            let trimmed = host_root.trim_end_matches('/').trim_end_matches('\\');
-            let path = PathBuf::from(trimmed).join(sref);
-            path.to_string_lossy().to_string()
+            match storage::resolve_host_path(&host_root, sref, &req.ws_id).await {
+                Ok(p) => p.to_string_lossy().to_string(),
+                Err(e) => {
+                    tracing::error!(
+                        "storage resolve failed ws_id={} sref={:?} hostRoot={:?} err={}",
+                        req.ws_id, sref, host_root, e
+                    );
+                    return AxumJson(CreateWorkspaceResponse {
+                        status: format!("error: STORAGE_BINDING_INVALID: {}", e),
+                        ws_id: req.ws_id,
+                    });
+                }
+            }
         } else {
+            tracing::warn!(
+                "XIHE_WORKSPACE_HOST_ROOT not set, fallback to workspacePath for ws_id={}",
+                req.ws_id
+            );
             req.workspace_path.clone()
         }
     } else {
+        tracing::warn!(
+            "storageRef missing for ws_id={}, fallback to workspacePath (legacy)",
+            req.ws_id
+        );
         req.workspace_path.clone()
     };
 
