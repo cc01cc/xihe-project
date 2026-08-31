@@ -1880,6 +1880,10 @@ async fn mcp_config_poll_loop(
                             Ok(exec) => exec,
                             Err(e) => {
                                 tracing::warn!("config poll: failed to create exec for {}/{}: {e}", ws_id, server_id);
+                                // Q27 A: log + blocked
+                                manager
+                                    .mark_failed(ws_id, server_id, &format!("create exec failed: {}", e))
+                                    .await;
                                 continue;
                             }
                         };
@@ -1892,6 +1896,9 @@ async fn mcp_config_poll_loop(
                             }),
                         ).await {
                             tracing::warn!("config poll: failed to start bridge for {}/{}: {e}", ws_id, server_id);
+                            manager
+                                .mark_failed(ws_id, server_id, &format!("start exec failed: {}", e))
+                                .await;
                             continue;
                         }
 

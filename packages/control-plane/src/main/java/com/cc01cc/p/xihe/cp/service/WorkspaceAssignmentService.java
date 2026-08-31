@@ -26,6 +26,12 @@ public class WorkspaceAssignmentService {
      */
     @Transactional
     public WorkspaceAssignment createAssignment(String workspaceId, String sandboxSpecJson, String actor, String reason) {
+        if (actor == null || actor.trim().isEmpty()) {
+            throw new IllegalArgumentException("actor is required per Q26 B");
+        }
+        if (reason == null || reason.trim().isEmpty()) {
+            throw new IllegalArgumentException("reason is required per Q26 B");
+        }
         Workspace ws = workspaceRepository.findById(workspaceId)
                 .orElseThrow(() -> new IllegalArgumentException("Workspace not found: " + workspaceId));
 
