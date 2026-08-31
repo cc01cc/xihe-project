@@ -83,10 +83,14 @@ pub async fn hydrate_loop(registry: Arc<WorkspaceRegistry>, ready: Arc<AtomicBoo
                                     let hash = item.get("sandboxSpecHash").and_then(|x| x.as_str()).unwrap_or("").to_string();
                                     let prev = last.get(&ws_id).cloned().unwrap_or((0, String::new()));
                                     if prev.0 != generation || prev.1 != hash {
-                                        if prev.0 != 0 || !prev.1.is_empty() {
-                                            info!("hydrate: generation/hash changed for {}: {}->{} ({}->{}), would rebuild per Q19 A", ws_id, prev.0, generation, prev.1, hash);
+                                        if generation < prev.0 {
+                                            info!("hydrate: ignoring old generation for {}: {} < {} per Q21 A", ws_id, generation, prev.0);
+                                        } else {
+                                            if prev.0 != 0 || !prev.1.is_empty() {
+                                                info!("hydrate: generation/hash changed for {}: {}->{} ({}->{}), would rebuild per Q19 A", ws_id, prev.0, generation, prev.1, hash);
+                                            }
+                                            last.insert(ws_id, (generation, hash));
                                         }
-                                        last.insert(ws_id, (generation, hash));
                                     }
                                 }
                             }
