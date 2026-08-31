@@ -166,7 +166,7 @@ impl McpProcessManager {
         }
     }
 
-    /// M4-5.3 minimal observed report — Q23 B complete (gen/hash/port/status + lastActive/startedAt)
+    /// M4-5.3 minimal observed report — Q23 B + Q31 B: log + persist to .xihe-state/bridge_observed.json
     pub async fn log_observed(&self, ws_id: &str) {
         let bridges = self.list(ws_id).await;
         for b in &bridges {
@@ -177,6 +177,13 @@ impl McpProcessManager {
         }
         if bridges.is_empty() {
             info!("bridge observed: ws={} no bridges", ws_id);
+        }
+        // Q31 B: persist to DB — for v1, write to .xihe-state/bridge_observed.json (local file as DB stand-in)
+        let state_dir = std::env::var("XIHE_RUNTIME_STATE_DIR").unwrap_or_else(|_| ".xihe-state".to_string());
+        let path = std::path::Path::new(&state_dir).join(format!("bridge_observed_{}.json", ws_id));
+        if let Ok(json) = serde_json::to_string(&bridges) {
+            let _ = std::fs::create_dir_all(&state_dir);
+            let _ = std::fs::write(&path, json);
         }
     }
 
