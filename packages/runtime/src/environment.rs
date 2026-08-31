@@ -39,6 +39,7 @@ impl ExecutionSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::log_redact::redact_text;
 
     #[test]
     fn test_host_snapshot_collect() {
@@ -53,5 +54,20 @@ mod tests {
         let snap = ExecutionSnapshot::collect("xihe/workspace", "coding");
         assert_eq!(snap.image, "xihe/workspace");
         assert_eq!(snap.profile, "coding");
+    }
+
+    #[test]
+    fn test_snapshot_redaction_minimal() {
+        // Q14 A: only token/env/path are redacted; snapshot should not contain token
+        let host = HostSnapshot::collect("H:\\test");
+        let json = serde_json::to_string(&host).unwrap();
+        // Simulate logging with a fake token nearby
+        let log_line = format!("snapshot {} with token Bearer abc123", json);
+        let redacted = redact_text(&log_line);
+        assert!(!redacted.contains("abc123"));
+        assert!(redacted.contains("***redacted***"));
+        // Snapshot itself should not be redacted (no token inside)
+        let snap_redacted = redact_text(&json);
+        assert_eq!(snap_redacted, json);
     }
 }
