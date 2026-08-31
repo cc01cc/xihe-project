@@ -66,3 +66,6 @@ packages/control-plane/data/
 
 # Dev/test data (PDFs, images, etc.)
 data/
+
+# Runtime device state (generated, not committed)
+.xihe-state/

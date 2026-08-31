@@ -811,7 +811,10 @@ fn has_runtime_service_auth(headers: &HeaderMap) -> bool {
 }
 
 async fn internal_auth_middleware(request: Request<axum::body::Body>, next: Next) -> Response {
-    if request.uri().path() == "/health" || has_runtime_service_auth(request.headers()) {
+    if request.uri().path() == "/health"
+        || request.uri().path() == "/ready"
+        || has_runtime_service_auth(request.headers())
+    {
         return next.run(request).await;
     }
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -1287,6 +1290,7 @@ async fn create_workspace_handler(
 
     // Strict profile: no container (network none, read-only rootfs, 127.0.0.1:39001 unreachable).
     // Keep host-direct fallback for Strict; fail-closed only applies to Coding/Isolated.
+    // For M1b consistency, Strict also writes the fixed sentinel so file API can verify mount (host-only).
     if profile == SecurityProfile::Strict {
         app.registry
             .register_with_profile(&req.ws_id, &effective_path, profile)
@@ -1296,6 +1300,9 @@ async fn create_workspace_handler(
                 "Failed to create workspace directory {} (resolved from {:?} / {:?}): {}",
                 effective_path, req.workspace_path, req.storage_ref, err
             );
+        } else {
+            let sentinel_path = std::path::Path::new(&effective_path).join(".xihe-sentinel");
+            let _ = std::fs::write(&sentinel_path, format!("sentinel-{}", req.ws_id));
         }
         tracing::info!(
             "Workspace registered via API (Strict, no container): ws_id={}, path={}, storageRef={:?}, effective_path={}",
@@ -1386,30 +1393,37 @@ async fn delete_workspace_handler(
     let ws_id = &req.ws_id;
     mcp_manager().cleanup_workspace(ws_id).await;
     // Try to remove via manager (stops container + removes dir) if tracked; ignore not-found.
-    {
+    // For Strict (no container), manager won't track, so we also remove host dir via registry.
+    let is_tracked = {
+        let mgr = app.manager.lock().await;
+        mgr.get_state(ws_id).is_some()
+    };
+    if is_tracked {
         let mut mgr = app.manager.lock().await;
-        if mgr.get_state(ws_id).is_some() {
-            if let Err(e) = mgr.delete_workspace(ws_id).await {
-                tracing::warn!("Manager delete failed for ws_id={}: {}", ws_id, e);
-            } else {
-                tracing::info!("Workspace container removed via manager: ws_id={}", ws_id);
-            }
+        if let Err(e) = mgr.delete_workspace(ws_id).await {
+            tracing::warn!("Manager delete failed for ws_id={}: {}", ws_id, e);
         } else {
-            // Manager not tracking (e.g. Strict or post-restart orphan). Try best-effort docker removal
-            // via a temporary Docker connect to avoid leaking containers with the known name.
-            let name = format!("xihe-workspace-ws_{ws_id}");
-            if let Ok(docker) = Docker::connect_with_local_defaults() {
-                let _ = docker
-                    .remove_container(
-                        &name,
-                        Some(RemoveContainerOptions {
-                            force: true,
-                            v: true,
-                            link: false,
-                        }),
-                    )
-                    .await;
-            }
+            tracing::info!("Workspace container removed via manager: ws_id={}", ws_id);
+        }
+    } else {
+        // Manager not tracking (e.g. Strict). Remove host dir via registry's workspace_path.
+        if let Some(instance) = app.registry.get(ws_id).await {
+            let _ = tokio::fs::remove_dir_all(&instance.workspace_path).await;
+            tracing::info!("Strict host dir removed for ws_id={}: {}", ws_id, instance.workspace_path);
+        }
+        // Also try best-effort docker removal for orphan containers
+        let name = format!("xihe-workspace-ws_{ws_id}");
+        if let Ok(docker) = Docker::connect_with_local_defaults() {
+            let _ = docker
+                .remove_container(
+                    &name,
+                    Some(RemoveContainerOptions {
+                        force: true,
+                        v: true,
+                        link: false,
+                    }),
+                )
+                .await;
         }
     }
     app.registry.unregister(ws_id).await;
