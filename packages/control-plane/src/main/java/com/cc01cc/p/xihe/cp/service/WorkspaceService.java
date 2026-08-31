@@ -10,10 +10,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceAssignment;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.util.SandboxSpecHashUtil;
 
 import java.util.List;
 import java.util.Map;
@@ -26,6 +28,7 @@ public class WorkspaceService {
     private final String workspaceBasePath;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
+    private final WorkspaceAssignmentService assignmentService;
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
     private final String workspaceImage;
@@ -33,6 +36,7 @@ public class WorkspaceService {
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceUserRepository workspaceUserRepository,
+                            WorkspaceAssignmentService assignmentService,
                             RestTemplate restTemplate,
                             @Value("${cp.workspace-base-path:/data/xihe/workspaces}") String workspaceBasePath,
                             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
@@ -40,6 +44,7 @@ public class WorkspaceService {
                             @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
+        this.assignmentService = assignmentService;
         this.restTemplate = restTemplate;
         this.workspaceBasePath = workspaceBasePath;
         this.runtimeUrl = runtimeUrl;
@@ -52,12 +57,23 @@ public class WorkspaceService {
         Workspace ws = new Workspace(name, ownerId);
         ws.setStoragePath(workspaceBasePath + "/" + java.util.UUID.randomUUID().toString().substring(0, 8));
         ws = workspaceRepository.save(ws);
+        // Q18 A minimal: storageRef is workspaceId, storageBackend is host_directory (set after id is generated)
+        ws.setStorageRef(ws.getId());
+        ws.setStorageBackend("host_directory");
+        ws = workspaceRepository.save(ws);
 
         workspaceUserRepository.save(new WorkspaceUser(ws.getId(), ownerId, WorkspaceRole.OWNER));
 
+        // Create initial assignment per Q17 A DB generation + Q12 A hash
+        String initialSpec = String.format("{\"image\":\"%s\",\"profile\":\"coding\"}", workspaceImage);
+        try {
+            assignmentService.createAssignment(ws.getId(), initialSpec, ownerId, "create");
+        } catch (Exception e) {
+            logger.warn("Failed to create initial assignment for {}: {}", ws.getId(), e.getMessage());
+        }
+
         // Runtime is the sole writer of workspace files (PLAN-197 v1 minimal).
-        // CP no longer creates the host directory; it only persists logical metadata.
-        String storageRef = "workspace/" + ws.getId();
+        String storageRef = ws.getStorageRef();
         notifyRuntimeCreate(ws.getId(), ws.getStoragePath(), storageRef);
 
         logger.info("Workspace created: id={} name={} path={} storageRef={}", ws.getId(), name, ws.getStoragePath(), storageRef);
