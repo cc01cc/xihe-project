@@ -1807,11 +1807,55 @@ async fn mcp_config_poll_loop(
                 let instances = registry.all_instances().await;
                 for instance in &instances {
                     let ws_id = &instance.ws_id;
-                    let servers = manager.poll_config(ws_id, &cp_url, &cp_api_token).await;
+                    let (generation, hash, servers) =
+                        manager.poll_config_with_generation(ws_id, &cp_url, &cp_api_token).await;
                     let existing = manager.list(ws_id).await;
                     for (server_id, command, args) in &servers {
-                        if existing.iter().any(|b| b.server_id == *server_id) {
-                            continue;
+                        if let Some(existing_info) =
+                            existing.iter().find(|b| &b.server_id == server_id)
+                        {
+                            if existing_info.generation == generation
+                                && existing_info.hash == hash
+                            {
+                                continue;
+                            }
+                            // Q9 A: generation/hash changed → rebuild (kill old, spawn new)
+                            tracing::info!(
+                                "config poll: generation/hash changed for {}/{} ({}->{}, {}->{}) rebuilding",
+                                ws_id, server_id, existing_info.generation, generation, existing_info.hash, hash
+                            );
+                            manager.stop(ws_id, server_id).await;
+                            let kill_cmd = format!(
+                                "kill $(cat /workspace/.xihe-bridge-{}.pid 2>/dev/null) 2>/dev/null; rm -f /workspace/.xihe-bridge-{}.pid",
+                                server_id, server_id
+                            );
+                            let container_name = format!("xihe-workspace-ws_{ws_id}");
+                            if let Ok(exec) = docker
+                                .create_exec(
+                                    &container_name,
+                                    bollard::exec::CreateExecOptions {
+                                        cmd: Some(vec![
+                                            "sh".to_string(),
+                                            "-c".to_string(),
+                                            kill_cmd,
+                                        ]),
+                                        attach_stdout: Some(false),
+                                        attach_stderr: Some(false),
+                                        ..Default::default()
+                                    },
+                                )
+                                .await
+                            {
+                                let _ = docker
+                                    .start_exec(
+                                        &exec.id,
+                                        Some(bollard::exec::StartExecOptions {
+                                            detach: true,
+                                            ..Default::default()
+                                        }),
+                                    )
+                                    .await;
+                            }
                         }
                         tracing::info!(
                             "config poll: spawning {}/{} ({})",
@@ -1854,7 +1898,11 @@ async fn mcp_config_poll_loop(
                         let container_ip = resolve_container_ip(docker, &container_name).await
                             .unwrap_or_else(|_| "127.0.0.1".to_string());
 
-                        manager.spawn(ws_id, server_id, command, args, &container_ip, port).await;
+                        manager
+                            .spawn_with_generation(
+                                ws_id, server_id, command, args, &container_ip, port, generation, &hash,
+                            )
+                            .await;
                         tracing::info!("config poll: bridge {}/{} spawned at {}:{}", ws_id, server_id, container_ip, port);
                     }
 

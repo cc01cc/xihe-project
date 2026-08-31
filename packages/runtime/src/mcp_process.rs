@@ -19,6 +19,8 @@ pub struct BridgeInfo {
     pub status: BridgeStatus,
     pub spawned_at: SystemTime,
     pub last_active: SystemTime,
+    pub generation: u64,
+    pub hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -79,6 +81,21 @@ impl McpProcessManager {
         container_ip: &str,
         port: u16,
     ) {
+        self.spawn_with_generation(ws_id, server_id, command, args, container_ip, port, 0, "")
+            .await
+    }
+
+    pub async fn spawn_with_generation(
+        &self,
+        ws_id: &str,
+        server_id: &str,
+        command: &str,
+        args: &[String],
+        container_ip: &str,
+        port: u16,
+        generation: u64,
+        hash: &str,
+    ) {
         let mut workspaces = self.bridges.write().await;
         let servers = workspaces.entry(ws_id.to_string()).or_default();
         servers.insert(
@@ -92,9 +109,13 @@ impl McpProcessManager {
                 status: BridgeStatus::Running,
                 spawned_at: SystemTime::now(),
                 last_active: SystemTime::now(),
+                generation,
+                hash: hash.to_string(),
             },
         );
-        info!("bridge spawned: ws={ws_id} server={server_id} at {container_ip}:{port}");
+        info!(
+            "bridge spawned: ws={ws_id} server={server_id} at {container_ip}:{port} gen={generation} hash={hash}"
+        );
     }
 
     pub async fn stop(&self, ws_id: &str, server_id: &str) -> bool {
@@ -177,6 +198,16 @@ impl McpProcessManager {
         cp_url: &str,
         api_token: &str,
     ) -> Vec<(String, String, Vec<String>)> {
+        let (_generation, _hash, servers) = self.poll_config_with_generation(ws_id, cp_url, api_token).await;
+        servers
+    }
+
+    pub async fn poll_config_with_generation(
+        &self,
+        ws_id: &str,
+        cp_url: &str,
+        api_token: &str,
+    ) -> (u64, String, Vec<(String, String, Vec<String>)>) {
         let url = format!("{cp_url}/internal/v1/config/workspaces/{ws_id}/mcp-config");
         match reqwest::Client::new()
             .get(&url)
@@ -187,6 +218,15 @@ impl McpProcessManager {
             Ok(resp) if resp.status().is_success() => {
                 match resp.json::<serde_json::Value>().await {
                     Ok(config) => {
+                        let generation = config
+                            .get("generation")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let hash = config
+                            .get("hash")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         let mut servers = Vec::new();
                         if let Some(servers_obj) =
                             config.get("mcpServers").and_then(|v| v.as_object())
@@ -205,21 +245,21 @@ impl McpProcessManager {
                                 servers.push((sid.clone(), cmd.to_string(), args));
                             }
                         }
-                        servers
+                        (generation, hash, servers)
                     }
                     Err(e) => {
                         error!("failed to parse mcp-config: {e}");
-                        Vec::new()
+                        (0, String::new(), Vec::new())
                     }
                 }
             }
             Ok(resp) => {
                 warn!("mcp-config poll returned {}", resp.status());
-                Vec::new()
+                (0, String::new(), Vec::new())
             }
             Err(e) => {
                 error!("mcp-config poll request failed: {e}");
-                Vec::new()
+                (0, String::new(), Vec::new())
             }
         }
     }
