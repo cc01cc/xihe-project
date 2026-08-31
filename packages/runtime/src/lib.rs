@@ -14,6 +14,7 @@ pub mod device;
 pub mod environment;
 pub mod hydrate;
 pub mod capability;
+pub mod heartbeat;
 
 #[cfg(test)]
 mod tests {

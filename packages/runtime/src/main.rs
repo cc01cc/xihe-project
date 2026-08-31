@@ -40,6 +40,7 @@ use xihe_runtime::fs;
 use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
 use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::device;
+use xihe_runtime::heartbeat;
 use xihe_runtime::hydrate;
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
@@ -1575,6 +1576,12 @@ async fn main() -> anyhow::Result<()> {
     let hydrate_ct = ct.child_token();
     tokio::spawn(async move {
         hydrate::hydrate_loop(hydrate_registry, hydrate_ready, hydrate_ct).await;
+    });
+
+    let hb_ready = readiness.clone();
+    let hb_ct = ct.child_token();
+    tokio::spawn(async move {
+        heartbeat::heartbeat_loop(hb_ready, hb_ct).await;
     });
 
     let workspace_path =
