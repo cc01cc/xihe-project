@@ -18,6 +18,7 @@ pub struct BridgeInfo {
     pub args: Vec<String>,
     pub status: BridgeStatus,
     pub spawned_at: SystemTime,
+    pub last_active: SystemTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -44,6 +45,31 @@ impl McpProcessManager {
         }
     }
 
+    pub async fn touch(&self, ws_id: &str, server_id: &str) {
+        let mut bridges = self.bridges.write().await;
+        if let Some(ws_bridges) = bridges.get_mut(ws_id) {
+            if let Some(info) = ws_bridges.get_mut(server_id) {
+                info.last_active = SystemTime::now();
+            }
+        }
+    }
+
+    pub async fn reap_idle(&self, idle: Duration) -> usize {
+        let mut bridges = self.bridges.write().await;
+        let mut removed = 0;
+        for (_ws_id, ws_bridges) in bridges.iter_mut() {
+            let before = ws_bridges.len();
+            ws_bridges.retain(|_, info| {
+                info.last_active.elapsed().map(|e| e < idle).unwrap_or(false)
+            });
+            removed += before - ws_bridges.len();
+        }
+        if removed > 0 {
+            info!("bridge idle reaped: {}", removed);
+        }
+        removed
+    }
+
     pub async fn spawn(
         &self,
         ws_id: &str,
@@ -65,6 +91,7 @@ impl McpProcessManager {
                 args: args.to_vec(),
                 status: BridgeStatus::Running,
                 spawned_at: SystemTime::now(),
+                last_active: SystemTime::now(),
             },
         );
         info!("bridge spawned: ws={ws_id} server={server_id} at {container_ip}:{port}");
@@ -94,11 +121,14 @@ impl McpProcessManager {
     }
 
     pub async fn get_bridge_url(&self, ws_id: &str, server_id: &str) -> Option<String> {
-        let workspaces = self.bridges.read().await;
-        workspaces
-            .get(ws_id)
-            .and_then(|servers| servers.get(server_id))
-            .map(|info| format!("http://{}:{}/{}", info.container_ip, info.port, server_id))
+        let mut workspaces = self.bridges.write().await;
+        if let Some(servers) = workspaces.get_mut(ws_id) {
+            if let Some(info) = servers.get_mut(server_id) {
+                info.last_active = SystemTime::now();
+                return Some(format!("http://{}:{}/{}", info.container_ip, info.port, server_id));
+            }
+        }
+        None
     }
 
     pub async fn cleanup_workspace(&self, ws_id: &str) {

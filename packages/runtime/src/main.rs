@@ -1784,6 +1784,8 @@ async fn mcp_config_poll_loop(
         tokio::select! {
             _ = ct.cancelled() => break,
             _ = interval.tick() => {
+                // Q11: reap idle bridges (15 min) — grill A timeout
+                manager.reap_idle(Duration::from_secs(900)).await;
                 let Some(ref docker) = docker else { continue };
                 let instances = registry.all_instances().await;
                 for instance in &instances {
