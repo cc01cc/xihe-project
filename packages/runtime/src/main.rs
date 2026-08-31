@@ -1107,8 +1107,16 @@ async fn fetch_remote_mcp_token(
 static NEXT_BRIDGE_PORT: AtomicU16 = AtomicU16::new(39000);
 
 fn allocate_bridge_port() -> u16 {
+    // Grill Q10 C: dynamic probing — ask OS for a free port, fallback to atomic increment
+    if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") {
+        if let Ok(addr) = listener.local_addr() {
+            let port = addr.port();
+            // Keep atomic in sync to avoid reuse on fallback path
+            NEXT_BRIDGE_PORT.store(port.wrapping_add(1), Ordering::Relaxed);
+            return port;
+        }
+    }
     let port = NEXT_BRIDGE_PORT.fetch_add(1, Ordering::Relaxed);
-    // Cycle back into range 39000-39999 if we overflow
     if port >= 40000 {
         NEXT_BRIDGE_PORT.store(39000, Ordering::Relaxed);
         39000
