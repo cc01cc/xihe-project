@@ -1938,6 +1938,8 @@ async fn mcp_config_poll_loop(
                             }
                         }
                     }
+                    // M4-5.3 minimal observed report (log only for v1)
+                    manager.log_observed(ws_id).await;
                 }
             }
         }

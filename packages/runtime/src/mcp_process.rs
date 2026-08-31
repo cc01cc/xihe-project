@@ -166,6 +166,20 @@ impl McpProcessManager {
         }
     }
 
+    /// M4-5.3 minimal observed report — for v1, just log; future will POST /internal/v1/runtime/status
+    pub async fn log_observed(&self, ws_id: &str) {
+        let bridges = self.list(ws_id).await;
+        for b in &bridges {
+            info!(
+                "bridge observed: ws={} server={} gen={} hash={} port={} status={:?}",
+                ws_id, b.server_id, b.generation, b.hash, b.port, b.status
+            );
+        }
+        if bridges.is_empty() {
+            info!("bridge observed: ws={} no bridges", ws_id);
+        }
+    }
+
     pub async fn health_check_loop(&self) {
         let mut interval = tokio::time::interval(HEALTH_CHECK_INTERVAL);
         loop {
