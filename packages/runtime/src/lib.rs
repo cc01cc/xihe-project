@@ -13,6 +13,7 @@ pub mod storage;
 pub mod device;
 pub mod environment;
 pub mod hydrate;
+pub mod capability;
 
 #[cfg(test)]
 mod tests {
