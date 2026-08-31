@@ -166,13 +166,13 @@ impl McpProcessManager {
         }
     }
 
-    /// M4-5.3 minimal observed report — for v1, just log; future will POST /internal/v1/runtime/status
+    /// M4-5.3 minimal observed report — Q23 B complete (gen/hash/port/status + lastActive/startedAt)
     pub async fn log_observed(&self, ws_id: &str) {
         let bridges = self.list(ws_id).await;
         for b in &bridges {
             info!(
-                "bridge observed: ws={} server={} gen={} hash={} port={} status={:?}",
-                ws_id, b.server_id, b.generation, b.hash, b.port, b.status
+                "bridge observed: ws={} server={} gen={} hash={} port={} status={:?} lastActive={:?} startedAt={:?}",
+                ws_id, b.server_id, b.generation, b.hash, b.port, b.status, b.last_active, b.spawned_at
             );
         }
         if bridges.is_empty() {
