@@ -376,8 +376,8 @@ ChatView 集成方式：
 
 ### 7.1 统一 Session 层
 
-- chat 与 workspace 被视为**同一 Session 的不同视图**，分别通过 `/chat/:sessionId` 与 `/workspace/:sessionId` 访问。
-- `useSessionStore` 承载跨视图核心状态：session 元数据、Agent 编排、RAG/MCP 上下文、附件列表、文件上下文。
+- chat 与 workspace 共享当前 Workspace 下的 Session 视图：Chat 通过 `/chat/:sessionId` 访问，Workspace 通过 `/workspace/:workspaceId` 访问；不能用 Session ID 充当 Workspace ID。
+- `useSessionStore` 承载服务端 Session 元数据和当前视图引用；Agent/RAG/MCP 上下文、附件和文件内容分别遵循各自的 CP/Runtime API 契约，业务 Session/Message 不落 localStorage。
 - `useChatStore` 与 `useWorkspaceStore` 降级为视图层状态：前者保留消息流与 UI 状态，后者保留文件树、编辑器与上传队列。
 - workspace 通过可嵌入的 `ChatPanel.vue` 直接复用 chat 的对话能力，无需复制组件树。
 

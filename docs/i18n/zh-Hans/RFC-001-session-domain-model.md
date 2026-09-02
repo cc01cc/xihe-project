@@ -2,15 +2,17 @@
 title: RFC-001 - Session 领域模型
 category: dev-guide
 lang: zh-Hans
-status: active
+status: deprecated
 sidebar_order: 100
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-09-02
 ---
 
 # RFC-001: Session 领域模型
 
 > 本 RFC 定义 xihe UI 中统一 Session 的领域模型、状态图、生命周期及其与 Message、Attachment、File 的关系。它是 PLAN-029-XH-unified-session-architecture 的核心设计产出，为 PLAN-030（附件后端）和 PLAN-031（附件前端）提供边界约定。
+>
+> **已由 PLAN-222 覆盖（2026-09-02）**：本文保留为历史设计记录。当前 Session/Message 以 CP 服务端 API 为 canonical source；Chat 使用 `sessionId`，Workspace 使用 `workspaceId`，不再兼容业务 Session/Message localStorage。
 
 ## 1. 背景
 
@@ -145,7 +147,7 @@ stateDiagram-v2
 ```
 
 - **Active**：用户当前可交互的 Session；chat 与 workspace 视图均指向它。
-- **Archived**：前端不再加载，但数据可能仍保存在后端/本地存储中。
+- **Archived**：前端不再加载，但数据仍按服务端 Session 契约保留或清理。
 - 删除是前端操作，从 `sessions` 列表移除；后端清理由 PLAN-030 决定。
 
 ## 5. 生命周期
@@ -153,10 +155,10 @@ stateDiagram-v2
 1. **创建**：用户打开 Xihe 或点击「New Chat」时，`useSessionStore.createSession()` 创建 Session。
 2. **选择**：侧边栏点击或路由切换时，`selectSession(id)` 激活 Session。
 3. **在 chat 中对话**：`/chat/:sessionId` 下，消息追加到 `chatStore.messages[sessionId]`。
-4. **切换到 workspace**：`/workspace/:sessionId` 共享同一 Session，内嵌 `ChatPanel` 继续显示历史消息。
+4. **切换到 workspace**：`/workspace/:workspaceId` 在当前 Workspace 下选择 Session，内嵌 `ChatPanel` 继续显示历史消息。
 5. **在 workspace 中操作文件**：`fileContext` 更新，Agent 可基于当前文件上下文回答。
 6. **切换回 chat**：同一 Session 的消息与附件保持一致。
-7. **结束**：用户删除 Session 或关闭应用；消息与附件本地状态释放。
+7. **结束**：用户通过服务端 API 删除 Session 或关闭应用；消息与附件由服务端契约管理。
 
 ## 6. 边界约定
 
@@ -170,8 +172,8 @@ stateDiagram-v2
 
 ## 7. 向后兼容
 
-- `Session` 类型新增 `context` 等可选字段，不破坏现有 `xihe-sessions` localStorage。
-- 旧 Session 记录首次被访问时，`ensureSession()` 会自动补全 `context`。
+- Session/Message 的服务端 API 是 canonical source，不把业务状态持久化到 localStorage。
+- 历史 localStorage 值不会作为当前用户的 Session/Message 数据恢复。
 - `modelId` 字段保留但已废弃，由 `configStore` 的 session-model 绑定接管。
 
 ## 8. 参考

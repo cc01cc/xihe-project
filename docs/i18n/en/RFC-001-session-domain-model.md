@@ -2,15 +2,17 @@
 title: RFC-001 - Session Domain Model
 category: dev-guide
 lang: en
-status: active
+status: deprecated
 sidebar_order: 100
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-09-02
 ---
 
 # RFC-001: Session Domain Model
 
 > This RFC defines the unified Session domain model, state diagram, lifecycle, and relationships to Message, Attachment, and File for the xihe UI. It is the core design output of PLAN-029-XH-unified-session-architecture and sets boundary conventions for PLAN-030 (attachment backend) and PLAN-031 (attachment frontend).
+>
+> **Superseded by PLAN-222 (2026-09-02)**: This file remains as a historical design record. Current Session/Message data uses the CP server API as canonical source; Chat uses `sessionId`, Workspace uses `workspaceId`, and business Session/Message localStorage is no longer supported.
 
 ## 1. Background
 
@@ -145,7 +147,7 @@ stateDiagram-v2
 ```
 
 - **Active**: the Session the user is currently interacting with; both chat and workspace views point to it.
-- **Archived**: no longer loaded in the frontend, but data may still live in backend/local storage.
+- **Archived**: no longer loaded in the frontend; retention and cleanup follow the server Session contract.
 - Deletion is a frontend operation that removes the Session from the `sessions` list; backend cleanup is decided by PLAN-030.
 
 ## 5. Lifecycle
@@ -153,10 +155,10 @@ stateDiagram-v2
 1. **Create**: when the user opens Xihe or clicks “New Chat”, `useSessionStore.createSession()` creates a Session.
 2. **Select**: clicking in the sidebar or switching routes calls `selectSession(id)` to activate the Session.
 3. **Chat**: under `/chat/:sessionId`, messages are appended to `chatStore.messages[sessionId]`.
-4. **Switch to workspace**: `/workspace/:sessionId` shares the same Session; the embedded `ChatPanel` continues to show the message history.
+4. **Switch to workspace**: `/workspace/:workspaceId` selects a Session within the current Workspace; the embedded `ChatPanel` continues to show the message history.
 5. **Work with files in workspace**: `fileContext` is updated, and the Agent can answer based on the current file context.
 6. **Switch back to chat**: the same Session’s messages and attachments remain consistent.
-7. **End**: the user deletes the Session or closes the app; local message and attachment state is released.
+7. **End**: the user deletes the Session through the server API or closes the app; message and attachment state follows the server contract.
 
 ## 6. Boundary Conventions
 
@@ -170,8 +172,8 @@ stateDiagram-v2
 
 ## 7. Backward Compatibility
 
-- The `Session` type adds optional fields such as `context`; existing `xihe-sessions` localStorage is not broken.
-- When an old Session record is first accessed, `ensureSession()` automatically backfills the `context`.
+- The server Session/Message APIs are canonical; business state is not persisted in localStorage.
+- Historical localStorage values are not restored as current-user Session/Message data.
 - The `modelId` field is kept but deprecated; session-model binding is now handled by `configStore`.
 
 ## 8. References

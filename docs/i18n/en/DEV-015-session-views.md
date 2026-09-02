@@ -5,12 +5,14 @@ lang: en
 status: active
 sidebar_order: 15
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-09-02
 ---
 
 # DEV-015: Session Views Design
 
 > This document describes the view-layer implementation of PLAN-029-XH-unified-session-architecture: routing, `ChatPanel` embedding, and chat ↔ workspace switching. It is aimed at frontend developers and assumes the reader has already read RFC-001 and ADR-001.
+>
+> **PLAN-222 v1 correction (2026-09-02)**: Chat uses `sessionId`, Workspace uses `workspaceId`; server APIs are the canonical source for Session/Message data, and the old business localStorage design no longer applies.
 
 ## 1. Routing Design
 
@@ -28,7 +30,7 @@ updated: 2026-07-06
   ],
 },
 {
-  path: '/workspace/:sessionId?',
+  path: '/workspace/:workspaceId?',
   name: 'workspace',
   component: AppLayout,
   children: [
@@ -39,8 +41,8 @@ updated: 2026-07-06
 
 ### 1.2. Design Decisions
 
-- Keep `/chat/:sessionId` and `/workspace/:sessionId` side by side; do not unify into `/session/:id` for now.
-- `/workspace/:sessionId?` uses an optional parameter so the old `/workspace` entry still works.
+- Keep `/chat/:sessionId` and `/workspace/:workspaceId` side by side; do not unify into `/session/:id` for now.
+- `/workspace/:workspaceId?` uses an optional parameter so the old `/workspace` entry still works.
 - Both routes share `AppLayout`, keeping the sidebar and global state consistent.
 
 ### 1.3. Default Home Page
@@ -65,7 +67,7 @@ updated: 2026-07-06
 - Responsibility: the full-screen chat page.
 - Contains a top header (Session title, Agent status).
 - Embeds `ChatPanel :session-id="currentSessionId"` internally.
-- Resolves the current Session from the route parameter or `currentSessionId`; creates a Session automatically if none exists.
+- Reads the current Workspace from the `workspaceId` route; Session creation/selection goes through the server API and never treats a Session ID as a Workspace ID.
 
 ### 2.3. WorkspaceView.vue (File Editor + Embedded Chat)
 
@@ -73,14 +75,14 @@ updated: 2026-07-06
 
 - Responsibility: the main workspace page.
 - Left: file tree; center: code editor; right: embedded `ChatPanel`.
-- Resolves the current Session from the route parameter or `currentSessionId`; creates a Session automatically if none exists.
+- Reads the current Workspace from the `workspaceId` route; the embedded panel uses the server-owned current Session.
 - When `activeFilePath` changes, calls `workspaceStore.syncActiveFileToSession()` to write the file context back to the Session layer.
 
 ### 2.4. WorkspaceToolbar.vue (Workspace Toolbar)
 
 `packages/ui/src/components/workspace/WorkspaceToolbar.vue`
 
-- Added Session dropdown selector: switches the current Session and routes to `/workspace/:sessionId`.
+- Added Session dropdown selector: switches the current Session while retaining `/workspace/:workspaceId`.
 - Added "Switch to chat" button: navigates to `/chat/:currentSessionId`.
 - Retains refresh and upload buttons.
 
@@ -90,7 +92,7 @@ updated: 2026-07-06
 
 - "New Chat" button: creates a new Session and navigates to `/chat/:sessionId`.
 - Session list: clicking navigates to `/chat/:sessionId`.
-- "Workspace" button: navigates to `/workspace/:currentSessionId`; creates a Session first if none exists.
+- "Workspace" button: navigates to `/workspace/:currentWorkspaceId`; fails closed when the Workspace is missing.
 
 ## 3. ChatPanel Embedding Details
 

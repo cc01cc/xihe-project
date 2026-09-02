@@ -91,7 +91,7 @@ flowchart LR
 | UI Build | Vite + Tailwind CSS 4 + shadcn-vue | ^8.2.2 / ^4.3.3 / ^2.8.2 |
 | CP Framework | Spring Boot 4 + Spring Security + Spring Data JPA | 4.0.6 |
 | Agent Framework | FastAPI + LangChain + LangGraph + litellm | — |
-| Runtime Framework | rmcp + Axum + Tokio + bollard | 1.8.0 / 0.8.9 / 1.53.1 / 0.21.1 |
+| Runtime Framework | rmcp + Axum + Tokio + bollard | 3.1.4 / 0.8.9 / 1.53.1 / 0.21.1 |
 | Database | PostgreSQL 17 + pgvector | — |
 | Toolchain | Node 22 / pnpm 10 / Maven 3.9 / uv / Docker | — |
 
@@ -101,11 +101,18 @@ flowchart LR
 # Install dependencies (all modules)
 mise run setup
 
-# Start all services (Docker Compose backend + UI on host)
-mise run dev:full
+# Start the daily host development stack
+# PostgreSQL runs in Docker; CP/Agent/Runtime/UI run natively.
+mise run dev:host
 
-# Run full validation (lint + typecheck + build + test)
+# Full validation (lint + typecheck + build + test)
 mise run validate
+
+# Host E2E (per-run isolated DB, host root, and Sandbox)
+# mise run test:e2e:host
+
+# One-off full-container baseline (not the daily host path)
+# mise run dev:full
 ```
 
 Open http://localhost:12630 in your browser.

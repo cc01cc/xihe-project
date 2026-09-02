@@ -25,10 +25,24 @@ paths:
       operationId: currentUser
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/workspaces/current:
+    get: { operationId: getCurrentWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Current workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/workspaces:
+    post:
+      operationId: createWorkspace
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceCreateRequest' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '409': { $ref: '#/components/responses/Problem' } }
+  /api/v1/workspaces/{workspaceId}:
+    get: { operationId: getWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    patch: { operationId: updateWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    delete: { operationId: deleteWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '204': { description: Logically deleted }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/sessions:
     get: { operationId: listSessions, security: [{ bearerAuth: [] }], responses: { '200': { description: Sessions } } }
-    post: { operationId: createSession, security: [{ bearerAuth: [] }], responses: { '201': { description: Created }, '401': { $ref: '#/components/responses/Problem' } } }
+    post: { operationId: createSession, security: [{ bearerAuth: [] }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /api/v1/sessions/{sessionId}:
+    get: { operationId: getSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    patch: { operationId: updateSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     delete: { operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/oauth/sessions:
     post:
@@ -135,6 +149,8 @@ paths:
   /api/v1/workspaces/{workspaceId}/mcp-config:
      get: { operationId: getMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP configuration } } }
      put: { operationId: putMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  /api/v1/workspaces/{workspaceId}/environment:
+     get: { operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/context/{sessionId}/events:
     get: { operationId: readContextEvents, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Events } } }
     post: { operationId: appendContextEvent, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '201': { description: Appended } } }
@@ -188,6 +204,12 @@ paths:
     post: { operationId: forkContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sourceSessionId, required: true, schema: { type: string } }], responses: { '201': { description: Forked } } }
   /internal/v1/runtime/workspaces:
     post: { operationId: registerRuntimeWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Registered } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/execution-spec:
+    get: { operationId: getWorkspaceExecutionSpec, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Targeted workspace execution specification, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceExecutionSpec' } } } }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/status:
+    get: { operationId: getRuntimeWorkspaceStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Runtime workspace materialization status }, '404': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/runtime/heartbeat:
+    post: { operationId: runtimeHeartbeat, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeHeartbeatRequest' } } } }, responses: { '200': { description: Accepted }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/delete:
     post: { operationId: deleteRuntimeWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Deleted } } }
   /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn:
@@ -219,7 +241,13 @@ components:
   schemas:
     RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
-    AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object } } }
+    AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: string } } }
+    Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    WorkspaceCreateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
+    WorkspaceUpdateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
+    Session: { type: object, required: [id, workspaceId, title, archived], properties: { id: { type: string }, workspaceId: { type: string }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] } } }
+    SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] } } }
     OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
     StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }
@@ -227,6 +255,8 @@ components:
     RagIngestRequest: { type: object, required: [file], properties: { file: { type: string, format: binary }, chunkSize: { type: integer, default: 1000 }, chunkOverlap: { type: integer, default: 200 } } }
     RagIngestResponse: { type: object, required: [status, chunks, docIds], properties: { status: { type: string }, chunks: { type: integer }, docIds: { type: array, items: { type: string } } } }
     RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
+    WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string } } }
+    RuntimeHeartbeatRequest: { type: object, required: [deviceId, status], properties: { deviceId: { type: string }, status: { type: string, enum: [ready, blocked] } } }
     ProblemDetails:
       type: object
       required: [type, title, status, code, requestId]

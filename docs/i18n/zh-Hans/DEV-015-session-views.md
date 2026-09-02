@@ -5,12 +5,14 @@ lang: zh-Hans
 status: active
 sidebar_order: 15
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-09-02
 ---
 
 # DEV-015: Session 视图层设计
 
 > 本文档描述 PLAN-029-XH-unified-session-architecture 的视图层实现：路由、`ChatPanel` 嵌入、chat ↔ workspace 切换。它面向前端开发者，假设读者已阅读 RFC-001 与 ADR-001。
+>
+> **PLAN-222 v1 修正（2026-09-02）**：Chat 使用 `sessionId`，Workspace 使用 `workspaceId`；Session/Message 以服务端 API 为 canonical source，旧 localStorage Session/Message 设计不再适用。
 
 ## 1. 路由设计
 
@@ -28,7 +30,7 @@ updated: 2026-07-06
   ],
 },
 {
-  path: '/workspace/:sessionId?',
+  path: '/workspace/:workspaceId?',
   name: 'workspace',
   component: AppLayout,
   children: [
@@ -39,8 +41,8 @@ updated: 2026-07-06
 
 ### 1.2. 设计决策
 
-- 保持 `/chat/:sessionId` 与 `/workspace/:sessionId` 并存，不统一为 `/session/:id`。
-- `/workspace/:sessionId?` 使用可选参数，兼容旧入口 `/workspace`。
+- 保持 `/chat/:sessionId` 与 `/workspace/:workspaceId` 并存，不统一为 `/session/:id`。
+- `/workspace/:workspaceId?` 使用可选参数，兼容旧入口 `/workspace`。
 - 两个路由共用 `AppLayout`，侧边栏与全局状态保持一致。
 
 ### 1.3. 默认首页
@@ -73,14 +75,14 @@ updated: 2026-07-06
 
 - 职责：workspace 主页面。
 - 左侧：文件树；中间：代码编辑器；右侧：嵌入 `ChatPanel`。
-- 从路由参数或 `currentSessionId` 解析当前 Session，无 Session 时自动创建。
+- 从 Workspace route 的 `workspaceId` 读取当前 Workspace；Session 由服务端 Session API 创建/选择，不把 Session ID 当作 Workspace ID。
 - 当 `activeFilePath` 变化时，调用 `workspaceStore.syncActiveFileToSession()` 把文件上下文回写 Session 层。
 
 ### 2.4. WorkspaceToolbar.vue（workspace 工具栏）
 
 `packages/ui/src/components/workspace/WorkspaceToolbar.vue`
 
-- 新增 Session 下拉选择器：切换当前 Session 并路由到 `/workspace/:sessionId`。
+- 新增 Session 下拉选择器：切换当前 Session 并保留当前 Workspace route `/workspace/:workspaceId`。
 - 新增「切换回 chat」按钮：跳转到 `/chat/:currentSessionId`。
 - 保留刷新、上传按钮。
 
@@ -90,7 +92,7 @@ updated: 2026-07-06
 
 - 「New Chat」按钮：创建新 Session 并跳转 `/chat/:sessionId`。
 - Session 列表：点击后跳转 `/chat/:sessionId`。
-- 「Workspace」按钮：跳转 `/workspace/:currentSessionId`；若无当前 Session，先创建。
+- 「Workspace」按钮：跳转 `/workspace/:currentWorkspaceId`；Workspace 缺失时保持 fail-closed。
 
 ## 3. ChatPanel 嵌入细节
 

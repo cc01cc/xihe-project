@@ -5,7 +5,7 @@ lang: zh-Hans
 status: active
 sidebar_order: 101
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-09-02
 ---
 
 # ADR-001: Session Store 边界
@@ -62,7 +62,7 @@ PLAN-029 需要在 chat 与 workspace 之间引入统一的 Session 层，同时
 - `updateSessionContext(id, context)` / `setSessionAgents(id, agentIds)` / `setRAGContext(id, ragContext)` / `setMCPContext(id, mcpContext)` / `setFileContext(id, fileContext)`
 - `addAttachment(id, attachment)` / `removeAttachment(id, attachmentId)` / `clearAttachments(id)` / `getAttachments(id)`
 
-**注意**：`attachments` 与 `fileContexts` 不通过 `localStorage` 持久化。PLAN-030 将在后端实现 Session 专属附件空间；前端当前仅保存运行时引用。
+**注意**：业务 Session/Message/附件以服务端 API 为 canonical source；Pinia 只保留当前视图的响应式投影和临时引用，不通过 `localStorage` 恢复业务数据。Workspace 文件内容由 Runtime 管理。
 
 ### 4.2. useChatStore（视图层：消息流）
 
@@ -140,7 +140,7 @@ Pinia 的响应式 store 本身就是同步机制。store 之间直接读取状�
 | 测试 | `useSessionStore` 需要单独测试跨视图状态转换 | 已在 `sessionStore.spec.ts` 中新增断言 |
 | 性能 | `currentSessionAttachments` 等计算属性在视图切换时重新计算 | 数据量小，影响可忽略 |
 | 数据一致性 | workspace 只读访问附件，避免写入冲突 | 写入附件的入口统一在 chat/上传组件 |
-| 后端边界 | 前端 attachments 不持久化，刷新后丢失 | PLAN-030 实现后端后持久化 |
+| 后端边界 | CP 持久化 Session/Message/附件数据，Runtime 管理 Workspace 文件 | UI store 在刷新/切用户后从服务端重新加载，不把 localStorage 当真相源 |
 
 ## 7. 状态分层图
 

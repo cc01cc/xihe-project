@@ -5,7 +5,7 @@ lang: en
 status: active
 sidebar_order: 101
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-09-02
 ---
 
 # ADR-001: Session Store Boundary
@@ -62,7 +62,7 @@ Located at `packages/ui/src/stores/session.ts`.
 - `updateSessionContext(id, context)` / `setSessionAgents(id, agentIds)` / `setRAGContext(id, ragContext)` / `setMCPContext(id, mcpContext)` / `setFileContext(id, fileContext)`
 - `addAttachment(id, attachment)` / `removeAttachment(id, attachmentId)` / `clearAttachments(id)` / `getAttachments(id)`
 
-**Note**: `attachments` and `fileContexts` are not persisted via `localStorage`. PLAN-030 will implement the backend Session-scoped attachment store; the frontend currently only keeps runtime references.
+**Note**: Server APIs are the canonical source for business Session/Message/attachment data. Pinia keeps only the reactive view projection and transient references, never restoring business data from `localStorage`; Workspace file content is owned by Runtime.
 
 ### 4.2. useChatStore (View Layer: Message Flow)
 
@@ -140,7 +140,7 @@ Pinia’s reactive stores are themselves the synchronization mechanism. Stores c
 | Testing | `useSessionStore` needs isolated tests for cross-view state transitions | New assertions added in `sessionStore.spec.ts` |
 | Performance | Computed properties like `currentSessionAttachments` recompute on view switch | Data volume is small; impact is negligible |
 | Data consistency | Workspace has read-only access to attachments, avoiding write conflicts | Attachment writes are centralized in chat/upload components |
-| Backend boundary | Frontend attachments are not persisted and are lost on reload | PLAN-030 will implement backend persistence |
+| Backend boundary | CP persists Session/Message/attachment data while Runtime owns Workspace files | UI stores reload from the server after refresh or user switch and never treat localStorage as canonical |
 
 ## 7. State Layering Diagram
 

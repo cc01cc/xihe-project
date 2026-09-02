@@ -9,9 +9,9 @@ Xihe 是四模块架构（UI → CP → Agent → Runtime），单看代码无�
 mise run dev:full
 
 # 2. 验证每个端点（全部走规范契约：公开 /api/v1，服务间 /internal/v1）
-TOKEN=$(curl -s -X POST 'http://localhost:12631/api/v1/auth/login' \
+TOKEN=$(curl -s -X POST "http://localhost:${XIHE_CP_PORT:-12631}/api/v1/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@xihe.local","password":"admin123"}' | \
+  -d "{\"email\":\"${XIHE_LOGIN_EMAIL:?set XIHE_LOGIN_EMAIL}\",\"password\":\"${XIHE_LOGIN_PASSWORD:?set XIHE_LOGIN_PASSWORD}\"}" | \
   python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
 
 # SSE 连接
@@ -61,9 +61,9 @@ mise run dev:full
 # 等待 CP 就绪
 sleep 15
 # 测试 CP 配置 API
-ADMIN_TOKEN=$(curl -s -X POST 'http://localhost:${XIHE_CP_PORT:-12631}/auth/login' \
+ADMIN_TOKEN=$(curl -s -X POST 'http://localhost:${XIHE_CP_PORT:-12631}/api/v1/auth/login' \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@xihe.local","password":"admin123"}' | \
+  -d "{\"email\":\"${XIHE_LOGIN_EMAIL:?set XIHE_LOGIN_EMAIL}\",\"password\":\"${XIHE_LOGIN_PASSWORD:?set XIHE_LOGIN_PASSWORD}\"}" | \
   python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
 # PUT → GET → restart → GET (PG 持久化验证)
 curl -s -X PUT 'http://localhost:${XIHE_CP_PORT:-12631}/config/admin/logging' \

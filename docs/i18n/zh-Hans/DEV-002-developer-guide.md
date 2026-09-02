@@ -152,7 +152,13 @@ mise run test:cp
 mise run dev:runtime
 mise run test:runtime
 
+mise run dev:host:check
+mise run dev:host
+mise run dev:host:stop
+mise run dev:reset
+
 mise run test:e2e
+mise run test:e2e:host
 mise run validate:full
 ```
 
@@ -166,9 +172,22 @@ mise run validate:full
 
 ### 2.4. 2.2 运行模式
 
-CP (Control Plane) 支持两种运行模式：
+Xihe 支持三种运行模式：
 
-#### 模式 A: Docker Compose 全栈（推荐用于集成测试）
+#### 模式 A: `dev:host` 日常开发（推荐）
+
+```bash
+mise run dev:host:check
+mise run dev:host
+```
+
+日常 host 模式只让 PostgreSQL 运行在 Docker 中，CP、Agent、Runtime、UI 由 Mise 原生进程管理。Runtime 使用 `.xihe-workspaces/` 作为宿主 WorkspaceStorage 根目录；`/health` 是 liveness，`/ready` 表示 Runtime 服务本身可接收请求，不等待全部 Workspace Sandbox 物化。WorkspaceExecutionSpec 按 `workspaceId` 定向获取，首次文件/命令/MCP 操作时才物化目标 Sandbox。
+
+`mise run test:e2e:host` 默认自行生成 `e2eRunId`、随机端口、隔离 PostgreSQL/host root，并在结束后销毁本轮资源；不会连接长期 `dev:host` 数据库。仅本地调试外部运行服务时才显式设置 `XIHE_E2E_EXTERNAL_SERVER=1`，该模式不作为标准验收证据。
+
+`mise run dev:reset` 默认只执行 dry-run；仅在确认本地 dev 数据可丢弃后使用 `pwsh -File scripts/dev-reset.ps1 -Reset`。该命令会先生成本地临时数据库备份，再重建项目 PostgreSQL 数据卷，并将 host workspace 目录送入 Windows 回收站；不会删除 Runtime device identity。
+
+#### 模式 B: Docker Compose 全栈（冻结基线）
 
 ```bash
 docker compose up -d --build
@@ -187,22 +206,24 @@ curl -s http://localhost:12631/actuator/health    # 预期: {"status":"UP"}（Do
 curl -s http://localhost:12633/health              # 预期: OK（Docker 内为 :8001）
 ```
 
-#### 模式 B: 宿主开发（CP 在宿主机运行，用于单元测试）
+> Compose 模式仍需要额外提供 Runtime 使用的 Docker Engine socket 和 WorkspaceStorage 映射；当前完整 Compose Real E2E 不能替代已验证的 `dev:host` 主链路。
+
+#### 模式 C: 单模块宿主测试
 
 ```bash
-# 方式 B1: H2 内存库（零配置，推荐）
+# 方式 C1: H2 内存库（零配置，推荐）
 XIHE_CP_DATASOURCE_URL="jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE" \
 XIHE_CP_DATASOURCE_DRIVER="org.h2.Driver" \
 XIHE_CP_DATASOURCE_USERNAME="sa" \
 XIHE_CP_DATASOURCE_PASSWORD="" \
 mvn spring-boot:run -f packages/control-plane/pom.xml
 
-# 方式 B2: PostgreSQL 容器（需先启动 Docker）
+# 方式 C2: PostgreSQL 容器（需先启动 Docker）
 docker compose up -d postgres
 mvn spring-boot:run -f packages/control-plane/pom.xml
 ```
 
-**注意**：在 WSL2 mirror 网络模式下，宿主连接 Docker PostgreSQL 可能遇到密码认证失败。这是因为 `bridge` 网络的端口映射导致连接源地址被 NAT 转换，`pg_hba.conf` 中的 `127.0.0.1/32 trust` 规则不匹配。遇到此问题时请使用**方式 B1（H2）**或**模式 A（全 Docker Compose）**。
+**注意**：在 WSL2 mirror 网络模式下，宿主连接 Docker PostgreSQL 可能遇到密码认证失败。这是因为 `bridge` 网络的端口映射导致连接源地址被 NAT 转换，`pg_hba.conf` 中的 `127.0.0.1/32 trust` 规则不匹配。遇到此问题时请使用 H2 或 `dev:host`。
 
 `.env.dev` 文件记录了两种数据库配置（PostgreSQL 为默认，H2 被注释），取消注释即可切换。
 
@@ -215,7 +236,7 @@ CP ConfigService 是统一的配置管理入口，采用两层模型：
 | 层 | 用途 | 修改方式 |
 |----|------|---------|
 | **环境变量** | 运行前固定（端口/DB/JWT） | `.env.dev`（gitignore）|
-| **ConfigService** | 运行时可改（API key/模型/日志） | UI Settings / `PUT /config/admin/{domain}` / `POST /config/import` |
+| **ConfigService** | 运行时可改（API key/模型/日志） | UI Settings / `PUT /api/v1/config/admin/{domain}` / `POST /api/v1/config/import` |
 
 **优先级**：ConfigService 值覆盖环境变量同名 key。
 
@@ -230,13 +251,13 @@ CP ConfigService 是统一的配置管理入口，采用两层模型：
 
 ```bash
 # 设置 admin 级配置
-curl -X PUT http://localhost:8080/config/admin/llm-provider \
+curl -X PUT http://localhost:12631/api/v1/config/admin/llm-provider \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"deepseekApiKey": "sk-xxx", "defaultProvider": "deepseek"}'
 
 # 读取当前生效配置
-curl http://localhost:8080/config/llm-provider \
+curl http://localhost:12631/api/v1/config/llm-provider \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -244,21 +265,21 @@ curl http://localhost:8080/config/llm-provider \
 
 ```bash
 # 导入配置到 admin 层
-curl -X POST http://localhost:8080/config/import \
+curl -X POST http://localhost:12631/api/v1/config/import \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d @config.import.local.jsonc
 ```
 
-`mise run dev:full` 会自动执行此导入（CP ready 后）。
+`mise run dev:full` 仅用于一次性全容器基线场景；日常 `dev:host` 通过 UI Settings 或 API 修改 ConfigService。
 
 JSONC 支持注释和尾部逗号，可直接复制 Claude Desktop / Cursor 的 MCP 配置片段。
 
 #### 开发流程
 
 1. **`cp config.import.example.jsonc config.import.local.jsonc`** — 填入 API key
-2. **`mise run dev:full`** — Docker Compose 启动 + CP ready 后自动导入 `config.import.local.jsonc`
-3. **运行时调试** — `PUT /config/admin/{domain}` 或 UI 设置页修改，立即生效
+2. **`mise run dev:host`** — 启动 PostgreSQL 与四个原生 host 服务
+3. **运行时调试** — `PUT /api/v1/config/admin/{domain}` 或 UI 设置页修改，立即生效
 
 #### 配置客户端
 
@@ -272,12 +293,12 @@ JSONC 支持注释和尾部逗号，可直接复制 Claude Desktop / Cursor 的 
 
 ### 2.6. 2.4 集成测试
 
-Agent 集成测试（`packages/agent/tests/test_agent_cp_integration.py`）需要 CP 运行在 `localhost:8080`。
+Agent 集成测试（`packages/agent/tests/integration/test_agent_cp_integration.py`）需要 CP 运行在 `localhost:12631`。
 
 ```bash
 # 方式 1: Docker Compose（推荐）
 docker compose up -d --build
-cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
+cd packages/agent && uv run pytest tests/integration/test_agent_cp_integration.py -v
 
 # 方式 2: 宿主 H2 模式
 XIHE_CP_DATASOURCE_URL="jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE" \
@@ -286,7 +307,7 @@ XIHE_CP_DATASOURCE_USERNAME="sa" \
 XIHE_CP_DATASOURCE_PASSWORD="" \
 mvn spring-boot:run -q -f packages/control-plane/pom.xml &
 sleep 12
-cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
+cd packages/agent && uv run pytest tests/integration/test_agent_cp_integration.py -v
 ```
 
 测试文件已包含 `@pytest.mark.skipif` 自动检测，CP 不可达时静默跳过。
@@ -342,13 +363,13 @@ LangChain 事件通过 SSE 适配层（`packages/agent/src/xihe_agent/adapters/s
 
 | 模块 | 框架 | 测试数 | 运行命令 |
 |------|------|--------|---------|
-| **UI 单元** | Vitest + @vue/test-utils | 206 | `cd packages/ui && pnpm vitest run` |
+| **UI 单元** | Vitest + @vue/test-utils | 323 | `cd packages/ui && pnpm vitest run` |
 | **UI E2E (Mock)** | Playwright + page.route() | 40 | `cd packages/ui && npx playwright test e2e/mock/` |
 | **UI E2E (Real)** | Playwright + 真实 CP | 32 | `cd packages/ui && npx playwright test e2e/real/` (需 Docker Compose) |
-| **CP** | JUnit 5 + Mockito + Testcontainers | 152 | `cd packages/control-plane && mvn test` |
-| **Agent 单元** | pytest + pytest-asyncio | 150 | `cd packages/agent && uv run pytest tests/unit/ -v` |
+| **CP** | JUnit 5 + Mockito + Testcontainers | 265 | `cd packages/control-plane && mvn test` |
+| **Agent 单元** | pytest + pytest-asyncio | 196 + 15 skipped | `cd packages/agent && uv run pytest tests/ -v` |
 | **Agent 集成** | pytest + httpx | — | `cd packages/agent && uv run pytest tests/integration/ -v` (需 Docker Compose) |
-| **Runtime** | cargo test | 176 | `cd packages/runtime && cargo test` |
+| **Runtime** | cargo test | 215 + 3 ignored | `cd packages/runtime && cargo test` |
 | **跨模块 E2E** | pytest + httpx | 32 | `uv run --directory packages/agent pytest tests/ -v` |
 
 ### 4.2. 4.2 测试目录命名约定
@@ -366,7 +387,7 @@ LangChain 事件通过 SSE 适配层（`packages/agent/src/xihe_agent/adapters/s
 
 规则：
 - **Mock 测试**：不依赖外部服务，所有 API 通过 `page.route()` 或 Mock 对象拦截
-- **Real 测试**：依赖真实后端（Docker Compose），自动通过 `skipif` 检测可达性
+- **Real 测试**：依赖真实后端；不可达依赖必须失败，只有明确声明的环境条件才允许 skip
 - **不混放**：同一目录下不应同时有 Mock 和 Real 测试（`e2e/` 拆分 mock/ 和 real/ 即为此目的）
 
 **总计：756+ 个测试**
