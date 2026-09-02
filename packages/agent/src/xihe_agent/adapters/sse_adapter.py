@@ -17,6 +17,9 @@ def render_sse(event: str, data: dict[str, Any]) -> str:
 class LangGraphEventAdapter(EventAdapter):
     """Translates LangGraph `astream_events` payloads into `AgentEvent`."""
 
+    def __init__(self) -> None:
+        self._streamed_runs: set[str] = set()
+
     def translate(self, raw_event: dict[str, Any]) -> AgentEvent | list[AgentEvent] | None:
         event_type = raw_event.get("event", "")
         name = raw_event.get("name", "")
@@ -37,9 +40,16 @@ class LangGraphEventAdapter(EventAdapter):
                     reasoning = chunk.response_metadata.get("reasoning_content")
                     if reasoning:
                         event_data["hint"] = "reasoning"
+                if run_id:
+                    self._streamed_runs.add(run_id)
                 return AgentEvent(type="token", data=event_data)
 
         if event_type == "on_chat_model_end":
+            streamed = bool(run_id and run_id in self._streamed_runs)
+            if run_id:
+                self._streamed_runs.discard(run_id)
+            if streamed:
+                return None
             output = data.get("output")
             if isinstance(output, BaseMessage):
                 content = output.content or ""

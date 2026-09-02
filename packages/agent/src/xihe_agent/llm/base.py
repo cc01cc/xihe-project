@@ -44,6 +44,8 @@ PROVIDER_DEFAULTS: dict[ProviderName, dict[str, Any]] = {
 
 def _provider_for_model(model_id: str) -> ProviderName:
     model_lower = model_id.lower()
+    if "mimo" in model_lower or "xiaomi" in model_lower:
+        return "xiaomi"
     if model_lower.startswith("deepseek"):
         return "deepseek"
     if any(kw in model_lower for kw in ("gpt", "o1", "o3")):
@@ -119,6 +121,10 @@ class LLMConfig(BaseModel):
         model = cc.get("user-preference", "defaultModel")
         if not provider_str:
             provider_str = _provider_for_model(model) if model else "mock"
+        else:
+            inferred_provider = _provider_for_model(model) if model else provider_str
+            if inferred_provider != provider_str and cc.get_provider(inferred_provider):
+                provider_str = inferred_provider
 
         provider: ProviderName = cast(ProviderName, provider_str)
 
@@ -200,6 +206,7 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
             model = f"{litellm_provider}/{model}"
         llm_kwargs: dict[str, Any] = {
             "model": model,
+            "streaming": True,
             "temperature": cfg.temperature,
             "max_tokens": cfg.max_tokens,
             "request_timeout": cfg.timeout,

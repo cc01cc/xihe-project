@@ -2,10 +2,11 @@
 
 
 import pytest
+from langchain_core.messages import HumanMessage
 
 from xihe_agent.config_client import ConfigClient
 from xihe_agent.interfaces.llm import LLMProvider, LLMRequest
-from xihe_agent.llm.base import LLMConfig, MockChatModel, create_llm
+from xihe_agent.llm.base import LLMConfig, MockChatModel, XiheLiteLLM, create_llm
 
 
 class TestLLMConfig:
@@ -115,6 +116,23 @@ class TestLLMConfig:
         assert cfg.api_base == "https://api.xiaomimimo.com/v1"
         assert cfg.model == "mimo-v2.5"
 
+    def test_from_config_client_aligns_stale_provider_with_configured_model(self):
+        client = ConfigClient("http://test-cp", "test-token")
+        client._admin_cache["llm-provider"] = {
+            "defaultProvider": "deepseek",
+            "xiaomiApiKey": "sk-mimo-test",
+            "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
+            "xiaomiModel": "mimo-v2.5",
+        }
+        client._admin_cache["user-preference"] = {"defaultModel": "mimo-v2.5"}
+        client._rebuild_provider_cache()
+
+        cfg = LLMConfig.from_config_client(client)
+
+        assert cfg.provider == "xiaomi"
+        assert cfg.api_key == "sk-mimo-test"
+        assert cfg.api_base == "https://api.xiaomimimo.com/v1"
+
 
 class TestCreateLLM:
     """Factory function create_llm()."""
@@ -160,6 +178,33 @@ class TestCreateLLM:
 
         assert getattr(model, "model") == "xiaomi_mimo/mimo-v2.5"
         assert getattr(model, "request_timeout") == 60.0
+        assert getattr(model, "streaming") is True
+        assert model._client_params["stream"] is True
+
+    @pytest.mark.asyncio
+    async def test_streaming_passes_stream_true_to_litellm(self, monkeypatch: pytest.MonkeyPatch):
+        model = XiheLiteLLM(LLMConfig(
+            provider="openai",
+            api_key="test-key",
+            api_base="https://api.example.test/v1",
+            model="test-model",
+        ))
+        observed: dict[str, object] = {}
+
+        async def fake_acompletion(**kwargs: object):
+            observed.update(kwargs)
+
+            async def chunks():
+                yield {"choices": [{"delta": {"content": "first"}}]}
+                yield {"choices": [{"delta": {"content": " second"}}]}
+
+            return chunks()
+
+        monkeypatch.setattr(model.client, "acompletion", fake_acompletion)
+        chunks = [chunk async for chunk in model.astream([HumanMessage(content="hello")])]
+
+        assert observed["stream"] is True
+        assert [chunk.content for chunk in chunks if chunk.content] == ["first", " second"]
 
     def test_xiaomi_uses_openai_compat_route_when_tools_are_bound(self):
         model = create_llm(LLMConfig(

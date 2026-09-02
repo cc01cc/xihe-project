@@ -18,6 +18,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import BaseMessage
 from litellm import get_llm_provider
+import litellm
+
+# Suppress litellm verbose debugging that prints Authorization headers and
+# full request payloads (curl -H 'Authorization: ...'). The redaction boundary
+# already masks Bearer/JWT, but litellm's own masking (Be****3z) still triggers
+# the scan-log-secrets gate. Disable verbose at the source.
+litellm.suppress_debug_info = True  # type: ignore[attr-defined]
+with suppress(Exception):
+    litellm.set_verbose = False  # type: ignore[attr-defined]
 from loguru import logger
 
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
@@ -365,7 +374,13 @@ async def lifespan(app: FastAPI):
         USE_SUPERVISOR = config_client.get_bool("logging", "useSupervisor")
         USE_REGISTRY = config_client.get_bool("logging", "useRegistry")
         config_sync_succeeded = True
-        logger.info("[LIFECYCLE] service=agent event=config_sync_ok provider={} model={}", llm_config.provider, llm_config.model)
+        logger.info(
+            "[LIFECYCLE] service=agent event=config_sync_ok provider={} model={} configured={} providerConfigured={}",
+            llm_config.provider,
+            llm_config.model,
+            bool(llm_config.api_key) or llm_config.provider == "mock",
+            bool(config_client.get_provider(llm_config.provider)),
+        )
     except Exception as e:
         logger.error("[LIFECYCLE] service=agent event=config_sync_failed error={}", e, exc_info=True)
         # Keep status as "starting" — health endpoint will report starting
@@ -496,12 +511,23 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     content: str = data.get("content", "")
     session_id: str = data.get("sessionId", "default")
     workspace_id: str | None = data.get("workspaceId") or None
+    request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
+    run_id: str = request.headers.get("X-Chat-Run-Id") or data.get("runId") or str(uuid4())
     user_name: str = data.get("userName", AGENT_USER_NAME)
     model_override: str | None = data.get("model")
     instructions: str = data.get("instructions", AGENT_INSTRUCTIONS)
     chat_history_raw: list[dict[str, Any]] = data.get("history", [])
 
-    logger.info("Chat request: session={}, content={}...", session_id, content[:60])
+    logger.info(
+        "[LIFECYCLE] service=agent event=chat_stream_started requestId={} sessionId={} workspaceId={} runId={} provider={} model={} contentLength={}",
+        request_id,
+        session_id,
+        workspace_id,
+        run_id,
+        llm_config.provider,
+        model_override or llm_config.model,
+        len(content),
+    )
 
     # Enrich with RAG context if knowledge base has content
     instructions = await _enrich_with_rag_context(content, instructions)
@@ -511,6 +537,19 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     model = create_llm(cfg)
 
     async def event_stream():
+        terminal_sent = False
+        error_sent = False
+        error_seen = False
+        token_count = 0
+        assistant_chars = 0
+        event_index = 0
+
+        def correlated_data(event_data: dict[str, Any]) -> dict[str, Any]:
+            payload = dict(event_data)
+            payload.setdefault("requestId", request_id)
+            payload.setdefault("runId", run_id)
+            return payload
+
         try:
             mcp_tools = await _get_mcp_tools(workspace_id)
             if USE_SUPERVISOR:
@@ -529,8 +568,21 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 })
                 for msg in result["messages"]:
                     if hasattr(msg, "content") and msg.content:
-                        yield render_sse("token", {"content": msg.content})
-                yield render_sse("done", {})
+                        token_count += 1
+                        msg_content = _content_length(msg.content)
+                        assistant_chars += msg_content
+                        event_index += 1
+                        logger.debug(
+                            "[LIFECYCLE] service=agent event=chat_stream_chunk requestId={} sessionId={} runId={} eventIndex={} tokenChars={}",
+                            request_id,
+                            session_id,
+                            run_id,
+                            event_index,
+                            msg_content,
+                        )
+                        yield render_sse("token", correlated_data({"content": msg.content, "type": "token"}))
+                terminal_sent = True
+                yield render_sse("done", correlated_data({"type": "done"}))
             else:
                 context = await context_provider.load(session_id, after_sequence=0)
                 context.runtime_state["user_name"] = user_name
@@ -551,14 +603,74 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 )
 
                 async for event in agent_runner.stream(messages, config):
-                    yield render_sse(event.type, event.data)
+                    if event.type == "token":
+                        token_chars = _content_length(event.data.get("content"))
+                        token_count += 1
+                        event_index += 1
+                        if event.data.get("hint") != "reasoning":
+                            assistant_chars += token_chars
+                        logger.debug(
+                            "[LIFECYCLE] service=agent event=chat_stream_chunk requestId={} sessionId={} runId={} eventIndex={} tokenChars={}",
+                            request_id,
+                            session_id,
+                            run_id,
+                            event_index,
+                            token_chars,
+                        )
+                        yield render_sse("token", correlated_data(event.data))
+                    elif event.type == "error":
+                        error_seen = True
+                        if not error_sent:
+                            error_sent = True
+                            yield render_sse("error", correlated_data({
+                                "code": "AGENT_STREAM_FAILED",
+                                "detail": "Agent stream failed",
+                                "type": "error",
+                            }))
+                    elif event.type == "done":
+                        if terminal_sent:
+                            continue
+                        terminal_sent = True
+                        yield render_sse("done", correlated_data({**event.data, "type": "done"}))
+                    else:
+                        yield render_sse(event.type, correlated_data(event.data))
         except Exception:
-            logger.exception("Agent streaming error")
-            yield render_sse("error", {
-                "code": "AGENT_STREAM_FAILED",
-                "requestId": str(uuid4()),
-                "detail": "Agent stream failed",
-            })
+            error_seen = True
+            logger.exception(
+                "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode=AGENT_STREAM_FAILED",
+                request_id,
+                session_id,
+                workspace_id,
+                run_id,
+            )
+            if not error_sent:
+                error_sent = True
+                yield render_sse("error", correlated_data({
+                    "code": "AGENT_STREAM_FAILED",
+                    "detail": "Agent stream failed",
+                    "type": "error",
+                }))
+
+        if not terminal_sent:
+            terminal_sent = True
+            done_data: dict[str, Any] = {
+                "type": "done",
+                "synthetic": True,
+            }
+            if error_seen:
+                done_data["errorCode"] = "AGENT_STREAM_FAILED"
+            yield render_sse("done", correlated_data(done_data))
+
+        logger.info(
+            "[LIFECYCLE] service=agent event=chat_stream_finished requestId={} sessionId={} workspaceId={} runId={} tokenCount={} assistantChars={} outcome={}",
+            request_id,
+            session_id,
+            workspace_id,
+            run_id,
+            token_count,
+            assistant_chars,
+            "error" if error_seen else "ok",
+        )
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -594,6 +706,16 @@ async def rag_stats(_token: None = Depends(verify_api_token)):
 async def rag_delete(doc_id: str, _token: None = Depends(verify_api_token)):
     ok = await vector_store.delete(doc_id)
     return {"deleted": ok}
+
+
+def _content_length(content: Any) -> int:
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        return sum(_content_length(item) for item in content)
+    if isinstance(content, dict):
+        return _content_length(content.get("text") or content.get("content") or "")
+    return 0
 
 
 def _deserialize_messages(raw: list[dict[str, Any]]) -> list[Message]:

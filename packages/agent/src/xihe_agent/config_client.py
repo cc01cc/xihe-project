@@ -67,9 +67,11 @@ class ConfigClient:
             self._rebuild_provider_cache()
             self._last_fetch = time.time()
             logger.info(
-                "ConfigClient: synced %d admin domains, %d system domains",
-                len(self._admin_cache), len(self._system_cache,
-            ))
+                "ConfigClient: synced {} admin domains, {} system domains: admin_llm_keys={} xiaomi_present={}",
+                len(self._admin_cache), len(self._system_cache),
+                list(self._admin_cache.get("llm-provider", {}).keys()),
+                bool(self._admin_cache.get("llm-provider", {}).get("xiaomiApiKey")),
+            )
 
     def _rebuild_provider_cache(self) -> None:
         merged: dict[str, dict[str, Any]] = {}
