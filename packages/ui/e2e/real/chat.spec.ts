@@ -1,3 +1,6 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -7,7 +10,7 @@ test.describe('Chat — Real Backend', () => {
 
   test.beforeAll(async ({ request }) => {
     const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `real-chat-${Date.now()}@test.com`, password: 'Test1234!', name: 'ChatTest' },
+      data: { email: `real-chat-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'ChatTest' },
     })
     if (r.ok()) {
       const body = await r.json()
@@ -40,3 +43,4 @@ test.describe('Chat — Real Backend', () => {
     }
   })
 })
+

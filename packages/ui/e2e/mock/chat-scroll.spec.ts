@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { ChatPage } from '../page-objects/ChatPage'
-import { setupMockAuth } from './helpers/auth'
+import { setupMockAuth, setupMockSessions } from './helpers/auth'
 
 test.describe('Chat Scroller', () => {
   test.beforeEach(async ({ page }) => {
@@ -16,12 +16,14 @@ test.describe('Chat Scroller', () => {
       timestamp: new Date(Date.now() - (60 - i) * 60000).toISOString(),
     }))
 
-    await page.addInitScript((msgs) => {
-      localStorage.setItem('xihe-messages', JSON.stringify({ 'scroll-session': msgs }))
-      localStorage.setItem('xihe-sessions', JSON.stringify([
-        { id: 'scroll-session', title: 'Scroll Test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      ]))
-    }, messages)
+    await setupMockSessions(page, {
+      sessions: [{ id: 'scroll-session', title: 'Scroll Test' }],
+      messages: { 'scroll-session': messages.map((message) => ({
+        ...message,
+        role: message.role.toUpperCase(),
+        createdAt: message.timestamp,
+      })) },
+    })
 
     const chat = new ChatPage(page)
     await chat.goto('scroll-session')
@@ -61,16 +63,23 @@ test.describe('Chat Scroller', () => {
       timestamp: new Date(Date.now() - (50 - i) * 60000).toISOString(),
     }))
 
-    await page.addInitScript((msgs) => {
-      localStorage.setItem('xihe-messages', JSON.stringify({ 'auto-scroll-session': msgs }))
-      localStorage.setItem('xihe-sessions', JSON.stringify([
-        { id: 'auto-scroll-session', title: 'Auto Scroll Test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      ]))
-    }, messages)
+    await setupMockSessions(page, {
+      sessions: [{ id: 'auto-scroll-session', title: 'Auto Scroll Test' }],
+      messages: { 'auto-scroll-session': messages.map((message) => ({
+        ...message,
+        role: message.role.toUpperCase(),
+        createdAt: message.timestamp,
+      })) },
+    })
 
     const chat = new ChatPage(page)
     await chat.goto('auto-scroll-session')
     await expect(chat.scrollerViewport).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=Message 0')).toBeVisible({ timeout: 10000 })
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="message-scroller-viewport"]') as HTMLElement
+      return el && el.scrollHeight > el.clientHeight
+    }, { timeout: 10000 })
 
     // Scroll to top first
     await chat.scrollToTop()

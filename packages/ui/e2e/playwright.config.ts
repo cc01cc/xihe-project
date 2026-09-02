@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 const UI_PORT = process.env.XIHE_UI_PORT || '12630'
 const externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === '1'
+const e2eProfile = process.env.XIHE_E2E_PROFILE || 'all'
 
 export default defineConfig({
   testDir: '.',
@@ -23,6 +24,8 @@ export default defineConfig({
       maxDiffPixelRatio: 0.01,
     },
   },
+  grep: e2eProfile === 'host' ? /@host/ : undefined,
+  grepInvert: e2eProfile === 'compose' ? /@host/ : undefined,
   webServer: externalServer
     ? undefined
     : {

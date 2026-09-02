@@ -1,3 +1,6 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 import fs from 'fs'
 import path from 'path'
@@ -14,7 +17,7 @@ test.describe('PdfViewer — Real Backend', () => {
 
   test.beforeAll(async ({ request }) => {
     const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `pdf-${Date.now()}@test.com`, password: 'Test1234!', name: 'PdfTest' },
+      data: { email: `pdf-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'PdfTest' },
     })
     expect(r.ok()).toBeTruthy()
     const body = await r.json()
@@ -73,3 +76,4 @@ test.describe('PdfViewer — Real Backend', () => {
     await expect(page).toHaveScreenshot('pdf-viewer-rendered.png')
   })
 })
+

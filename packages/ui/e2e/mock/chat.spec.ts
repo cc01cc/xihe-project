@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { setupMockAuth } from './helpers/auth'
+import { setupMockAuth, setupMockSessions } from './helpers/auth'
 
 function markdownResponseTokens(): string[] {
   return [
@@ -32,18 +32,15 @@ test.describe('Chat', () => {
     await expect(page).toHaveScreenshot('chat-empty.png')
   })
 
-  test('renders pre-existing messages from localStorage', async ({ page }) => {
-    await page.addInitScript(() => {
-      const messages = {
+  test('renders pre-existing messages from the server projection', async ({ page }) => {
+    await setupMockSessions(page, {
+      sessions: [{ id: 'test-session', title: 'Chat about TS' }],
+      messages: {
         'test-session': [
-          { id: 'msg-1', sessionId: 'test-session', role: 'user', content: 'What is TypeScript?', timestamp: new Date(Date.now() - 60000).toISOString() },
-          { id: 'msg-2', sessionId: 'test-session', role: 'assistant', content: 'TypeScript is a typed superset of JavaScript that compiles to plain JavaScript.', timestamp: new Date().toISOString() },
+          { id: 'msg-1', sessionId: 'test-session', role: 'USER', content: 'What is TypeScript?', createdAt: new Date(Date.now() - 60000).toISOString() },
+          { id: 'msg-2', sessionId: 'test-session', role: 'ASSISTANT', content: 'TypeScript is a typed superset of JavaScript that compiles to plain JavaScript.', createdAt: new Date().toISOString() },
         ],
-      }
-      localStorage.setItem('xihe-messages', JSON.stringify(messages))
-      localStorage.setItem('xihe-sessions', JSON.stringify([
-        { id: 'test-session', title: 'Chat about TS', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      ]))
+      },
     })
 
     await page.goto('/chat/test-session')
@@ -53,6 +50,7 @@ test.describe('Chat', () => {
   })
 
   test('shows session in sidebar after creating new chat', async ({ page }) => {
+    await setupMockSessions(page, { createSession: true })
     await page.goto('/chat')
 
     const newChatBtn = page.locator('button:has-text("新建对话")')
@@ -62,13 +60,12 @@ test.describe('Chat', () => {
     await expect(sessionItem).toBeVisible({ timeout: 5000 })
   })
 
-  test('shows sidebar with seeded sessions', async ({ page }) => {
-    await page.addInitScript(() => {
-      const sessions = [
-        { id: 'sid-1', title: 'TypeScript Help', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-        { id: 'sid-2', title: 'Rust Borrow Checker', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      ]
-      localStorage.setItem('xihe-sessions', JSON.stringify(sessions))
+  test('shows sidebar with server sessions', async ({ page }) => {
+    await setupMockSessions(page, {
+      sessions: [
+        { id: 'sid-1', title: 'TypeScript Help' },
+        { id: 'sid-2', title: 'Rust Borrow Checker' },
+      ],
     })
 
     await page.goto('/chat/sid-1')
@@ -79,9 +76,7 @@ test.describe('Chat', () => {
   })
 
   test('empty state in sidebar when no sessions', async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('xihe-sessions', JSON.stringify([]))
-    })
+    await setupMockSessions(page)
 
     await page.goto('/chat/default')
     await expect(page.locator('text=暂无对话')).toBeVisible({ timeout: 5000 })
@@ -90,6 +85,7 @@ test.describe('Chat', () => {
 
   test('sends message and streams markdown response', async ({ page }) => {
     await setupMockAuth(page, { sse: { tokens: markdownResponseTokens() } })
+    await setupMockSessions(page, { sessions: [{ id: 'stream-session', title: 'Stream Test' }] })
 
     await page.goto('/chat/stream-session')
 
@@ -118,6 +114,7 @@ test.describe('Chat', () => {
         delayMs: 200,
       },
     })
+    await setupMockSessions(page, { sessions: [{ id: 'stop-session', title: 'Stop Test' }] })
 
     await page.goto('/chat/stop-session')
 
@@ -137,6 +134,7 @@ test.describe('Chat', () => {
     await setupMockAuth(page, {
       sse: { tokens: ['reply '] },
     })
+    await setupMockSessions(page, { sessions: [{ id: 'anchor-session', title: 'Anchor Test' }] })
 
     await page.goto('/chat/anchor-session')
 

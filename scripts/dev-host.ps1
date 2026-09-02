@@ -49,6 +49,54 @@ function Test-Tool {
   catch { return "$Name MISSING: $_" }
 }
 
+function Send-ToRecycleBin {
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  Add-Type -AssemblyName Microsoft.VisualBasic
+  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
+    $Path,
+    [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+    [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
+}
+
+function Remove-WorkspaceContainers {
+  $containers = @(docker ps -aq --filter "name=xihe-workspace-ws_")
+  foreach ($container in $containers) {
+    $id = $container.Trim()
+    if ($id) {
+      docker rm -f $id | Out-Null
+      Write-DevHostEvent -Event "container_removed" -Fields @{ containerId = $id; scope = "workspace-sandbox" }
+    }
+  }
+  if ($containers.Count -gt 0) {
+    Write-Host "Removed $($containers.Count) workspace Sandbox container(s); host storage preserved." -ForegroundColor Green
+  }
+}
+
+function Stop-NativeServices {
+  $ports = @(12630, 12631, 12632, 12633)
+  $currentProcessId = $PID
+  $owners = @(
+    foreach ($port in $ports) {
+      Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess
+    }
+  ) | Sort-Object -Unique
+
+  foreach ($owner in $owners) {
+    if ($owner -and $owner -ne $currentProcessId) {
+      try {
+        Stop-Process -Id $owner -Force -ErrorAction Stop
+        Write-DevHostEvent -Event "process_stopped" -Fields @{ pid = $owner; scope = "native-service-port" }
+        Write-Host "Stopped native service process $owner" -ForegroundColor Yellow
+      } catch {
+        Write-DevHostEvent -Event "process_stop_failed" -Fields @{ pid = $owner; scope = "native-service-port"; detail = "$($_)" }
+        Write-Host "Could not stop native service process $owner : $_" -ForegroundColor Yellow
+      }
+    }
+  }
+}
+
 function Ensure-Dirs {
   New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
   New-Item -ItemType Directory -Force -Path $PidDir | Out-Null
@@ -77,7 +125,7 @@ function Do-Check {
   try {
     $testFile = Join-Path $HostRoot ".devhost-probe"
     Set-Content -Path $testFile -Value "probe" -Encoding utf8 -Force
-    Remove-Item $testFile -Force
+    Send-ToRecycleBin -Path $testFile
     $free = (Get-PSDrive -Name ($HostRoot.Substring(0,1)) -ErrorAction SilentlyContinue)
     Write-Host "hostRoot: $HostRoot writable (drive free ~$([math]::Round($free.Free/1GB,1))GB)" -ForegroundColor Green
     Write-DevHostEvent -Event "process_ready" -Fields @{ service = "host_root"; hostRootRef = "XIHE_WORKSPACE_HOST_ROOT"; outcome = "ok" }
@@ -89,7 +137,7 @@ function Do-Check {
   # Ports
   foreach ($p in @(12630,12631,12632,12633,12634)) {
     if (Test-PortFree -Port $p) { Write-Host "port $p free" -ForegroundColor Green }
-    else { Write-Host "port $p IN USE" -ForegroundColor Yellow; Write-DevHostEvent -Event "process_failed" -Fields @{ service = "port"; port = $p; errorCode = "PORT_IN_USE" } }
+    else { Write-Host "port $p IN USE" -ForegroundColor Yellow; $ok = $false; Write-DevHostEvent -Event "process_failed" -Fields @{ service = "port"; port = $p; errorCode = "PORT_IN_USE" } }
   }
 
   # Tools
@@ -201,7 +249,7 @@ function Do-Start {
     $services = @(
       @{ Name = "CP"; Url = "http://localhost:12631/actuator/health" },
       @{ Name = "Agent"; Url = "http://localhost:12632/internal/v1/agent/health" },
-      @{ Name = "Runtime"; Url = "http://localhost:12633/health" },
+      @{ Name = "Runtime"; Url = "http://localhost:12633/ready" },
       @{ Name = "UI"; Url = "http://localhost:12630" }
     )
     foreach ($svc in $services) {
@@ -220,12 +268,15 @@ function Do-Start {
 }
 
 function Do-Stop {
+  Ensure-Dirs
   Write-Host "=== dev:host -Stop ===" -ForegroundColor Cyan
   Write-DevHostEvent -Event "cleanup_started" -Fields @{ scope = "dev-host" }
   Push-Location $ProjectRoot
   try {
+    Stop-NativeServices
     Write-Host "Stopping postgres (docker compose stop postgres)..." -ForegroundColor Cyan
     docker compose stop postgres 2>$null
+    Remove-WorkspaceContainers
     # Do NOT down volumes or remove host directories
     Write-Host "Postgres stopped (volume pgdata kept, hostRoot kept: $HostRoot)" -ForegroundColor Green
   } finally { Pop-Location }
@@ -234,12 +285,12 @@ function Do-Stop {
   if (Test-Path $PidDir) {
     Get-ChildItem $PidDir -Filter "*.pid" -ErrorAction SilentlyContinue | ForEach-Object {
       try {
-        $pid = Get-Content $_.FullName -Raw | ForEach-Object { $_.Trim() }
-        if ($pid -match '^\d+$') {
-          Write-Host "Killing pid $pid from $($_.Name)" -ForegroundColor Yellow
-          Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        $filePid = Get-Content $_.FullName -Raw | ForEach-Object { $_.Trim() }
+        if ($filePid -match '^\d+$') {
+          Write-Host "Killing pid $filePid from $($_.Name)" -ForegroundColor Yellow
+          Stop-Process -Id $filePid -Force -ErrorAction SilentlyContinue
         }
-        Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+        Send-ToRecycleBin -Path $_.FullName
       } catch {}
     }
   }
@@ -277,7 +328,7 @@ function Do-Watch {
   $services = @(
     @{ Name = "control-plane"; HealthUrl = "http://localhost:12631/actuator/health"; Command = "cd $ProjectRoot; mise run dev:cp"; LogPath = Join-Path $LogDir "cp.log" },
     @{ Name = "agent"; HealthUrl = "http://localhost:12632/internal/v1/agent/health"; Command = "cd $ProjectRoot; mise run dev:agent"; LogPath = Join-Path $LogDir "agent.log" },
-    @{ Name = "runtime"; HealthUrl = "http://localhost:12633/health"; Command = "cd $ProjectRoot; mise run dev:runtime"; LogPath = Join-Path $LogDir "runtime.log" }
+    @{ Name = "runtime"; HealthUrl = "http://localhost:12633/ready"; Command = "cd $ProjectRoot; mise run dev:runtime"; LogPath = Join-Path $LogDir "runtime.log" }
   )
 
   # Track process PIDs
@@ -319,7 +370,7 @@ function Do-Watch {
 }
 
 if ($Check) { Do-Check; exit 0 }
-if ($Stop)  { & docker compose stop postgres; exit $LASTEXITCODE }
+if ($Stop)  { Do-Stop; exit 0 }
 if ($Watch) { & mise run dev:host:watch; exit $LASTEXITCODE }
 if ($Start) { & mise run dev:host; exit $LASTEXITCODE }
 

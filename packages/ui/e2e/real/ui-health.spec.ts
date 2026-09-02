@@ -1,14 +1,26 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
-const pages = [
+interface HealthPage {
+  path: string
+  name: string
+  requiresAuth: boolean
+  keySelector: string | null
+  benign: string[]
+  hostOnly?: boolean
+}
+
+const pages: HealthPage[] = [
   { path: '/chat', name: 'chat', requiresAuth: true, keySelector: 'textarea', benign: [] as string[] },
   { path: '/settings/config', name: 'settings-config', requiresAuth: true, keySelector: '[data-testid="settings-config-heading"]', benign: [] as string[] },
   { path: '/settings/knowledge', name: 'settings-knowledge', requiresAuth: true, keySelector: '[data-testid="settings-knowledge-heading"]', benign: ['status of 502'] },
   { path: '/settings/data', name: 'settings-data', requiresAuth: true, keySelector: '[data-testid="settings-data-heading"]', benign: [] as string[] },
   { path: '/settings/monitoring', name: 'settings-monitoring', requiresAuth: true, keySelector: '[data-testid="settings-monitoring-heading"]', benign: [] as string[] },
-  { path: '/workspace', name: 'workspace', requiresAuth: true, keySelector: null, benign: [] as string[] },
+  { path: '/workspace', name: 'workspace', requiresAuth: true, keySelector: null, benign: [] as string[], hostOnly: true },
   { path: '/login', name: 'login', requiresAuth: false, keySelector: 'input[type="password"]', benign: [] as string[] },
   { path: '/register', name: 'register', requiresAuth: false, keySelector: 'input[type="password"]', benign: [] as string[] },
 ]
@@ -19,7 +31,7 @@ test.describe('UI Health — Console, Overflow, Hit-Test', () => {
 
   test.beforeAll(async ({ request }) => {
     const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `health-${Date.now()}@test.com`, password: 'Test1234!', name: 'Health' },
+      data: { email: `health-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'Health' },
     })
     const auth = await r.json()
     authToken = auth.accessToken
@@ -27,7 +39,7 @@ test.describe('UI Health — Console, Overflow, Hit-Test', () => {
   })
 
   for (const p of pages) {
-    test(`${p.name}: zero console errors, zero pageerrors, no horizontal overflow`, async ({ page }) => {
+    test(`${p.hostOnly ? '@host ' : ''}${p.name}: zero console errors, zero pageerrors, no horizontal overflow`, async ({ page }) => {
       const consoleErrors: string[] = []
       const pageErrors: string[] = []
       const failedResponses: string[] = []
@@ -84,3 +96,4 @@ test.describe('UI Health — Console, Overflow, Hit-Test', () => {
     }
   })
 })
+

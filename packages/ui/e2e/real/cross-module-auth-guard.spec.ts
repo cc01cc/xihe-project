@@ -1,3 +1,6 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -8,7 +11,7 @@ test.describe('Cross-Module — Auth Guard', () => {
     const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: 'Test1234!', name: 'AuthTest' }),
+      body: JSON.stringify({ email, password: SHARED_PASSWORD, name: 'AuthTest' }),
     })
     const { accessToken } = await reg.json()
 
@@ -26,3 +29,4 @@ test.describe('Cross-Module — Auth Guard', () => {
     expect(page.url()).toContain('/login')
   })
 })
+

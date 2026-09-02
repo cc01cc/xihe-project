@@ -1,3 +1,6 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -7,7 +10,7 @@ test.beforeAll(async () => {
   const r = await fetch(`${CP_URL}/api/v1/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: `vis-${Date.now()}@test.com`, password: 'Test1234!', name: 'Visual' }),
+    body: JSON.stringify({ email: `vis-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'Visual' }),
   })
   if (r.ok) {
     const body = await r.json()
@@ -45,3 +48,4 @@ test('settings monitoring page with tab nav', async ({ page }) => {
   await expect(page.locator('[data-testid="settings-monitoring-heading"]')).toBeVisible()
   await expect(page).toHaveScreenshot('settings-monitoring.png')
 })
+

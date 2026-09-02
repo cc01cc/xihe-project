@@ -1,3 +1,6 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 
@@ -5,7 +8,7 @@ const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
 async function registerAndLogin(page: import('@playwright/test').Page, request: import('@playwright/test').APIRequestContext, name: string) {
   const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-    data: { email: `${name}-${Date.now()}@test.com`, password: 'Test1234!', name },
+    data: { email: `${name}-${Date.now()}@test.com`, password: SHARED_PASSWORD, name },
   })
   const auth = await reg.json()
   await page.addInitScript(({ token, user, workspaceId }) => {
@@ -121,3 +124,4 @@ test.describe('Settings — Remote MCP OAuth button states', () => {
     await expect(page).toHaveScreenshot('mcp-oauth-authorized.png')
   })
 })
+

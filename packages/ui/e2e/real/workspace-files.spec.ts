@@ -1,14 +1,17 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
-test.describe('Workspace — File Panel & Delete Flow', () => {
+test.describe('@host Workspace — File Panel & Delete Flow', () => {
   let authToken = ''
   let wsId = ''
 
   test.beforeAll(async ({ request }) => {
     const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `ws-ui-${Date.now()}@test.com`, password: 'Test1234!', name: 'WsUI' },
+      data: { email: `ws-ui-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'WsUI' },
     })
     const auth = await r.json()
     authToken = auth.accessToken
@@ -124,7 +127,7 @@ test.describe('Workspace — File Panel & Delete Flow', () => {
 
   test('workspace empty state is centered and styled', async ({ page, request }) => {
     const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `ws-empty-${Date.now()}@test.com`, password: 'Test1234!', name: 'WsEmpty' },
+      data: { email: `ws-empty-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'WsEmpty' },
     })
     const token = (await r.json()).accessToken
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
@@ -133,3 +136,4 @@ test.describe('Workspace — File Panel & Delete Flow', () => {
     await expect(page).toHaveScreenshot('workspace-empty-state.png')
   })
 })
+

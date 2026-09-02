@@ -1,17 +1,35 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
+const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN
+if (!SERVICE_TOKEN) throw new Error('XIHE_CP_API_TOKEN must be set for real E2E')
+const FAKE_MCP_ACCESS_TOKEN = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN
+if (!FAKE_MCP_ACCESS_TOKEN) throw new Error('XIHE_FAKE_MCP_ACCESS_TOKEN must be set for real E2E')
+const fixtureHost = process.env.XIHE_E2E_PROFILE === 'host' ? '127.0.0.1' : 'host.docker.internal'
+const oauthRemoteHost = 'host.docker.internal'
 
-async function registerAndGetToken(name: string): Promise<string> {
+type RegisteredAuth = {
+  accessToken: string
+  workspaceId: string
+}
+
+async function registerAuth(name: string): Promise<RegisteredAuth> {
   const email = `${name}-${Date.now()}@test.com`
   const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'Test1234!', name }),
+    body: JSON.stringify({ email, password: SHARED_PASSWORD, name }),
   })
   const body = await reg.json()
-  return body.accessToken
+  return { accessToken: body.accessToken, workspaceId: body.workspaceId }
+}
+
+async function registerAndGetToken(name: string): Promise<string> {
+  return (await registerAuth(name)).accessToken
 }
 
 test.describe('Cross-Module — Full Chain Chat', () => {
@@ -23,9 +41,9 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
   })
 
-  test('sends message and renders response in the UI', async ({ page }) => {
-    const token = await registerAndGetToken('chain-msg')
-    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
+  test('sends message and renders response in the UI', async ({ page, request }) => {
+    const auth = await registerAuth('chain-msg')
+    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), auth.accessToken)
 
     await page.goto('/chat')
     await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
@@ -38,20 +56,40 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     // User message must appear in the DOM immediately.
     await expect(page.locator(`text=${testMessage}`)).toBeVisible({ timeout: 5000 })
 
-    // User message must appear in the local chat store.
-    await page.waitForTimeout(2000)
-    const messages = await page.evaluate(() => {
-      const raw = localStorage.getItem('xihe-messages')
-      if (!raw) return []
-      const data = JSON.parse(raw)
-      return Object.values(data).flatMap((msgs: any) =>
-        (msgs as Array<{ role: string; content: string }>).map(m => ({ role: m.role, content: m.content }))
-      )
-    })
-    expect(messages.some(m => m.role === 'user' && m.content === testMessage)).toBe(true)
+    // The server is the canonical message source; localStorage is not used for
+    // business messages anymore.
+    let sessionId = ''
+    await expect.poll(async () => {
+      const sessions = await request.get(`${CP_URL}/api/v1/sessions`, {
+        headers: { Authorization: `Bearer ${auth.accessToken}`, 'X-Workspace-Id': auth.workspaceId },
+      })
+      if (!sessions.ok()) return ''
+      const body = await sessions.json()
+      sessionId = body.sessions?.[0]?.id ?? ''
+      return sessionId
+    }, { timeout: 10000 }).not.toBe('')
+
+    const getMessages = async () => {
+      const response = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages`, {
+        headers: { Authorization: `Bearer ${auth.accessToken}`, 'X-Workspace-Id': auth.workspaceId },
+      })
+      return response.ok() ? await response.json() : []
+    }
+
+    await expect.poll(async () => {
+      const messages = await getMessages()
+      return messages.some((message: { role?: string; content?: string }) =>
+        message.role === 'USER' && message.content === testMessage)
+    }, { timeout: 30000 }).toBe(true)
 
     // The UI must not get stuck in the "Thinking" state when the backend fails.
     await expect(page.locator('text=Thinking')).not.toBeVisible({ timeout: 30000 })
+
+    await expect.poll(async () => {
+      const messages = await getMessages()
+      return messages.filter((message: { role?: string; content?: string }) =>
+        message.role === 'ASSISTANT' && Boolean(message.content?.trim())).length
+    }, { timeout: 30000 }).toBeGreaterThan(0)
 
     // Assistant response must not be serialized as [object Object].
     const assistantMessages = await page.locator('[class*="bg-card"]').allInnerTexts()
@@ -71,8 +109,12 @@ test.describe('Cross-Module — Full Chain Chat', () => {
   })
 
   test('mcp config save and reload persists', async ({ page, request }) => {
-    const token = await registerAndGetToken('mcp-persist')
-    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
+    const auth = await registerAuth('mcp-persist')
+    const token = auth.accessToken
+    await page.addInitScript(({ token, workspaceId }) => {
+      localStorage.setItem('xihe-token', token)
+      localStorage.setItem('xihe-user', JSON.stringify({ workspaceId }))
+    }, { token, workspaceId: auth.workspaceId })
 
     // Save MCP config through the canonical public API.
     const mcpConfig = {
@@ -83,14 +125,14 @@ test.describe('Cross-Module — Full Chain Chat', () => {
         },
       },
     }
-    const saveResp = await request.put(`${CP_URL}/api/v1/workspaces/default/mcp-config`, {
+    const saveResp = await request.put(`${CP_URL}/api/v1/workspaces/${auth.workspaceId}/mcp-config`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       data: mcpConfig,
     })
     expect(saveResp.ok()).toBe(true)
 
     // Read back via CP API
-    const getResp = await request.get(`${CP_URL}/api/v1/workspaces/default/mcp-config`, {
+    const getResp = await request.get(`${CP_URL}/api/v1/workspaces/${auth.workspaceId}/mcp-config`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     expect(getResp.ok()).toBe(true)
@@ -106,10 +148,11 @@ test.describe('Cross-Module — Full Chain Chat', () => {
   })
 
   test('mcp config with invalid json shows error toast', async ({ page, request }) => {
-    const token = await registerAndGetToken('mcp-invalid')
+    const auth = await registerAuth('mcp-invalid')
+    const token = auth.accessToken
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
-    const saveResp = await request.put(`${CP_URL}/api/v1/workspaces/default/mcp-config`, {
+    const saveResp = await request.put(`${CP_URL}/api/v1/workspaces/${auth.workspaceId}/mcp-config`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       data: { mcpServers: 'not-valid-object' },
     })
@@ -118,18 +161,18 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     expect(saveResp.status()).toBeLessThan(500)
   })
 
-  test('mcp initialize negotiates 2026 protocol via CP', async ({ page, request }) => {
-    const token = await registerAndGetToken('mcp-session')
-    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
+  test('@host mcp initialize negotiates 2026 protocol via CP', async ({ page, request }) => {
+    const auth = await registerAuth('mcp-session')
+    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), auth.accessToken)
 
     // MCP 2026-07-28 discover lifecycle does not require a session-id.
     const initResp = await request.post(`${CP_URL}/api/v1/mcp`, {
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${auth.accessToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json, text/event-stream',
         'MCP-Protocol-Version': '2026-07-28',
-        'X-Workspace-Id': 'default',
+        'X-Workspace-Id': auth.workspaceId,
       },
       data: {
         jsonrpc: '2.0',
@@ -156,7 +199,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     const email = `oauth-${Date.now()}@test.com`
     const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
       headers: { 'Content-Type': 'application/json' },
-      data: { email, password: 'Test1234!', name: 'oauth-e2e' },
+      data: { email, password: SHARED_PASSWORD, name: 'oauth-e2e' },
     })
     expect(registration.ok()).toBe(true)
     const auth = await registration.json()
@@ -177,7 +220,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
             oauth: {
               clientId: 'xihe-e2e-client',
               authorizationEndpoint: `http://localhost:${fakeOAuthPort}/authorize`,
-              tokenEndpoint: `http://host.docker.internal:${fakeOAuthPort}/token`,
+               tokenEndpoint: `http://${fixtureHost}:${fakeOAuthPort}/token`,
               redirectUri,
               scope: 'mcp:tools',
             },
@@ -204,10 +247,10 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: 10000 })
   })
 
-  test('Runtime obtains a scoped token and calls the remote MCP', async ({ request }) => {
+  test('@host Runtime obtains a scoped token and calls the remote MCP', async ({ request }) => {
     const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
       headers: { 'Content-Type': 'application/json' },
-      data: { email: `remote-call-${Date.now()}@test.com`, password: 'Test1234!', name: 'remote-call-e2e' },
+      data: { email: `remote-call-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'remote-call-e2e' },
     })
     expect(registration.ok()).toBe(true)
     const auth = await registration.json()
@@ -221,16 +264,17 @@ test.describe('Cross-Module — Full Chain Chat', () => {
       data: {
         workspaceId: auth.workspaceId,
         serverId,
-        remoteEndpoint: `http://host.docker.internal:${fakeMcpPort}/mcp`,
+         remoteEndpoint: `http://${oauthRemoteHost}:${fakeMcpPort}/mcp`,
         clientId: 'xihe-e2e-client',
         authorizationEndpoint: `http://localhost:${fakeOAuthPort}/authorize`,
-        tokenEndpoint: `http://host.docker.internal:${fakeOAuthPort}/token`,
+         tokenEndpoint: `http://${fixtureHost}:${fakeOAuthPort}/token`,
         redirectUri,
         scope: 'mcp:tools',
       },
     })
-    expect(session.ok()).toBe(true)
-    const oauth = await session.json()
+    const sessionText = await session.text()
+    expect(session.ok(), `OAuth session creation failed: ${session.status()} ${sessionText}`).toBe(true)
+    const oauth = JSON.parse(sessionText)
     const authorize = await request.get(oauth.authorizationUrl, { maxRedirects: 0 })
     expect(authorize.status()).toBe(302)
     const callback = new URL(authorize.headers().location)
@@ -245,12 +289,12 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       response = await request.post(runtimeUrl, {
         headers: {
-          Authorization: `Bearer ${process.env.XIHE_CP_API_TOKEN || 'dev-token-change-me'}`,
+          Authorization: `Bearer ${SERVICE_TOKEN}`,
           'Content-Type': 'application/json',
         },
         data: {
           userId: auth.user.id,
-          endpoint: `http://host.docker.internal:${fakeMcpPort}/mcp`,
+           endpoint: `http://${fixtureHost}:${fakeMcpPort}/mcp`,
           tool: 'remote_echo',
           arguments: { text: 'through-runtime' },
           scope: 'mcp:tools',
@@ -271,11 +315,11 @@ test.describe('Cross-Module — Full Chain Chat', () => {
       scope: 'mcp:tools',
     }
     const refreshed = await request.post(`${CP_URL}/internal/v1/oauth/token`, {
-      headers: { Authorization: 'Bearer dev-token-change-me', 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, 'Content-Type': 'application/json' },
       data: brokerRequest,
     })
     expect(refreshed.ok()).toBe(true)
-    expect((await refreshed.json()).access_token).toBe('fixture-token')
+    expect((await refreshed.json()).access_token).toBe(FAKE_MCP_ACCESS_TOKEN)
 
     const revoke = await request.post(`${CP_URL}/api/v1/oauth/revoke`, {
       headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' },
@@ -283,7 +327,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     })
     expect(revoke.ok()).toBe(true)
     const afterRevoke = await request.post(`${CP_URL}/internal/v1/oauth/token`, {
-      headers: { Authorization: 'Bearer dev-token-change-me', 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, 'Content-Type': 'application/json' },
       data: brokerRequest,
     })
     expect(afterRevoke.status()).toBe(401)
@@ -292,7 +336,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
   test('Fake Remote MCP exposes authenticated 2026 SSE channel', async ({ request }) => {
     const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT || '13641'
     const response = await request.get(`http://localhost:${fakeMcpPort}/mcp`, {
-      headers: { Authorization: 'Bearer fixture-token', Accept: 'text/event-stream' },
+      headers: { Authorization: `Bearer ${FAKE_MCP_ACCESS_TOKEN}`, Accept: 'text/event-stream' },
     })
     expect(response.ok()).toBe(true)
     expect(response.headers()['content-type']).toContain('text/event-stream')
@@ -303,7 +347,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT || '13641'
     const endpoint = `http://localhost:${fakeMcpPort}/mcp`
     const headers = {
-      Authorization: 'Bearer fixture-token',
+      Authorization: `Bearer ${FAKE_MCP_ACCESS_TOKEN}`,
       Accept: 'application/json, text/event-stream',
       'Content-Type': 'application/json',
     }
@@ -331,7 +375,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     expect(inputState.required).toEqual(['value'])
 
     const sse = await request.get(endpoint, {
-      headers: { Authorization: 'Bearer fixture-token', Accept: 'text/event-stream', 'mcp-session-id': sessionId },
+      headers: { Authorization: `Bearer ${FAKE_MCP_ACCESS_TOKEN}`, Accept: 'text/event-stream', 'mcp-session-id': sessionId },
     })
     expect(sse.ok()).toBe(true)
     expect(sse.headers()['content-type']).toContain('text/event-stream')
@@ -339,7 +383,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     expect(sse.headers()['last-event-id']).toBe('ready-1')
 
     const resumed = await request.get(endpoint, {
-      headers: { Authorization: 'Bearer fixture-token', Accept: 'text/event-stream', 'mcp-session-id': sessionId, 'Last-Event-ID': 'ready-1' },
+      headers: { Authorization: `Bearer ${FAKE_MCP_ACCESS_TOKEN}`, Accept: 'text/event-stream', 'mcp-session-id': sessionId, 'Last-Event-ID': 'ready-1' },
     })
     expect(resumed.ok()).toBe(true)
     expect(resumed.headers()['last-event-id']).toBe('ready-2')
@@ -379,3 +423,4 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     expect(afterDisconnect.status()).toBe(404)
   })
 })
+

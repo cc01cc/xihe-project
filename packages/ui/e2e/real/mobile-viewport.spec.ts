@@ -1,3 +1,6 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -9,7 +12,7 @@ test.describe('Mobile Viewport (390x844)', () => {
 
   test.beforeAll(async ({ request }) => {
     const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `mobile-${Date.now()}@test.com`, password: 'Test1234!', name: 'Mobile' },
+      data: { email: `mobile-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'Mobile' },
     })
     authToken = (await r.json()).accessToken
   })
@@ -33,7 +36,6 @@ test.describe('Mobile Viewport (390x844)', () => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
     await page.goto('/chat', { waitUntil: 'load' })
     await page.locator('textarea').waitFor({ state: 'visible', timeout: 10000 })
-    await page.waitForTimeout(800)
 
     const textarea = page.locator('textarea')
     const box = await textarea.boundingBox()
@@ -49,7 +51,7 @@ test.describe('Mobile Viewport (390x844)', () => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
     await page.goto('/settings/config', { waitUntil: 'load' })
     await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({ timeout: 10000 })
-    await page.waitForTimeout(800)
+    await page.locator('[data-testid="mcp-config-textarea"]').waitFor({ state: 'visible', timeout: 10000 })
     await assertNoHorizontalOverflow(page)
     await expect(page).toHaveScreenshot('mobile-settings-config.png')
   })
@@ -62,3 +64,4 @@ test.describe('Mobile Viewport (390x844)', () => {
     expect(await dialogs.count()).toBe(0)
   })
 })
+

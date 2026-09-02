@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 
 const port = Number(process.env.XIHE_FAKE_OAUTH_PORT ?? 13640)
-const accessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? 'fixture-token'
+const accessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? ''
 const codes = new Map()
 const tokens = new Map()
 

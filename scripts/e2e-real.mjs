@@ -1,5 +1,6 @@
 import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
@@ -12,9 +13,14 @@ const runtimePort = process.env.XIHE_RUNTIME_PORT ?? String(portSeed + 3)
 const pgPort = process.env.XIHE_PG_PORT ?? String(portSeed + 4)
 const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? String(portSeed + 10)
 const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portSeed + 11)
+const fakeMcpAccessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? `e2e-${randomBytes(24).toString('hex')}`
 process.env.XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL ??= 'true'
-process.env.XIHE_CP_API_TOKEN = 'dev-token-change-me'
+process.env.XIHE_CP_API_TOKEN ??= `e2e-${randomBytes(24).toString('hex')}`
 process.env.XIHE_E2E_EXTERNAL_SERVER = 'true'
+const e2eProfile = process.env.XIHE_E2E_PROFILE ?? 'compose'
+if (e2eProfile !== 'compose') {
+  throw new Error('scripts/e2e-real.mjs only supports the compose profile; run host E2E against an active dev:host stack')
+}
 // Export resolved isolated ports so docker-compose port bindings use them too
 process.env.XIHE_UI_PORT = uiPort
 process.env.XIHE_CP_PORT = cpPort
@@ -22,7 +28,7 @@ process.env.XIHE_AGENT_PORT = agentPort
 process.env.XIHE_RUNTIME_PORT = runtimePort
 process.env.XIHE_PG_PORT = pgPort
 const projectName = `xihe-e2e-${Date.now()}-${process.pid}`
-const noBuild = process.argv.includes('--no-build')
+let noBuild = process.argv.includes('--no-build')
 const noCache = process.argv.includes('--no-cache')
 const keep = process.argv.includes('--keep')
 const playwrightArgs = process.argv.slice(2).filter(
@@ -137,6 +143,18 @@ async function main() {
   let testCode = 1
   try {
     console.log(`[e2e] starting Docker project ${projectName}`)
+    if (noBuild) {
+      const missingImages = []
+      for (const service of composeServices) {
+        const image = `${projectName}-${service}:latest`
+        const result = await run(command, ['image', 'inspect', image], { stdio: 'ignore' })
+        if (result.code !== 0) missingImages.push(image)
+      }
+      if (missingImages.length > 0) {
+        console.log('[e2e] --no-build requested but this isolated project has no cached service images; falling back to build')
+        noBuild = false
+      }
+    }
     if (noCache) {
       await runChecked(command, [...composeArgs, 'build', '--no-cache', ...composeServices])
     }
@@ -156,7 +174,7 @@ async function main() {
       ['Fake OAuth', 'fake-oauth-server.mjs', fakeOAuthPort, { XIHE_FAKE_OAUTH_PORT: fakeOAuthPort }],
       ['Fake MCP', 'fake-mcp-server.mjs', fakeMcpPort, {
         XIHE_FAKE_MCP_PORT: fakeMcpPort,
-        XIHE_FAKE_MCP_ACCESS_TOKEN: 'fixture-token',
+        XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
       }],
     ]) {
       const fixture = spawnCommand(process.execPath, [join(uiDir, 'e2e', 'fixtures', script)], {
@@ -189,13 +207,14 @@ async function main() {
     ], {
       cwd: uiDir,
       env: {
+        XIHE_E2E_PROFILE: e2eProfile,
         XIHE_UI_PORT: uiPort,
         XIHE_CP_PORT: cpPort,
         XIHE_AGENT_PORT: agentPort,
         XIHE_RUNTIME_PORT: runtimePort,
         XIHE_FAKE_OAUTH_PORT: fakeOAuthPort,
         XIHE_FAKE_MCP_PORT: fakeMcpPort,
-        XIHE_FAKE_MCP_ACCESS_TOKEN: 'fixture-token',
+        XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
         XIHE_E2E_EXTERNAL_SERVER: '1',
       },
     })

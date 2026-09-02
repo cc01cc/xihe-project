@@ -46,7 +46,10 @@ export class ChatPage {
 
   async scrollToTop(): Promise<void> {
     await this.scrollerViewport.evaluate((el) => {
+      // Mark the movement as user initiated so auto-scroll does not restore the end.
+      el.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -1 }))
       el.scrollTop = 0
+      el.dispatchEvent(new Event('scroll', { bubbles: true }))
     })
   }
 

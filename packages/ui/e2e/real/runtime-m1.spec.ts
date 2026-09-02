@@ -1,33 +1,29 @@
 import { test, expect } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
+import { generateE2EPassword } from './helpers/password'
 
 const RUNTIME_URL = `http://localhost:${process.env.XIHE_RUNTIME_PORT || '12633'}`
-const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN || 'dev-token-not-secure'
+const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
+const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN
+if (!SERVICE_TOKEN) throw new Error('XIHE_CP_API_TOKEN must be set for real E2E')
+const TEST_PASSWORD = generateE2EPassword()
 
-test.describe('Runtime M1 — dev:host E2E via Playwright CLI', () => {
-  test('POST create → sentinel → delete (coding, Engine exec)', async ({ request }) => {
-    const wsId = `pw-m1-${Date.now()}-${Math.floor(Math.random() * 10000)}`
-    const storageRef = wsId
-
-    // 1. Create workspace (coding) — should succeed and create Docker container
-    const createRes = await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces`, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${SERVICE_TOKEN}`,
-      },
-      data: {
-        workspaceId: wsId,
-        workspacePath: 'C:\\tmp\\unused',
-        storageRef,
-        profile: 'coding',
-      },
+test.describe('@host Runtime M1 — dev:host E2E via Playwright CLI', () => {
+  test('targeted file operation materializes one coding Sandbox, then delete preserves the contract', async ({ request }) => {
+    const register = await request.post(`${CP_URL}/api/v1/auth/register`, {
+      data: { email: `runtime-m1-${Date.now()}@test.com`, password: TEST_PASSWORD, name: 'Runtime M1' },
     })
-    expect(createRes.ok()).toBeTruthy()
-    const createBody = await createRes.json()
-    expect(createBody.status).toBe('ok')
-    expect(createBody.workspaceId).toBe(wsId)
+    expect(register.ok()).toBeTruthy()
+    const auth = await register.json()
+    const wsId = auth.workspaceId
 
-    // 2. Verify file write/read via runtime's file API (proves mount is writable)
-    // Use the runtime's file API: POST /internal/v1/runtime/workspaces/{wsId}/files/write/{path}
+    // Session/auth creation only creates logical Workspace state.
+    const before = await request.get(`${RUNTIME_URL}/internal/v1/runtime/workspaces/${wsId}/status`, {
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}` },
+    })
+    expect(before.status()).toBe(404)
+
+    // The first targeted file operation performs materialization.
     const filePath = 'hello-m1.txt'
     const fileContent = `hello-m1-${wsId}`
     const writeRes = await request.post(
@@ -37,7 +33,6 @@ test.describe('Runtime M1 — dev:host E2E via Playwright CLI', () => {
         data: Buffer.from(fileContent, 'utf-8'),
       },
     )
-    // The file API may return JSON with message; accept 200
     expect(writeRes.ok()).toBeTruthy()
 
     const readRes = await request.post(
@@ -56,23 +51,7 @@ test.describe('Runtime M1 — dev:host E2E via Playwright CLI', () => {
     const content = readBody.content ?? readBody.data ?? ''
     expect(content).toContain(fileContent)
 
-    // 3. Verify sentinel exists via file API (proves host→container mount)
-    const sentinelRes = await request.post(
-      `${RUNTIME_URL}/internal/v1/runtime/workspaces/${wsId}/files/read`,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${SERVICE_TOKEN}`,
-        },
-        data: { path: '.xihe-sentinel' },
-      },
-    )
-    expect(sentinelRes.ok()).toBeTruthy()
-    const sentinelBody = await sentinelRes.json()
-    const sentinelContent = sentinelBody.content ?? ''
-    expect(sentinelContent).toBe(`sentinel-${wsId}`)
-
-    // 4. Delete workspace — should remove container and host dir
+    // Delete removes the ephemeral Sandbox, not WorkspaceStorage.
     const delRes = await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces/delete`, {
       headers: {
         'Content-Type': 'application/json',
@@ -84,7 +63,7 @@ test.describe('Runtime M1 — dev:host E2E via Playwright CLI', () => {
     const delBody = await delRes.json()
     expect(delBody.status).toBe('ok')
 
-    // 5. Verify workspace no longer accessible (should be 404)
+    // The materialized runtime entry is gone after delete.
     const afterDel = await request.post(
       `${RUNTIME_URL}/internal/v1/runtime/workspaces/${wsId}/files/read`,
       {
@@ -98,8 +77,8 @@ test.describe('Runtime M1 — dev:host E2E via Playwright CLI', () => {
     expect(afterDel.status()).toBe(404)
   })
 
-  test('Strict workspace creates with network none and sentinel', async ({ request }) => {
-    const wsId = `pw-m1-strict-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+  test('direct Runtime create acknowledges a strict logical Workspace without materializing it', async ({ request }) => {
+    const wsId = randomUUID()
     const createRes = await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces`, {
       headers: {
         'Content-Type': 'application/json',
@@ -116,28 +95,18 @@ test.describe('Runtime M1 — dev:host E2E via Playwright CLI', () => {
     const body = await createRes.json()
     expect(body.status).toBe('ok')
 
-    // Strict should still have sentinel (mount is still verified, but network is none)
-    const sentinelRes = await request.post(
-      `${RUNTIME_URL}/internal/v1/runtime/workspaces/${wsId}/files/read`,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${SERVICE_TOKEN}`,
-        },
-        data: { path: '.xihe-sentinel' },
-      },
-    )
-    expect(sentinelRes.ok()).toBeTruthy()
-    const sentinelBody = await sentinelRes.json()
-    expect(sentinelBody.content).toBe(`sentinel-${wsId}`)
+    const statusRes = await request.get(`${RUNTIME_URL}/internal/v1/runtime/workspaces/${wsId}/status`, {
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}` },
+    })
+    expect(statusRes.status()).toBe(404)
 
-    // Cleanup
-    await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces/delete`, {
+    const deleteRes = await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces/delete`, {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${SERVICE_TOKEN}`,
       },
       data: { workspaceId: wsId },
     })
+    expect(deleteRes.ok()).toBeTruthy()
   })
 })

@@ -1,3 +1,6 @@
+import { generateE2EPassword } from './helpers/password'
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -7,14 +10,14 @@ async function registerAndGetToken(name: string): Promise<string> {
   const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'Test1234!', name }),
+    body: JSON.stringify({ email, password: SHARED_PASSWORD, name }),
   })
   const body = await reg.json()
   return body.accessToken
 }
 
 test.describe('Cross-Module — Workspace', () => {
-  test('workspace page shows file panel and editor after login', async ({ page }) => {
+  test('@host workspace page shows file panel and editor after login', async ({ page }) => {
     const token = await registerAndGetToken('ws')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
@@ -25,7 +28,7 @@ test.describe('Cross-Module — Workspace', () => {
     expect(page.url()).toContain('/workspace')
   })
 
-  test('workspace page shows empty state when no files exist', async ({ page }) => {
+  test('@host workspace page shows empty state when no files exist', async ({ page }) => {
     const token = await registerAndGetToken('ws-empty')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
@@ -47,3 +50,4 @@ test.describe('Cross-Module — Workspace', () => {
     expect(page.url()).toContain('/login')
   })
 })
+

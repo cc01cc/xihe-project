@@ -1,6 +1,8 @@
+import { generateE2EPassword } from './helpers/password'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 
 test.describe('Auth — UI Flows & Error States', () => {
   test('register → logout → login full UI flow', async ({ page }) => {
@@ -8,8 +10,8 @@ test.describe('Auth — UI Flows & Error States', () => {
 
     await page.goto('/register')
     await page.locator('input[type="text"]').first().fill(email)
-    await page.locator('input[type="password"]').nth(0).fill('Test1234!')
-    await page.locator('input[type="password"]').nth(1).fill('Test1234!')
+    await page.locator('input[type="password"]').nth(0).fill(SHARED_PASSWORD)
+    await page.locator('input[type="password"]').nth(1).fill(SHARED_PASSWORD)
     await page.locator('button[type="submit"]').click()
     await page.waitForURL(/\/chat/, { timeout: 15000 })
 
@@ -19,7 +21,7 @@ test.describe('Auth — UI Flows & Error States', () => {
     await page.waitForURL(/\/login/, { timeout: 10000 })
 
     await page.locator('input[type="text"]').first().fill(email)
-    await page.locator('input[type="password"]').first().fill('Test1234!')
+    await page.locator('input[type="password"]').first().fill(SHARED_PASSWORD)
     await page.locator('button[type="submit"]').click()
     await page.waitForURL(/\/chat/, { timeout: 15000 })
     await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
@@ -28,13 +30,13 @@ test.describe('Auth — UI Flows & Error States', () => {
   test('wrong password shows Problem Details error without layout breakage', async ({ page, request }) => {
     const email = `wrongpw-${Date.now()}@test.com`
     const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email, password: 'Test1234!', name: 'WrongPw' },
+      data: { email, password: SHARED_PASSWORD, name: 'WrongPw' },
     })
     expect(reg.ok()).toBe(true)
 
     await page.goto('/login')
     await page.locator('input[type="text"]').first().fill(email)
-    await page.locator('input[type="password"]').first().fill('WrongPass999!')
+    await page.locator('input[type="password"]').first().fill(generateE2EPassword())
     await page.locator('button[type="submit"]').click()
 
     const errorEl = page.locator('p.text-destructive').first()
@@ -47,7 +49,7 @@ test.describe('Auth — UI Flows & Error States', () => {
 
   test('authenticated user visiting /login does not flash login form', async ({ page, request }) => {
     const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `redir-${Date.now()}@test.com`, password: 'Test1234!', name: 'Redir' },
+      data: { email: `redir-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'Redir' },
     })
     const body = await reg.json()
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), body.accessToken)
@@ -59,7 +61,7 @@ test.describe('Auth — UI Flows & Error States', () => {
 
   test('session persists across page refresh without sidebar flicker', async ({ page, request }) => {
     const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `refresh-${Date.now()}@test.com`, password: 'Test1234!', name: 'Refresh' },
+      data: { email: `refresh-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'Refresh' },
     })
     const body = await reg.json()
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), body.accessToken)

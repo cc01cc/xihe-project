@@ -18,7 +18,7 @@ const logStream = fs.createWriteStream(hostLogFile, { flags: "a" });
 const services = [
   { name: "cp", url: "http://127.0.0.1:12631/actuator/health" },
   { name: "agent", url: "http://127.0.0.1:12632/internal/v1/agent/health" },
-  { name: "runtime", url: "http://127.0.0.1:12633/health" },
+  { name: "runtime", url: "http://127.0.0.1:12633/ready" },
   { name: "ui", url: "http://127.0.0.1:12630/" },
 ];
 
@@ -197,6 +197,20 @@ function stopPostgres() {
   lifecycle("postgres_stop_complete", { code: result.status ?? "null" });
 }
 
+function stopWorkspaceContainers() {
+  const listed = spawnSync(command, ["ps", "-aq", "--filter", "name=xihe-workspace-ws_"], {
+    cwd: projectRoot,
+    encoding: "utf8",
+  });
+  const containers = (listed.stdout ?? "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+  for (const container of containers) {
+    spawnSync(command, ["rm", "-f", container], { cwd: projectRoot, stdio: "ignore" });
+  }
+  if (containers.length > 0) {
+    lifecycle("workspace_containers_removed", { count: containers.length, storage: "preserved" });
+  }
+}
+
 async function shutdown(reason, exitCode = 0) {
   if (stopping) {
     return;
@@ -204,6 +218,7 @@ async function shutdown(reason, exitCode = 0) {
   stopping = true;
   lifecycle("watch_stop", { reason });
   await stopStack();
+  stopWorkspaceContainers();
   stopPostgres();
   process.exit(exitCode);
 }

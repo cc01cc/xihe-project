@@ -1,17 +1,15 @@
 import { test, expect } from '@playwright/test'
-import { setupMockAuth } from './helpers/auth'
+import { setupMockAuth, setupMockSessions } from './helpers/auth'
 
 test.describe('Session Management', () => {
   test.beforeEach(async ({ page }) => {
     await setupMockAuth(page)
-
-    await page.addInitScript(() => {
-      const sessions = [
-        { id: 'sid-1', title: 'Alpha', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-        { id: 'sid-2', title: 'Beta', createdAt: new Date(Date.now() - 86400000).toISOString(), updatedAt: new Date(Date.now() - 86400000).toISOString() },
-        { id: 'sid-3', title: 'Gamma', createdAt: new Date(Date.now() - 2 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 2 * 86400000).toISOString() },
-      ]
-      localStorage.setItem('xihe-sessions', JSON.stringify(sessions))
+    await setupMockSessions(page, {
+      sessions: [
+        { id: 'sid-1', title: 'Alpha' },
+        { id: 'sid-2', title: 'Beta', createdAt: new Date(Date.now() - 86400000).toISOString() },
+        { id: 'sid-3', title: 'Gamma', createdAt: new Date(Date.now() - 2 * 86400000).toISOString() },
+      ],
     })
   })
 
