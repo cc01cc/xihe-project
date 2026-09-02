@@ -167,5 +167,5 @@ npx playwright test e2e/mock/ --update-snapshots
 
 ## 4. 参考
 
-- XH E2E profile、readiness 和实际结果矩阵：`internal/docs/xh-e2e-evidence-matrix.md`
+- XH E2E profile、readiness 和实际结果矩阵：维护在 workspace 私有 internal 层（不在本仓库分发）
 - 测试策略决策框架 — 维护在 workspace skill 中
