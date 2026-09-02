@@ -157,6 +157,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         break
 
       case 'error':
+        isStreaming.value = false
+        clearStreamTimeout()
         try {
           const data = JSON.parse(msg.data) as {
             error?: string

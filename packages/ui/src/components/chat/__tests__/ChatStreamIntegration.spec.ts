@@ -41,6 +41,24 @@ describe('Chat Stream Integration: useStreamParser → store.appendToParts → M
     expect(storedMsg.content).toBe('Hello world')
   })
 
+  it('no-hint text tokens update the live message on every token', () => {
+    const store = useChatStore()
+    const parser = useStreamParser()
+    store.createStreamingMessage('s1')
+
+    parser.handleToken('流')
+    store.replaceStreamingParts('s1', parser.parts.value)
+    expect(store.getMessages('s1')[0].parts).toEqual([{ type: 'text', content: '流' }])
+
+    parser.handleToken('式')
+    store.replaceStreamingParts('s1', parser.parts.value)
+    expect(store.getMessages('s1')[0].parts).toEqual([{ type: 'text', content: '流式' }])
+
+    parser.handleToken('响应')
+    store.replaceStreamingParts('s1', parser.parts.value)
+    expect(store.getMessages('s1')[0].parts).toEqual([{ type: 'text', content: '流式响应' }])
+  })
+
   it('think block via no-hint produces reasoning + text parts', () => {
     const store = useChatStore()
     const parser = useStreamParser()

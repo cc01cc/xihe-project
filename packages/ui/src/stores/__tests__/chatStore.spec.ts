@@ -49,6 +49,23 @@ describe('useChatStore', () => {
     expect(store.isStreaming('s1')).toBe(true)
   })
 
+  it('loadMessages does not replace an in-flight streaming message', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.appendToParts('s1', { type: 'text', content: 'partial' })
+
+    store.loadMessages('s1', [{
+      id: 'server-user',
+      sessionId: 's1',
+      role: 'user',
+      content: 'hello',
+      timestamp: new Date().toISOString(),
+    }])
+
+    expect(store.getMessages('s1')[0].parts).toEqual([{ type: 'text', content: 'partial' }])
+    expect(store.isStreaming('s1')).toBe(true)
+  })
+
   it('appendToParts appends text parts to streaming message content', () => {
     const store = useChatStore()
     store.createStreamingMessage('s1')
@@ -76,6 +93,16 @@ describe('useChatStore', () => {
     store.appendToParts('s1', { type: 'text', content: 'B' })
     expect(store.getMessages('s1')[0].parts).toHaveLength(1)
     expect(store.getMessages('s1')[0].parts![0].content).toBe('AB')
+  })
+
+  it('replaceStreamingParts updates the live parser result', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.replaceStreamingParts('s1', [{ type: 'text', content: 'A' }])
+    expect(store.getMessages('s1')[0].parts).toEqual([{ type: 'text', content: 'A' }])
+
+    store.replaceStreamingParts('s1', [{ type: 'text', content: 'AB' }])
+    expect(store.getMessages('s1')[0].parts).toEqual([{ type: 'text', content: 'AB' }])
   })
 
   it('appendToParts does nothing when no streaming message exists', () => {

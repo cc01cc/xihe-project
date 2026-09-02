@@ -31,6 +31,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function loadMessages(sessionId: string, sessionMessages: Message[]) {
+    // An in-flight response is owned by the live SSE stream. Do not let a
+    // slower history request replace its optimistic user/assistant messages.
+    if (isStreaming(sessionId)) return
     messages.value[sessionId] = sessionMessages
   }
 
@@ -108,6 +111,16 @@ export const useChatStore = defineStore('chat', () => {
     message.parts.push(part)
   }
 
+  function replaceStreamingParts(sessionId: string, nextParts: MessagePart[]) {
+    const messageId = streamingMessageId.value[sessionId]
+    if (!messageId) return
+
+    const message = messages.value[sessionId]?.find((msg) => msg.id === messageId)
+    if (!message) return
+
+    message.parts = [...nextParts]
+  }
+
   function finalizeStreaming(sessionId: string) {
     const messageId = streamingMessageId.value[sessionId]
     if (!messageId) {
@@ -166,6 +179,7 @@ export const useChatStore = defineStore('chat', () => {
     addMarker,
     createStreamingMessage,
     appendToParts,
+    replaceStreamingParts,
     finalizeStreaming,
     clearSession,
     deleteSession,

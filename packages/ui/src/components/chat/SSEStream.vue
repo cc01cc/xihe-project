@@ -27,71 +27,68 @@ watch(
   () => props.sessionId,
   (id) => {
     if (id) {
-      let lastSentCount = 0
-      const parser = useStreamParser()
-      connect({
-        onStart: () => {
-          parser.reset()
-          lastSentCount = 0
-          chatStore.createStreamingMessage(id)
-        },
-        onToken: (token: string, hint?) => {
-          if (hint === 'reasoning') {
-            chatStore.appendToParts(id, { type: 'reasoning', content: token })
-            return
-          }
-          if (hint === 'text') {
-            chatStore.appendToParts(id, { type: 'text', content: token })
-            return
-          }
-          parser.handleToken(token, hint)
-          const currentParts = parser.parts.value
-          for (let i = lastSentCount; i < currentParts.length; i++) {
-            chatStore.appendToParts(id, currentParts[i])
-          }
-          lastSentCount = currentParts.length
-        },
-        onStatus: (status: string) => {
-          agentStore.setStatus(status as 'thinking' | 'executing' | 'idle')
-          if (status === 'thinking' || status === 'executing') {
-            chatStore.addMarker(id, {
-              role: 'system',
-              content: status,
-              timestamp: new Date().toISOString(),
-              marker: 'status',
-              status,
-            })
-          }
-        },
-        onDone: () => {
-          parser.finalize()
-          const finalParts = parser.parts.value
-          const msg = chatStore.getMessages(id).find(m => m.id === chatStore.getStreamingMessageId(id))
-          if (msg && finalParts.length > 0) {
-            msg.parts = [...finalParts]
-          }
-          chatStore.finalizeStreaming(id)
-          agentStore.setStatus('idle')
-        },
-        onError: (msg: string) => {
-          chatStore.finalizeStreaming(id)
-          agentStore.setStatus('error')
-          toast.error(msg)
-        },
-        onToolCall: (name: string, args: Record<string, unknown>) => {
-          handleToolCall(name, args)
-        },
-      })
+      connectSession(id)
     }
   },
   { immediate: true },
 )
+
+function connectSession(id: string) {
+  const parser = useStreamParser()
+  connect({
+    onStart: () => {
+      parser.reset()
+      chatStore.createStreamingMessage(id)
+    },
+    onToken: (token: string, hint?) => {
+      if (hint === 'reasoning') {
+        chatStore.appendToParts(id, { type: 'reasoning', content: token })
+        return
+      }
+      if (hint === 'text') {
+        chatStore.appendToParts(id, { type: 'text', content: token })
+        return
+      }
+      parser.handleToken(token, hint)
+      chatStore.replaceStreamingParts(id, parser.parts.value)
+    },
+    onStatus: (status: string) => {
+      agentStore.setStatus(status as 'thinking' | 'executing' | 'idle')
+      if (status === 'thinking' || status === 'executing') {
+        chatStore.addMarker(id, {
+          role: 'system',
+          content: status,
+          timestamp: new Date().toISOString(),
+          marker: 'status',
+          status,
+        })
+      }
+    },
+    onDone: () => {
+      parser.finalize()
+      if (parser.parts.value.length > 0) {
+        chatStore.replaceStreamingParts(id, parser.parts.value)
+      }
+      chatStore.finalizeStreaming(id)
+      agentStore.setStatus('idle')
+    },
+    onError: (msg: string) => {
+      chatStore.finalizeStreaming(id)
+      agentStore.setStatus('error')
+      toast.error(msg)
+    },
+    onToolCall: (name: string, args: Record<string, unknown>) => {
+      handleToolCall(name, args)
+    },
+  })
+}
 
 async function handleSend(content: string, options?: { attachments?: string[] }) {
   const sessionId = props.sessionId
   if (!sessionId) return
 
   if (!isConnected.value) {
+    connectSession(sessionId)
     const ready = await waitForConnection(5000)
     if (!ready) {
       const msg = 'SSE connection not established'
