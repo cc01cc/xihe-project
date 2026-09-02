@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 
 @Entity
@@ -40,7 +42,11 @@ public class Workspace {
     private String sandboxSpecHash;
 
     @Column(name = "sandbox_spec", columnDefinition = "JSONB")
+    @JdbcTypeCode(SqlTypes.JSON)
     private String sandboxSpec;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -98,6 +104,9 @@ public class Workspace {
 
     public String getSandboxSpec() { return sandboxSpec; }
     public void setSandboxSpec(String sandboxSpec) { this.sandboxSpec = sandboxSpec; }
+
+    public Instant getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

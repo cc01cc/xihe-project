@@ -28,6 +28,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -118,7 +119,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         String email = "chat-ctrl-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         ResponseEntity<AuthResponse> reg = restTemplate.postForEntity(
-                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, "Test1234!", "ChatCtrl"), AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, TestDataFactory.PASSWORD, "ChatCtrl"), AuthResponse.class);
         authToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
@@ -226,9 +227,15 @@ class ChatControllerTest extends AbstractH2Test {
         file = fileRepository.save(file);
 
         final String[] capturedBody = new String[1];
+        final String[] capturedUserId = new String[1];
+        final String[] capturedWorkspaceId = new String[1];
+        final String[] capturedSessionId = new String[1];
         agentServer.createContext("/internal/v1/agent/chat", exchange -> {
             try {
                 capturedBody[0] = new String(exchange.getRequestBody().readAllBytes());
+                capturedUserId[0] = exchange.getRequestHeaders().getFirst("X-User-Id");
+                capturedWorkspaceId[0] = exchange.getRequestHeaders().getFirst("X-Workspace-Id");
+                capturedSessionId[0] = exchange.getRequestHeaders().getFirst("X-Session-Id");
                 exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
                 exchange.sendResponseHeaders(200, 0);
                 try (OutputStream out = exchange.getResponseBody()) {
@@ -265,6 +272,11 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(1, attachments.size());
         assertEquals(file.getId(), attachments.get(0).get("fileId"));
         assertEquals("/api/v1/files/" + file.getId(), attachments.get(0).get("url"));
+        assertEquals(userId, agentRequest.get("userId"));
+        assertEquals(userId, capturedUserId[0]);
+        assertEquals(workspaceId, agentRequest.get("workspaceId"));
+        assertEquals(workspaceId, capturedWorkspaceId[0]);
+        assertEquals(sessionId, capturedSessionId[0]);
     }
 
     @TestConfiguration

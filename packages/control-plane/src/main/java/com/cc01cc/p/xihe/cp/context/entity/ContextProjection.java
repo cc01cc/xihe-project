@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.context.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -29,6 +31,7 @@ public class ContextProjection {
     private Long latestSequence = 0L;
 
     @Column(name = "payload", columnDefinition = "JSONB", nullable = false)
+    @JdbcTypeCode(SqlTypes.JSON)
     private String payload;
 
     @Column(name = "created_at", nullable = false, updatable = false)

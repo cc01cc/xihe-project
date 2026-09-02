@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.*;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 
 import java.util.Map;
 
@@ -22,7 +23,7 @@ class SecurityConfigTest extends AbstractH2Test {
     void registerEndpointIsPublic() {
         ResponseEntity<Map> response = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/register",
-                Map.of("email", "sec-test@test.com", "password", "Test1234!", "name", "SecTest"),
+                Map.of("email", "sec-test@test.com", "password", TestDataFactory.PASSWORD, "name", "SecTest"),
                 Map.class);
         assertEquals(HttpStatus.CREATED.value(), response.getStatusCode().value());
     }
@@ -93,7 +94,7 @@ class SecurityConfigTest extends AbstractH2Test {
     private String registerAndGetToken(String email) {
         ResponseEntity<Map> regResponse = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/register",
-                Map.of("email", email, "password", "Test1234!", "name", "AuthTest"),
+                Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "AuthTest"),
                 Map.class);
         assertEquals(HttpStatus.CREATED.value(), regResponse.getStatusCode().value());
         @SuppressWarnings("unchecked")

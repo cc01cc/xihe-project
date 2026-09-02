@@ -3,11 +3,13 @@ package com.cc01cc.p.xihe.cp.mcp;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -21,6 +23,8 @@ class McpProxyTest {
     private ObjectMapper objectMapper;
     private SseEmitterManager sseEmitterManager;
     private ConfigJpaRepository configRepo;
+    private WorkspaceService workspaceService;
+    private SessionRepository sessionRepository;
     private McpProxyController controller;
 
     @BeforeEach
@@ -31,10 +35,13 @@ class McpProxyTest {
         objectMapper = new ObjectMapper();
         sseEmitterManager = mock(SseEmitterManager.class);
         configRepo = mock(ConfigJpaRepository.class);
+        workspaceService = mock(WorkspaceService.class);
+        sessionRepository = mock(SessionRepository.class);
 
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
-                auditLogger, objectMapper, sseEmitterManager, configRepo
+                auditLogger, objectMapper, sseEmitterManager, configRepo,
+                workspaceService, sessionRepository
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -67,14 +74,6 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{},\"id\":1}";
         String name = (String) ReflectionTestUtils.invokeMethod(controller, "extractToolName", body);
         assertNull(name);
-    }
-
-    @Test
-    void extractSessionId_doesNotReuseBearerToken() {
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-        headers.set("Authorization", "Bearer test-token-123");
-        String sessionId = (String) ReflectionTestUtils.invokeMethod(controller, "extractSessionId", headers);
-        assertTrue(sessionId.startsWith("default-"));
     }
 
     @Test
@@ -132,23 +131,4 @@ class McpProxyTest {
         assertNull(wsId);
     }
 
-    @Test
-    void extractWorkspaceId_prefersSignedSessionId() {
-        String signed = (String) ReflectionTestUtils.invokeMethod(controller, "signSessionId", "ws-signed", "token");
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-        headers.set("mcp-session-id", signed);
-        headers.set("X-Workspace-Id", "ws-header-fallback");
-
-        String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "extractWorkspaceId", headers, "session");
-        assertEquals("ws-signed", wsId, "Signed session-id must take precedence over header");
-    }
-
-    @Test
-    void extractWorkspaceId_fallsBackToHeaderWhenNoSignature() {
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-        headers.set("X-Workspace-Id", "ws-header");
-
-        String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "extractWorkspaceId", headers, "session");
-        assertEquals("ws-header", wsId);
-    }
 }

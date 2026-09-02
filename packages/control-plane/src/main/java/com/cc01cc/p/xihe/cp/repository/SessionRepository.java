@@ -8,4 +8,8 @@ import java.util.List;
 public interface SessionRepository extends JpaRepository<Session, String> {
     List<Session> findByUserIdAndArchivedFalseOrderByCreatedAtDesc(String userId);
     List<Session> findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(String workspaceId);
+    List<Session> findByWorkspaceIdAndUserIdAndArchivedFalseOrderByCreatedAtDesc(
+            String workspaceId, String userId);
+    java.util.Optional<Session> findByIdAndUserIdAndWorkspaceIdAndArchivedFalse(
+            String id, String userId, String workspaceId);
 }

@@ -1,14 +1,20 @@
 package com.cc01cc.p.xihe.cp.config;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 
 import java.util.Map;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ConfigControllerTest extends AbstractH2Test {
+
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
 
     @Test
     void getConfig_returnsMergedConfig() {
@@ -243,6 +249,36 @@ class ConfigControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
     }
 
+    @Test
+    void mcpConfig_usesObjectEnvelopeForUserAndInternalRuntime() {
+        String token = userToken();
+        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        Map<String, Object> servers = Map.of(
+                "docs", Map.of("command", "npx", "args", List.of("docs-server")));
+        HttpHeaders userHeaders = authHeaders(token);
+        userHeaders.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> put = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("mcpServers", servers), userHeaders), Map.class);
+
+        assertEquals(HttpStatus.OK, put.getStatusCode());
+
+        ResponseEntity<Map> userGet = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.GET,
+                new HttpEntity<>(authHeaders(token)), Map.class);
+        assertEquals(HttpStatus.OK, userGet.getStatusCode());
+        assertTrue(userGet.getBody().get("mcpServers") instanceof Map);
+
+        ResponseEntity<Map> internalGet = restTemplate.exchange(
+                url("/internal/v1/config/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.GET,
+                new HttpEntity<>(internalApiHeaders()), Map.class);
+        assertEquals(HttpStatus.OK, internalGet.getStatusCode());
+        Object internalServers = internalGet.getBody().get("mcpServers");
+        assertTrue(internalServers instanceof Map);
+        assertEquals("npx", ((Map<?, ?>) ((Map<?, ?>) internalServers).get("docs")).get("command"));
+    }
+
     private HttpHeaders authHeaders(String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -256,10 +292,11 @@ class ConfigControllerTest extends AbstractH2Test {
     }
 
     private String userToken() {
+        String password = TestDataFactory.PASSWORD;
         ResponseEntity<Map> reg = restTemplate.postForEntity(
             url("/api/v1/auth/register"),
             Map.of("email", "config-user-" + System.nanoTime() + "@test.com",
-                "password", "Test1234!", "name", "TestUser"),
+                "password", password, "name", "TestUser"),
             Map.class);
         assertEquals(HttpStatus.CREATED, reg.getStatusCode());
         String token = (String) reg.getBody().get("accessToken");
@@ -268,9 +305,10 @@ class ConfigControllerTest extends AbstractH2Test {
     }
 
     private String adminToken() {
+        String password = DataSeeder.seededAdminPassword();
         ResponseEntity<Map> login = restTemplate.postForEntity(
             url("/api/v1/auth/login"),
-            Map.of("email", "admin@xihe.local", "password", "admin123"),
+            Map.of("email", "admin@xihe.local", "password", password),
             Map.class);
         assertEquals(HttpStatus.OK, login.getStatusCode());
         String token = (String) login.getBody().get("accessToken");

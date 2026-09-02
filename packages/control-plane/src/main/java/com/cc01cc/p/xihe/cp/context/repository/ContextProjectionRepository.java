@@ -13,4 +13,6 @@ public interface ContextProjectionRepository extends JpaRepository<ContextProjec
     Optional<ContextProjection> findBySessionId(String sessionId);
 
     Optional<ContextProjection> findBySessionIdAndProjectionType(String sessionId, String projectionType);
+
+    long deleteBySessionId(String sessionId);
 }

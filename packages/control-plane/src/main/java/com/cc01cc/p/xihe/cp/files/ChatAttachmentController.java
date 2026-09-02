@@ -45,6 +45,10 @@ public class ChatAttachmentController {
         try {
             BatchUploadResult result = chatAttachmentService.upload(sessionId, files, userId, workspaceId);
             return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            logger.warn("Attachment upload rejected session={} reason={}", sessionId, e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
         } catch (Exception e) {
             logger.error("Attachment upload failed session={}", sessionId, e);
             return ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR, "UPLOAD_FAILED", "Attachment upload failed");

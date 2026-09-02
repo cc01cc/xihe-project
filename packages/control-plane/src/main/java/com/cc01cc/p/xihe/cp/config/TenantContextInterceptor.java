@@ -30,10 +30,6 @@ public class TenantContextInterceptor implements HandlerInterceptor {
                 String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
                 if (workspaceId != null) {
                     TenantContext.setWorkspaceId(workspaceId);
-                    String path = workspaceService.resolveStoragePath(workspaceId);
-                    if (path != null) {
-                        TenantContext.setWorkspacePath(path);
-                    }
                     String wsRole = workspaceService.resolveWorkspaceRole(workspaceId, userId);
                     if (wsRole != null) {
                         TenantContext.setWorkspaceRole(wsRole);

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp;
 
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -27,7 +28,7 @@ public abstract class AbstractIntegrationTest {
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine")
             .withDatabaseName("xihe_cp_test")
             .withUsername("test")
-            .withPassword("test");
+            .withPassword(TestDataFactory.PASSWORD);
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {

@@ -5,8 +5,8 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
@@ -203,13 +203,16 @@ public class ContextController {
     private String resolveUserId(String sessionId) {
         String tokenUserId = TenantContext.getUserId();
         if (tokenUserId != null) return tokenUserId;
-        return sessionRepository.findById(sessionId).map(session -> session.getUserId()).orElse("anonymous");
+        // Internal service calls carry no JWT; resolve from the Session row.
+        // No implicit default: unknown session means no user context.
+        return sessionRepository.findById(sessionId).map(s -> s.getUserId()).orElse(null);
     }
 
     private String resolveWorkspaceId(String sessionId) {
         String tokenWorkspaceId = TenantContext.getWorkspaceId();
         if (tokenWorkspaceId != null) return tokenWorkspaceId;
-        return sessionRepository.findById(sessionId).map(session -> session.getWorkspaceId()).orElse("default");
+        // No silent "default" workspace fallback; unknown session fails access check.
+        return sessionRepository.findById(sessionId).map(s -> s.getWorkspaceId()).orElse(null);
     }
 
     private ResponseEntity<?> forbidden() {

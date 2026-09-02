@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.*;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 
 import java.util.Map;
 
@@ -13,7 +14,7 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void registerCreatesUserAndReturnsTokens() {
-        RegisterRequest request = new RegisterRequest("register-test@test.com", "password123", "Register Test");
+        RegisterRequest request = new RegisterRequest("register-test@test.com", TestDataFactory.PASSWORD, "Register Test");
 
         ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/register", request, AuthResponse.class);
@@ -29,7 +30,7 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void registerRejectsDuplicateEmail() {
-        RegisterRequest request = new RegisterRequest("dup@test.com", "password123", "Register Test");
+        RegisterRequest request = new RegisterRequest("dup@test.com", TestDataFactory.PASSWORD, "Register Test");
 
         ResponseEntity<AuthResponse> first = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/register", request, AuthResponse.class);
@@ -43,10 +44,11 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
     @Test
     void loginWithValidCredentialsReturnsTokens() {
         String email = "login-success-" + System.currentTimeMillis() + "@test.com";
-        RegisterRequest register = new RegisterRequest(email, "password123", "Login Test");
+        String password = TestDataFactory.PASSWORD;
+        RegisterRequest register = new RegisterRequest(email, password, "Login Test");
         restTemplate.postForEntity(baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
 
-        LoginRequest login = new LoginRequest(email, "password123");
+        LoginRequest login = new LoginRequest(email, password);
         ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/login", login, AuthResponse.class);
 
@@ -59,10 +61,12 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
     @Test
     void loginWithInvalidPasswordReturns401() {
         String email = "login-fail-" + System.currentTimeMillis() + "@test.com";
-        RegisterRequest register = new RegisterRequest(email, "password123", "Login Test");
+        String password = TestDataFactory.PASSWORD;
+        String invalidPassword = TestDataFactory.INVALID_PASSWORD;
+        RegisterRequest register = new RegisterRequest(email, password, "Login Test");
         restTemplate.postForEntity(baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
 
-        LoginRequest badLogin = new LoginRequest(email, "wrong-password");
+        LoginRequest badLogin = new LoginRequest(email, invalidPassword);
         ResponseEntity<Map> response = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/login", badLogin, Map.class);
         assertEquals(HttpStatus.UNAUTHORIZED.value(), response.getStatusCode().value());
@@ -70,7 +74,7 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void loginWithNonExistentEmailReturns401() {
-        LoginRequest login = new LoginRequest("nonexistent@test.com", "password123");
+        LoginRequest login = new LoginRequest("nonexistent@test.com", TestDataFactory.PASSWORD);
         ResponseEntity<Map> response = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/login", login, Map.class);
         assertEquals(HttpStatus.UNAUTHORIZED.value(), response.getStatusCode().value());
@@ -79,7 +83,7 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
     @Test
     void refreshWithValidTokenReturnsNewTokens() {
         String email = "refresh-valid-" + System.currentTimeMillis() + "@test.com";
-        RegisterRequest register = new RegisterRequest(email, "password123", "Refresh Test");
+        RegisterRequest register = new RegisterRequest(email, TestDataFactory.PASSWORD, "Refresh Test");
         ResponseEntity<AuthResponse> regResponse = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
         String refreshToken = regResponse.getBody().getRefreshToken();
@@ -104,7 +108,7 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
     @Test
     void meReturnsCurrentUser() {
         String email = "me-valid-" + System.currentTimeMillis() + "@test.com";
-        RegisterRequest register = new RegisterRequest(email, "password123", "Me Test");
+        RegisterRequest register = new RegisterRequest(email, TestDataFactory.PASSWORD, "Me Test");
         ResponseEntity<AuthResponse> regResponse = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
         String token = regResponse.getBody().getAccessToken();

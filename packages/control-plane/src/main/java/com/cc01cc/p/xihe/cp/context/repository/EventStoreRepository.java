@@ -18,4 +18,6 @@ public interface EventStoreRepository extends JpaRepository<ContextEvent, UUID> 
     Optional<ContextEvent> findTopBySessionIdOrderBySequenceDesc(String sessionId);
 
     long countBySessionId(String sessionId);
+
+    long deleteBySessionId(String sessionId);
 }

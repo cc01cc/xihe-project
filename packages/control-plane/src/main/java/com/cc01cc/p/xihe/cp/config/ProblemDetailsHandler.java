@@ -34,6 +34,10 @@ public class ProblemDetailsHandler {
     @ExceptionHandler({IllegalArgumentException.class, HttpMessageNotReadableException.class,
             MethodArgumentNotValidException.class})
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception, HttpServletRequest request) {
+        if (exception instanceof CpApiException apiException) {
+            logger.warn("Domain failure at {}: {}", request.getRequestURI(), apiException.getMessage());
+            return problem(apiException.getStatus(), apiException.getCode(), apiException.getMessage(), request);
+        }
         logger.warn("Bad request at {}", request.getRequestURI(), exception);
         return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request validation failed", request);
     }

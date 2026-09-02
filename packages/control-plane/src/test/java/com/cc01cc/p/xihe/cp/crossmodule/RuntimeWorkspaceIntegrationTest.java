@@ -50,53 +50,53 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
-    void createWorkspaceNotifiesRuntime() {
-        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces"))
-                .willReturn(aResponse().withStatus(200)));
-
+    void createWorkspaceDoesNotCallRuntime() {
+        // Lazy workspace execution: CP only persists metadata; the Runtime
+        // materializes the Sandbox when it fetches the WorkspaceExecutionSpec.
         createdWorkspace = workspaceService.createWorkspace(
                 "test-ws-" + UUID.randomUUID().toString().substring(0, 8),
-                "test-owner");
+                UUID.randomUUID().toString());
 
         assertNotNull(createdWorkspace.getId());
-        assertNotNull(createdWorkspace.getStoragePath());
+        assertEquals(createdWorkspace.getId(), createdWorkspace.getStorageRef());
+        assertEquals("host_directory", createdWorkspace.getStorageBackend());
 
-        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces"))
-                .withRequestBody(matchingJsonPath("$.workspaceId"))
-                .withRequestBody(matchingJsonPath("$.workspacePath"))
-                .withRequestBody(matchingJsonPath("$.image")));
+        wireMock.verify(0, postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces")));
     }
 
     @Test
     void deleteWorkspaceNotifiesRuntime() {
-        String wsName = "del-ws-" + UUID.randomUUID().toString().substring(0, 8);
-
-        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces"))
-                .willReturn(aResponse().withStatus(200)));
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
                 .willReturn(aResponse().withStatus(200)));
 
-        createdWorkspace = workspaceService.createWorkspace(wsName, "test-owner");
+        String ownerId = UUID.randomUUID().toString();
+        createdWorkspace = workspaceService.createWorkspace(
+                "del-ws-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
 
-        workspaceService.deleteWorkspace(createdWorkspace.getId());
+        workspaceService.deleteWorkspace(createdWorkspace.getId(), ownerId);
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
                 .withRequestBody(matchingJsonPath("$.workspaceId", containing(createdWorkspace.getId())))
-                .withRequestBody(matchingJsonPath("$.workspacePath")));
+                .withRequestBody(matchingJsonPath("$.storageRef", containing(createdWorkspace.getId()))));
 
-        createdWorkspace = null;
+        assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(createdWorkspace.getId()).isEmpty());
     }
 
     @Test
-    void createWorkspaceSucceedsEvenWhenRuntimeUnavailable() {
-        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces"))
+    void deleteWorkspaceReturnsStableFailureWhenRuntimeUnavailable() {
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
                 .willReturn(aResponse().withStatus(500)));
 
+        String ownerId = UUID.randomUUID().toString();
         createdWorkspace = workspaceService.createWorkspace(
-                "offline-ws-" + UUID.randomUUID().toString().substring(0, 8),
-                "test-owner");
+                "offline-ws-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
 
-        assertNotNull(createdWorkspace.getId());
-        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces")));
+        com.cc01cc.p.xihe.cp.config.CpApiException exception = assertThrows(
+                com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> workspaceService.deleteWorkspace(createdWorkspace.getId(), ownerId));
+
+        assertEquals("RUNTIME_CLEANUP_FAILED", exception.getCode());
+        assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(createdWorkspace.getId()).isPresent());
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces/delete")));
     }
 }

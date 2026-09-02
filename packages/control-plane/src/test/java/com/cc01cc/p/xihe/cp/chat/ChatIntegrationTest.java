@@ -22,6 +22,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 
 import java.util.List;
 import java.util.Map;
@@ -55,7 +56,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         String email = "chat-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
-        RegisterRequest register = new RegisterRequest(email, "password123", "ChatIntTest");
+        RegisterRequest register = new RegisterRequest(email, TestDataFactory.PASSWORD, "ChatIntTest");
         ResponseEntity<AuthResponse> regResponse = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
         authToken = regResponse.getBody().getAccessToken();

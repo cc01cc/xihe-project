@@ -1,5 +1,8 @@
 package com.cc01cc.p.xihe.cp.config;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +22,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 @RestController
 public class ConfigController {
@@ -27,10 +31,15 @@ public class ConfigController {
 
     private final ConfigService configService;
     private final ConfigJpaRepository configRepo;
+    private final WorkspaceService workspaceService;
+    private final ObjectMapper objectMapper;
 
-    public ConfigController(ConfigService configService, ConfigJpaRepository configRepo) {
+    public ConfigController(ConfigService configService, ConfigJpaRepository configRepo,
+                            WorkspaceService workspaceService, ObjectMapper objectMapper) {
         this.configService = configService;
         this.configRepo = configRepo;
+        this.workspaceService = workspaceService;
+        this.objectMapper = objectMapper;
     }
 
     private static final Set<String> SENSITIVE_DOMAINS = Set.of("llm-provider", "embedding");
@@ -176,22 +185,46 @@ public class ConfigController {
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @GetMapping("/api/v1/workspaces/{workspaceId}/mcp-config")
     public ResponseEntity<Map<String, Object>> getMcpConfig(@PathVariable("workspaceId") String wsId) {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        workspaceService.requireAccessibleWorkspace(wsId, userId);
         return getMcpConfigForWorkspace(wsId);
     }
 
     @GetMapping("/internal/v1/config/workspaces/{workspaceId}/mcp-config")
     public ResponseEntity<Map<String, Object>> getInternalMcpConfig(
             @PathVariable("workspaceId") String wsId) {
+        workspaceService.requireActiveWorkspace(wsId);
         return getMcpConfigForWorkspace(wsId);
     }
 
     private ResponseEntity<Map<String, Object>> getMcpConfigForWorkspace(String wsId) {
         Optional<ConfigEntity> opt = configRepo
             .findByEnvironmentAndLayerAndDomainAndConfigKey(wsId, "workspace", "mcp", "mcpServers");
-        if (opt.isPresent() && opt.get().getMcpConfig() != null) {
-            return ResponseEntity.ok(Map.of("mcpServers", opt.get().getMcpConfig()));
+        if (opt.isEmpty() || opt.get().getMcpConfig() == null) {
+            return ResponseEntity.ok(Map.of("mcpServers", Map.of()));
         }
-        return ResponseEntity.ok(Map.of());
+        try {
+            JsonNode root = objectMapper.readTree(opt.get().getMcpConfig());
+            JsonNode servers = root == null ? null : root.get("mcpServers");
+            if (servers == null || !servers.isObject()) {
+                log.error("Persisted MCP config is not an envelope for workspace {}", wsId);
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.INTERNAL_SERVER_ERROR, "INVALID_MCP_CONFIG", "Persisted MCP configuration is invalid");
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("mcpServers", objectMapper.convertValue(
+                    servers, new TypeReference<Map<String, Object>>() { }));
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Failed to read MCP config for workspace {}", wsId, e);
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.INTERNAL_SERVER_ERROR, "INVALID_MCP_CONFIG", "Persisted MCP configuration is invalid");
+        }
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
@@ -199,13 +232,22 @@ public class ConfigController {
     public ResponseEntity<Map<String, Object>> putMcpConfig(
             @PathVariable("workspaceId") String wsId,
             @RequestBody Map<String, Object> body) {
-        Object raw = body.get("mcpServers");
-        if (raw == null) {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        workspaceService.requireAccessibleWorkspace(wsId, userId);
+        Object raw = body == null ? null : body.get("mcpServers");
+        if (!(raw instanceof Map<?, ?>)) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "mcpServers is required");
         }
         String jsonStr;
         try {
-            jsonStr = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(raw);
+            Map<String, Object> envelope = new LinkedHashMap<>();
+            envelope.put("mcpServers", raw);
+            jsonStr = objectMapper.writeValueAsString(envelope);
         } catch (Exception e) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "MCP configuration is invalid");
         }
@@ -220,7 +262,7 @@ public class ConfigController {
             entity.setConfigKey("mcpServers");
         }
         entity.setMcpConfig(jsonStr);
-        entity.setUpdatedBy("user");
+        entity.setUpdatedBy(userId);
         configRepo.save(entity);
         log.info("MCP config saved for workspace {}: {} chars", wsId, jsonStr.length());
         return ResponseEntity.ok(Map.of("status", "ok"));

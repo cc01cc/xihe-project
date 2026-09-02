@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.crossmodule;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -67,9 +68,10 @@ public abstract class AbstractWireMockTest {
 
     protected String registerAndLogin() {
         String email = "test-" + System.currentTimeMillis() + "@test.com";
+        String password = TestDataFactory.PASSWORD;
         ResponseEntity<Map> reg = restTemplate.postForEntity(
                 url("/api/v1/auth/register"),
-                Map.of("email", email, "password", "Test1234!", "name", "Test"),
+                Map.of("email", email, "password", password, "name", "Test"),
                 Map.class);
         Map regBody = reg.getBody();
         if (regBody != null && regBody.containsKey("accessToken")) {
@@ -77,7 +79,7 @@ public abstract class AbstractWireMockTest {
         }
         ResponseEntity<Map> login = restTemplate.postForEntity(
                 url("/api/v1/auth/login"),
-                Map.of("email", email, "password", "Test1234!"),
+                Map.of("email", email, "password", password),
                 Map.class);
         Map loginBody = login.getBody();
         return loginBody != null ? (String) loginBody.get("accessToken") : null;

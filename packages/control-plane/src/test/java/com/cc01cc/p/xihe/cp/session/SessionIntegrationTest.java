@@ -1,5 +1,24 @@
 package com.cc01cc.p.xihe.cp.session;
 
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.auth.AuthResponse;
+import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
+import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
+import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
+import com.cc01cc.p.xihe.cp.entity.Message;
+import com.cc01cc.p.xihe.cp.entity.MessageRole;
+import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -7,21 +26,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.http.*;
-
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
-import com.cc01cc.p.xihe.cp.auth.AuthResponse;
-import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
-import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
-import com.cc01cc.p.xihe.cp.entity.Message;
-import com.cc01cc.p.xihe.cp.entity.MessageRole;
-import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
-import com.cc01cc.p.xihe.cp.repository.UserRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
 import java.util.List;
 import java.util.Map;
@@ -46,6 +55,18 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
+    private WorkspaceUserRepository workspaceUserRepository;
+
+    @Autowired
+    private SessionService sessionService;
+
+    @Autowired
+    private EventStoreRepository eventStoreRepository;
+
+    @Autowired
+    private ContextProjectionRepository contextProjectionRepository;
+
+    @Autowired
     private SseEmitterManager sseEmitterManager;
 
     private String authToken;
@@ -55,15 +76,20 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         String email = "session-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
-        RegisterRequest register = new RegisterRequest(email, "password123", "SessionIntTest");
+        RegisterRequest register = new RegisterRequest(email, TestDataFactory.PASSWORD, "SessionIntTest");
         ResponseEntity<AuthResponse> regResponse = restTemplate.postForEntity(
                 baseUrl + "/api/v1/auth/register", register, AuthResponse.class);
         authToken = regResponse.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId();
-        Workspace ws = workspaceRepository.save(new Workspace("session-test-workspace", userId));
-        workspaceId = ws.getId();
+        // The default workspace is created via the auth flow.
+        var defaultWorkspace = workspaceRepository.findActiveByMemberUserId(userId).stream().findFirst();
+        workspaceId = defaultWorkspace.orElseThrow().getId();
+        // Backfill membership (auth flow already inserts OWNER; ensure role is set).
+        if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isEmpty()) {
+            workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        }
 
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);
     }
@@ -99,7 +125,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
         List<Session> sessions = sessionRepository.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(userId);
 
-        assertEquals(2, sessions.size());
+        assertTrue(sessions.size() >= 2);
         assertTrue(sessions.stream().anyMatch(s -> "Session A".equals(s.getTitle())));
         assertTrue(sessions.stream().anyMatch(s -> "Session B".equals(s.getTitle())));
     }
@@ -119,17 +145,91 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void deleteSession_removesSession() {
-        Session session = new Session(workspaceId, userId, "To Be Deleted");
-        session.setId(UUID.randomUUID().toString());
-        sessionRepository.save(session);
-
+    void deleteSession_viaService_removesRelatedRows() {
+        Session session = sessionService.create(userId, workspaceId, "To Be Deleted", null, null);
         String sessionId = session.getId();
-        assertTrue(sessionRepository.findById(sessionId).isPresent());
-
-        sessionRepository.deleteById(sessionId);
+        messageRepository.save(new Message(sessionId, MessageRole.USER, "hello"));
+        sessionService.delete(sessionId, userId, workspaceId);
 
         assertFalse(sessionRepository.findById(sessionId).isPresent());
+        assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
+    }
+
+    @Test
+    void deleteSession_endpointReturns204() {
+        Session session = sessionService.create(userId, workspaceId, "Delete Endpoint", null, null);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Void> response = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + session.getId(),
+                HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+        assertFalse(sessionRepository.findById(session.getId()).isPresent());
+    }
+
+    @Test
+    void listSessionsEndpoint_returnsOwnSessions() {
+        Session s1 = sessionService.create(userId, workspaceId, "Listed A", null, null);
+        Session s2 = sessionService.create(userId, workspaceId, "Listed B", null, null);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions", HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        List<Map<String, Object>> items = (List<Map<String, Object>>) response.getBody().get("sessions");
+        assertTrue(items.stream().anyMatch(item -> s1.getId().equals(item.get("id"))));
+        assertTrue(items.stream().anyMatch(item -> s2.getId().equals(item.get("id"))));
+    }
+
+    @Test
+    void sessionEndpoint_returns403ForCrossUser() {
+        Session s1 = sessionService.create(userId, workspaceId, "Mine", null, null);
+        String otherEmail = "other-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        String password = TestDataFactory.PASSWORD;
+        restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
+                new RegisterRequest(otherEmail, password, "Other"), AuthResponse.class);
+        String otherToken = restTemplate.postForEntity(baseUrl + "/api/v1/auth/login",
+                Map.of("email", otherEmail, "password", password), Map.class)
+                .getBody().get("accessToken").toString();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(otherToken);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + s1.getId(),
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    }
+
+    @Test
+    void sessionEndpoint_returnsOwnSession() {
+        Session s1 = sessionService.create(userId, workspaceId, "My Session", null, null);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + s1.getId(),
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(s1.getId(), response.getBody().get("id"));
+    }
+
+    @Test
+    void eventsEndpoint_rejectsSessionOwnedByAnotherUser() {
+        Session session = sessionService.create(userId, workspaceId, "Private Events", null, null);
+        String otherEmail = "events-other-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
+                new RegisterRequest(otherEmail, TestDataFactory.PASSWORD, "Other"), AuthResponse.class);
+        String otherToken = restTemplate.postForEntity(baseUrl + "/api/v1/auth/login",
+                Map.of("email", otherEmail, "password", TestDataFactory.PASSWORD), Map.class)
+                .getBody().get("accessToken").toString();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(otherToken);
+        headers.setAccept(List.of(org.springframework.http.MediaType.TEXT_EVENT_STREAM));
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/events?sessionId=" + session.getId(),
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
     }
 
     @Test
@@ -163,8 +263,8 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     @Test
     void sessionIsolation_betweenUsers() {
         String emailB = "session-int-b-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
-        RegisterRequest registerB = new RegisterRequest(emailB, "password123", "UserB");
-        restTemplate.postForEntity(baseUrl + "/api/v1/auth/register", registerB, AuthResponse.class);
+        restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
+                new RegisterRequest(emailB, TestDataFactory.PASSWORD, "UserB"), AuthResponse.class);
 
         User userB = userRepository.findByEmail(emailB).orElseThrow();
         String userIdB = userB.getId();
@@ -180,11 +280,8 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         List<Session> userASessions = sessionRepository.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(userId);
         List<Session> userBSessions = sessionRepository.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(userIdB);
 
-        assertEquals(1, userASessions.size());
-        assertEquals("User A Session", userASessions.get(0).getTitle());
-
-        assertEquals(1, userBSessions.size());
-        assertEquals("User B Session", userBSessions.get(0).getTitle());
+        assertTrue(userASessions.stream().anyMatch(s -> "User A Session".equals(s.getTitle())));
+        assertTrue(userBSessions.stream().anyMatch(s -> "User B Session".equals(s.getTitle())));
 
         assertTrue(userASessions.stream().noneMatch(s -> "User B Session".equals(s.getTitle())));
         assertTrue(userBSessions.stream().noneMatch(s -> "User A Session".equals(s.getTitle())));

@@ -14,9 +14,9 @@ import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
 import com.cc01cc.p.xihe.cp.files.dto.UploadFailure;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -73,6 +73,7 @@ public class ChatAttachmentService {
     private final Set<String> allowedExtensions;
     private final FileRepository fileRepository;
     private final SessionRepository sessionRepository;
+    private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
     private final ObjectMapper objectMapper;
 
@@ -81,20 +82,22 @@ public class ChatAttachmentService {
             @Value("${cp.attachments.allowed-extensions:png,jpg,jpeg,gif,webp,svg,bmp,pdf,doc,docx,txt,md,json,csv,xls,xlsx,ppt,pptx,mp3,wav,m4a,ogg,flac,aac,mp4,webm,mov,avi,mkv}") String allowedExtensionsConfig,
             FileRepository fileRepository,
             SessionRepository sessionRepository,
+            WorkspaceRepository workspaceRepository,
             WorkspaceUserRepository workspaceUserRepository,
             ObjectMapper objectMapper) {
         this.attachmentsBasePath = attachmentsBasePath;
         this.allowedExtensions = parseAllowedExtensions(allowedExtensionsConfig);
         this.fileRepository = fileRepository;
         this.sessionRepository = sessionRepository;
+        this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.objectMapper = objectMapper;
     }
 
     @Transactional
     public BatchUploadResult upload(String sessionId, List<MultipartFile> files, String userId, String workspaceId) {
-        ensureSessionExists(sessionId, workspaceId, userId);
         verifyWorkspaceMembership(userId, workspaceId);
+        ensureSessionExists(sessionId, workspaceId, userId);
 
         List<AttachmentInfo> success = new ArrayList<>();
         List<UploadFailure> failed = new ArrayList<>();
@@ -143,8 +146,10 @@ public class ChatAttachmentService {
     @Transactional
     public void delete(String sessionId, String fileId, String userId, String workspaceId) {
         verifyWorkspaceMembership(userId, workspaceId);
+        requireOwnedSession(sessionId, workspaceId, userId);
         File file = fileRepository.findByIdAndSessionId(fileId, sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Attachment not found: " + fileId));
+        verifyFileOwnership(file, userId, workspaceId);
         deletePhysicalFile(file.getStoragePath());
         fileRepository.delete(file);
         logger.info("Attachment deleted session={} fileId={}", sessionId, fileId);
@@ -153,8 +158,11 @@ public class ChatAttachmentService {
     @Transactional(readOnly = true)
     public File getMetadata(String sessionId, String fileId, String userId, String workspaceId) {
         verifyWorkspaceMembership(userId, workspaceId);
-        return fileRepository.findByIdAndSessionId(fileId, sessionId)
+        requireOwnedSession(sessionId, workspaceId, userId);
+        File file = fileRepository.findByIdAndSessionId(fileId, sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Attachment not found: " + fileId));
+        verifyFileOwnership(file, userId, workspaceId);
+        return file;
     }
 
     @Transactional
@@ -196,9 +204,7 @@ public class ChatAttachmentService {
     private void ensureSessionExists(String sessionId, String workspaceId, String userId) {
         Optional<Session> existing = sessionRepository.findById(sessionId);
         if (existing.isPresent()) {
-            if (!existing.get().getWorkspaceId().equals(workspaceId)) {
-                throw new IllegalArgumentException("Session does not belong to workspace");
-            }
+            requireOwnedSession(existing.get(), workspaceId, userId);
             return;
         }
         Session session = new Session(workspaceId, userId, "Attachment Upload");
@@ -207,11 +213,33 @@ public class ChatAttachmentService {
         logger.info("Session created for attachments session={} workspace={}", sessionId, workspaceId);
     }
 
+    private Session requireOwnedSession(String sessionId, String workspaceId, String userId) {
+        Session session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+        return requireOwnedSession(session, workspaceId, userId);
+    }
+
+    private Session requireOwnedSession(Session session, String workspaceId, String userId) {
+        if (session.isArchived()
+                || !workspaceId.equals(session.getWorkspaceId())
+                || !userId.equals(session.getUserId())) {
+            throw new IllegalArgumentException("Session access denied");
+        }
+        return session;
+    }
+
+    private void verifyFileOwnership(File file, String userId, String workspaceId) {
+        if (!userId.equals(file.getUserId()) || !workspaceId.equals(file.getWorkspaceId())) {
+            throw new IllegalArgumentException("Attachment access denied");
+        }
+    }
+
     private void verifyWorkspaceMembership(String userId, String workspaceId) {
         if (workspaceId == null || userId == null) {
             throw new IllegalArgumentException("Workspace or user context missing");
         }
-        if (!workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent()) {
+        if (workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isEmpty()
+                || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isEmpty()) {
             throw new IllegalArgumentException("User is not a member of the workspace");
         }
     }

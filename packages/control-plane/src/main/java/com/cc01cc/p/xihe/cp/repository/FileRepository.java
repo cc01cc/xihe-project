@@ -15,5 +15,5 @@ public interface FileRepository extends JpaRepository<File, String> {
     Optional<File> findByIdAndSessionId(String id, String sessionId);
     List<File> findByMessageId(String messageId);
     List<File> findByMessageIdIsNullAndCreatedAtBefore(Instant createdAt);
-    void deleteBySessionId(String sessionId);
+    long deleteBySessionId(String sessionId);
 }

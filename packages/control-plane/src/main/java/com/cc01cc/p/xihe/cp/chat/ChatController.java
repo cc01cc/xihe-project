@@ -9,8 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionRepository;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
@@ -45,10 +44,9 @@ public class ChatController {
     private final HttpClient agentHttpClient;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
-    private final SessionRepository sessionRepository;
+    private final SessionService sessionService;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
-    private final WorkspaceUserRepository workspaceUserRepository;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
 
@@ -61,10 +59,9 @@ public class ChatController {
     public ChatController(
             ObjectMapper objectMapper,
             SseEmitterManager sseManager,
-            SessionRepository sessionRepository,
+            SessionService sessionService,
             MessageRepository messageRepository,
             FileRepository fileRepository,
-            WorkspaceUserRepository workspaceUserRepository,
             HealthMonitor healthMonitor,
             RequestQueue requestQueue) {
         this.agentHttpClient = HttpClient.newBuilder()
@@ -72,10 +69,9 @@ public class ChatController {
             .build();
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
-        this.sessionRepository = sessionRepository;
+        this.sessionService = sessionService;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
-        this.workspaceUserRepository = workspaceUserRepository;
         this.healthMonitor = healthMonitor;
         this.requestQueue = requestQueue;
 
@@ -84,7 +80,8 @@ public class ChatController {
             if ("agent".equals(serviceName)) {
                 requestQueue.drain(req -> {
                     logger.info("[LIFECYCLE] service=cp event=requestRedelivered sessionId={}", req.sessionId());
-                    execAsync(req.sessionId(), req.content(), req.model(), List.of(), req.workspaceId());
+                    execAsync(req.sessionId(), req.content(), req.model(), List.of(),
+                            req.userId(), req.workspaceId());
                 });
             }
         });
@@ -92,7 +89,18 @@ public class ChatController {
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @GetMapping(path = "/api/v1/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter events(@RequestParam(name = "sessionId", defaultValue = "default") String sessionId) {
+    public SseEmitter events(@RequestParam(name = "sessionId") String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new com.cc01cc.p.xihe.cp.config.CpApiException(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
+        }
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            throw new com.cc01cc.p.xihe.cp.config.CpApiException(
+                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        sessionService.requireCurrent(sessionId, userId, workspaceId);
         SseEmitter emitter = sseManager.createEmitter(sessionId);
         sseManager.send(sessionId, "connected", Map.of("sessionId", sessionId, "type", "connected"));
         logger.info("SSE stream connected session={}", sessionId);
@@ -102,9 +110,22 @@ public class ChatController {
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @PostMapping("/api/v1/exec")
     public ResponseEntity<Map<String, Object>> exec(@RequestBody Map<String, Object> request) {
-        String sessionId = (String) request.getOrDefault("sessionId", "default");
+        String sessionId = (String) request.get("sessionId");
         String content = (String) request.getOrDefault("content", "");
         String model = (String) request.get("model");
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        if (sessionId == null || sessionId.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
+        }
+        try {
+            sessionService.requireCurrent(sessionId, userId, workspaceId);
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
 
         if (!sseManager.hasEmitter(sessionId)) {
             logger.warn("Rejected chat request without SSE subscription session={}", sessionId);
@@ -112,8 +133,7 @@ public class ChatController {
         }
 
         logger.info("Received chat request session={} contentLength={}", sessionId, content.length());
-
-        execAsync(sessionId, content, model);
+        execAsync(sessionId, content, model, List.of(), userId, workspaceId);
         return ResponseEntity.accepted().body(Map.of(
             "status", "accepted",
             "sessionId", sessionId
@@ -123,22 +143,23 @@ public class ChatController {
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @PostMapping("/api/v1/chat")
     public ResponseEntity<Map<String, Object>> chat(@RequestBody Map<String, Object> request) {
-        String sessionId = (String) request.getOrDefault("sessionId", "default");
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        String sessionId = (String) request.get("sessionId");
+        if (sessionId == null || sessionId.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
+        }
         String content = (String) request.getOrDefault("content", "");
         String model = (String) request.get("model");
-        String userId = (String) request.getOrDefault("userId", "anonymous");
-        String workspaceId = (String) request.getOrDefault("workspaceId", "default");
 
-        String tokenUserId = TenantContext.getUserId();
-        String tokenWorkspaceId = TenantContext.getWorkspaceId();
-        if (tokenUserId != null) {
-            userId = tokenUserId;
+        try {
+            sessionService.requireWorkspace(userId, workspaceId);
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
-        if (tokenWorkspaceId != null) {
-            workspaceId = tokenWorkspaceId;
-        }
-        final String effectiveUserId = userId;
-        final String effectiveWorkspaceId = workspaceId;
 
         if (!sseManager.hasEmitter(sessionId)) {
             logger.warn("Rejected chat request without SSE subscription session={}", sessionId);
@@ -167,7 +188,7 @@ public class ChatController {
         // Agent down → queue request
         HealthMonitor.ServiceHealth agentHealth = healthMonitor.getAgentHealth();
         if ("down".equals(agentHealth.status())) {
-            boolean queued = requestQueue.enqueue(sessionId, content, model, effectiveUserId, effectiveWorkspaceId);
+            boolean queued = requestQueue.enqueue(sessionId, content, model, userId, workspaceId);
             if (queued) {
                 return ResponseEntity.accepted().body(Map.of(
                     "status", "queued",
@@ -178,22 +199,13 @@ public class ChatController {
             // Queue full → fall through to attempt direct call
         }
 
-        Session session = sessionRepository.findById(sessionId)
-                .orElseGet(() -> {
-                    Session newSession = new Session(effectiveWorkspaceId, effectiveUserId, content.length() > 50
-                            ? content.substring(0, 50) + "..."
-                            : content);
-                    newSession.setId(sessionId);
-                    return sessionRepository.save(newSession);
-                });
-
-        if (!session.getWorkspaceId().equals(effectiveWorkspaceId)) {
-            logger.warn("Rejected chat request for session outside workspace session={} workspace={}", sessionId, effectiveWorkspaceId);
-            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Session does not belong to workspace");
-        }
-
-        if (!workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(effectiveWorkspaceId, effectiveUserId).isPresent()) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "User is not a member of the workspace");
+        Session session;
+        try {
+            session = sessionService.requireCurrent(sessionId, userId, workspaceId);
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            // Session missing for this user/workspace: create a fresh one tied to this conversation.
+            String title = content.length() > 50 ? content.substring(0, 50) + "..." : content;
+            session = sessionService.createWithId(sessionId, userId, workspaceId, title, null, null);
         }
 
         List<String> attachmentIds = extractAttachmentIds(request);
@@ -204,7 +216,10 @@ public class ChatController {
                 if (file == null) {
                     return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "ATTACHMENT_NOT_FOUND", "Attachment not found");
                 }
-                if (!sessionId.equals(file.getSessionId())) {
+                if (!sessionId.equals(file.getSessionId())
+                        || !workspaceId.equals(file.getWorkspaceId())
+                        || !userId.equals(file.getUserId())
+                        || !userId.equals(session.getUserId())) {
                     return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Attachment does not belong to session");
                 }
                 attachmentInfos.add(new com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo(
@@ -248,7 +263,7 @@ public class ChatController {
 
         logger.info("Persisted message session={} messageId={} attachments={}", sessionId, userMessage.getId(), attachmentIds.size());
 
-        execAsync(sessionId, content, model, attachmentInfos, effectiveWorkspaceId);
+        execAsync(sessionId, content, model, attachmentInfos, userId, workspaceId);
         return ResponseEntity.accepted().body(Map.of(
             "status", "accepted",
             "sessionId", sessionId,
@@ -265,27 +280,15 @@ public class ChatController {
         );
     }
 
-    private void execAsync(String sessionId, String content) {
-        execAsync(sessionId, content, null, List.of(), "default");
-    }
-
-    private void execAsync(String sessionId, String content, String model) {
-        execAsync(sessionId, content, model, List.of(), "default");
-    }
-
-    private void execAsync(String sessionId, String content, String model,
-                           List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments) {
-        execAsync(sessionId, content, model, attachments, "default");
-    }
-
     private void execAsync(String sessionId, String content, String model,
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
-                           String workspaceId) {
+                           String userId, String workspaceId) {
         new Thread(() -> {
             try {
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);
                 agentRequest.put("content", content);
+                agentRequest.put("userId", userId);
                 agentRequest.put("workspaceId", workspaceId);
                 agentRequest.put("stream", true);
                 if (model != null && !model.isEmpty()) {
@@ -308,6 +311,9 @@ public class ChatController {
                     .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                     .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
                     .header("Authorization", "Bearer " + agentApiToken)
+                    .header("X-User-Id", userId)
+                    .header("X-Workspace-Id", workspaceId)
+                    .header("X-Session-Id", sessionId)
                     .timeout(Duration.ofSeconds(30))
                     .POST(HttpRequest.BodyPublishers.ofString(
                         objectMapper.writeValueAsString(agentRequest), StandardCharsets.UTF_8))

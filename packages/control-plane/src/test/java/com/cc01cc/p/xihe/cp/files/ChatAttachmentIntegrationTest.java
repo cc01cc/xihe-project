@@ -20,6 +20,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -67,7 +68,7 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
     void setUp() {
         String email = "attach-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         ResponseEntity<AuthResponse> reg = restTemplate.postForEntity(
-                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, "Test1234!", "AttachInt"), AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, TestDataFactory.PASSWORD, "AttachInt"), AuthResponse.class);
         String baseToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();

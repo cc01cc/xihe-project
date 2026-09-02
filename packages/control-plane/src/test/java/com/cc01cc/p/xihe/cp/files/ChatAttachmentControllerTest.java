@@ -21,6 +21,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -80,7 +81,7 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
 
         String email = "attach-ctrl-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         ResponseEntity<AuthResponse> reg = restTemplate.postForEntity(
-                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, "Test1234!", "AttachCtrl"), AuthResponse.class);
+                baseUrl + "/api/v1/auth/register", new RegisterRequest(email, TestDataFactory.PASSWORD, "AttachCtrl"), AuthResponse.class);
         reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
@@ -236,6 +237,29 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
     }
 
     @Test
+    void attachmentMetadata_rejectsDifferentSessionOwner() {
+        com.cc01cc.p.xihe.cp.entity.File owned = new com.cc01cc.p.xihe.cp.entity.File(
+                userId, "owned.txt", "/tmp/owned-attachment.txt");
+        owned.setWorkspaceId(workspaceId);
+        owned.setSessionId(sessionId);
+        owned.setMimeType("text/plain");
+        fileRepository.save(owned);
+
+        String otherEmail = "attach-other-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
+                new RegisterRequest(otherEmail, TestDataFactory.PASSWORD, "Other"), AuthResponse.class);
+        User other = userRepository.findByEmail(otherEmail).orElseThrow();
+        workspaceUserRepository.save(new WorkspaceUser(workspaceId, other.getId(), WorkspaceRole.MEMBER));
+        String otherToken = jwtTokenProvider.createAccessToken(other.getId(), otherEmail, "USER", workspaceId);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + sessionId + "/attachments/" + owned.getId(),
+                HttpMethod.GET, new HttpEntity<>(authHeaders(otherToken)), Map.class);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    }
+
+    @Test
     void uploadAttachments_withoutAuth_returns401() {
         ResponseEntity<Map> response = restTemplate.postForEntity(
                 baseUrl + "/api/v1/sessions/" + sessionId + "/attachments",
@@ -244,8 +268,12 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
     }
 
     private HttpHeaders authHeaders() {
+        return authHeaders(authToken);
+    }
+
+    private HttpHeaders authHeaders(String token) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(authToken);
+        headers.setBearerAuth(token);
         return headers;
     }
 }

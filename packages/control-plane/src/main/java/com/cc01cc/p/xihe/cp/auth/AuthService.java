@@ -7,12 +7,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
-
-import java.util.List;
 
 @Service
 public class AuthService {
@@ -85,21 +82,12 @@ public class AuthService {
     }
 
     private AuthResponse createAuthResponse(User user) {
-        String workspaceId = resolveDefaultWorkspace(user.getId()).getId();
+        String workspaceId = workspaceService.getOrCreateDefaultWorkspace(user.getId()).getId();
         String accessToken = jwtTokenProvider.createAccessToken(
                 user.getId(), user.getEmail(), user.getRole().name(), workspaceId);
         String refreshToken = jwtTokenProvider.createRefreshToken(user.getId());
 
         return new AuthResponse(accessToken, refreshToken, 900,
                 UserResponse.from(user), workspaceId);
-    }
-
-    private Workspace resolveDefaultWorkspace(String userId) {
-        List<Workspace> workspaces = workspaceService.getWorkspacesByUser(userId);
-        if (!workspaces.isEmpty()) {
-            return workspaces.get(0);
-        }
-        logger.info("Creating default workspace for user={}", userId);
-        return workspaceService.createWorkspace("Default Workspace", userId);
     }
 }

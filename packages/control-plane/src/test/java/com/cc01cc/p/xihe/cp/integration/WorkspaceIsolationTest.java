@@ -73,15 +73,19 @@ class WorkspaceIsolationTest {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         String emailA = "user-a-" + suffix + "@test.com";
         String emailB = "user-b-" + suffix + "@test.com";
+        String password = TestDataFactory.PASSWORD;
 
-        registerUser(emailA, "Test1234!", "User A");
+        registerUser(emailA, password, "User A");
         userA = userRepository.findByEmail(emailA).orElseThrow();
-        registerUser(emailB, "Test1234!", "User B");
+        registerUser(emailB, password, "User B");
         userB = userRepository.findByEmail(emailB).orElseThrow();
 
-        ws1 = workspaceService.createWorkspace("ws-isolation-1-" + suffix, userA.getId());
-        ws2 = workspaceService.createWorkspace("ws-isolation-2-" + suffix, userA.getId());
-        workspaceUserRepository.save(new WorkspaceUser(ws2.getId(), userB.getId(), WorkspaceRole.MEMBER));
+        // Registration provisions one default workspace per user; reuse those
+        // instead of creating extra workspaces (single-active-workspace policy).
+        // User A is then added to user B's workspace as MEMBER to exercise isolation.
+        ws1 = workspaceService.findCurrentWorkspace(userA.getId()).orElseThrow();
+        ws2 = workspaceService.findCurrentWorkspace(userB.getId()).orElseThrow();
+        workspaceUserRepository.save(new WorkspaceUser(ws2.getId(), userA.getId(), WorkspaceRole.MEMBER));
     }
 
     @AfterEach
@@ -116,27 +120,22 @@ class WorkspaceIsolationTest {
     @Test
     void tenantContextWorkspaceSwitch() {
         TenantContext.setWorkspaceId(ws1.getId());
-        TenantContext.setWorkspacePath(ws1.getStoragePath());
         TenantContext.setWorkspaceRole(WorkspaceRole.OWNER.name());
 
         assertAll("ws-1 context",
             () -> assertEquals(ws1.getId(), TenantContext.getWorkspaceId()),
-            () -> assertEquals(ws1.getStoragePath(), TenantContext.getWorkspacePath()),
             () -> assertEquals(WorkspaceRole.OWNER.name(), TenantContext.getWorkspaceRole())
         );
 
         TenantContext.clear();
         assertNull(TenantContext.getWorkspaceId());
-        assertNull(TenantContext.getWorkspacePath());
         assertNull(TenantContext.getWorkspaceRole());
 
         TenantContext.setWorkspaceId(ws2.getId());
-        TenantContext.setWorkspacePath(ws2.getStoragePath());
         TenantContext.setWorkspaceRole(WorkspaceRole.MEMBER.name());
 
         assertAll("ws-2 context",
             () -> assertEquals(ws2.getId(), TenantContext.getWorkspaceId()),
-            () -> assertEquals(ws2.getStoragePath(), TenantContext.getWorkspacePath()),
             () -> assertEquals(WorkspaceRole.MEMBER.name(), TenantContext.getWorkspaceRole())
         );
 
@@ -149,8 +148,13 @@ class WorkspaceIsolationTest {
         assertEquals(WorkspaceRole.OWNER.name(), roleA);
 
         String roleB = workspaceService.resolveWorkspaceRole(ws2.getId(), userB.getId());
-        assertEquals(WorkspaceRole.MEMBER.name(), roleB);
+        assertEquals(WorkspaceRole.OWNER.name(), roleB);
 
+        // user-a is a member of ws-2 (added in setUp) but not the owner.
+        String roleAInWs2 = workspaceService.resolveWorkspaceRole(ws2.getId(), userA.getId());
+        assertEquals(WorkspaceRole.MEMBER.name(), roleAInWs2);
+
+        // user-b is not a member of ws-1.
         assertNull(workspaceService.resolveWorkspaceRole(ws1.getId(), userB.getId()));
     }
 
@@ -158,10 +162,6 @@ class WorkspaceIsolationTest {
     void memberCannotAccessOwnerWorkspace() {
         String roleB = workspaceService.resolveWorkspaceRole(ws1.getId(), userB.getId());
         assertNull(roleB, "user-b should have no role in ws-1");
-
-        String roleA = workspaceService.resolveWorkspaceRole(ws2.getId(), userA.getId());
-        assertEquals(WorkspaceRole.OWNER.name(), roleA,
-                "user-a is OWNER of ws-2 and should have access");
     }
 
     @Test
@@ -178,7 +178,7 @@ class WorkspaceIsolationTest {
     void registeredUserTokenHasDefaultWorkspace() throws Exception {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         String email = "token-null-ws-" + suffix + "@test.com";
-        String token = registerAndExtractToken(email, "Test1234!", "Token Test");
+        String token = registerAndExtractToken(email, TestDataFactory.PASSWORD, "Token Test");
         assertNotNull(token);
         assertTrue(TestDataFactory.tokenProvider().validateToken(token));
         assertNotNull(TestDataFactory.tokenProvider().getWorkspaceIdFromToken(token));

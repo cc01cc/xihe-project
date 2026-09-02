@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface MessageRepository extends JpaRepository<Message, String> {
     List<Message> findBySessionIdOrderByCreatedAtAsc(String sessionId);
+    long deleteBySessionId(String sessionId);
 }

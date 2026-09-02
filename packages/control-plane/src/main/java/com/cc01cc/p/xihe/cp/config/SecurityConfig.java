@@ -3,8 +3,6 @@ package com.cc01cc.p.xihe.cp.config;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -68,8 +66,9 @@ public class SecurityConfig {
                 .requestMatchers("/swagger-ui.html").permitAll()
                 .requestMatchers("/health").permitAll()
                 .requestMatchers("/error").permitAll()
-                .requestMatchers("/logs").permitAll()
-                .requestMatchers("/api/v1/**").authenticated()
+                 .requestMatchers("/logs").permitAll()
+                 .requestMatchers("/api/v1/mcp").hasAnyRole("USER", "ADMIN", "INTERNAL_SERVICE")
+                 .requestMatchers("/api/v1/**").hasAnyRole("USER", "ADMIN")
                 .requestMatchers("/internal/v1/**").hasRole("INTERNAL_SERVICE")
                 .anyRequest().authenticated()
             )

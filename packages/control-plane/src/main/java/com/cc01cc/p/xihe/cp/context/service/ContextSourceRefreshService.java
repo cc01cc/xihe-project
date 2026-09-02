@@ -1,16 +1,16 @@
 package com.cc01cc.p.xihe.cp.context.service;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.context.entity.ContextSourceHash;
 import com.cc01cc.p.xihe.cp.context.repository.ContextSourceHashRepository;
-import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.runtime.RuntimeContextSourceClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
@@ -23,6 +23,8 @@ import java.util.Optional;
  *
  * <p>This implementation persists the last observed hash per workspace/source
  * to avoid emitting duplicate events when the source has not actually changed.
+ * The source bytes are now fetched through Runtime (lazy materialization);
+ * CP no longer reads the host filesystem directly.
  */
 @Service
 public class ContextSourceRefreshService {
@@ -32,60 +34,52 @@ public class ContextSourceRefreshService {
     private static final String SOURCE_KEY = "AGENTS.md";
 
     private final ContextService contextService;
-    private final WorkspaceService workspaceService;
     private final ContextSourceHashRepository sourceHashRepository;
+    private final RuntimeContextSourceClient runtimeContextSourceClient;
 
     public ContextSourceRefreshService(ContextService contextService,
-                                       WorkspaceService workspaceService,
-                                       ContextSourceHashRepository sourceHashRepository) {
+                                       ContextSourceHashRepository sourceHashRepository,
+                                       RuntimeContextSourceClient runtimeContextSourceClient) {
         this.contextService = contextService;
-        this.workspaceService = workspaceService;
         this.sourceHashRepository = sourceHashRepository;
+        this.runtimeContextSourceClient = runtimeContextSourceClient;
     }
 
     @Transactional
     public Optional<String> refresh(String sessionId, String workspaceId, String userId) {
-        String storagePath = workspaceService.resolveStoragePath(workspaceId);
-        if (storagePath == null || storagePath.isBlank()) {
-            logger.debug("No storage path for workspace {}, skipping source refresh", workspaceId);
-            return Optional.empty();
-        }
-
-        Path agentsPath = Path.of(storagePath, AGENTS_MD);
-        if (!Files.exists(agentsPath)) {
-            logger.debug("AGENTS.md not found at {}, skipping source refresh", agentsPath);
-            return Optional.empty();
-        }
-
+        Optional<String> content;
         try {
-            String content = Files.readString(agentsPath, StandardCharsets.UTF_8);
-            if (content.isBlank()) {
-                logger.debug("AGENTS.md is blank at {}, skipping source refresh", agentsPath);
-                return Optional.empty();
-            }
-            String hash = sha256(content);
-            Optional<ContextSourceHash> existing = sourceHashRepository
-                    .findByWorkspaceIdAndSourceKey(workspaceId, SOURCE_KEY);
-            if (existing.isPresent() && hash.equals(existing.get().getHash())) {
-                logger.debug("AGENTS.md hash unchanged for workspace {}, skipping source refresh", workspaceId);
-                return Optional.of(hash);
-            }
-
-            contextService.appendEvent(sessionId, workspaceId, userId, "context.source_changed", Map.of(
-                    "source_key", SOURCE_KEY,
-                    "rendered_text", content,
-                    "baseline_hash", hash
-            ));
-
-            ContextSourceHash sourceHash = existing
-                    .orElseGet(() -> new ContextSourceHash(workspaceId, SOURCE_KEY, hash));
-            sourceHash.setHash(hash);
-            sourceHashRepository.save(sourceHash);
-            return Optional.of(hash);
+            content = runtimeContextSourceClient.readAgents(workspaceId);
         } catch (Exception e) {
-            logger.error("Failed to refresh AGENTS.md for session {} workspace {}", sessionId, workspaceId, e);
+            logger.warn("Runtime source fetch failed for workspace {}: {}", workspaceId, e.getMessage());
             return Optional.empty();
         }
+        if (content.isEmpty()) {
+            return Optional.empty();
+        }
+
+        String text = content.get();
+        if (text.isBlank()) {
+            return Optional.empty();
+        }
+        String hash = sha256(text);
+        Optional<ContextSourceHash> existing = sourceHashRepository
+                .findByWorkspaceIdAndSourceKey(workspaceId, SOURCE_KEY);
+        if (existing.isPresent() && hash.equals(existing.get().getHash())) {
+            return Optional.of(hash);
+        }
+
+        contextService.appendEvent(sessionId, workspaceId, userId, "context.source_changed", Map.of(
+                "source_key", SOURCE_KEY,
+                "rendered_text", text,
+                "baseline_hash", hash
+        ));
+
+        ContextSourceHash sourceHash = existing
+                .orElseGet(() -> new ContextSourceHash(workspaceId, SOURCE_KEY, hash));
+        sourceHash.setHash(hash);
+        sourceHashRepository.save(sourceHash);
+        return Optional.of(hash);
     }
 
     private String sha256(String content) {

@@ -8,10 +8,16 @@ import org.springframework.stereotype.Component;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 
+import java.security.SecureRandom;
+import java.util.Base64;
+
 @Component
 public class DataSeeder implements CommandLineRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DataSeeder.class);
+    private static final int PASSWORD_BYTES = 24;
+    private static final SecureRandom RANDOM = new SecureRandom();
+    private static final String ADMIN_PASSWORD = generatePassword();
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -21,12 +27,22 @@ public class DataSeeder implements CommandLineRunner {
         this.passwordEncoder = passwordEncoder;
     }
 
+    static String seededAdminPassword() {
+        return ADMIN_PASSWORD;
+    }
+
     @Override
     public void run(String... args) {
         if (userRepository.findByEmail("admin@xihe.local").isEmpty()) {
-            User admin = new User("admin@xihe.local", passwordEncoder.encode("admin123"), com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN, "Admin");
+            User admin = new User("admin@xihe.local", passwordEncoder.encode(ADMIN_PASSWORD), com.cc01cc.p.xihe.cp.entity.UserRole.ADMIN, "Admin");
             userRepository.save(admin);
             log.info("Seeded default admin user: admin@xihe.local");
         }
+    }
+
+    private static String generatePassword() {
+        byte[] bytes = new byte[PASSWORD_BYTES];
+        RANDOM.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 }
