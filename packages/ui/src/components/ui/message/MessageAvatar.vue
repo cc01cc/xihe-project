@@ -10,7 +10,7 @@ const props = defineProps<{
   <div
     data-slot="message-avatar"
     :class="cn(
-      'flex w-fit min-w-8 shrink-0 items-center justify-center self-end overflow-hidden rounded-full bg-muted',
+      'flex w-fit min-w-8 shrink-0 items-center justify-center self-start overflow-hidden rounded-full bg-muted',
       props.class,
     )"
   >

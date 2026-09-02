@@ -8,6 +8,12 @@
 @import "./scroll-fade.css";
 @import "./shimmer.css";
 
+/* Keep chat bubbles compact; markstream's document paragraph spacing is too large for messages. */
+.xihe-chat-markdown p,
+.xihe-chat-markdown .paragraph-node {
+  margin: 0;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

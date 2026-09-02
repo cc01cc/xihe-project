@@ -9,6 +9,7 @@ defineProps<{
 
 <template>
   <MarkdownRender
+    class="xihe-chat-markdown"
     mode="chat"
     :content="content"
     :final="!isStreaming"

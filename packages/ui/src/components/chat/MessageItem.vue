@@ -144,6 +144,12 @@ onUnmounted(() => {
       </div>
     </MessageAvatar>
 
+    <MessageAvatar v-if="isUser">
+      <div class="flex size-8 items-center justify-center rounded-full bg-secondary">
+        <User class="size-4 text-secondary-foreground" />
+      </div>
+    </MessageAvatar>
+
     <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%]">
       <AttachmentGroup v-if="message.attachments?.length">
         <Attachment
@@ -225,10 +231,5 @@ onUnmounted(() => {
       </div>
     </MessageContent>
 
-    <MessageAvatar v-if="isUser">
-      <div class="flex size-8 items-center justify-center rounded-full bg-secondary">
-        <User class="size-4 text-secondary-foreground" />
-      </div>
-    </MessageAvatar>
   </MessageRoot>
 </template>
