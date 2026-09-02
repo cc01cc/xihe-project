@@ -13,9 +13,9 @@ services:
       - "-c"
       - "effective_cache_size=256MB"
     environment:
-      POSTGRES_DB: xihe
-      POSTGRES_USER: xihe
-      POSTGRES_PASSWORD: xihe123
+      POSTGRES_DB: ${POSTGRES_DB:-xihe}
+      POSTGRES_USER: ${POSTGRES_USER:-xihe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "${XIHE_PG_PORT:-12634}:5432"
@@ -80,6 +80,7 @@ services:
       XIHE_LOG_DIR: "/logs"
       XIHE_CP_PORT: "8080"
       XIHE_CP_URL: "http://control-plane:8080"
+      XIHE_CP_API_TOKEN: "${XIHE_CP_API_TOKEN:-dev-token-not-secure}"
     volumes:
       - ./logs/agent:/logs
     mem_limit: 640m
@@ -114,7 +115,7 @@ services:
       - ./logs/runtime:/logs
     mem_limit: 128m
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8001/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3

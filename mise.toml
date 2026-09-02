@@ -80,7 +80,7 @@ alias = "dev:cp"
 run = "cargo run --bin xihe-runtime"
 description = "Start the runtime service (Windows native)"
 dir = "packages/runtime"
-env = { XIHE_ENV = "dev", XIHE_RUNTIME_PORT = "12633", XIHE_CP_URL = "http://127.0.0.1:12631", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_LOG_DIR = "../../logs", XIHE_LOAD_DOTENV = "0" }
+env = { XIHE_ENV = "dev", XIHE_RUNTIME_PORT = "12633", XIHE_CP_URL = "http://127.0.0.1:12631", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_WORKSPACE_HOST_ROOT = "../../.xihe-workspaces", XIHE_WORKSPACE_IMAGE = "xihe/workspace:latest", XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL = "true", XIHE_LOG_DIR = "../../logs", XIHE_LOAD_DOTENV = "0" }
 alias = "dev:runtime"
 
 [tasks.build]
@@ -137,8 +137,13 @@ alias = "test:runtime:lib"
 
 [tasks."test:e2e"]
 run = "node scripts/e2e-real.mjs"
-description = "Run end-to-end stack tests (auto-start/stop Docker Compose)"
+description = "Run Compose-compatible end-to-end tests (auto-start/stop frozen Docker Compose)"
 alias = "test:e2e"
+
+[tasks."test:e2e:host"]
+run = "node scripts/e2e-host.mjs"
+description = "Run host-only E2E tests in an isolated per-run native stack"
+alias = "test:e2e:host"
 
 [tasks."test:integration"]
 depends = ["test:integration:t2", "test:integration:t3"]
@@ -185,7 +190,7 @@ dir = "packages/runtime"
 alias = "lint:runtime"
 
 [tasks."lint:links"]
-run = "bash ../scripts/check-doc-links.sh \"{{config_root}}\""
+run = "C:/Progra~1/Git/bin/bash.exe ../scripts/check-doc-links.sh ."
 description = "Check documentation links (no escape from docs/)"
 alias = "lint:links"
 
@@ -233,9 +238,14 @@ run = "pwsh -File scripts/dev-host.ps1 -Check"
 description = "Preflight check for dev:host (Docker npipe, ports, host root, tools)"
 alias = "dev:host:check"
 
+[tasks."dev:reset"]
+run = "pwsh -File scripts/dev-reset.ps1"
+description = "Dry-run or explicitly reset local Xihe development data"
+alias = "dev:reset"
+
 [tasks."dev:host:stop"]
-run = "docker compose stop postgres"
-description = "Stop dev:host PostgreSQL (native tasks stop with mise Ctrl+C)"
+run = "pwsh -File scripts/dev-host.ps1 -Stop"
+description = "Stop dev:host PostgreSQL and workspace Sandbox containers (preserve host storage)"
 alias = "dev:host:stop"
 
 [tasks."dev:host:check-config"]
@@ -267,7 +277,7 @@ alias = "dev:host:start:agent"
 run = "cargo run --bin xihe-runtime"
 description = "Start Runtime (port 12633)"
 dir = "packages/runtime"
-env = { XIHE_ENV = "dev", XIHE_RUNTIME_PORT = "12633", XIHE_CP_URL = "http://127.0.0.1:12631", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_LOG_DIR = "../../logs", XIHE_LOAD_DOTENV = "0" }
+env = { XIHE_ENV = "dev", XIHE_RUNTIME_PORT = "12633", XIHE_CP_URL = "http://127.0.0.1:12631", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_WORKSPACE_HOST_ROOT = "../../.xihe-workspaces", XIHE_WORKSPACE_IMAGE = "xihe/workspace:latest", XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL = "true", XIHE_LOG_DIR = "../../logs", XIHE_LOAD_DOTENV = "0" }
 alias = "dev:host:start:runtime"
 
 [tasks."dev:host:start:ui"]
@@ -278,7 +288,7 @@ env = { XIHE_ENV = "dev", XIHE_UI_PORT = "12630", XIHE_CP_BASE_URL = "http://127
 alias = "dev:host:start:ui"
 
 [tasks."image:workspace:build"]
-run = "docker build -t xihe/workspace -f docker/images/workspace/Dockerfile ../.."
+run = "docker build -t xihe/workspace -f docker/images/workspace/Dockerfile ."
 description = "Build the xihe/workspace Docker image (multi-stage)"
 alias = "image:workspace:build"
 

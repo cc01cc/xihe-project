@@ -69,3 +69,9 @@ data/
 
 # Runtime device state (generated, not committed)
 .xihe-state/
+
+# Runtime workspace storage (generated, not committed)
+.xihe-workspaces/
+
+# Isolated Host E2E runtime state (generated, not committed)
+.tmp/e2e-host/
