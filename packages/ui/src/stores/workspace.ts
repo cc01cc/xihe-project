@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useSessionStore } from './session'
-import { api, apiPost } from '../composables/api'
+import { useAuthStore } from './auth'
+import { api, apiPost, ApiError } from '../composables/api'
 import { readFilePreview } from '../composables/fileService'
 import { logger } from '../lib/logger'
 import type { FileNode, OpenFile, UploadItem } from '../types'
@@ -21,11 +22,25 @@ function detectLanguage(path: string): string {
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const sessionStore = useSessionStore()
+  const authStore = useAuthStore()
 
   const sessionId = computed<string | null>(() => sessionStore.currentSessionId)
   const sessionAttachments = computed(() => sessionStore.currentSessionAttachments)
   const sessionFileContext = computed(() => sessionStore.currentSessionFileContext)
   const sessionAgents = computed(() => sessionStore.currentAgentIds)
+  const workspaceId = computed(() => authStore.currentWorkspaceId)
+
+  function requireWorkspaceId(): string {
+    if (!workspaceId.value) {
+      throw new ApiError({
+        status: 400,
+        code: 'WORKSPACE_CONTEXT_REQUIRED',
+        detail: 'Workspace context is required',
+        requestId: 'client',
+      })
+    }
+    return workspaceId.value
+  }
 
   const fileTree = ref<FileNode[]>([])
   const expandedPaths = ref<Set<string>>(new Set())
@@ -50,7 +65,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function fetchDirectoryTree(dirPath: string): Promise<FileNode[]> {
     const nodes: FileNode[] = []
     try {
-      const res = await api.listDirectory(dirPath)
+      const res = await api.listDirectory(dirPath, requireWorkspaceId())
       const entries = res.entries ?? []
       const dirs = entries.filter((e: any) => e.type === 'directory').sort((a: any, b: any) => a.name.localeCompare(b.name))
       const files = entries.filter((e: any) => e.type === 'file').sort((a: any, b: any) => a.name.localeCompare(b.name))
@@ -139,7 +154,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
     try {
       const size = findFileSize(path)
-      const res = await readFilePreview(path, size)
+      const res = await readFilePreview(path, size, requireWorkspaceId())
       const file: OpenFile = {
         path,
         name: path.split('/').pop() || path,
@@ -177,7 +192,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const file = openFiles.value.get(path)
     if (!file || !file.modified) return
     try {
-      await api.writeFile(path, file.content)
+      await api.writeFile(path, file.content, requireWorkspaceId())
       file.originalContent = file.content
       file.modified = false
     } catch (e) {
@@ -187,7 +202,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function deleteNode(path: string) {
     try {
-      await api.deleteFile(path)
+      await api.deleteFile(path, requireWorkspaceId())
       closeFile(path)
       await loadTree()
       return true
@@ -200,7 +215,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function createFile(parentDir: string, name: string) {
     const fullPath = parentDir ? `${parentDir}/${name}` : name
     try {
-      await api.writeFile(fullPath, '')
+      await api.writeFile(fullPath, '', requireWorkspaceId())
       await loadTree()
       return true
     } catch (e) {
@@ -259,7 +274,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         } else {
           const text = await item.file.text()
           const fullPath = targetDir ? `${targetDir}/${item.name}` : item.name
-          await api.writeFile(fullPath, text)
+          await api.writeFile(fullPath, text, requireWorkspaceId())
         }
         item.status = 'done'
       } catch (e) {
@@ -278,7 +293,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         file.chunks = res.chunks
         file.chunkIndex = 0
         if (res.chunks.length > 0) {
-          const chunkRes = await api.readFile(res.chunks[0])
+          const chunkRes = await api.readFile(res.chunks[0], requireWorkspaceId())
           file.content = chunkRes.content
           file.originalContent = chunkRes.content
         }
@@ -290,7 +305,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function loadFullContent(path: string) {
     try {
-      const res = await api.readFile(path)
+      const res = await api.readFile(path, requireWorkspaceId())
       const file = openFiles.value.get(path)
       if (file) {
         file.content = res.content

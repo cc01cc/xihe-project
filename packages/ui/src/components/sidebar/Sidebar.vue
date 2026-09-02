@@ -14,6 +14,9 @@ import {
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAuthStore } from '../../stores/auth'
+import { ApiError } from '../../composables/api'
+import { logger } from '../../lib/logger'
+import { toast } from 'vue-sonner'
 import SessionList from './SessionList.vue'
 
 const props = defineProps<{
@@ -37,10 +40,20 @@ const sidebarStyle = computed(() => ({
   width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : '0px',
 }))
 
-function startNewChat() {
-  const session = sessionStore.createSession()
-  chatStore.clearSession(session.id)
-  router.push(`/chat/${session.id}`)
+async function startNewChat() {
+  if (!auth.currentWorkspaceId) {
+    toast.error(t('sidebar.noWorkspace'))
+    return
+  }
+  try {
+    const session = await sessionStore.createSession()
+    chatStore.clearSession(session.id)
+    router.push(`/chat/${session.id}`)
+  } catch (cause) {
+    const message = cause instanceof ApiError ? cause.message : 'Failed to create session'
+    logger.error('Create session failed', cause)
+    toast.error(message)
+  }
 }
 
 function toggleSidebar() {
@@ -67,8 +80,12 @@ function handleResizeStart(e: MouseEvent) {
 }
 
 function navigateToWorkspace() {
-  const id = sessionStore.currentSessionId ?? sessionStore.createSession().id
-  router.push(`/workspace/${id}`)
+  const workspaceId = auth.currentWorkspaceId
+  if (!workspaceId) {
+    toast.error(t('sidebar.noWorkspace'))
+    return
+  }
+  router.push(`/workspace/${workspaceId}`)
 }
 
 function navigateSettings() {
@@ -105,6 +122,7 @@ function handleLogout() {
 
     <div class="px-3 pb-2">
       <button
+        data-testid="sidebar-new-chat"
         class="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-sidebar-border text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
         @click="startNewChat"
       >
@@ -128,6 +146,7 @@ function handleLogout() {
 
     <div class="px-3 py-2">
       <button
+        data-testid="sidebar-workspace"
         class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
         @click="navigateToWorkspace"
       >

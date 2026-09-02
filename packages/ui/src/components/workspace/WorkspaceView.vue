@@ -3,6 +3,10 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
+import { useAuthStore } from '../../stores/auth'
+import { ApiError } from '../../composables/api'
+import { logger } from '../../lib/logger'
+import { toast } from 'vue-sonner'
 import WorkspaceToolbar from './WorkspaceToolbar.vue'
 import FileTreePanel from './FileTreePanel.vue'
 import FileEditor from './FileEditor.vue'
@@ -13,26 +17,36 @@ import ChatPanel from '../chat/ChatPanel.vue'
 const route = useRoute()
 const ws = useWorkspaceStore()
 const sessionStore = useSessionStore()
+const auth = useAuthStore()
 const contextMenu = ref<{ path: string; x: number; y: number } | null>(null)
 
+const routeWorkspaceId = computed(() => (route.params.workspaceId as string | undefined) ?? '')
+
 const sessionId = computed(() => {
-  const id = (route.params.sessionId as string) || sessionStore.currentSessionId
-  if (id && !sessionStore.currentSessionId) {
-    sessionStore.selectSession(id)
-  }
-  if (!id && !sessionStore.currentSessionId) {
-    const session = sessionStore.createSession()
-    return session.id
-  }
-  return id
+  if (sessionStore.currentSessionId) return sessionStore.currentSessionId
+  return null
 })
+
+const workspaceId = computed(() => routeWorkspaceId.value || auth.currentWorkspaceId || '')
+
+async function ensureSessionForWorkspace() {
+  if (!auth.currentWorkspaceId) return null
+  if (sessionStore.currentSessionId) return sessionStore.currentSessionId
+  try {
+    const session = await sessionStore.createSession()
+    return session.id
+  } catch (cause) {
+    const message = cause instanceof ApiError ? cause.message : 'Failed to create session'
+    logger.error('Create session failed', cause)
+    toast.error(message)
+    return null
+  }
+}
 
 watch(
   () => sessionId.value,
   (id) => {
-    if (id) {
-      sessionStore.selectSession(id)
-    }
+    if (id) sessionStore.selectSession(id)
   },
   { immediate: true },
 )
@@ -51,6 +65,8 @@ function handleContextmenu(path: string, event: MouseEvent) {
 function handleUpload() {
   ws.openImportDialog()
 }
+
+void ensureSessionForWorkspace
 </script>
 
 <template>
@@ -60,7 +76,7 @@ function handleUpload() {
     </div>
 
     <div class="flex-1 flex flex-col min-w-0">
-      <WorkspaceToolbar @upload="handleUpload" />
+      <WorkspaceToolbar :workspace-id="workspaceId" @upload="handleUpload" />
       <FileEditor />
     </div>
 

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { api } from '../api'
 
 let fetchSpy: ReturnType<typeof vi.spyOn>
+const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`
+const INVALID_PASSWORD = `ui-invalid-${globalThis.crypto.randomUUID()}`
 
 beforeEach(() => {
   localStorage.clear()
@@ -23,13 +25,13 @@ describe('api.login', () => {
       json: () => Promise.resolve(mockResponse),
     } as Response)
 
-    const result = await api.login('test@test.com', 'password123')
+    const result = await api.login('test@test.com', TEST_PASSWORD)
 
     expect(fetchSpy).toHaveBeenCalledWith(
       '/api/v1/auth/login',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ email: 'test@test.com', password: 'password123' }),
+        body: JSON.stringify({ email: 'test@test.com', password: TEST_PASSWORD }),
       }),
     )
     expect(result.accessToken).toBe('test-token')
@@ -43,7 +45,7 @@ describe('api.login', () => {
       json: () => Promise.resolve({ accessToken: 't', user: { id: '1', email: 'a@b.com' } }),
     } as Response)
 
-    await api.login('a@b.com', 'pw')
+    await api.login('a@b.com', TEST_PASSWORD)
 
     const callHeaders = (fetchSpy.mock.calls[0][1] as RequestInit).headers as Record<string, string>
     expect(callHeaders['Authorization']).toBe('Bearer existing-token')
@@ -56,7 +58,7 @@ describe('api.login', () => {
       json: () => Promise.resolve({ error: 'Unauthorized' }),
     } as Response)
 
-    await expect(api.login('bad@test.com', 'wrong')).rejects.toThrow('Session expired')
+    await expect(api.login('bad@test.com', INVALID_PASSWORD)).rejects.toThrow('Session expired')
   })
 
   it('clears token and redirects to login on 401 for protected paths', async () => {
@@ -109,13 +111,13 @@ describe('api.register', () => {
       json: () => Promise.resolve(mockResponse),
     } as Response)
 
-    const result = await api.register('new@test.com', 'pass', 'New User')
+    const result = await api.register('new@test.com', TEST_PASSWORD, 'New User')
 
     expect(fetchSpy).toHaveBeenCalledWith(
       '/api/v1/auth/register',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ email: 'new@test.com', password: 'pass', name: 'New User' }),
+        body: JSON.stringify({ email: 'new@test.com', password: TEST_PASSWORD, name: 'New User' }),
       }),
     )
     expect(result.accessToken).toBe('reg-token')

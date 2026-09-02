@@ -4,6 +4,7 @@ import { usePdfDocument } from '../../composables/usePdfDocument'
 import { api } from '../../composables/api'
 import { formatFileSize } from '../../lib/fileSize'
 import { logger } from '../../lib/logger'
+import { useAuthStore } from '../../stores/auth'
 import PdfToolbar from './PdfToolbar.vue'
 import PdfPageCanvas from './PdfPageCanvas.vue'
 
@@ -25,6 +26,7 @@ const scale = ref(1.0)
 const chunkLoading = ref(false)
 const chunkError = ref<string | null>(null)
 const chunkContent = ref<string | ArrayBuffer | null>(null)
+const authStore = useAuthStore()
 
 function base64ToUint8Array(base64: string): Uint8Array {
   const binary = atob(base64)
@@ -66,10 +68,14 @@ watch(() => props.chunkIndex, async (index) => {
     chunkContent.value = null
     return
   }
+  if (!authStore.currentWorkspaceId) {
+    chunkError.value = 'Workspace context is required'
+    return
+  }
   chunkLoading.value = true
   chunkError.value = null
   try {
-    const res = await api.readFile(props.chunks[index])
+    const res = await api.readFile(props.chunks[index], authStore.currentWorkspaceId)
     chunkContent.value = res.content
     pageNum.value = 1
   } catch (e) {

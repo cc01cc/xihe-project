@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
 import type { Message, MessagePart } from '../types'
 
-export const XIHE_STORAGE_KEYS = ['xihe-messages', 'xihe-token', 'xihe-user', 'xihe-sessions', 'xihe-current-session'] as const
+export const XIHE_STORAGE_KEYS = ['xihe-token', 'xihe-user', 'xihe-workspace'] as const
 
 export const useChatStore = defineStore('chat', () => {
-  const messages = useLocalStorage<Record<string, Message[]>>('xihe-messages', {})
+  // Messages are not business data we should resurrect from localStorage.
+  // The server is the canonical source via /api/v1/sessions/{id}/messages,
+  // and the session store + chat store are cleared on user switch / logout.
+  const messages = ref<Record<string, Message[]>>({})
   const streamingMessageId = ref<Record<string, string | null>>({})
 
   function getMessages(sessionId: string): Message[] {
@@ -147,6 +149,11 @@ export const useChatStore = defineStore('chat', () => {
     streamingMessageId.value = {}
   }
 
+  function clearForUserSwitch() {
+    messages.value = {}
+    streamingMessageId.value = {}
+  }
+
   return {
     messages,
     streamingMessageId,
@@ -163,5 +170,6 @@ export const useChatStore = defineStore('chat', () => {
     clearSession,
     deleteSession,
     clearAllData,
+    clearForUserSwitch,
   }
 })

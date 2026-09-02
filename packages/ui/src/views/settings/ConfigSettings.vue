@@ -130,7 +130,7 @@ const oauthError = ref('')
 const mcpReadonly = computed(() => activeTab.value === 'system')
 
 function currentWorkspaceId(): string {
-  return String(configStore.mergedConfig['workspace-config']?.workspaceId || authStore.user?.workspaceId || 'default')
+  return String(configStore.mergedConfig['workspace-config']?.workspaceId || authStore.currentWorkspaceId || '')
 }
 
 const builtInTools = [

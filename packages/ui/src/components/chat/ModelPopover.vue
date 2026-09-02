@@ -19,6 +19,8 @@ import {
 } from 'reka-ui'
 import { useConfigStore } from '../../stores/config'
 import { useSessionStore } from '../../stores/session'
+import { ApiError } from '../../composables/api'
+import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import { getProviderInfo, getModelTags, getModelContextWindow } from '../../types/provider'
 
@@ -155,6 +157,13 @@ function selectModel(value: string) {
   const sessionId = sessionStore.currentSessionId
   if (sessionId) {
     configStore.setSessionModel(sessionId, provider, model)
+    void sessionStore
+      .updateSession(sessionId, { modelProvider: provider, modelName: model, modelId: value })
+      .catch((cause: unknown) => {
+        const message = cause instanceof ApiError ? cause.message : 'Failed to persist model binding'
+        logger.warn('Persist model binding failed', cause)
+        toast.error(message)
+      })
   }
   open.value = false
   searchTerm.value = ''

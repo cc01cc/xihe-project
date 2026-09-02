@@ -3,6 +3,11 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
+import { useAuthStore } from '../../stores/auth'
+
+const props = defineProps<{
+  workspaceId: string
+}>()
 
 const emit = defineEmits<{
   upload: []
@@ -11,6 +16,7 @@ const emit = defineEmits<{
 const router = useRouter()
 const ws = useWorkspaceStore()
 const sessionStore = useSessionStore()
+const auth = useAuthStore()
 
 const breadcrumb = computed(() => {
   const active = ws.activeFilePath
@@ -22,7 +28,10 @@ const breadcrumb = computed(() => {
   }))
 })
 
-const currentSessionTitle = computed(() => sessionStore.currentSession?.title ?? 'Session')
+const workspaceLabel = computed(() => {
+  const id = props.workspaceId || auth.currentWorkspaceId || ''
+  return id ? `WS ${id.slice(0, 6)}` : 'Workspace'
+})
 
 function handleRefresh() {
   ws.refreshTree()
@@ -30,14 +39,17 @@ function handleRefresh() {
 
 function switchToChat() {
   const id = sessionStore.currentSessionId
-  if (id) {
-    router.push(`/chat/${id}`)
-  }
+  if (id) router.push(`/chat/${id}`)
+}
+
+function openEnvironment() {
+  const id = props.workspaceId || auth.currentWorkspaceId
+  if (id) router.push(`/workspace/${id}/environment`)
 }
 
 function switchSession(id: string) {
   sessionStore.selectSession(id)
-  router.push(`/workspace/${id}`)
+  router.push(`/chat/${id}`)
 }
 </script>
 
@@ -60,7 +72,7 @@ function switchSession(id: string) {
           </span>
         </span>
       </template>
-      <span v-else class="text-muted-foreground/60">workspace root</span>
+      <span v-else class="text-muted-foreground/60">{{ workspaceLabel }}</span>
     </div>
 
     <div class="flex items-center gap-1">
@@ -83,7 +95,15 @@ function switchSession(id: string) {
         title="Switch to chat"
         @click="switchToChat"
       >
-        {{ currentSessionTitle }}
+        Chat
+      </button>
+      <button
+        data-testid="workspace-toolbar-environment"
+        class="px-2 py-1 text-xs rounded border hover:bg-accent text-muted-foreground transition-colors"
+        title="View workspace environment"
+        @click="openEnvironment"
+      >
+        Environment
       </button>
       <button
         class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
+import { useAuthStore } from '../../stores/auth'
 import { api, ApiError } from '../../composables/api'
 import { parseRawToParts } from '../../composables/useStreamParser'
 import { logger } from '../../lib/logger'
@@ -14,25 +15,60 @@ const route = useRoute()
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
+const auth = useAuthStore()
 
-const currentSessionId = computed(() => {
-  const routeId = route.params.sessionId as string
-  const id = (routeId && routeId !== 'default' ? routeId : '') || sessionStore.currentSessionId
-  if (id && !sessionStore.currentSessionId) {
-    sessionStore.selectSession(id)
-  }
-  return id
+const routeSessionId = computed(() => {
+  const raw = route.params.sessionId as string | undefined
+  if (raw && raw !== 'default') return raw
+  return ''
 })
+
+const currentSessionId = computed(() => routeSessionId.value || sessionStore.currentSessionId || '')
 
 const isStreaming = computed(() => {
   return agentStore.agentState.status === 'thinking' || agentStore.agentState.status === 'executing'
 })
 
+async function ensureSession(): Promise<string | null> {
+  const fromRoute = routeSessionId.value
+  if (fromRoute) {
+    if (!sessionStore.sessions.some((session) => session.id === fromRoute)) {
+      try {
+        await sessionStore.loadSession(fromRoute)
+      } catch (cause) {
+        logger.warn('Failed to load session from route', cause)
+        return null
+      }
+    }
+    sessionStore.selectSession(fromRoute)
+    return fromRoute
+  }
+  if (!auth.currentWorkspaceId) {
+    logger.warn('Missing current workspace, cannot create session')
+    return null
+  }
+  try {
+    if (sessionStore.sessions.length === 0) {
+      await sessionStore.loadSessions()
+    }
+    if (sessionStore.sessions.length > 0) {
+      const first = sessionStore.sessions[0]
+      sessionStore.selectSession(first.id)
+      return first.id
+    }
+    const created = await sessionStore.createSession()
+    return created.id
+  } catch (cause) {
+    logger.warn('Create session failed', cause)
+    return null
+  }
+}
+
 async function loadSessionMessages(sessionId: string) {
   try {
     const rawMessages = await api.getMessages(sessionId)
     if (!Array.isArray(rawMessages)) {
-      logger.debug('Messages response is not an array, falling back to localStorage')
+      logger.debug('Messages response is not an array, ignoring')
       return
     }
     const normalized: Message[] = rawMessages.map((msg) => ({
@@ -64,16 +100,27 @@ async function loadSessionMessages(sessionId: string) {
 
 watch(
   currentSessionId,
-  (id) => {
+  async (id) => {
     if (!id) {
-      const session = sessionStore.createSession()
-      chatStore.clearSession(session.id)
+      const ensured = await ensureSession()
+      if (ensured) await loadSessionMessages(ensured)
       return
     }
-    loadSessionMessages(id)
+    sessionStore.selectSession(id)
+    await loadSessionMessages(id)
   },
   { immediate: true },
 )
+
+onMounted(async () => {
+  if (!sessionStore.sessions.length) {
+    try {
+      await sessionStore.loadSessions()
+    } catch (cause) {
+      logger.debug('Background session load failed', cause)
+    }
+  }
+})
 </script>
 
 <template>

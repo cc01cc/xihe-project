@@ -70,7 +70,7 @@ const router = createRouter({
       component: () => import('../views/auth/RegisterView.vue'),
     },
     {
-      path: '/workspace/:sessionId?',
+      path: '/workspace/:workspaceId?',
       name: 'workspace',
       component: () => import('../layouts/AppLayout.vue'),
       meta: { requiresAuth: true },
@@ -79,6 +79,11 @@ const router = createRouter({
           path: '',
           name: 'workspace-session',
           component: () => import('../components/workspace/WorkspaceView.vue'),
+        },
+        {
+          path: 'environment',
+          name: 'workspace-environment',
+          component: () => import('../views/workspace/WorkspaceEnvironmentView.vue'),
         },
       ],
     },

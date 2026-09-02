@@ -27,7 +27,10 @@ export interface Session {
   title: string
   createdAt: string
   updatedAt: string
+  workspaceId?: string
   modelId?: string
+  modelProvider?: string
+  modelName?: string
   context?: SessionContext
 }
 

@@ -1,11 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { useLocalStorage } from '@vueuse/core'
+import { api, type ApiSession } from '../composables/api'
 import type { Session, SessionContext, RAGContext, MCPContext, FileContext, AttachmentFile } from '../types'
-
-function generateId(): string {
-  return crypto.randomUUID()
-}
 
 function getTimeGroup(dateStr: string): 'today' | 'yesterday' | 'earlier' {
   const date = new Date(dateStr)
@@ -28,10 +24,31 @@ function createEmptyContext(): SessionContext {
   }
 }
 
+function toSession(record: ApiSession): Session {
+  const now = new Date().toISOString()
+  return {
+    id: record.id,
+    title: record.title || 'Untitled',
+    createdAt: record.createdAt ?? now,
+    updatedAt: record.updatedAt ?? record.createdAt ?? now,
+    workspaceId: record.workspaceId,
+    modelId: record.modelId,
+    modelProvider: record.modelProvider,
+    modelName: record.modelName,
+    context: createEmptyContext(),
+  }
+}
+
 export const useSessionStore = defineStore('session', () => {
-  const sessions = useLocalStorage<Session[]>('xihe-sessions', [])
+  // Session metadata is a server projection. localStorage must not resurrect a
+  // session after a user switch or make up an ID before the CP responds.
+  const sessions = ref<Session[]>([])
   const currentSessionId = ref<string | null>(null)
   const searchQuery = ref('')
+  const loading = ref(false)
+  const error = ref<string | null>(null)
+  let loadPromise: Promise<Session[]> | null = null
+  let storeGeneration = 0
 
   // Cross-view state that is intentionally not persisted via localStorage.
   // PLAN-030 will implement the backend session-scoped attachment store.
@@ -74,16 +91,68 @@ export const useSessionStore = defineStore('session', () => {
     return groups
   })
 
-  function createSession(): Session {
-    const session: Session = {
-      id: generateId(),
-      title: 'New Chat',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      context: createEmptyContext(),
+  function replaceFromServer(records: ApiSession[]) {
+    sessions.value = records.map(toSession)
+    if (currentSessionId.value && !sessions.value.some((session) => session.id === currentSessionId.value)) {
+      currentSessionId.value = null
     }
-    sessions.value.unshift(session)
+  }
+
+  function resetForUserSwitch() {
+    storeGeneration += 1
+    sessions.value = []
+    currentSessionId.value = null
+    error.value = null
+    attachments.value = {}
+    fileContexts.value = {}
+  }
+
+  async function loadSessions(): Promise<Session[]> {
+    if (loadPromise) return loadPromise
+    const generation = storeGeneration
+    loading.value = true
+    error.value = null
+    loadPromise = (async () => {
+      try {
+        const response = await api.getSessions()
+        if (generation !== storeGeneration) return sessions.value
+        replaceFromServer(response.sessions)
+        return sessions.value
+      } catch (cause) {
+        if (generation === storeGeneration) {
+          error.value = cause instanceof Error ? cause.message : 'Failed to load sessions'
+        }
+        throw cause
+      } finally {
+        if (generation === storeGeneration) loading.value = false
+      }
+    })()
+    try {
+      return await loadPromise
+    } finally {
+      loadPromise = null
+    }
+  }
+
+  async function loadSession(id: string): Promise<Session> {
+    const response = await api.getSession(id)
+    const session = toSession(response)
+    upsertSession(session)
+    return session
+  }
+
+  function upsertSession(session: Session) {
+    const index = sessions.value.findIndex((item) => item.id === session.id)
+    if (index >= 0) sessions.value.splice(index, 1, session)
+    else sessions.value.unshift(session)
+  }
+
+  async function createSession(title = 'New Chat'): Promise<Session> {
+    const response = await api.createSession(title)
+    const session = toSession(response)
+    upsertSession(session)
     currentSessionId.value = session.id
+    error.value = null
     return session
   }
 
@@ -104,7 +173,8 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  function deleteSession(id: string) {
+  async function deleteSession(id: string): Promise<void> {
+    await api.deleteSession(id)
     const index = sessions.value.findIndex((s) => s.id === id)
     if (index >= 0) {
       sessions.value.splice(index, 1)
@@ -114,24 +184,25 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  function renameSession(id: string, title: string) {
-    const session = sessions.value.find((s) => s.id === id)
-    if (session) {
-      session.title = title
-      session.updatedAt = new Date().toISOString()
-    }
+  async function updateSession(
+    id: string,
+    patch: { title?: string; modelId?: string; modelProvider?: string; modelName?: string },
+  ): Promise<Session> {
+    const updated = toSession(await api.updateSession(id, patch))
+    upsertSession(updated)
+    return updated
+  }
+
+  async function renameSession(id: string, title: string): Promise<Session> {
+    return updateSession(id, { title })
   }
 
   function selectSession(id: string) {
     currentSessionId.value = id
-    const session = ensureSession(id)
-    if (session) {
-      session.updatedAt = new Date().toISOString()
-    }
   }
 
-  function updateSessionTitle(id: string, title: string) {
-    renameSession(id, title)
+  async function updateSessionTitle(id: string, title: string): Promise<Session> {
+    return renameSession(id, title)
   }
 
   function updateSessionContext(id: string, context: Partial<SessionContext>) {
@@ -187,6 +258,8 @@ export const useSessionStore = defineStore('session', () => {
     sessions,
     currentSessionId,
     searchQuery,
+    loading,
+    error,
     currentSession,
     currentSessionContext,
     currentSessionAttachments,
@@ -194,12 +267,15 @@ export const useSessionStore = defineStore('session', () => {
     currentAgentIds,
     filteredSessions,
     groupedSessions,
+    loadSessions,
+    loadSession,
     createSession,
     ensureSession,
     deleteSession,
     renameSession,
     selectSession,
     updateSessionTitle,
+    updateSession,
     setSessionModelId,
     updateSessionContext,
     setSessionAgents,
@@ -210,5 +286,6 @@ export const useSessionStore = defineStore('session', () => {
     addAttachment,
     removeAttachment,
     clearAttachments,
+    resetForUserSwitch,
   }
 })

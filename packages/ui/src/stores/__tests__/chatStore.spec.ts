@@ -123,12 +123,20 @@ describe('useChatStore', () => {
     expect(store.isStreaming('s1')).toBe(false)
   })
 
-  it('clearAllData removes all xihe localStorage keys', () => {
-    localStorage.setItem('xihe-messages', '{}')
+  it('clearAllData clears auth-only localStorage keys and resets in-memory messages', () => {
     localStorage.setItem('xihe-token', 'abc')
+    localStorage.setItem('xihe-workspace', JSON.stringify({ id: 'ws-1' }))
     const store = useChatStore()
+    store.addMessage('s1', {
+      id: 'm1',
+      sessionId: 's1',
+      role: 'user',
+      content: 'hello',
+      timestamp: new Date().toISOString(),
+    })
     store.clearAllData()
-    expect(localStorage.getItem('xihe-messages')).toBeNull()
     expect(localStorage.getItem('xihe-token')).toBeNull()
+    expect(localStorage.getItem('xihe-workspace')).toBeNull()
+    expect(store.getMessages('s1')).toEqual([])
   })
 })
