@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.config;
 
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -57,6 +58,7 @@ public class SecurityConfig {
                 })
             )
             .authorizeHttpRequests(auth -> auth
+                .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 .requestMatchers("/api/v1/oauth/callback").permitAll()
                 .requestMatchers("/api/v1/health").permitAll()

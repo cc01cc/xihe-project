@@ -18,11 +18,17 @@ public class RequestQueue {
     private final ConcurrentLinkedQueue<QueuedRequest> queue = new ConcurrentLinkedQueue<>();
 
     public boolean enqueue(String sessionId, String content, String model, String userId, String workspaceId) {
+        return enqueue(sessionId, content, model, userId, workspaceId, null, null);
+    }
+
+    public boolean enqueue(String sessionId, String content, String model, String userId,
+                           String workspaceId, String requestId, String runId) {
         if (queue.size() >= MAX_SIZE) {
             logger.warn("[LIFECYCLE] service=cp event=requestQueueFull sessionId={} queueSize={}", sessionId, queue.size());
             return false;
         }
-        queue.offer(new QueuedRequest(sessionId, content, model, userId, workspaceId, Instant.now()));
+        queue.offer(new QueuedRequest(sessionId, content, model, userId, workspaceId,
+                Instant.now(), requestId, runId));
         logger.info("[LIFECYCLE] service=cp event=requestQueued sessionId={} reason=agent_down queueSize={}", sessionId, queue.size());
         return true;
     }
@@ -67,6 +73,8 @@ public class RequestQueue {
         String model,
         String userId,
         String workspaceId,
-        Instant createdAt
+        Instant createdAt,
+        String requestId,
+        String runId
     ) {}
 }

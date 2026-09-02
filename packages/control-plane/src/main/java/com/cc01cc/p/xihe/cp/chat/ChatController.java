@@ -16,6 +16,7 @@ import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -35,6 +36,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RestController
 public class ChatController {
@@ -49,6 +53,7 @@ public class ChatController {
     private final FileRepository fileRepository;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
+    private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     @Value("${cp.agent-url:http://localhost:12632/chat}")
     private String agentUrl;
@@ -79,9 +84,17 @@ public class ChatController {
         healthMonitor.setOnServiceRecovered(serviceName -> {
             if ("agent".equals(serviceName)) {
                 requestQueue.drain(req -> {
-                    logger.info("[LIFECYCLE] service=cp event=requestRedelivered sessionId={}", req.sessionId());
+                    String requestId = nonBlankOrGenerated(req.requestId());
+                    String runId = nonBlankOrGenerated(req.runId());
+                    if (!acquireRun(req.sessionId(), runId)) {
+                        logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
+                                requestId, req.sessionId(), runId);
+                        return;
+                    }
+                    logger.info("[LIFECYCLE] service=cp event=requestRedelivered requestId={} sessionId={} runId={} outcome=accepted",
+                            requestId, req.sessionId(), runId);
                     execAsync(req.sessionId(), req.content(), req.model(), List.of(),
-                            req.userId(), req.workspaceId());
+                            req.userId(), req.workspaceId(), requestId, runId);
                 });
             }
         });
@@ -103,7 +116,8 @@ public class ChatController {
         sessionService.requireCurrent(sessionId, userId, workspaceId);
         SseEmitter emitter = sseManager.createEmitter(sessionId);
         sseManager.send(sessionId, "connected", Map.of("sessionId", sessionId, "type", "connected"));
-        logger.info("SSE stream connected session={}", sessionId);
+        logger.info("[LIFECYCLE] service=cp event=chat_sse_connected requestId={} sessionId={} workspaceId={} connectionGeneration={} outcome=ok",
+                currentRequestId(), sessionId, workspaceId, sseManager.connectionGeneration(sessionId));
         return emitter;
     }
 
@@ -128,15 +142,26 @@ public class ChatController {
         }
 
         if (!sseManager.hasEmitter(sessionId)) {
-            logger.warn("Rejected chat request without SSE subscription session={}", sessionId);
+            logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} errorCode=SSE_SUBSCRIPTION_REQUIRED",
+                    currentRequestId(), sessionId);
             return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "SSE_SUBSCRIPTION_REQUIRED", "An active SSE subscription is required");
         }
 
-        logger.info("Received chat request session={} contentLength={}", sessionId, content.length());
-        execAsync(sessionId, content, model, List.of(), userId, workspaceId);
+        String requestId = currentRequestId();
+        String runId = UUID.randomUUID().toString();
+        if (!acquireRun(sessionId, runId)) {
+            logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
+                    requestId, sessionId, runId);
+            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
+        }
+
+        logger.info("[LIFECYCLE] service=cp event=chat_run_started requestId={} sessionId={} runId={} contentLength={}",
+                requestId, sessionId, runId, content.length());
+        execAsync(sessionId, content, model, List.of(), userId, workspaceId, requestId, runId);
         return ResponseEntity.accepted().body(Map.of(
             "status", "accepted",
-            "sessionId", sessionId
+            "sessionId", sessionId,
+            "runId", runId
         ));
     }
 
@@ -161,16 +186,19 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
 
+        String requestId = currentRequestId();
+        String runId = UUID.randomUUID().toString();
         if (!sseManager.hasEmitter(sessionId)) {
-            logger.warn("Rejected chat request without SSE subscription session={}", sessionId);
+            logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=SSE_SUBSCRIPTION_REQUIRED",
+                    requestId, sessionId, runId);
             return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "SSE_SUBSCRIPTION_REQUIRED", "An active SSE subscription is required");
         }
 
         // Circuit breaker check
         CircuitBreaker agentBreaker = healthMonitor.getAgentBreaker();
         if (!agentBreaker.allowRequest()) {
-            logger.warn("[LIFECYCLE] service=cp event=chatRejectedCircuitOpen session={}", sessionId);
-            String requestId = java.util.UUID.randomUUID().toString();
+            logger.warn("[LIFECYCLE] service=cp event=chat_run_rejected requestId={} sessionId={} runId={} errorCode=AGENT_CIRCUIT_OPEN",
+                    requestId, sessionId, runId);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Retry-After", "30")
                 .contentType(MediaType.parseMediaType("application/problem+json"))
@@ -188,11 +216,14 @@ public class ChatController {
         // Agent down → queue request
         HealthMonitor.ServiceHealth agentHealth = healthMonitor.getAgentHealth();
         if ("down".equals(agentHealth.status())) {
-            boolean queued = requestQueue.enqueue(sessionId, content, model, userId, workspaceId);
+            boolean queued = requestQueue.enqueue(sessionId, content, model, userId, workspaceId, requestId, runId);
             if (queued) {
+                logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
+                        requestId, sessionId, runId);
                 return ResponseEntity.accepted().body(Map.of(
                     "status", "queued",
                     "sessionId", sessionId,
+                    "runId", runId,
                     "reason", "agent_down"
                 ));
             }
@@ -247,28 +278,44 @@ public class ChatController {
             }
         }
 
-        Message userMessage = new Message(sessionId, MessageRole.USER, content);
-        userMessage.setAttachments(attachmentsJson);
-        messageRepository.save(userMessage);
-
-        if (!attachmentIds.isEmpty()) {
-            for (String fileId : attachmentIds) {
-                File file = fileRepository.findById(fileId).orElse(null);
-                if (file != null) {
-                    file.setMessageId(userMessage.getId());
-                    fileRepository.save(file);
-                }
-            }
+        if (!acquireRun(sessionId, runId)) {
+            logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
+                    requestId, sessionId, runId);
+            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
         }
 
-        logger.info("Persisted message session={} messageId={} attachments={}", sessionId, userMessage.getId(), attachmentIds.size());
+        boolean handedOff = false;
+        try {
+            Message userMessage = new Message(sessionId, MessageRole.USER, content);
+            userMessage.setAttachments(attachmentsJson);
+            messageRepository.save(userMessage);
 
-        execAsync(sessionId, content, model, attachmentInfos, userId, workspaceId);
-        return ResponseEntity.accepted().body(Map.of(
-            "status", "accepted",
-            "sessionId", sessionId,
-            "messageId", userMessage.getId()
-        ));
+            if (!attachmentIds.isEmpty()) {
+                for (String fileId : attachmentIds) {
+                    File file = fileRepository.findById(fileId).orElse(null);
+                    if (file != null) {
+                        file.setMessageId(userMessage.getId());
+                        fileRepository.save(file);
+                    }
+                }
+            }
+
+            logger.info("[LIFECYCLE] service=cp event=chat_message_persisted requestId={} sessionId={} runId={} messageId={} attachments={}",
+                    requestId, sessionId, runId, userMessage.getId(), attachmentIds.size());
+
+            execAsync(sessionId, content, model, attachmentInfos, userId, workspaceId, requestId, runId);
+            handedOff = true;
+            return ResponseEntity.accepted().body(Map.of(
+                "status", "accepted",
+                "sessionId", sessionId,
+                "messageId", userMessage.getId(),
+                "runId", runId
+            ));
+        } finally {
+            if (!handedOff) {
+                releaseRun(sessionId, runId, "chat_handoff_failed");
+            }
+        }
     }
 
     @GetMapping("/api/v1/health")
@@ -282,14 +329,19 @@ public class ChatController {
 
     private void execAsync(String sessionId, String content, String model,
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
-                           String userId, String workspaceId) {
-        new Thread(() -> {
+                           String userId, String workspaceId, String requestId, String runId) {
+        Thread worker = new Thread(() -> {
+            MDC.put("requestId", requestId);
+            MDC.put("chatRunId", runId);
+            AtomicBoolean terminalSent = new AtomicBoolean(false);
             try {
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);
                 agentRequest.put("content", content);
                 agentRequest.put("userId", userId);
                 agentRequest.put("workspaceId", workspaceId);
+                agentRequest.put("requestId", requestId);
+                agentRequest.put("runId", runId);
                 agentRequest.put("stream", true);
                 if (model != null && !model.isEmpty()) {
                     agentRequest.put("model", model);
@@ -311,6 +363,8 @@ public class ChatController {
                     .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                     .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
                     .header("Authorization", "Bearer " + agentApiToken)
+                    .header("X-Request-Id", requestId)
+                    .header("X-Chat-Run-Id", runId)
                     .header("X-User-Id", userId)
                     .header("X-Workspace-Id", workspaceId)
                     .header("X-Session-Id", sessionId)
@@ -327,60 +381,98 @@ public class ChatController {
                 long elapsedMs = System.currentTimeMillis() - startMs;
 
                 if (response.statusCode() >= 400) {
-                    String errorBody;
-                    try (InputStream errorStream = response.body()) {
-                        errorBody = new String(errorStream.readAllBytes(), StandardCharsets.UTF_8);
+                    try (InputStream ignored = response.body()) {
+                        // Do not log an upstream body: it may contain provider details or credentials.
                     }
-
-                    logger.error("[LIFECYCLE] service=cp event=chatForwardFailed session={} status={} elapsedMs={} body={}",
-                            sessionId, response.statusCode(), elapsedMs, errorBody);
+                    logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=AGENT_UNAVAILABLE upstreamStatus={} durationMs={}",
+                            requestId, sessionId, runId, response.statusCode(), elapsedMs);
                     healthMonitor.getAgentBreaker().recordFailure();
-                    sseManager.send(sessionId, "error", Map.of(
-                        "code", "AGENT_UNAVAILABLE",
-                        "requestId", java.util.UUID.randomUUID().toString(),
-                        "detail", "Agent service unavailable",
-                        "type", "error"
-                    ));
+                    sendRunErrorAndDone(sessionId, requestId, runId, "AGENT_UNAVAILABLE", "Agent service unavailable", terminalSent);
                     return;
                 }
 
                 healthMonitor.getAgentBreaker().recordSuccess();
-                logger.info("[LIFECYCLE] service=cp event=chatForwarded session={} status={} elapsedMs={}", sessionId, response.statusCode(), elapsedMs);
+                logger.info("[LIFECYCLE] service=cp event=chat_run_forwarded requestId={} sessionId={} runId={} status={} durationMs={}",
+                        requestId, sessionId, runId, response.statusCode(), elapsedMs);
                 String assistantContent;
                 try (InputStream agentStream = response.body()) {
-                    assistantContent = relayAgentStream(sessionId, agentStream);
+                    assistantContent = relayAgentStream(sessionId, agentStream, requestId, runId, terminalSent);
                 }
-                logger.info("Agent stream completed session={}", sessionId);
+                logger.info("[LIFECYCLE] service=cp event=chat_run_finished requestId={} sessionId={} runId={} assistantChars={}",
+                        requestId, sessionId, runId, assistantContent == null ? 0 : assistantContent.length());
 
                 if (assistantContent != null && !assistantContent.isBlank()) {
                     Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, assistantContent);
                     messageRepository.save(assistantMessage);
-                    logger.info("Persisted assistant reply session={} messageId={}", sessionId, assistantMessage.getId());
+                    logger.info("[LIFECYCLE] service=cp event=chat_assistant_persisted requestId={} sessionId={} runId={} messageId={} assistantChars={}",
+                            requestId, sessionId, runId, assistantMessage.getId(), assistantContent.length());
                 }
 
             } catch (java.net.http.HttpTimeoutException e) {
-                logger.warn("[LIFECYCLE] service=cp event=chatTimeout session={} timeoutMs=30000", sessionId);
+                logger.warn("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=AGENT_TIMEOUT timeoutMs=30000",
+                        requestId, sessionId, runId, e);
                 healthMonitor.getAgentBreaker().recordFailure();
-                sseManager.send(sessionId, "error", Map.of(
-                    "code", "AGENT_TIMEOUT",
-                    "requestId", java.util.UUID.randomUUID().toString(),
-                    "detail", "Agent request timed out after 30 seconds",
-                    "type", "error"
-                ));
+                sendRunErrorAndDone(sessionId, requestId, runId, "AGENT_TIMEOUT", "Agent request timed out after 30 seconds", terminalSent);
             } catch (Exception e) {
-                logger.error("[LIFECYCLE] service=cp event=chatForwardFailed session={} error={}", sessionId, e.getMessage(), e);
+                logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=CHAT_EXECUTION_FAILED",
+                        requestId, sessionId, runId, e);
                 healthMonitor.getAgentBreaker().recordFailure();
-                sseManager.send(sessionId, "error", Map.of(
-                    "code", "CHAT_EXECUTION_FAILED",
-                    "requestId", java.util.UUID.randomUUID().toString(),
-                    "detail", "Chat execution failed",
-                    "type", "error"));
+                sendRunErrorAndDone(sessionId, requestId, runId, "CHAT_EXECUTION_FAILED", "Chat execution failed", terminalSent);
             } finally {
-                // The Agent may close without emitting the terminal event.
-                // Always release the UI stream after relay success or failure.
-                sseManager.complete(sessionId);
+                releaseRun(sessionId, runId, "run_finished");
+                MDC.remove("requestId");
+                MDC.remove("chatRunId");
             }
-        }).start();
+        }, "xihe-chat-" + runId);
+        try {
+            worker.start();
+        } catch (RuntimeException e) {
+            releaseRun(sessionId, runId, "worker_start_failed");
+            throw e;
+        }
+    }
+
+    private void sendRunErrorAndDone(String sessionId, String requestId, String runId,
+                                     String errorCode, String detail, AtomicBoolean terminalSent) {
+        if (!terminalSent.compareAndSet(false, true)) {
+            logger.warn("[LIFECYCLE] service=cp event=chat_run_terminal_ignored requestId={} sessionId={} runId={} errorCode={} reason=terminal_already_sent",
+                    requestId, sessionId, runId, errorCode);
+            return;
+        }
+        sseManager.send(sessionId, "error", Map.of(
+                "code", errorCode,
+                "requestId", requestId,
+                "runId", runId,
+                "detail", detail,
+                "type", "error"));
+        sseManager.send(sessionId, "done", Map.of(
+                "type", "done",
+                "requestId", requestId,
+                "runId", runId,
+                "errorCode", errorCode,
+                "synthetic", true));
+    }
+
+    private boolean acquireRun(String sessionId, String runId) {
+        return activeRuns.putIfAbsent(sessionId, runId) == null;
+    }
+
+    private void releaseRun(String sessionId, String runId, String reason) {
+        if (activeRuns.remove(sessionId, runId)) {
+            logger.info("[LIFECYCLE] service=cp event=chat_run_lease_released sessionId={} runId={} reason={}",
+                    sessionId, runId, reason);
+        } else {
+            logger.debug("[LIFECYCLE] service=cp event=chat_run_lease_release_ignored sessionId={} runId={} reason={}",
+                    sessionId, runId, reason);
+        }
+    }
+
+    private String currentRequestId() {
+        return nonBlankOrGenerated(MDC.get("requestId"));
+    }
+
+    private String nonBlankOrGenerated(String value) {
+        return value == null || value.isBlank() ? UUID.randomUUID().toString() : value;
     }
 
     private List<String> extractAttachmentIds(Map<String, Object> request) {
@@ -397,10 +489,13 @@ public class ChatController {
         return List.of();
     }
 
-    private String relayAgentStream(String sessionId, InputStream agentStream) throws Exception {
+    private String relayAgentStream(String sessionId, InputStream agentStream,
+                                    String requestId, String runId,
+                                    AtomicBoolean terminalSent) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
         Map<String, Integer> eventCounts = new LinkedHashMap<>();
         boolean doneSeen = false;
+        int eventIndex = 0;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
             String eventName = "message";
             StringBuilder data = new StringBuilder();
@@ -408,10 +503,14 @@ public class ChatController {
 
             while ((line = reader.readLine()) != null) {
                 if (line.isBlank()) {
-                    recordStreamEvent(eventCounts, eventName, data.length());
-                    doneSeen = doneSeen || "done".equals(eventName);
+                    eventIndex++;
+                    recordStreamEvent(eventCounts, eventName, data.length(), requestId, sessionId, runId, eventIndex);
+                    boolean isDone = "done".equals(eventName);
+                    doneSeen = doneSeen || isDone;
                     collectEventContent(assistantContent, eventName, data.toString());
-                    dispatchEvent(sessionId, eventName, data.toString());
+                    if (!isDone || terminalSent.compareAndSet(false, true)) {
+                        dispatchEvent(sessionId, eventName, data.toString());
+                    }
                     eventName = "message";
                     data.setLength(0);
                     continue;
@@ -430,27 +529,38 @@ public class ChatController {
                 }
             }
 
-            recordStreamEvent(eventCounts, eventName, data.length());
-            doneSeen = doneSeen || "done".equals(eventName);
+            if (data.length() > 0) {
+                eventIndex++;
+            }
+            recordStreamEvent(eventCounts, eventName, data.length(), requestId, sessionId, runId, eventIndex);
+            boolean isDone = "done".equals(eventName);
+            doneSeen = doneSeen || isDone;
             collectEventContent(assistantContent, eventName, data.toString());
-            dispatchEvent(sessionId, eventName, data.toString());
+            if (!isDone || terminalSent.compareAndSet(false, true)) {
+                dispatchEvent(sessionId, eventName, data.toString());
+            }
         }
         if (!doneSeen) {
-            logger.warn("Agent SSE stream missing done event session={}; emitting relay fallback", sessionId);
-            dispatchEvent(sessionId, "done", "{\"type\":\"done\",\"synthetic\":true}");
+            logger.warn("[LIFECYCLE] service=cp event=chat_run_missing_done requestId={} sessionId={} runId={} errorCode=AGENT_DONE_MISSING",
+                    requestId, sessionId, runId);
+            if (terminalSent.compareAndSet(false, true)) {
+                dispatchEvent(sessionId, "done", "{\"type\":\"done\",\"synthetic\":true}");
+            }
             eventCounts.put("done", 1);
         }
-        logger.info("Agent SSE relay completed session={} events={} assistantChars={}",
-                sessionId, eventCounts, assistantContent.length());
+        logger.info("[LIFECYCLE] service=cp event=chat_stream_relay_finished requestId={} sessionId={} runId={} tokenCount={} assistantChars={}",
+                requestId, sessionId, runId, eventCounts.getOrDefault("token", 0), assistantContent.length());
         return assistantContent.toString();
     }
 
-    private void recordStreamEvent(Map<String, Integer> eventCounts, String eventName, int payloadLength) {
+    private void recordStreamEvent(Map<String, Integer> eventCounts, String eventName, int payloadLength,
+                                   String requestId, String sessionId, String runId, int eventIndex) {
         if (payloadLength <= 0) {
             return;
         }
         eventCounts.merge(eventName, 1, Integer::sum);
-        logger.debug("Agent SSE event received event={} payloadLength={}", eventName, payloadLength);
+        logger.debug("[LIFECYCLE] service=cp event=chat_stream_event_received requestId={} sessionId={} runId={} eventIndex={} eventName={} payloadLength={}",
+                requestId, sessionId, runId, eventIndex, eventName, payloadLength);
     }
 
     private void collectEventContent(StringBuilder builder, String eventName, String payload) {

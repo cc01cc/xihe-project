@@ -6,11 +6,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication
+@SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
 @EnableScheduling
 public class CpApplication {
 

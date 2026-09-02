@@ -10,6 +10,8 @@ import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,9 +46,13 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     private WorkspaceUserRepository workspaceUserRepository;
 
     @Autowired
+    private SessionRepository sessionRepository;
+
+    @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
     private String token;
+    private String userId;
     private String workspaceId;
 
     @BeforeEach
@@ -54,7 +60,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         super.setUp();
         token = registerAndLogin();
 
-        String userId = jwtTokenProvider.getUserIdFromToken(token);
+        userId = jwtTokenProvider.getUserIdFromToken(token);
         Workspace ws = new Workspace("Agent Test", userId);
         ws = workspaceRepository.save(ws);
         workspaceId = ws.getId();
@@ -99,7 +105,42 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 .withHeader("Content-Type", containing("application/json"))
                 .withRequestBody(matchingJsonPath("$.sessionId"))
                 .withRequestBody(matchingJsonPath("$.content"))
-                .withRequestBody(matchingJsonPath("$.stream")));
+                .withRequestBody(matchingJsonPath("$.stream", equalTo("true"))));
+    }
+
+    @Test
+    void execForwardsStreamingRequestToAgent() {
+        String sessionId = "exec-" + UUID.randomUUID().toString().substring(0, 8);
+        Session session = new Session(workspaceId, userId, "Exec Test");
+        session.setId(sessionId);
+        sessionRepository.save(session);
+
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "text/event-stream")
+                        .withBody("event: token\ndata: {\"content\":\"chunk-1\"}\n\n"
+                                + "event: token\ndata: {\"content\":\"chunk-2\"}\n\n"
+                                + "event: done\ndata: {\"type\":\"done\"}\n\n")));
+
+        Map<String, Object> body = Map.of(
+                "sessionId", sessionId,
+                "content", "Execute this",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                url("/api/v1/exec"),
+                HttpMethod.POST,
+                entityWithAuth(body, token),
+                Map.class);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
+                .withHeader("Authorization", containing("Bearer dev-token-not-secure"))
+                .withRequestBody(matchingJsonPath("$.stream", equalTo("true")))
+                .withRequestBody(matchingJsonPath("$.runId")));
     }
 
     @Test

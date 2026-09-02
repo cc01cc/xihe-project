@@ -6,6 +6,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -49,7 +50,12 @@ public class ProblemDetailsHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> internalError(Exception exception, HttpServletRequest request) {
+    public ResponseEntity<?> internalError(Exception exception, HttpServletRequest request) {
+        if (exception instanceof AsyncRequestNotUsableException) {
+            // A client closing a persistent SSE stream is an expected lifecycle event.
+            logger.debug("Async client disconnected at {}: {}", request.getRequestURI(), exception.getMessage());
+            return null;
+        }
         logger.error("Unhandled request failure at {}", request.getRequestURI(), exception);
         return problem(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Request failed", request);
     }
