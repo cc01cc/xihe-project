@@ -202,7 +202,7 @@ agent_runner = LangGraphRunner(model_factory=lambda model: create_llm(llm_config
 PG_DSN = (
     config_client.get("infrastructure", "pgDsn")
     or config_client.get("workspace-config", "pgDsn")
-    or "postgresql+psycopg://xihe:xihe123@postgres:5432/xihe"
+    or "postgresql+psycopg://xihe:@postgres:5432/xihe"
 )
 embedding_model: str | None = None
 _embedding_api_key: str | None = None

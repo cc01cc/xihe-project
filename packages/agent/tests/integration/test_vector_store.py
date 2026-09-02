@@ -15,7 +15,7 @@ from xihe_agent.rag.store import VectorStore
 
 PG_DSN = os.getenv(
     "XIHE_PG_DSN",
-    "postgresql+psycopg://xihe:xihe123@postgres:5432/xihe",
+    "postgresql+psycopg://xihe:@postgres:5432/xihe",
 )
 
 
