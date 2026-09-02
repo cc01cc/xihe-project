@@ -51,17 +51,13 @@ test.describe('@host Runtime M1 — dev:host E2E via Playwright CLI', () => {
     const content = readBody.content ?? readBody.data ?? ''
     expect(content).toContain(fileContent)
 
-    // Delete removes the ephemeral Sandbox, not WorkspaceStorage.
-    const delRes = await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces/delete`, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${SERVICE_TOKEN}`,
-      },
-      data: { workspaceId: wsId },
+    // Delete goes through the CP so the logical Workspace is marked deleted;
+    // the Runtime only releases ephemeral Sandbox state and keeps files.
+    const delRes = await request.delete(`${CP_URL}/api/v1/workspaces/${wsId}`, {
+      headers: { Authorization: `Bearer ${auth.accessToken}` },
     })
-    expect(delRes.ok()).toBeTruthy()
-    const delBody = await delRes.json()
-    expect(delBody.status).toBe('ok')
+    expect(delRes.status()).toBe(204)
+    await new Promise(resolve => setTimeout(resolve, 500))
 
     // The materialized runtime entry is gone after delete.
     const afterDel = await request.post(

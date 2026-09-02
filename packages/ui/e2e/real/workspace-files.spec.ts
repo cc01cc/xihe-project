@@ -69,6 +69,10 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
     await page.addInitScript((raw) => localStorage.setItem('xihe-user', raw), JSON.stringify({ workspaceId: wsId }))
+    await page.addInitScript(
+      (ws) => localStorage.setItem('xihe-workspace', JSON.stringify(ws)),
+      { id: wsId, name: 'Default Workspace' },
+    )
   })
 
   test('seeded file appears in panel and opens in editor without layout collapse', async ({ page }) => {
