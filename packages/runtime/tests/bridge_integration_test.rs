@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -13,6 +14,24 @@ fn fixture_binary() -> String {
     })
 }
 
+fn bridge_binary() -> PathBuf {
+    let path = std::env::var("CARGO_BIN_EXE_xihe-mcp-bridge")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let mut path = PathBuf::from(BINARY);
+            if cfg!(windows) {
+                path.set_extension("exe");
+            }
+            path
+        });
+    assert!(
+        path.is_file(),
+        "MCP bridge binary must exist at {}",
+        path.display()
+    );
+    path
+}
+
 fn find_free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -22,7 +41,7 @@ fn find_free_port() -> u16 {
 }
 
 fn start_bridge(port: u16) -> Child {
-    Command::new(BINARY)
+    Command::new(bridge_binary())
         .args(["--port", &port.to_string()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -44,26 +63,14 @@ fn wait_for_ready(port: u16) {
 }
 
 fn stop_bridge(mut child: Child) {
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn skip_if_no_binary() -> bool {
-    if !std::path::Path::new(BINARY).exists() {
-        eprintln!(
-            "skipping: binary {BINARY} not found — run 'cargo build --bin xihe-mcp-bridge' first"
-        );
-        return true;
-    }
-    false
+    child.kill().expect("MCP bridge process should still be running");
+    child
+        .wait()
+        .expect("MCP bridge process should provide an exit status");
 }
 
 #[test]
 fn test_health_endpoint() {
-    if skip_if_no_binary() {
-        return;
-    }
-
     let port = find_free_port();
     let child = start_bridge(port);
     wait_for_ready(port);
@@ -81,10 +88,6 @@ fn test_health_endpoint() {
 
 #[test]
 fn test_spawn_and_health() {
-    if skip_if_no_binary() {
-        return;
-    }
-
     let port = find_free_port();
     let child = start_bridge(port);
     wait_for_ready(port);
@@ -108,15 +111,21 @@ fn test_spawn_and_health() {
     let health: serde_json::Value = resp.json().unwrap();
     assert_eq!(health["count"], 1);
 
+    let payload = serde_json::json!({"jsonrpc": "2.0", "method": "tools/list", "id": 1});
+    let resp = client
+        .post(format!("{base}/test-srv"))
+        .json(&payload)
+        .send()
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let echoed = resp.text().unwrap();
+    assert!(echoed.contains("\"method\":\"tools/list\""));
+
     stop_bridge(child);
 }
 
 #[test]
 fn test_spawn_conflict() {
-    if skip_if_no_binary() {
-        return;
-    }
-
     let port = find_free_port();
     let child = start_bridge(port);
     wait_for_ready(port);
@@ -149,10 +158,6 @@ fn test_spawn_conflict() {
 
 #[test]
 fn test_kill_not_found() {
-    if skip_if_no_binary() {
-        return;
-    }
-
     let port = find_free_port();
     let child = start_bridge(port);
     wait_for_ready(port);
@@ -169,10 +174,6 @@ fn test_kill_not_found() {
 
 #[test]
 fn test_mcp_call_not_found() {
-    if skip_if_no_binary() {
-        return;
-    }
-
     let port = find_free_port();
     let child = start_bridge(port);
     wait_for_ready(port);

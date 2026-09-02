@@ -1,21 +1,42 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
+use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::mcp_process::BridgeInfo;
 use crate::sandbox::SecurityProfile;
 
 /// Lifecycle state of a per-workspace runtime instance.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceState {
     Active,
     Paused,
     Stopped,
     Suspended,
     Released,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterializationState {
+    Materializing,
+    Ready,
+    Failed,
+    Released,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WorkspaceStatus {
+    #[serde(rename = "workspaceId")]
+    pub workspace_id: String,
+    pub state: MaterializationState,
+    pub generation: Option<u64>,
+    #[serde(rename = "specHash")]
+    pub spec_hash: Option<String>,
+    #[serde(rename = "lastError")]
+    pub last_error: Option<String>,
 }
 
 impl InstanceState {
@@ -35,6 +56,8 @@ pub struct XiheRuntimeInstance {
     pub ws_id: String,
     pub workspace_path: String,
     pub profile: SecurityProfile,
+    pub generation: u64,
+    pub spec_hash: String,
     pub file_service_pid: Option<u32>,
     pub mcp_bridges: HashMap<String, BridgeInfo>,
     pub last_active: SystemTime,
@@ -43,10 +66,22 @@ pub struct XiheRuntimeInstance {
 
 impl XiheRuntimeInstance {
     pub fn new(ws_id: &str, workspace_path: &str, profile: SecurityProfile) -> Self {
+        Self::new_with_spec(ws_id, workspace_path, profile, 0, "")
+    }
+
+    pub fn new_with_spec(
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        generation: u64,
+        spec_hash: &str,
+    ) -> Self {
         Self {
             ws_id: ws_id.to_string(),
             workspace_path: workspace_path.to_string(),
             profile,
+            generation,
+            spec_hash: spec_hash.to_string(),
             file_service_pid: None,
             mcp_bridges: HashMap::new(),
             last_active: SystemTime::now(),
@@ -73,7 +108,7 @@ impl XiheRuntimeInstance {
 #[derive(Debug, Default)]
 pub struct WorkspaceRegistry {
     instances: Arc<RwLock<HashMap<String, XiheRuntimeInstance>>>,
-    hydrated: AtomicBool,
+    statuses: Arc<RwLock<HashMap<String, WorkspaceStatus>>>,
 }
 
 impl WorkspaceRegistry {
@@ -82,12 +117,8 @@ impl WorkspaceRegistry {
     }
 
     pub async fn register(&self, ws_id: &str, workspace_path: &str) {
-        let instance = XiheRuntimeInstance::new(ws_id, workspace_path, SecurityProfile::Strict);
-        self.instances
-            .write()
-            .await
-            .insert(ws_id.to_string(), instance);
-        self.hydrated.store(true, Ordering::Relaxed);
+        self.register_with_spec(ws_id, workspace_path, SecurityProfile::Strict, 0, "")
+            .await;
     }
 
     pub async fn register_with_profile(
@@ -96,21 +127,101 @@ impl WorkspaceRegistry {
         workspace_path: &str,
         profile: SecurityProfile,
     ) {
-        let instance = XiheRuntimeInstance::new(ws_id, workspace_path, profile);
+        self.register_with_spec(ws_id, workspace_path, profile, 0, "")
+            .await;
+    }
+
+    pub async fn register_with_spec(
+        &self,
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        generation: u64,
+        spec_hash: &str,
+    ) {
+        let instance = XiheRuntimeInstance::new_with_spec(
+            ws_id,
+            workspace_path,
+            profile,
+            generation,
+            spec_hash,
+        );
         self.instances
             .write()
             .await
             .insert(ws_id.to_string(), instance);
-        self.hydrated.store(true, Ordering::Relaxed);
+        self.mark_ready(ws_id, generation, spec_hash).await;
     }
 
-    /// M2-3.3: registry as cache — distinguish not ready vs not registered.
-    pub fn is_hydrated(&self) -> bool {
-        self.hydrated.load(Ordering::Relaxed)
+    pub async fn mark_materializing(&self, ws_id: &str) {
+        let mut statuses = self.statuses.write().await;
+        let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
+        let previous_hash = statuses
+            .get(ws_id)
+            .and_then(|status| status.spec_hash.clone());
+        statuses.insert(
+            ws_id.to_string(),
+            WorkspaceStatus {
+                workspace_id: ws_id.to_string(),
+                state: MaterializationState::Materializing,
+                generation: previous_generation,
+                spec_hash: previous_hash,
+                last_error: None,
+            },
+        );
     }
 
-    pub fn set_hydrated(&self, v: bool) {
-        self.hydrated.store(v, Ordering::Relaxed);
+    pub async fn mark_ready(&self, ws_id: &str, generation: u64, spec_hash: &str) {
+        self.statuses.write().await.insert(
+            ws_id.to_string(),
+            WorkspaceStatus {
+                workspace_id: ws_id.to_string(),
+                state: MaterializationState::Ready,
+                generation: (generation != 0).then_some(generation),
+                spec_hash: (!spec_hash.is_empty()).then_some(spec_hash.to_string()),
+                last_error: None,
+            },
+        );
+    }
+
+    pub async fn mark_failed(&self, ws_id: &str, error: &str) {
+        let mut statuses = self.statuses.write().await;
+        let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
+        let previous_hash = statuses
+            .get(ws_id)
+            .and_then(|status| status.spec_hash.clone());
+        statuses.insert(
+            ws_id.to_string(),
+            WorkspaceStatus {
+                workspace_id: ws_id.to_string(),
+                state: MaterializationState::Failed,
+                generation: previous_generation,
+                spec_hash: previous_hash,
+                last_error: Some(error.to_string()),
+            },
+        );
+    }
+
+    pub async fn mark_released(&self, ws_id: &str) {
+        let mut statuses = self.statuses.write().await;
+        let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
+        let previous_hash = statuses
+            .get(ws_id)
+            .and_then(|status| status.spec_hash.clone());
+        statuses.insert(
+            ws_id.to_string(),
+            WorkspaceStatus {
+                workspace_id: ws_id.to_string(),
+                state: MaterializationState::Released,
+                generation: previous_generation,
+                spec_hash: previous_hash,
+                last_error: None,
+            },
+        );
+    }
+
+    pub async fn status(&self, ws_id: &str) -> Option<WorkspaceStatus> {
+        self.statuses.read().await.get(ws_id).cloned()
     }
 
     pub async fn unregister(&self, ws_id: &str) {
@@ -165,11 +276,7 @@ pub async fn get_instance_for_request(
     workspace_id: &str,
 ) -> Result<XiheRuntimeInstance, String> {
     let instance = registry.get(workspace_id).await.ok_or_else(|| {
-        if !registry.is_hydrated() {
-            format!("workspace not registered: {workspace_id} (WORKSPACE_REGISTRY_NOT_READY)")
-        } else {
-            format!("workspace not registered: {workspace_id} (WORKSPACE_NOT_REGISTERED)")
-        }
+        format!("workspace not registered: {workspace_id} (WORKSPACE_NOT_REGISTERED)")
     })?;
     registry.update_last_active(workspace_id).await;
     Ok(instance)
@@ -281,7 +388,7 @@ mod tests {
         let err = get_instance_for_request(&registry, "ws-nonexistent")
             .await
             .unwrap_err();
-        assert!(err.contains("not registered"));
+        assert!(err.contains("WORKSPACE_NOT_REGISTERED"));
     }
 
     #[tokio::test]
@@ -304,6 +411,21 @@ mod tests {
         assert!(!InstanceState::Stopped.is_running());
         assert!(!InstanceState::Suspended.is_running());
         assert!(!InstanceState::Released.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_status_tracks_failure_without_global_hydration_flag() {
+        let registry = WorkspaceRegistry::new();
+        registry.mark_materializing("ws-1").await;
+        assert_eq!(
+            registry.status("ws-1").await.unwrap().state,
+            MaterializationState::Materializing
+        );
+
+        registry.mark_failed("ws-1", "execution spec not found").await;
+        let status = registry.status("ws-1").await.unwrap();
+        assert_eq!(status.state, MaterializationState::Failed);
+        assert_eq!(status.last_error.as_deref(), Some("execution spec not found"));
     }
 
     #[test]

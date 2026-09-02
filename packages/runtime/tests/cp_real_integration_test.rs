@@ -10,7 +10,12 @@ fn cp_port() -> u16 {
 }
 
 fn cp_api_token() -> String {
-    std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-change-me".into())
+    std::env::var("XIHE_CP_API_TOKEN")
+        .expect("XIHE_CP_API_TOKEN must be set for real CP integration tests")
+}
+
+fn test_password() -> String {
+    format!("runtime-test-{}", uuid::Uuid::new_v4())
 }
 
 fn cp_url() -> String {
@@ -56,9 +61,10 @@ async fn test_cp_auth_register_login() {
 
     let client = reqwest::Client::new();
 
+    let password = test_password();
     let register_body = serde_json::json!({
         "email": email,
-        "password": "Test1234!",
+        "password": password,
         "name": "Integration Test User"
     });
 
@@ -84,7 +90,7 @@ async fn test_cp_auth_register_login() {
 
     let login_body = serde_json::json!({
         "email": email,
-        "password": "Test1234!"
+        "password": register_body["password"]
     });
 
     let login_resp = client

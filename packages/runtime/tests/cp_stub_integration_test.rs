@@ -87,7 +87,7 @@ fn test_sync_sends_auth_header() {
         .match_header("Authorization", TEST_AUTHORIZATION)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(&empty_hashmap_body())
+        .with_body(empty_hashmap_body())
         .create();
 
     let url = server.url();
@@ -108,7 +108,7 @@ fn test_sync_sends_auth_header_on_all_system_requests() {
         .match_header("Authorization", TEST_AUTHORIZATION)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(&empty_hashmap_body())
+        .with_body(empty_hashmap_body())
         .create();
 
     let url = server.url();

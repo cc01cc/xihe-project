@@ -9,6 +9,22 @@ use tracing::{error, info, warn};
 pub const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
+pub fn bridge_base_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}")
+}
+
+pub fn bridge_server_url(base_url: &str, server_id: &str) -> String {
+    format!("{}/{}", base_url.trim_end_matches('/'), server_id)
+}
+
+pub fn bridge_health_url(base_url: &str) -> String {
+    format!("{}/_health", base_url.trim_end_matches('/'))
+}
+
+pub fn bridge_spawn_url(base_url: &str) -> String {
+    format!("{}/_spawn", base_url.trim_end_matches('/'))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BridgeInfo {
     pub server_id: String,
@@ -49,20 +65,23 @@ impl McpProcessManager {
 
     pub async fn touch(&self, ws_id: &str, server_id: &str) {
         let mut bridges = self.bridges.write().await;
-        if let Some(ws_bridges) = bridges.get_mut(ws_id) {
-            if let Some(info) = ws_bridges.get_mut(server_id) {
-                info.last_active = SystemTime::now();
-            }
+        if let Some(ws_bridges) = bridges.get_mut(ws_id)
+            && let Some(info) = ws_bridges.get_mut(server_id)
+        {
+            info.last_active = SystemTime::now();
         }
     }
 
     pub async fn reap_idle(&self, idle: Duration) -> usize {
         let mut bridges = self.bridges.write().await;
         let mut removed = 0;
-        for (_ws_id, ws_bridges) in bridges.iter_mut() {
+        for ws_bridges in bridges.values_mut() {
             let before = ws_bridges.len();
             ws_bridges.retain(|_, info| {
-                info.last_active.elapsed().map(|e| e < idle).unwrap_or(false)
+                info.last_active
+                    .elapsed()
+                    .map(|e| e < idle)
+                    .unwrap_or(false)
             });
             removed += before - ws_bridges.len();
         }
@@ -85,6 +104,7 @@ impl McpProcessManager {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn_with_generation(
         &self,
         ws_id: &str,
@@ -143,11 +163,11 @@ impl McpProcessManager {
 
     pub async fn get_bridge_url(&self, ws_id: &str, server_id: &str) -> Option<String> {
         let mut workspaces = self.bridges.write().await;
-        if let Some(servers) = workspaces.get_mut(ws_id) {
-            if let Some(info) = servers.get_mut(server_id) {
-                info.last_active = SystemTime::now();
-                return Some(format!("http://{}:{}/{}", info.container_ip, info.port, server_id));
-            }
+        if let Some(servers) = workspaces.get_mut(ws_id)
+            && let Some(info) = servers.get_mut(server_id)
+        {
+            info.last_active = SystemTime::now();
+            return Some(bridge_base_url(&info.container_ip, info.port));
         }
         None
     }
@@ -172,14 +192,22 @@ impl McpProcessManager {
         for b in &bridges {
             info!(
                 "bridge observed: ws={} server={} gen={} hash={} port={} status={:?} lastActive={:?} startedAt={:?}",
-                ws_id, b.server_id, b.generation, b.hash, b.port, b.status, b.last_active, b.spawned_at
+                ws_id,
+                b.server_id,
+                b.generation,
+                b.hash,
+                b.port,
+                b.status,
+                b.last_active,
+                b.spawned_at
             );
         }
         if bridges.is_empty() {
             info!("bridge observed: ws={} no bridges", ws_id);
         }
         // Q31 B: persist to DB — for v1, write to .xihe-state/bridge_observed.json (local file as DB stand-in)
-        let state_dir = std::env::var("XIHE_RUNTIME_STATE_DIR").unwrap_or_else(|_| ".xihe-state".to_string());
+        let state_dir =
+            std::env::var("XIHE_RUNTIME_STATE_DIR").unwrap_or_else(|_| ".xihe-state".to_string());
         let path = std::path::Path::new(&state_dir).join(format!("bridge_observed_{}.json", ws_id));
         if let Ok(json) = serde_json::to_string(&bridges) {
             let _ = std::fs::create_dir_all(&state_dir);
@@ -202,7 +230,7 @@ impl McpProcessManager {
             };
             for (ws_id, server_id) in &all {
                 if let Some(url) = self.get_bridge_url(ws_id, server_id).await {
-                    match reqwest::get(&format!("{url}/_health")).await {
+                    match reqwest::get(bridge_health_url(&url)).await {
                         Ok(resp) if resp.status().is_success() => {}
                         _ => {
                             warn!("bridge health check failed: ws={ws_id} server={server_id}");
@@ -219,7 +247,9 @@ impl McpProcessManager {
         cp_url: &str,
         api_token: &str,
     ) -> Vec<(String, String, Vec<String>)> {
-        let (_generation, _hash, servers) = self.poll_config_with_generation(ws_id, cp_url, api_token).await;
+        let (_generation, _hash, servers) = self
+            .poll_config_with_generation(ws_id, cp_url, api_token)
+            .await;
         servers
     }
 
@@ -325,7 +355,10 @@ mod tests {
         mgr.spawn("ws-1", "github", "npx", &[], "10.0.0.1", 39000)
             .await;
         let url = mgr.get_bridge_url("ws-1", "github").await;
-        assert_eq!(url, Some("http://10.0.0.1:39000/github".to_string()));
+        assert_eq!(url, Some("http://10.0.0.1:39000".to_string()));
+        let base = url.expect("bridge base URL should exist");
+        assert_eq!(bridge_server_url(&base, "github"), "http://10.0.0.1:39000/github");
+        assert_eq!(bridge_health_url(&base), "http://10.0.0.1:39000/_health");
     }
 
     #[tokio::test]

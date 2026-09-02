@@ -9,10 +9,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, RwLock};
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{error, info, warn};
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::prelude::*;
@@ -24,6 +22,11 @@ const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 struct ManagedProcess {
     child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
+    // STDIO MCP transport is newline-delimited JSON-RPC: one request line
+    // produces exactly one response line. stdout must outlive a single call
+    // so later forwards keep working; taking it per request would strand
+    // every subsequent call on this server.
+    stdout: Mutex<BufReader<ChildStdout>>,
     server_id: String,
     restart_count: u8,
     command: String,
@@ -88,9 +91,7 @@ async fn main() {
         .with(EnvFilter::new(env_filter))
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(|| {
-                    xihe_runtime::log_redact::RedactingWriter::new(std::io::stdout())
-                })
+                .with_writer(|| xihe_runtime::log_redact::RedactingWriter::new(std::io::stdout()))
                 .with_ansi(false),
         )
         .with(
@@ -121,7 +122,10 @@ async fn main() {
         .route("/{server_id}", post(mcp_call_handler))
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{port}");
+    // Bridge-network clients connect through the sandbox container IP. The
+    // WorkspaceManager rejects an un-published dynamic bridge port before this
+    // process is started when the caller is a native Windows Runtime.
+    let addr = format!("0.0.0.0:{port}");
     info!("mcp-bridge listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, router).await.unwrap();
@@ -186,10 +190,15 @@ async fn restart_process(
         .stdin
         .take()
         .ok_or_else(|| std::io::Error::other("failed to capture stdin"))?;
+    let new_stdout = new_child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("failed to capture stdout"))?;
 
     let new_proc = Arc::new(ManagedProcess {
         child: Mutex::new(new_child),
         stdin: Mutex::new(new_stdin),
+        stdout: Mutex::new(BufReader::new(new_stdout)),
         server_id: old_proc.server_id.clone(),
         restart_count: old_proc.restart_count + 1,
         command: old_proc.command.clone(),
@@ -264,7 +273,6 @@ async fn mcp_call_handler(
             .ok_or(StatusCode::NOT_FOUND)?
     };
 
-    let mut child = proc.child.lock().await;
     let mut stdin = proc.stdin.lock().await;
 
     stdin.write_all(&body).await.map_err(|e| {
@@ -276,58 +284,48 @@ async fn mcp_call_handler(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let Some(stdout) = child.stdout.take() else {
-        error!("no stdout for {server_id}");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    };
-
     drop(stdin);
-    drop(child);
 
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Vec<u8>, std::io::Error>>();
-
-    tokio::spawn(async move {
-        let mut reader = BufReader::new(stdout);
+    // Read exactly one newline-delimited JSON-RPC response. Reading the
+    // stream to EOF would hang until READ_TIMEOUT because STDIO servers
+    // stay alive between calls.
+    let mut stdout = proc.stdout.lock().await;
+    let read_result = tokio::time::timeout(READ_TIMEOUT, async {
         let mut line = Vec::with_capacity(4096);
-        let mut total = 0usize;
+        let n = match stdout.read_until(b'\n', &mut line).await {
+            Ok(n) => n,
+            Err(e) => return Err(e),
+        };
+        Ok::<(usize, Vec<u8>), std::io::Error>((n, line))
+    })
+    .await;
 
-        loop {
-            line.clear();
-            let read_future = reader.read_until(b'\n', &mut line);
-            match tokio::time::timeout(READ_TIMEOUT, read_future).await {
-                Ok(Ok(0)) => {
-                    let _ = tx.send(Ok(line.clone()));
-                    break;
-                }
-                Ok(Ok(n)) => {
-                    total += n;
-                    if tx.send(Ok(line[..n].to_vec())).is_err() {
-                        break;
-                    }
-                    if total > BUFFER_LIMIT {
-                        warn!("response truncated at {BUFFER_LIMIT}B for {server_id}");
-                        break;
-                    }
-                }
-                Ok(Err(e)) => {
-                    error!("read error for {server_id}: {e}");
-                    break;
-                }
-                Err(_) => {
-                    warn!("read timeout ({READ_TIMEOUT:?}) for {server_id}");
-                    break;
-                }
-            }
+    match read_result {
+        Ok(Ok((0, _))) => {
+            error!("server {server_id} closed stdout");
+            Err(StatusCode::BAD_GATEWAY)
         }
-    });
-
-    let stream = UnboundedReceiverStream::new(rx);
-    Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/json")],
-        axum::body::Body::from_stream(stream.map(|chunk| chunk.map(axum::body::Bytes::from))),
-    )
-        .into_response())
+        Ok(Ok((n, line))) => {
+            let total = n;
+            if total > BUFFER_LIMIT {
+                warn!("response truncated at {BUFFER_LIMIT}B for {server_id}");
+            }
+            Ok((
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                axum::body::Body::from(line),
+            )
+                .into_response())
+        }
+        Ok(Err(e)) => {
+            error!("read error for {server_id}: {e}");
+            Err(StatusCode::BAD_GATEWAY)
+        }
+        Err(_) => {
+            warn!("read timeout ({READ_TIMEOUT:?}) for {server_id}");
+            Err(StatusCode::GATEWAY_TIMEOUT)
+        }
+    }
 }
 
 fn spawn_managed_process(req: &SpawnRequest) -> std::io::Result<ManagedProcess> {
@@ -342,10 +340,15 @@ fn spawn_managed_process(req: &SpawnRequest) -> std::io::Result<ManagedProcess> 
         .stdin
         .take()
         .ok_or_else(|| std::io::Error::other("failed to capture stdin"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("failed to capture stdout"))?;
 
     Ok(ManagedProcess {
         child: Mutex::new(child),
         stdin: Mutex::new(stdin),
+        stdout: Mutex::new(BufReader::new(stdout)),
         server_id: req.server_id.clone(),
         restart_count: 0,
         command: req.command.clone(),

@@ -79,60 +79,52 @@ mod tests {
 
     // --- Symlink escape ---
 
+    #[cfg(unix)]
     #[test]
     fn test_read_rejects_symlink_to_etc() {
         let (dir, ws) = setup_ws();
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink("/etc", dir.path().join("link-to-etc")).unwrap();
-            let result = xihe_fs::resolve_read_path("link-to-etc/shadow", &ws);
-            assert!(result.is_err());
-        }
+        std::os::unix::fs::symlink("/etc", dir.path().join("link-to-etc")).unwrap();
+        let result = xihe_fs::resolve_read_path("link-to-etc/shadow", &ws);
+        assert!(result.is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_read_rejects_symlink_to_other_workspace() {
         let ws1 = TempDir::new().unwrap();
         let ws2 = TempDir::new().unwrap();
         fs::write(ws2.path().join("secret.txt"), "secret").unwrap();
 
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(ws2.path(), ws1.path().join("link-to-ws2")).unwrap();
-            let ws = ws1.path().to_str().unwrap().to_string();
-            let result = xihe_fs::resolve_read_path("link-to-ws2/secret.txt", &ws);
-            assert!(result.is_err());
-        }
+        std::os::unix::fs::symlink(ws2.path(), ws1.path().join("link-to-ws2")).unwrap();
+        let ws = ws1.path().to_str().unwrap().to_string();
+        let result = xihe_fs::resolve_read_path("link-to-ws2/secret.txt", &ws);
+        assert!(result.is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_read_rejects_chained_symlinks() {
         let dir = TempDir::new().unwrap();
         let outside = TempDir::new().unwrap();
         fs::write(outside.path().join("secret"), "data").unwrap();
 
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(outside.path(), dir.path().join("a")).unwrap();
-            std::os::unix::fs::symlink(dir.path().join("a"), dir.path().join("b")).unwrap();
-            let ws = dir.path().to_str().unwrap().to_string();
-            let result = xihe_fs::resolve_read_path("b/secret", &ws);
-            assert!(result.is_err());
-        }
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("a")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("a"), dir.path().join("b")).unwrap();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let result = xihe_fs::resolve_read_path("b/secret", &ws);
+        assert!(result.is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_write_rejects_symlink_parent_escape() {
         let dir = TempDir::new().unwrap();
         let outside = TempDir::new().unwrap();
 
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(outside.path(), dir.path().join("escape")).unwrap();
-            let ws = dir.path().to_str().unwrap().to_string();
-            let result = xihe_fs::resolve_write_path("escape/newfile.txt", &ws);
-            assert!(result.is_err());
-        }
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("escape")).unwrap();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let result = xihe_fs::resolve_write_path("escape/newfile.txt", &ws);
+        assert!(result.is_err());
     }
 
     // --- Write boundary: write inside workspace ---

@@ -479,13 +479,10 @@ pub fn validate_endpoint_with_allowlist(
         std::env::var("XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL").is_ok_and(|value| value == "true");
     let local_http = url.scheme() == "http"
         && allow_local_http
-        && url
-            .host_str()
-            .is_some_and(|host| host.eq_ignore_ascii_case("host.docker.internal"));
-    if url
-        .host_str()
-        .is_some_and(|host| host.eq_ignore_ascii_case("host.docker.internal"))
-        && !local_http
+        && url.host_str().is_some_and(is_local_development_host);
+    if url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("host.docker.internal") && !local_http
+    })
     {
         return Err(RemoteMcpError::EndpointNotAllowed(
             "host.docker.internal is allowed only for explicit local HTTP development".into(),
@@ -514,15 +511,17 @@ pub fn validate_endpoint_with_allowlist(
             "host is not in the configured allowlist".into(),
         ));
     }
-    if host_lower == "localhost"
+    if !local_http
+        && (host_lower == "localhost"
         || host_lower.ends_with(".localhost")
-        || host_lower == "localhost.localdomain"
+        || host_lower == "localhost.localdomain")
     {
         return Err(RemoteMcpError::EndpointNotAllowed(
             "localhost is not allowed".into(),
         ));
     }
-    if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
+    if !local_http
+        && let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
         && is_private_or_local(ip)
     {
         return Err(RemoteMcpError::EndpointNotAllowed(
@@ -546,9 +545,11 @@ fn host_matches_allowlist(host: &str, allowed: &str) -> bool {
 }
 
 pub async fn validate_endpoint_dns(endpoint: &Url) -> Result<(), RemoteMcpError> {
-    if endpoint
-        .host_str()
-        .is_some_and(|host| host.eq_ignore_ascii_case("host.docker.internal"))
+    let allow_local_http = std::env::var("XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL")
+        .is_ok_and(|value| value == "true");
+    if endpoint.scheme() == "http"
+        && allow_local_http
+        && endpoint.host_str().is_some_and(is_local_development_host)
     {
         return Ok(());
     }
@@ -571,6 +572,15 @@ pub async fn validate_endpoint_dns(endpoint: &Url) -> Result<(), RemoteMcpError>
         }
     }
     Ok(())
+}
+
+fn is_local_development_host(host: &str) -> bool {
+    let normalized = host.trim_matches(['[', ']']);
+    normalized.eq_ignore_ascii_case("host.docker.internal")
+        || normalized.eq_ignore_ascii_case("localhost")
+        || normalized.eq_ignore_ascii_case("localhost.localdomain")
+        || normalized == "127.0.0.1"
+        || normalized == "::1"
 }
 
 fn is_private_or_local(ip: IpAddr) -> bool {

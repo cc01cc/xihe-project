@@ -2,8 +2,8 @@
 mod tests {
     #[test]
     fn test_artifact_store_api() {
-        // Artifact store is tested inline in sandbox.rs
-        // This file verifies the module compiles and links correctly
-        assert!(true);
+        let id = xihe_runtime::sandbox::store_artifact("artifact", 1);
+        let lines = xihe_runtime::sandbox::read_artifact(&id, None, None).unwrap();
+        assert_eq!(lines, vec!["artifact"]);
     }
 }

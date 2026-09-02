@@ -47,7 +47,7 @@ mod tests {
         let result = check_required().await;
         // On dev machine with Docker and xihe/workspace, should be Ready
         match result {
-            Observed::Ready => assert!(true),
+            Observed::Ready => {}
             Observed::Blocked(msg) => {
                 // If Docker unavailable, skip (don't fail)
                 if msg.contains("Docker unavailable") {

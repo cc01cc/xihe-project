@@ -27,9 +27,11 @@ pub fn resolve_state_dir() -> PathBuf {
 /// Ensure `device_id` file exists in `state_dir`, returning the id.
 /// - If `device_id` file exists and contains a valid UUID-like string, return it.
 /// - Otherwise generate a new v4 UUID, write it atomically, and return it.
-/// This is `grill M2-3.1 A` — random UUID file, not hardware-derived.
+///   This is `grill M2-3.1 A` — random UUID file, not hardware-derived.
 pub async fn ensure_device_id(state_dir: &Path) -> Result<String> {
-    fs::create_dir_all(state_dir).await.map_err(RuntimeError::Io)?;
+    fs::create_dir_all(state_dir)
+        .await
+        .map_err(RuntimeError::Io)?;
     let device_id_path = state_dir.join("device_id");
     if device_id_path.exists() {
         let content = fs::read_to_string(&device_id_path)
@@ -92,7 +94,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let state_dir = dir.path().join("state2");
         tokio::fs::create_dir_all(&state_dir).await.unwrap();
-        tokio::fs::write(state_dir.join("device_id"), b"not-a-uuid").await.unwrap();
+        tokio::fs::write(state_dir.join("device_id"), b"not-a-uuid")
+            .await
+            .unwrap();
         let id = ensure_device_id(&state_dir).await.unwrap();
         assert!(uuid::Uuid::parse_str(&id).is_ok());
         assert_ne!(id, "not-a-uuid");

@@ -41,13 +41,21 @@ fn problem(status: StatusCode, code: &str, detail: &str) -> (StatusCode, Json<Va
     )
 }
 
-fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
+pub(crate) fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
     let status = match &e {
         RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => {
             StatusCode::FORBIDDEN
         }
         RuntimeError::FileNotFound(_) => StatusCode::NOT_FOUND,
         RuntimeError::WorkspaceNotFound(_) => StatusCode::NOT_FOUND,
+        RuntimeError::ExecutionSpecNotFound(_) | RuntimeError::McpBridgeNotFound { .. } => {
+            StatusCode::NOT_FOUND
+        }
+        RuntimeError::ExecutionSpecUnavailable { .. }
+        | RuntimeError::WorkspaceMaterializationFailed { .. }
+        | RuntimeError::McpBridgeUnavailable { .. }
+        | RuntimeError::Docker(_) => StatusCode::SERVICE_UNAVAILABLE,
+        RuntimeError::InvalidExecutionSpec { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         RuntimeError::InvalidPath(_) => StatusCode::BAD_REQUEST,
         RuntimeError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -61,22 +69,6 @@ fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
     problem(status, code, "Runtime file operation failed")
 }
 
-fn workspace_not_found(app: &AppState) -> (StatusCode, Json<Value>) {
-    if !app.registry.is_hydrated() {
-        problem(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "WORKSPACE_REGISTRY_NOT_READY",
-            "Registry not hydrated",
-        )
-    } else {
-        problem(
-            StatusCode::NOT_FOUND,
-            "WORKSPACE_NOT_FOUND",
-            "Workspace not found",
-        )
-    }
-}
-
 // ---- Handlers ----
 
 pub async fn handle_read_file(
@@ -85,10 +77,9 @@ pub async fn handle_read_file(
     Json(req): Json<ReadFileRestRequest>,
 ) -> Result<Json<ReadFileResult>, (StatusCode, Json<Value>)> {
     let ws = app
-        .registry
-        .get(&ws_id)
+        .ensure_workspace(&ws_id)
         .await
-        .ok_or_else(|| workspace_not_found(&app))?;
+        .map_err(map_error)?;
     let mut content = fs::read_file(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -110,11 +101,6 @@ pub async fn handle_write_binary(
     Path((ws_id, raw_path)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = app
-        .registry
-        .get(&ws_id)
-        .await
-        .ok_or_else(|| workspace_not_found(&app))?;
     let path = percent_encoding::percent_decode_str(&raw_path)
         .decode_utf8()
         .map_err(|_| {
@@ -130,6 +116,10 @@ pub async fn handle_write_binary(
                 })),
             )
         })?;
+    let ws = app
+        .ensure_workspace(&ws_id)
+        .await
+        .map_err(map_error)?;
     let msg = fs::write_file_binary(&path, &body, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -142,10 +132,9 @@ pub async fn handle_list_directory(
     Json(req): Json<ListDirectoryRequest>,
 ) -> Result<Json<fs::DirectoryListing>, (StatusCode, Json<Value>)> {
     let ws = app
-        .registry
-        .get(&ws_id)
+        .ensure_workspace(&ws_id)
         .await
-        .ok_or_else(|| workspace_not_found(&app))?;
+        .map_err(map_error)?;
     let entries = fs::list_directory(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(fs::DirectoryListing { entries }))
 }
@@ -156,10 +145,9 @@ pub async fn handle_delete_file(
     Json(req): Json<DeleteFileRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let ws = app
-        .registry
-        .get(&ws_id)
+        .ensure_workspace(&ws_id)
         .await
-        .ok_or_else(|| workspace_not_found(&app))?;
+        .map_err(map_error)?;
     let msg = fs::delete_file(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -172,10 +160,9 @@ pub async fn handle_mkdir(
     Json(req): Json<MkdirRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let ws = app
-        .registry
-        .get(&ws_id)
+        .ensure_workspace(&ws_id)
         .await
-        .ok_or_else(|| workspace_not_found(&app))?;
+        .map_err(map_error)?;
     let msg = fs::mkdir(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -188,10 +175,9 @@ pub async fn handle_stat(
     Json(req): Json<GetFileInfoRequest>,
 ) -> Result<Json<fs::FileInfo>, (StatusCode, Json<Value>)> {
     let ws = app
-        .registry
-        .get(&ws_id)
+        .ensure_workspace(&ws_id)
         .await
-        .ok_or_else(|| workspace_not_found(&app))?;
+        .map_err(map_error)?;
     let info = fs::get_file_info(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(info))
 }
@@ -205,28 +191,95 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use tempfile::TempDir;
+    use tokio::task::JoinHandle;
     use tokio::sync::Mutex;
+    use xihe_runtime::hydrate::{ExecutionSpecClient, WorkspaceEnsurer};
     use xihe_runtime::gateway::WorkspaceRegistry;
     use xihe_runtime::workspace::WorkspaceManager;
 
-    /// Helper: create a temp workspace dir, register it, return (app_state, ws_id, _dir_guard)
-    async fn setup_ws() -> (Arc<AppState>, String, TempDir) {
+    struct TestCp {
+        task: JoinHandle<()>,
+    }
+
+    impl Drop for TestCp {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    /// Create a targeted-spec test server and a cached workspace instance.
+    async fn setup_ws() -> (Arc<AppState>, String, TempDir, TestCp) {
         let dir = TempDir::new().unwrap();
         let ws_id = uuid::Uuid::new_v4().to_string();
-        let reg = WorkspaceRegistry::new();
-        reg.register(&ws_id, dir.path().to_str().unwrap()).await;
+        let hash = "a".repeat(64);
+        let route_path = format!(
+            "/internal/v1/runtime/workspaces/{ws_id}/execution-spec"
+        );
+        let spec_body = serde_json::json!({
+            "workspaceId": ws_id,
+            "generation": 1,
+            "sandboxSpecHash": hash,
+            "sandboxSpec": {"profile": "strict"},
+            "storageBackend": "host_directory",
+            "storageRef": ws_id,
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let route_body = spec_body.clone();
+        let router = axum::Router::new()
+            .route(
+                &route_path,
+                axum::routing::get(move || {
+                    let body = route_body.clone();
+                    async move { axum::Json(body) }
+                }),
+            )
+            .fallback(|| async { StatusCode::NOT_FOUND });
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("targeted-spec test server should stay running");
+        });
+
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let workspace_path = xihe_runtime::storage::resolve_host_path(
+            dir.path().to_str().unwrap(),
+            &ws_id,
+            &ws_id,
+        )
+        .await
+        .unwrap();
+        tokio::fs::create_dir_all(&workspace_path).await.unwrap();
+        registry
+            .register_with_spec(
+                &ws_id,
+                workspace_path.to_str().unwrap(),
+                xihe_runtime::sandbox::SecurityProfile::Strict,
+                1,
+                &hash,
+            )
+            .await;
+        let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
         let app = Arc::new(AppState {
-            registry: Arc::new(reg),
-            manager: Arc::new(Mutex::new(WorkspaceManager::new())),
+            registry: registry.clone(),
+            manager: manager.clone(),
             device_id: "test-device".to_string(),
             ready: Arc::new(AtomicBool::new(true)),
+            workspace_ensurer: Arc::new(WorkspaceEnsurer::new(
+                registry,
+                manager,
+                ExecutionSpecClient::new(&format!("http://{address}"), "test-token"),
+                Some(dir.path().to_path_buf()),
+            )),
         });
-        (app, ws_id, dir)
+        (app, ws_id, dir, TestCp { task })
     }
 
     #[tokio::test]
     async fn test_read_write_roundtrip() {
-        let (app, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
 
         // Write a file directly via the fs module to validate the workspace works
         let ws = app.registry.get(&ws_id).await.unwrap();
@@ -248,7 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_workspace_not_found() {
-        let (app, _own_ws_id, _dir) = setup_ws().await;
+        let (app, _own_ws_id, _dir, _cp) = setup_ws().await;
 
         let state = State(app);
         let path = Path("ws-nonexistent".to_string());
@@ -265,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_binary_handler() {
-        let (app, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
 
         // URL-encoded path "test/hello.txt"
         let state = State(app);
@@ -283,7 +336,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_max_bytes_truncation() {
-        let (app, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
 
         // Write a 100-byte file via fs
         let ws = app.registry.get(&ws_id).await.unwrap();
@@ -306,7 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_directory_handler() {
-        let (app, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
 
         // Write two files via fs
         let ws = app.registry.get(&ws_id).await.unwrap();
@@ -329,7 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_file_handler() {
-        let (app, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
 
         // Write via fs
         let ws = app.registry.get(&ws_id).await.unwrap();
@@ -349,7 +402,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mkdir_handler() {
-        let (app, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
 
         let state = State(app);
         let path = Path(ws_id);
@@ -362,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stat_handler() {
-        let (app, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
 
         // Write via fs
         let ws = app.registry.get(&ws_id).await.unwrap();
@@ -383,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_binary_write_and_stat() {
-        let (app, ws_id, _dir) = setup_ws().await;
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
 
         // Write via handler
         let state = State(app.clone());

@@ -37,7 +37,7 @@ fn strip_unc_prefix(p: PathBuf) -> PathBuf {
 /// - B1: strict regex, length, no NUL/colon/slash already covered by regex
 /// - Ownership: `ws_id == storageRef` (per M1a 2.1a)
 /// - B2: Windows canonicalize + lowercase prefix check (requires hostRoot exists;
-///       if joined path not yet exists, canonicalize its parent)
+///   if joined path not yet exists, canonicalize its parent)
 /// - Returns `STORAGE_BINDING_INVALID` (InvalidPath/PathTraversal/SymlinkEscape) on failure
 pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
     // B1: strict regex
@@ -74,11 +74,12 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
             .map_err(RuntimeError::Io)?;
     }
 
-    let host_root_canonical = strip_unc_prefix(
-        host_root_path
-            .canonicalize()
-            .map_err(|e| RuntimeError::InvalidPath(format!("hostRoot canonicalize failed {:?}: {}", host_root, e)))?,
-    );
+    let host_root_canonical = strip_unc_prefix(host_root_path.canonicalize().map_err(|e| {
+        RuntimeError::InvalidPath(format!(
+            "hostRoot canonicalize failed {:?}: {}",
+            host_root, e
+        ))
+    })?);
 
     // Join (lexically) — regex already guarantees no traversal, but we still canonical-check.
     let joined = host_root_path.join(storage_ref);
@@ -86,7 +87,11 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
     // If joined exists, canonicalize it; otherwise canonicalize its first existing ancestor (hostRoot) and append remaining.
     let joined_canonical = if joined.exists() {
         strip_unc_prefix(joined.canonicalize().map_err(|e| {
-            RuntimeError::InvalidPath(format!("joined canonicalize failed {:?}: {}", joined.display(), e))
+            RuntimeError::InvalidPath(format!(
+                "joined canonicalize failed {:?}: {}",
+                joined.display(),
+                e
+            ))
         })?)
     } else {
         // Parent (hostRoot) is guaranteed to exist after above; canonicalize parent + push child name lexically then check.
@@ -104,7 +109,8 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
     // starts_with on Path would be case-sensitive on Windows, so use lowercased string.
     if joined_lower != host_lower
         && !joined_lower.starts_with(&format!("{}/", host_lower))
-        && !joined_lower.starts_with(&format!("{}\\{}", host_lower, ""))  // host_lower already ends without sep; handle both
+        && !joined_lower.starts_with(&format!("{}\\{}", host_lower, ""))
+    // host_lower already ends without sep; handle both
     {
         // More robust: check Path starts_with on canonical Paths (which are already case-preserving but we lowercased).
         // Fall back to Path check as well.
@@ -147,27 +153,29 @@ pub fn resolve_host_path_sync(host_root: &str, storage_ref: &str, ws_id: &str) -
     }
     let host_root_path = Path::new(host_root);
     let host_root_canonical = strip_unc_prefix(host_root_path.canonicalize().map_err(|e| {
-        RuntimeError::InvalidPath(format!("hostRoot canonicalize failed {:?}: {}", host_root, e))
+        RuntimeError::InvalidPath(format!(
+            "hostRoot canonicalize failed {:?}: {}",
+            host_root, e
+        ))
     })?);
     let joined = host_root_path.join(storage_ref);
     let joined_canonical = if joined.exists() {
         strip_unc_prefix(joined.canonicalize().map_err(|e| {
-            RuntimeError::InvalidPath(format!("joined canonicalize failed {:?}: {}", joined.display(), e))
+            RuntimeError::InvalidPath(format!(
+                "joined canonicalize failed {:?}: {}",
+                joined.display(),
+                e
+            ))
         })?)
     } else {
         host_root_canonical.join(storage_ref)
     };
     let host_lower = host_root_canonical.to_string_lossy().to_lowercase();
     let joined_lower = joined_canonical.to_string_lossy().to_lowercase();
-    if !joined_canonical.starts_with(&host_root_canonical) && joined_lower != host_lower && !joined_lower.starts_with(&format!("{}/", host_lower)) {
-        if !joined_canonical.starts_with(&host_root_canonical) {
-            return Err(RuntimeError::SymlinkEscape {
-                path: joined.display().to_string(),
-                resolved: joined_canonical.display().to_string(),
-            });
-        }
-    }
-    if !joined_canonical.starts_with(&host_root_canonical) {
+    let within_root = joined_lower == host_lower
+        || joined_lower.starts_with(&format!("{host_lower}/"))
+        || joined_lower.starts_with(&format!("{host_lower}\\"));
+    if !within_root {
         return Err(RuntimeError::SymlinkEscape {
             path: joined.display().to_string(),
             resolved: joined_canonical.display().to_string(),
@@ -205,7 +213,11 @@ mod tests {
             let r = resolve_host_path_sync(host_root, bad, bad);
             assert!(r.is_err(), "should reject {:?}", bad);
             let msg = r.unwrap_err().to_string();
-            assert!(msg.contains("invalid storageRef") || msg.contains("Invalid path"), "{}", msg);
+            assert!(
+                msg.contains("invalid storageRef") || msg.contains("Invalid path"),
+                "{}",
+                msg
+            );
         }
     }
 
@@ -223,9 +235,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let host_root = dir.path().to_str().unwrap();
         let r = resolve_host_path_sync(host_root, "ws_valid123", "ws_valid123").unwrap();
-        // Should be hostRoot + ws_valid123 canonical
-        assert!(r.ends_with("ws_valid123"));
-        assert!(r.to_string_lossy().to_lowercase().contains(&host_root.to_lowercase().split('/').last().unwrap_or("").to_lowercase()) || true);
+        let expected = strip_unc_prefix(dir.path().canonicalize().unwrap()).join("ws_valid123");
+        assert_eq!(r, expected);
     }
 
     #[test]
@@ -265,7 +276,10 @@ mod tests {
         let sym_res = std::os::unix::fs::symlink(&outside_path, &link_path);
 
         if sym_res.is_err() {
-            println!("symlink creation not permitted, skipping test: {:?}", sym_res);
+            println!(
+                "symlink creation not permitted, skipping test: {:?}",
+                sym_res
+            );
             return;
         }
 
@@ -282,6 +296,10 @@ mod tests {
         // If the child exists and is a symlink, the exists() branch will canonicalize it and detect escape.
         assert!(r.is_err(), "symlink escape should be rejected, got {:?}", r);
         let msg = r.unwrap_err().to_string();
-        assert!(msg.contains("Symlink") || msg.contains("outside"), "{}", msg);
+        assert!(
+            msg.contains("Symlink") || msg.contains("outside"),
+            "{}",
+            msg
+        );
     }
 }

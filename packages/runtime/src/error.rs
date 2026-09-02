@@ -46,6 +46,31 @@ pub enum RuntimeError {
 
     #[error("Sandbox not found for workspace {0}")]
     SandboxNotFound(String),
+
+    #[error("Workspace execution spec not found: {0}")]
+    ExecutionSpecNotFound(String),
+
+    #[error("Workspace execution spec unavailable for {workspace_id}: {detail}")]
+    ExecutionSpecUnavailable { workspace_id: String, detail: String },
+
+    #[error("Invalid workspace execution spec for {workspace_id}: {detail}")]
+    InvalidExecutionSpec { workspace_id: String, detail: String },
+
+    #[error("Workspace materialization failed for {workspace_id}: {detail}")]
+    WorkspaceMaterializationFailed { workspace_id: String, detail: String },
+
+    #[error("MCP bridge not found for workspace {workspace_id}: {server_id}")]
+    McpBridgeNotFound {
+        workspace_id: String,
+        server_id: String,
+    },
+
+    #[error("MCP bridge unavailable for workspace {workspace_id}: {server_id}: {detail}")]
+    McpBridgeUnavailable {
+        workspace_id: String,
+        server_id: String,
+        detail: String,
+    },
 }
 
 impl From<RuntimeError> for rmcp::ErrorData {

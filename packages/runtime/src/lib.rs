@@ -1,20 +1,20 @@
+pub mod capability;
 pub mod config_client;
+pub mod device;
 pub mod dotenv_loader;
+pub mod environment;
 pub mod error;
 pub mod fetch;
 pub mod fs;
 pub mod gateway;
+pub mod heartbeat;
+pub mod hydrate;
+pub mod log_redact;
 pub mod mcp_process;
 pub mod remote_mcp;
 pub mod sandbox;
-pub mod log_redact;
-pub mod workspace;
 pub mod storage;
-pub mod device;
-pub mod environment;
-pub mod hydrate;
-pub mod capability;
-pub mod heartbeat;
+pub mod workspace;
 
 #[cfg(test)]
 mod tests {

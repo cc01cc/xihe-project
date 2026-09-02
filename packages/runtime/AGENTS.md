@@ -4,7 +4,7 @@
 
 ## Tech Stack
 
-- **Rust** 1.97（edition 2024，rmcp 3.1.4）— 编译语言
+- **Rust** 1.88（edition 2024，rmcp 3.1.4）— 编译语言
 - **Cargo** — 构建/测试
 - **rmcp** — MCP 服务器框架
 - **Axum** — HTTP 服务器
@@ -51,6 +51,9 @@ src/
 - MCP endpoint 通过 rmcp 自动注册
 - 配置文件通过 ConfigClient（HTTP）从 CP 获取
 - 沙盒隔离依赖 Docker/bollard
+- 启动时只完成 Runtime 自身 liveness/readiness；通过 Bearer 按 `workspaceId` 定向获取 `WorkspaceExecutionSpec`，首次文件/命令/MCP 操作时再 materialize Workspace Sandbox。
+- Sandbox Container 创建、重建和删除只处理临时执行实体，必须保留 WorkspaceStorage 文件。
+- Coding/Isolated Sandbox 的 container-runtime 绑定容器内所有接口，但只通过 Docker 分配的 `127.0.0.1` host port 供 native Runtime 访问；不要假设 Docker Desktop Linux bridge IP 从 Windows host 可达。Strict Sandbox 不发布该端口。
 
 ## Permissions
 

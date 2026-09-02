@@ -13,7 +13,10 @@ use xihe_runtime::error::RuntimeError;
 use xihe_runtime::fs;
 
 const WORKSPACE: &str = "/workspace";
-const LISTEN_ADDR: &str = "127.0.0.1:39001";
+// Coding/Isolated gateways reach this service through a Docker-assigned loopback
+// host port. Binding all container interfaces is required because Windows native
+// hosts cannot route directly to Docker Desktop's Linux bridge IP.
+const LISTEN_ADDR: &str = "0.0.0.0:39001";
 
 #[derive(Clone)]
 struct AppState;
@@ -33,9 +36,7 @@ async fn main() {
         .with(EnvFilter::new(env_filter))
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(|| {
-                    xihe_runtime::log_redact::RedactingWriter::new(std::io::stdout())
-                })
+                .with_writer(|| xihe_runtime::log_redact::RedactingWriter::new(std::io::stdout()))
                 .with_ansi(false),
         )
         .with(

@@ -4,15 +4,18 @@ use std::time::Duration;
 
 use bollard::Docker;
 use bollard::exec::CreateExecOptions;
-use bollard::models::{ContainerCreateBody, HostConfig};
+use bollard::models::{ContainerCreateBody, HostConfig, PortBinding};
 use bollard::query_parameters::{
-    CreateContainerOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+    CreateContainerOptions, ListContainersOptions, RemoveContainerOptions, StartContainerOptions,
+    StopContainerOptions,
 };
 use tokio::fs;
 use tracing::{info, warn};
 
 use crate::error::{Result, RuntimeError};
 use crate::sandbox::SecurityProfile;
+
+pub const CONTAINER_RUNTIME_PORT: u16 = 39001;
 
 fn container_name(ws_id: &str) -> String {
     format!("xihe-workspace-ws_{ws_id}")
@@ -57,8 +60,17 @@ impl WorkspaceManager {
         profile: SecurityProfile,
         image: &str,
     ) -> Result<WorkspaceState> {
-        let docker = self.get_docker().await?;
         let name = container_name(ws_id);
+
+        // Establish the Docker connection first: remove_container_best_effort is a
+        // no-op when self.docker is not yet connected.
+        self.get_docker().await?;
+        // Sandbox containers are ephemeral; WorkspaceStorage persists. A leftover
+        // container from a previous Runtime generation (unclean shutdown) must be
+        // removed before creating a fresh one — never touch host storage here.
+        self.remove_container_best_effort(&name).await;
+
+        let docker = self.get_docker().await?;
 
         fs::create_dir_all(workspace_path)
             .await
@@ -71,7 +83,10 @@ impl WorkspaceManager {
             if let Err(e) = fs::write(&probe_file, content.as_bytes()).await {
                 return Err(RuntimeError::Io(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
-                    format!("STORAGE_UNAVAILABLE: host writability probe failed for {}: {}", workspace_path, e),
+                    format!(
+                        "STORAGE_UNAVAILABLE: host writability probe failed for {}: {}",
+                        workspace_path, e
+                    ),
                 )));
             }
             let _ = fs::remove_file(&probe_file).await;
@@ -79,13 +94,10 @@ impl WorkspaceManager {
         // M1b: available space check (>64MB) — fs2
         {
             let available = fs2::available_space(workspace_path).map_err(|e| {
-                RuntimeError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!(
-                        "STORAGE_UNAVAILABLE: available_space check failed for {}: {}",
-                        workspace_path, e
-                    ),
-                ))
+                RuntimeError::Io(std::io::Error::other(format!(
+                    "STORAGE_UNAVAILABLE: available_space check failed for {}: {}",
+                    workspace_path, e
+                )))
             })?;
             if available < 64 * 1024 * 1024 {
                 return Err(RuntimeError::Io(std::io::Error::new(
@@ -98,6 +110,25 @@ impl WorkspaceManager {
             }
         }
 
+        // Native Windows hosts cannot route to Docker Desktop's Linux bridge IP.
+        // Publish the private container-runtime port on a Docker-assigned
+        // loopback port so the host gateway can reach it. Strict sandboxes use
+        // host-side file operations and do not need a published port.
+        let port_bindings = match profile {
+            SecurityProfile::Strict => None,
+            SecurityProfile::Coding | SecurityProfile::Isolated => Some(HashMap::from([(
+                format!("{CONTAINER_RUNTIME_PORT}/tcp"),
+                Some(vec![PortBinding {
+                    host_ip: Some("127.0.0.1".to_string()),
+                    host_port: Some(String::new()),
+                }]),
+            )])),
+        };
+
+        let labels = std::env::var("XIHE_E2E_RUN_ID").ok().map(|run_id| {
+            HashMap::from([(String::from("xihe.e2e.run-id"), run_id)])
+        });
+
         let host_config = HostConfig {
             memory: Some(512 * 1024 * 1024),
             memory_swap: Some(512 * 1024 * 1024),
@@ -106,6 +137,7 @@ impl WorkspaceManager {
             cap_drop: Some(vec!["ALL".to_string()]),
             security_opt: Some(vec!["no-new-privileges:true".to_string()]),
             binds: Some(vec![format!("{}:/workspace:rw", workspace_path)]),
+            port_bindings,
             network_mode: match profile {
                 SecurityProfile::Strict => Some("none".to_string()),
                 SecurityProfile::Coding => Some("bridge".to_string()),
@@ -121,6 +153,7 @@ impl WorkspaceManager {
         let config = ContainerCreateBody {
             image: Some(image.to_string()),
             cmd: Some(vec!["sleep".into(), "infinity".into()]),
+            labels,
             host_config: Some(host_config),
             env: match profile {
                 SecurityProfile::Coding => Some(vec![
@@ -156,44 +189,25 @@ impl WorkspaceManager {
             profile,
         };
 
-        // Start xihe-container-runtime inside the container
-        self.start_container_runtime(&state).await?;
+        // Start xihe-container-runtime inside the container.
+        if let Err(error) = self.start_container_runtime(&state).await {
+            self.remove_container_best_effort(&state.container_name).await;
+            return Err(error);
+        }
 
         // M1b: verify mount via sentinel (host -> container) — grill B3/B4
         if let Err(e) = self.verify_mount(&state).await {
             // Clean up container on mount verification failure to avoid orphan
-            if let Some(docker) = self.docker.as_ref() {
-                let _ = docker
-                    .remove_container(
-                        &state.container_name,
-                        Some(RemoveContainerOptions {
-                            force: true,
-                            v: true,
-                            link: false,
-                        }),
-                    )
-                    .await;
-            }
+            self.remove_container_best_effort(&state.container_name).await;
             return Err(e);
         }
 
         // M1c: Strict isolation probes — grill B5 direct Engine exec, B6 STRICT_PROBE_FAILED
-        if profile == SecurityProfile::Strict {
-            if let Err(e) = self.verify_strict_isolation(&state).await {
-                if let Some(docker) = self.docker.as_ref() {
-                    let _ = docker
-                        .remove_container(
-                            &state.container_name,
-                            Some(RemoveContainerOptions {
-                                force: true,
-                                v: true,
-                                link: false,
-                            }),
-                        )
-                        .await;
-                }
-                return Err(e);
-            }
+        if profile == SecurityProfile::Strict
+            && let Err(e) = self.verify_strict_isolation(&state).await
+        {
+            self.remove_container_best_effort(&state.container_name).await;
+            return Err(e);
         }
 
         self.workspaces.insert(ws_id.to_string(), state.clone());
@@ -207,41 +221,39 @@ impl WorkspaceManager {
     pub async fn delete_workspace(&mut self, ws_id: &str) -> Result<()> {
         let state = self
             .workspaces
-            .remove(ws_id)
+            .get(ws_id)
+            .cloned()
             .ok_or_else(|| RuntimeError::SandboxNotFound(ws_id.to_string()))?;
 
-        if let Some(ref docker) = self.docker {
-            let _ = docker
-                .stop_container(
-                    &state.container_name,
-                    Some(StopContainerOptions {
-                        t: Some(10),
-                        ..Default::default()
-                    }),
-                )
-                .await;
+        self.remove_ephemeral_container(&state).await?;
+        self.workspaces.remove(ws_id);
 
-            docker
-                .remove_container(
-                    &state.container_name,
-                    Some(RemoveContainerOptions {
-                        force: true,
-                        v: true,
-                        link: false,
-                    }),
-                )
-                .await
-                .map_err(|e| RuntimeError::Docker(format!("remove container: {e}")))?;
-        }
-
-        if PathBuf::from(&state.workspace_path).exists() {
-            fs::remove_dir_all(&state.workspace_path)
-                .await
-                .map_err(RuntimeError::Io)?;
-        }
-
-        info!("Workspace deleted: ws_id={}", ws_id);
+        info!(
+            "Sandbox deleted: ws_id={} container={} WorkspaceStorage preserved at {}",
+            ws_id, state.container_name, state.workspace_path
+        );
         Ok(())
+    }
+
+    /// Recreate only the ephemeral Sandbox Container while preserving WorkspaceStorage.
+    pub async fn recreate_workspace(
+        &mut self,
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        image: &str,
+    ) -> Result<WorkspaceState> {
+        if let Some(previous) = self.workspaces.get(ws_id).cloned() {
+            self.remove_ephemeral_container(&previous).await?;
+            self.workspaces.remove(ws_id);
+            info!(
+                "Sandbox container removed for reconcile: ws_id={} storage_preserved={}",
+                ws_id, previous.workspace_path
+            );
+        }
+
+        self.create_workspace(ws_id, workspace_path, profile, image)
+            .await
     }
 
     pub async fn pause_container(&self, ws_id: &str) -> Result<()> {
@@ -369,7 +381,9 @@ impl WorkspaceManager {
                         cmd: Some(vec![
                             "sh".to_string(),
                             "-c".to_string(),
-                            "wget -qO- http://127.0.0.1:39001/health 2>/dev/null || curl -sf http://127.0.0.1:39001/health 2>/dev/null".into(),
+                            format!(
+                                "wget -qO- http://127.0.0.1:{CONTAINER_RUNTIME_PORT}/health 2>/dev/null || curl -sf http://127.0.0.1:{CONTAINER_RUNTIME_PORT}/health 2>/dev/null"
+                            ),
                         ]),
                         attach_stdout: Some(true),
                         attach_stderr: Some(true),
@@ -390,7 +404,9 @@ impl WorkspaceManager {
                         }),
                     )
                     .await;
-                // If start_exec didn't error, the command ran — check exit via inspect
+                // Small delay to let inspect populate exit_code (bollard quirk on Windows):
+                // inspect_exec immediately after start_exec returns Running (exit_code None).
+                tokio::time::sleep(Duration::from_millis(200)).await;
                 if let Ok(info) = docker.inspect_exec(&exec.id).await
                     && info.exit_code == Some(0)
                 {
@@ -408,8 +424,10 @@ impl WorkspaceManager {
             "xihe-container-runtime health check timeout for workspace {}",
             state.ws_id
         );
-        // Continue anyway — container-runtime may start serving after health check window
-        Ok(())
+        Err(RuntimeError::Docker(format!(
+            "xihe-container-runtime health check timeout for workspace {}",
+            state.ws_id
+        )))
     }
 
     /// M1b: verify host -> container mount via fixed sentinel (grill B3/B4).
@@ -427,7 +445,10 @@ impl WorkspaceManager {
             .map_err(|e| {
                 RuntimeError::Io(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
-                    format!("STORAGE_UNAVAILABLE: sentinel write failed for {}: {}", state.workspace_path, e),
+                    format!(
+                        "STORAGE_UNAVAILABLE: sentinel write failed for {}: {}",
+                        state.workspace_path, e
+                    ),
                 ))
             })?;
         // Verify inside container: cat + grep
@@ -467,13 +488,10 @@ impl WorkspaceManager {
                 info!("mount verified via sentinel for workspace {}", state.ws_id);
                 Ok(())
             }
-            Some(code) => Err(RuntimeError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "STORAGE_UNAVAILABLE: sentinel mismatch for {}: expected {:?}, exit code {}",
-                    state.ws_id, expected, code
-                ),
-            ))),
+            Some(code) => Err(RuntimeError::Io(std::io::Error::other(format!(
+                "STORAGE_UNAVAILABLE: sentinel mismatch for {}: expected {:?}, exit code {}",
+                state.ws_id, expected, code
+            )))),
             None => Err(RuntimeError::Docker(format!(
                 "verify mount: no exit code for {}",
                 state.ws_id
@@ -511,7 +529,9 @@ impl WorkspaceManager {
                     },
                 )
                 .await
-                .map_err(|e| RuntimeError::Docker(format!("strict probe {label} create exec: {e}")))?;
+                .map_err(|e| {
+                    RuntimeError::Docker(format!("strict probe {label} create exec: {e}"))
+                })?;
             docker
                 .start_exec(
                     &exec.id,
@@ -522,7 +542,9 @@ impl WorkspaceManager {
                     }),
                 )
                 .await
-                .map_err(|e| RuntimeError::Docker(format!("strict probe {label} start exec: {e}")))?;
+                .map_err(|e| {
+                    RuntimeError::Docker(format!("strict probe {label} start exec: {e}"))
+                })?;
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             let info = docker
                 .inspect_exec(&exec.id)
@@ -553,23 +575,96 @@ impl WorkspaceManager {
         Ok(())
     }
 
+    async fn resolve_mcp_bridge_endpoint(
+        &self,
+        ws_id: &str,
+        server_id: &str,
+        container_name: &str,
+        container_port: u16,
+    ) -> Result<(String, u16)> {
+        let unavailable = |detail: String| RuntimeError::McpBridgeUnavailable {
+            workspace_id: ws_id.to_string(),
+            server_id: server_id.to_string(),
+            detail,
+        };
+        let docker = self
+            .docker
+            .as_ref()
+            .ok_or_else(|| unavailable("Docker is not connected".to_string()))?;
+        let inspect = docker
+            .inspect_container(container_name, None)
+            .await
+            .map_err(|error| unavailable(format!("inspect container failed: {error}")))?;
+
+        if let Some(bindings) = inspect
+            .network_settings
+            .as_ref()
+            .and_then(|settings| settings.ports.as_ref())
+            .and_then(|ports| ports.get(&format!("{container_port}/tcp")))
+            .and_then(|bindings| bindings.as_ref())
+            && let Some(binding) = bindings.iter().find(|binding| {
+                binding
+                    .host_port
+                    .as_ref()
+                    .is_some_and(|port| !port.is_empty())
+            })
+        {
+            let host_port = binding
+                .host_port
+                .as_deref()
+                .and_then(|port| port.parse::<u16>().ok())
+                .ok_or_else(|| {
+                    unavailable(format!(
+                        "published bridge host port is invalid for container port {container_port}"
+                    ))
+                })?;
+            let host = binding
+                .host_ip
+                .as_deref()
+                .filter(|ip| !ip.is_empty() && *ip != "0.0.0.0")
+                .unwrap_or("127.0.0.1")
+                .to_string();
+            return Ok((host, host_port));
+        }
+
+        if cfg!(windows) {
+            return Err(unavailable(format!(
+                "bridge container port {container_port} is not published for native Windows Runtime"
+            )));
+        }
+
+        let container_ip = inspect
+            .network_settings
+            .and_then(|settings| settings.networks)
+            .and_then(|networks| {
+                networks
+                    .values()
+                    .find_map(|endpoint| endpoint.ip_address.clone().filter(|ip| !ip.is_empty()))
+            })
+            .ok_or_else(|| unavailable("container has no reachable network address".to_string()))?;
+        Ok((container_ip, container_port))
+    }
+
     pub async fn start_mcp_bridge(
         &self,
         ws_id: &str,
         server_id: &str,
-        _command: &str,
-        _args: &[String],
+        command: &str,
+        args: &[String],
+        port: u16,
     ) -> Result<(String, u16)> {
         let state = self
             .workspaces
             .get(ws_id)
+            .cloned()
             .ok_or_else(|| RuntimeError::SandboxNotFound(ws_id.to_string()))?;
+        let (bridge_host, bridge_port) = self
+            .resolve_mcp_bridge_endpoint(ws_id, server_id, &state.container_name, port)
+            .await?;
         let docker = self
             .docker
             .as_ref()
             .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
-
-        let port = 39000u16;
 
         let bridge_cmd = format!(
             "/usr/local/bin/xihe-mcp-bridge --port {port} & echo $! > /workspace/.xihe-bridge-{server_id}.pid"
@@ -599,11 +694,12 @@ impl WorkspaceManager {
             .await
             .map_err(|e| RuntimeError::Docker(format!("start bridge exec: {e}")))?;
 
-        let container_ip = resolve_container_ip(docker, &state.container_name).await?;
+        info!(
+            "MCP bridge started: ws={ws_id} server={server_id} cmd={command} args={} at {bridge_host}:{bridge_port} (container_port={port})",
+            args.len()
+        );
 
-        info!("MCP bridge started: ws={ws_id} server={server_id} at {container_ip}:{port}");
-
-        Ok((container_ip, port))
+        Ok((bridge_host, bridge_port))
     }
 
     pub async fn stop_mcp_bridge(&self, ws_id: &str, server_id: &str) -> Result<()> {
@@ -621,7 +717,7 @@ impl WorkspaceManager {
              rm -f /workspace/.xihe-bridge-{server_id}.pid"
         );
 
-        let _ = docker
+        let exec = docker
             .create_exec(
                 &state.container_name,
                 CreateExecOptions {
@@ -635,7 +731,20 @@ impl WorkspaceManager {
                     ..Default::default()
                 },
             )
-            .await;
+            .await
+            .map_err(|e| RuntimeError::Docker(format!("create bridge stop exec: {e}")))?;
+
+        docker
+            .start_exec(
+                &exec.id,
+                Some(bollard::exec::StartExecOptions {
+                    detach: true,
+                    tty: false,
+                    output_capacity: None,
+                }),
+            )
+            .await
+            .map_err(|e| RuntimeError::Docker(format!("start bridge stop exec: {e}")))?;
 
         info!("MCP bridge stopped: ws={ws_id} server={server_id}");
         Ok(())
@@ -654,34 +763,52 @@ impl WorkspaceManager {
     }
 
     pub async fn cleanup_orphans(&mut self) -> Result<u32> {
-        let docker = match &self.docker {
-            Some(d) => d,
-            None => return Ok(0),
-        };
+        let docker = self.get_docker().await?.clone();
 
         let mut removed = 0u32;
         let containers = docker
-            .list_containers(None::<bollard::query_parameters::ListContainersOptions>)
+            .list_containers(Some(ListContainersOptions {
+                all: true,
+                ..Default::default()
+            }))
             .await
             .map_err(|e| RuntimeError::Docker(e.to_string()))?;
 
         for container in containers {
-            if let Some(names) = &container.names {
-                for name in names {
-                    if name.starts_with("/xihe-workspace-ws_")
-                        && let Some(id) = &container.id
-                    {
-                        let _ = docker
-                            .remove_container(
-                                id,
-                                Some(RemoveContainerOptions {
-                                    force: true,
-                                    v: true,
-                                    link: false,
-                                }),
-                            )
-                            .await;
-                        removed += 1;
+            let is_runtime_owned = container.names.as_ref().is_some_and(|names| {
+                names
+                    .iter()
+                    .any(|name| name.starts_with("/xihe-workspace-ws_"))
+            });
+            let belongs_to_current_run = match std::env::var("XIHE_E2E_RUN_ID") {
+                Ok(run_id) => container
+                    .labels
+                    .as_ref()
+                    .and_then(|labels| labels.get("xihe.e2e.run-id"))
+                    .is_some_and(|label| label == &run_id),
+                Err(_) => container
+                    .labels
+                    .as_ref()
+                    .is_none_or(|labels| !labels.contains_key("xihe.e2e.run-id")),
+            };
+            if is_runtime_owned && belongs_to_current_run && let Some(id) = &container.id {
+                match docker
+                    .remove_container(
+                        id,
+                        Some(RemoveContainerOptions {
+                            force: true,
+                            v: true,
+                            link: false,
+                        }),
+                    )
+                    .await
+                {
+                    Ok(_) => removed += 1,
+                    Err(error) => {
+                        warn!(
+                            "orphan sandbox cleanup failed: container={} status={:?} error={}",
+                            id, container.state, error
+                        );
                     }
                 }
             }
@@ -690,28 +817,62 @@ impl WorkspaceManager {
         info!("Cleaned up {} orphan workspace container(s)", removed);
         Ok(removed)
     }
-}
 
-async fn resolve_container_ip(docker: &Docker, container_name: &str) -> Result<String> {
-    match docker.inspect_container(container_name, None).await {
-        Ok(inspect) => {
-            if let Some(settings) = &inspect.network_settings
-                && let Some(networks) = &settings.networks
-            {
-                for ep in networks.values() {
-                    if let Some(ip) = &ep.ip_address
-                        && !ip.is_empty()
-                    {
-                        return Ok(ip.clone());
-                    }
-                }
-            }
-            Err(RuntimeError::Docker(
-                "could not resolve container IP from inspect".to_string(),
-            ))
+    async fn remove_ephemeral_container(&self, state: &WorkspaceState) -> Result<()> {
+        let docker = self
+            .docker
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
+
+        if let Err(error) = docker
+            .stop_container(
+                &state.container_name,
+                Some(StopContainerOptions {
+                    t: Some(10),
+                    ..Default::default()
+                }),
+            )
+            .await
+        {
+            warn!(
+                "sandbox stop before delete failed: ws_id={} container={} error={}",
+                state.ws_id, state.container_name, error
+            );
         }
-        Err(e) => Err(RuntimeError::Docker(format!(
-            "inspect container {container_name}: {e}"
-        ))),
+
+        docker
+            .remove_container(
+                &state.container_name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    v: true,
+                    link: false,
+                }),
+            )
+            .await
+            .map_err(|error| RuntimeError::Docker(format!("remove container: {error}")))?;
+        Ok(())
+    }
+
+    async fn remove_container_best_effort(&self, container_name: &str) {
+        let Some(docker) = self.docker.as_ref() else {
+            return;
+        };
+        if let Err(error) = docker
+            .remove_container(
+                container_name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    v: true,
+                    link: false,
+                }),
+            )
+            .await
+        {
+            warn!(
+                "sandbox cleanup failed: container={} error={}",
+                container_name, error
+            );
+        }
     }
 }

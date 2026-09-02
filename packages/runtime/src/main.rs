@@ -30,30 +30,27 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
-mod config_client;
 mod ws_file_handler;
-
+use tokio::sync::Mutex;
+use xihe_runtime::device;
 use xihe_runtime::dotenv_loader;
 use xihe_runtime::fetch;
 use xihe_runtime::fetch::WebFetchResult;
 use xihe_runtime::fs;
 use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
 use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
-use xihe_runtime::device;
 use xihe_runtime::heartbeat;
-use xihe_runtime::hydrate;
+use xihe_runtime::hydrate::WorkspaceEnsurer;
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
-use xihe_runtime::storage;
-use xihe_runtime::workspace::WorkspaceManager;
-use tokio::sync::Mutex;
 use xihe_runtime::remote_mcp::{
     RemoteMcpConnector, RemoteMcpError, RequestStateBinding, RequestStateStore,
     validate_endpoint_dns, validate_endpoint_with_allowlist,
 };
 use xihe_runtime::sandbox;
-
-const CONTAINER_RUNTIME_PORT: u16 = 39001;
+use xihe_runtime::storage;
+use xihe_runtime::workspace::{CONTAINER_RUNTIME_PORT, WorkspaceManager};
+use xihe_runtime::error::RuntimeError;
 
 /// Shared runtime state for Axum handlers — holds the routing registry
 /// and the Docker-backed WorkspaceManager. This converges the former dual
@@ -64,9 +61,20 @@ pub struct AppState {
     pub registry: Arc<WorkspaceRegistry>,
     pub manager: Arc<Mutex<WorkspaceManager>>,
     pub device_id: String,
-    /// Readiness: false until first successful hydrate (for now, set true after device_id ensured).
-    /// In future, this will be set true only after `GET assignments` succeeds.
+    pub workspace_ensurer: Arc<WorkspaceEnsurer>,
+    /// Readiness describes the Runtime process, not any particular Workspace.
     pub ready: Arc<AtomicBool>,
+}
+
+impl AppState {
+    pub async fn ensure_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> xihe_runtime::error::Result<xihe_runtime::gateway::XiheRuntimeInstance> {
+        self.workspace_ensurer
+            .ensure_workspace_materialized(workspace_id)
+            .await
+    }
 }
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -85,6 +93,28 @@ async fn resolve_container_addr(ws_id: &str) -> Option<String> {
     let docker = Docker::connect_with_local_defaults().ok()?;
     let name = format!("xihe-workspace-ws_{ws_id}");
     let inspect = docker.inspect_container(&name, None).await.ok()?;
+    if let Some(bindings) = inspect
+        .network_settings
+        .as_ref()
+        .and_then(|settings| settings.ports.as_ref())
+        .and_then(|ports| ports.get(&format!("{CONTAINER_RUNTIME_PORT}/tcp")))
+        .and_then(|bindings| bindings.as_ref())
+        && let Some(binding) = bindings.iter().find(|binding| {
+            binding
+                .host_port
+                .as_ref()
+                .is_some_and(|port| !port.is_empty())
+        })
+        && let Some(host_port) = binding.host_port.as_deref()
+    {
+        let host_ip = binding
+            .host_ip
+            .as_deref()
+            .filter(|ip| !ip.is_empty() && *ip != "0.0.0.0")
+            .unwrap_or("127.0.0.1");
+        return Some(format!("http://{host_ip}:{host_port}"));
+    }
+
     let ip = inspect
         .network_settings?
         .networks?
@@ -106,14 +136,6 @@ tokio::task_local! {
 
 static MCP_SERVICE: OnceLock<StreamableHttpService<XiheRuntime, LocalSessionManager>> =
     OnceLock::new();
-
-fn resolve_security_profile_value(value: Option<&str>) -> SecurityProfile {
-    match value.unwrap_or("strict") {
-        "coding" => SecurityProfile::Coding,
-        "isolated" => SecurityProfile::Isolated,
-        _ => SecurityProfile::Strict,
-    }
-}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadFileRequest {
@@ -155,19 +177,20 @@ where
                 Ok(Vec::new())
             } else if t.starts_with('[') {
                 // LLM sometimes sends array as JSON-encoded string, e.g. "[\"-c\", \"date\"]"
-                let parsed: Vec<String> = serde_json::from_str::<Vec<String>>(t).unwrap_or_else(|_| {
-                    serde_json::from_str::<Vec<serde_json::Value>>(t)
-                        .map(|arr| {
-                            arr.into_iter()
-                                .map(|x| {
-                                    x.as_str()
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_else(|| x.to_string().trim_matches('"').to_string())
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_else(|_| vec![s.clone()])
-                });
+                let parsed: Vec<String> =
+                    serde_json::from_str::<Vec<String>>(t).unwrap_or_else(|_| {
+                        serde_json::from_str::<Vec<serde_json::Value>>(t)
+                            .map(|arr| {
+                                arr.into_iter()
+                                    .map(|x| {
+                                        x.as_str().map(|s| s.to_string()).unwrap_or_else(|| {
+                                            x.to_string().trim_matches('"').to_string()
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_else(|_| vec![s.clone()])
+                    });
                 Ok(parsed)
             } else {
                 Ok(vec![s])
@@ -175,7 +198,11 @@ where
         }
         serde_json::Value::Array(arr) => Ok(arr
             .into_iter()
-            .filter_map(|x| x.as_str().map(|s| s.to_string()).or_else(|| Some(x.to_string())))
+            .filter_map(|x| {
+                x.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| Some(x.to_string()))
+            })
             .collect()),
         serde_json::Value::Null => Ok(Vec::new()),
         _ => Ok(Vec::new()),
@@ -266,10 +293,12 @@ pub struct WebFetchRequest {
 
 #[derive(Debug, Clone)]
 pub struct XiheRuntime {
+    #[allow(dead_code)]
     workspace: String,
     ws_id: String,
     #[allow(dead_code)]
     profile: SecurityProfile,
+    #[allow(dead_code)]
     container_addr: Option<String>,
 }
 
@@ -738,14 +767,84 @@ async fn ready(State(app): State<Arc<AppState>>) -> impl IntoResponse {
     }
 }
 
+fn runtime_error_status(error: &RuntimeError) -> StatusCode {
+    match error {
+        RuntimeError::ExecutionSpecNotFound(_)
+        | RuntimeError::WorkspaceNotFound(_)
+        | RuntimeError::SandboxNotFound(_)
+        | RuntimeError::McpBridgeNotFound { .. } => StatusCode::NOT_FOUND,
+        RuntimeError::ExecutionSpecUnavailable { .. }
+        | RuntimeError::WorkspaceMaterializationFailed { .. }
+        | RuntimeError::McpBridgeUnavailable { .. }
+        | RuntimeError::Docker(_) => StatusCode::SERVICE_UNAVAILABLE,
+        RuntimeError::InvalidExecutionSpec { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => {
+            StatusCode::FORBIDDEN
+        }
+        RuntimeError::InvalidPath(_) => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn runtime_error_code(error: &RuntimeError) -> &'static str {
+    match error {
+        RuntimeError::ExecutionSpecNotFound(_)
+        | RuntimeError::WorkspaceNotFound(_)
+        | RuntimeError::SandboxNotFound(_)
+        | RuntimeError::McpBridgeNotFound { .. } => "WORKSPACE_NOT_FOUND",
+        RuntimeError::ExecutionSpecUnavailable { .. } => "EXECUTION_SPEC_UNAVAILABLE",
+        RuntimeError::McpBridgeUnavailable { .. } => "MCP_BRIDGE_UNAVAILABLE",
+        RuntimeError::InvalidExecutionSpec { .. } => "EXECUTION_SPEC_INVALID",
+        RuntimeError::WorkspaceMaterializationFailed { .. } => {
+            "WORKSPACE_MATERIALIZATION_FAILED"
+        }
+        RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => "FORBIDDEN",
+        RuntimeError::InvalidPath(_) => "INVALID_REQUEST",
+        _ => "RUNTIME_ERROR",
+    }
+}
+
+fn runtime_problem(error: RuntimeError) -> (StatusCode, AxumJson<serde_json::Value>) {
+    let status = runtime_error_status(&error);
+    let code = runtime_error_code(&error);
+    (
+        status,
+        AxumJson(serde_json::json!({
+            "type": format!("https://xihe.dev/problems/{}", code.to_ascii_lowercase()),
+            "title": status.canonical_reason().unwrap_or("Runtime request failed"),
+            "status": status.as_u16(),
+            "code": code,
+            "detail": error.to_string(),
+            "requestId": uuid::Uuid::new_v4().to_string(),
+        })),
+    )
+}
+
+fn runtime_problem_with_header(
+    error: RuntimeError,
+) -> (
+    StatusCode,
+    [(axum::http::HeaderName, &'static str); 1],
+    AxumJson<serde_json::Value>,
+) {
+    let (status, body) = runtime_problem(error);
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+        body,
+    )
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateWorkspaceRequest {
     #[serde(rename = "workspaceId")]
     ws_id: String,
+    #[allow(dead_code)]
     #[serde(rename = "workspacePath")]
     workspace_path: String,
     #[serde(rename = "storageRef")]
     storage_ref: Option<String>,
+    #[allow(dead_code)]
     profile: Option<String>,
 }
 
@@ -912,33 +1011,9 @@ async fn remote_mcp_call_handler(
             ),
         ));
     }
-    if app.registry.get(&workspace_id).await.is_none() {
-        let (status, code, detail) = if !app.registry.is_hydrated() {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "WORKSPACE_REGISTRY_NOT_READY",
-                "Registry not hydrated",
-            )
-        } else {
-            (
-                StatusCode::NOT_FOUND,
-                "WORKSPACE_NOT_FOUND",
-                "Workspace is not registered",
-            )
-        };
-        return Err((
-            status,
-            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
-            AxumJson(serde_json::json!({
-                "type": format!("https://xihe.dev/problems/{}", code.to_ascii_lowercase()),
-                "title": if status == StatusCode::SERVICE_UNAVAILABLE { "Registry not ready" } else { "Workspace not found" },
-                "status": status.as_u16(),
-                "code": code,
-                "detail": detail,
-                "requestId": uuid::Uuid::new_v4().to_string()
-            })),
-        ));
-    }
+    app.ensure_workspace(&workspace_id)
+        .await
+        .map_err(runtime_problem_with_header)?;
     if request.user_id.trim().is_empty()
         || request.tool.trim().is_empty()
         || request.scope.trim().is_empty()
@@ -1110,13 +1185,13 @@ static NEXT_BRIDGE_PORT: AtomicU16 = AtomicU16::new(39000);
 
 fn allocate_bridge_port() -> u16 {
     // Grill Q10 C: dynamic probing — ask OS for a free port, fallback to atomic increment
-    if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") {
-        if let Ok(addr) = listener.local_addr() {
-            let port = addr.port();
-            // Keep atomic in sync to avoid reuse on fallback path
-            NEXT_BRIDGE_PORT.store(port.wrapping_add(1), Ordering::Relaxed);
-            return port;
-        }
+    if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0")
+        && let Ok(addr) = listener.local_addr()
+    {
+        let port = addr.port();
+        // Keep atomic in sync to avoid reuse on fallback path
+        NEXT_BRIDGE_PORT.store(port.wrapping_add(1), Ordering::Relaxed);
+        return port;
     }
     let port = NEXT_BRIDGE_PORT.fetch_add(1, Ordering::Relaxed);
     if port >= 40000 {
@@ -1127,56 +1202,98 @@ fn allocate_bridge_port() -> u16 {
     }
 }
 
+async fn spawn_bridge_server(
+    workspace_id: &str,
+    base_url: &str,
+    server_id: &str,
+    command: &str,
+    args: &[String],
+) -> Result<(), RuntimeError> {
+    let url = mcp_process::bridge_spawn_url(base_url);
+    let mut last_error = None;
+    for attempt in 0..10 {
+        match http_client()
+            .post(&url)
+            .json(&serde_json::json!({
+                "server_id": server_id,
+                "command": command,
+                "args": args,
+            }))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => return Ok(()),
+            Ok(response) => {
+                let status = response.status();
+                let detail = match response.text().await {
+                    Ok(body) if !body.is_empty() => {
+                        format!("bridge returned {status}: {body}")
+                    }
+                    Ok(_) => format!("bridge returned {status}"),
+                    Err(error) => format!("bridge returned {status}; body read failed: {error}"),
+                };
+                return Err(RuntimeError::McpBridgeUnavailable {
+                    workspace_id: workspace_id.to_string(),
+                    server_id: server_id.to_string(),
+                    detail,
+                });
+            }
+            Err(error) => {
+                last_error = Some(error.to_string());
+                if attempt < 9 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    }
+
+    Err(RuntimeError::McpBridgeUnavailable {
+        workspace_id: workspace_id.to_string(),
+        server_id: server_id.to_string(),
+        detail: format!(
+            "bridge spawn endpoint {} was unreachable: {}",
+            url,
+            last_error.unwrap_or_else(|| "unknown connection error".to_string())
+        ),
+    })
+}
+
 async fn mcp_spawn_handler(
     Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<McpSpawnRequest>,
-) -> Result<AxumJson<McpSpawnResponse>, StatusCode> {
-    if app.registry.get(&ws_id).await.is_none() {
-        if !app.registry.is_hydrated() {
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
-        } else {
-            return Err(StatusCode::NOT_FOUND);
-        }
-    }
-
-    let container_name = format!("xihe-workspace-ws_{ws_id}");
-    let docker =
-        Docker::connect_with_local_defaults().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Result<AxumJson<McpSpawnResponse>, (StatusCode, AxumJson<serde_json::Value>)> {
+    app.ensure_workspace(&ws_id)
+        .await
+        .map_err(runtime_problem)?;
 
     let port = allocate_bridge_port();
-    let bridge_cmd = format!(
-        "/usr/local/bin/xihe-mcp-bridge --port {} & echo $! > /workspace/.xihe-bridge-{}.pid",
-        port, req.server_id
-    );
-
-    let exec = docker
-        .create_exec(
-            &container_name,
-            bollard::exec::CreateExecOptions {
-                cmd: Some(vec!["sh".to_string(), "-c".to_string(), bridge_cmd]),
-                attach_stdout: Some(false),
-                attach_stderr: Some(false),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    docker
-        .start_exec(
-            &exec.id,
-            Some(bollard::exec::StartExecOptions {
-                detach: true,
-                ..Default::default()
-            }),
-        )
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let container_ip = resolve_container_ip(&docker, &container_name)
-        .await
-        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    let (bridge_host, bridge_port) = {
+        let manager = app.manager.lock().await;
+        manager
+            .start_mcp_bridge(&ws_id, &req.server_id, &req.command, &req.args, port)
+            .await
+            .map_err(runtime_problem)?
+    };
+    let bridge_base_url = mcp_process::bridge_base_url(&bridge_host, bridge_port);
+    if let Err(error) =
+        spawn_bridge_server(&ws_id, &bridge_base_url, &req.server_id, &req.command, &req.args)
+            .await
+    {
+        let cleanup_result = {
+            let manager = app.manager.lock().await;
+            manager.stop_mcp_bridge(&ws_id, &req.server_id).await
+        };
+        if let Err(cleanup_error) = cleanup_result {
+            tracing::warn!(
+                "MCP bridge cleanup failed after spawn error: ws={} server={} error={}",
+                ws_id,
+                req.server_id,
+                cleanup_error
+            );
+        }
+        return Err(runtime_problem(error));
+    }
 
     let manager = mcp_manager();
     manager
@@ -1185,12 +1302,12 @@ async fn mcp_spawn_handler(
             &req.server_id,
             &req.command,
             &req.args,
-            &container_ip,
-            port,
+            &bridge_host,
+            bridge_port,
         )
         .await;
 
-    let url = format!("http://{}:{}/{}", container_ip, port, req.server_id);
+    let url = mcp_process::bridge_server_url(&bridge_base_url, &req.server_id);
     tracing::info!(
         "MCP bridge spawned: ws={ws_id} server={} at {url}",
         req.server_id
@@ -1201,33 +1318,71 @@ async fn mcp_spawn_handler(
         url,
     }))
 }
-
 async fn mcp_kill_handler(
     Path((ws_id, server_id)): Path<(String, String)>,
-) -> AxumJson<serde_json::Value> {
+    State(app): State<Arc<AppState>>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    app.ensure_workspace(&ws_id)
+        .await
+        .map_err(runtime_problem)?;
     let manager = mcp_manager();
-    let _removed = manager.stop(&ws_id, &server_id).await;
-    AxumJson(serde_json::json!({"status": "ok"}))
+    if !manager.list(&ws_id).await.iter().any(|bridge| bridge.server_id == server_id) {
+        return Err(runtime_problem(RuntimeError::McpBridgeNotFound {
+            workspace_id: ws_id,
+            server_id,
+        }));
+    }
+    {
+        let workspace_manager = app.manager.lock().await;
+        workspace_manager
+            .stop_mcp_bridge(&ws_id, &server_id)
+            .await
+            .map_err(runtime_problem)?;
+    }
+    let removed = manager.stop(&ws_id, &server_id).await;
+    if !removed {
+        return Err(runtime_problem(RuntimeError::McpBridgeNotFound {
+            workspace_id: ws_id,
+            server_id,
+        }));
+    }
+    Ok(AxumJson(serde_json::json!({"status": "ok"})))
 }
 
-async fn mcp_list_handler(Path(ws_id): Path<String>) -> AxumJson<serde_json::Value> {
+async fn mcp_list_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    app.ensure_workspace(&ws_id)
+        .await
+        .map_err(runtime_problem)?;
     let manager = mcp_manager();
     let bridges = manager.list(&ws_id).await;
-    AxumJson(serde_json::json!({
+    Ok(AxumJson(serde_json::json!({
         "servers": bridges,
         "count": bridges.len()
-    }))
+    })))
 }
 
 async fn mcp_stdio_handler(
     Path((ws_id, server_id)): Path<(String, String)>,
+    State(app): State<Arc<AppState>>,
     body: axum::body::Bytes,
-) -> Result<axum::response::Response, StatusCode> {
+) -> Result<axum::response::Response, (StatusCode, AxumJson<serde_json::Value>)> {
+    app.ensure_workspace(&ws_id)
+        .await
+        .map_err(runtime_problem)?;
     let manager = mcp_manager();
-    let bridge_url = manager
+    let bridge_base_url = manager
         .get_bridge_url(&ws_id, &server_id)
         .await
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or_else(|| {
+            runtime_problem(RuntimeError::McpBridgeNotFound {
+                workspace_id: ws_id.clone(),
+                server_id: server_id.clone(),
+            })
+        })?;
+    let bridge_url = mcp_process::bridge_server_url(&bridge_base_url, &server_id);
 
     let client = reqwest::Client::new();
     let resp = client
@@ -1236,10 +1391,18 @@ async fn mcp_stdio_handler(
         .body(body.to_vec())
         .send()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|error| {
+            runtime_problem(RuntimeError::Docker(format!(
+                "MCP bridge request failed: {error}"
+            )))
+        })?;
 
     let status = resp.status();
-    let body = resp.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let body = resp.bytes().await.map_err(|error| {
+        runtime_problem(RuntimeError::Docker(format!(
+            "MCP bridge response failed: {error}"
+        )))
+    })?;
 
     Ok(axum::response::Response::builder()
         .status(status)
@@ -1250,248 +1413,130 @@ async fn mcp_stdio_handler(
 
 async fn workspace_mcp_handler(
     Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
+    if let Err(error) = app.ensure_workspace(&ws_id).await {
+        return runtime_problem(error).into_response();
+    }
     CURRENT_WS_ID
         .scope(ws_id, async {
-            let mut svc = MCP_SERVICE
-                .get()
-                .expect("MCP_SERVICE not initialized")
-                .clone();
-            let response = svc.call(req).await.unwrap();
-            response.map(axum::body::Body::new)
+            let Some(service) = MCP_SERVICE.get() else {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    AxumJson(serde_json::json!({
+                        "code": "MCP_SERVICE_UNAVAILABLE",
+                        "detail": "MCP service is not initialized",
+                        "requestId": uuid::Uuid::new_v4().to_string(),
+                    })),
+                )
+                    .into_response();
+            };
+            let mut svc = service.clone();
+            match svc.call(req).await {
+                Ok(response) => response.map(axum::body::Body::new),
+                Err(error) => {
+                    tracing::error!("workspace MCP request failed: {error}");
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        AxumJson(serde_json::json!({
+                            "code": "MCP_REQUEST_FAILED",
+                            "detail": "Workspace MCP request failed",
+                            "requestId": uuid::Uuid::new_v4().to_string(),
+                        })),
+                    )
+                        .into_response()
+                }
+            }
         })
         .await
 }
 
-async fn resolve_container_ip(docker: &Docker, container_name: &str) -> Result<String, String> {
-    docker
-        .inspect_container(container_name, None)
-        .await
-        .map_err(|e| format!("inspect failed: {e}"))
-        .and_then(|inspect| {
-            inspect
-                .network_settings
-                .and_then(|ns| ns.networks)
-                .and_then(|networks| {
-                    networks
-                        .values()
-                        .find_map(|ep| ep.ip_address.clone().filter(|ip| !ip.is_empty()))
-                })
-                .ok_or_else(|| "no IP found".to_string())
-        })
+async fn workspace_status_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    match app.registry.status(&ws_id).await {
+        Some(status) => Ok(AxumJson(serde_json::to_value(status).map_err(|error| {
+            runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
+                workspace_id: ws_id.clone(),
+                detail: format!("serialize workspace status: {error}"),
+            })
+        })?)),
+        None => Err(runtime_problem(RuntimeError::ExecutionSpecNotFound(ws_id))),
+    }
 }
 
 async fn create_workspace_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<CreateWorkspaceRequest>,
-) -> AxumJson<CreateWorkspaceResponse> {
-    let profile = match req.profile.as_deref() {
-        Some("coding") => SecurityProfile::Coding,
-        Some("isolated") => SecurityProfile::Isolated,
-        _ => SecurityProfile::Strict,
-    };
-    // M1a: storageRef → hostRoot resolver with strict allowlist + canonical + ownership check (grill B1/B2).
-    let effective_path = if let Some(ref sref) = req.storage_ref {
-        if let Ok(host_root) = std::env::var("XIHE_WORKSPACE_HOST_ROOT") {
-            match storage::resolve_host_path(&host_root, sref, &req.ws_id).await {
-                Ok(p) => p.to_string_lossy().to_string(),
-                Err(e) => {
-                    tracing::error!(
-                        "storage resolve failed ws_id={} sref={:?} hostRoot={:?} err={}",
-                        req.ws_id, sref, host_root, e
-                    );
-                    return AxumJson(CreateWorkspaceResponse {
-                        status: format!("error: STORAGE_BINDING_INVALID: {}", e),
-                        ws_id: req.ws_id,
-                    });
-                }
-            }
-        } else {
-            tracing::warn!(
-                "XIHE_WORKSPACE_HOST_ROOT not set, fallback to workspacePath for ws_id={}",
-                req.ws_id
-            );
-            req.workspace_path.clone()
-        }
-    } else {
-        tracing::warn!(
-            "storageRef missing for ws_id={}, fallback to workspacePath (legacy)",
-            req.ws_id
-        );
-        req.workspace_path.clone()
-    };
-
-    // Strict profile: no container (network none, read-only rootfs, 127.0.0.1:39001 unreachable).
-    // Keep host-direct fallback for Strict; fail-closed only applies to Coding/Isolated.
-    // For M1b consistency, Strict also writes the fixed sentinel so file API can verify mount (host-only).
-    if profile == SecurityProfile::Strict {
-        app.registry
-            .register_with_profile(&req.ws_id, &effective_path, profile)
-            .await;
-        if let Err(err) = std::fs::create_dir_all(&effective_path) {
-            tracing::error!(
-                "Failed to create workspace directory {} (resolved from {:?} / {:?}): {}",
-                effective_path, req.workspace_path, req.storage_ref, err
-            );
-        } else {
-            let sentinel_path = std::path::Path::new(&effective_path).join(".xihe-sentinel");
-            let _ = std::fs::write(&sentinel_path, format!("sentinel-{}", req.ws_id));
-        }
-        tracing::info!(
-            "Workspace registered via API (Strict, no container): ws_id={}, path={}, storageRef={:?}, effective_path={}",
-            req.ws_id, req.workspace_path, req.storage_ref, effective_path
-        );
-        return AxumJson(CreateWorkspaceResponse {
-            status: "ok".to_string(),
-            ws_id: req.ws_id,
-        });
-    }
-
-    // Coding/Isolated: must create Docker container — fail-closed on Docker errors.
-    let image = std::env::var("XIHE_WORKSPACE_IMAGE").unwrap_or_else(|_| "xihe/workspace".to_string());
-    let mut mgr = app.manager.lock().await;
-
-    // Idempotency: if manager already tracks this ws, just ensure registry and return.
-    if mgr.get_state(&req.ws_id).is_some() {
-        app.registry
-            .register_with_profile(&req.ws_id, &effective_path, profile)
-            .await;
-        tracing::info!(
-            "Workspace already tracked in manager, re-registered: ws_id={}, path={}",
-            req.ws_id, effective_path
-        );
-        return AxumJson(CreateWorkspaceResponse {
-            status: "ok".to_string(),
-            ws_id: req.ws_id,
-        });
-    }
-
-    match mgr
-        .create_workspace(&req.ws_id, &effective_path, profile, &image)
+) -> Result<AxumJson<CreateWorkspaceResponse>, (StatusCode, AxumJson<serde_json::Value>)> {
+    let _ = &app; // explicit acknowledgement that the AppState may be extended later
+    let storage_ref = req.storage_ref.as_deref().ok_or_else(|| {
+        runtime_problem(RuntimeError::InvalidExecutionSpec {
+            workspace_id: req.ws_id.clone(),
+            detail: "storageRef is required; workspacePath is never used as a fallback".to_string(),
+        })
+    })?;
+    let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT").map_err(|_| {
+        runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
+            workspace_id: req.ws_id.clone(),
+            detail: "XIHE_WORKSPACE_HOST_ROOT is not configured".to_string(),
+        })
+    })?;
+    storage::resolve_host_path(&host_root, storage_ref, &req.ws_id)
         .await
-    {
-        Ok(state) => {
-            // Also register in routing registry so MCP factory can resolve workspace_path.
-            app.registry
-                .register_with_profile(&req.ws_id, &effective_path, profile)
-                .await;
-            tracing::info!(
-                "Workspace created with container: ws_id={}, path={}, container={}, image={}, profile={:?}",
-                req.ws_id, effective_path, state.container_name, image, profile
-            );
-            AxumJson(CreateWorkspaceResponse {
-                status: "ok".to_string(),
-                ws_id: req.ws_id,
-            })
-        }
-        Err(err) => {
-            let msg = err.to_string();
-            // Docker name conflict after restart (manager HashMap empty but container exists externally) → treat as ok, re-register.
-            let is_conflict = msg.contains("already exists")
-                || msg.contains("Conflict")
-                || msg.contains("is already in use")
-                || msg.contains("already in use");
-            if is_conflict {
-                tracing::warn!(
-                    "Workspace container already exists externally, re-registering: ws_id={}, err={}",
-                    req.ws_id, msg
-                );
-                app.registry
-                    .register_with_profile(&req.ws_id, &effective_path, profile)
-                    .await;
-                // Ensure host dir exists even if container existed
-                let _ = std::fs::create_dir_all(&effective_path);
-                return AxumJson(CreateWorkspaceResponse {
-                    status: "ok".to_string(),
-                    ws_id: req.ws_id,
-                });
-            }
-            tracing::error!(
-                "Failed to create workspace container ws_id={}, path={}, image={}, err={}",
-                req.ws_id, effective_path, image, msg
-            );
-            // Fail-closed: do NOT register, do NOT create fallback dir. Return error status so caller can observe.
-            AxumJson(CreateWorkspaceResponse {
-                status: format!("error: {msg}"),
-                ws_id: req.ws_id,
-            })
-        }
-    }
+        .map_err(runtime_problem)?;
+    tracing::info!(
+        "Workspace logical create acknowledged without Sandbox materialization: ws_id={} storageRef={}",
+        req.ws_id,
+        storage_ref
+    );
+    Ok(AxumJson(CreateWorkspaceResponse {
+        status: "ok".to_string(),
+        ws_id: req.ws_id,
+    }))
 }
-
 async fn delete_workspace_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<DeleteWorkspaceRequest>,
-) -> AxumJson<DeleteWorkspaceResponse> {
+) -> Result<AxumJson<DeleteWorkspaceResponse>, (StatusCode, AxumJson<serde_json::Value>)> {
     let ws_id = &req.ws_id;
     mcp_manager().cleanup_workspace(ws_id).await;
-    // Try to remove via manager (stops container + removes dir) if tracked; ignore not-found.
-    // For Strict (no container), manager won't track, so we also remove host dir via registry.
-    let is_tracked = {
-        let mgr = app.manager.lock().await;
-        mgr.get_state(ws_id).is_some()
-    };
-    if is_tracked {
-        let mut mgr = app.manager.lock().await;
-        if let Err(e) = mgr.delete_workspace(ws_id).await {
-            tracing::warn!("Manager delete failed for ws_id={}: {}", ws_id, e);
+    let cleanup_result = {
+        let mut manager = app.manager.lock().await;
+        if manager.get_state(ws_id).is_some() {
+            manager.delete_workspace(ws_id).await
         } else {
-            tracing::info!("Workspace container removed via manager: ws_id={}", ws_id);
+            Ok(())
         }
-    } else {
-        // Manager not tracking (e.g. Strict). Remove host dir via registry's workspace_path.
-        if let Some(instance) = app.registry.get(ws_id).await {
-            let _ = tokio::fs::remove_dir_all(&instance.workspace_path).await;
-            tracing::info!("Strict host dir removed for ws_id={}: {}", ws_id, instance.workspace_path);
-        }
-        // Also try best-effort docker removal for orphan containers
-        let name = format!("xihe-workspace-ws_{ws_id}");
-        if let Ok(docker) = Docker::connect_with_local_defaults() {
-            let _ = docker
-                .remove_container(
-                    &name,
-                    Some(RemoveContainerOptions {
-                        force: true,
-                        v: true,
-                        link: false,
-                    }),
-                )
-                .await;
-        }
+    };
+    if let Err(error) = cleanup_result {
+        app.registry.mark_failed(ws_id, &error.to_string()).await;
+        return Err(runtime_problem(error));
     }
     app.registry.unregister(ws_id).await;
-    tracing::info!("Workspace deleted: ws_id={}, registry + manager cleaned", ws_id);
-    AxumJson(DeleteWorkspaceResponse {
+    app.registry.mark_released(ws_id).await;
+    tracing::info!(
+        "Sandbox deleted: ws_id={}, temporary execution resources cleaned; WorkspaceStorage preserved",
+        ws_id
+    );
+    Ok(AxumJson(DeleteWorkspaceResponse {
         status: "ok".to_string(),
         ws_id: ws_id.clone(),
-    })
+    }))
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv_loader::load();
 
-    // Initialize CP ConfigClient (non-blocking on failure, uses env fallback)
-    config_client::init_global_config_client().await;
-
-    // Resolve CP-managed values locally; changing process-wide environment is unsafe in edition 2024.
-    let log_dir = config_client::get_cp("logging", "logDir")
-        .await
-        .filter(|value| !value.is_empty())
-        .or_else(|| std::env::var("XIHE_LOG_DIR").ok())
-        .unwrap_or_else(|| "logs".to_string());
-    let log_level = config_client::get_cp("logging", "logLevel").await;
-    let runtime_log_level = config_client::get_cp("logging", "levelRuntime").await;
-    let runtime_log_filter = config_client::get_cp("logging", "runtimeFilter").await;
-    let profile_name = match config_client::get_cp("workspace-config", "profile").await {
-        Some(value) if !value.is_empty() => Some(value),
-        _ => match config_client::get_cp("logging", "profile").await {
-            Some(value) if !value.is_empty() => Some(value),
-            _ => std::env::var("XIHE_WORKSPACE_PROFILE").ok(),
-        },
-    };
-    let security_profile = resolve_security_profile_value(profile_name.as_deref());
+    // CP configuration is optional at startup. Keep readiness independent from CP and
+    // refresh the optional config client after the HTTP listener is available.
+    let log_dir = std::env::var("XIHE_LOG_DIR").unwrap_or_else(|_| "logs".to_string());
+    let log_level = std::env::var("XIHE_LOG_LEVEL").ok();
+    let runtime_log_level = std::env::var("XIHE_LOG_LEVEL_RUNTIME").ok();
+    let runtime_log_filter = std::env::var("XIHE_RUNTIME_LOG_FILTER").ok();
     let log_path = PathBuf::from(&log_dir).join("runtime.log");
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).ok();
@@ -1506,9 +1551,8 @@ async fn main() -> anyhow::Result<()> {
             log_level.as_deref(),
         ))
         .with(
-            tracing_subscriber::fmt::layer().with_writer(|| {
-                xihe_runtime::log_redact::RedactingWriter::new(std::io::stdout())
-            }),
+            tracing_subscriber::fmt::layer()
+                .with_writer(|| xihe_runtime::log_redact::RedactingWriter::new(std::io::stdout())),
         )
         .with(
             tracing_subscriber::fmt::layer()
@@ -1529,32 +1573,56 @@ async fn main() -> anyhow::Result<()> {
 
     let registry = Arc::new(WorkspaceRegistry::new());
     let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+    let workspace_ensurer = Arc::new(WorkspaceEnsurer::from_env(
+        registry.clone(),
+        manager.clone(),
+    ));
     // M2-3.1: device_id persistence (grill A random UUID file)
     let state_dir = device::resolve_state_dir();
     let device_id = match device::ensure_device_id(&state_dir).await {
         Ok(id) => id,
         Err(e) => {
-            tracing::warn!("device_id init failed (state_dir={:?}): {}, using ephemeral", state_dir, e);
+            tracing::warn!(
+                "device_id init failed (state_dir={:?}): {}, using ephemeral",
+                state_dir,
+                e
+            );
             uuid::Uuid::new_v4().to_string()
         }
     };
-    let readiness = Arc::new(AtomicBool::new(false));
+
+    // A previous Runtime process may have exited before its graceful shutdown
+    // handler ran. Remove only stale workspace containers owned by this run (or
+    // unlabelled dev containers when no isolated E2E run is active); never touch
+    // another isolated E2E run's containers.
+    {
+        let mut manager = manager.lock().await;
+        if let Err(error) = manager.cleanup_orphans().await {
+            tracing::warn!("runtime orphan cleanup failed: {}", error);
+        }
+    }
+
+    let readiness = Arc::new(AtomicBool::new(true));
     let app_state = Arc::new(AppState {
         registry: registry.clone(),
         manager: manager.clone(),
         device_id: device_id.clone(),
+        workspace_ensurer: workspace_ensurer.clone(),
         ready: readiness.clone(),
     });
+    // `readiness` and `workspace_ensurer` are consumed by `app_state`; clone first
+    // so the background loops can observe them without taking references into
+    // `app_state` (which would require a second Arc to be cheap).
+    let hb_ready = readiness.clone();
+    let reaper_ready_marker = readiness.clone();
+    let cp_poll_ensurer = workspace_ensurer.clone();
 
     tracing::info!(
         "Starting xihe Runtime MCP Server (Gateway mode) on {} (device_id={})",
-        bind_addr, device_id
+        bind_addr,
+        device_id
     );
-    // For v1, readiness is true after device_id ensured. Future hydrate will gate it.
-    readiness.store(true, Ordering::Relaxed);
-    tracing::info!("readiness: true (device_id ready, hydrate not yet required for v1)");
-    // M2-3.2 minimal hydrate stub — for v1, just log; future will fetch assignments and compare generation/hash
-    hydrate::hydrate_once(registry.clone(), readiness.clone()).await;
+    tracing::info!("readiness: true; Workspace Sandbox materialization is lazy");
 
     let ct = tokio_util::sync::CancellationToken::new();
 
@@ -1566,74 +1634,67 @@ async fn main() -> anyhow::Result<()> {
 
     let mcp_manager = mcp_manager();
     let cp_poll_registry = registry.clone();
+    let cp_poll_workspace_manager = manager.clone();
     let poll_ct = ct.child_token();
     tokio::spawn(async move {
-        mcp_config_poll_loop(mcp_manager, cp_poll_registry, poll_ct).await;
+        mcp_config_poll_loop(
+            mcp_manager,
+            cp_poll_registry,
+            cp_poll_ensurer,
+            cp_poll_workspace_manager,
+            poll_ct,
+        )
+        .await;
     });
 
-    let hydrate_registry = registry.clone();
-    let hydrate_ready = readiness.clone();
-    let hydrate_ct = ct.child_token();
-    tokio::spawn(async move {
-        hydrate::hydrate_loop(hydrate_registry, hydrate_ready, hydrate_ct).await;
-    });
-
-    let hb_ready = readiness.clone();
+    let _hb_ready = hb_ready.clone();
+    let hb_cp_url =
+        std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://127.0.0.1:12631".to_string());
+    let hb_api_token =
+        std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-not-secure".to_string());
+    let hb_device_id = device_id.clone();
     let hb_ct = ct.child_token();
     tokio::spawn(async move {
-        heartbeat::heartbeat_loop(hb_ready, hb_ct).await;
+        heartbeat::heartbeat_loop(hb_ready, hb_cp_url, hb_api_token, hb_device_id, hb_ct).await;
     });
+    let _ = reaper_ready_marker;
 
-    let workspace_path =
-        std::env::var("XIHE_WORKSPACE").unwrap_or_else(|_| "/tmp/xihe-workspace".to_string());
-    let wp = workspace_path.clone();
-
-    let service_registry = registry.clone();
-    let wp_for_single = wp.clone();
+    let service_ensurer = workspace_ensurer;
     let service = StreamableHttpService::new(
         move || {
             let ws_id = CURRENT_WS_ID
                 .try_with(|id| id.clone())
                 .unwrap_or_else(|_| "default".to_string());
-            let profile = security_profile;
-            let container_addr = match profile {
-                SecurityProfile::Strict => None,
-                _ => tokio::runtime::Handle::current().block_on(resolve_container_addr(&ws_id)),
-            };
-            let ws_root = match service_registry.try_get(&ws_id) {
-                Some(instance) => instance.workspace_path.clone(),
-                None => {
-                    // Fail-closed: unknown workspace must not silently use default directory.
-                    // Distinguish not hydrated (registry empty) vs not registered (known empty after hydrate).
-                    if !service_registry.is_hydrated() {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::WouldBlock,
-                            format!(
-                                "workspace not registered: {} (WORKSPACE_REGISTRY_NOT_READY)",
-                                ws_id
-                            ),
-                        ));
-                    }
-                    let single_mode =
-                        std::env::var("XIHE_SINGLE_WORKSPACE_MODE").as_deref() == Ok("true");
-                    if single_mode {
-                        tracing::warn!(
-                            "single_workspace_fallback: ws_id={} not registered, using XIHE_WORKSPACE={}",
-                            ws_id, wp_for_single
-                        );
-                        wp_for_single.clone()
-                    } else {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            format!(
-                                "workspace not registered: {} (WORKSPACE_NOT_REGISTERED)",
-                                ws_id
-                            ),
-                        ));
-                    }
+            // Lazy, per-workspace materialization. Errors are surfaced through the
+            // rmcp service handler so the caller observes a structured Problem+JSON.
+            // block_in_place: rmcp invokes this closure from async worker threads;
+            // a bare block_on panics with "Cannot start a runtime from within a runtime".
+            let materialized = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(service_ensurer.ensure_workspace_materialized(&ws_id))
+            });
+            let instance = match materialized {
+                Ok(instance) => instance,
+                Err(error) => {
+                    return Err(std::io::Error::other(format!(
+                        "workspace materialization failed: {error}"
+                    )));
                 }
             };
-            Ok(XiheRuntime::new(&ws_id, &ws_root, profile, container_addr))
+            let profile = instance.profile;
+            let container_addr = match profile {
+                SecurityProfile::Strict => None,
+                _ => tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(resolve_container_addr(&ws_id))
+                }),
+            };
+            Ok(XiheRuntime::new(
+                &ws_id,
+                &instance.workspace_path,
+                profile,
+                container_addr,
+            ))
         },
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default()
@@ -1641,6 +1702,9 @@ async fn main() -> anyhow::Result<()> {
             .with_allowed_hosts(["localhost", "127.0.0.1", "runtime", "runtime:8001"]),
     );
     let _ = MCP_SERVICE.set(service);
+    // Drop the registry handle for clarity; the Streamable service keeps its own
+    // references via `service_ensurer` which is cloned below if needed.
+    drop(registry);
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1657,6 +1721,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/internal/v1/runtime/workspaces",
             post(create_workspace_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/status",
+            get(workspace_status_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/delete",
@@ -1741,7 +1809,10 @@ async fn main() -> anyhow::Result<()> {
     {
         let ids: Vec<String> = {
             let mgr = app_state.manager.lock().await;
-            mgr.list_workspaces().iter().map(|s| s.ws_id.clone()).collect()
+            mgr.list_workspaces()
+                .iter()
+                .map(|s| s.ws_id.clone())
+                .collect()
         };
         if ids.is_empty() {
             tracing::info!("runtime_shutdown_draining: no managed sandboxes");
@@ -1753,26 +1824,19 @@ async fn main() -> anyhow::Result<()> {
         }
         for ws_id in ids {
             let res = {
-                let mgr = app_state.manager.lock().await;
-                mgr.stop_container(&ws_id).await
+                let mut mgr = app_state.manager.lock().await;
+                mgr.delete_workspace(&ws_id).await
             };
             match res {
-                Ok(_) => tracing::info!("sandbox_stopped: ws_id={}", ws_id),
+                Ok(_) => tracing::info!("sandbox_deleted: ws_id={} storage_preserved=true", ws_id),
                 Err(e) => {
                     let msg = e.to_string();
                     if msg.contains("SandboxNotFound") || msg.contains("not found") {
-                        tracing::info!("sandbox_stop_skipped: ws_id={} not tracked", ws_id);
+                        tracing::info!("sandbox_delete_skipped: ws_id={} not tracked", ws_id);
                     } else {
-                        tracing::warn!("sandbox_stop_failed: ws_id={} err={}", ws_id, msg);
+                        tracing::warn!("sandbox_delete_failed: ws_id={} err={}", ws_id, msg);
                     }
                 }
-            }
-            // Best-effort: also try to stop any orphan docker container by name (manager HashMap may be empty after restart).
-            let name = format!("xihe-workspace-ws_{ws_id}");
-            if let Ok(docker) = Docker::connect_with_local_defaults() {
-                let _ = docker
-                    .stop_container(&name, Some(StopContainerOptions { t: Some(10), ..Default::default() }))
-                    .await;
             }
         }
     }
@@ -1784,18 +1848,13 @@ async fn main() -> anyhow::Result<()> {
 async fn mcp_config_poll_loop(
     manager: &'static mcp_process::McpProcessManager,
     registry: Arc<WorkspaceRegistry>,
+    ensurer: Arc<WorkspaceEnsurer>,
+    workspace_manager: Arc<Mutex<WorkspaceManager>>,
     ct: tokio_util::sync::CancellationToken,
 ) {
     let cp_url = std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://localhost:12631".into());
     let cp_api_token =
         std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-not-secure".into());
-    let docker = match Docker::connect_with_local_defaults() {
-        Ok(d) => Some(d),
-        Err(e) => {
-            tracing::warn!("Docker unavailable in config poll loop: {e}, spawn disabled");
-            None
-        }
-    };
     let mut interval = tokio::time::interval(mcp_process::CONFIG_POLL_INTERVAL);
     loop {
         tokio::select! {
@@ -1803,10 +1862,21 @@ async fn mcp_config_poll_loop(
             _ = interval.tick() => {
                 // Q11: reap idle bridges (15 min) — grill A timeout
                 manager.reap_idle(Duration::from_secs(900)).await;
-                let Some(ref docker) = docker else { continue };
                 let instances = registry.all_instances().await;
                 for instance in &instances {
                     let ws_id = &instance.ws_id;
+                    // ensure_workspace_materialized performs one targeted CP lookup even
+                    // for a Registry hit, so a local hash is never compared only with
+                    // itself.
+                    if let Err(error) = ensurer.ensure_workspace_materialized(ws_id).await {
+                        tracing::warn!(
+                            "config poll: ensure_workspace failed for {ws_id}: {error}"
+                        );
+                        registry
+                            .mark_failed(ws_id, &format!("config poll: {error}"))
+                            .await;
+                        continue;
+                    }
                     let (generation, hash, servers) =
                         manager.poll_config_with_generation(ws_id, &cp_url, &cp_api_token).await;
                     let existing = manager.list(ws_id).await;
@@ -1824,38 +1894,25 @@ async fn mcp_config_poll_loop(
                                 "config poll: generation/hash changed for {}/{} ({}->{}, {}->{}) rebuilding",
                                 ws_id, server_id, existing_info.generation, generation, existing_info.hash, hash
                             );
-                            manager.stop(ws_id, server_id).await;
-                            let kill_cmd = format!(
-                                "kill $(cat /workspace/.xihe-bridge-{}.pid 2>/dev/null) 2>/dev/null; rm -f /workspace/.xihe-bridge-{}.pid",
-                                server_id, server_id
-                            );
-                            let container_name = format!("xihe-workspace-ws_{ws_id}");
-                            if let Ok(exec) = docker
-                                .create_exec(
-                                    &container_name,
-                                    bollard::exec::CreateExecOptions {
-                                        cmd: Some(vec![
-                                            "sh".to_string(),
-                                            "-c".to_string(),
-                                            kill_cmd,
-                                        ]),
-                                        attach_stdout: Some(false),
-                                        attach_stderr: Some(false),
-                                        ..Default::default()
-                                    },
-                                )
-                                .await
-                            {
-                                let _ = docker
-                                    .start_exec(
-                                        &exec.id,
-                                        Some(bollard::exec::StartExecOptions {
-                                            detach: true,
-                                            ..Default::default()
-                                        }),
-                                    )
+                            let stop_result = {
+                                let workspace_manager = workspace_manager.lock().await;
+                                workspace_manager
+                                    .stop_mcp_bridge(ws_id, server_id)
+                                    .await
+                            };
+                            if let Err(error) = stop_result {
+                                tracing::warn!(
+                                    "config poll: failed to stop changed bridge for {}/{}: {}",
+                                    ws_id,
+                                    server_id,
+                                    error
+                                );
+                                registry
+                                    .mark_failed(ws_id, &format!("config poll stop failed: {error}"))
                                     .await;
+                                continue;
                             }
+                            manager.stop(ws_id, server_id).await;
                         }
                         tracing::info!(
                             "config poll: spawning {}/{} ({})",
@@ -1863,54 +1920,76 @@ async fn mcp_config_poll_loop(
                         );
 
                         let port = allocate_bridge_port();
-                        let container_name = format!("xihe-workspace-ws_{ws_id}");
-                        let bridge_cmd = format!(
-                            "/usr/local/bin/xihe-mcp-bridge --port {port} & echo $! > /workspace/.xihe-bridge-{server_id}.pid"
-                        );
-
-                        let exec = match docker.create_exec(
-                            &container_name,
-                            bollard::exec::CreateExecOptions {
-                                cmd: Some(vec!["sh".to_string(), "-c".to_string(), bridge_cmd]),
-                                attach_stdout: Some(false),
-                                attach_stderr: Some(false),
-                                ..Default::default()
-                            },
-                        ).await {
-                            Ok(exec) => exec,
-                            Err(e) => {
-                                tracing::warn!("config poll: failed to create exec for {}/{}: {e}", ws_id, server_id);
-                                // Q27 A: log + blocked
-                                manager
-                                    .mark_failed(ws_id, server_id, &format!("create exec failed: {}", e))
+                        let endpoint = {
+                            let workspace_manager = workspace_manager.lock().await;
+                            workspace_manager
+                                .start_mcp_bridge(ws_id, server_id, command, args, port)
+                                .await
+                        };
+                        let (bridge_host, bridge_port) = match endpoint {
+                            Ok(endpoint) => endpoint,
+                            Err(error) => {
+                                tracing::warn!(
+                                    "config poll: bridge {}/{} is unavailable: {}",
+                                    ws_id,
+                                    server_id,
+                                    error
+                                );
+                                registry
+                                    .mark_failed(ws_id, &format!("config poll bridge unavailable: {error}"))
                                     .await;
                                 continue;
                             }
                         };
-
-                        if let Err(e) = docker.start_exec(
-                            &exec.id,
-                            Some(bollard::exec::StartExecOptions {
-                                detach: true,
-                                ..Default::default()
-                            }),
-                        ).await {
-                            tracing::warn!("config poll: failed to start bridge for {}/{}: {e}", ws_id, server_id);
-                            manager
-                                .mark_failed(ws_id, server_id, &format!("start exec failed: {}", e))
+                        let bridge_base_url =
+                            mcp_process::bridge_base_url(&bridge_host, bridge_port);
+                        if let Err(error) =
+                            spawn_bridge_server(ws_id, &bridge_base_url, server_id, command, args)
+                                .await
+                        {
+                            tracing::warn!(
+                                "config poll: failed to spawn {}/{} through bridge: {}",
+                                ws_id,
+                                server_id,
+                                error
+                            );
+                            let cleanup_result = {
+                                let workspace_manager = workspace_manager.lock().await;
+                                workspace_manager.stop_mcp_bridge(ws_id, server_id).await
+                            };
+                            if let Err(cleanup_error) = cleanup_result {
+                                tracing::warn!(
+                                    "config poll: bridge cleanup failed for {}/{}: {}",
+                                    ws_id,
+                                    server_id,
+                                    cleanup_error
+                                );
+                            }
+                            registry
+                                .mark_failed(ws_id, &format!("config poll bridge spawn failed: {error}"))
                                 .await;
                             continue;
                         }
 
-                        let container_ip = resolve_container_ip(docker, &container_name).await
-                            .unwrap_or_else(|_| "127.0.0.1".to_string());
-
                         manager
                             .spawn_with_generation(
-                                ws_id, server_id, command, args, &container_ip, port, generation, &hash,
+                                ws_id,
+                                server_id,
+                                command,
+                                args,
+                                &bridge_host,
+                                bridge_port,
+                                generation,
+                                &hash,
                             )
                             .await;
-                        tracing::info!("config poll: bridge {}/{} spawned at {}:{}", ws_id, server_id, container_ip, port);
+                        tracing::info!(
+                            "config poll: bridge {}/{} spawned at {}:{}",
+                            ws_id,
+                            server_id,
+                            bridge_host,
+                            bridge_port
+                        );
                     }
 
                     // Remove servers no longer in config
@@ -1918,30 +1997,27 @@ async fn mcp_config_poll_loop(
                     for bridge_info in &existing {
                         if !configured_ids.contains(bridge_info.server_id.as_str()) {
                             tracing::info!("config poll: stopping removed server {}/{}", ws_id, bridge_info.server_id);
-                            manager.stop(ws_id, &bridge_info.server_id).await;
-                            // Docker kill the bridge process inside the container
-                            let kill_cmd = format!(
-                                "kill $(cat /workspace/.xihe-bridge-{}.pid 2>/dev/null) 2>/dev/null; \
-                                 rm -f /workspace/.xihe-bridge-{}.pid",
-                                bridge_info.server_id, bridge_info.server_id
-                            );
-                            let container_name = format!("xihe-workspace-ws_{ws_id}");
-                            if let Ok(exec) = docker.create_exec(
-                                &container_name,
-                                bollard::exec::CreateExecOptions {
-                                    cmd: Some(vec!["sh".to_string(), "-c".to_string(), kill_cmd]),
-                                    attach_stdout: Some(false),
-                                    attach_stderr: Some(false),
-                                    ..Default::default()
-                                },
-                            ).await {
-                                let _ = docker.start_exec(
-                                    &exec.id,
-                                    Some(bollard::exec::StartExecOptions {
-                                        detach: true,
-                                        ..Default::default()
-                                    }),
-                                ).await;
+                            let stop_result = {
+                                let workspace_manager = workspace_manager.lock().await;
+                                workspace_manager
+                                    .stop_mcp_bridge(ws_id, &bridge_info.server_id)
+                                    .await
+                            };
+                            match stop_result {
+                                Ok(()) => {
+                                    manager.stop(ws_id, &bridge_info.server_id).await;
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        "config poll: failed to stop removed bridge for {}/{}: {}",
+                                        ws_id,
+                                        bridge_info.server_id,
+                                        error
+                                    );
+                                    registry
+                                        .mark_failed(ws_id, &format!("config poll stop failed: {error}"))
+                                        .await;
+                                }
                             }
                         }
                     }
@@ -1987,29 +2063,75 @@ async fn idle_reaper_loop(
                     let ws_id = &instance.ws_id;
                     let name = format!("xihe-workspace-ws_{ws_id}");
 
-                    // Tier 4: 7 days idle — Suspended → Released (rmdir workspace dir)
+                    // Tier 4: 7 days idle — Suspended → Released. The Sandbox container is
+                    // already gone in Tier 3; we only mark Released and surface the workspace
+                    // in the per-workspace status map. Physical WorkspaceStorage stays intact.
                     if elapsed >= Duration::from_secs(604800) && instance.state == InstanceState::Suspended {
-                        match tokio::fs::remove_dir_all(&instance.workspace_path).await {
-                            Ok(_) => {
-                                registry.set_state(ws_id, InstanceState::Released).await;
-                                tracing::info!("Idle reaper: released workspace {} (idle >7d)", ws_id);
-                            }
-                            Err(e) => {
-                                tracing::warn!("Idle reaper: failed to remove dir {}: {}", ws_id, e);
-                            }
-                        }
+                        registry.set_state(ws_id, InstanceState::Released).await;
+                        tracing::info!(
+                            "Idle reaper: released workspace {} (idle >7d); WorkspaceStorage preserved at {}",
+                            ws_id,
+                            instance.workspace_path
+                        );
                         continue;
                     }
 
-                    // Tier 3: 24 hours idle — Stopped → Suspended (remove container, keep dir)
-                    if elapsed >= Duration::from_secs(86400) && instance.state == InstanceState::Stopped {
-                        match docker.remove_container(&name, Some(RemoveContainerOptions { force: true, v: true, link: false })).await {
+                    // Stop & pause must reflect the current Docker state, otherwise a Sandbox
+                    // restarted out of band (already exited) would never enter a clean state.
+                    let is_container_already_stopped = matches!(
+                        instance.state,
+                        InstanceState::Stopped | InstanceState::Suspended | InstanceState::Released
+                    );
+                    if is_container_already_stopped
+                        && let Ok(detail) = docker
+                            .inspect_container(&name, None)
+                            .await
+                            .map(|inspect| {
+                                inspect
+                                    .state
+                                    .as_ref()
+                                    .and_then(|value| value.status)
+                                    .map(|status| format!("{status:?}"))
+                                    .unwrap_or_else(|| "unknown".to_string())
+                            })
+                    {
+                        tracing::debug!(
+                            "Idle reaper: workspace {} container already non-running (state={}); skipping active tier",
+                            ws_id, detail
+                        );
+                        continue;
+                    }
+
+                    // Tier 3: 24 hours idle — remove ephemeral container, keep WorkspaceStorage.
+                    // Tier 3 is idempotent against the suspended state so a Sandbox that was
+                    // already stopped externally still gets its state promoted to Suspended.
+                    if elapsed >= Duration::from_secs(86400)
+                        && (instance.state == InstanceState::Stopped
+                            || matches!(instance.state, InstanceState::Active | InstanceState::Paused))
+                    {
+                        match docker
+                            .remove_container(
+                                &name,
+                                Some(RemoveContainerOptions {
+                                    force: true,
+                                    v: true,
+                                    link: false,
+                                }),
+                            )
+                            .await
+                        {
                             Ok(_) => {
                                 registry.set_state(ws_id, InstanceState::Suspended).await;
-                                tracing::info!("Idle reaper: suspended workspace {} (idle >24h)", ws_id);
+                                tracing::info!(
+                                    "Idle reaper: suspended workspace {} (idle >24h); WorkspaceStorage preserved",
+                                    ws_id
+                                );
                             }
                             Err(e) => {
-                                tracing::warn!("Idle reaper: failed to remove container {}: {}", ws_id, e);
+                                tracing::warn!(
+                                    "Idle reaper: failed to remove container {}: {}; retaining state",
+                                    ws_id, e
+                                );
                             }
                         }
                         continue;
@@ -2023,7 +2145,10 @@ async fn idle_reaper_loop(
                                 tracing::info!("Idle reaper: stopped container {} (idle >2h)", ws_id);
                             }
                             Err(e) => {
-                                tracing::warn!("Idle reaper: failed to stop container {}: {}", ws_id, e);
+                                tracing::warn!(
+                                    "Idle reaper: failed to stop container {}: {}; retaining state",
+                                    ws_id, e
+                                );
                             }
                         }
                         continue;
@@ -2037,7 +2162,10 @@ async fn idle_reaper_loop(
                                 tracing::info!("Idle reaper: paused container {} (idle >15m)", ws_id);
                             }
                             Err(e) => {
-                                tracing::warn!("Idle reaper: failed to pause container {}: {}", ws_id, e);
+                                tracing::warn!(
+                                    "Idle reaper: failed to pause container {}: {}; retaining state",
+                                    ws_id, e
+                                );
                             }
                         }
                     }
