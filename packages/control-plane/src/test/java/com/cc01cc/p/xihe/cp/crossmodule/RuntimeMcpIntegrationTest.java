@@ -271,8 +271,17 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
     }
 
+    // MCP 2026-07-28 removed protocol sessions (SEP-2567); a session-less
+    // GET/DELETE is valid and must be forwarded to the Runtime.
     @Test
-    void mcpGetRejectsWorkspaceHeaderWithoutBoundSession() {
+    void mcpGetForwardsWorkspaceHeaderWithoutBoundSession() {
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        wireMock.stubFor(get(urlEqualTo(runtimePath))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "text/event-stream")
+                        .withBody("event: message\ndata: {}\n\n")));
+
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.set("X-Workspace-Id", wsId);
@@ -280,11 +289,20 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         ResponseEntity<String> response = restTemplate.exchange(
                 url("/api/v1/mcp"), HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
-        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        wireMock.verify(getRequestedFor(urlEqualTo(runtimePath))
+                .withHeader("X-Workspace-Id", equalTo(wsId)));
     }
 
     @Test
-    void mcpDeleteRejectsWorkspaceHeaderWithoutBoundSession() {
+    void mcpDeleteForwardsWorkspaceHeaderWithoutBoundSession() {
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        wireMock.stubFor(delete(urlEqualTo(runtimePath))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"disconnected\":true}}")));
+
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.set("X-Workspace-Id", wsId);
@@ -292,6 +310,8 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         ResponseEntity<String> response = restTemplate.exchange(
                 url("/api/v1/mcp"), HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
 
-        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        wireMock.verify(deleteRequestedFor(urlEqualTo(runtimePath))
+                .withHeader("X-Workspace-Id", equalTo(wsId)));
     }
 }

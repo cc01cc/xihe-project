@@ -51,6 +51,7 @@ src/
 - MCP endpoint 通过 rmcp 自动注册
 - 配置文件通过 ConfigClient（HTTP）从 CP 获取
 - 沙盒隔离依赖 Docker/bollard
+- STDIO MCP 传输按 newline-delimited JSON-RPC 分帧：bridge 转发 HTTP body 时必须补写 `\n` 完成帧，按单行读取响应（不能读到 EOF——STDIO server 调用间不退出），stdout 句柄持久持有供后续调用复用（`take()` 会让第二次调用永久失败）。MCP 2026-07-28（SEP-2567）为无会话协议，上游不返回 `Mcp-Session-Id`，网关侧不得强制要求 session。
 - 启动时只完成 Runtime 自身 liveness/readiness；通过 Bearer 按 `workspaceId` 定向获取 `WorkspaceExecutionSpec`，首次文件/命令/MCP 操作时再 materialize Workspace Sandbox。
 - Sandbox Container 创建、重建和删除只处理临时执行实体，必须保留 WorkspaceStorage 文件。
 - Coding/Isolated Sandbox 的 container-runtime 绑定容器内所有接口，但只通过 Docker 分配的 `127.0.0.1` host port 供 native Runtime 访问；不要假设 Docker Desktop Linux bridge IP 从 Windows host 可达。Strict Sandbox 不发布该端口。

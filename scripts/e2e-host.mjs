@@ -235,7 +235,10 @@ async function launchUIVite() {
 
 async function startFixtures() {
   const fixtures = [
-    { name: 'Fake OAuth', script: 'fake-oauth-server.mjs', port: fakeOAuthPort, env: { XIHE_FAKE_OAUTH_PORT: fakeOAuthPort } },
+    { name: 'Fake OAuth', script: 'fake-oauth-server.mjs', port: fakeOAuthPort, env: {
+      XIHE_FAKE_OAUTH_PORT: fakeOAuthPort,
+      XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
+    } },
     { name: 'Fake MCP', script: 'fake-mcp-server.mjs', port: fakeMcpPort, env: {
       XIHE_FAKE_MCP_PORT: fakeMcpPort,
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,

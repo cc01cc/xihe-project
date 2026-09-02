@@ -138,6 +138,7 @@ public class McpProxyController {
                     .header("MCP-Protocol-Version", "2026-07-28")
                     .header("Authorization", "Bearer " + runtimeServiceToken)
                     .header("Accept", "application/json")
+                    .header("X-Workspace-Id", wsId)
                     .DELETE();
             copySessionHeaders(headers, builder);
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
@@ -493,7 +494,7 @@ public class McpProxyController {
      * user/workspace pair.
      */
     private AuthorizationResult authorize(
-            HttpHeaders headers, String body, boolean allowMissingMcpSession) {
+            HttpHeaders headers, String body, @SuppressWarnings("unused") boolean allowMissingMcpSession) {
         String gatewaySessionId = headerValue(headers, "mcp-session-id");
         String signedWorkspaceId = null;
         if (gatewaySessionId != null) {
@@ -586,16 +587,13 @@ public class McpProxyController {
                     HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found"));
         }
 
-        if (gatewaySessionId == null && !allowMissingMcpSession) {
-            return AuthorizationResult.failure(problem(
-                    HttpStatus.BAD_REQUEST, "MCP_SESSION_REQUIRED", "MCP session is required"));
-        }
+        // MCP 2026-07-28 (SEP-2567) removed protocol sessions; the Runtime
+        // serves that version statelessly and returns no Mcp-Session-Id.
+        // A protocol session therefore becomes an optional binding: when
+        // present it must match the resolved user/workspace pair, but its
+        // absence is never an error.
         McpSessionBinding binding = gatewaySessionId == null
                 ? null : mcpSessionBindings.get(gatewaySessionId);
-        if (gatewaySessionId != null && binding == null) {
-            return AuthorizationResult.failure(problem(
-                    HttpStatus.FORBIDDEN, "MCP_SESSION_NOT_FOUND", "MCP session is not recognized"));
-        }
         if (binding != null && (!workspaceId.equals(binding.workspaceId())
                 || !userId.equals(binding.userId()))) {
             return AuthorizationResult.failure(problem(

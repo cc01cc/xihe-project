@@ -275,8 +275,14 @@ async fn mcp_call_handler(
 
     let mut stdin = proc.stdin.lock().await;
 
+    // STDIO MCP transport is newline-delimited JSON-RPC; the HTTP body has
+    // no trailing delimiter, so the bridge must add one to complete the frame.
     stdin.write_all(&body).await.map_err(|e| {
         error!("write stdin failed for {server_id}: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    stdin.write_all(b"\n").await.map_err(|e| {
+        error!("write stdin delimiter failed for {server_id}: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     stdin.flush().await.map_err(|_| {
