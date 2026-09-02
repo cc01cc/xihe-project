@@ -61,6 +61,7 @@ mise run validate
 | `mise run dev:host:watch` | 启动 host 栈并监控健康端点，故障后重启任务组 | Node watcher；不启动 CP/Agent/Runtime 容器 |
 | `mise run dev:host:stop` | 停止 host 栈 PostgreSQL | 日常场景先 Ctrl+C 停止原生任务，再执行本命令 |
 | `mise run dev:reset` | 默认 dry-run；显式 `-Reset` 后备份并重建本地 dev 数据、清理 host workspace/Sandbox | 仅 dev；不连接生产，不删除 Runtime device identity |
+| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码（PLAN-229） | 缺省随机生成 24 字节 base64url 并打印；`pwsh scripts/reset-admin.ps1 -Password <pw>` 指定密码；免重启，账号不存在时以 ADMIN 创建，绝不删数据 |
 | `mise run build` | 构建 UI + Runtime | — |
 | `mise run build:ui` | 构建 UI bundle | — |
 | `mise run build:runtime` | 构建 Runtime binaries | — |
@@ -252,6 +253,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
 - **Agent MCP init 按需执行**: 纯 chat 即使带 current `workspaceId` 也不连接 CP MCP；只有明确需要 Workspace tool 的请求才触发工具发现和 Sandbox materialization。不得把一个 Workspace 的工具复用于其他 Workspace。
 - **dev:full/T3 拓扑边界**: 当前验证主线是 Windows `dev:host`。完整 Compose E2E 仍需要为 Runtime 提供 Docker Engine socket 和容器内 WorkspaceStorage 映射；未完成前不得将 `dev:full`/T3 的 workspace、MCP 和截图失败归因于 host v1。
+- **dev seed 密码不可知**: `DataSeeder` 为 `admin@xihe.local` 生成的随机密码不打印、不落日志，`dev:reset` 重建库后无法用旧凭据登录；恢复方式为 `mise run reset-admin`（PLAN-229）。
 - **Runtime 生命周期技术债**: `WorkspaceRegistry` 与 `WorkspaceManager` 若继续形成双路径，会使 create/exec/MCP/pause-resume/restart/delete 的状态不可恢复；后续应先收敛为单一生命周期状态机，再推进 warm pool、microVM 或多设备接管等隔离增强。
 - **`dev:host` 原生编排**: `mise run dev:host` 先以 Docker 启动并等待 PostgreSQL，再由 mise 并行管理原生 CP/Agent/Runtime/UI；`mise run dev:host:watch` 通过 Node watcher 检查四个健康端点并在任务组失败后重启。`scripts/dev-host.ps1` 仅保留兼容的检查/包装入口。`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根，默认 `A03-xihe\.xihe-workspaces`
 - **Host E2E 数据边界**: `mise run test:e2e:host` 每轮使用独立数据库和 host root，不连接长期 dev DB。成功、失败和中断都必须 teardown，并反向确认用户、Workspace、Session、ExecutionSpec、Sandbox、host 文件和 fixture 无本轮残留；`--keep` 仅限本地调试。

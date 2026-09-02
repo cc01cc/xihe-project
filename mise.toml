@@ -292,6 +292,11 @@ run = "docker build -t xihe/workspace -f docker/images/workspace/Dockerfile ."
 description = "Build the xihe/workspace Docker image (multi-stage)"
 alias = "image:workspace:build"
 
+[tasks."reset-admin"]
+run = "pwsh -NoProfile -File scripts/reset-admin.ps1"
+description = "Reset dev admin@xihe.local password (random if not specified; PLAN-229)"
+alias = "reset-admin"
+
 [tasks.clean]
 run = "rm -rf logs packages/*/target packages/*/dist packages/*/coverage"
 description = "Remove build artifacts, logs, and temporary files"
