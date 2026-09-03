@@ -24,83 +24,46 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 
 ## 2. 架构图
 
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart TD
+    AG["Agent (Python)<br/>StreamableHTTPConnection<br/>POST /api/v1/mcp {jsonrpc}"]
+    CP["CP McpProxyController (Java)<br/>1. 验 session-id 签名 + 提取 ws_id<br/>2. tools/list 合并 + tool→server 映射 (5min TTL)<br/>3. tools/call 查表路由<br/>4. 系统工具优先"]
+    GW["Runtime Gateway (Rust/Axum)<br/>/mcp (any) · /remote-mcp/../call<br/>/mcp/spawn (POST 启动 / GET 列表)<br/>/mcp/spawn/{id} (DELETE 停止)<br/>/mcp/stdio/{id} (POST 调用)<br/>配置轮询 30s"]
+    SB["容器 xihe-workspace-ws_{id}<br/>container-runtime --oneshot<br/>(stdin operation → stdout result, EOF 边界)<br/>mcp-bridge: POST /{server_id} → STDIO<br/>(30s 超时 / 1MB 缓冲)<br/>STDIO 子进程"]
+    AG --> CP --> GW --> SB
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Agent (Python)                                             │
-│  StreamableHTTPConnection(session-id, headers)              │
-│  └─→ POST /mcp { jsonrpc, method, params }                 │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│  CP McpProxyController (Java)                               │
-│                                                             │
-│  1. 验证 session-id 签名 + 提取 ws_id                      │
-│  2. tools/list: 合并系统工具 + 各 STDIO server 工具        │
-│     记录 tool_name → server_id 映射（缓存 5min TTL）        │
-│  3. tools/call: 按 tool name 查表路由                      │
-│  4. 系统工具优先（同名用户工具被跳过 + 告警）               │
-│                                                             │
-│  路由规则：                                                  │
-│  ├─ 系统工具 → POST /api/v1/mcp（CP logical endpoint）       │
-│  └─ 用户工具 → POST /api/v1/mcp（CP 按 tool 路由）            │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│  Runtime Gateway (Rust / Axum, 由 XIHE_RUNTIME_PORT 配置)   │
-│                                                             │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp             │  any 系统工具调用（tools/list + call）
-│  ├─ /internal/v1/runtime/remote-mcp/{ws}/{server}/call          │  POST 远程 MCP 调用
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn       │  POST 启动 bridge（无 serverId）
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │  DELETE 停止 bridge（kill，带 serverId）
-│  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │  POST 用户 STDIO 工具调用
-│                                                             │
-│  配置轮询：每 30s 从 CP 读取 mcpServers JSON，diff 后管理   │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│  Per-workspace Docker Container (xihe/workspace 镜像)        │
-│  xihe-workspace-ws_{ws_id}                                  │
-│                                                             │
-│  xihe-container-runtime (Rust binary, 镜像内预装)            │
-│  ├─ `--oneshot` 模式：stdin 单 operation JSON → stdout 单   │
-│  │   result JSON，EOF 即边界（per-request Docker exec）      │
-│  ├─ 文件操作 + 显式 Shell 命令 + `/tmp/xihe-jobs` 状态文件   │
-│  └─ 无 HTTP server / 无端口发布 / 无 instance token（exec   │
-│      本身即认证边界，见 PLAN-235）                           │
-│                                                             │
-│  xihe-mcp-bridge (Rust binary, 镜像内预装)                   │
-│  ├─ POST /{server_id} → STDIN → STDOUT → streaming resp    │
-│  ├─ health check (每 5s)                                    │
-│  ├─ auto-restart (max 3 次)                                 │
-│  └─ 30s 超时 / 1MB 缓冲区                                   │
-│                                                             │
-│  STDIO 子进程（npx, docker, python 等）                     │
-└─────────────────────────────────────────────────────────────┘
-```
+
+锚点：`McpProxyController.java`、`main.rs: 路由注册`、`mcp_bridge.rs`、`mcp_process.rs: CONFIG_POLL_INTERVAL`。无 HTTP container-runtime 通道、无 instance token（exec 本身即认证边界，PLAN-235）。
 
 ## 3. 数据传输流
 
 ### 3.1. 工具发现（tools/list）
 
-```
-Agent → CP /mcp
-  CP: 验证 session-id → 读 DB mcpServers JSON
-  CP → Runtime: GET /internal/v1/runtime/workspaces/{workspaceId}/mcp (系统 tools/list)
-  CP → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} (各 STDIO tools/list)
-  CP: 合并工具列表 + 构建 tool_name → server_id 映射（缓存）
-  CP → Agent: 返回合并后的工具列表
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+sequenceDiagram
+  Agent->>CP: POST /api/v1/mcp (tools/list)
+  CP->>CP: 验 session-id → 读 DB mcpServers
+  CP->>RT: /mcp (系统 tools/list)
+  CP->>RT: /mcp/stdio/{id} (各 STDIO tools/list)
+  CP->>CP: 合并 + tool→server 映射 (5min TTL)
+  CP-->>Agent: 合并工具列表
 ```
 
 ### 3.2. 工具调用（tools/call）
 
-```
-Agent → CP /mcp (tool_name, args)
-  CP: 查 tool_name → server_id 映射
-  ├─ 系统工具 → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp
-  │               → XiheRuntime 执行 Rust 函数
-  └─ 用户工具 → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}
-                  → xihe-mcp-bridge: STDIN → STDOUT → 结果返回
-  CP → Agent: 透传结果
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+sequenceDiagram
+  Agent->>CP: POST /api/v1/mcp (tool_name, args)
+  CP->>CP: 查 tool→server 映射
+  alt 系统工具
+    CP->>RT: /mcp → exec 进 Sandbox 执行
+  else 用户工具
+    CP->>RT: /mcp/stdio/{id} → bridge STDIN/STDOUT
+  end
+  CP-->>Agent: 透传结果
 ```
 
 ## 4. 关键技术决策

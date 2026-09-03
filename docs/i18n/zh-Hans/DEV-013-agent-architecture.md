@@ -61,28 +61,17 @@ LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters
 
 ### 3.1 总体架构
 
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart TD
+    ES["Event Store (Postgres)"] --> PS["ContextProjectionService"]
+    PS --> CS["ContextService"]
+    CS -->|"GET /internal/v1/context/{id}/snapshot"| EP["EventSourcedContextProvider"]
+    EP --> AC["AgentContext 快照"]
+    AC --> EX["BaseAgentTool.execute(context=...)"]
 ```
-┌─────────────────────────────────────────┐
-│ Control Plane (CP)                      │
-│  ┌──────────────┐  ┌──────────────────┐ │
-│  │ Event Store  │  │ Context          │ │
-│  │ (Postgres)   │  │ Projection       │ │
-│  │              │  │ Service          │ │
-│  └──────────────┘  └──────────────────┘ │
-│           │                   │         │
-│           └───────┬───────────┘         │
-│              ContextService             │
-└─────────────────────────────────────────┘
-                     │ HTTP / snapshot
-┌─────────────────────────────────────────┐
-│ Agent Service                           │
-│  EventSourcedContextProvider            │
-│           ↓                             │
-│      AgentContext 快照                  │
-│           ↓                             │
-│  BaseAgentTool.execute(context=...)     │
-└─────────────────────────────────────────┘
-```
+
+锚点：`ContextProjectionService.java`、`ContextController.java:83`、`event_sourced_provider.py`。
 
 - CP 是唯一真相源，负责事件持久化与投影。
 - Agent 无状态，通过 `/internal/v1/context/{sessionId}/snapshot` 获取投影快照。

@@ -47,6 +47,15 @@ updated: 2026-09-03
 
 ## 4. 传输层（会话级持久 SSE，PLAN-230）
 
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart LR
+    T["chatTransport<br/>(单飞连接 + 退避重连)"] --> S["SSEStream<br/>(hint 分流 / parser 替换)"]
+    S --> P["useStreamParser<br/>(MessagePart 分类)"]
+    P --> C["chatStore<br/>(Message.parts)"]
+    C --> V["Message 气泡渲染"]
+```
+
 - **chatTransport**（`services/chatTransport.ts`）：按 `sessionId` 单飞连接（`connectionGeneration` + `intentionalStops`）；`onerror` 指数退避（250ms 起，上限 5s）；`onclose` 调度重连（无次数上限，`intentionalStops` 才停）；401 清 token 跳 `/login`。
 - **useSSE**（`composables/useSSE.ts`，返回 `connect/disconnect/sendMessage`，未提供连接确保方法）：发送前由 `SSEStream` 手工确认连接（未连则 `connectSession` + 等待）；CP 侧 409（`SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`）由调用方处理，UI 无自动 409 重试分支。
 - **SSEStream**：带 hint（`reasoning`/`text`）的 token 走 `chatStore.appendToParts` 追加；无 hint 时经 `useStreamParser.handleToken` 再 `replaceStreamingParts` 整量替换；`done` 仅结束 run；`heartbeat` 15s 不进业务气泡。

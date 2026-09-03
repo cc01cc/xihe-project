@@ -11,6 +11,8 @@ updated: 2026-09-03
 
 # DEV-017: Session 架构
 
+> 面向前端与会话逻辑开发者：一页讲清状态归属、同步机制与嵌入约定。UI 实现细节见 DEV-010。
+>
 > chat 与 workspace 是同一 Session 的不同视图。与 DEV-010 以"Session 领域 vs UI 实现"分界：状态归属、同步机制、嵌入约定归本文；路由表、组件树、传输层实现归 DEV-010。
 
 ## 1. Session 领域模型

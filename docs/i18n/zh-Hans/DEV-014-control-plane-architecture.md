@@ -13,6 +13,18 @@ updated: 2026-09-03
 
 > Control Plane（Java 25 + Spring Boot 4）是系统心脏：路由 + 认证 + MCP 反向代理 + 状态广播 + 会话管理 + 统一配置。约束：不做模块专属业务逻辑。与 DEV-016 以"CP 内部 vs 端到端工具路径"分界互引；端点以 `docs/api/openapi.yaml` 为准。
 
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart LR
+    UI["UI"] -->|"POST /api/v1/chat"| CP["CP"]
+    CP -->|"POST /internal/v1/agent/chat"| AG["Agent"]
+    AG -.->|"SSE 回流"| CP
+    CP -.->|"GET /api/v1/events SSE"| UI
+    AG2["Agent MCP"] -->|"POST /api/v1/mcp"| CP
+    CP -->|"/mcp · /stdio"| RT["Runtime"]
+    RT -.->|"notification"| CP
+```
+
 ## 1. 三通道
 
 - **聊天通道**：`POST /api/v1/chat`（`202` + `runId`，指令发送）+ `GET /api/v1/events?sessionId=`（会话级持久 SSE，流接收）；`POST /api/v1/exec` 并存。CP 中转 UI↔Agent，流式分发到 UI。
@@ -21,7 +33,7 @@ updated: 2026-09-03
 
 ## 2. 会话级持久 SSE（PLAN-230）
 
-- `SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储，单会话单活；新连接替换旧连接（`chat_sse_replaced`），旧 `onCompletion` 用 `compareAndRemove` 保护（误删记 `stale_cleanup_ignored`）。
+- `SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储，单会话单活；新连接替换旧连接（`chat_sse_replaced`），旧 `onCompletion` 用 `removeIfCurrent` 身份比对保护（误删记 `stale_cleanup_ignored`）。
 - `POST /api/v1/chat` 先校验 `hasEmitter`（缺失 → `409 SSE_SUBSCRIPTION_REQUIRED`），再原子获取 `activeRuns` 单并发租约（冲突 → `409 CHAT_IN_PROGRESS`）。
 - `done` 仅结束当前 `runId`，不关闭会话 SSE；`heartbeat` 15s 保活不进业务气泡。
 - `requestId`/`runId` 由 `RequestIdFilter` 生成，经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传至异步 `execAsync` 与 Agent（禁跨线程 MDC 继承）；`RequestIdFilter` 同时写 MDC `requestId` 并回写响应头。

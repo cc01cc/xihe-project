@@ -11,6 +11,8 @@ updated: 2026-09-03
 
 # DEV-012: UI/UX Reference Projects
 
+> 面向 UI/UX 设计：只借鉴布局与交互模式，不引入其组件代码（技术栈不兼容）。新增参考前先评估模块匹配度。
+
 以下开源/商业产品可作为 xihe 各模块 UI/UX 与交互设计的参考来源。xihe 使用 **Vue 3 + reka-ui（shadcn-vue 封装层共存）+ Tailwind v4**，因此只借鉴其**布局、交互模式、信息架构和视觉层级**，不直接引入其 React/Vue 组件或样式系统。
 
 ## 通用 AI 聊天界面

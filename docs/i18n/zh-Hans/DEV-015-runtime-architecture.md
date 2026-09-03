@@ -24,8 +24,32 @@ updated: 2026-09-03
 ## 2. 执行边界（PLAN-235）
 
 - Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作**全部在 Sandbox 内执行**，Runtime host 进程不直接读写 WorkspaceStorage，无 container failure → host fallback。
-- 传输模型：统一 per-request Docker exec（create_exec → start_exec → 写 operation JSON → 读 stdout 到 EOF）；**无** HTTP container-runtime 通道、instance token、长驻 worker、NDJSON 多路复用（exec 本身即认证边界：只有 Runtime 能调 Docker Engine API）。
-- Strict Sandbox 用 `network_mode=none` 且不发布端口；镜像预置 `xihe-executor` / `xihe-job` 独立容器用户（切换与凭据隔离语义待实现确认，见 DEV-018）
+- 传输模型：统一 per-request Docker exec；**无** HTTP container-runtime 通道、instance token、长驻 worker、NDJSON 多路复用（exec 本身即认证边界：只有 Runtime 能调 Docker Engine API）。
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+sequenceDiagram
+  participant R as xihe-runtime (host)
+  participant D as Docker Engine
+  participant C as container-runtime --oneshot
+  R->>D: create_exec (operation)
+  R->>D: start_exec (attach stdin/stdout)
+  R->>C: 写 operation JSON → shutdown stdin
+  C->>C: 执行（文件/命令/job）
+  C-->>R: stdout 单 result JSON → EOF 即边界
+```
+
+锚点：`executor.rs: create_exec→start_exec` + `container_runtime.rs: --oneshot`。
+- 三 profile 隔离矩阵：
+
+| | Strict | Coding | Isolated |
+|---|---|---|---|
+| network | `none` | bridge | bridge |
+| 端口发布 | 无 | 无 | 无 |
+| 执行面 | per-request exec | per-request exec | per-request exec |
+| host 回退 | 无 | 无 | 无 |
+
+镜像预置 `xihe-executor` / `xihe-job` 独立容器用户（切换与凭据隔离语义待实现确认，见 DEV-018）
 - `execute_command` 为显式 Shell 语义：`args` 作 positional parameters 传入（禁拼接）；timeout/cancel 终止并等待 child/process group；stdout/stderr 与 retained artifact 有界，超限只留 bounded preview。
 - MCP 工具集（rmcp `#[tool]`，`main.rs` 共 24 个）：read_file/read_file_range/write_file/list_directory/glob/grep/execute_command/read_command_output/get_file_info/watch_directory/edit_file/delete_file/delete_directory/move_file/copy_file/mkdir/extract_pdf_text/web_fetch/start/list/get/cancel_background_process。
 
