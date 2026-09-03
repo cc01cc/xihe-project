@@ -531,7 +531,7 @@ uv run python -m xihe_agent.main
 # 直接启动时日志输出到终端；host 启动时还会默认写入 logs/agent.log
 ```
 
-或通过设置页添加 Provider：OpenAI、DeepSeek、小米 MiMo、Anthropic 预设 + 自定义。
+或通过设置页添加 Provider：OpenAI、DeepSeek、小米 MiMo（`mimo-v2.5` / `mimo-v2.5-pro` 等 6 模型，`GET /api/v1/models` 为事实来源，`xiaomi_mimo/` 前缀为 LiteLLM 原生路由）、Anthropic 预设 + 自定义。`config.import.example.jsonc` 中 `xiaomiModel` 默认 `mimo-v2.5`。
 
 ## 7. 相关文档
 

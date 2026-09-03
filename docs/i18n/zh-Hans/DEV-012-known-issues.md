@@ -2,6 +2,12 @@
 
 本文件收录不属于 AGENTS.md 最关键的 5 项的已知问题，供排查时参考。
 
+## 已修复 — Chat SSE 生命周期与真实流式（PLAN-230 已完成 M1-M4）
+
+- **会话 SSE 一次性连接导致连续消息 409**：已修复。原因：CP ChatController 每轮 inally 执行 sseManager.complete(sessionId) 使会话 SSE 变为一次性，且旧 emitter onCompletion 按 sessionId 无条件 emove 可能误删新连接；UI onclose 未重连。修复：CP 改为持久会话 SSE（SseEmitterManager 按 {sessionId, generation, emitter} + compareAndRemove/stale_cleanup_ignored，complete(sessionId) 不在普通 run 末尾调用，仅客户端断开/session 删除/不可写时清理）；UI chatTransport 单飞 + 退避重连 + nsureConnected 一次 409 恢复；SSEStream 每 	oken 整量替换（eplaceStreamingParts）。验证：同一页面连续两条 POST /api/v1/chat 均 202 且助手回复不空；	oken 增量在 done 前多次增长（手工 115 长度样本 + xh-incremental-stream-verified.png）。
+- **真实模型流式未生效（stream=False 单 token）**：已修复。XiheLiteLLM 未实现 _astream() 导致 stream_events 仅产生 on_chat_model_end 单包。修复：llm/base.py 实现 streaming=True 异步 hook，sse_adapter 按 un_id 去重使 on_chat_model_end 仅在无 stream 时 fallback；真实 MiMo 长回复多 	oken（ChatIntegration/AgentChatIntegration + 手工 115 长度证据）。
+- **日志泄露与关联缺失**：已修复。main.py 前记录消息前缀、ChatController 记录完整 Agent error body、litellm curl debug 的 Authorization: Be****、Spring Using generated security password。修复：litellm.suppress_debug_info=True、log_redact 掩码 Authorization:、pplication.properties 占位密码、scan-log-secrets.mjs 读取失败即失败并扩展 pattern（门禁 clean 20 files）。
+
 ## 环境 / Docker
 
 - **WSL2 OOM**: 修改 vitest config 前需 `bash ../../scripts/cleanup-wsl-resources.sh`

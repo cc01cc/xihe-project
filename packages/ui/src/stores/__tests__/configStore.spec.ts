@@ -116,13 +116,13 @@ describe('useConfigStore', () => {
 
     it('uses modelCache to resolve provider for defaultModel', () => {
       const store = useConfigStore()
-      store.modelCache = { models: { xiaomi: ['mimo-v2-omni'] } }
+      store.modelCache = { models: { xiaomi: ['mimo-v2.5'] } }
       store.mergedConfig = {
         'llm-provider': {},
-        'user-preference': { defaultModel: 'mimo-v2-omni' },
+        'user-preference': { defaultModel: 'mimo-v2.5' },
       }
 
-      expect(store.getEffectiveModel('s1')).toEqual({ provider: 'xiaomi', model: 'mimo-v2-omni' })
+      expect(store.getEffectiveModel('s1')).toEqual({ provider: 'xiaomi', model: 'mimo-v2.5' })
     })
 
     it('falls back to provider defaultModel when only defaultProvider is set', () => {

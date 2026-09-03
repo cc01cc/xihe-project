@@ -92,11 +92,132 @@ paths:
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
       responses: { '200': { description: MCP configuration }, '401': { $ref: '#/components/responses/Problem' } }
   /api/v1/chat:
-    post: { operationId: chat, security: [{ bearerAuth: [] }], responses: { '202': { description: Accepted }, '401': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
+    post:
+      operationId: chat
+      summary: Enqueue a chat turn (requires active SSE)
+      description: |
+        Accepts a user message for the given session and enqueues an async relay to the Agent.
+        The caller must already hold an active `GET /api/v1/events?sessionId=` subscription for the same session;
+        otherwise the request is rejected with `409 SSE_SUBSCRIPTION_REQUIRED`.
+        Only one in-flight run per session is allowed (`409 CHAT_IN_PROGRESS`).
+        The accepted run streams `token` events followed by a terminal `done` over the persistent session SSE —
+        `done` ends the run, not the SSE connection. The SSE remains reusable for the next chat.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, content]
+              properties:
+                sessionId: { type: string, description: Target session ID }
+                content: { type: string, description: User message content }
+                model: { type: string, description: Optional model override }
+                attachments: { type: array, items: { type: string }, description: Attachment fileIds bound to the session }
+      responses:
+        '202':
+          description: Accepted — run enqueued, progress via SSE
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, sessionId, runId]
+                properties:
+                  status: { type: string, enum: [accepted, queued] }
+                  sessionId: { type: string }
+                  messageId: { type: string }
+                  runId: { type: string }
+                  reason: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: SSE subscription missing or run already active
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example: { type: "https://xihe.dev/problems/sse-subscription-required", title: "SSE subscription required", status: 409, code: "SSE_SUBSCRIPTION_REQUIRED", detail: "An active SSE subscription is required", requestId: "req-..." }
+        '503': { $ref: '#/components/responses/Problem' }
   /api/v1/events:
-    get: { operationId: chatEvents, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: sessionId, schema: { type: string } }], responses: { '200': { description: SSE stream, content: { text/event-stream: {} } }, '401': { $ref: '#/components/responses/Problem' } } }
+    get:
+      operationId: chatEvents
+      summary: Subscribe to session-scoped persistent SSE
+      description: |
+        Session-scoped **persistent** Server-Sent Events connection.
+        * One active emitter per `sessionId` (v1). A new `GET /api/v1/events?sessionId=` replaces any prior emitter for the same session; the old emitter's completion/timeout/error callbacks are identity-checked and must not delete the new emitter (`stale_cleanup_ignored`).
+        * `done` terminates a **run**, not the session SSE. The connection stays open across multiple `POST /api/v1/chat` turns and only closes on client disconnect, session deletion, or explicit server termination.
+        * The server sends a `heartbeat` comment/event every 15s to keep the connection observable. Heartbeat never enters the message bubble nor resets the run's token count.
+        * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
+        * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `tool_call`/`tool_result` (optional) → `token` (one or more) → `done` (exactly one, may carry `errorCode`/`synthetic`). On provider error a single `error` + terminal `done(error)` is sent; the session SSE is retained unless the emitter itself is unwritable.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: sessionId
+          required: true
+          schema: { type: string }
+          description: Session to subscribe to (must belong to current workspace/user)
+      responses:
+        '200':
+          description: SSE stream — one event per line `event: <name>` + `data: <json>`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: connected
+                data: {"sessionId":"sess-123","type":"connected"}
+
+                event: token
+                data: {"content":"hello ","type":"token","run_id":"run-abc"}
+
+                event: token
+                data: {"content":"world","type":"token","run_id":"run-abc"}
+
+                event: done
+                data: {"type":"done","run_id":"run-abc"}
+
+                event: heartbeat
+                data: {"type":"heartbeat","connectionGeneration":2}
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/exec:
-    post: { operationId: executeChat, security: [{ bearerAuth: [] }], responses: { '202': { description: Accepted }, '401': { $ref: '#/components/responses/Problem' } } }
+    post:
+      operationId: executeChat
+      summary: Execute chat via legacy exec path (shares chat SSE contract)
+      description: |
+        Shares the same session-SSE contract as `POST /api/v1/chat`: an active `GET /api/v1/events?sessionId=` is required before the run is accepted, and `done` does not close the SSE.
+        Exists for backward compatibility; new clients should use `/api/v1/chat`.
+        Request validation, `409 SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`, and SSE event order are identical to `/api/v1/chat`.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, content]
+              properties:
+                sessionId: { type: string }
+                content: { type: string }
+                model: { type: string }
+      responses:
+        '202':
+          description: Accepted — shares chat SSE contract
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, sessionId, runId]
+                properties:
+                  status: { type: string, enum: [accepted] }
+                  sessionId: { type: string }
+                  runId: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /api/v1/health:
     get: { operationId: health, responses: { '200': { description: Healthy } } }
   /api/v1/status:

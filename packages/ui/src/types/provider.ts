@@ -18,7 +18,7 @@ const BUILTIN_PROVIDERS_LIST: ProviderInfo[] = [
   {
     id: 'xiaomi',
     name: '小米 MiMo',
-    defaultModel: 'mimo-v2-omni',
+    defaultModel: 'mimo-v2.5',
     defaultBaseUrl: 'https://api.xiaomimimo.com/v1',
     description: '小米 MiMo 系列模型（深度推理、函数调用、256K 上下文）',
   },
@@ -49,7 +49,9 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'deepseek-chat': 64,
   'deepseek-reasoner': 64,
   'deepseek-r1': 64,
+  'mimo-v2.5': 256,
   'mimo-v2-omni': 256,
+  'mimo-v2.5-pro': 256,
   'claude-sonnet-4-20250514': 200,
   'claude-3-5-sonnet-20241022': 200,
 }

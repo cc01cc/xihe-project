@@ -1,7 +1,7 @@
 # Xihe API Inventory
 
-This inventory is the implementation baseline for PLAN-222. It records the
-current canonical routes after the targeted WorkspaceExecutionSpec migration.
+This inventory is the implementation baseline for PLAN-222 + PLAN-230. It records the
+current canonical routes after the targeted WorkspaceExecutionSpec migration and the PLAN-230 Chat SSE lifecycle freeze.
 
 ## HTTP Routes
 
@@ -22,7 +22,10 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration.
 | CP | `/workspaces/{id}/mcp-config` | `/internal/v1/config/workspaces/{workspaceId}/mcp-config` | service Bearer | Runtime config read |
 | CP | `/workspaces/current`, `/workspaces`, `/workspaces/{workspaceId}` | unchanged under `/api/v1/workspaces/...` | user Bearer | UI, Runtime lifecycle |
 | CP | `/sessions`, `/sessions/{sessionId}` | unchanged under `/api/v1/sessions/...` | user Bearer + current workspace | UI |
-| CP | `/files/**`, `/rag/**`, `/chat`, `/events`, `/exec` | `/api/v1/...` equivalent | user Bearer | UI |
+| CP | `/files/**`, `/rag/**` | `/api/v1/...` equivalent | user Bearer | UI |
+| CP | `POST /api/v1/chat` | `POST /api/v1/chat` (requires active SSE, single in-flight, `202` + `runId`, `409 SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`) | user Bearer + current workspace | UI — enqueues async Agent relay; streams `token` → `done` on persistent SSE |
+| CP | `GET /api/v1/events?sessionId=` | `GET /api/v1/events?sessionId=` — **session-scoped persistent SSE** | user Bearer + current workspace | UI — one active emitter per `sessionId`; `done` ends run, not SSE; `heartbeat` (15s) is transport-only, never enters `MessagePart` |
+| CP | `POST /api/v1/exec` | `POST /api/v1/exec` (legacy, shares `/api/v1/chat` SSE contract) | user Bearer + current workspace | UI — legacy exec path, identical subscription/in-flight/close semantics |
 | CP | `/api/v1/status`, `/api/v1/health`, `/api/v1/logs`, `/api/v1/telemetry/*` | unchanged `/api/v1/...` | public/user Bearer | UI/telemetry |
 | CP | `/api/v1/sessions/{sessionId}/messages[/{messageId}]` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `/api/v1/sessions/{sessionId}/attachments[/{fileId}]` | unchanged `/api/v1/...` | user Bearer | UI |
@@ -48,3 +51,12 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration.
 - Errors use `application/problem+json` with `type`, `title`, `status`,
   `code`, `detail`, and `requestId`.
 - No query-string tokens, `X-Api-Token`, old path aliases, or field fallbacks.
+
+## Chat SSE Contract (PLAN-230)
+
+- **Persistence**: `GET /api/v1/events?sessionId=` is a session-scoped long-lived SSE. `done` terminates a *run*, not the SSE. Only client disconnect, session deletion, or explicit server termination closes it. Heartbeat `event: heartbeat` every 15s; never enters UI `MessagePart`.
+- **Identity**: One active emitter per `sessionId` (v1). `SseEmitterManager` stores `{sessionId, generation, emitter}` and uses `compareAndRemove`; new connection replaces old (`chat_sse_replaced`) and old `onCompletion`/`onTimeout`/`onError` that no longer own the entry are logged as `chat_sse_stale_cleanup_ignored`.
+- **Gate**: `POST /api/v1/chat` and `POST /api/v1/exec` check `hasEmitter(sessionId)` *before* persisting the user message. On miss: `409 SSE_SUBSCRIPTION_REQUIRED`; on concurrent run: `409 CHAT_IN_PROGRESS` / `429` / `503 AGENT_CIRCUIT_OPEN`.
+- **Events per run**: `connected` (SSE open) → optional `status`/`thinking` → optional `tool_call`/`tool_result` → `token` (≥1) → `done` (exactly one; `error` + `done(error)` on failure). Real MiMo long replies produce ≥2 `token` events; `on_chat_model_end` fallback fires only when no `on_chat_model_stream` was emitted (`LangGraphEventAdapter` per `run_id`).
+- **Observability**: CP logs `chat_sse_registered` / `replaced` / `stale_cleanup_ignored` / `client_closed` / `send_failed` with `sessionId` + `connectionGeneration`; `chat_run_started` / `forwarded` / `finished` / `failed` with `requestId` + `runId`; `chat_stream_event_received` / `relay_finished` with `eventIndex` + `tokenCount` (never token content). `requestId` from `RequestIdFilter` is explicitly propagated to `execAsync` via `X-Request-Id`/`X-Chat-Run-Id` (not thread-local).
+- **UI**: `chatTransport` enforces single flight per session (`connectionGeneration` + `intentionalStops`), `fetch-event-source` retry is *solely* in transport (`onerror` returns explicit backoff 250ms→5s, `onclose` schedules at most one reconnect; no second retry loop). `useSSE.ensureConnected()` + one-shot `409` recovery, `SSEStream` replaces streaming parts on every `token` (`replaceStreamingParts`).

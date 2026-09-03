@@ -71,6 +71,7 @@ src/xihe_agent/
 - `interfaces/` 目录下禁止直接 import `langchain*`；LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph
 - Context 通过 `ContextProvider.load()` 获取 CP 投影后的 `AgentContext` 快照；事件持久化由 `EventStore` 写入 CP
+- **Chat 流式（PLAN-230）**：`XiheLiteLLM` 以 `streaming=True` 实现 `BaseChatModel._astream()`，使 `astream_events` 产生真实 `on_chat_model_stream`；`LangGraphEventAdapter` 按 `run_id` 记录 `streamed` 状态，`on_chat_model_end` 仅在无 stream 时 fallback 单 `token`，避免重复；`main.py` 设置 `litellm.suppress_debug_info=True` 并经 `log_redact` 掩码 `Authorization:`，日志仅 `tokenChars`/`tokenCount` 不记内容
 
 ## Permissions
 

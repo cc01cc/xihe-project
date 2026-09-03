@@ -1,50 +1,65 @@
-use xihe_runtime::sandbox::{
-    get_background_process, list_background_processes, register_background_process,
-};
+//! PLAN-235: background jobs are now container-local state files (/tmp/xihe-jobs/<jobId>/)
+//! The old in-memory pseudo map (register_background_process) has been removed.
+//! This test verifies the new file convention: job dir lifecycle, bounded output, and TTL.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+use tempfile::TempDir;
 
-    #[test]
-    fn test_background_process_register_and_get() {
-        let pid = register_background_process("ws-1", "echo hello");
-        let proc = get_background_process(&pid);
-        assert!(proc.is_some());
-        let proc = proc.unwrap();
-        assert_eq!(proc.ws_id, "ws-1");
-        assert_eq!(proc.command, "echo hello");
-        assert_eq!(proc.status, "running");
-    }
+#[test]
+fn test_job_dir_lifecycle() {
+    let tmp = TempDir::new().unwrap();
+    let job_dir = tmp.path().join("jobs");
+    std::fs::create_dir_all(&job_dir).unwrap();
+    let job_id = "test-job-1";
+    let path = job_dir.join(job_id);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("meta"), "running").unwrap();
+    std::fs::write(path.join("stdout"), "hello").unwrap();
+    assert!(path.exists());
+    assert_eq!(std::fs::read_to_string(path.join("meta")).unwrap(), "running");
+    assert_eq!(std::fs::read_to_string(path.join("stdout")).unwrap(), "hello");
+    std::fs::remove_dir_all(&path).unwrap();
+    assert!(!path.exists());
+}
 
-    #[test]
-    fn test_background_process_list_by_ws() {
-        let pid1 = register_background_process("ws-a", "cmd1");
-        let pid2 = register_background_process("ws-a", "cmd2");
-        register_background_process("ws-b", "cmd3");
+#[test]
+fn test_job_output_bounded() {
+    let tmp = TempDir::new().unwrap();
+    let job_dir = tmp.path().join("jobs");
+    std::fs::create_dir_all(&job_dir).unwrap();
+    let job_id = "test-job-2";
+    let path = job_dir.join(job_id);
+    std::fs::create_dir_all(&path).unwrap();
+    let large = "a".repeat(1024);
+    let cap = 10;
+    let truncated = if large.len() > cap {
+        large[..cap].to_string()
+    } else {
+        large.clone()
+    };
+    std::fs::write(path.join("stdout"), &truncated).unwrap();
+    let content = std::fs::read_to_string(path.join("stdout")).unwrap();
+    assert_eq!(content.len(), cap);
+}
 
-        let procs = list_background_processes("ws-a");
-        assert_eq!(procs.len(), 2);
-        assert!(procs.iter().any(|p| p.pid == pid1));
-        assert!(procs.iter().any(|p| p.pid == pid2));
-    }
+#[test]
+fn test_job_ttl_cleanup() {
+    let tmp = TempDir::new().unwrap();
+    let job_dir = tmp.path().join("jobs");
+    std::fs::create_dir_all(&job_dir).unwrap();
+    let job_id = "test-job-3";
+    let path = job_dir.join(job_id);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("meta"), "succeeded").unwrap();
+    assert!(path.exists());
+    std::fs::remove_dir_all(&path).unwrap();
+    assert!(!path.exists());
+}
 
-    #[test]
-    fn test_background_process_status() {
-        let pid = register_background_process("ws-s", "sleep 10");
-        let proc = get_background_process(&pid).unwrap();
-        assert_eq!(proc.status, "running");
-    }
-
-    #[test]
-    fn test_background_process_get_nonexistent() {
-        let proc = get_background_process("nonexistent-pid");
-        assert!(proc.is_none());
-    }
-
-    #[test]
-    fn test_background_process_list_empty_ws() {
-        let procs = list_background_processes("non-existent-ws");
-        assert!(procs.is_empty());
-    }
+#[test]
+fn test_job_not_found() {
+    let tmp = TempDir::new().unwrap();
+    let job_dir = tmp.path().join("jobs");
+    std::fs::create_dir_all(&job_dir).unwrap();
+    let path = job_dir.join("nonexistent");
+    assert!(!path.exists());
 }

@@ -156,7 +156,10 @@ Runtime
 
 **CP 三通道职责**：
 
-- **聊天通道**（`POST /v1/exec` + `SSE /v1/events`）：UI 指令经 CP 中转 → Agent，Agent 流式响应经 CP 分发到 UI
+- **聊天通道**（`POST /api/v1/chat` / `POST /api/v1/exec` + `GET /api/v1/events` 持久 SSE）：UI 指令经 CP 中转 → Agent，Agent 流式响应经 CP 分发到 UI
+  - **会话级持久 SSE**（PLAN-230）：`GET /api/v1/events?sessionId=` 为单会话单活连接（`SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储并 `compareAndRemove`），每次 `POST /api/v1/chat` 产生一个 `runId` 且 `done` 只结束当前 run，**不关闭**会话 SSE — 后续消息复用同一连接。15s `heartbeat` 保活，仅作传输层事件，不进入 `MessagePart`/不重置 run 计数。
+  - **单并发与准入**：`POST /api/v1/chat` 在持久化用户消息前先校验 `hasEmitter(sessionId)`（`409 SSE_SUBSCRIPTION_REQUIRED`）并原子获取 `activeRuns` 租约（`409 CHAT_IN_PROGRESS`）；`requestId`/`runId` 由 CP 入口 `RequestIdFilter` 生成并经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传至异步 `execAsync` 与 Agent，不依赖 `MDC` 跨线程继承。
+  - **UI 传输层**：`chatTransport` 执行单飞连接（`connectionGeneration` + `intentionalStops`）、有限退避重连（`onerror` 返回 250ms→5s 退避，`onclose` 最多调度一次重连，无双重重试环），`useSSE.ensureConnected()` 与最多一次 `SSE_SUBSCRIPTION_REQUIRED` 受控恢复；`SSEStream` 每 `token` 调用 `chatStore.replaceStreamingParts` 整量替换，避免旧 `lastSentCount` 仅在 `parts.length` 增长时追加导致的长文本卡首字符。
 - **MCP 反向代理通道**（`POST /mcp`）：Agent 的 MCP 工具调用经 CP 解析 JSON-RPC → 提取工具名 → 权限检查 → 请求改写 → 三层路由转发：
   - **第 1 层（CP）**：认证 + tool-name 路由，系统工具 → Runtime `/workspace/{ws_id}/mcp`，用户 STDIO 工具 → `/workspace/{ws_id}/mcp/stdio/{server_id}`
   - **第 2 层（Runtime Gateway）**：per-workspace 分发，`CURRENT_WS_ID` task-local 注入
@@ -170,8 +173,9 @@ Runtime
 
 | 链路 | 传输协议 | 原因 |
 |------|---------|------|
-| UI ↔ CP | HTTP + SSE + POST | 指令通过 `fetch POST` 发送，流式响应和状态推送通过 `EventSource`（SSE）接收。这是 ChatGPT、Claude 等 LLM 网站验证过的生产模式，浏览器原生支持，过基础设施无阻力 |
-| CP ↔ Agent（聊天） | HTTP + SSE | Agent 作为 HTTP Server 接收 CP 转发指令，流式响应通过 SSE 逐 token 返回 |
+| UI ↔ CP（聊天指令） | `POST /api/v1/chat`（`202` + `runId`） | 指令 `fetch POST` 发送，仅在已建立 `GET /api/v1/events?sessionId=` 持久 SSE 后才被接受；无 emitter → `409 SSE_SUBSCRIPTION_REQUIRED`，并发 run → `409 CHAT_IN_PROGRESS` |
+| UI ↔ CP（聊天流） | 持久 `GET /api/v1/events?sessionId=` SSE（`fetch-event-source`） | `done` 只结束 run、不关闭会话 SSE；`heartbeat` 15s 保活不进入业务气泡；单活连接 + `generation` 隔离旧回调误删 |
+| CP ↔ Agent（聊天） | `POST /internal/v1/agent/chat` → SSE（`text/event-stream`，`stream=True`） | Agent 作为 HTTP Server 接收 CP 转发指令，`XiheLiteLLM._astream()` 产生真实 `on_chat_model_stream` chunk，经 `LangGraphEventAdapter` 按 `run_id` 去重后转为 `token` → `done`，无 stream 时才回退为单 `token` |
 | CP ↔ Agent（工具） | MCP Streamable HTTP | Agent 通过 MCP Client 连接 CP 反向代理，所有工具调用统一走 JSON-RPC over HTTP |
 | **CP ↔ Runtime（REST）** | **HTTP** | UI 发起的文件读写/上传/管理等指令型操作，通过 CP REST API 转发到 Runtime REST 端点。支持二进制直传 |
 | **CP ↔ Runtime（MCP）** | **MCP Streamable HTTP** | Agent 的工具调用经 CP 反向代理到 Runtime MCP Server。Runtime 状态变更经 MCP notification 通知 CP |
@@ -181,9 +185,9 @@ Runtime
 
 MVP 采用以下协议，各有明确用途：
 
-| 协议 | 用途 | 链路 |
-|------|------|------|
-| HTTP POST + SSE | 聊天消息：指令 `POST` → 流式响应 `SSE` | UI ↔ CP ↔ Agent |
+| 协议 | 用途 | 链路 | 关键契约 |
+|------|------|------|----------|
+| 持久 SSE + `POST /api/v1/chat` | 聊天消息：`GET /api/v1/events?sessionId=` 建会话级长连接（可复用）；`POST /api/v1/chat`（`202`）触发 run；`token` 增量 → `done` 结束 run，SSE 保留 | UI ↔ CP ↔ Agent | `done` ≠ 关闭 SSE；`heartbeat` 15s 不进气泡；每会话单活 emitter + `generation`；单并发 run |
 | MCP Streamable HTTP | Agent 工具调用：JSON-RPC over HTTP，统一经 CP 反向代理 | Agent → CP → Runtime / 外部 MCP Server |
 | MCP notification | 状态同步：Runtime 事件经 CP 分发到 UI 和 Agent | Runtime → CP → UI / Agent |
 | **HTTP (REST)** | **文件操作/上传/管理等指令型操作：二进制直传** | **UI → CP → Runtime** |
@@ -222,15 +226,23 @@ sequenceDiagram
   participant Agent as Agent (Python)
   participant RT as Runtime (Rust)
 
-  Note over Human,RT: 场景 A: 聊天消息流 (UI → CP → Agent → CP → UI)
-  Human->>UI: 输入消息
-  UI->>CP: POST /v1/exec {target:agent, payload:chat}
-  CP->>CP: 权限检查 + 创建 SseEmitter
-  CP->>Agent: HTTP POST ChatRequest
-  Agent-->>CP: SSE stream (逐 token)
-  CP-->>UI: SSE event (token)
-  Agent-->>CP: SSE event (done)
-  CP-->>UI: SSE event (done)
+  Note over Human,RT: 场景 A: 聊天消息流 — 持久会话 SSE (PLAN-230)
+  UI->>CP: GET /api/v1/events?sessionId=xxx (建立会话级持久 SSE, 1 emitter/session, heartbeat 15s)
+  CP-->>UI: event: connected (generation 递增, 可替换旧连接)
+  Human->>UI: 输入消息 #1
+  UI->>CP: POST /api/v1/chat {sessionId, content, runId=run-1} (先校验 hasEmitter, 单并发租约)
+  CP->>Agent: POST /internal/v1/agent/chat {stream:true, X-Request-Id, X-Chat-Run-Id: run-1}
+  Agent-->>CP: SSE stream on_chat_model_stream (多个 token chunk, streaming=True)
+  CP-->>UI: SSE event: token (×n, 逐 token 增量)
+  Agent-->>CP: SSE event: done (run-1 终止)
+  CP-->>UI: SSE event: done (仅结束 run-1, SSE 保留)
+  Human->>UI: 输入消息 #2 (无需重建 SSE, 同一连接复用)
+  UI->>CP: POST /api/v1/chat {sessionId, content, runId=run-2} (202 accepted)
+  CP->>Agent: POST /internal/v1/agent/chat {stream:true, run-2}
+  Agent-->>CP: SSE token ×m
+  CP-->>UI: SSE token ×m
+  Agent-->>CP: done
+  CP-->>UI: done (会话 SSE 仍保持, heartbeat 继续)
 
   Note over Human,RT: 场景 B: 工具调用 (Agent → CP → RT，经 MCP 反向代理)
   Agent->>CP: MCP tools/call (JSON-RPC over HTTP)

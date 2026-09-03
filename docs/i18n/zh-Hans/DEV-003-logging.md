@@ -198,13 +198,33 @@ CP 的 `AuditLogger` 记录所有 MCP 工具调用和策略决策：
 - Agent FastAPI middleware 读取/生成 `X-Request-Id`，通过 `logger.contextualize(request_id=...)` 写入结构化日志并回写响应头。
 - `workspaceId` 预留 MDC 键位（`RequestIdFilter.MDC_WORKSPACE`），由控制器在解析 workspace 后写入。
 
-### 6.3 泄露扫描门禁
+### 6.3 Chat SSE 可观测性（PLAN-230）
+
+Chat SSE 与 Agent 流式的结构化日志遵循 PLAN-197 附录 C 的 canonical 字段，追加以下组件字段：
+
+| 字段 | 必填位置 | 说明 |
+|------|----------|------|
+| `requestId` | CP 入口生成，经 `X-Request-Id` 显式透传至 `execAsync` 与 Agent | 来自 `RequestIdFilter`；异步线程禁止依赖 `MDC`/`ThreadLocal` |
+| `runId` | 每次 `POST /api/v1/chat` 的 run | CP 生成 `UUID`，经 `X-Chat-Run-Id` 与 body `runId` 透传；Agent `chat_stream_*` 均携带 |
+| `sessionId` | 全部 Chat/SSE 事件 | 组件级追加字段 |
+| `connectionGeneration` | `chat_sse_registered` / `replaced` / `stale_cleanup_ignored` / `client_closed` | `SseEmitterManager` 原子递增的连接代数，用于区分新旧 emitter |
+| `eventIndex` / `tokenChars` | `chat_stream_chunk` / `chat_stream_event_received` | 单 token 事件序号与长度，仅记长度不记内容 |
+| `errorCode` | 失败事件 | `SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS` / `AGENT_TIMEOUT` 等稳定码 |
+| `outcome` / `durationMs` | `chat_run_failed` / `chat_run_forwarded` 等 | 耗时与结果 |
+
+**CP 稳定事件**：`chat_sse_registered`、`chat_sse_replaced`、`chat_sse_stale_cleanup_ignored`、`chat_sse_client_closed`、`chat_sse_send_failed`、`chat_run_started`、`chat_run_forwarded`、`chat_run_finished`（含 `tokenCount`/`assistantChars`）、`chat_run_failed`、`chat_sse_rejected`。`heartbeat` 事件仅含 `connectionGeneration`，永不进入消息持久层。
+
+**Agent 稳定事件**：`chat_stream_started`、`chat_stream_chunk`（`eventIndex` + `tokenChars`）、`chat_stream_finished`（`tokenCount` + `assistantChars`）、`chat_stream_failed`（`errorCode` + `stacktrace`）。`token` 日志不记录 `content` 明文；provider 日志仅 `provider`/`model`/`status`/`durationMs`/`errorCode`。
+
+**日志安全**：`main.py` 设置 `litellm.suppress_debug_info=True` 并 `log_redact` 掩码 `Authorization:` 明文；`application.properties` 占位 `spring.security.user.*` 抑制 `Using generated security password`；`RequestIdFilter` 不跨 `new Thread()` 隐式继承；UI `logger` 的 IndexedDB/telemetry 失败路径显式落错误日志且不携带消息正文。
+
+### 6.4 泄露扫描门禁
 
 ```bash
 node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
 ```
 
-扫描 Bearer/JWT/PEM/JSON 敏感字段模式，命中即退出码 1。该命令是 PLAN-195 M6 安全验收的门禁。
+扫描 `Bearer`/JWT/PEM/`Authorization:`/JSON 敏感字段等模式，命中即退出码 1。读取失败或权限失败本身也使门禁失败（`throw` 而非静默 `continue`），该命令是 PLAN-195 M6 与 PLAN-230 M4 的安全门禁。
 
 ## 7. 错误日志规范
 

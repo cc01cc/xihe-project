@@ -154,7 +154,10 @@ Tool names are mapped by CP reverse proxy when building the tool→server mappin
 
 **CP Three-Channel Responsibilities**:
 
-- **Chat Channel** (`POST /v1/exec` + `SSE /v1/events`): UI commands relayed through CP → Agent, Agent streaming responses distributed through CP to UI
+- **Chat Channel** (`POST /api/v1/chat` / `POST /api/v1/exec` + persistent `GET /api/v1/events` SSE): UI commands relayed through CP → Agent, Agent streaming responses distributed through CP to UI
+  - **Session-scoped persistent SSE** (PLAN-230): `GET /api/v1/events?sessionId=` maintains one live emitter per session (`SseEmitterManager` stores `{sessionId, generation, emitter}` with `compareAndRemove`), each `POST /api/v1/chat` creates a `runId` and `done` ends the run only — **not** the session SSE, which is reused for subsequent turns. A `heartbeat` every 15s keeps the connection observable without entering `MessagePart` or resetting run counters.
+  - **Single-flight & gate**: `POST /api/v1/chat` validates `hasEmitter(sessionId)` (`409 SSE_SUBSCRIPTION_REQUIRED`) before persisting and atomically acquires an `activeRuns` lease (`409 CHAT_IN_PROGRESS`); `requestId`/`runId` from `RequestIdFilter` are explicitly propagated via `X-Request-Id`/`X-Chat-Run-Id` to `execAsync` and the Agent (never inherited via thread-local `MDC`).
+  - **UI transport**: `chatTransport` enforces single flight per session (`connectionGeneration` + `intentionalStops`), bounded backoff reconnect (`onerror` returns 250ms→5s, `onclose` schedules at most one reconnect, no second retry loop), `useSSE.ensureConnected()` plus at most one `SSE_SUBSCRIPTION_REQUIRED` recovery; `SSEStream` replaces streaming parts on every `token` via `chatStore.replaceStreamingParts`, fixing the old `lastSentCount`-only-on-`parts.length`-growth truncation.
 - **MCP Reverse Proxy Channel** (`POST /mcp`): Agent's MCP tool calls parsed by CP as JSON-RPC → tool name extracted → permission check → request rewriting → three-layer routing forwarding:
   - **Layer 1 (CP)**: Authentication + tool-name routing, system tools → Runtime `/workspace/{ws_id}/mcp`, user STDIO tools → `/workspace/{ws_id}/mcp/stdio/{server_id}`
   - **Layer 2 (Runtime Gateway)**: Per-workspace dispatch, `CURRENT_WS_ID` task-local injection
@@ -168,8 +171,9 @@ See Sprint 1 `DESIGN-007-mcp-gateway-reverse-proxy.md`.
 
 | Link | Transport Protocol | Reason |
 |------|-------------------|--------|
-| UI ↔ CP | HTTP + SSE + POST | Commands sent via `fetch POST`, streaming responses and status pushes received via `EventSource` (SSE). This is a production-proven pattern validated by ChatGPT, Claude, and other LLM websites, natively supported by browsers with no infrastructure friction |
-| CP ↔ Agent (Chat) | HTTP + SSE | Agent receives CP-forwarded commands as an HTTP Server, streaming responses returned token-by-token via SSE |
+| UI ↔ CP (chat command) | `POST /api/v1/chat` (`202` + `runId`) | `fetch POST` sent only after `GET /api/v1/events?sessionId=` persistent SSE is active; no emitter → `409 SSE_SUBSCRIPTION_REQUIRED`, concurrent run → `409 CHAT_IN_PROGRESS` |
+| UI ↔ CP (chat stream) | persistent `GET /api/v1/events?sessionId=` SSE (`fetch-event-source`) | `done` ends run only, SSE stays open; `heartbeat` every 15s never enters bubble; single active emitter + `generation` shields against stale callbacks |
+| CP ↔ Agent (Chat) | `POST /internal/v1/agent/chat` → SSE (`text/event-stream`, `stream=true`) | Agent as HTTP Server receives CP-forwarded commands, `XiheLiteLLM._astream()` yields real `on_chat_model_stream` chunks converted via `LangGraphEventAdapter` per `run_id` into `token` → `done`, falling back to a single `token` only when streaming is unavailable |
 | CP ↔ Agent (Tools) | MCP Streamable HTTP | Agent connects to CP reverse proxy via MCP Client, all tool calls unified through JSON-RPC over HTTP |
 | **CP ↔ Runtime (REST)** | **HTTP** | UI-initiated file read/write/upload/management operations forwarded through CP REST API to Runtime REST endpoints. Supports binary direct transfer |
 | **CP ↔ Runtime (MCP)** | **MCP Streamable HTTP** | Agent's tool calls reverse-proxied through CP to Runtime MCP Server. Runtime state changes notified to CP via MCP notifications |
@@ -179,9 +183,9 @@ See Sprint 1 `DESIGN-007-mcp-gateway-reverse-proxy.md`.
 
 MVP uses the following protocols, each with a clear purpose:
 
-| Protocol | Purpose | Link |
-|----------|---------|------|
-| HTTP POST + SSE | Chat messages: command `POST` → streaming response `SSE` | UI ↔ CP ↔ Agent |
+| Protocol | Purpose | Link | Key contract |
+|----------|---------|------|--------------|
+| persistent SSE + `POST /api/v1/chat` | Chat messages: `GET /api/v1/events?sessionId=` builds a session long-lived connection (reused); `POST /api/v1/chat` (`202`) triggers a run; `token` streaming → `done` ends the run, SSE retained | UI ↔ CP ↔ Agent | `done` ≠ close SSE; `heartbeat` 15s not in bubble; one live emitter + `generation`; single-flight run |
 | MCP Streamable HTTP | Agent tool invocation: JSON-RPC over HTTP, unified through CP reverse proxy | Agent → CP → Runtime / External MCP Server |
 | MCP notification | State synchronization: Runtime events distributed through CP to UI and Agent | Runtime → CP → UI / Agent |
 | **HTTP (REST)** | **File operations/upload/management command-type operations: binary direct transfer** | **UI → CP → Runtime** |
@@ -220,15 +224,23 @@ sequenceDiagram
   participant Agent as Agent (Python)
   participant RT as Runtime (Rust)
 
-  Note over Human,RT: Scenario A: Chat Message Flow (UI → CP → Agent → CP → UI)
-  Human->>UI: Input message
-  UI->>CP: POST /v1/exec {target:agent, payload:chat}
-  CP->>CP: Permission check + create SseEmitter
-  CP->>Agent: HTTP POST ChatRequest
-  Agent-->>CP: SSE stream (token by token)
-  CP-->>UI: SSE event (token)
-  Agent-->>CP: SSE event (done)
-  CP-->>UI: SSE event (done)
+  Note over Human,RT: Scenario A: Chat Message Flow — persistent session SSE (PLAN-230)
+  UI->>CP: GET /api/v1/events?sessionId=xxx (persistent SSE per session, 1 emitter/session, heartbeat 15s)
+  CP-->>UI: event: connected (generation bumps, replaces prior emitter)
+  Human->>UI: Input message #1
+  UI->>CP: POST /api/v1/chat {sessionId, content, runId=run-1} (validate hasEmitter, single-flight lease)
+  CP->>Agent: POST /internal/v1/agent/chat {stream:true, X-Request-Id, X-Chat-Run-Id: run-1}
+  Agent-->>CP: SSE stream on_chat_model_stream (multiple token chunks, streaming=True)
+  CP-->>UI: SSE event: token (×n, incremental)
+  Agent-->>CP: SSE event: done (terminates run-1)
+  CP-->>UI: SSE event: done (run only, SSE retained)
+  Human->>UI: Input message #2 (reuses same SSE, no reconnect needed)
+  UI->>CP: POST /api/v1/chat {sessionId, content, runId=run-2} (202 accepted)
+  CP->>Agent: POST /internal/v1/agent/chat {stream:true, run-2}
+  Agent-->>CP: SSE token ×m
+  CP-->>UI: SSE token ×m
+  Agent-->>CP: done
+  CP-->>UI: done (session SSE stays open, heartbeat continues)
 
   Note over Human,RT: Scenario B: Tool Invocation (Agent → CP → RT, via MCP reverse proxy)
   Agent->>CP: MCP tools/call (JSON-RPC over HTTP)

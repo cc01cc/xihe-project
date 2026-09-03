@@ -21,6 +21,9 @@ use base64::Engine;
 
 use crate::error::{Result, RuntimeError};
 
+#[cfg(target_os = "linux")]
+use rustix::fs as rustix_fs;
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FileInfo {
     pub name: String,
@@ -148,6 +151,64 @@ pub fn resolve_write_path(path: &str, workspace: &str) -> Result<PathBuf> {
     resolve_canonical(ancestor, ws)?;
     Ok(target)
 }
+
+
+#[cfg(target_os = "linux")]
+#[allow(dead_code)]
+fn secure_beneath_check(path: &str, workspace: &str) -> Result<()> {
+    use std::os::unix::io::AsFd;
+    // Lexical already done by caller; now use openat2 to verify no symlink escape
+    let ws_file = std::fs::File::open(workspace).map_err(|e| RuntimeError::Io(e))?;
+    let ws_fd = ws_file.as_fd();
+    // Relative path inside workspace (strip leading / if any, lexical already ensures no absolute)
+    let rel = Path::new(path);
+    // Try to open with RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV
+    let flags = rustix_fs::OFlags::empty();
+    let mode = rustix_fs::Mode::empty();
+    let resolve = rustix_fs::ResolveFlags::BENEATH | rustix_fs::ResolveFlags::NO_SYMLINKS | rustix_fs::ResolveFlags::NO_MAGICLINKS;
+    match rustix_fs::openat2(ws_fd, rel, flags, mode, resolve) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            if e == rustix::io::Errno::NOSYS || e == rustix::io::Errno::INVAL {
+                return Err(RuntimeError::InvalidPath(format!("openat2 not supported: {e} – blocked")));
+            }
+            // If file doesn't exist, we check parent instead
+            if e == rustix::io::Errno::NOENT {
+                if let Some(parent) = rel.parent() {
+                    if parent.as_os_str().is_empty() {
+                        return Ok(());
+                    }
+                    return secure_beneath_check(parent.to_str().unwrap_or("."), workspace);
+                }
+                return Ok(());
+            }
+            // Symlink escape or outside -> map to SymlinkEscape
+            Err(RuntimeError::SymlinkEscape { path: path.to_string(), resolved: format!("openat2 blocked: {e}") })
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[allow(dead_code)]
+fn secure_write_beneath(path: &str, workspace: &str) -> Result<PathBuf> {
+    let target = lexically_safe(path, Path::new(workspace))?;
+    // Verify parent/target stays beneath via openat2
+    secure_beneath_check(path, workspace)?;
+    // Also verify existing target if exists is not symlink outside
+    if target.exists() {
+        // Check via openat2 again with NO_SYMLINKS should fail if symlink
+        secure_beneath_check(path, workspace)?;
+    }
+    Ok(target)
+}
+
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+fn secure_write_beneath(path: &str, workspace: &str) -> Result<PathBuf> {
+    // Fallback to lexical + canonical ancestor check on non-linux (should not happen in container)
+    resolve_write_path(path, workspace)
+}
+
 
 pub fn strip_workspace<'a>(full_path: &'a Path, workspace: &str) -> &'a Path {
     if let Ok(relative) = full_path.strip_prefix(workspace) {
@@ -319,6 +380,9 @@ pub async fn read_file_range(
 }
 
 pub async fn write_file_binary(path: &str, data: &[u8], workspace: &str) -> Result<String> {
+    #[cfg(target_os = "linux")]
+    let full_path = secure_write_beneath(path, workspace)?;
+    #[cfg(not(target_os = "linux"))]
     let full_path = resolve_write_path(path, workspace)?;
     if let Some(parent) = full_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -333,6 +397,9 @@ pub async fn write_file(path: &str, content: &str, workspace: &str) -> Result<St
         call_file_service(&socket, "write", path, Some(content)).await?;
         return Ok(format!("Written {} bytes to {}", content.len(), path));
     }
+    #[cfg(target_os = "linux")]
+    let full_path = secure_write_beneath(path, workspace)?;
+    #[cfg(not(target_os = "linux"))]
     let full_path = resolve_write_path(path, workspace)?;
     if let Some(parent) = full_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -403,8 +470,9 @@ pub async fn edit_file(
         .saturating_sub(content.match_indices(old_string).count())
         .saturating_add(if replace_all { replacements.len() } else { 1 });
 
-    // Use resolve_write_path for the write, but pass through the resolved full path
-    // to ensure it's within workspace
+    #[cfg(target_os = "linux")]
+    let _ = secure_write_beneath(file_path, workspace)?;
+    #[cfg(not(target_os = "linux"))]
     let _ = resolve_write_path(file_path, workspace)?;
     tokio::fs::write(&full_path, &new_content).await?;
 
@@ -416,6 +484,8 @@ pub async fn edit_file(
 }
 
 pub async fn delete_file(path: &str, workspace: &str) -> Result<String> {
+    #[cfg(target_os = "linux")]
+    secure_beneath_check(path, workspace)?;
     let socket = file_socket_path(workspace);
     if socket.exists() {
         call_file_service(&socket, "rm", path, None).await?;
@@ -471,6 +541,11 @@ pub async fn delete_directory(path: &str, recursive: bool, workspace: &str) -> R
 }
 
 pub async fn move_file(from: &str, to: &str, workspace: &str) -> Result<String> {
+    #[cfg(target_os = "linux")]
+    {
+        secure_beneath_check(from, workspace)?;
+        secure_beneath_check(to, workspace)?;
+    }
     let src = resolve_write_path(from, workspace)?;
     let dst = resolve_write_path(to, workspace)?;
     if !src.exists() {
@@ -486,6 +561,11 @@ pub async fn move_file(from: &str, to: &str, workspace: &str) -> Result<String> 
 }
 
 pub async fn copy_file(from: &str, to: &str, workspace: &str) -> Result<String> {
+    #[cfg(target_os = "linux")]
+    {
+        secure_beneath_check(from, workspace)?;
+        secure_beneath_check(to, workspace)?;
+    }
     let src = resolve_read_path(from, workspace)?;
     let dst = resolve_write_path(to, workspace)?;
     if !src.exists() {
@@ -501,6 +581,8 @@ pub async fn copy_file(from: &str, to: &str, workspace: &str) -> Result<String> 
 }
 
 pub async fn mkdir(path: &str, workspace: &str) -> Result<String> {
+    #[cfg(target_os = "linux")]
+    secure_beneath_check(path, workspace)?;
     let socket = file_socket_path(workspace);
     if socket.exists() {
         call_file_service(&socket, "mkdir", path, None).await?;

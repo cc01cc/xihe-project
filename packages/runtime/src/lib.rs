@@ -15,6 +15,8 @@ pub mod remote_mcp;
 pub mod sandbox;
 pub mod storage;
 pub mod workspace;
+pub mod executor;
+pub mod inventory;
 
 #[cfg(test)]
 mod tests {

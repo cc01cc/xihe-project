@@ -36,9 +36,39 @@ docker compose logs --no-color agent 2>&1 | grep -i "error\|model\|deepseek" | t
 |------|------|---------|
 | CP 端点路径不一致 | 调用方用了旧别名/缺 `/api/v1`、`/internal/v1` 前缀导致 404 | Vite 已不再重写 API 路径；统一使用规范契约 `docs/api/openapi.yaml` 中的 `/api/v1`（公开）与 `/internal/v1`（服务间）路径 |
 | Docker 网络配置缺失 | CP→Agent 连接拒绝 | 检查 `docker-compose.yml` 环境变量是否完整 |
-| JWT 认证方式不匹配 | SSE 401 | 检查 JWT filter 是否支持 query param token |
+| JWT 认证方式不匹配 | SSE 401 | 检查 JWT filter 是否支持 query param token；`chatTransport` 在 401 时会清理 `xihe-token` 并跳转 `/login`，不要循环重试 |
 | 属性名不一致 | 配置读取为空 | 对比 `application.properties` 中的 key 名 vs docker-compose 环境变量名 |
 | litellm model 格式 | BadRequestError | litellm 需要 `provider/model` 格式（如 `deepseek/deepseek-v4-flash`） |
+| 会话 SSE 未建立就发 chat | `POST /api/v1/chat` 返回 `409 SSE_SUBSCRIPTION_REQUIRED` | 确认前端已 `GET /api/v1/events?sessionId=` 且 `chatTransport` 状态 `isConnected=true`；`SSEStream` 发送前会 `ensureConnected()`，失败则最多一次受控重连后重试 |
+| 旧 emitter 回调误删新连接 | 连续消息第二条 409；日志出现 `stale_cleanup_ignored` | 检查 CP `SseEmitterManager` 的 `generation` 递增与 `compareAndRemove`；正常替换应为 `chat_sse_replaced` + 新 `registered`，旧回调应为 `stale_cleanup_ignored` 而非 `removed` |
+| 每轮 `done` 后 SSE 被关闭 | 第二条消息需刷新 | 确认 `ChatController` 已移除 `finally` 中 `sseManager.complete(sessionId)`；仅客户端断开 / session 删除 / 不可写时才 `complete` |
+| 单气泡长回复只首字符可见 | `bubble-content` 0→首字符后卡住，`done` 后一次性出现 | 检查 `SSEStream` 是否每 `token` 调用 `replaceStreamingParts` 整量替换；旧 `lastSentCount` 仅在 `parts.length` 增长时追加，单 `text` part 的逐字符更新会被吞 |
+| 流式不增量（`stream=False`） | 日志 `token=1` 且 `stream=False` | 检查 `XiheLiteLLM` 是否 `streaming=True` 且 `agent.astream_events` 产生 `on_chat_model_stream`；`LangGraphEventAdapter` 按 `run_id` 去重，`on_chat_model_end` 仅作 fallback |
+| `fetch-event-source` 双重试 | 网络抖动后出现双连接 | 确认仅 `chatTransport` 一处控制重试：`onerror` 返回显式退避值，`onclose` 由同一 transport 调度；不要叠加库默认 1s + 应用层重连 |
+| `Authorization: Be***` 泄露 | `logs/agent.log` 出现 `Be****` 或 `Using generated security password` | 检查 `litellm.suppress_debug_info=True`、`log_redact` 的 `Authorization:` 掩码、`application.properties` 的 `spring.security.user.*` 占位；运行 `node scripts/scan-log-secrets.mjs` |
+
+## Chat SSE 调试清单（PLAN-230）
+
+```bash
+# 1. 确认持久连接：首条 chat 完成后 SSE 仍存活
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/events?sessionId=$SID" --max-time 2 &
+# 在另一终端发送两条消息，观察两条均 202 且无 SSE_SUBSCRIPTION_REQUIRED
+
+# 2. 查看 CP 生命周期日志（generation 隔离）
+grep "chat_sse_" logs/cp.log | tail -20
+# 期望：registered → finished → 第二条仍可用；替换时 replaced → stale_cleanup_ignored
+
+# 3. 查看 Agent 真实流式（stream=True 且多 token）
+grep "chat_stream_" logs/agent.log | tail -30
+# 期望：stream_started → chunk ×n (tokenChars) → finished，tokenCount ≥2
+
+# 4. 检查 requestId/runId 贯通
+grep -E "requestId=.*runId=" logs/cp.log | tail -5
+# 每条 chat_run_* 与 chat_stream_* 应共享同一 requestId/runId
+
+# 5. 脱敏门禁
+node scripts/scan-log-secrets.mjs   # 预期 clean (20+ files)
+```
 
 ## 跨层协议验证清单
 

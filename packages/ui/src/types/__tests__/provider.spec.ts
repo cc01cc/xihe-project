@@ -26,7 +26,7 @@ describe('BUILTIN_PROVIDERS', () => {
     const p = BUILTIN_PROVIDERS.find((provider) => provider.id === 'xiaomi')
     expect(p).toBeDefined()
     expect(p!.name).toBe('小米 MiMo')
-    expect(p!.defaultModel).toBe('mimo-v2-omni')
+    expect(p!.defaultModel).toBe('mimo-v2.5')
     expect(p!.defaultBaseUrl).toBe('https://api.xiaomimimo.com/v1')
   })
 

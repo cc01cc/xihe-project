@@ -4,6 +4,8 @@
 
 ### Added
 
+- Chat SSE 真实流式（PLAN-230）：`XiheLiteLLM._astream()` 显式 `streaming=True` 使真实 MiMo 产生多 `on_chat_model_stream` token 并经 `LangGraphEventAdapter` 按 `run_id` 去重（`on_chat_model_end` 仅 fallback），`SseEmitterManager` 会话持久 SSE + `generation` + `compareAndRemove` + `heartbeat` 15s，UI `chatTransport` 单飞/退避重连 + `ensureConnected` 受控 409 恢复 + `replaceStreamingParts` 逐 token 实时渲染；真实浏览器 115 distinct lengths（0→704）与截图 `xh-incremental-stream-verified.png` 验证。
+- 小米 MiMo 多模态 provider 真实验证：`mimo-v2.5` 为 canonical 模型（`GET /api/v1/models` 返回 6 模型，经 `GET /internal/v1/agent/models` 汇聚），`config.import.example.jsonc` 与 `ConfigClient`/`LLMConfig`/`UI BUILTIN_PROVIDERS` 均已对齐 `mimo-v2.5`，`ProviderManager`/`ChatLiteLLM` 使用 `xiaomi_mimo/mimo-v2.5` 原生 LiteLLM 路由（富工具时自动切 `openai/mimo-v2.5`），文本 + 图片多模态经真实 CP→Agent→MiMo 链路验证（M3 截图与 SSE 日志证据）。
 - 服务韧性架构：CP 新增 HealthMonitor（10s 轮询 Agent/Runtime 健康）、CircuitBreaker（3 次失败 → open → 30s half-open）、RequestQueue（Agent 故障时暂存 chat 请求，60s TTL，恢复后自动 drain 重发）。
 - 外部进程保活：Docker Compose 所有服务加 `restart: unless-stopped` + healthcheck；`dev-host.ps1` 新增 `-Watch` 模式（health loop + 自动重启）。
 - Agent readiness gate：config sync 完成后才将 health 从 `starting` 改为 `ok`，config sync 失败时保持 `starting`。
@@ -20,6 +22,7 @@
 
 ### Changed
 
+- Chat SSE API 契约（PLAN-230）：`GET /api/v1/events?sessionId=` 明确为会话级持久 SSE（`docs/api/openapi.yaml`：`done` 仅结束 run、不关闭 SSE，`heartbeat` 15s，错误边界 `SSE_SUBSCRIPTION_REQUIRED`/`CHAT_IN_PROGRESS`/`AGENT_CIRCUIT_OPEN`）；`POST /api/v1/chat` 与 `POST /api/v1/exec` 共用同一订阅检查与单并发语义。
 - Runtime 迁移至 Rust edition 2024 与 rmcp 3.1.4（MCP protocol `2026-07-28`）；测试基础设施修复：`e2e-real.mjs` 隔离端口全量生效，Runtime 全量测试可编译执行（201 passed / 3 ignored）。
 
 - 实现 Agent 崩溃恢复：启动时可通过 `XIHE_RECOVER_SESSION_IDS` 从 CP Event Store 重放事件并重建会话状态
@@ -54,6 +57,7 @@
 
 ### Fixed
 
+- Chat SSE 生命周期与连续消息（PLAN-230）：修复 CP 每轮 `finally complete(sessionId)` 导致会话 SSE 一次性化及旧 `onCompletion` 按 `sessionId` 误删新连接的竞态（`SseEmitterManager` 增加 `generation`/`compareAndRemove` + `stale_cleanup_ignored`），移除 per-run 关闭、仅在客户端断开/session 删除/不可写时清理；修复 UI 长回复单 text part 卡首字符（`SSEStream` 每 `token` `replaceStreamingParts` 整量替换）；修复假流式 `stream=False` 单 `token`（`XiheLiteLLM` 真实 `streaming=True`）。
 - 修复 Runtime Windows 本地构建与测试兼容性：隔离 Unix socket/symlink 代码，并统一 Windows canonical path 的 workspace 相对路径处理
 - 将 CP JSON Schema 校验迁移到 `json-schema-validator 3.0.7` 的 `SchemaRegistry`/`Schema`/`Error` API
 - 修复 `packages/agent/src/xihe_agent/main.py` 两处静默异常捕获，改为 `logger.warning(..., exc_info=True)`，确保异常可观测

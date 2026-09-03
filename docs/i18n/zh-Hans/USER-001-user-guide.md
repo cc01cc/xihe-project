@@ -60,10 +60,13 @@ mise run validate:full  # 单元 + 集成 + E2E
 
 ### 2.1. 聊天
 
-1. 在侧边栏点击 "+" 创建新会话
-2. 在输入框输入消息，按 Enter 发送
-3. Agent 通过 SSE 流式回复
-4. 工具调用以卡片形式展示，可折叠查看详情
+1. 在侧边栏点击 "+" 创建新会话（进入 `/chat/:sessionId` 时自动建立会话级持久 SSE：`GET /api/v1/events?sessionId=`）。
+2. 在输入框输入消息，按 Enter 或点击发送按钮发送。同一会话同一时间仅允许一条发送中的消息（`CHAT_IN_PROGRESS`）；若提示“已有进行中的对话”，请等待当前回复结束。
+3. Agent 通过 SSE 流式回复：`token` 增量逐步追加到助手气泡（支持 `text`/`reasoning` 分区），工具调用以卡片形式展示，可折叠查看详情。
+4. 首条回复结束后 SSE 保持连接，**无需刷新**即可继续发送下一条消息（第二条也会立即得到 `token` 增量）。`done` 仅结束当前轮次，不关闭会话 SSE。
+5. 若网络抖动导致连接中断，UI 会自动以 250ms→5s 退避重连并恢复连接状态；重连期间提示 “recovering”，完成后自动拉取最终内容。
+
+**连续对话与流式验证（PLAN-230）**：真实长回复应产生多个 `token` 事件，助手气泡在 `done` 前可观察到多次文本增长；若仅一次出现即为单包回落（provider 不支持流式时的兼容路径），可在开发者工具中查看 `Network → events` 的 `token`/`done` 事件数量。
 
 ### 2.2. 多模态
 
@@ -131,7 +134,7 @@ Provider 可在设置页面的模型配置中管理，选择预设后自动填�
 | `XIHE_DEEPSEEK_API_KEY` | — | DeepSeek API Key |
 | `XIHE_DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek 模型 |
 | `XIHE_XIAOMI_API_KEY` | — | 小米 MiMo API Key |
-| `XIHE_XIAOMI_MODEL` | `mimo-v2-omni` | 小米 MiMo 模型 |
+| `XIHE_XIAOMI_MODEL` | `mimo-v2.5` | 小米 MiMo 模型（可选 `mimo-v2.5-pro` / `mimo-v2.5-asr` 等，`/api/v1/models` 为事实来源） |
 | `XIHE_CP_PORT` | `12631` | CP 端口（宿主机映射，Docker 内为 8080） |
 | `XIHE_AGENT_PORT` | `12632` | Agent 端口（宿主机映射，Docker 内为 8000） |
 | `XIHE_RUNTIME_PORT` | `12633` | Runtime 端口（宿主机映射，Docker 内为 8001） |
@@ -144,12 +147,16 @@ Provider 可在设置页面的模型配置中管理，选择预设后自动填�
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| UI 无法连接 CP | Docker 服务未启动 | `docker compose up -d` |
+| UI 无法连接 CP | Docker 服务未启动 | `docker compose up -d` 或 `mise run dev:host` |
 | Agent MCP 重试 | CP 尚未就绪 | 等待 CP 启动完成（约 10s） |
 | 注册返回 400 | 密码不足 8 位 | 使用 ≥8 位密码 |
-| 401 错误 | 未登录或 Token 过期 | 重新登录 |
-| SSE 断开 | 网络问题 | 自动重连（指数退避） |
-| PostgreSQL 连接失败 | Docker 容器未运行 | `docker compose up -d postgres` |
+| 401 错误 | 未登录或 Token 过期 | 重新登录；持久 SSE 会在过期前关闭并清理本地 token，需重新登录 |
+| `409 SSE_SUBSCRIPTION_REQUIRED` | 页面未建立 `GET /api/v1/events` 订阅就发送 | 刷新页面或等待 SSE `connected` 后重发；UI 的 `ensureConnected` 会自动尝试一次重连 |
+| `409 CHAT_IN_PROGRESS` | 同一会话已有进行中的 run | 等待当前 `done` 结束后再发送；刷新不会清除服务端租约 |
+| 发送后仅用户气泡、无助手回复 | 曾为 `SSE_SUBSCRIPTION_REQUIRED` 误判；已由 PLAN-230 修复（持久 SSE + 代数隔离） | 确认 `Network` 中 `/events` 仍为 `200 text/event-stream` 且 `POST /api/v1/chat` 返回 `202`；检查 `logs/cp.log` 的 `stale_cleanup_ignored` / `replaced` |
+| 长回复只有一次内容变化 | provider 不支持流式，触发单 `token` 回落 | 属兼容路径：查看 `Network → events` 的 `token` 数量；真实 MiMo 应产生 ≥2 `token` |
+| SSE 断开（网络抖动） | 网络问题或心跳超时 | 自动重连（指数退避 250ms→5s）；重连期间显示 `recovering`，完成后重新加载 `/messages` 恢复最终内容 |
+| PostgreSQL 连接失败 | Docker 容器未运行 | `docker compose up -d postgres` 或 `mise run dev:host`（自动等待 Postgres） |
 
 ## 5. 快捷键
 

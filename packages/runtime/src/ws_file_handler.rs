@@ -196,6 +196,7 @@ mod tests {
     use xihe_runtime::hydrate::{ExecutionSpecClient, WorkspaceEnsurer};
     use xihe_runtime::gateway::WorkspaceRegistry;
     use xihe_runtime::workspace::WorkspaceManager;
+    use xihe_runtime::executor::WorkspaceExecutionRouter;
 
     struct TestCp {
         task: JoinHandle<()>,
@@ -262,17 +263,24 @@ mod tests {
             )
             .await;
         let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+        let workspace_ensurer = Arc::new(WorkspaceEnsurer::new(
+            registry.clone(),
+            manager.clone(),
+            ExecutionSpecClient::new(&format!("http://{address}"), "test-token"),
+            Some(dir.path().to_path_buf()),
+        ));
+        let router = Arc::new(WorkspaceExecutionRouter::new(
+            workspace_ensurer.clone(),
+            manager.clone(),
+            registry.clone(),
+        ));
         let app = Arc::new(AppState {
             registry: registry.clone(),
             manager: manager.clone(),
             device_id: "test-device".to_string(),
             ready: Arc::new(AtomicBool::new(true)),
-            workspace_ensurer: Arc::new(WorkspaceEnsurer::new(
-                registry,
-                manager,
-                ExecutionSpecClient::new(&format!("http://{address}"), "test-token"),
-                Some(dir.path().to_path_buf()),
-            )),
+            workspace_ensurer,
+            router,
         });
         (app, ws_id, dir, TestCp { task })
     }

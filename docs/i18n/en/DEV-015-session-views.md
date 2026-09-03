@@ -94,9 +94,20 @@ updated: 2026-09-02
 - Session list: clicking navigates to `/chat/:sessionId`.
 - "Workspace" button: navigates to `/workspace/:currentWorkspaceId`; fails closed when the Workspace is missing.
 
-## 3. ChatPanel Embedding Details
+## 3. Chat SSE Lifecycle (PLAN-230)
 
-### 3.1. Why Extract ChatPanel
+Session-scoped persistent SSE replaces the former per-run one-shot connection:
+
+- **Ownership**: `GET /api/v1/events?sessionId=` maintains one live emitter per session (CP `SseEmitterManager` stores `{sessionId, generation, emitter}` with `compareAndRemove`; a new connection replaces the old one with `chat_sse_replaced`, stale `onCompletion` ignored as `chat_sse_stale_cleanup_ignored`).
+- **Reuse**: `done` ends the current `runId` only — the session SSE stays open; the next `POST /api/v1/chat` reuses the same connection. A `heartbeat` every 15s is transport-only — never enters `MessagePart`, never resets run counters, never persisted.
+- **Gate & concurrency**: `POST /api/v1/chat` checks `hasEmitter` before persisting (`409 SSE_SUBSCRIPTION_REQUIRED`) and acquires a single-flight lease via `activeRuns.putIfAbsent` (`409 CHAT_IN_PROGRESS`); on success a `runId` is generated and explicitly propagated via `X-Request-Id`/`X-Chat-Run-Id` to the Agent — no `MDC` inheritance across async threads.
+- **UI transport**: `chatTransport` single-flights per `sessionId` (`connectionGeneration` + `intentionalStops`), with unified `fetch-event-source` retry (explicit 250ms→5s backoff on `onerror`, at most one reconnect on `onclose`), `useSSE.ensureConnected()` with at most one `SSE_SUBSCRIPTION_REQUIRED` recovery; `SSEStream` replaces streaming parts on every `token` via `replaceStreamingParts`, fixing the old `lastSentCount`-only-on-`parts.length` truncation for long single-part texts.
+- **Streaming & dedup**: Agent `XiheLiteLLM._astream()` sets `streaming=True` so `astream_events` yields `on_chat_model_stream`; `LangGraphEventAdapter` tracks `streamed` per `run_id`; `on_chat_model_end` falls back to a single `token` only when no stream chunks were emitted, preventing duplicate appends.
+- **Lifecycle bounds**: Mount / `sessionId` switch → at most one `connect` attempt; unmount / switch / session delete → `abort` and remove only that emitter; `401` → clear auth and navigate to login; network jitter → backoff reconnect (cap 5s, reset on success). `Last-Event-ID` replay is not implemented in this phase; runs interrupted mid-stream must reload canonical `/messages` after `done`.
+
+## 4. ChatPanel Embedding Details
+
+### 4.1. Why Extract ChatPanel
 
 - `ChatView.vue` contains full-screen header and layout logic, making it unsuitable for direct embedding into the workspace.
 - `ChatPanel.vue` keeps only the message list, input box, and SSEStream, taking up little space and fitting into the right-side panel.
@@ -117,23 +128,23 @@ updated: 2026-09-02
 
 The right-side panel is currently fixed at `w-96` (384px). It can later be made resizable.
 
-## 4. Chat ↔ Workspace Switching
+## 5. Chat ↔ Workspace Switching
 
-### 4.1. Switching Within the Same Session
+### 5.1. Switching Within the Same Session
 
 All switching entries are based on `sessionStore.currentSessionId`:
 
 - From chat to workspace: click the Workspace button in the Sidebar or the back button in WorkspaceToolbar.
 - From workspace back to chat: click the "Current Session Title" button in WorkspaceToolbar.
 
-### 4.2. State Synchronization Guarantees
+### 5.2. State Synchronization Guarantees
 
 - Session metadata (`currentSessionId`, `title`, `context`) is maintained by `useSessionStore`.
 - Message history: `ChatPanel` always reads via `chatStore.getMessages(sessionId)`, so it is consistent across views.
 - Attachments: `sessionStore.currentSessionAttachments` is shared between both views.
 - File context: `workspaceStore.syncActiveFileToSession()` writes workspace state back to the Session layer, where chat can read it.
 
-## 5. View-Layer Data Flow
+## 6. View-Layer Data Flow
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -159,14 +170,14 @@ sequenceDiagram
   ChatPanel->>ChatStore: getMessages(id)
 ```
 
-## 6. Development Conventions
+## 7. Development Conventions
 
 - When adding new view components, prefer reading Session metadata from `useSessionStore` and do not manipulate Session-related state in `useChatStore` directly.
 - `ChatPanel` is the only embeddable chat component; do not embed `ChatView` directly elsewhere.
 - The attachment write entry point is unified in `ChatPanel.handleSend`; the workspace reads attachments only.
 - The file context write entry point is unified in `useWorkspaceStore.syncActiveFileToSession`.
 
-## 7. Future Extensions
+## 8. Future Extensions
 
 | Extension | Description | Owner |
 |-----------|-------------|-------|
@@ -175,7 +186,7 @@ sequenceDiagram
 | Drag workspace files into chat | Requires backend attachment support | PLAN-031 |
 | Multiple Sessions side by side | Open multiple workspaces/chats simultaneously | Future design |
 
-## 8. References
+## 9. References
 
 - RFC-001-session-domain-model.md
 - ADR-001-session-store-boundary.md

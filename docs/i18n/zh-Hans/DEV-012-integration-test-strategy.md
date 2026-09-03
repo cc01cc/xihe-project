@@ -280,6 +280,11 @@ tests/
 
 | 接口 | 协议 | 方向 | T2 测试 | T3 测试 |
 |------|------|------|---------|---------|
+| Chat SSE persistence | `GET /api/v1/events?sessionId=` per-session (1 emitter/session, `generation` + `compareAndRemove`) → `POST /api/v1/chat` must find emitter (`409 SSE_SUBSCRIPTION_REQUIRED`) | CP internal | `SseEmitterManagerTest` (replacement / stale completion-timeout-error / `stale_cleanup_ignored` / send failure) | — |
+| Chat SSE consecutive | 首条 `POST /api/v1/chat` 完成 `done` 后 SSE 仍可用，第二条不刷新返回 `202` | CP→Agent (stub) | `ChatIntegrationTest` (两轮 `202` + 助理只持久化一次) / `AgentChatIntegrationTest` (token/done 顺序 + `stream=true` / `X-Request-Id` / `X-Chat-Run-Id`) | `cross-module-chat.spec.ts` host named E2E (真实 CP/Agent/Runtime + 隔离 DB) — 连续消息、增量流、重复导航 |
+| Chat SSE streaming | `XiheLiteLLM._astream()` 显式 `streaming=True` → `on_chat_model_stream` 多 token，`LangGraphEventAdapter` 按 `run_id` 去重，`on_chat_model_end` 仅 fallback | Agent internal | `test_sse_adapter.py` (多 chunk / end fallback / run 隔离) / `test_llm_base.py` (stream 参数 + provider 兼容) / `test_log_redact.py` (Authorization 脱敏) | 手工 CLI 真实流式：400 字长回复 → `bubble-content` 115 长度递增（0→704）+ `xh-incremental-stream-verified.png` |
+| Chat SSE error/timeout | `error` + `done(error)` 仅一次终结信号；`missing done` 合成 `done(synthetic)`；`Agent down` / 401 / 超时 / 部分 token 后异常 | CP/Agent | `ChatIntegrationTest` / `AgentChatIntegrationTest` / `main.py` 失败路径 | Host `startup-failure` smoke + manual 断线恢复 |
+| UI SSE lifecycle | `chatTransport` 单飞 + 退避重连 + `409` 一次恢复；`useSSE` / `SSEStream` / `chatStore.replaceStreamingParts` | UI | `chatStore.spec.ts` (replaceStreamingParts) / `ChatStreamIntegration.spec.ts` (逐 token live 更新) / `useSSE.spec.ts` (close/reconnect/409) | `chat.spec.ts` / `chat-interactions.spec.ts` / `auth-flows.spec.ts` (重复导航/reload/session switch 不破坏新连接) |
 | Chat (SSE) | HTTP POST → SSE | CP→Agent | `AgentChatIntegrationTest` | `test_cp_real_integration.py` |
 | RAG Ingest | HTTP POST multipart | CP→Agent | `AgentRagIntegrationTest` | `test_cp_real_integration.py` |
 | RAG Search | HTTP POST form | CP→Agent | `AgentRagIntegrationTest` | `test_cp_real_integration.py` |

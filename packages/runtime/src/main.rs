@@ -49,7 +49,8 @@ use xihe_runtime::remote_mcp::{
 };
 use xihe_runtime::sandbox;
 use xihe_runtime::storage;
-use xihe_runtime::workspace::{CONTAINER_RUNTIME_PORT, WorkspaceManager};
+use xihe_runtime::workspace::WorkspaceManager;
+use xihe_runtime::executor::WorkspaceExecutionRouter;
 use xihe_runtime::error::RuntimeError;
 
 /// Shared runtime state for Axum handlers — holds the routing registry
@@ -62,6 +63,7 @@ pub struct AppState {
     pub manager: Arc<Mutex<WorkspaceManager>>,
     pub device_id: String,
     pub workspace_ensurer: Arc<WorkspaceEnsurer>,
+    pub router: Arc<WorkspaceExecutionRouter>,
     /// Readiness describes the Runtime process, not any particular Workspace.
     pub ready: Arc<AtomicBool>,
 }
@@ -89,39 +91,6 @@ fn http_client() -> &'static reqwest::Client {
     })
 }
 
-async fn resolve_container_addr(ws_id: &str) -> Option<String> {
-    let docker = Docker::connect_with_local_defaults().ok()?;
-    let name = format!("xihe-workspace-ws_{ws_id}");
-    let inspect = docker.inspect_container(&name, None).await.ok()?;
-    if let Some(bindings) = inspect
-        .network_settings
-        .as_ref()
-        .and_then(|settings| settings.ports.as_ref())
-        .and_then(|ports| ports.get(&format!("{CONTAINER_RUNTIME_PORT}/tcp")))
-        .and_then(|bindings| bindings.as_ref())
-        && let Some(binding) = bindings.iter().find(|binding| {
-            binding
-                .host_port
-                .as_ref()
-                .is_some_and(|port| !port.is_empty())
-        })
-        && let Some(host_port) = binding.host_port.as_deref()
-    {
-        let host_ip = binding
-            .host_ip
-            .as_deref()
-            .filter(|ip| !ip.is_empty() && *ip != "0.0.0.0")
-            .unwrap_or("127.0.0.1");
-        return Some(format!("http://{host_ip}:{host_port}"));
-    }
-
-    let ip = inspect
-        .network_settings?
-        .networks?
-        .values()
-        .find_map(|ep| ep.ip_address.clone().filter(|ip| !ip.is_empty()))?;
-    Some(format!("http://{ip}:{CONTAINER_RUNTIME_PORT}"))
-}
 use xihe_runtime::sandbox::CommandResult;
 use xihe_runtime::sandbox::SecurityProfile;
 
@@ -291,15 +260,14 @@ pub struct WebFetchRequest {
     pub timeout: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct XiheRuntime {
     #[allow(dead_code)]
     workspace: String,
     ws_id: String,
     #[allow(dead_code)]
     profile: SecurityProfile,
-    #[allow(dead_code)]
-    container_addr: Option<String>,
+    router: Arc<WorkspaceExecutionRouter>,
 }
 
 #[tool_router]
@@ -308,41 +276,14 @@ impl XiheRuntime {
         ws_id: &str,
         workspace_path: &str,
         profile: SecurityProfile,
-        container_addr: Option<String>,
+        router: Arc<WorkspaceExecutionRouter>,
     ) -> Self {
         Self {
             workspace: workspace_path.to_string(),
             ws_id: ws_id.to_string(),
             profile,
-            container_addr,
+            router,
         }
-    }
-
-    /// POST to container-runtime endpoint.
-    /// If successful, returns the raw JSON body. On HTTP error, returns the error body text.
-    async fn container_post(
-        &self,
-        endpoint: &str,
-        body: &impl serde::Serialize,
-    ) -> Result<serde_json::Value, String> {
-        let base = self
-            .container_addr
-            .as_ref()
-            .ok_or_else(|| "no container".to_string())?;
-        let url = format!("{base}{endpoint}");
-        let resp = http_client()
-            .post(&url)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| format!("container-runtime request failed: {e}"))?;
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(format!("container-runtime error ({endpoint}): {text}"));
-        }
-        resp.json::<serde_json::Value>()
-            .await
-            .map_err(|e| format!("container-runtime response parse failed: {e}"))
     }
 
     #[tool(description = "Read file content from the workspace")]
@@ -350,22 +291,7 @@ impl XiheRuntime {
         &self,
         Parameters(ReadFileRequest { path }): Parameters<ReadFileRequest>,
     ) -> Result<String, String> {
-        if self.container_addr.is_some() {
-            #[derive(serde::Serialize)]
-            struct Req {
-                path: String,
-            }
-            let resp = self
-                .container_post("/fs/read", &Req { path: path.clone() })
-                .await?;
-            return resp["content"]
-                .as_str()
-                .map(|s| s.to_string())
-                .ok_or_else(|| "invalid response from container-runtime".to_string());
-        }
-        fs::read_file(&path, &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
+        self.router.read_file(&self.ws_id, &path).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "Read file with line range support, binary detection, and line numbers")]
@@ -377,44 +303,23 @@ impl XiheRuntime {
             limit,
         }): Parameters<ReadFileRangeRequest>,
     ) -> Result<Json<ReadFileRangeResult>, String> {
-        if self.container_addr.is_some() {
-            let resp = self
-                .container_post(
-                    "/fs/read_range",
-                    &serde_json::json!({
-                        "path": path, "offset": offset, "limit": limit
-                    }),
-                )
-                .await?;
-            let result: ReadFileRangeResult =
-                serde_json::from_value(resp).map_err(|e| format!("deserialize read_range: {e}"))?;
-            return Ok(Json(result));
-        }
-        fs::read_file_range(&path, offset, limit, &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
-            .map(Json)
+        let content = self.router.read_file(&self.ws_id, &path).await.map_err(|e| e.to_string())?;
+        let lines: Vec<&str> = content.lines().collect();
+        let total_lines = lines.len();
+        let off = offset.unwrap_or(1).max(1);
+        let lim = limit.unwrap_or(total_lines);
+        let start = (off - 1).min(total_lines);
+        let end = (start + lim).min(total_lines);
+        let ranged = lines[start..end].iter().enumerate().map(|(i, l)| format!("{} | {}", start+i+1, l)).collect::<Vec<_>>().join("\n");
+        Ok(Json(ReadFileRangeResult { content: ranged, total_lines, is_binary: false }))
     }
 
-    #[tool(description = "Write content to a file in the workspace")]
+    #[tool(description = "Write file (creates parent directories as needed)")]
     async fn write_file(
         &self,
         Parameters(WriteFileRequest { path, content }): Parameters<WriteFileRequest>,
     ) -> Result<String, String> {
-        if self.container_addr.is_some() {
-            let _ = self
-                .container_post(
-                    "/fs/write",
-                    &serde_json::json!({
-                        "path": path, "content": content
-                    }),
-                )
-                .await?;
-            return Ok(format!("Written {} bytes to {}", content.len(), path));
-        }
-        fs::write_file(&path, &content, &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
+        self.router.write_file(&self.ws_id, &path, &content).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "List directory contents with file metadata")]
@@ -422,15 +327,8 @@ impl XiheRuntime {
         &self,
         Parameters(ListDirectoryRequest { path }): Parameters<ListDirectoryRequest>,
     ) -> Result<Json<fs::DirectoryListing>, String> {
-        if self.container_addr.is_some() {
-            let resp = self
-                .container_post("/fs/list", &serde_json::json!({ "path": path }))
-                .await?;
-            let entries: Vec<fs::FileInfo> =
-                serde_json::from_value(resp).map_err(|e| format!("deserialize list: {e}"))?;
-            return Ok(Json(fs::DirectoryListing { entries }));
-        }
-        let entries = fs::list_directory(&path, &self.workspace).map_err(|e| e.to_string())?;
+        let val = self.router.list_directory(&self.ws_id, &path).await.map_err(|e| e.to_string())?;
+        let entries: Vec<fs::FileInfo> = serde_json::from_value(val.get("entries").cloned().unwrap_or(val)).map_err(|e| format!("deserialize list: {e}"))?;
         Ok(Json(fs::DirectoryListing { entries }))
     }
 
@@ -439,19 +337,8 @@ impl XiheRuntime {
         &self,
         Parameters(GlobRequest { pattern, path }): Parameters<GlobRequest>,
     ) -> Result<Json<fs::GlobResults>, String> {
-        if self.container_addr.is_some() {
-            let resp = self
-                .container_post(
-                    "/fs/glob",
-                    &serde_json::json!({ "pattern": pattern, "path": path }),
-                )
-                .await?;
-            let matches: Vec<String> = serde_json::from_value(resp["matches"].clone())
-                .map_err(|e| format!("deserialize glob: {e}"))?;
-            return Ok(Json(fs::GlobResults { matches }));
-        }
-        let matches =
-            fs::glob_files(&pattern, &path, &self.workspace).map_err(|e| e.to_string())?;
+        let val = self.router.glob(&self.ws_id, &pattern, &path).await.map_err(|e| e.to_string())?;
+        let matches: Vec<String> = serde_json::from_value(val.get("matches").cloned().unwrap_or(val)).map_err(|e| format!("deserialize glob: {e}"))?;
         Ok(Json(fs::GlobResults { matches }))
     }
 
@@ -460,19 +347,8 @@ impl XiheRuntime {
         &self,
         Parameters(GrepRequest { pattern, path }): Parameters<GrepRequest>,
     ) -> Result<Json<fs::GrepResults>, String> {
-        if self.container_addr.is_some() {
-            let resp = self
-                .container_post(
-                    "/fs/grep",
-                    &serde_json::json!({ "pattern": pattern, "path": path }),
-                )
-                .await?;
-            let matches: Vec<fs::MatchResult> = serde_json::from_value(resp["matches"].clone())
-                .map_err(|e| format!("deserialize grep: {e}"))?;
-            return Ok(Json(fs::GrepResults { matches }));
-        }
-        let matches =
-            fs::grep_files(&pattern, &path, &self.workspace).map_err(|e| e.to_string())?;
+        let val = self.router.grep(&self.ws_id, &pattern, &path).await.map_err(|e| e.to_string())?;
+        let matches: Vec<fs::MatchResult> = serde_json::from_value(val.get("matches").cloned().unwrap_or(val)).map_err(|e| format!("deserialize grep: {e}"))?;
         Ok(Json(fs::GrepResults { matches }))
     }
 
@@ -481,47 +357,15 @@ impl XiheRuntime {
         &self,
         Parameters(ExecuteCommandRequest {
             command,
-            args: _args,
+            args,
             timeout,
             truncate_limit,
         }): Parameters<ExecuteCommandRequest>,
     ) -> Result<Json<CommandResult>, String> {
-        if self.container_addr.is_some() {
-            #[derive(serde::Serialize)]
-            struct Req {
-                command: String,
-                timeout_secs: Option<u64>,
-            }
-            let resp = self
-                .container_post(
-                    "/exec",
-                    &Req {
-                        command: command.clone(),
-                        timeout_secs: timeout,
-                    },
-                )
-                .await?;
-            let mut result = CommandResult {
-                stdout: resp["stdout"].as_str().unwrap_or_default().to_string(),
-                stderr: resp["stderr"].as_str().unwrap_or_default().to_string(),
-                exit_code: resp["exit_code"].as_i64().unwrap_or(-1),
-                success: resp["exit_code"].as_i64() == Some(0),
-                artifact_id: None,
-            };
-            if let Some(limit) = truncate_limit {
-                let limit_usize = limit as usize;
-                if result.stdout.len() > limit_usize {
-                    let artifact_id = sandbox::store_artifact(&result.stdout, limit_usize);
-                    result.stdout = format!(
-                        "[Output truncated to {limit_usize} chars. Use read_command_output with artifact_id={artifact_id} to retrieve]"
-                    );
-                    result.artifact_id = Some(artifact_id);
-                }
-            }
-            return Ok(Json(result));
-        }
-        // Strict profile fallback — no container available
-        Err("execute_command requires a workspace container (Coding/Isolated profile)".into())
+        let args_vec = args;
+        let val = self.router.execute_command(&self.ws_id, &command, args_vec, timeout, truncate_limit).await.map_err(|e| e.to_string())?;
+        let result: CommandResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
+        Ok(Json(result))
     }
 
     #[tool(description = "Read paginated command output by artifact_id")]
@@ -533,9 +377,13 @@ impl XiheRuntime {
             limit,
         }): Parameters<ReadCommandOutputRequest>,
     ) -> Result<Json<Vec<String>>, String> {
-        match sandbox::read_artifact(&artifact_id, offset, limit) {
-            Some(lines) => Ok(Json(lines)),
-            None => Err(format!("Artifact not found: {artifact_id}")),
+        let val = self.router.read_command_output(&self.ws_id, &artifact_id, offset, limit).await.map_err(|e| e.to_string())?;
+        if let Some(content) = val.get("content").and_then(|v| v.as_str()) {
+            Ok(Json(content.lines().map(|s| s.to_string()).collect()))
+        } else if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
+            Ok(Json(arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()))
+        } else {
+            Ok(Json(vec![]))
         }
     }
 
@@ -544,8 +392,9 @@ impl XiheRuntime {
         &self,
         Parameters(GetFileInfoRequest { path }): Parameters<GetFileInfoRequest>,
     ) -> Result<Json<FileInfo>, String> {
-        let result = fs::get_file_info(&path, &self.workspace).map_err(|e| e.to_string())?;
-        Ok(Json(result))
+        let val = self.router.get_file_info(&self.ws_id, &path).await.map_err(|e| e.to_string())?;
+        let info: FileInfo = serde_json::from_value(val).map_err(|e| e.to_string())?;
+        Ok(Json(info))
     }
 
     #[tool(description = "Watch a directory for file system events (2s poll)")]
@@ -553,11 +402,8 @@ impl XiheRuntime {
         &self,
         Parameters(WatchDirectoryRequest { path }): Parameters<WatchDirectoryRequest>,
     ) -> Result<Json<fs::FileEventList>, String> {
-        let workspace = self.workspace.clone();
-        let events = tokio::task::spawn_blocking(move || fs::watch_directory(&path, &workspace))
-            .await
-            .map_err(|e| format!("Task failed: {e}"))?
-            .map_err(|e| e.to_string())?;
+        let val = self.router.watch_directory(&self.ws_id, &path).await.map_err(|e| e.to_string())?;
+        let events: Vec<fs::FileEvent> = serde_json::from_value(val.get("events").cloned().unwrap_or(val)).map_err(|e| e.to_string())?;
         Ok(Json(fs::FileEventList { events }))
     }
 
@@ -573,15 +419,8 @@ impl XiheRuntime {
             replace_all,
         }): Parameters<EditFileRequest>,
     ) -> Result<Json<EditFileResult>, String> {
-        let result = fs::edit_file(
-            &file_path,
-            &old_string,
-            &new_string,
-            replace_all.unwrap_or(false),
-            &self.workspace,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let val = self.router.edit_file(&self.ws_id, &file_path, &old_string, &new_string, replace_all.unwrap_or(false)).await.map_err(|e| e.to_string())?;
+        let result: EditFileResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(result))
     }
 
@@ -590,9 +429,7 @@ impl XiheRuntime {
         &self,
         Parameters(DeleteFileRequest { path }): Parameters<DeleteFileRequest>,
     ) -> Result<String, String> {
-        fs::delete_file(&path, &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
+        self.router.delete_file(&self.ws_id, &path).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "Delete a directory (requires recursive=true for non-empty dirs)")]
@@ -600,9 +437,7 @@ impl XiheRuntime {
         &self,
         Parameters(DeleteDirectoryRequest { path, recursive }): Parameters<DeleteDirectoryRequest>,
     ) -> Result<String, String> {
-        fs::delete_directory(&path, recursive.unwrap_or(false), &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
+        self.router.delete_directory(&self.ws_id, &path, recursive.unwrap_or(false)).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "Move or rename a file or directory")]
@@ -610,9 +445,7 @@ impl XiheRuntime {
         &self,
         Parameters(MoveFileRequest { from, to }): Parameters<MoveFileRequest>,
     ) -> Result<String, String> {
-        fs::move_file(&from, &to, &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
+        self.router.move_file(&self.ws_id, &from, &to).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "Copy a file")]
@@ -620,9 +453,7 @@ impl XiheRuntime {
         &self,
         Parameters(CopyFileRequest { from, to }): Parameters<CopyFileRequest>,
     ) -> Result<String, String> {
-        fs::copy_file(&from, &to, &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
+        self.router.copy_file(&self.ws_id, &from, &to).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "Create a directory (recursive, creates parents as needed)")]
@@ -630,9 +461,7 @@ impl XiheRuntime {
         &self,
         Parameters(MkdirRequest { path }): Parameters<MkdirRequest>,
     ) -> Result<String, String> {
-        fs::mkdir(&path, &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
+        self.router.mkdir(&self.ws_id, &path).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "Extract text content from a PDF file")]
@@ -640,9 +469,7 @@ impl XiheRuntime {
         &self,
         Parameters(ExtractPdfTextRequest { path }): Parameters<ExtractPdfTextRequest>,
     ) -> Result<String, String> {
-        fs::extract_pdf_text(&path, &self.workspace)
-            .await
-            .map_err(|e| e.to_string())
+        self.router.extract_pdf_text(&self.ws_id, &path).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "Fetch a URL and return its content as text or markdown")]
@@ -664,33 +491,22 @@ impl XiheRuntime {
         &self,
         Parameters(ExecuteCommandRequest {
             command,
-            args: _args,
+            args,
             timeout: _timeout,
             truncate_limit: _truncate,
         }): Parameters<ExecuteCommandRequest>,
     ) -> Result<String, String> {
-        let pid = sandbox::register_background_process(&self.ws_id, &command);
-        if self.container_addr.is_some() {
-            let base = self.container_addr.clone().unwrap();
-            let cmd = command.clone();
-            tokio::spawn(async move {
-                let client = http_client();
-                let url = format!("{base}/exec");
-                let _ = client
-                    .post(&url)
-                    .json(&serde_json::json!({ "command": cmd, "timeout_secs": null }))
-                    .send()
-                    .await;
-            });
-        }
-        Ok(pid)
+        let args_vec = args;
+        self.router.start_background_process(&self.ws_id, &command, args_vec).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "List all background processes for this workspace")]
     async fn list_background_processes(
         &self,
     ) -> Result<Json<Vec<sandbox::BackgroundProcess>>, String> {
-        Ok(Json(sandbox::list_background_processes(&self.ws_id)))
+        let val = self.router.list_background_processes(&self.ws_id).await.map_err(|e| e.to_string())?;
+        let jobs: Vec<sandbox::BackgroundProcess> = serde_json::from_value(val.get("jobs").cloned().unwrap_or(val)).map_err(|e| e.to_string())?;
+        Ok(Json(jobs))
     }
 
     #[tool(description = "Get status of a background process by PID")]
@@ -698,9 +514,18 @@ impl XiheRuntime {
         &self,
         Parameters(GetFileInfoRequest { path: pid }): Parameters<GetFileInfoRequest>,
     ) -> Result<Json<sandbox::BackgroundProcess>, String> {
-        sandbox::get_background_process(&pid)
-            .map(Json)
-            .ok_or_else(|| format!("Background process not found: {pid}"))
+        let val = self.router.get_background_process(&self.ws_id, &pid).await.map_err(|e| e.to_string())?;
+        let proc: sandbox::BackgroundProcess = serde_json::from_value(val).map_err(|e| e.to_string())?;
+        Ok(Json(proc))
+    }
+
+    #[tool(description = "Cancel a background process")]
+    async fn cancel_background_process(
+        &self,
+        Parameters(GetFileInfoRequest { path: pid }): Parameters<GetFileInfoRequest>,
+    ) -> Result<String, String> {
+        let val = self.router.cancel_background_process(&self.ws_id, &pid).await.map_err(|e| e.to_string())?;
+        Ok(val.get("status").and_then(|v| v.as_str()).unwrap_or("cancelled").to_string())
     }
 }
 
@@ -1577,6 +1402,7 @@ async fn main() -> anyhow::Result<()> {
         registry.clone(),
         manager.clone(),
     ));
+    let router = Arc::new(WorkspaceExecutionRouter::new(workspace_ensurer.clone(), manager.clone(), registry.clone()));
     // M2-3.1: device_id persistence (grill A random UUID file)
     let state_dir = device::resolve_state_dir();
     let device_id = match device::ensure_device_id(&state_dir).await {
@@ -1608,6 +1434,7 @@ async fn main() -> anyhow::Result<()> {
         manager: manager.clone(),
         device_id: device_id.clone(),
         workspace_ensurer: workspace_ensurer.clone(),
+        router: router.clone(),
         ready: readiness.clone(),
     });
     // `readiness` and `workspace_ensurer` are consumed by `app_state`; clone first
@@ -1682,19 +1509,13 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
             let profile = instance.profile;
-            let container_addr = match profile {
-                SecurityProfile::Strict => None,
-                _ => tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(resolve_container_addr(&ws_id))
-                }),
-            };
-            Ok(XiheRuntime::new(
+            let runtime = XiheRuntime::new(
                 &ws_id,
                 &instance.workspace_path,
                 profile,
-                container_addr,
-            ))
+                router.clone(),
+            );
+            Ok(runtime)
         },
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default()

@@ -176,10 +176,10 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Agent 术语**: 代码包用 Agent 模块 (module)，运行进程用 Agent 服务 (server)，运行时单元用 Agent Worker (Worker)
 - **异常日志**: 每个 catch 必须有日志 + stacktrace，禁止 silent catch
 - **UI**: reka-ui + Tailwind v4；聊天组件使用自研 MessageScroller / Message / Bubble / Attachment / Marker 五个组件族；Toast 为唯一反馈渠道
-- **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；消息附件已持久化到后端 Session 专属空间，刷新后仍可渲染（详见 DEV-001 §7）。
-  - 流式 token 通过 `useStreamParser` composable 实时分类为 `MessagePart[]`（支持 `text` / `reasoning` / `citation` / `artifact` 四类）
-  - `Message.parts` 替代旧 `marked` 扩展的 think/citation/artifact 嵌入方式；`useMarkdown` 仅处理纯 Markdown 渲染
-  - 后端 `sse_adapter.py` 透传 `reasoning_content` 信号，前端 `useSSE` 通过 `hint` 参数路由到对应 Part 类型
+- **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；消息附件已持久化到后端 Session 专属空间，刷新后仍可渲染（详见 DEV-001 §7、DEV-015 §3）。
+  - 会话级持久 SSE（PLAN-230）：`GET /api/v1/events?sessionId=` 为单会话单活连接（`SseEmitterManager` generation + `compareAndRemove`），`done` 仅结束 run、不关闭 SSE，`heartbeat` 15s 不进业务气泡；`POST /api/v1/chat` 需已建立订阅（`409 SSE_SUBSCRIPTION_REQUIRED`）且单并发（`409 CHAT_IN_PROGRESS`），`requestId`/`runId` 经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传。
+  - 流式渲染：`useStreamParser` 将 token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`），`SSEStream` 每 `token` 调用 `chatStore.replaceStreamingParts` 整量替换当前流式 parts（修复旧 `lastSentCount` 仅 `parts.length` 增长时追加导致的卡首字符）；`Message.parts` 替代旧 `marked`，`useMarkdown` 仅处理纯 Markdown。
+  - 真实流式：`XiheLiteLLM._astream()` 显式 `streaming=True` 使 `astream_events` 产生 `on_chat_model_stream` 多 token，`sse_adapter` 按 `run_id` 去重使 `on_chat_model_end` 仅作无流 fallback；多 `token` 事件驱动气泡在 `done` 前多次增长。
 - **配置**: 3-tier (system > admin > user)，CP ConfigService 统一管理
 - **Service 纯函数**: Service 不依赖 ConfigClient，配置由调用方解析后传入
 - **提交**: Conventional Commits，pass `mise run validate` 后可提交

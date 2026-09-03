@@ -60,10 +60,13 @@ mise run validate:full  # Unit + integration + E2E
 
 ### 2.1. Chat
 
-1. Click "+" in the sidebar to create a new session
-2. Enter message in the input box, press Enter to send
-3. Agent replies via SSE streaming
-4. Tool calls displayed as collapsible cards with details
+1. Click "+" in the sidebar to create a new session (navigating to `/chat/:sessionId` automatically opens a session-scoped persistent SSE: `GET /api/v1/events?sessionId=`).
+2. Enter a message in the input box, press Enter or click Send. Only one in-flight message per session is allowed (`CHAT_IN_PROGRESS`); if you see “a chat run is already active”, wait for the current reply to finish.
+3. Agent replies via SSE streaming: `token` increments are appended to the assistant bubble incrementally (separate `text`/`reasoning` parts), tool calls appear as collapsible cards.
+4. After the first reply finishes, the SSE stays open — you can send the next message **without refreshing** and still get incremental `token`s. `done` ends the turn only, not the session SSE.
+5. If the connection drops due to network jitter, the UI automatically reconnects with 250ms→5s backoff and shows “recovering”; after reconnect it reloads the canonical content.
+
+**Consecutive & streaming verification (PLAN-230)**: Real long replies should produce multiple `token` events with several visible growths before `done`; a single-shot appearance means the single-token fallback (provider without streaming). Inspect `Network → events` for `token`/`done` counts.
 
 ### 2.2. Multimodal
 
@@ -144,12 +147,16 @@ Providers can be managed in the model configuration on the settings page. Select
 
 | Symptom | Cause | Solution |
 |---------|-------|----------|
-| UI cannot connect to CP | Docker services not started | `docker compose up -d` |
+| UI cannot connect to CP | Docker services not started | `docker compose up -d` or `mise run dev:host` |
 | Agent MCP retry | CP not yet ready | Wait for CP startup to complete (~10s) |
 | Registration returns 400 | Password less than 8 characters | Use ≥8 character password |
-| 401 error | Not logged in or token expired | Re-login |
-| SSE disconnect | Network issue | Auto-reconnect (exponential backoff) |
-| PostgreSQL connection failure | Docker container not running | `docker compose up -d postgres` |
+| 401 error | Not logged in or token expired | Re-login; the persistent SSE is closed before expiry and local token is cleared — re-login is required |
+| `409 SSE_SUBSCRIPTION_REQUIRED` | Sent without an active `GET /api/v1/events` subscription | Refresh the page or wait for `connected`, then retry; UI's `ensureConnected()` will attempt one reconnect |
+| `409 CHAT_IN_PROGRESS` | A run is already active in this session | Wait for the current `done` before sending; refreshing does not clear the server-side lease |
+| Sent but only user bubble, no assistant reply | Previously `SSE_SUBSCRIPTION_REQUIRED`; fixed by PLAN-230 (persistent SSE + generation isolation) | Verify `Network` shows `/events` as `200 text/event-stream` and `POST /api/v1/chat` as `202`; check `logs/cp.log` for `stale_cleanup_ignored` / `replaced` |
+| Long reply shows only one content change | Provider without streaming, single `token` fallback | Expected fallback — inspect `Network → events` `token` count; real MiMo should yield ≥2 `token`s |
+| SSE disconnect (jitter) | Network issue or heartbeat timeout | Auto-reconnect (backoff 250ms→5s); shows `recovering` and reloads `/messages` after `done` |
+| PostgreSQL connection failure | Docker container not running | `docker compose up -d postgres` or `mise run dev:host` (auto-waits for Postgres) |
 
 ## 5. Keyboard Shortcuts
 

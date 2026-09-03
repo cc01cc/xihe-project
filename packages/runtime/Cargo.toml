@@ -76,6 +76,9 @@ base64 = "0.22.1"
 percent-encoding = "2"
 bytes = "1"
 
+# === NEW: openat2 helper (PLAN-235) ===
+rustix = { version = "1.1", features = ["fs"] }
+
 # === NEW: HTTP client & HTML parsing (web_fetch) ===
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "blocking"] }
 scraper = "0.27.0"
