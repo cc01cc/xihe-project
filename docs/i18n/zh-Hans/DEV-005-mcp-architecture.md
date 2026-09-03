@@ -61,9 +61,11 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 │  xihe-workspace-ws_{ws_id}                                  │
 │                                                             │
 │  xihe-container-runtime (Rust binary, 镜像内预装)            │
-│  ├─ POST /fs/* → 文件操作 (read/write/glob/grep/etc)        │
-│  ├─ POST /exec → 一次性命令执行                             │
-│  └─ GET  /health → 健康检查                                 │
+│  ├─ `--oneshot` 模式：stdin 单 operation JSON → stdout 单   │
+│  │   result JSON，EOF 即边界（per-request Docker exec）      │
+│  ├─ 文件操作 + 显式 Shell 命令 + `/tmp/xihe-jobs` 状态文件   │
+│  └─ 无 HTTP server / 无端口发布 / 无 instance token（exec   │
+│      本身即认证边界，见 PLAN-235）                           │
 │                                                             │
 │  xihe-mcp-bridge (Rust binary, 镜像内预装)                   │
 │  ├─ POST /{server_id} → STDIN → STDOUT → streaming resp    │

@@ -135,6 +135,8 @@ tracing::error!("Failed to X: {e:?}");
 
 子二进制（`xihe-container-runtime`、`xihe-mcp-bridge`）使用同一 `XIHE_*` 环境变量体系，不依赖 `RUST_LOG`。
 
+Workspace 执行事件（PLAN-235，`WorkspaceExecutionRouter` + oneshot exec，`info` 级，全部经 `RedactingWriter`）：`workspace_exec_start`（`workspaceId`/`profile`/`operation`/`requestId`）、`workspace_exec_success`/`workspace_exec_fail`（`durationMs`/`errorCode`）、`job_start`/`job_cancel`/`job_cleanup`（`workspaceId`/`jobId`/`status`）。`command`/`args`/`stdout` 与 `/tmp/xihe-jobs` 输出内容永不进入明文日志，由 `scan-log-secrets` 门禁覆盖。
+
 ### 3.4. UI (TypeScript/Vue) — 3 路并行
 
 浏览器端 `logger`（`lib/logger.ts`）三路并行输出：

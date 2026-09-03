@@ -117,8 +117,8 @@ Runtime
 | `POST /internal/v1/runtime/workspaces/delete` | CP → Runtime | 删除工作区（含 bridge 清理） |
 
 **MCP Server**（`rmcp` SDK + `#[tool]` macro）：自动生成 JSON Schema。Runtime 有三个 binary：
-- `xihe-runtime`：Gateway 主进程，注册 `/workspace/{ws_id}/mcp` 系列路由
-- `xihe-container-runtime`：容器内 HTTP 服务，处理 built-in 文件/命令工具
+- `xihe-runtime`：Gateway 主进程，注册 `/workspace/{ws_id}/mcp` 系列路由；Workspace 操作经 `WorkspaceExecutionRouter` 以 per-request Docker exec 在 Sandbox 内执行（PLAN-235，无 HTTP container-runtime 通道、无 instance token、无长驻 worker）
+- `xihe-container-runtime`：容器内执行器，提供 `--oneshot` CLI 模式（stdin 单 operation JSON → stdout 单 result JSON，EOF 即边界），处理 built-in 文件/命令工具与 `/tmp/xihe-jobs` 状态文件后台任务
 - `xihe-mcp-bridge`：容器内 STDIO bridge，将用户配置的 STDIO MCP server 暴露为 HTTP 端点
 
 工具名经 CP 反向代理时构建 tool→server 映射表，Agent 调用时 CP 查表路由。详见 [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md)。

@@ -116,8 +116,8 @@ Both interfaces share underlying core functions like `fs.rs` — the same busine
 | `POST /internal/v1/runtime/workspaces/delete` | CP → Runtime | Delete workspace (including bridge cleanup) |
 
 **MCP Server** (`rmcp` SDK + `#[tool]` macro): Automatically generates JSON Schema. Runtime has three binaries:
-- `xihe-runtime`: Gateway main process, registers `/workspace/{ws_id}/mcp` series routes
-- `xihe-container-runtime`: In-container HTTP service, handles built-in file/command tools
+- `xihe-runtime`: Gateway main process, registers `/workspace/{ws_id}/mcp` series routes; workspace operations run inside the Sandbox via per-request Docker exec through `WorkspaceExecutionRouter` (PLAN-235, no HTTP channel, no instance token, no long-lived worker)
+- `xihe-container-runtime`: In-container executor with `--oneshot` CLI mode (single operation JSON on stdin → single result JSON on stdout, EOF-delimited); handles built-in file/command tools and `/tmp/xihe-jobs` state-file background jobs
 - `xihe-mcp-bridge`: In-container STDIO bridge, exposes user-configured STDIO MCP servers as HTTP endpoints
 
 Tool names are mapped by CP reverse proxy when building the tool→server mapping table. When Agent calls a tool, CP looks up the table for routing. See [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md).
