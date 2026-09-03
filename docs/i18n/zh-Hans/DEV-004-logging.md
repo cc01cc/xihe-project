@@ -19,7 +19,7 @@ xihe 采用**分层统一**的日志系统：
 
 ```
 XIHE_LOG_LEVEL (全局默认)
-  ├── XIHE_LOG_LEVEL_UI       → Vite logLevel + 浏览器 logger (3 路并行)
+  ├── XIHE_LOG_LEVEL_UI       → Vite logLevel + 浏览器 logger (console/IndexedDB 有效，telemetry 发送已禁用)
   ├── XIHE_LOG_LEVEL_CP        → Logback (logback-spring.xml)
   ├── XIHE_LOG_LEVEL_AGENT     → loguru (Python)
   └── XIHE_LOG_LEVEL_RUNTIME   → tracing EnvFilter
@@ -137,11 +137,18 @@ tracing::error!("Failed to X: {e:?}");
 
 子二进制（`xihe-container-runtime`、`xihe-mcp-bridge`）使用同一 `XIHE_*` 环境变量体系，不依赖 `RUST_LOG`。
 
-Workspace 执行事件（PLAN-235，`WorkspaceExecutionRouter` + oneshot exec，`info` 级，全部经 `RedactingWriter`）：`workspace_exec_start`（`workspaceId`/`profile`/`operation`/`requestId`）、`workspace_exec_success`/`workspace_exec_fail`（`durationMs`/`errorCode`）、`job_start`/`job_cancel`/`job_cleanup`（`workspaceId`/`jobId`/`status`）。`command`/`args`/`stdout` 与 `/tmp/xihe-jobs` 输出内容永不进入明文日志，由 `scan-log-secrets` 门禁覆盖。
+Workspace 执行事件（PLAN-235 约定，`WorkspaceExecutionRouter` + oneshot exec，`info` 级，全经 `RedactingWriter`）：
 
-### 3.4. UI (TypeScript/Vue) — 3 路并行
+| 事件 | 结构化字段 |
+|------|-----------|
+| exec 开始 / 成功 / 失败 | `workspaceId`、`profile`、`operation`、`requestId`、`durationMs`、`errorCode` |
+| job start / cancel / cleanup | `workspaceId`、`jobId`、`status` |
 
-浏览器端 `logger`（`lib/logger.ts`）三路并行输出：
+`command`/`args`/`stdout` 与 `/tmp/xihe-jobs` 输出内容永不进入明文日志，由 `scan-log-secrets` 门禁覆盖。
+
+### 3.4. UI (TypeScript/Vue) — 输出通道
+
+浏览器端 `logger`（`lib/logger.ts`）输出通道（telemetry 发送当前禁用，见下表备注）：
 
 ```typescript
 import { logger } from '../lib/logger'
@@ -193,7 +200,12 @@ CP 的 `AuditLogger` 记录所有 MCP 工具调用和策略决策：
 | Agent | loguru patcher | `log_redact.patch_record`（`logger.configure(patcher=...)`） |
 | UI | logger emit | `sanitizeData` / `redactDeep`（`lib/logger.ts`） |
 
-统一规则：敏感 key（`token/secret/password/authorization/cookie/accessToken/refreshToken/apiKey/serviceToken/clientSecret/pkce/verifier` 等，大小写不敏感）值替换为 `***redacted***`；Bearer token、JWT（`eyJ...`）、PEM 私钥模式在任意字符串中也会被替换。
+统一规则：
+
+| 目标 | 处理 |
+|------|------|
+| 敏感 key（`token`、`secret`、`password`、`authorization`、`cookie`、`accessToken`、`refreshToken`、`apiKey`、`serviceToken`、`clientSecret`、`pkce`、`verifier` 等，大小写不敏感） | 值替换为 `***redacted***` |
+| Bearer token、JWT（`eyJ...`）、PEM 私钥模式 | 在任意字符串中也被替换 |
 
 ### 6.2 关联 ID 贯通
 
@@ -216,11 +228,31 @@ Chat SSE 与 Agent 流式的结构化日志遵循 PLAN-197 附录 C 的 canonica
 | `errorCode` | 失败事件 | `SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS` / `AGENT_TIMEOUT` 等稳定码 |
 | `outcome` / `durationMs` | `chat_run_failed` / `chat_run_forwarded` 等 | 耗时与结果 |
 
-**CP 稳定事件**：`chat_sse_registered`、`chat_sse_replaced`、`chat_sse_stale_cleanup_ignored`、`chat_sse_client_closed`、`chat_sse_send_failed`、`chat_run_started`、`chat_run_forwarded`、`chat_run_finished`（含 `tokenCount`/`assistantChars`）、`chat_run_failed`、`chat_sse_rejected`。`heartbeat` 事件仅含 `connectionGeneration`，永不进入消息持久层。
+**CP 稳定事件**：
 
-**Agent 稳定事件**：`chat_stream_started`、`chat_stream_chunk`（`eventIndex` + `tokenChars`）、`chat_stream_finished`（`tokenCount` + `assistantChars`）、`chat_stream_failed`（`errorCode` + `stacktrace`）。`token` 日志不记录 `content` 明文；provider 日志仅 `provider`/`model`/`status`/`durationMs`/`errorCode`。
+| 事件 | 备注 |
+|------|------|
+| `chat_sse_registered`、`chat_sse_replaced`、`chat_sse_stale_cleanup_ignored`、`chat_sse_client_closed`、`chat_sse_send_failed` | 连接生命周期 |
+| `chat_run_started`、`chat_run_forwarded`、`chat_run_finished`、`chat_run_failed`、`chat_sse_rejected` | run 生命周期（`finished` 含 `tokenCount`/`assistantChars`） |
+| `heartbeat` | 仅含 `connectionGeneration`，永不进入消息持久层 |
 
-**日志安全**：`main.py` 设置 `litellm.suppress_debug_info=True` 并 `log_redact` 掩码 `Authorization:` 明文；`application.properties` 占位 `spring.security.user.*` 抑制 `Using generated security password`；`RequestIdFilter` 不跨 `new Thread()` 隐式继承；UI `logger` 的 IndexedDB/telemetry 失败路径显式落错误日志且不携带消息正文。
+**Agent 稳定事件**：
+
+| 事件 | 字段 |
+|------|------|
+| `chat_stream_started` | — |
+| `chat_stream_chunk` | `eventIndex` + `tokenChars`（不记 `content` 明文） |
+| `chat_stream_finished` | `tokenCount` + `assistantChars` |
+| `chat_stream_failed` | `errorCode` + `stacktrace` |
+
+provider 日志仅 `provider`/`model`/`status`/`durationMs`/`errorCode`。
+
+**日志安全**（四条硬规则）：
+
+1. `main.py` 设置 `litellm.suppress_debug_info=True`，`log_redact` 掩码 `Authorization:` 明文。
+2. `application.properties` 占位 `spring.security.user.*`，抑制 `Using generated security password`。
+3. `RequestIdFilter` 不跨 `new Thread()` 隐式继承。
+4. UI `logger` 的 IndexedDB/telemetry 失败路径显式落错误日志，且不携带消息正文。
 
 ### 6.4 泄露扫描门禁
 
@@ -228,7 +260,10 @@ Chat SSE 与 Agent 流式的结构化日志遵循 PLAN-197 附录 C 的 canonica
 node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
 ```
 
-扫描 `Bearer`/JWT/PEM/`Authorization:`/JSON 敏感字段等模式，命中即退出码 1。读取失败或权限失败本身也使门禁失败（`throw` 而非静默 `continue`），该命令是 PLAN-195 M6 与 PLAN-230 M4 的安全门禁。
+扫描模式：`Bearer` / JWT / PEM / `Authorization:` / JSON 敏感字段。
+
+- 命中即退出码 1；读取失败或权限失败本身也使门禁失败（`throw` 而非静默 `continue`）。
+- 该命令是 PLAN-195 M6 与 PLAN-230 M4 的安全门禁。
 
 ## 7. 错误日志规范
 

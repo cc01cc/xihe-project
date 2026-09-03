@@ -83,4 +83,10 @@ curl -X POST http://localhost:12631/api/v1/config/import \
 
 `mise run dev:full` 自动导入 `config.import.local.jsonc`（如存在）；日常 `dev:host` 通过 UI Settings 或 API 修改。
 
-各模块客户端：CP 内建 `ConfigService`；Agent `config_client.py`（启动拉取缓存）；Runtime `config_client.rs`（启动拉取 + 定期刷新）。内部端点前缀为 `/internal/v1/config/{layer}/{domain}`。
+各模块客户端（内部端点前缀 `/internal/v1/config/{layer}/{domain}`）：
+
+| 模块 | 客户端 | 行为 |
+|------|--------|------|
+| CP | 内建 `ConfigService` | 直接读库 |
+| Agent | `config_client.py` | 启动拉取缓存 |
+| Runtime | `config_client.rs` | 启动拉取 + 定期刷新 |

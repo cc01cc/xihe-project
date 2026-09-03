@@ -196,7 +196,11 @@ sequenceDiagram
 
 ## 4. 统一 Session 与附件（摘要，详见 DEV-017）
 
-chat 与 workspace 是同一 Session 的不同视图：Chat 用 `/chat/:sessionId`，Workspace 用 `/workspace/:workspaceId`；`useSessionStore` 承载服务端 Session 投影，`useChatStore`/`useWorkspaceStore` 为视图层状态；附件持久化到后端 Session 专属空间（`{base}/{sessionId}/{fileId}`），刷新仍可渲染。
+chat 与 workspace 是同一 Session 的不同视图：
+
+- Chat 用 `/chat/:sessionId`，Workspace 用 `/workspace/:workspaceId`。
+- `useSessionStore` 承载服务端 Session 投影；`useChatStore`/`useWorkspaceStore` 为视图层状态。
+- 附件持久化到后端 Session 专属空间（`{base}/{sessionId}/{fileId}`），刷新仍可渲染。
 
 ## 5. 远程 MCP 与 OAuth 边界（摘要，详见 DEV-016/DEV-014）
 

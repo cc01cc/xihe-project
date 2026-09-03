@@ -34,7 +34,10 @@ xihe/
 └── docker-compose.yml         # 全容器基线编排
 ```
 
-根 `pnpm-workspace.yaml` 仍有效（`packages/*` 约束 + 构建白名单），但日常不走 pnpm workspace 安装：UI 依赖仅在 `packages/ui/` 内用 pnpm 管理。`Taskfile.yml` 仅保留作向后兼容（首行已声明弃用），统一入口为 `mise run ...`。
+包管理规则：
+
+- 根 `pnpm-workspace.yaml` 仍有效（`packages/*` 约束 + 构建白名单），但日常不走 pnpm workspace 安装：UI 依赖仅在 `packages/ui/` 内用 pnpm 管理。
+- `Taskfile.yml` 仅保留作向后兼容（首行已声明弃用），统一入口为 `mise run ...`。
 
 ## 2. 环境与安装
 
@@ -47,7 +50,14 @@ cp .env.example .env.dev
 
 前置：Node 22+ / pnpm 10+ / Python 3.12+ + uv / Java 25+ + Maven 3.9 / Rust 1.88+ / Docker（Desktop for Windows 需 WSL2 集成）。
 
-模块级等价命令：`cd packages/ui && pnpm install --ignore-workspace`；`cd packages/agent && uv sync --all-extras`；`cd packages/control-plane && mvn dependency:resolve`；`cd packages/runtime && cargo fetch`。
+模块级等价命令：
+
+| 模块 | 命令 |
+|------|------|
+| UI | `cd packages/ui && pnpm install --ignore-workspace` |
+| Agent | `cd packages/agent && uv sync --all-extras` |
+| CP | `cd packages/control-plane && mvn dependency:resolve` |
+| Runtime | `cd packages/runtime && cargo fetch` |
 
 ## 3. 运行模式
 
@@ -69,9 +79,20 @@ sequenceDiagram
   C-->>M: /actuator/health + /internal/v1/agent/health + /health + UI 根路径就绪
 ```
 
-锚点：`mise.toml: dev:host` + `scripts/dev-host.ps1`。PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。Runtime 用 `XIHE_WORKSPACE_HOST_ROOT`（默认 `A03-xihe/.xihe-workspaces`）作宿主 WorkspaceStorage 根；`/health` 为 liveness，`/ready` 不等待全部 Sandbox 物化；Workspace 按 `workspaceId` 首次操作时懒物化。
+要点（锚点：`mise.toml: dev:host` + `scripts/dev-host.ps1`）：
 
-常用：`mise run dev:host:watch`（健康监督 + 故障重启任务组）、`mise run dev:host:stop`（停 PG；先 Ctrl+C 停原生任务）、`mise run dev:reset`（默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity）、`mise run reset-admin`（重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启）。
+- PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。
+- Runtime 用 `XIHE_WORKSPACE_HOST_ROOT`（默认 `A03-xihe/.xihe-workspaces`）作宿主 WorkspaceStorage 根。
+- `/health` 为 liveness，`/ready` 不等待全部 Sandbox 物化；Workspace 按 `workspaceId` 首次操作时懒物化。
+
+常用命令：
+
+| 命令 | 说明 |
+|------|------|
+| `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
+| `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |
+| `mise run dev:reset` | 默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity |
+| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启 |
 
 ### 模式 B：Docker Compose 全栈（一次性基线）
 
