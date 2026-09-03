@@ -62,11 +62,10 @@ sidebar_group: "开发指南"
 
 > 用 WireMock（CP 侧）或 httpx mock（Agent 侧）或 HTTP mock（Runtime 侧）模拟对方模块的 HTTP 接口，验证"本模块是否正确组装了跨模块请求"。
 
-```
-┌──────────────┐     HTTP (stubbed)     ┌──────────────┐
-│  CP Test     │─────── WireMock ──────▶│  Mock Agent  │
-│  (H2 + JUnit)│◀───────────────────────│  (no Docker) │
-└──────────────┘                        └──────────────┘
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart LR
+    T["CP Test<br/>(H2 + JUnit)"] <-->|"HTTP (stubbed, WireMock)<br/>无 Docker"| M["Mock Agent"]
 ```
 
 **CP 侧模式**（WireMock）：
@@ -148,11 +147,10 @@ async fn test_config_client_fetch() {
 
 > 用 Docker Compose 启动部分模块栈（如 CP+Agent 或 CP+Runtime），通过真实 HTTP 端口验证端到端通信。
 
-```
-┌──────────────┐     HTTP (real)        ┌──────────────┐
-│  CP (Docker) │◀──────────────────────▶│  Agent/Runtime│
-│  :12631      │                        │  (Docker)     │
-└──────────────┘                        └──────────────┘
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart LR
+    C["CP (Docker :12631)"] <-->|"HTTP (real)"| AR["Agent / Runtime (Docker)"]
 ```
 
 **启动方式**：

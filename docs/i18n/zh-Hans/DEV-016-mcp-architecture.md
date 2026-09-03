@@ -27,11 +27,27 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 flowchart TD
-    AG["Agent (Python)<br/>StreamableHTTPConnection<br/>POST /api/v1/mcp {jsonrpc}"]
-    CP["CP McpProxyController (Java)<br/>1. 验 session-id 签名 + 提取 ws_id<br/>2. tools/list 合并 + tool→server 映射 (5min TTL)<br/>3. tools/call 查表路由<br/>4. 系统工具优先"]
-    GW["Runtime Gateway (Rust/Axum)<br/>/mcp (any) · /remote-mcp/../call<br/>/mcp/spawn (POST 启动 / GET 列表)<br/>/mcp/spawn/{id} (DELETE 停止)<br/>/mcp/stdio/{id} (POST 调用)<br/>配置轮询 30s"]
-    SB["容器 xihe-workspace-ws_{id}<br/>container-runtime --oneshot<br/>(stdin operation → stdout result, EOF 边界)<br/>mcp-bridge: POST /{server_id} → STDIO<br/>(30s 超时 / 1MB 缓冲)<br/>STDIO 子进程"]
-    AG --> CP --> GW --> SB
+    subgraph AG["Agent (Python)"]
+        A1["StreamableHTTPConnection (session-id, headers)<br/>POST /api/v1/mcp {jsonrpc, method, params}"]
+    end
+    subgraph CP["CP McpProxyController (Java)"]
+        C1["1. 验 session-id 签名 + 提取 ws_id"]
+        C2["2. tools/list: 合并系统工具 + 各 STDIO server 工具<br/>tool_name → server_id 映射 (5min TTL)"]
+        C3["3. tools/call: 按 tool name 查表路由"]
+        C4["4. 系统工具优先 (同名用户工具跳过 + 告警)"]
+    end
+    subgraph GW["Runtime Gateway (Rust / Axum)"]
+        G1["/mcp (any): 系统工具调用"]
+        G2["/remote-mcp/../call (POST): 远程 MCP"]
+        G3["/mcp/spawn (POST 启动 / GET 列表)<br/>/mcp/spawn/{id} (DELETE 停止)<br/>/mcp/stdio/{id} (POST 调用)"]
+        G4["配置轮询 30s: 读 CP mcpServers JSON, diff 后管理"]
+    end
+    subgraph SB["容器 xihe-workspace-ws_{id}"]
+        S1["container-runtime --oneshot<br/>stdin 单 operation JSON → stdout 单 result JSON<br/>EOF 即边界 · 文件操作 + 显式 Shell + /tmp/xihe-jobs<br/>无 HTTP server / 无端口发布 / 无 instance token"]
+        S2["mcp-bridge: POST /{server_id} → STDIN → STDOUT<br/>streaming resp · 30s 超时 / 1MB 缓冲<br/>health check · auto-restart"]
+        S3["STDIO 子进程 (npx, docker, python 等)"]
+    end
+    A1 --> C1 --> C2 --> C3 --> C4 --> G1 & G2 & G3 --> S1 & S2 --> S3
 ```
 
 锚点：`McpProxyController.java`、`main.rs: 路由注册`、`mcp_bridge.rs`、`mcp_process.rs: CONFIG_POLL_INTERVAL`。无 HTTP container-runtime 通道、无 instance token（exec 本身即认证边界，PLAN-235）。
