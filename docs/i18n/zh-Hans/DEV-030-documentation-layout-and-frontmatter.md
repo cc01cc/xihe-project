@@ -130,7 +130,18 @@ INDEX.md 等纯导航文件不需要特殊设置——LYJ 端自动排除。
 - CMTX 仓同名文档布局规范 — 原始规范（含完整调研背景）
 - `LingYiJu/packages/project/generate-config.ts` — LYJ 端扫描和排除逻辑（待复核，见 §2.1 注）
 
-## 6. 文档归属制（PLAN-239 防漂移门禁）
+## 6. 风格体系（PLAN-241 可读性基线）
+
+三原则：① **倒金字塔**：H1 下导读（读者 + 内容 + 前置阅读），先结论后细节；② **表格优先**：对比/矩阵/清单用表不用段；③ **渐进披露**：正文留结论与常用路径，考据/历史/全量清单进附录。
+
+- 标题：H1 唯一，H2/H3 编号，禁 H4+（超层拆表或进附录）。
+- 图：流程类一律 mermaid（统一 neutral 主题头），ASCII 流程图不再新增；每图注代码锚点。
+- 重复内容：各留摘要 + 指主篇（传输主篇 DEV-010，附件领域主篇 DEV-017），保证单篇自包含。
+- 符号：保留 ✅/⚠️/❌/→ 扫描标记（项目例外，见下）；中英文术语首次对照，后续用中文。
+
+> 项目例外声明：workspace DOC-002 要求全 ASCII、无 emoji。本系列因扫描可读性与存量一致，保留 ✅/⚠️/❌/→ 四个标记，其余仍遵守 DOC-002（无其他 emoji/装饰字符）。
+
+## 7. 文档归属制（PLAN-239 防漂移门禁）
 
 每篇文档指定归属模块；修改该模块代码的 PLAN 收尾必须同步其归属文档（见 A03-xihe/AGENTS.md 收尾检查清单）：
 
@@ -148,3 +159,18 @@ INDEX.md 等纯导航文件不需要特殊设置——LYJ 端自动排除。
 | Session | DEV-017 |
 | 测试 | DEV-020/021/022/023 |
 | 用户可见行为 | USER-001 |
+
+## 附录：术语表（全系列通用，首次出现中英对照）
+
+| 术语 | 英文 | 说明 |
+|------|------|------|
+| 物化 | materialization | Runtime 按需创建 Sandbox / 加载 Workspace 的过程 |
+| 执行规格 | ExecutionSpec | CP 下发的工作区执行描述，Runtime 按 `workspaceId` 定向获取 |
+| 存储引用 | storageRef | WorkspaceStorage 的持久化定位 |
+| 连接代数 | generation | SSE 会话连接的递增版本号，用于隔离新旧 emitter |
+| 轮次 | run / runId | 一次 `POST /api/v1/chat` 触发的单次模型执行 |
+| 消息分区 | MessagePart | 流式消息的内容单元（text/reasoning/citation/artifact） |
+| 工具命名空间 | tool namespace | 工具名前缀机制（当前未接线，见 DEV-014 §3） |
+| 沙盒 | Sandbox | per-workspace Docker 容器执行面 |
+| 桥 | bridge（xihe-mcp-bridge） | 容器内 STDIO MCP server ↔ HTTP 的桥接进程 |
+| 画像 | profile（Strict/Coding/Isolated） | Workspace 隔离等级，PLAN-235 后全部进 Sandbox 执行 |

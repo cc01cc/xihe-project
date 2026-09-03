@@ -57,7 +57,19 @@ cp .env.example .env.dev
 mise run dev:host
 ```
 
-PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。Runtime 用 `XIHE_WORKSPACE_HOST_ROOT`（默认 `A03-xihe/.xihe-workspaces`）作宿主 WorkspaceStorage 根；`/health` 为 liveness，`/ready` 不等待全部 Sandbox 物化；Workspace 按 `workspaceId` 首次操作时懒物化。
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+sequenceDiagram
+  participant M as mise dev:host
+  participant PG as PostgreSQL (Docker)
+  participant C as CP/Agent/Runtime/UI (原生)
+  M->>PG: docker compose up -d --wait postgres
+  PG-->>M: healthy
+  M->>C: 并行启动四个原生任务
+  C-->>M: /actuator/health + /internal/v1/agent/health + /health + UI 根路径就绪
+```
+
+锚点：`mise.toml: dev:host` + `scripts/dev-host.ps1`。PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。Runtime 用 `XIHE_WORKSPACE_HOST_ROOT`（默认 `A03-xihe/.xihe-workspaces`）作宿主 WorkspaceStorage 根；`/health` 为 liveness，`/ready` 不等待全部 Sandbox 物化；Workspace 按 `workspaceId` 首次操作时懒物化。
 
 常用：`mise run dev:host:watch`（健康监督 + 故障重启任务组）、`mise run dev:host:stop`（停 PG；先 Ctrl+C 停原生任务）、`mise run dev:reset`（默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity）、`mise run reset-admin`（重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启）。
 
@@ -94,7 +106,7 @@ curl -s -X POST 'http://localhost:12631/api/v1/chat' -H "Authorization: Bearer $
 | 404 路径 | Vite 不再重写 API 路径；统一用 `docs/api/openapi.yaml` 的 `/api/v1`（公开）/ `/internal/v1`（服务间） |
 | SSE 401 | JWT filter 需支持 query param token；401 后 `chatTransport` 清 token 跳 `/login`，勿循环重试 |
 | `409 SSE_SUBSCRIPTION_REQUIRED` | 先 `GET /api/v1/events?sessionId=` 再 chat；`SSEStream` 发送前手工确认连接（UI 无自动 409 重试分支，见 DEV-010 §4） |
-| 连续第二条 409 | 查 `SseEmitterManager` generation 递增 + `removeIfCurrent` 身份比对；正常为 `replaced` + 新 `registered`（旧称 compareAndRemove 语义） |
+| 连续第二条 409 | 查 `SseEmitterManager` generation 递增 + `removeIfCurrent` 身份比对；正常为 `replaced` + 新 `registered`（历史文档旧称，已按源码 `removeIfCurrent` 统一） |
 | `done` 后 SSE 关闭 | 确认 `ChatController` 仅在断开/session 删除/不可写时 `complete` |
 | 长回复卡首字符 | `SSEStream` 按 hint 分流（reasoning/text 追加、无 hint 经 parser 整量替换；旧 `lastSentCount` 追加已废弃，见 DEV-010 §4） |
 | 无增量流式 | `XiheLiteLLM` 须 `streaming=True`（`on_chat_model_stream`）；`on_chat_model_end` 仅 fallback |

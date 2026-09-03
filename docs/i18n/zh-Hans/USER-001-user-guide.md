@@ -11,6 +11,8 @@ updated: 2026-09-03
 
 # 用户指南 — xihe Agent 平台
 
+> 面向最终用户：安装启动（§1）→ 功能使用（§2）→ 配置（§3）→ 排障（§4，先看表头“先查”列）。开发调试见 DEV-002。
+
 ## 1. 快速开始
 
 ### 1.1. 环境要求
@@ -142,18 +144,18 @@ Provider 可在设置页面的模型配置中管理，选择预设后自动填�
 
 ## 4. 故障排查
 
-| 现象 | 原因 | 解决 |
-|------|------|------|
-| UI 无法连接 CP | Docker 服务未启动 | `docker compose up -d` 或 `mise run dev:host` |
-| Agent MCP 重试 | CP 尚未就绪 | 等待 CP 启动完成（约 10s） |
-| 注册返回 400 | 密码不足 8 位 | 使用 ≥8 位密码 |
-| 401 错误 | 未登录或 Token 过期 | 重新登录；持久 SSE 会在过期前关闭并清理本地 token，需重新登录 |
-| `409 SSE_SUBSCRIPTION_REQUIRED` | 页面未建立 `GET /api/v1/events` 订阅就发送 | 刷新页面或等待 SSE `connected` 后重发；发送前 `SSEStream` 会手工确认连接（无自动 409 重试分支） |
-| `409 CHAT_IN_PROGRESS` | 同一会话已有进行中的 run | 等待当前 `done` 结束后再发送；刷新不会清除服务端租约 |
-| 发送后仅用户气泡、无助手回复 | 曾为 `SSE_SUBSCRIPTION_REQUIRED` 误判；已由 PLAN-230 修复（持久 SSE + 代数隔离） | 确认 `Network` 中 `/events` 仍为 `200 text/event-stream` 且 `POST /api/v1/chat` 返回 `202`；检查 `logs/cp.log` 的 `stale_cleanup_ignored` / `replaced` |
-| 长回复只有一次内容变化 | provider 不支持流式，触发单 `token` 回落 | 属兼容路径：查看 `Network → events` 的 `token` 数量；真实 MiMo 应产生 ≥2 `token` |
-| SSE 断开（网络抖动） | 网络问题或心跳超时 | 自动重连（指数退避 250ms 起，上限 5s）；重连后重新加载 `/api/v1/sessions/{id}/messages` 恢复最终内容 |
-| PostgreSQL 连接失败 | Docker 容器未运行 | `docker compose up -d postgres` 或 `mise run dev:host`（自动等待 Postgres） |
+| 先查 | 现象 | 原因 | 解决 |
+|------|------|------|------|
+| 服务状态 | UI 无法连接 CP | Docker 服务未启动 | `docker compose up -d` 或 `mise run dev:host` |
+| 服务状态 | Agent MCP 重试 | CP 尚未就绪 | 等待 CP 启动完成（约 10s） |
+| 输入 | 注册返回 400 | 密码不足 8 位 | 使用 ≥8 位密码 |
+| 登录态 | 401 错误 | 未登录或 Token 过期 | 重新登录；持久 SSE 会在过期前关闭并清理本地 token，需重新登录 |
+| Network `/events` | `409 SSE_SUBSCRIPTION_REQUIRED` | 页面未建立 `GET /api/v1/events` 订阅就发送 | 刷新页面或等待 SSE `connected` 后重发；发送前 `SSEStream` 会手工确认连接（无自动 409 重试分支） |
+| 等待 `done` | `409 CHAT_IN_PROGRESS` | 同一会话已有进行中的 run | 等待当前 `done` 结束后再发送；刷新不会清除服务端租约 |
+| Network + `logs/cp.log` | 发送后仅用户气泡、无助手回复 | 曾为 `SSE_SUBSCRIPTION_REQUIRED` 误判；已由 PLAN-230 修复（持久 SSE + 代数隔离） | 确认 `Network` 中 `/events` 仍为 `200 text/event-stream` 且 `POST /api/v1/chat` 返回 `202`；检查 `logs/cp.log` 的 `stale_cleanup_ignored` / `replaced` |
+| Network `token` 数 | 长回复只有一次内容变化 | provider 不支持流式，触发单 `token` 回落 | 属兼容路径：查看 `Network → events` 的 `token` 数量；真实 MiMo 应产生 ≥2 `token` |
+| 等待重连 | SSE 断开（网络抖动） | 网络问题或心跳超时 | 自动重连（指数退避 250ms 起，上限 5s）；重连后重新加载 `/api/v1/sessions/{id}/messages` 恢复最终内容 |
+| 服务状态 | PostgreSQL 连接失败 | Docker 容器未运行 | `docker compose up -d postgres` 或 `mise run dev:host`（自动等待 Postgres） |
 
 ## 5. 快捷键
 

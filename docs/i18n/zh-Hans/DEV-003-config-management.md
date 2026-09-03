@@ -11,24 +11,33 @@ updated: 2026-09-03
 
 # DEV-003: 配置管理
 
+> 面向开发者与运维：一次讲清配什么、放哪层、怎么改。前置阅读：DEV-002 §3（运行模式）。
+>
 > CP ConfigService 是统一的配置管理入口。两层模型：**环境变量**（运行前固定：端口/DB/JWT）+ **ConfigService**（运行时可改：API key/模型/日志）。端点以 `docs/api/openapi.yaml` 为准。
 
 ## 1. 三层所有权（System / Admin / User）
 
 ConfigService 按三层所有权 × 领域（Domain）组织配置：
 
-| Domain | System | Admin | User |
-|--------|--------|-------|------|
-| `infrastructure` | ✅ | ❌ | ❌ |
-| `logging` | ✅ | ✅ | ✅ |
-| `llm-provider` | ✅ | ✅ | ✅ |
-| `embedding` | ✅ | ✅ | ✅ |
-| `user-preference` | ✅ | ✅ | ✅ |
-| `mcp` | ✅ | ✅ | ✅ |
-| `rag` | ✅ | ✅ | ✅ |
-| `workspace-config` | ✅ | ✅ | ✅ |
+| Domain | System | Admin | User | 备注 |
+|--------|--------|-------|------|------|
+| `logging` / `llm-provider` / `embedding` / `user-preference` / `rag` / `workspace-config` | ✅ | ✅ | ✅ | 有 schema |
+| `infrastructure` | ✅（种子） | ❌ | ❌ | 无 schema，仅 system 层种子写入 |
+| `mcp` | — | — | — | 走 workspace 轴（`layer=workspace`），不在 S/A/U 三层 |
 
-**取值优先级：user > admin > system**（同名 key 高层覆盖低层；`ConfigService.resolveDomain` 按 user→admin→system 顺序首命中生效）。
+**取值优先级：user > admin > system**（同名 key 高层覆盖低层；`ConfigService.resolveDomain` 按序首命中生效）：
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart TD
+    Q["查询 domain.key"] --> U{"user 层有值?"}
+    U -->|是| R["返回 user 值"]
+    U -->|否| A{"admin 层有值?"}
+    A -->|是| R2["返回 admin 值"]
+    A -->|否| S["返回 system 值 / null"]
+```
+
+锚点：`ConfigService.java: RESOLVE_ORDER + resolveDomain`。
 
 UI 入口 `/settings/config` 分 3 个 tab 对应三层。
 
@@ -42,7 +51,7 @@ UI 入口 `/settings/config` 分 3 个 tab 对应三层。
 | `XIHE_CP_URL` / `XIHE_CP_API_TOKEN` | Agent/Runtime 回连 CP 的地址与 service token |
 | `XIHE_CP_DATASOURCE_URL` / `XIHE_CP_DATASOURCE_USERNAME` / `XIHE_CP_DATASOURCE_PASSWORD` | CP 数据库连接 |
 | `XIHE_CP_JWT_SECRET` | JWT 签名密钥（仅 CP 自身初始化） |
-| `XIHE_WORKSPACE_HOST_ROOT` | host workspace 根（默认 `A03-xihe/.xihe-workspaces`） |
+| `XIHE_WORKSPACE_HOST_ROOT` | host workspace 根（默认 `A03-xihe/.xihe-workspaces`；由 mise/scripts 注入，非 `.env` 模板项） |
 | `XIHE_LOAD_DOTENV` | `0`：各模块不从 `.env` 读取应用层配置 |
 | `XIHE_LOG_LEVEL` / `XIHE_LOG_LEVEL_<MODULE>` | 日志等级回退链（详见 DEV-004） |
 
