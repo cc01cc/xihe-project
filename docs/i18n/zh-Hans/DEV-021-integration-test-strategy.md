@@ -255,11 +255,23 @@ tests/
 
 集成测试和 E2E 测试原则上归入各模块 package 内，而非抽取到根级 `tests/` 或 `e2e/`。理由如下：
 
-**T2 测试无法出包**。CP 的 WireMock 测试是 Java JUnit，需要 `pom.xml` 类路径、Spring `@SpringBootTest` 上下文、`AbstractWireMockTest.configureProperties` 注入端口。Agent 的 T2 需要导入 `xihe_agent` 的 Python 模块。放到包外意味着为每种语言单独维护 build config 和模块导入路径，成本远高于收益。
+**T2 测试无法出包**，原因有三：
 
-**T3 测试技术上可出包，但存在位置浪费**。T3 测试本质上只是 HTTP 请求脚本——不需要模块内部的任何依赖。但如果抽取到 `tests/integration/`，需要为每个模块的 T3 开辟独立的 build 配置（JUnit/pytest/cargo），而每个模块的 T3 测试数量通常只有 1-3 个（见 §4 契约清单）。不如直接放在模块内测试目录，复用已有的语言框架配置，并在接口契约清单中统一索引。
+1. CP 的 WireMock 测试是 Java JUnit，需要 `pom.xml` 类路径、Spring `@SpringBootTest` 上下文、`AbstractWireMockTest.configureProperties` 注入端口。
+2. Agent 的 T2 需要导入 `xihe_agent` 的 Python 模块。
+3. 放到包外意味着为每种语言单独维护 build config 和模块导入路径，成本远高于收益。
 
-**E2E 测试归属 UI 包的历史原因**。E2E 使用 Playwright，Playwright config 的 `webServer` 段配置了 Vite dev server 启动命令（`pnpm dev`），天然属于 UI 包。约 40 个 spec（mock 19 + real 21）中仅 4 个 cross-module spec（`cross-module-*.spec.ts`）涉及跨模块通信，其余均为 UI 组件测试。为 4 个 spec 将整个 E2E 套件移出 UI 包，破坏其余同目录 spec 的相邻性，收益小于成本。
+**T3 测试技术上可出包，但存在位置浪费**：
+
+- T3 测试本质上只是 HTTP 请求脚本——不需要模块内部的任何依赖。
+- 但如果抽取到 `tests/integration/`，需要为每个模块的 T3 开辟独立的 build 配置（JUnit/pytest/cargo），而每个模块的 T3 测试数量通常只有 1-3 个（见 §4 契约清单）。
+- 不如直接放在模块内测试目录，复用已有的语言框架配置，并在接口契约清单中统一索引。
+
+**E2E 测试归属 UI 包的历史原因**：
+
+- Playwright config 的 `webServer` 段配置了 Vite dev server 启动命令（`pnpm dev`），天然属于 UI 包。
+- 约 40 个 spec（mock 19 + real 21）中仅 4 个 cross-module spec（`cross-module-*.spec.ts`）涉及跨模块通信，其余均为 UI 组件测试。
+- 为 4 个 spec 将整个 E2E 套件移出 UI 包，破坏其余同目录 spec 的相邻性，收益小于成本。
 
 **索引优于移动**。跨模块测试不通过目录位置标记，而是通过接口契约清单（§4）统一索引。接口契约清单列出了每个跨模块接口、对应的 T2/T3 测试文件、所在模块。无论文件物理上在哪，一表可查。
 

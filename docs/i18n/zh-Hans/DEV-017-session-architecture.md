@@ -27,7 +27,11 @@ Session 是用户一次连贯工作上下文，独立于视图：
 | File | 物理文件归 Runtime；Session 经 `fileContext` 存引用（workspaceFiles/activeFilePath） |
 | 上下文 | `SessionContext{agents, ragContext?, mcpContext?, fileContext?}`；RAG/MCP 配置源为 `configStore` |
 
-Chat 用 `sessionId`，Workspace 用 `workspaceId`，禁止互充（PLAN-222）。状态机：Active（可交互）→ Archived（前端不加载，数据按服务端契约保留/清理）→ 删除（服务端 API）。`modelId` 字段读路径仍保留（`@deprecated` 转 `configStore` session-model，双轨并存，非已删除）。
+Chat 用 `sessionId`，Workspace 用 `workspaceId`，禁止互充（PLAN-222）。
+
+状态机：Active（可交互）→ Archived（前端不加载，数据按服务端契约保留/清理）→ 删除（服务端 API）。
+
+`modelId` 字段读路径仍保留（`@deprecated` 转 `configStore` session-model，双轨并存，非已删除）。
 
 ## 2. Store 职责边界（选项 B：共享 + 视图分离）
 

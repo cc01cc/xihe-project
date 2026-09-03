@@ -103,13 +103,18 @@ xihe 使用单个浏览器 project（chromium），通过 `XIHE_E2E_PROFILE` 区
 - `host`：以每轮隔离的 host 环境执行 `@host` 用例，覆盖 Runtime-created Sandbox 和 WorkspaceStorage；成功、失败和中断都必须 teardown 并反向断言无残留。
 - 未设置 profile：不做过滤，供人工诊断使用；不能将该结果作为标准 Compose 或 host 门禁。
 
-依赖 Docker Engine socket、`XIHE_WORKSPACE_HOST_ROOT` 或 Runtime Sandbox 的用例必须标记 `@host`。禁止通过 `test.skip()` 或放宽断言掩盖拓扑缺失。
+依赖 Docker Engine socket、`XIHE_WORKSPACE_HOST_ROOT` 或 Runtime Sandbox 的用例必须标记 `@host`。
+
+禁止通过 `test.skip()` 或放宽断言掩盖拓扑缺失。
 
 ## 2. 截图与视觉回归方案
 
 ### 2.1 基线追踪
 
-视觉回归使用 Playwright `toHaveScreenshot()`，基线文件存于 `*-snapshots/` 目录。当前 A03 的 `.gitignore` 将 `**/*-snapshots/*.png` 作为本地生成工件忽略，因此这些文件只能证明当前准备好的工作区中的视觉回归，不能声称 fresh checkout 可以直接复现。若未来需要仓库级视觉门禁，应另行移除忽略规则并审查二进制基线的提交边界。
+视觉回归使用 Playwright `toHaveScreenshot()`，基线文件存于 `*-snapshots/` 目录。注意两条边界：
+
+- 当前 A03 的 `.gitignore` 将 `**/*-snapshots/*.png` 作为本地生成工件忽略：只能证明当前工作区的视觉回归，不能声称 fresh checkout 可直接复现。
+- 若未来需要仓库级视觉门禁，应另行移除忽略规则并审查二进制基线的提交边界。
 
 ```
 e2e/mock/login.spec.ts-snapshots/
