@@ -1,6 +1,17 @@
-# DEV-012: Known Issues (Supplement)
+---
+title: DEV-018 - Known Issues 补充
+category: dev-guide
+lang: zh-Hans
+sidebar_group: "开发指南"
+sidebar_order: 18
+status: active
+created: 2026-09-02
+updated: 2026-09-03
+---
 
-本文件收录不属于 AGENTS.md 最关键的 5 项的已知问题，供排查时参考。
+# DEV-018: Known Issues (Supplement)
+
+本文件收录 AGENTS.md 之外的已知问题，供排查时参考。
 
 ## 已修复 — Chat SSE 生命周期与真实流式（PLAN-230 已完成 M1-M4）
 
@@ -21,15 +32,15 @@
 - **Playwright 视觉审查规则**: 在推进 UI 截图前必须先完成一轮真实 chat（发送 → assistant 回复 → 截图）；视觉审查不能只看 accessibility snapshot，必须人工复核截图。
 - **Agent MCP lazy init**: Agent 启动阶段不会连接 CP MCP；纯 chat 即使带 current workspace 也不触发工具发现，只有明确需要 Workspace tool 的请求才触发 MCP/Sandbox。当前最小边界按单默认 workspace，其他 workspace 不复用已发现的远程工具。
 - **RAG embedding 未配置**: `embedding` provider 没有 API key 时，chat 会跳过 RAG enrichment；RAG ingest/search 明确返回 `503`，不会为每条 chat 发送无凭据的 embedding 请求。
-- **Runtime host 日志**: Runtime 使用按日滚动文件，路径为 `logs/runtime.log.<YYYY-MM-DD>`；CP/Agent/UI 使用稳定的 `logs/<module>.log`，host watcher 使用 `logs/host.log`。
+- **Runtime 日志**: host 侧 `logs/runtime.log.<YYYY-MM-DD>`（按日滚动）；容器内 `xihe-container-runtime` / `xihe-mcp-bridge` 各写自有按日文件；CP/Agent/UI 用稳定 `logs/<module>.log`，host watcher 用 `logs/host.log`。
 - **Host E2E data/readiness**: `test:e2e:host` 每轮使用独立 PostgreSQL 和 host root，在 Playwright 前等待 Runtime `/ready`。成功、失败和中断都必须 teardown 并反向确认无本轮用户、Workspace、Session、ExecutionSpec、Sandbox 或文件残留；不得把长期 dev DB 作为 Host E2E 数据源。
 - **Screenshot reproducibility**: A03 当前忽略 `*-snapshots/*.png`，本地 baseline 需要预先生成；`toHaveScreenshot()` 通过不等于人工 UI 审查通过，也不等于 fresh checkout 能复现视觉结果。
 - **Runtime CWD 测试**: `dotenv_loader` 测试会临时切换 process CWD，测试 helper 已用 mutex 串行化；默认并行 `cargo test --lib` 可稳定运行。
-- **Runtime per-request exec 延迟（PLAN-235）**: Workspace 操作经 Docker exec 单次往返，M0 spike 实测均值约 136ms；高频批量操作若不可接受，以纯性能优化另行评估 HTTP 通道，不改变 operation core。
+- **Runtime per-request exec 延迟（PLAN-235）**: Workspace 操作经 Docker exec 单次往返，M0 spike 手工实测均值约 136ms（不可复现锚点，仅供参考）；高频批量操作若不可接受，以纯性能优化另行评估 HTTP 通道，不改变 operation core。
 - **Runtime 后台 job 状态文件（PLAN-235）**: job 状态存于容器 `/tmp/xihe-jobs/<jobId>/`，容器重建即自然孤儿化；查询旧 jobId 返回 not found 属设计内行为，非数据丢失。
 
 ## Code
 
-- **Jackson 3.x fieldNames**: Spring Boot 4.x 使用 Jackson 3.x (`tools.jackson.databind`)。`JsonNode.fieldNames()` 已移除，改为 `JsonNode.propertyNames()`（返回 `Collection<String>` 而非 `Iterator<String>`）
+- **Jackson 2/3 混用**: CP 同时依赖 Jackson2（`com.fasterxml.jackson.databind`，如 `McpProxyController` 仍用 `fieldNames()`）与 Jackson3（`tools.jackson`）。3.x 新增 `propertyNames()`（返回 `Collection<String>`）；按所在模块的依赖对齐选用，禁跨版本混调
 - **JSONB @JdbcTypeCode**: JPA 实体含 `columnDefinition = "jsonb"` 的 String 字段必须加 `@JdbcTypeCode(SqlTypes.JSON)`，否则 PG 报类型不匹配
-- **ConfigClient URL 路径**（Agent `config_client.py`、Runtime `config_client.rs`）：CP 内部端点路径为 `/internal/v1/config/{layer}/{domain}`（注意是 `/internal/v1` 前缀，非 `/internal`，亦非 `/api/v1/internal`）。PLAN-049 T3 测试暴露了此 bug——Agent/Runtime ConfigClient 曾误用 `/api/v1/internal/config/...`。新增模块调用时确认路径为 `/internal/v1/config/...`
+- **ConfigClient URL 路径**（Agent `config_client.py`、Runtime `config_client.rs`）：CP 内部端点路径为 `/internal/v1/config/{layer}/{domain}`（注意是 `/internal/v1` 前缀；PLAN-049 T3 测试暴露过误用公开前缀拼接内部路径的 bug）。新增模块调用时确认路径为 `/internal/v1/config/...`

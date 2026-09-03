@@ -1,16 +1,16 @@
 ---
-title: DEV-005 - Agent 架构与接口抽象
+title: DEV-013 - Agent 架构与接口抽象
 description: xihe Agent 模块的接口抽象层、Event Sourcing 上下文管理、工具适配与编排实现。
 category: dev-guide
 lang: zh-Hans
 sidebar_group: "开发指南"
-sidebar_order: 6
+sidebar_order: 13
 status: active
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-09-03
 ---
 
-# DEV-005: Agent 架构与接口抽象
+# DEV-013: Agent 架构与接口抽象
 
 ## 1. 概述
 
@@ -47,11 +47,11 @@ Agent 模块负责 LLM 编排、工具调用与上下文管理。为降低对 La
 
 所有工具均实现 `BaseAgentTool`：
 
-- `MCPAgentTool` — 包装 LangChain MCP 工具。
-- `ApprovalAgentTool` / `GenerateImageAgentTool` — 自定义工具。
-- `LCToolAdapter` — 将任意 `BaseAgentTool` 适配回 LangChain `BaseTool`，供 `LangGraphRunner` 内部使用。
+- `MCPAgentTool`（`adapters/mcp_client.py`）— 包装 LangChain MCP 工具。
+- `ApprovalAgentTool`（`adapters/approval_tool.py`）/ `GenerateImageAgentTool`（`tools/__init__.py`）— 自定义工具。
+- `LCToolAdapter`（位于 `agent_runner/langgraph_runner.py`，非 `adapters/`）— 将任意 `BaseAgentTool` 适配回 LangChain `BaseTool`，供 `LangGraphRunner` 内部使用；`registry` 经自有 `_adapt_tools` 接入，`supervisor` 经本地 `_adapt` 接入。
 
-LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`。
+LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`（sse/approval/mcp_client）。
 
 ### 2.3 LLMProvider
 
@@ -85,7 +85,7 @@ LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters
 ```
 
 - CP 是唯一真相源，负责事件持久化与投影。
-- Agent 无状态，通过 `/api/v1/context/{sessionId}/snapshot` 获取投影快照。
+- Agent 无状态，通过 `/internal/v1/context/{sessionId}/snapshot` 获取投影快照。
 - 事件写入当前为同步；性能测试显示批量写入已足够快（~17k events/s），未引入异步队列。
 
 ### 3.2 事件类型

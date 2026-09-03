@@ -1,15 +1,15 @@
 ---
-title: DEV-003 - 日志系统设计
+title: DEV-004 - 日志系统设计
 category: dev-guide
 lang: zh-Hans
 sidebar_group: "开发指南"
-sidebar_order: 3
+sidebar_order: 4
 created: 2026-06-03
 status: active
 updated: 2026-08-28
 ---
 
-# DEV-003: 日志系统设计
+# DEV-004: 日志系统设计
 
 ## 1. 架构概览
 
@@ -32,7 +32,7 @@ XIHE_LOG_LEVEL (全局默认)
 |------|------|------|------|------|------|
 | Control Plane | Logback + LogstashEncoder | `{XIHE_LOG_DIR}/cp.log` | 日轮转 `%d{yyyy-MM-dd}.%i.gz` | 7d / 1GB / 100MB | JSONL |
 | Agent | loguru | `{XIHE_LOG_DIR}/agent.log` | 100MB | 7 备份 | JSONL |
-| Runtime | tracing + tracing-appender | `{XIHE_LOG_DIR}/runtime.log` | 日轮转 | 30d（logrotate） | JSONL |
+| Runtime | tracing + tracing-appender | `{XIHE_LOG_DIR}/runtime.log`（host） | 日轮转 | 依赖外部 logrotate（未入仓） | JSONL |
 | UI (IndexedDB) | Dexie | 浏览器 IndexedDB | 10k 条上限自动清理 | — | JSON |
 | UI (telemetry) | CP TelemetryController | `{XIHE_LOG_DIR}/telemetry.log` | 日轮转 `%d{yyyy-MM-dd}.%i.gz` | 7d / 500MB / 100MB | JSONL |
 
@@ -154,7 +154,7 @@ catch (e) {
 |--------|------|------|
 | Console | `console.log/debug/warn/error` | 开发调试 |
 | IndexedDB | Dexie (`XiheLogDB.logs`) | 本地持久化，10k 条上限，自动清理 |
-| Telemetry batch | POST `/api/v1/telemetry/logs` 或 `/anonymous` | 5s 间隔，50 条/批，64KB 上限 |
+| Telemetry batch | POST `/api/v1/telemetry/logs` 或 `/api/v1/telemetry/anonymous` | 5s 间隔，50 条/批，64KB 上限；**当前 UI 侧已禁用发送**（`sendTelemetry` 直接丢弃），CP 端点保留 |
 
 支持 `logger.exportLogs()` / `logger.download()` 导出和下载日志。
 
@@ -165,7 +165,7 @@ CP `TelemetryController` 接收前端遥测日志：
 | 端点 | 认证 | 限流 | 说明 |
 |------|------|------|------|
 | `POST /api/v1/telemetry/logs` | JWT (`@PreAuthorize`) | 无 | 已登录用户遥测 |
-| `POST /api/v1/telemetry/anonymous` | 无 | 100 req/min/device（内存） | 匿名设备遥测 |
+| `POST /api/v1/telemetry/anonymous` | 无 | 每设备每 60s 仅 1 次（内存） | 匿名设备遥测 |
 
 写入 `{XIHE_LOG_DIR}/telemetry.log`（日轮转，7d / 500MB / 100MB，JSONL）。
 

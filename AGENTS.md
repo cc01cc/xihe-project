@@ -158,7 +158,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - `LLMProvider` — LLM 后端抽象，`complete()` / `stream_complete()`
 - `EventStore` / `AgentContext` — Event Sourcing 上下文管理（PLAN-035）
 
-详见 [docs/i18n/zh-Hans/DEV-005-agent-architecture.md](docs/i18n/zh-Hans/DEV-005-agent-architecture.md)。
+详见 [docs/i18n/zh-Hans/DEV-013-agent-architecture.md](docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。
 
 ### Runtime / Sandbox 生命周期边界
 
@@ -176,7 +176,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Agent 术语**: 代码包用 Agent 模块 (module)，运行进程用 Agent 服务 (server)，运行时单元用 Agent Worker (Worker)
 - **异常日志**: 每个 catch 必须有日志 + stacktrace，禁止 silent catch
 - **UI**: reka-ui + Tailwind v4；聊天组件使用自研 MessageScroller / Message / Bubble / Attachment / Marker 五个组件族；Toast 为唯一反馈渠道
-- **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；消息附件已持久化到后端 Session 专属空间，刷新后仍可渲染（详见 DEV-001 §7、DEV-015 §3）。
+- **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；消息附件已持久化到后端 Session 专属空间，刷新后仍可渲染（详见 DEV-001 §7、DEV-017）。
   - 会话级持久 SSE（PLAN-230）：`GET /api/v1/events?sessionId=` 为单会话单活连接（`SseEmitterManager` generation + `compareAndRemove`），`done` 仅结束 run、不关闭 SSE，`heartbeat` 15s 不进业务气泡；`POST /api/v1/chat` 需已建立订阅（`409 SSE_SUBSCRIPTION_REQUIRED`）且单并发（`409 CHAT_IN_PROGRESS`），`requestId`/`runId` 经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传。
   - 流式渲染：`useStreamParser` 将 token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`），`SSEStream` 每 `token` 调用 `chatStore.replaceStreamingParts` 整量替换当前流式 parts（修复旧 `lastSentCount` 仅 `parts.length` 增长时追加导致的卡首字符）；`Message.parts` 替代旧 `marked`，`useMarkdown` 仅处理纯 Markdown。
   - 真实流式：`XiheLiteLLM._astream()` 显式 `streaming=True` 使 `astream_events` 产生 `on_chat_model_stream` 多 token，`sse_adapter` 按 `run_id` 去重使 `on_chat_model_end` 仅作无流 fallback；多 `token` 事件驱动气泡在 `done` 前多次增长。
@@ -217,7 +217,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 ## Telemetry & Logging
 
-日志通过 `XIHE_LOG_LEVEL_<MODULE>` → `XIHE_LOG_LEVEL` 回退链设定，支持 ConfigService 动态调级。JSONL 格式，`mise run clean` 清空。四模块在序列化层统一脱敏（token/JWT/Bearer/PEM → `***redacted***`），`X-Request-Id` 经 CP filter 生成并向 Runtime/Agent 贯通；泄露扫描门禁 `node scripts/scan-log-secrets.mjs`。详见 `docs/i18n/zh-Hans/DEV-003-logging.md`。
+日志通过 `XIHE_LOG_LEVEL_<MODULE>` → `XIHE_LOG_LEVEL` 回退链设定，支持 ConfigService 动态调级。JSONL 格式，`mise run clean` 清空。四模块在序列化层统一脱敏（token/JWT/Bearer/PEM → `***redacted***`），`X-Request-Id` 经 CP filter 生成并向 Runtime/Agent 贯通；泄露扫描门禁 `node scripts/scan-log-secrets.mjs`。详见 `docs/i18n/zh-Hans/DEV-004-logging.md`。
 
 ### Real E2E readiness
 
@@ -261,7 +261,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Visual evidence boundary**: `toHaveScreenshot()` 只证明当前画面接近 baseline；人工 UI 审查还需读取 actual/diff、检查 DOM/computed style、overflow、console/pageerror 和交互状态。当前 A03 `*-snapshots/*.png` 按 `.gitignore` 规则作为本地生成工件处理，不能声称为 fresh checkout 可复现的 Git baseline。
 - **E2E evidence matrix**: 当前 profile、readiness、测试计数、失败分类和清理证据统一记录在 workspace 私有 internal 层（不在本仓库分发）；更新结果必须区分 Compose、host 和 manual，不得混合统计。
 
-详见 `docs/i18n/zh-Hans/DEV-012-known-issues.md`。覆盖率缺口 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。
+详见 `docs/i18n/zh-Hans/DEV-018-known-issues.md`。覆盖率缺口 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。
 
 ## PLAN 实施收尾检查清单
 
@@ -269,7 +269,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 - [ ] 更新 `packages/agent/AGENTS.md` 的项目结构、接口约定与目录说明。
 - [ ] 更新 `A03-xihe/AGENTS.md` 的 Architecture 关键设计小节。
-- [ ] 新增或更新 `docs/i18n/zh-Hans/DEV-005-agent-architecture.md` 等设计文档。
+- [ ] 新增或更新 `docs/i18n/zh-Hans/DEV-013-agent-architecture.md` 等设计文档（编号见 DEV-030 分块规则）。
 - [ ] 若系统架构有变，同步更新 `docs/i18n/zh-Hans/DEV-001-system-architecture.md`。
 - [ ] 同步更新 `plans/PLAN-XXX.md` 的 frontmatter、§7 完成状态、§8 收尾总结与决策日志。
 - [ ] 为新增接口/能力补充单元测试或集成测试。

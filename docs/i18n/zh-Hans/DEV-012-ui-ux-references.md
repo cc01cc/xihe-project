@@ -1,6 +1,17 @@
-# DEV-004: UI/UX Reference Projects
+---
+title: DEV-012 - UI/UX 参考项目
+category: dev-guide
+lang: zh-Hans
+sidebar_group: "开发指南"
+sidebar_order: 12
+status: active
+created: 2026-07-01
+updated: 2026-09-03
+---
 
-以下开源/商业产品可作为 xihe 各模块 UI/UX 与交互设计的参考来源。xihe 使用 **Vue 3 + reka-ui + Tailwind v4**，因此只借鉴其**布局、交互模式、信息架构和视觉层级**，不直接引入其 React/Vue 组件或样式系统。
+# DEV-012: UI/UX Reference Projects
+
+以下开源/商业产品可作为 xihe 各模块 UI/UX 与交互设计的参考来源。xihe 使用 **Vue 3 + reka-ui（shadcn-vue 封装层共存）+ Tailwind v4**，因此只借鉴其**布局、交互模式、信息架构和视觉层级**，不直接引入其 React/Vue 组件或样式系统。
 
 ## 通用 AI 聊天界面
 
@@ -32,7 +43,7 @@
 | 项目 | 仓库/地址 | 借鉴范围 | xihe 对应模块 |
 |------|----------|---------|-------------|
 | **AnythingLLM** | `Mintplex-Labs/anything-llm` | Workspace 隔离、文档上传/embedding、引用来源、chunking 配置 | `packages/ui/src/views/settings/KnowledgeBaseView.vue` |
-| **NexusRAG** | `LeDat98/NexusRAG` | Inline citation badge、source card、文档查看器跳转、Agent step timeline | `packages/ui/src/components/chat/MarkdownRenderer.vue` |
+| **NexusRAG** | `LeDat98/NexusRAG` | Inline citation badge、source card、文档查看器跳转、Agent step timeline | `packages/ui/src/components/chat/parts/` + `MarkstreamCodeBlockAdapter` |
 | **RAG Web UI** | `rag-web-ui/rag-web-ui` | 文档处理状态、引用展示、API key 管理 | `packages/ui/src/views/settings/KnowledgeBaseView.vue` |
 
 ## 管理后台 / 配置面板

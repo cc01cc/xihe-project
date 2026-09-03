@@ -1,12 +1,12 @@
 ---
-title: DEV-011 - E2E 测试策略与截图方案
+title: DEV-020 - E2E 测试策略与截图方案
 category: dev-guide
-sidebar_order: 11
+sidebar_order: 20
 lang: zh-Hans
 sidebar_group: "开发指南"
 ---
 
-# DEV-011: E2E 测试策略与截图方案
+# DEV-020: E2E 测试策略与截图方案
 
 > xihe 项目 E2E 测试架构设计、Playwright 配置、截图策略和目录规范的持久化文档。
 
@@ -19,8 +19,11 @@ E2E 测试分 mock 和 real 两层，位于 `packages/ui/e2e/`：
 ```
 e2e/
 ├── playwright.config.ts      # Playwright 全局配置
-├── helpers/
-│   └── auth.ts              # setupMockAuth：统一 mock /api/v1/** 认证
+├── mock/helpers/
+│   └── auth.ts              # setupMockAuth：统一 mock /api/v1/** 认证（各 mock spec 以 `./helpers/auth` 引用）
+├── fixtures/ / page-objects/ / utils/ / assets/  # fixture 与页面对象（utils 为空目录）
+├── real/helpers/
+│   └── password.ts          # real 侧密码辅助
 ├── mock/                     # Mock 模式：page.route() 拦截 API，无需后端
 │   ├── aria-label.spec.ts
 │   ├── base-modal.spec.ts
@@ -48,12 +51,14 @@ e2e/
 │   ├── cross-module-chat.spec.ts
 │   ├── cross-module-rag.spec.ts
 │   ├── cross-module-workspace.spec.ts
+│   ├── auth-flows.spec.ts
 │   ├── message-search.spec.ts
 │   ├── pdf-viewer-perf.spec.ts
 │   ├── pdf-viewer.spec.ts
 │   ├── screenshots.spec.ts
 │   ├── session-management.spec.ts
 │   ├── settings-visual.spec.ts
+│   ├── settings-interactions.spec.ts
 │   ├── visual.spec.ts
 │   ├── chat-interactions.spec.ts
 │   ├── environment.spec.ts
@@ -75,7 +80,7 @@ e2e/
 
 ```typescript
 // playwright.config.ts 核心配置
-projects: 1 (chromium, 1920×1080@2x)
+单 project（chromium 语义，配置无 projects 数组；viewport 1920×1080）+ `animations:disabled` + `trace:retain-on-failure` + 按 profile 的 `grep/grepInvert` + `webServer: pnpm dev`
 timeout: 30000ms
 retries: 1
 screenshot: 'only-on-failure'  // 仅失败时保存实际截图
@@ -108,7 +113,7 @@ e2e/mock/login.spec.ts-snapshots/
 └── login-page-win32.png
 ```
 
-Playwright 自动按 `{snapshotName}-{browser}-{platform}.png` 命名。
+Playwright 自动按 `{snapshotName}-{platform}.png` 命名（单 project，无 browser 段）。
 
 ### 2.2 更新基线
 
@@ -144,7 +149,7 @@ screenshots/          # 手动截图存档（项目未使用，为未来预留�
 ## 3. 运行命令
 
 ```bash
-# Mock E2E（无需后端，自动启动 Vite dev）
+# Mock E2E（无需后端，自动启动 Vite dev；cwd=e2e/，或从 packages/ui 用 --config e2e/playwright.config.ts）
 npx playwright test e2e/mock/
 
 # 单个测试文件

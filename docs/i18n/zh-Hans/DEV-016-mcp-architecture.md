@@ -1,16 +1,16 @@
 ---
-title: DEV-005 - MCP 三层路由架构设计
+title: DEV-016 - MCP 三层路由架构设计
 description: MCP 请求从 Agent 到 Runtime 的三层路由设计，含 CP 路由、Gateway 分发、容器内 bridge 执行。
 category: dev-guide
 lang: zh-Hans
 sidebar_group: "开发指南"
-sidebar_order: 5
+sidebar_order: 16
 status: active
 created: 2026-06-03
-updated: 2026-08-29
+updated: 2026-09-03
 ---
 
-# DEV-005: MCP 三层路由架构
+# DEV-016: MCP 三层路由架构
 
 ## 1. 概述
 
@@ -48,7 +48,8 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 ┌────────────────────────▼────────────────────────────────────┐
 │  Runtime Gateway (Rust / Axum, 由 XIHE_RUNTIME_PORT 配置)   │
 │                                                             │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp             │  POST 系统工具调用
+│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp             │  any 系统工具调用（tools/list + call）
+│  ├─ /internal/v1/runtime/remote-mcp/{ws}/{server}/call          │  POST 远程 MCP 调用
 │  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn       │  POST 启动 bridge（无 serverId）
 │  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │  DELETE 停止 bridge（kill，带 serverId）
 │  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │  POST 用户 STDIO 工具调用
@@ -108,7 +109,7 @@ Agent → CP /mcp (tool_name, args)
 |------|------|------|
 | MCP transport | Streamable HTTP | MCP 社区已废弃 SSE |
 | STDIO 桥接方式 | Rust bridge binary | shell 无法处理 JSON-RPC streaming |
-| Bridge 部署 | host bind mount | 开发期迭代快；生产可切 multi-stage build |
+| Bridge 部署 | 多阶段构建进 workspace 镜像（builder 编译双 binary + COPY） | 无 bind mount |
 | 路由策略 | tool-name based | Agent 无需感知 server_id |
 | 工具冲突 | 系统优先 + 告警 | 保证平台工具可用性 |
 | 配置格式 | Claude Desktop JSON textarea | 业界标准，用户直接复制粘贴 |
@@ -142,9 +143,9 @@ Agent → CP /mcp (tool_name, args)
 | 层级 | 内容 | 命令 |
 |------|------|------|
 | Unit | bridge spawn/conflict/kill | `cargo test --bin xihe-mcp-bridge` |
-| Unit | Gateway 路由转发 | `cargo test --lib` (83 tests) |
-| Unit | CP McpProxyController | `mvn test -Dtest=McpProxyTest` (8 tests) |
-| Unit | MCPSettings Vue | `pnpm vitest run` (206 tests) |
+| Unit | Gateway 路由转发 | `cargo test --lib`（计数以实测为准） |
+| Unit | CP McpProxyController | `mvn test -Dtest=McpProxyTest` |
+| Unit | MCP 配置（ConfigSettings） | `pnpm vitest run` |
 | Integration | 真实 bridge 进程 | `cargo test --test bridge_integration_test` |
 | E2E | Settings 页截图 | `npx playwright test e2e/real/settings-visual.spec.ts` |
 
@@ -161,4 +162,69 @@ Agent → CP /mcp (tool_name, args)
 | `packages/runtime/src/main.rs` | 路由注册 + 配置轮询 |
 | `packages/control-plane/.../McpProxyController.java` | CP 层路由代理 |
 | `packages/control-plane/.../ConfigController.java` | MCP 配置 API |
-| `packages/ui/.../MCPSettings.vue` | MCP 配置 UI |
+| `packages/ui/src/views/settings/ConfigSettings.vue`（mcpJson textarea + saveMcpConfig，未设独立 MCP 设置页） | MCP 配置 UI |
+
+## 9. 附录：会话签名规则（旧签名规则短文全文并入，M2 正文化）
+
+# MCP Session-id Signing Rule
+
+## 问题
+
+MCP 通信中 session-id 用于标识 workspace 身份。未签名的 session-id（如仅 Base64 编码的 `ws_id:user_id:timestamp`）可被中间人或恶意工具调用篡改，导致跨 workspace 数据泄露。
+
+```java
+// ❌ 禁止 — 仅 Base64 编码，无防篡改
+String payload = wsId + ":" + rawSessionId + ":" + timestamp;
+return Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes());
+
+// ✅ 必须 — HMAC-SHA256 签名
+String payload = wsId + ":" + rawSessionId + ":" + timestamp;
+byte[] signature = mac.doFinal(payload.getBytes());
+String sigB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(signature);
+String payloadB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes());
+return payloadB64 + "." + sigB64;
+```
+
+## 硬约束
+
+### R1: session-id 必须包含 HMAC 签名
+
+```typescript
+// ❌ 禁止
+sessionId: base64(ws_id + ":" + user_id + ":" + timestamp)
+
+// ✅ 必须
+sessionId: base64(payload) + "." + base64(HMAC-SHA256(payload))
+```
+
+### R2: 服务端必须验签
+
+每次收到 session-id 时验证：
+1. 检查格式：`payload.signature` 两部分
+2. 用相同密钥计算 `HMAC-SHA256(payload)` 并与 `signature` 对比
+3. 只有匹配时才信任 session-id 中的 workspace 身份
+
+### R3: 密钥安全
+
+- HMAC 密钥不得硬编码在客户端代码中
+- 生产环境密钥通过环境变量或密钥管理服务注入
+- 开发/测试环境可使用固定占位密钥
+
+> ⚠️ 已知违规（待修）：当前 `McpProxyController.HMAC_SECRET` 为硬编码 dev 默认值，无环境变量覆盖；R3 作为目标规则保留，实现合规前不得声称满足。
+
+## 验证方法
+
+```bash
+# 扫描：检查是否有仅 Base64 编码的 session-id 实现
+grep -rn "Base64.*encodeToString.*payload" packages/ --include="*.java" | grep -v "Mac\|hmac\|Hmac"
+```
+
+## 审计清单
+
+```
+□ 每个 MCP session-id 签发点使用 HMAC-SHA256 签名
+□ 每个 session-id 验签点检查 HMAC 签名完整性
+□ 无仅 Base64 编码的 session-id 构造逻辑
+□ 签名密钥通过环境变量配置，非硬编码
+□ 篡改 payload 的请求被拒绝（返回 null 或 403）
+```

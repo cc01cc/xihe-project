@@ -1,11 +1,11 @@
 ---
-title: DEV-004 - UI 视觉检查清单
+title: DEV-011 - UI 视觉检查清单
 category: dev-guide
 lang: zh-Hans
 sidebar_group: "开发指南"
-sidebar_order: 4
+sidebar_order: 11
 created: 2026-05-31
-updated: 2026-06-15
+updated: 2026-09-03
 status: active
 ---
 
@@ -22,12 +22,12 @@ status: active
 
 ## 2. 图标渲染
 
-- [ ] 所有图标使用 `@lucide/vue` 组件（**禁止** `i-lucide-*` CSS 类在动态组件中使用）
-- [ ] 主题设置页图标（Sun/Moon/Monitor）正常显示
+- [ ] 新增图标优先使用 `@lucide/vue` 组件；`i-lucide-*` CSS 类仅允许存量静态场景，动态组件（按扩展名/状态切换图标，如 FileTreeNode/ModelPopover）须用组件（历史 Tailwind v4 动态渲染不可靠）
+- [ ] 主题选择器（`ConfigSettings` 内 light/dark/system 下拉）正常显示与切换
 - [ ] 发送按钮纸飞机图标正常显示
 - [ ] 消息气泡 bot/user 头像图标正常显示
 
-> **根因**：`i-lucide-*` CSS 类在 Tailwind v4 动态渲染场景下不可靠。所有图标必须用 `@lucide/vue` Vue 组件。
+> **根因**：`i-lucide-*` CSS 类在 Tailwind v4 动态渲染场景下不可靠。存量代码仍有 20+ 处 `i-lucide-*`（含动态场景），新代码遵守本条，存量逐步迁移。
 
 ## 3. 主题切换
 
@@ -35,7 +35,7 @@ status: active
 - [ ] dark 模式：sidebar 与 chat 区域有可辨识的色差（`--sidebar-background` 与 `--background` 差值 ≥ 4%）
 - [ ] dark 模式下表单输入框边框可见
 - [ ] 主题切换后页面无闪烁/残影
-- [ ] 主题设置页三个按钮（浅色/深色/跟随系统）均渲染图标
+- [ ] 主题切换后设置页下拉值与实际主题一致
 
 ## 4. 登录/注册页
 
@@ -46,10 +46,10 @@ status: active
 
 ## 5. 聊天界面
 
-- [ ] 空状态：显示"暂无对话"文案
-- [ ] 消息气泡：用户消息右对齐深色背景，助手消息左对齐白色背景
+- [ ] 空状态：chat 显示欢迎语 + 建议问题；会话列表为空时 Sidebar 显示"暂无对话"
+- [ ] 消息气泡：用户消息右对齐（`bubbleVariant=default`），助手消息左对齐（`muted`），系统消息 `outline`
 - [ ] 助手消息头像有 bot 图标，用户消息头像有人物图标
-- [ ] 时间戳显示在消息下方
+- [ ] 时间戳在 hover 工具栏中可见
 - [ ] 输入框 placeholder 文字正确
 - [ ] 发送按钮在输入为空时禁用（半透明）
 
@@ -73,7 +73,7 @@ status: active
 ## 8. i18n
 
 - [ ] 所有用户可见文案使用 `t()` 国际化函数
-- [ ] zh-Hans 和 en 两个 locale 均有对应 key
+- [ ] `zh-CN` 和 `en-US` 两个 locale 均有对应 key
 - [ ] 链接文字不出现原始 key（如 `login.login`）
 - [ ] 表单验证错误信息有对应翻译
 
@@ -83,6 +83,5 @@ status: active
 - [ ] `register-page` — 注册页完整渲染
 - [ ] `chat-empty` — 空聊天页 + sidebar
 - [ ] `chat-with-messages` — 有消息的聊天页
-- [ ] `theme-light-settings` — 浅色主题设置页（三个图标可见）
-- [ ] `theme-dark-settings` — 深色主题设置页
+- [ ] `theme-default-light` — 浅色主题页
 - [ ] `theme-dark-persisted-chat` — 深色模式聊天页
