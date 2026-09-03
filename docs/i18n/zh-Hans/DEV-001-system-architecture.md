@@ -5,217 +5,64 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 sidebar_order: 1
 created: 2026-05-28
-updated: 2026-07-07
+updated: 2026-09-03
 status: active
 ---
 
 # DEV-001: xihe Agent 系统架构
 
-> xihe 是一个通用 Agent 运行时平台，提供多 Agent 编排、工具调用、沙盒执行、权限控制等能力。
+> xihe 是一个通用 Agent 运行时平台，提供多 Agent 编排、工具调用、沙盒执行、权限控制等能力。四模块 Hub-Module 架构：各模块独立演进、独立部署、独立技术栈。模块专篇：UI 见 DEV-010、Agent 见 DEV-013、CP 见 DEV-014、Runtime 见 DEV-015、MCP 见 DEV-016、Session 见 DEV-017；本文只保留总览与跨模块契约。
 
-## 1. 架构总览
+## 1. 四模块详解
 
-xihe 采用 **四模块 Hub-Module 架构**，核心设计理念是**解耦**——每个模块独立演进、独立部署、独立技术栈。
+### 1.1. UI 模块 — Vue/TypeScript
 
-## 2. 四模块详解
+职责：人类交互入口。Vue 3 + TypeScript（Composition API）、pnpm、Vite 8、Vue Router、Pinia + persistedstate、reka-ui + Tailwind CSS v4、@lucide/vue 图标、remark/rehype + Shiki + KaTeX、Vitest + @vue/test-utils、oxlint。
 
-### 2.1. UI 模块 — Vue/TypeScript
+通信：只与 CP 对话（`fetch POST` + 持久 `EventSource` SSE），不直接调用 Agent 或 Runtime；零系统调用，纯展示 + 输入采集。
 
-**职责**：与人类用户交互的入口，覆盖 Web、TUI、未来可能的 IDE Extension 等多终端。
+### 1.2. Agent 模块 — Python / LangChain
 
-| 方面 | 决策 |
-|------|------|
-| 核心框架 | Vue 3 + TypeScript（Composition API） |
-| 包管理器 | pnpm（workspace monorepo） |
-| 构建工具 | Vite 8 |
-| 路由 | Vue Router |
-| 状态管理 | Pinia + pinia-plugin-persistedstate |
-| 组件库 | shadcn-vue（基于 reka-ui 的无样式可访问组件）+ Tailwind CSS v4，含 Button、Card、Dialog、Input、MessageScroller 等组件族 |
-| 图标 | @lucide/vue + @iconify/vue |
-| CSS 方案 | Tailwind CSS v4 + HSL 主题变量，支持暗色模式。辅助工具：class-variance-authority、clsx、tailwind-merge |
-| Markdown 渲染 | remark/rehype 管线 + Shiki 语法高亮 + KaTeX 数学公式 |
-| AI 集成 | `fetch-event-source` + 自定义 SSE 传输层（UI 仅与 Control Plane 通信） |
-| 测试 | Vitest + @vue/test-utils |
-| 代码规范 | oxlint + oxfmt |
-| 通信 | 只与 Control Plane 对话（`EventSource` SSE + `fetch` POST），不直接调用 Agent 或 Runtime |
-| 约束 | 零系统调用，纯展示 + 输入采集。所有业务逻辑在后端 |
+职责：LLM 调用、多 Agent 编排、工具选择、规划决策。Python + LangChain + litellm（`ChatLiteLLM`，100+ Provider）、uv、长驻后端服务；不碰文件系统/Shell，只做"思考"。
 
-**关键接口**：
+关键能力：经 CP 获取工具清单并决策；Agent 间委派/并行/合并；Event Sourcing 上下文（PLAN-035，只消费 CP 投影的 `AgentContext` 快照）；MCP 集成经 CP 单一入口；`AgentRunner`/`BaseAgentTool`/`EventAdapter`/`LLMProvider` 接口隔离实现。详见 DEV-013。
 
-- 用户输入 → Control Plane（控制指令、Agent 指令）
-- Control Plane → UI（状态更新、执行结果、审批请求）
-- Control Plane → UI（Agent 的中间思考/决策流）
+### 1.3. Runtime 模块 — Rust
 
-### 2.2. Agent 模块 — Python / LangChain
+职责：沙盒化执行环境。Rust + cargo；文件系统、Shell、进程管理。
 
-**职责**：LLM 调用、多 Agent 编排、工具选择、规划决策。
+**执行模型（PLAN-235）**：Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作**全部经 `WorkspaceExecutionRouter` 以 per-request Docker exec 在 Sandbox 内执行**（create_exec → start_exec → 写 operation JSON → 读 stdout 到 EOF）；无 host fallback、无 HTTP 通道、无 instance token、无长驻 worker；Strict 用 `network_mode=none`。三 binary：`xihe-runtime`（Gateway）、`xihe-container-runtime`（`--oneshot` 单帧 EOF）、`xihe-mcp-bridge`（容器内 STDIO bridge）。详见 DEV-015。
 
-| 方面 | 决策 |
-|------|------|
-| 技术栈 | Python + LangChain + litellm（ChatLiteLLM，100+ LLM Provider） |
-| 构建工具 | uv（Python 项目管理，替代 pip/poetry） |
-| 核心 | 多 Agent 编排（Agent Swarm / 规划 - 执行循环） |
-| 部署 | **长驻后端服务**（非 CLI），无冷启动问题 |
-| 边界 | 不碰文件系统、不碰 Shell——只做"思考" |
+CP→Runtime REST 端点（Axum router，`/internal/v1/runtime/...`）：`workspaces` 创建、`workspaces/delete` 删除、`workspaces/{ws_id}/status` 状态、`workspaces/{ws_id}/mcp[/spawn[/…]/stdio/…]` bridge 管理、`workspaces/{ws_id}/files/{read,list,delete,mkdir,stat}`（POST，body 传参）与 `files/write/{*path}`（POST，路径参数传二进制）、另有 `/remote-mcp/...` 与 `GET /health`、`GET /ready`。MCP 工具（rmcp `#[tool]`）：文件/目录/glob/grep/edit/stat/PDF/命令/后台 job（start/list/get/cancel）等。
 
-**关键能力**：
+### 1.4. Control Plane 模块 — 系统核心
 
-- 工具选择：通过 Control Plane 获取 Runtime 注册的工具清单，决策后发指令给 Control Plane
-- 多 Agent：支持 Agent 间的委派、并行、结果合并
-- 记忆/上下文：基于 Event Sourcing 的结构化上下文管理（PLAN-035）。Agent 只消费 CP 投影后的 `AgentContext` 快照，所有对话变更（prompt、tool_call、tool_result、context_update）以事件形式持久化到 CP Event Store，支持重放、fork、compaction 与崩溃恢复。AGENTS.md 等 Context Source 变更会生成 `context.source_changed` 事件，运行中的对话可安全感知
-- MCP 集成：Agent 通过 `langchain-mcp-adapters` 的 `StreamableHttpConnection` 将 CP 作为统一 MCP 入口，所有工具调用（Runtime 内置工具 + 用户配置的 STDIO MCP server）均经过 CP 三层路由（CP 认证 → Runtime Gateway per-workspace 分发 → 容器内 `xihe-mcp-bridge` STDIO 桥接）。Agent 仅需配置一个 MCP 端点（CP 地址），不感知后端工具分布。详见 [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md)
-- **LLM Provider 管理**：通过 `langchain-litellm`（`ChatLiteLLM(BaseChatModel)`）统一封装，底层由 `litellm` 自动路由到 100+ Provider（OpenAI、DeepSeek、Anthropic、小米 MiMo、Ollama 等）。新增 Provider 无需修改 Agent 代码——前端 `BUILTIN_PROVIDERS` 加一条记录即可。
-- **AgentRunner 接口抽象**（PLAN-033）：`AgentRunner` / `BaseAgentTool` / `EventAdapter` / `LLMProvider` 等接口将 LangChain/LangGraph 实现隔离在接口之后。`LangGraphRunner` 是当前实现，未来切换编排框架只需新增实现。详见 [DEV-005-agent-architecture.md](DEV-005-agent-architecture.md)
-- **内部可随意折腾**：LangChain 生态、自定义 Agent、新框架替换都不影响其他模块
+职责：路由 + 权限控制 + 数据加工 + 状态广播 + 会话管理 + 统一配置管理。Java + Spring Boot、Maven；聊天中转 + MCP 反向代理 + 权限裁决 + 审计，HTTP/SSE + MCP Streamable HTTP 三通道；ConfigService 三层所有权（详见 DEV-003）。**不做模块专属业务逻辑**。详见 DEV-014。
 
-### 2.3. Runtime 模块 — Rust
+CP 三通道：聊天（`POST /api/v1/chat` + 持久 `GET /api/v1/events?sessionId=`，PLAN-230：单会话单活 emitter + generation、`done` 只结束 run、`heartbeat` 15s、409 准入/单并发）；MCP 反向代理（`POST /api/v1/mcp`，认证 + tool-name 路由 + 三层转发）；状态分发（Runtime notification → UI SSE / Agent 透传）。
 
-**职责**：底层系统能力的沙盒化执行环境，对外暴露两套接口。
-
-| 方面 | 决策 |
-|------|------|
-| 技术栈 | Rust |
-| 构建工具 | cargo |
-| 核心 | 文件系统操作、Shell 执行、进程管理 |
-| 安全 | 沙盒隔离（namespace/cgroup/seccomp），支持多租户。仅 `execute_command` 子进程进入沙盒，Runtime 主进程在沙盒外运行 |
-| 部署 | 独立进程（Axum），同时暴露 REST API + MCP Server 两套接口 |
-
-**双接口设计**：
-
-```
-Runtime
-├── REST API          ← 面向 UI/CP：文件操作、上传、管理等指令型操作
-│   协议: HTTP + JSON / 原始二进制
-│   消费者: UI → CP → Runtime
-│   优势: 二进制直传无编码开销、路径参数灵活、语义清晰
-│
-└── MCP Server        ← 面向 Agent：工具调用
-    协议: MCP Streamable HTTP (JSON-RPC)
-    消费者: Agent → CP(MCP Proxy) → Runtime
-    优势: 标准 MCP 协议、工具自发现、JSON Schema 自动生成
-```
-
-两个接口共享底层 `fs.rs` 等核心函数，同一套业务逻辑、两套传输协议。设计原则：**REST API 范围包含 MCP Server 范围**——所有 MCP tool 对应的功能都有对应的 REST 端点，但 REST 可以额外提供 MCP 协议不便于表达的能力（如二进制传输、大文件流）。
-
-**REST API 端点**（由 Axum router 注册）：
-
-| 端点 | 消费者 | 用途 |
-|------|--------|------|
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/read` | CP → Runtime | 读取文件内容（可选 `max_bytes` 截断） |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/write/{path}` | CP → Runtime | 写入文件（二进制 body） |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/list` | CP → Runtime | 列出目录 |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/delete` | CP → Runtime | 删除文件 |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/mkdir` | CP → Runtime | 创建目录 |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/stat` | CP → Runtime | 文件元信息 |
-| `GET /health` | CP | 健康检查 |
-| `POST /api/v1/mcp` | Agent/UI | CP logical MCP 工具调用 |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` | CP → Runtime | 启动容器内 STDIO MCP bridge |
-| `DELETE /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId}` | CP → Runtime | 停止 STDIO MCP bridge |
-| `GET /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` | CP → Runtime | 列出活跃 STDIO server |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}` | CP → Runtime | 路由到容器内 STDIO bridge |
-| `POST /internal/v1/runtime/workspaces` | CP → Runtime | 创建工作区 |
-| `POST /internal/v1/runtime/workspaces/delete` | CP → Runtime | 删除工作区（含 bridge 清理） |
-
-**MCP Server**（`rmcp` SDK + `#[tool]` macro）：自动生成 JSON Schema。Runtime 有三个 binary：
-- `xihe-runtime`：Gateway 主进程，注册 `/workspace/{ws_id}/mcp` 系列路由；Workspace 操作经 `WorkspaceExecutionRouter` 以 per-request Docker exec 在 Sandbox 内执行（PLAN-235，无 HTTP container-runtime 通道、无 instance token、无长驻 worker）
-- `xihe-container-runtime`：容器内执行器，提供 `--oneshot` CLI 模式（stdin 单 operation JSON → stdout 单 result JSON，EOF 即边界），处理 built-in 文件/命令工具与 `/tmp/xihe-jobs` 状态文件后台任务
-- `xihe-mcp-bridge`：容器内 STDIO bridge，将用户配置的 STDIO MCP server 暴露为 HTTP 端点
-
-工具名经 CP 反向代理时构建 tool→server 映射表，Agent 调用时 CP 查表路由。详见 [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md)。
-
-| 工具类别 | 示例 |
-|---------|------|
-| 文件系统 | read_file, list_directory, glob, grep, read_media |
-| Shell | execute_command（子进程进沙盒，含 timeout） |
-| 进程 | spawn, kill, signal |
-| 环境 | env vars, workspace info |
-
-**状态流保持 MCP**：Runtime 的状态变更（文件事件等）通过 MCP notification 发送，不走 REST。CP 透传 notification 到 Agent（MCP）和 UI（SSE）。详见 §3.2。
-
-### 2.4. Control Plane 模块 — 系统核心
-
-**职责**：Control Plane（简称 CP）是系统的心脏，负责路由 + 权限控制 +
-数据加工 + 状态广播 + 会话管理 + **统一配置管理**。下文链路图和协议示例中统一记为 CP。
-
-| 方面 | 决策 |
-|------|------|
-| 技术栈 | Java + Spring Boot + GraalVM |
-| 构建工具 | Maven（mvn） |
-| 核心 | 聊天消息中转 + MCP HTTP 反向代理 + 权限裁决 + 状态广播 + 审计日志，HTTP/SSE + MCP Streamable HTTP 三通道 |
-| 数据 | 会话状态、路由表、工具注册表、权限策略、加工规则 |
-| ConfigService | **CP 内置统一配置管理层**，所有模块通过 CP API 读取运行时配置。3-tier 所有权：system/admin/user。详见 DEV-002 §2.4 |
-| 约束 | **不做模块专属业务逻辑**，只做路由、权限控制、数据加工、配置管理等跨面关注点 |
-
-**ConfigService 架构**：详见 [DEV-002-developer-guide.md](DEV-002-developer-guide.md) §2.4。三个模块通过不同客户端访问 CP ConfigService：
-
-| 模块 | 客户端 | 访问方式 |
-|------|--------|---------|
-| **Control Plane** | `ConfigService.java` | 内建 `@Service`，启动时从 `env.{profile}.jsonc` 导入 system 配置 |
-| **Agent** | `config_client.py` | CP API `GET /api/v1/config`，启动时拉取全量缓存 |
-| **Runtime** | `config_client.rs` | CP API `GET /api/v1/config`，启动时拉取并定期刷新 |
-
-**CP 三通道职责**：
-
-- **聊天通道**（`POST /api/v1/chat` / `POST /api/v1/exec` + `GET /api/v1/events` 持久 SSE）：UI 指令经 CP 中转 → Agent，Agent 流式响应经 CP 分发到 UI
-  - **会话级持久 SSE**（PLAN-230）：`GET /api/v1/events?sessionId=` 为单会话单活连接（`SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储并 `compareAndRemove`），每次 `POST /api/v1/chat` 产生一个 `runId` 且 `done` 只结束当前 run，**不关闭**会话 SSE — 后续消息复用同一连接。15s `heartbeat` 保活，仅作传输层事件，不进入 `MessagePart`/不重置 run 计数。
-  - **单并发与准入**：`POST /api/v1/chat` 在持久化用户消息前先校验 `hasEmitter(sessionId)`（`409 SSE_SUBSCRIPTION_REQUIRED`）并原子获取 `activeRuns` 租约（`409 CHAT_IN_PROGRESS`）；`requestId`/`runId` 由 CP 入口 `RequestIdFilter` 生成并经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传至异步 `execAsync` 与 Agent，不依赖 `MDC` 跨线程继承。
-  - **UI 传输层**：`chatTransport` 执行单飞连接（`connectionGeneration` + `intentionalStops`）、有限退避重连（`onerror` 返回 250ms→5s 退避，`onclose` 最多调度一次重连，无双重重试环），`useSSE.ensureConnected()` 与最多一次 `SSE_SUBSCRIPTION_REQUIRED` 受控恢复；`SSEStream` 每 `token` 调用 `chatStore.replaceStreamingParts` 整量替换，避免旧 `lastSentCount` 仅在 `parts.length` 增长时追加导致的长文本卡首字符。
-- **MCP 反向代理通道**（`POST /mcp`）：Agent 的 MCP 工具调用经 CP 解析 JSON-RPC → 提取工具名 → 权限检查 → 请求改写 → 三层路由转发：
-  - **第 1 层（CP）**：认证 + tool-name 路由，系统工具 → Runtime `/workspace/{ws_id}/mcp`，用户 STDIO 工具 → `/workspace/{ws_id}/mcp/stdio/{server_id}`
-  - **第 2 层（Runtime Gateway）**：per-workspace 分发，`CURRENT_WS_ID` task-local 注入
-  - **第 3 层（容器内 bridge）**：`xihe-mcp-bridge` 管理 STDIO 子进程，HTTP ↔ STDIN/STDOUT 桥接
-  - 详见 [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md)
-- **状态分发通道**：Runtime 的 MCP notification 经 CP 分发到 UI（SSE）和 Agent（MCP notification 透传）
-
-详见 Sprint 1 `DESIGN-007-mcp-gateway-reverse-proxy.md`。
-
-**传输协议**：
-
-| 链路 | 传输协议 | 原因 |
-|------|---------|------|
-| UI ↔ CP（聊天指令） | `POST /api/v1/chat`（`202` + `runId`） | 指令 `fetch POST` 发送，仅在已建立 `GET /api/v1/events?sessionId=` 持久 SSE 后才被接受；无 emitter → `409 SSE_SUBSCRIPTION_REQUIRED`，并发 run → `409 CHAT_IN_PROGRESS` |
-| UI ↔ CP（聊天流） | 持久 `GET /api/v1/events?sessionId=` SSE（`fetch-event-source`） | `done` 只结束 run、不关闭会话 SSE；`heartbeat` 15s 保活不进入业务气泡；单活连接 + `generation` 隔离旧回调误删 |
-| CP ↔ Agent（聊天） | `POST /internal/v1/agent/chat` → SSE（`text/event-stream`，`stream=True`） | Agent 作为 HTTP Server 接收 CP 转发指令，`XiheLiteLLM._astream()` 产生真实 `on_chat_model_stream` chunk，经 `LangGraphEventAdapter` 按 `run_id` 去重后转为 `token` → `done`，无 stream 时才回退为单 `token` |
-| CP ↔ Agent（工具） | MCP Streamable HTTP | Agent 通过 MCP Client 连接 CP 反向代理，所有工具调用统一走 JSON-RPC over HTTP |
-| **CP ↔ Runtime（REST）** | **HTTP** | UI 发起的文件读写/上传/管理等指令型操作，通过 CP REST API 转发到 Runtime REST 端点。支持二进制直传 |
-| **CP ↔ Runtime（MCP）** | **MCP Streamable HTTP** | Agent 的工具调用经 CP 反向代理到 Runtime MCP Server。Runtime 状态变更经 MCP notification 通知 CP |
-| CP ↔ 外部 MCP Server | MCP Streamable HTTP | 外部工具（websearch 等）由 CP 透传，Agent 不感知外部地址 |
-
-### 2.5. 通信协议总结
-
-MVP 采用以下协议，各有明确用途：
+### 1.5. 通信协议总结
 
 | 协议 | 用途 | 链路 | 关键契约 |
 |------|------|------|----------|
-| 持久 SSE + `POST /api/v1/chat` | 聊天消息：`GET /api/v1/events?sessionId=` 建会话级长连接（可复用）；`POST /api/v1/chat`（`202`）触发 run；`token` 增量 → `done` 结束 run，SSE 保留 | UI ↔ CP ↔ Agent | `done` ≠ 关闭 SSE；`heartbeat` 15s 不进气泡；每会话单活 emitter + `generation`；单并发 run |
-| MCP Streamable HTTP | Agent 工具调用：JSON-RPC over HTTP，统一经 CP 反向代理 | Agent → CP → Runtime / 外部 MCP Server |
-| MCP notification | 状态同步：Runtime 事件经 CP 分发到 UI 和 Agent | Runtime → CP → UI / Agent |
-| **HTTP (REST)** | **文件操作/上传/管理等指令型操作：二进制直传** | **UI → CP → Runtime** |
+| 持久 SSE + `POST /api/v1/chat` | 聊天：`GET /api/v1/events?sessionId=` 建会话长连接；`token` 增量 → `done` 结束 run，SSE 保留 | UI ↔ CP ↔ Agent | `done` ≠ 关 SSE；单活 emitter + generation；单并发 run |
+| MCP Streamable HTTP | Agent 工具调用（JSON-RPC over HTTP，经 CP 反代） | Agent → CP → Runtime / 外部 | tool-name 路由 |
+| MCP notification | 状态同步 | Runtime → CP → UI / Agent | — |
+| HTTP (REST) | 文件操作/上传/管理（二进制直传） | UI → CP → Runtime | `/internal/v1/runtime/...` |
 
-> Runtime 双接口设计：Agent 工具调用走 MCP，UI 文件操作走 REST。状态流保持 MCP notification（§3.2），不因 REST API 的引入而改变。
->
-> MVP 零额外基础设施（无消息队列、无 WebSocket 网关），各模块直接通过 HTTP 端点互联。后续可按需引入 Centrifugo 等消息中间件实现企业级集群扩展。
+MVP 零额外基础设施（无消息队列/WS 网关）；后续可按需引入消息中间件做集群扩展。
 
-### 2.6. 设计备注
+### 1.6. 设计备注
 
-**统一 MCP 反向代理** — Agent 将所有 MCP 调用指向 CP 单一入口。CP 根据工具名前缀判断目标后端（Runtime / 外部服务），做权限检查后转发。Agent 不感知后端工具分布，外部工具的透传可随时切换为鉴权模式。详见 Sprint 1 `DESIGN-007-mcp-gateway-reverse-proxy.md`。
+- **统一 MCP 反向代理**：Agent 所有 MCP 调用指向 CP 单一入口，按工具名前缀路由后端；Agent 不感知后端分布。（历史设计名：DESIGN-007）
+- **工具名命名空间**：`ToolNameRewriter`（`read_file` ↔ `runtime__read_file`）已实现且有单测，但当前 `McpProxyController` 未接线（实际经 `RequestRewriter` 按原名合并转发）；如需启用前缀路由须先接线。（历史设计名：DESIGN-009）
+- **工具自发现**：Runtime 经标准 `tools/list` 暴露 Schema，Agent 经 CP 自动发现，零手动同步。
+- **零 MCP SDK 依赖（CP 侧）**：CP 纯 HTTP 反代，直接解析 JSON-RPC 做权限检查与改写。（历史设计名：DESIGN-001）
 
-**工具名命名空间** — CP 在 `tools/list` 时给工具名加后端前缀（`runtime__read_file`），在 `tools/call` 时解析前缀路由到对应后端。详见 Sprint 1 `DESIGN-009-tool-namespace.md`。
+## 2. 两流模型
 
-**工具自发现** — Runtime 通过标准 MCP `tools/list` 暴露工具 Schema，Agent 通过 CP 的 MCP Client 自动发现，无需手动同步。Runtime 新增工具时自动暴露，Agent 侧零配置。
-
-**零 MCP SDK 依赖（CP 侧）** — CP 作为纯 HTTP 反向代理，不依赖任何 MCP SDK。CP 直接解析 JSON-RPC 请求体提取 `method`/`params`，做权限检查和改写后转发。详见 Sprint 1 `DESIGN-001-decisions.md` §4。
-
-## 3. 两流模型
-
-所有模块间的通信归为两种流：
-
-1. **指令流** — 模块 A 请求模块 B 执行，含完整的 request → execute → response 生命周期
-2. **状态流** — 模块异步广播状态变更，无响应预期，一对多分发
-
-### 3.1. 指令流
-
-**定义**：RPC 模式。模块 A 请求模块 B 执行某操作，B 可以是任意模块——RT（工具）、Agent（任务）、UI（人类交互）。响应分为**一次性**（完整结果）和**流式**（逐 token 输出、实时 stdout）两种。
+1. **指令流** — RPC 模式：request → execute → response；响应分一次性与流式（逐 token / 实时 stdout）。
+2. **状态流** — 异步广播，无响应预期，一对多经 CP 分发。
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -227,207 +74,46 @@ sequenceDiagram
   participant RT as Runtime (Rust)
 
   Note over Human,RT: 场景 A: 聊天消息流 — 持久会话 SSE (PLAN-230)
-  UI->>CP: GET /api/v1/events?sessionId=xxx (建立会话级持久 SSE, 1 emitter/session, heartbeat 15s)
-  CP-->>UI: event: connected (generation 递增, 可替换旧连接)
+  UI->>CP: GET /api/v1/events?sessionId=xxx (会话级持久 SSE, heartbeat 15s)
   Human->>UI: 输入消息 #1
-  UI->>CP: POST /api/v1/chat {sessionId, content, runId=run-1} (先校验 hasEmitter, 单并发租约)
-  CP->>Agent: POST /internal/v1/agent/chat {stream:true, X-Request-Id, X-Chat-Run-Id: run-1}
-  Agent-->>CP: SSE stream on_chat_model_stream (多个 token chunk, streaming=True)
-  CP-->>UI: SSE event: token (×n, 逐 token 增量)
-  Agent-->>CP: SSE event: done (run-1 终止)
-  CP-->>UI: SSE event: done (仅结束 run-1, SSE 保留)
-  Human->>UI: 输入消息 #2 (无需重建 SSE, 同一连接复用)
-  UI->>CP: POST /api/v1/chat {sessionId, content, runId=run-2} (202 accepted)
-  CP->>Agent: POST /internal/v1/agent/chat {stream:true, run-2}
-  Agent-->>CP: SSE token ×m
-  CP-->>UI: SSE token ×m
-  Agent-->>CP: done
-  CP-->>UI: done (会话 SSE 仍保持, heartbeat 继续)
+  UI->>CP: POST /api/v1/chat {sessionId, content} (202 + runId)
+  CP->>Agent: POST /internal/v1/agent/chat {stream:true, X-Request-Id, X-Chat-Run-Id}
+  Agent-->>CP: SSE stream (多个 token chunk, streaming=True)
+  CP-->>UI: SSE event: token (×n) → done (仅结束 run, SSE 保留)
+  Human->>UI: 输入消息 #2 (同一连接复用, 无需重建 SSE)
 
-  Note over Human,RT: 场景 B: 工具调用 (Agent → CP → RT，经 MCP 反向代理)
+  Note over Human,RT: 场景 B: 工具调用 (Agent → CP → RT, MCP 反向代理)
   Agent->>CP: MCP tools/call (JSON-RPC over HTTP)
   CP->>CP: 提取工具名 → 权限检查 → 请求改写
-  CP->>RT: 转发改写后请求
+  CP->>RT: 转发改写后请求 (per-request Docker exec 进 Sandbox)
   RT->>CP: MCP 响应
   CP->>Agent: MCP 响应
-  CP-->>UI: SSE 通知工具执行状态
 
   Note over Human,RT: 场景 C: 文件操作 (UI → CP → Runtime via REST)
   Human->>UI: 打开/上传文件
-  UI->>CP: REST POST /api/v1/files/upload 或 /workspace/{ws_id}/files/read
-  CP->>CP: 鉴权 + workspace 解析
-  CP->>RT: REST POST /workspace/{ws_id}/files/write 或 /read (二进制/JSON)
-  RT->>CP: REST 响应 (文件内容/状态)
+  UI->>CP: REST POST /api/v1/...
+  CP->>RT: REST POST /internal/v1/runtime/workspaces/{ws_id}/files/...
+  RT->>CP: REST 响应
   CP->>UI: REST 响应
-
-  Note over Human,RT: 场景 D: 人类交互 (Agent → CP → UI → Human → UI → CP → Agent)
-  Agent->>CP: EXEC_REQ(target: UI, needs_human: true)
-  CP->>UI: 请求用户确认
-  UI->>Human: 展示
-  Human->>UI: 批准/拒绝
-  UI->>CP: EXEC_RES
-  CP->>Agent: 用户决策
 ```
 
-### 3.2. 状态流
+状态流：Runtime 文件事件 → MCP notification → CP → UI（`GET /api/v1/events?sessionId=`）/ Agent（透传）；Agent 会话切换/模型变更 → HTTP POST → CP → UI SSE。
 
-**定义**：模块主动广播的异步状态变更。所有模块既是发布者也是订阅者，经 CP 按订阅分发。
+## 3. 架构优势
 
-```mermaid
-%%{init: {'theme': 'neutral'}}%%
-sequenceDiagram
-  participant UI as UI (Vue)
-  participant CP as Control Plane
-  participant Agent as Agent (Python)
-  participant RT as Runtime (Rust)
+1. **多进程解耦** — 模块独立部署/扩缩/故障隔离；Agent Crash 不影响 UI，Runtime OOM 不影响 Agent。
+2. **多语言各取所长** — Vue（Web 生态）、LangChain/Python（AI 生态）、Java + Spring Boot（服务端生态）。
+3. **显式消息路由** — CP 是唯一通信枢纽，消息路径全程可追踪、可拦截、可 replay。
+4. **原生多租户** — 多进程 + Linux namespace 操作系统级隔离。
+5. **沙盒一等设计** — namespace/cgroup/seccomp + PLAN-235 全 profile 进 Sandbox，对 LLM"幻觉执行"原生防御。
+6. **多终端天然支持** — Web/TUI/App 只需实现 CP 协议。
 
-  Note over UI,RT: Runtime 状态变更
-  RT->>RT: 文件变更/inotify 事件
-  RT->>CP: MCP notification (resource change)
-  CP-->>UI: SSE /v1/events
-  CP-->>Agent: MCP notification (透传)
+## 4. 统一 Session 与附件（摘要，详见 DEV-017）
 
-  Note over UI,RT: Agent 状态变更
-  Agent->>Agent: 会话切换/模型变更
-  Agent->>CP: HTTP POST (state sync)
-  CP-->>UI: SSE /v1/events
-```
+chat 与 workspace 是同一 Session 的不同视图：Chat 用 `/chat/:sessionId`，Workspace 用 `/workspace/:workspaceId`；`useSessionStore` 承载服务端 Session 投影，`useChatStore`/`useWorkspaceStore` 为视图层状态；附件持久化到后端 Session 专属空间（`{base}/{sessionId}/{fileId}`），刷新仍可渲染。
 
-## 4. 架构优势
+## 5. 远程 MCP 与 OAuth 边界（摘要，详见 DEV-016/DEV-014）
 
-1. **多进程解耦** — 相比 Codex/OpenCode/PI/Kimi 的单进程单体，xihe 的模块可独立部署、独立扩缩、独立故障隔离。Agent Crash 不影响 UI，Runtime OOM 不影响 Agent。
-2. **多语言各取所长** — Vue 做 UI（Web 生态最成熟）、
-  LangChain/Python 做 Agent（AI 生态最丰富）、
-  Java + Spring Boot 做 Control Plane（服务端生态最成熟、GraalVM 原生启动）。
-  Codex 被全 Rust 锁定（换 LLM 需改两层 crate），
-  OpenCode/PI 被全 TS 锁定（无性能敏感层）。
-3. **显式消息路由** — Control Plane 是唯一的通信枢纽，天然提供可观测性
-   （审计日志、流量监控）。对比 Codex/OpenCode 的进程内隐式调用，
-   xihe 的消息路径全程可追踪、可拦截、可 replay。
-4. **原生多租户** — 多进程 + Linux namespace 是操作系统级的租户隔离，零额外开销。Codex 的沙盒虽强但只为单用户设计。
-5. **沙盒是一等设计** — Rust namespace/cgroup/seccomp 从第一天写入架构，而非事后加补丁。对比 OpenCode/PI 的无沙盒设计，xihe 对 LLM 的"幻觉执行"有原生防御能力。
-6. **多终端天然支持** — Web、TUI、手机 App 只需实现 Control Plane 的协议，
-  不用关心后端的语言和实现。
-
-### 4.1. 文件加载降级策略
-
-大文件全量加载到前端会导致 OOM（PDF >10MB 的 pdfjs.render 和文本 >10MB 的 JSON parse）。
-
-**策略矩阵**：
-
-| 文件类型 | 大小范围 | 策略 | 链路 |
-|---------|---------|------|------|
-| PDF | <10MB | 全量加载 | MCP `runtime__read_file` |
-| PDF | 10MB~500MB | CP 端 PDFBox 拆为 10 页/组，加载当前组 | UI → CP(/upload) → PDFBox → Runtime(REST write) |
-| PDF | >500MB 或 >500 页 | 拒绝拆分，提示用户下载 | CP 端 Content-Length 检查 |
-| 文本/代码 | <10MB | 全量加载 | REST `read` (无 max_bytes) |
-| 文本/代码 | 10MB~100MB | 服务端 max_bytes=1MB 截断 | REST `read` (max_bytes=1MB) |
-| 文本/代码 | ≥100MB | 前端拦截，Toast，空内容 | 前端 fileService.ts 判断 |
-
-**关键设计决策**：
-
-1. **文本截断走 REST，不走 MCP** — Runtime REST read endpoint 支持 `max_bytes` 参数，MCP `runtime__read_file` 保持全量读取（Agent 需要完整内容）。
-2. **PDF 拆分归属 CP** — CP (Java + PDFBox) 上传时或懒拆分后，通过 Runtime REST API 写入 chunk 文件。Runtime 不耦合 PDF 命名约定。
-3. **文件删除级联清理** — CP 侧在删除文件时查找并清理同名 chunk（`{name}.p*.pdf`）。
-4. **chunk 命名规则**：`{name}.p{start}-{end}.pdf`，例如 `report.p1-10.pdf`。
-
----
-
-## 5. 协议定义（草案）
-
-所有模块间的通信遵循统一的**消息契约**：
-
-```typescript
-interface Message {
-  id: string
-  type: 'EXEC_REQ' | 'EXEC_RES' | 'STATE_SYNC'
-  source: 'ui' | 'cp' | 'agent' | 'runtime'
-  target: 'ui' | 'cp' | 'agent' | 'runtime' | 'broadcast'
-  timestamp: number
-  payload: unknown
-}
-```
-
-> 详细协议见 `DEV-002-message-protocol.md`（待编写）。
-
----
-
-## 6. Chat UI 组件架构
-
-聊天界面采用分层组件库实现，位于 `packages/ui/src/components/ui/`：
-
-| 组件族 | 用途 | 关键特性 |
-|--------|------|---------|
-| `message-scroller/` | 滚动容器 | 锚定/自动跟随/预加载保持/消息级跳转/可见性追踪 |
-| `message/` | 消息卡片 | Message / MessageGroup / MessageAvatar / MessageContent / MessageHeader / MessageFooter |
-| `bubble/` | 消息气泡 | user / assistant / system 变体，cva 管理 |
-| `attachment/` | 附件展示 | 媒体/文件/动作按钮，state/size/orientation 变体 |
-| `marker/` | 时间/状态标记 | 分隔线变体，cva 管理 |
-
-滚动行为核心位于 `packages/ui/src/composables/messageScroller*.ts` 与 `packages/ui/src/lib/messageScrollerGeometry.ts`：
-
-- **模式状态机**：`following-bottom` → `free-scrolling` → `anchored-to-message` → `settling-jump`
-- **用户滚动意图**：监听 wheel / touchmove / PageUp/PageDown/Home/End 等按键
-- **新回合锚定**：新消息到达时滚动到锚定项顶部，并通过 `scrollPreviousItemPeek` 保留上文上下文
-- **预加载保持**：`preserveScrollOnPrepend` 在历史消息前置时保持当前可视锚点
-- **可见性追踪**：懒订阅的 `IntersectionObserver` 提供 `currentAnchorId` 与 `visibleMessageIds`
-- **性能策略**：`shallowRef` + 手动 `data-*` 属性同步，避免高频滚动触发 Vue 全子树响应
-
-ChatView 集成方式：
-
-- `ChatView.vue` 使用 `MessageScrollerProvider` 包裹 `MessageList`
-- `MessageList.vue` 用 `MessageScroller` / `Viewport` / `Content` / `Item` 替换旧的 `@tanstack/vue-virtual` 容器
-- 用户消息的 `MessageScrollerItem` 绑定 `:scroll-anchor="true"`，作为新回合的滚动锚点
-- SSE 流式开始时 `chatStore.createStreamingMessage()` 立即创建真实 assistant 消息，`appendToken()` 直接追加到该消息的 `content`，无需独立的 `streamingContent` 伪消息
-
-详见 `plans/PLAN-024-XH-chat-components.md` 与 `plans/PLAN-025-XH-chat-integration.md`。
-
-## 7. 统一 Session 与附件持久化架构
-
-随着 chat 与 workspace 的能力趋同，Xihe 引入**跨视图统一 Session 层**，避免 Agent、RAG、MCP、附件等概念在 chat 与 workspace 中重复落地。
-
-### 7.1 统一 Session 层
-
-- chat 与 workspace 共享当前 Workspace 下的 Session 视图：Chat 通过 `/chat/:sessionId` 访问，Workspace 通过 `/workspace/:workspaceId` 访问；不能用 Session ID 充当 Workspace ID。
-- `useSessionStore` 承载服务端 Session 元数据和当前视图引用；Agent/RAG/MCP 上下文、附件和文件内容分别遵循各自的 CP/Runtime API 契约，业务 Session/Message 不落 localStorage。
-- `useChatStore` 与 `useWorkspaceStore` 降级为视图层状态：前者保留消息流与 UI 状态，后者保留文件树、编辑器与上传队列。
-- workspace 通过可嵌入的 `ChatPanel.vue` 直接复用 chat 的对话能力，无需复制组件树。
-
-详细设计见：
-- [RFC-001-session-domain-model.md](RFC-001-session-domain-model.md)
-- [ADR-001-session-store-boundary.md](ADR-001-session-store-boundary.md)
-- [DEV-015-session-views.md](DEV-015-session-views.md)
-- `plans/PLAN-029-XH-unified-session-architecture.md`
-
-### 7.2 消息附件持久化
-
-早期 chat 附件仅使用 `URL.createObjectURL` 生成 Blob URL，刷新后失效。PLAN-030/031 实现了端到端附件持久化：
-
-**后端（PLAN-030）**
-
-- 扩展 `File` entity：新增 `sessionId`、`messageId`，`workspaceId` 改为 nullable；附件物理存储在 `{cp.attachments-base-path}/{sessionId}/{fileId}`，与 workspace 文件树隔离。
-- 扩展 `Message` entity：新增 `attachments` JSON 列保存 `{ fileId, name, type, size }[]`。
-- 新增 API：
-  - `POST /api/v1/sessions/{sessionId}/attachments` — 批量 multipart 上传，返回部分成功结果
-  - `GET /files/{fileId}` — 服务历史附件流
-  - `GET /api/v1/sessions/{sessionId}/messages` — 加载历史消息（含附件）
-  - `DELETE /api/v1/sessions/{sessionId}/messages/{messageId}` — 删除消息
-- 安全与生命周期：白名单扩展名校验、500MB 单文件上限、跨 session 访问防护、session 删除级联清理、orphan 附件 24h 后定时清理。
-- `/chat` 接收 `attachments: fileId[]` 并将附件元数据转发给 Agent。
-
-**前端（PLAN-031）**
-
-- `AttachmentService` 集中处理批量上传、前端白名单/大小校验、reactive 上传任务状态、删除与元数据查询。
-- `InputArea.vue` 选择文件后批量上传；若输入框有文本，文本与附件合并为一条消息发送；否则发送纯附件消息。
-- `MessageItem.vue` 使用 `/files/{fileId}` 渲染持久化附件，支持删除消息。
-- `ChatView.vue` 挂载时从后端加载历史消息并覆盖 localStorage，保证刷新后附件仍可见。
-
-详见 `plans/PLAN-030-XH-chat-attachment-backend.md` 与 `plans/PLAN-031-XH-chat-attachment-frontend.md`。
-
-## 8. 远程 MCP 与 OAuth 边界
-
-- UI 发起 Authorization Code + PKCE，Control Plane 保存加密 refresh token，并按 user/workspace/server 发放短期 access token。
-- Agent 只连接 Control Plane 的 logical MCP endpoint，不直接访问 Runtime、workspace bridge 或远程 MCP。
-- Runtime host-side connector 负责远程 MCP initialize、tools/list、tools/call 和受控出网；workspace sandbox 不直接出网。
-- Fake OAuth/Fake MCP 只作为真实 integration/E2E fixture，必须验证 PKCE、Bearer、refresh/revoke、MCP protocol 和清理。
-- PLAN-190 负责 remote MCP/OAuth 数据链路，PLAN-191 负责后续统一 API 路径、字段、错误和服务间边界。
+- UI 发起 Authorization Code + PKCE；CP 保存加密 refresh token，按 user/workspace/server 发短期 access token。
+- Agent 只连 CP logical MCP endpoint；Runtime host-side connector 负责远程 MCP 出网；workspace sandbox 不直接出网。
+- Fake OAuth/Fake MCP 只作真实 integration/E2E fixture。
