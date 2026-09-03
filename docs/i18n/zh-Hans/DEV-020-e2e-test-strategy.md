@@ -8,13 +8,16 @@ sidebar_group: "开发指南"
 
 # DEV-020: E2E 测试策略与截图方案
 
-> xihe 项目 E2E 测试架构设计、Playwright 配置、截图策略和目录规范的持久化文档。
+> 面向测试开发者：mock/real 分层 + profile 策略（§1）→ 截图基线（§2）→ 运行命令（§3）。契约测试见 DEV-021。
 
 ## 1. 测试架构
 
 ### 1.1 两层分离
 
 E2E 测试分 mock 和 real 两层，位于 `packages/ui/e2e/`：
+
+<details>
+<summary>完整目录树（点击展开）</summary>
 
 ```
 e2e/
@@ -69,6 +72,8 @@ e2e/
 └── assets/
     └── sample.pdf            # PDF viewer 测试 fixture
 ```
+
+</details>
 
 | 层 | 外部依赖 | 启动方式 | 用例数 |
 |----|---------|---------|--------|
