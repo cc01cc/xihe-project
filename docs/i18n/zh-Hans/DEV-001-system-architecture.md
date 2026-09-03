@@ -29,29 +29,103 @@ flowchart LR
 
 ### 1.1. UI 模块 — Vue/TypeScript
 
-职责：人类交互入口。Vue 3 + TypeScript（Composition API）、pnpm、Vite 8、Vue Router、Pinia + persistedstate、reka-ui + Tailwind CSS v4、@lucide/vue 图标、remark/rehype + Shiki + KaTeX、Vitest + @vue/test-utils、oxlint。
+职责：人类交互入口。
 
-通信：只与 CP 对话（`fetch POST` + 持久 `EventSource` SSE），不直接调用 Agent 或 Runtime；零系统调用，纯展示 + 输入采集。
+| 方面 | 选型 |
+|------|------|
+| 框架 / 语言 | Vue 3 + TypeScript（Composition API） |
+| 包管理 / 构建 | pnpm / Vite 8 |
+| 路由 / 状态 | Vue Router / Pinia + persistedstate |
+| 组件 / 样式 | reka-ui + Tailwind CSS v4 |
+| 图标 / 富文本 | @lucide/vue / remark + rehype + Shiki + KaTeX |
+| 测试 / 规范 | Vitest + @vue/test-utils / oxlint |
+
+通信：
+
+- 只与 CP 对话（`fetch POST` + 持久 `EventSource` SSE），不直接调用 Agent 或 Runtime。
+- 零系统调用：纯展示 + 输入采集。
 
 ### 1.2. Agent 模块 — Python / LangChain
 
 职责：LLM 调用、多 Agent 编排、工具选择、规划决策。Python + LangChain + litellm（`ChatLiteLLM`，100+ Provider）、uv、长驻后端服务；不碰文件系统/Shell，只做"思考"。
 
-关键能力：经 CP 获取工具清单并决策；Agent 间委派/并行/合并；Event Sourcing 上下文（PLAN-035，只消费 CP 投影的 `AgentContext` 快照）；MCP 集成经 CP 单一入口；`AgentRunner`/`BaseAgentTool`/`EventAdapter`/`LLMProvider` 接口隔离实现。详见 DEV-013。
+| 方面 | 选型 |
+|------|------|
+| 语言 / 包管理 | Python + uv |
+| 编排 / LLM | LangChain + litellm（`ChatLiteLLM`，100+ Provider） |
+| 部署 / 边界 | 长驻后端服务；不碰文件系统/Shell，只做“思考” |
+
+关键能力：
+
+- 经 CP 获取工具清单并决策；Agent 间委派 / 并行 / 合并。
+- Event Sourcing 上下文（PLAN-035）：只消费 CP 投影的 `AgentContext` 快照。
+- MCP 集成经 CP 单一入口。
+- `AgentRunner` / `BaseAgentTool` / `EventAdapter` / `LLMProvider` 接口隔离实现。
+
+详见 DEV-013。
 
 ### 1.3. Runtime 模块 — Rust
 
 职责：沙盒化执行环境。Rust + cargo；文件系统、Shell、进程管理。
 
-**执行模型（PLAN-235）**：Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作**全部经 `WorkspaceExecutionRouter` 以 per-request Docker exec 在 Sandbox 内执行**（create_exec → start_exec → 写 operation JSON → 读 stdout 到 EOF）；无 host fallback、无 HTTP 通道、无 instance token、无长驻 worker；Strict 用 `network_mode=none`。三 binary：`xihe-runtime`（Gateway）、`xihe-container-runtime`（`--oneshot` 单帧 EOF）、`xihe-mcp-bridge`（容器内 STDIO bridge）。详见 DEV-015。
+**执行模型（PLAN-235）**：Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作**全部经 `WorkspaceExecutionRouter` 以 per-request Docker exec 在 Sandbox 内执行**。详见 DEV-015。
 
-CP→Runtime REST 端点（Axum router，`/internal/v1/runtime/...`）：`workspaces` 创建、`workspaces/delete` 删除、`workspaces/{ws_id}/status` 状态、`workspaces/{ws_id}/mcp[/spawn[/…]/stdio/…]` bridge 管理、`workspaces/{ws_id}/files/{read,list,delete,mkdir,stat}`（POST，body 传参）与 `files/write/{*path}`（POST，路径参数传二进制）、另有 `/remote-mcp/...` 与 `GET /health`、`GET /ready`。MCP 工具（rmcp `#[tool]`）：文件/目录/glob/grep/edit/stat/PDF/命令/后台 job（start/list/get/cancel）等。
+| 约束 | 说明 |
+|------|------|
+| 无 host fallback | Runtime host 进程不直接读写 WorkspaceStorage |
+| 无旁路通道 | 无 HTTP 通道 / instance token / 长驻 worker |
+| Strict 隔离 | `network_mode=none`，不发布端口 |
+
+三 binary：
+
+| Binary | 角色 |
+|--------|------|
+| `xihe-runtime` | Gateway 主进程 |
+| `xihe-container-runtime` | 容器内执行器（`--oneshot` 单帧 EOF） |
+| `xihe-mcp-bridge` | 容器内 STDIO bridge |
+
+CP→Runtime REST 端点（Axum，`/internal/v1/runtime/...`）：
+
+| 用途 | 方法 | 路径 |
+|------|------|------|
+| 创建 / 删除 workspace | POST | `workspaces` / `workspaces/delete` |
+| workspace 状态 | GET | `workspaces/{ws_id}/status` |
+| MCP 调用 | any | `workspaces/{ws_id}/mcp`，`/remote-mcp/...` |
+| bridge 管理 | POST / GET / DELETE | `mcp/spawn`、`mcp/spawn/{server_id}`、`mcp/stdio/{server_id}` |
+| 文件操作 | POST（body 传参） | `files/{read,list,delete,mkdir,stat}` |
+| 文件写入 | POST（二进制，路径参数） | `files/write/{*path}` |
+| 健康 | GET | `/health`、`/ready` |
+
+MCP 工具（rmcp `#[tool]`，24 个）：
+
+| 组 | 工具 |
+|----|------|
+| 文件 | read_file、read_file_range、write_file、list_directory、get_file_info、mkdir、delete_file、delete_directory、move_file、copy_file |
+| 检索 | glob、grep、edit_file、extract_pdf_text、web_fetch |
+| 命令 | execute_command、read_command_output、watch_directory |
+| 后台 | start_background_process、list_background_processes、get_background_process、cancel_background_process |
 
 ### 1.4. Control Plane 模块 — 系统核心
 
-职责：路由 + 权限控制 + 数据加工 + 状态广播 + 会话管理 + 统一配置管理。Java + Spring Boot、Maven；聊天中转 + MCP 反向代理 + 权限裁决 + 审计，HTTP/SSE + MCP Streamable HTTP 三通道；ConfigService 三层所有权（详见 DEV-003）。**不做模块专属业务逻辑**。详见 DEV-014。
+职责：路由 + 权限控制 + 数据加工 + 状态广播 + 会话管理 + 统一配置管理。
 
-CP 三通道：聊天（`POST /api/v1/chat` + 持久 `GET /api/v1/events?sessionId=`，PLAN-230：单会话单活 emitter + generation、`done` 只结束 run、`heartbeat` 15s、409 准入/单并发）；MCP 反向代理（`POST /api/v1/mcp`，认证 + tool-name 路由 + 三层转发）；状态分发（Runtime notification → UI SSE / Agent 透传）。
+| 方面 | 选型 |
+|------|------|
+| 语言 / 构建 | Java + Spring Boot、Maven |
+| 能力 | 聊天中转 + MCP 反向代理 + 权限裁决 + 审计 |
+| 协议 | HTTP/SSE + MCP Streamable HTTP 三通道 |
+| 配置 | ConfigService 三层所有权（详见 DEV-003） |
+| 约束 | **不做模块专属业务逻辑** |
+
+CP 三通道：
+
+| 通道 | 契约 |
+|------|------|
+| 聊天 | `POST /api/v1/chat` + 持久 `GET /api/v1/events?sessionId=`（PLAN-230：单会话单活 emitter + generation、`done` 只结束 run、`heartbeat` 15s、409 准入/单并发） |
+| MCP 反向代理 | `POST /api/v1/mcp`（认证 + tool-name 路由 + 三层转发） |
+| 状态分发 | Runtime notification → UI SSE / Agent 透传 |
+
+详见 DEV-014。
 
 ### 1.5. 通信协议总结
 
