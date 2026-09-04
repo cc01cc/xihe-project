@@ -137,6 +137,17 @@ remote server 不走上式，走 `mcp_servers` 表（OAuth 授权或 `authMode=n
 | Integration | 真实 bridge 进程 | `cargo test --test bridge_integration_test` |
 | E2E | Settings 页截图 | `npx playwright test e2e/real/settings-visual.spec.ts` |
 
+### 7.1. Agent 手动验证 runbook（PLAN-242 补充）
+
+面向 Agent 操作者，验证 remote 工具端到端可达（以 no-auth 公开 server 为例）：
+
+1. 注册：`mcp_servers` 插一行（`workspaceId`、`name=deepwiki`、`endpoint=https://mcp.deepwiki.com/mcp`、`authMode=no-auth`、`enabled=true`）。
+2. 发现：`POST /api/v1/mcp` 发 `tools/list`，确认返回含远端工具名（无冲突为裸名）。
+3. 调用：`tools/call` 带上一步的工具名，确认结果透传。
+4. 审计：查审计日志，`detail` 含 `serverId/deepwiki backendName/<原名> generation=<代数>` 四元组。
+5. 无容器断言：`docker ps` 无新增 workspace 容器（remote 不建容器）。
+6. 烟雾（非门禁）：直调 endpoint 发 `initialize`（有/无 Bearer 均应 200，见 M1.3）。
+
 ## 8. 相关文件
 
 | 文件 | 说明 |

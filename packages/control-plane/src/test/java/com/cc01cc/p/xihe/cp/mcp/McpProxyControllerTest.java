@@ -16,6 +16,12 @@ class McpProxyControllerTest {
     @Autowired
     private McpProxyController controller;
 
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository aliasRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
+
     @Test
     void controllerLoads() {
         assertNotNull(controller);
@@ -162,5 +168,21 @@ class McpProxyControllerTest {
         assertEquals("read_file", McpProxyController.backendFromIssued("github__read_file"));
         assertEquals("read_file", McpProxyController.backendFromIssued("read_file"));
         assertNull(McpProxyController.backendFromIssued(null));
+    }
+
+    // PLAN-242 M2.4: alias rows persist (sticky source of truth) and bare +
+    // prefixed issues for one backend coexist without promotion.
+    @Test
+    void aliasRepository_roundTrip() {
+        String owner = java.util.UUID.randomUUID().toString();
+        String wsId = workspaceService.createWorkspace("alias-test", owner).getId();
+
+        aliasRepository.save(new com.cc01cc.p.xihe.cp.entity.McpToolAlias(
+                wsId, "ask_question", "deepwiki", "ask_question", 1L));
+        aliasRepository.save(new com.cc01cc.p.xihe.cp.entity.McpToolAlias(
+                wsId, "github__ask_question", "github", "ask_question", 1L));
+
+        assertTrue(aliasRepository.findByWorkspaceIdAndIssuedName(wsId, "ask_question").isPresent());
+        assertEquals(2, aliasRepository.findByWorkspaceId(wsId).size());
     }
 }

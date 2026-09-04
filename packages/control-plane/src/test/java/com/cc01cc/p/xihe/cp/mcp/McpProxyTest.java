@@ -180,6 +180,77 @@ class McpProxyTest {
         return constructor.newInstance(wsId, userId, null, null);
     }
 
+    // PLAN-242 M2.5 (CP 侧 Fake 门): tools/list 合并 remote 工具并落别名，
+    // tools/call 按别名以后端名直达 Fake。Runtime 由 JDK 内置 HttpServer 桩承担。
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsList_mergesRemoteToolsAndCallReachesFake() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/remote-mcp/ws-1/deepwiki/call", exchange -> {
+            String req = new String(exchange.getRequestBody().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            String resp = req.contains("\"listTools\":true")
+                    ? "{\"tools\":[{\"name\":\"fake_echo\",\"description\":\"Echo\",\"inputSchema\":{\"type\":\"object\"}}]}"
+                    : "{\"content\":[{\"type\":\"text\",\"text\":\"wire-ok\"}]}";
+            byte[] bytes = resp.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+
+            com.cc01cc.p.xihe.cp.entity.McpServer server =
+                    new com.cc01cc.p.xihe.cp.entity.McpServer(
+                            "ws-1", "deepwiki", "https://mcp.deepwiki.com/mcp");
+            server.setId("deepwiki");
+            server.setEnabled(true);
+            server.setAuthMode("no-auth");
+            when(mcpServerRepository.findByWorkspaceIdAndEnabledTrue("ws-1"))
+                    .thenReturn(java.util.List.of(server));
+            when(mcpServerRepository.findById("deepwiki"))
+                    .thenReturn(java.util.Optional.of(server));
+            when(configRepo.findByEnvironmentAndLayerAndDomainAndConfigKey(
+                    "ws-1", "workspace", "mcp", "mcpServers"))
+                    .thenReturn(java.util.Optional.empty());
+            when(aliasRepository.findByWorkspaceId("ws-1")).thenReturn(java.util.List.of());
+            when(aliasRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            Object access = accessContext("ws-1", "u-1");
+            String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
+            org.springframework.http.ResponseEntity<String> listResp =
+                    (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                            controller, "handleToolsList", "ws-1", listBody,
+                            new org.springframework.http.HttpHeaders(), "sess-1", access);
+            assertNotNull(listResp);
+            assertTrue(listResp.getBody().contains("fake_echo"),
+                    "merged list must contain the remote tool");
+            org.mockito.Mockito.verify(aliasRepository).save(
+                    org.mockito.ArgumentMatchers.argThat(a ->
+                            "fake_echo".equals(
+                                    ((com.cc01cc.p.xihe.cp.entity.McpToolAlias) a).getIssuedName())));
+
+            String callBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"fake_echo\",\"arguments\":{}},\"id\":2}";
+            org.springframework.http.ResponseEntity<String> callResp =
+                    (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                            controller, "handleToolsCall", "ws-1", callBody,
+                            new org.springframework.http.HttpHeaders(), "sess-1", access);
+            assertNotNull(callResp);
+            assertTrue(callResp.getBody().contains("wire-ok"),
+                    "remote call must reach Fake, got: " + callResp.getBody());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
     @Test
     void verifySessionId_rejectsEmptyString() {
         String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "verifySessionId", "");
