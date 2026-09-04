@@ -55,6 +55,18 @@ updated: 2026-09-03
 | **shadcn-admin-kit** | `marmelab/shadcn-admin-kit` | CRUD、数据表、RBAC 权限矩阵、侧边栏导航 | `packages/ui/src/views/settings/` |
 | **shadcn/ui Dashboard** | `https://ui.shadcn.com/examples/dashboard` | 数据展示、卡片布局、表单、响应式 | `packages/ui/src/views/settings/` |
 
+## shadcn-vue 官方新组件调研（2026-07/08，详见 PLAN-243 附录 A）
+
+版本已最新（`^2.8.2`），无需升级。按落地状态分三档：
+
+| 状态 | 组件 | 结论 |
+|------|------|------|
+| 已落地 | Typeset（排版节律）、审批剧本测试（替 `@shadcn/helpers`，其 peer 依赖 AI SDK 不兼容）、shimmer/scroll-fade（早已存在） | PLAN-243 M2 |
+| 暂不用 | Questionnaire（无多步 intake 可承载；触发条件：规划澄清式追问时直接采用） | PLAN-243 M3 |
+| 评估入库 | 聊天五件套：Attachment 换展示层首选、Marker 信息架构升级次选、Scroller 绝不动、Bubble 随缘 | PLAN-243 M4 |
+
+注意：官方五件套与自研五族**同名**，文档中必须加“自研版/官方版”前缀区分。
+
 ## 限制说明
 
 - **禁止直接复制组件代码**：上述项目多为 React/Ant Design，与 xihe 的 Vue + reka-ui 栈不兼容。

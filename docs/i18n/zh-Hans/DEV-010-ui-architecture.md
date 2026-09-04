@@ -37,6 +37,15 @@ updated: 2026-09-03
 
 位于 `packages/ui/src/components/ui/`，聊天界面自研组件（已替代旧第三方虚拟列表方案）：
 
+设计经验（shadcn-vue 官方组件对照，详见 PLAN-243 附录 A）：
+
+- **分层纪律**：对齐/头像/时间戳上浮 Message，Bubble 只管 surface（自研已做到，予以确认）。
+- **状态显式化**：上传态用 `state` prop 驱动，不从 service 派生。
+- **无障碍基线**：装饰图标 `aria-hidden`、不可用按钮 `inert` + `tabindex=-1`、思考态 `role=status`（缺失项，做 a11y pass 时补）。
+- **BubbleGroup**：同发送者连发合并，治工具调用 burst 刷屏。
+- **Footer actions 位**：copy/retry/feedback 标准位置，hover 栏向其收敛。
+- **耦合结论**：五族本体零 store 引用（已取证）；耦合在容器层属正常分离；MessageItem 身兼三职可拆（观察项）。
+
 | 组件族 | 用途 |
 |--------|------|
 | `message-scroller/` | 滚动容器：following-bottom → free-scrolling → anchored-to-message → settling-jump 状态机；`shallowRef` + `data-*` 避免高频响应 |
@@ -46,6 +55,8 @@ updated: 2026-09-03
 | `marker/` | 时间/状态分隔线 |
 
 ## 4. 传输层（会话级持久 SSE，PLAN-230）
+
+> 分层原则：**传输基元全用第三方，自研只做会话语义**。基元：`@microsoft/fetch-event-source`（UI）、Spring `SseEmitter`（CP）、HTTP SSE；自研约 800 行：chatTransport（单飞/退避）+ useSSE + SSEStream + useStreamParser，以及 CP `SseEmitterManager`（单活/generation/租约/409）。市面方案（AI SDK useChat、TanStack ChatClient）解决的是标准协议通用聊天，自创会话语义无现货；跟踪 TanStack AI（见 PLAN-243 TD-2），多设备/多会话时重估。
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
