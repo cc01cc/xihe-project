@@ -23,6 +23,9 @@ public class McpServer {
     @Column(name = "auth_config", columnDefinition = "TEXT")
     private String authConfig;
 
+    @Column(name = "auth_mode", nullable = false, length = 16)
+    private String authMode = "oauth";
+
     @Column(nullable = false)
     private boolean enabled;
 
@@ -66,6 +69,9 @@ public class McpServer {
 
     public String getAuthConfig() { return authConfig; }
     public void setAuthConfig(String authConfig) { this.authConfig = authConfig; }
+
+    public String getAuthMode() { return authMode; }
+    public void setAuthMode(String authMode) { this.authMode = authMode; }
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }

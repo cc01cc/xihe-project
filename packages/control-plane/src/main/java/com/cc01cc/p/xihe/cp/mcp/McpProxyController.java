@@ -12,10 +12,14 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
+import com.cc01cc.p.xihe.cp.entity.McpServer;
+import com.cc01cc.p.xihe.cp.entity.McpToolAlias;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
+import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
+import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
@@ -31,6 +35,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -41,6 +46,7 @@ public class McpProxyController {
     private static final Duration CACHE_TTL = Duration.ofMinutes(5);
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String HMAC_SECRET = "xihe-mcp-session-hmac-key-2026";
+    private static final String REMOTE_SCOPE = "mcp:tools";
 
     private final HttpClient httpClient;
     private final RequestRewriter rewriter;
@@ -49,6 +55,9 @@ public class McpProxyController {
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sse;
     private final ConfigJpaRepository configRepo;
+    private final McpServerRepository mcpServers;
+    private final McpToolAliasRepository aliases;
+    private final Map<String, AtomicLong> toolGenerations = new ConcurrentHashMap<>();
 
     @Value("${cp.mcp.runtime-url:http://localhost:12633}")
     private String runtimeBaseUrl;
@@ -70,17 +79,21 @@ public class McpProxyController {
             ObjectMapper objectMapper,
             SseEmitterManager sse,
             ConfigJpaRepository configRepo,
+            McpServerRepository mcpServers,
+            McpToolAliasRepository aliases,
             WorkspaceService workspaceService,
             SessionRepository sessionRepository) {
         this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
         this.rewriter = rewriter;
         this.policy = policy;
         this.audit = audit;
         this.objectMapper = objectMapper;
         this.sse = sse;
         this.configRepo = configRepo;
+        this.mcpServers = mcpServers;
+        this.aliases = aliases;
         this.workspaceService = workspaceService;
         this.sessionRepository = sessionRepository;
     }
@@ -264,6 +277,67 @@ public class McpProxyController {
                 }
             }
 
+            // PLAN-242 M2: merge enabled remote servers (sorted for determinism),
+            // then sticky-issue names and persist alias rows (never promoted).
+            long generation = nextGeneration(wsId);
+            Map<String, McpToolAlias> known = new HashMap<>();
+            try {
+                for (McpToolAlias alias : aliases.findByWorkspaceId(wsId)) {
+                    known.put(alias.getServerId() + "\0" + alias.getBackendName(), alias);
+                }
+            } catch (Exception e) {
+                logger.warn("Tool alias load failed, continuing without stickiness: {}", e.getMessage());
+            }
+            List<McpServer> remotes = new ArrayList<>();
+            try {
+                remotes.addAll(mcpServers.findByWorkspaceIdAndEnabledTrue(wsId));
+            } catch (Exception e) {
+                logger.warn("Remote server list failed, skipping remote merge: {}", e.getMessage());
+            }
+            remotes.sort(Comparator.comparing(McpServer::getId));
+            for (McpServer server : remotes) {
+                for (Map<String, Object> tool : fetchRemoteTools(wsId, server, sessionId, access)) {
+                    String backend = (String) tool.get("name");
+                    if (backend == null || backend.isEmpty()) {
+                        continue;
+                    }
+                    String key = server.getId() + "\0" + backend;
+                    McpToolAlias alias = known.get(key);
+                    String issued = alias == null ? null : alias.getIssuedName();
+                    // Sticky reuse only when the bare name is still ours; otherwise
+                    // re-issue (a newer stdio/system tool claimed the bare name).
+                    if (issued != null && !issued.contains("__")
+                            && mapping.containsKey(issued) && !server.getId().equals(mapping.get(issued))) {
+                        issued = null;
+                    }
+                    if (issued == null) {
+                        issued = stickyIssuedName(server.getId(), backend, !seenNames.contains(backend));
+                        try {
+                            McpToolAlias row = new McpToolAlias(wsId, issued, server.getId(), backend, generation);
+                            aliases.save(row);
+                            known.put(key, row);
+                        } catch (Exception e) {
+                            logger.warn("Tool alias persist failed, continuing in-memory: {}", e.getMessage());
+                        }
+                    } else if (alias != null) {
+                        try {
+                            alias.setGeneration(generation);
+                            aliases.save(alias);
+                        } catch (Exception e) {
+                            logger.warn("Tool alias touch failed: {}", e.getMessage());
+                        }
+                    }
+                    if (!mapping.containsKey(issued)) {
+                        mapping.put(issued, server.getId());
+                        Map<String, Object> published = new HashMap<>(tool);
+                        published.put("name", issued);
+                        allTools.add(published);
+                    }
+                    seenNames.add(issued);
+                    seenNames.add(backend);
+                }
+            }
+
             toolServerCache.put(wsId, mapping);
             cacheTimestamps.put(wsId, Instant.now());
 
@@ -335,6 +409,22 @@ public class McpProxyController {
             return forwardToRuntime(wsId, null, body, headers, sessionId, access);
         }
 
+        // PLAN-242 M2: remote servers keep policy evaluation on the issued
+        // name, then route by backend name (alias table, sticky).
+        Optional<McpServer> remote = remoteServer(wsId, serverId);
+        if (remote.isPresent()) {
+            String rewritten = rewriter.rewrite(toolName, body, sessionId);
+            PolicyEngine.PolicyDecision decision = policy.evaluate(toolName, rewritten, sessionId);
+            audit.record(sessionId, toolName, "request", rewritten);
+            if (decision.getResult() == PolicyEngine.PolicyDecision.PolicyResult.DENY) {
+                sse.send(sessionId, "tool_exec_denied",
+                    Map.of("tool", toolName, "reason", decision.getReason()));
+                audit.record(sessionId, toolName, "deny", decision.getReason());
+                return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+            }
+            return forwardRemoteToRuntime(wsId, remote.get(), rewritten, headers, sessionId, access);
+        }
+
         String rewritten = rewriter.rewrite(toolName, body, sessionId);
         PolicyEngine.PolicyDecision decision = policy.evaluate(toolName, rewritten, sessionId);
         audit.record(sessionId, toolName, "request", rewritten);
@@ -354,6 +444,14 @@ public class McpProxyController {
             String wsId, String serverId, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
         try {
+            // PLAN-242 M2: McpServer rows win over stdio config keys. A serverId
+            // present in the table is a remote MCP server, never a bridge.
+            if (serverId != null) {
+                Optional<McpServer> remote = remoteServer(wsId, serverId);
+                if (remote.isPresent()) {
+                    return forwardRemoteToRuntime(wsId, remote.get(), body, headers, sessionId, access);
+                }
+            }
             String path;
             if (serverId == null) {
                 path = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
@@ -443,6 +541,131 @@ public class McpProxyController {
             audit.record(sessionId, extractMethod(body), "error", e.getMessage());
             return problem(HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime MCP request failed");
         }
+    }
+
+    private long nextGeneration(String wsId) {
+        return toolGenerations.computeIfAbsent(wsId, key -> new AtomicLong()).incrementAndGet();
+    }
+
+    private long currentGeneration(String wsId) {
+        AtomicLong generation = toolGenerations.get(wsId);
+        return generation == null ? 0L : generation.get();
+    }
+
+    private String aliasDetail(String serverId, String backendName, long generation) {
+        return "serverId=" + serverId + " backendName=" + backendName + " generation=" + generation;
+    }
+
+    /** PLAN-242 M2: a serverId backed by an enabled McpServer row is remote. */
+    private Optional<McpServer> remoteServer(String wsId, String serverId) {
+        try {
+            return mcpServers.findById(serverId)
+                    .filter(server -> wsId.equals(server.getWorkspaceId()) && server.isEnabled());
+        } catch (Exception e) {
+            logger.warn("Remote server lookup failed, falling back to stdio: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** Sticky issue policy: bare name when free, else server-qualified. Pure, unit-tested. */
+    static String stickyIssuedName(String serverId, String backendName, boolean bareFree) {
+        // PLAN-242 M2: ToolNameRewriter wired as the conflict-only naming policy.
+        return bareFree ? backendName : new ToolNameRewriter().addPrefix(serverId, backendName);
+    }
+
+    /** Resolve an issued name back to its backend tool name. Pure, unit-tested. */
+    static String backendFromIssued(String issuedName) {
+        if (issuedName == null) {
+            return null;
+        }
+        return new ToolNameRewriter().removePrefix(issuedName)[1];
+    }
+
+    private ResponseEntity<String> forwardRemoteToRuntime(
+            String wsId, McpServer server, String body, HttpHeaders headers,
+            String sessionId, AccessContext access) {
+        String method = extractMethod(body);
+        try {
+            ObjectNode request = objectMapper.createObjectNode();
+            request.put("endpoint", server.getEndpoint());
+            request.put("userId", access.userId());
+            request.put("scope", REMOTE_SCOPE);
+            request.put("authMode", server.getAuthMode() == null ? "oauth" : server.getAuthMode());
+            if ("tools/list".equals(method)) {
+                request.put("tool", "");
+                request.set("arguments", objectMapper.createObjectNode());
+                request.put("listTools", true);
+            } else if ("tools/call".equals(method)) {
+                String issued = extractToolName(body);
+                if (issued == null || issued.isEmpty()) {
+                    return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Tool name is required");
+                }
+                String backend = aliases.findByWorkspaceIdAndIssuedName(wsId, issued)
+                        .map(McpToolAlias::getBackendName).orElseGet(() -> backendFromIssued(issued));
+                JsonNode params;
+                try {
+                    params = objectMapper.readTree(body).path("params");
+                } catch (Exception parseError) {
+                    return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Invalid tools/call body");
+                }
+                JsonNode args = params.path("arguments");
+                request.put("tool", backend);
+                request.set("arguments",
+                        args.isMissingNode() || args.isNull() ? objectMapper.createObjectNode() : args);
+                request.put("listTools", false);
+            } else {
+                return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "Remote MCP servers support tools/list and tools/call only");
+            }
+
+            String target = runtimeBaseUrl + "/internal/v1/runtime/remote-mcp/"
+                    + wsId + "/" + server.getId() + "/call";
+            HttpRequest forwardRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(target))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .header("Authorization", "Bearer " + runtimeServiceToken)
+                    .header("X-Workspace-Id", wsId)
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(request)))
+                    .timeout(Duration.ofSeconds(30))
+                    .build();
+            HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
+            HttpHeaders responseHeaders = new HttpHeaders();
+            responseHeaders.set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+            audit.record(sessionId, method, "allow",
+                    aliasDetail(server.getId(), request.path("tool").asText(""), currentGeneration(wsId)));
+            return new ResponseEntity<>(response.body(), responseHeaders,
+                    HttpStatus.valueOf(response.statusCode()));
+        } catch (Exception e) {
+            logger.error("Remote MCP forward failed: wsId={} server={} method={}",
+                    wsId, server.getId(), method, e);
+            audit.record(sessionId, method, "error", e.getMessage());
+            return problem(HttpStatus.BAD_GATEWAY, "REMOTE_MCP_UNAVAILABLE", "Remote MCP request failed");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> fetchRemoteTools(
+            String wsId, McpServer server, String sessionId, AccessContext access) {
+        String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
+        ResponseEntity<String> resp = forwardRemoteToRuntime(
+                wsId, server, listBody, new HttpHeaders(), sessionId, access);
+        if (resp == null || !resp.getStatusCode().is2xxSuccessful() || resp.getBody() == null) {
+            logger.warn("Remote tools/list failed: wsId={} server={} status={}",
+                    wsId, server.getId(), resp == null ? "null" : resp.getStatusCode());
+            return Collections.emptyList();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(resp.getBody());
+            JsonNode tools = root.has("tools") ? root.get("tools") : root.path("result").path("tools");
+            if (tools != null && tools.isArray()) {
+                return objectMapper.convertValue(tools, List.class);
+            }
+        } catch (Exception e) {
+            logger.warn("Remote tools/list parse failed: wsId={} server={}: {}",
+                    wsId, server.getId(), e.getMessage());
+        }
+        return Collections.emptyList();
     }
 
     private String normalizeRuntimeBody(String body, String protocolVersion) {

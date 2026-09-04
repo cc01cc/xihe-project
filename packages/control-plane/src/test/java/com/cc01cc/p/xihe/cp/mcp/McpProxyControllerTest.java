@@ -145,4 +145,22 @@ class McpProxyControllerTest {
             throw new RuntimeException(e);
         }
     }
+
+    // PLAN-242 M2: sticky naming is conflict-only and deterministic.
+    @Test
+    void stickyIssuedName_bareWhenFree() {
+        assertEquals("read_file", McpProxyController.stickyIssuedName("github", "read_file", true));
+    }
+
+    @Test
+    void stickyIssuedName_qualifiedOnConflict() {
+        assertEquals("github__read_file", McpProxyController.stickyIssuedName("github", "read_file", false));
+    }
+
+    @Test
+    void backendFromIssued_roundTrip() {
+        assertEquals("read_file", McpProxyController.backendFromIssued("github__read_file"));
+        assertEquals("read_file", McpProxyController.backendFromIssued("read_file"));
+        assertNull(McpProxyController.backendFromIssued(null));
+    }
 }

@@ -8,6 +8,8 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
+import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
+import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
@@ -23,6 +25,8 @@ class McpProxyTest {
     private ObjectMapper objectMapper;
     private SseEmitterManager sseEmitterManager;
     private ConfigJpaRepository configRepo;
+    private McpServerRepository mcpServerRepository;
+    private McpToolAliasRepository aliasRepository;
     private WorkspaceService workspaceService;
     private SessionRepository sessionRepository;
     private McpProxyController controller;
@@ -35,12 +39,15 @@ class McpProxyTest {
         objectMapper = new ObjectMapper();
         sseEmitterManager = mock(SseEmitterManager.class);
         configRepo = mock(ConfigJpaRepository.class);
+        mcpServerRepository = mock(McpServerRepository.class);
+        aliasRepository = mock(McpToolAliasRepository.class);
         workspaceService = mock(WorkspaceService.class);
         sessionRepository = mock(SessionRepository.class);
 
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
                 auditLogger, objectMapper, sseEmitterManager, configRepo,
+                mcpServerRepository, aliasRepository,
                 workspaceService, sessionRepository
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
@@ -123,6 +130,54 @@ class McpProxyTest {
     void verifySessionId_rejectsInvalidFormat() {
         String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "verifySessionId", "no-dot-separator");
         assertNull(wsId);
+    }
+
+    // PLAN-242 M2: three-way split — table-backed serverIds take the remote
+    // path, unknown ids fall back to the stdio path. No live Runtime here, so
+    // both assert the deterministic unreachable-Runtime failure per branch.
+    @Test
+    @SuppressWarnings("unchecked")
+    void forwardToRuntime_remoteServer_usesRemotePath() throws Exception {
+        com.cc01cc.p.xihe.cp.entity.McpServer server =
+                new com.cc01cc.p.xihe.cp.entity.McpServer("ws-1", "deepwiki", "https://mcp.deepwiki.com/mcp");
+        server.setId("deepwiki");
+        server.setEnabled(true);
+        when(mcpServerRepository.findById("deepwiki")).thenReturn(java.util.Optional.of(server));
+
+        Object access = accessContext("ws-1", "u-1");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
+        org.springframework.http.ResponseEntity<String> resp =
+                (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                        controller, "forwardToRuntime", "ws-1", "deepwiki", body,
+                        new org.springframework.http.HttpHeaders(), "sess-1", access);
+        assertNotNull(resp);
+        assertTrue(resp.getBody().contains("REMOTE_MCP_UNAVAILABLE"),
+                "table-backed serverId must take the remote branch, got: " + resp.getBody());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void forwardToRuntime_unknownServer_fallsBackToStdioPath() throws Exception {
+        when(mcpServerRepository.findById("ghost")).thenReturn(java.util.Optional.empty());
+
+        Object access = accessContext("ws-1", "u-1");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
+        org.springframework.http.ResponseEntity<String> resp =
+                (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                        controller, "forwardToRuntime", "ws-1", "ghost", body,
+                        new org.springframework.http.HttpHeaders(), "sess-1", access);
+        assertNotNull(resp);
+        assertTrue(resp.getBody().contains("RUNTIME_UNAVAILABLE"),
+                "unknown serverId must fall back to the stdio branch, got: " + resp.getBody());
+    }
+
+    private static Object accessContext(String wsId, String userId) throws Exception {
+        Class<?> accessClass = Class.forName(
+                "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
+        var constructor = accessClass.getDeclaredConstructor(
+                String.class, String.class, String.class, String.class);
+        constructor.setAccessible(true);
+        return constructor.newInstance(wsId, userId, null, null);
     }
 
     @Test
