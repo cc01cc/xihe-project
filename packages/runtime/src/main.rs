@@ -77,6 +77,16 @@ impl AppState {
             .ensure_workspace_materialized(workspace_id)
             .await
     }
+
+    /// PLAN-242 M2: identity-only check for remote MCP calls (no container).
+    pub async fn ensure_workspace_identity(
+        &self,
+        workspace_id: &str,
+    ) -> xihe_runtime::error::Result<()> {
+        self.workspace_ensurer
+            .ensure_workspace_identity(workspace_id)
+            .await
+    }
 }
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -721,6 +731,13 @@ struct RemoteMcpCallRequest {
     scope: String,
     #[serde(rename = "requestState")]
     request_state: Option<serde_json::Value>,
+    /// PLAN-242 M2: "no-auth" skips the CP token broker (public servers such
+    /// as deepwiki ignore the placeholder Bearer, verified M1.3).
+    #[serde(rename = "authMode", default)]
+    auth_mode: String,
+    /// PLAN-242 M2: when true, return tools/list instead of tools/call.
+    #[serde(rename = "listTools", default)]
+    list_tools: bool,
 }
 
 fn runtime_service_token() -> String {
@@ -836,18 +853,26 @@ async fn remote_mcp_call_handler(
             ),
         ));
     }
-    app.ensure_workspace(&workspace_id)
+    // PLAN-242 M2: identity check only — remote execution lives outside the
+    // sandbox, so no container is materialized. Unknown ids fail closed.
+    app.ensure_workspace_identity(&workspace_id)
         .await
         .map_err(runtime_problem_with_header)?;
-    if request.user_id.trim().is_empty()
-        || request.tool.trim().is_empty()
-        || request.scope.trim().is_empty()
-    {
+    if request.user_id.trim().is_empty() || request.scope.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
             AxumJson(
-                serde_json::json!({"type":"https://xihe.dev/problems/invalid-request","title":"Invalid request","status":400,"code":"INVALID_REQUEST","detail":"userId and tool are required","requestId":uuid::Uuid::new_v4().to_string()}),
+                serde_json::json!({"type":"https://xihe.dev/problems/invalid-request","title":"Invalid request","status":400,"code":"INVALID_REQUEST","detail":"userId and scope are required","requestId":uuid::Uuid::new_v4().to_string()}),
+            ),
+        ));
+    }
+    if !request.list_tools && request.tool.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            AxumJson(
+                serde_json::json!({"type":"https://xihe.dev/problems/invalid-request","title":"Invalid request","status":400,"code":"INVALID_REQUEST","detail":"tool is required","requestId":uuid::Uuid::new_v4().to_string()}),
             ),
         ));
     }
@@ -877,7 +902,58 @@ async fn remote_mcp_call_handler(
         server_id: server_id.clone(),
         scope: request.scope.clone(),
     };
-    let token = fetch_remote_mcp_token(
+    // PLAN-242 M2: no-auth servers skip the CP token broker entirely; the
+    // placeholder Bearer is ignored by public servers (verified M1.3).
+    let no_auth = request.auth_mode.eq_ignore_ascii_case("no-auth");
+    let store = REMOTE_REQUEST_STATES
+        .get_or_init(RequestStateStore::default)
+        .clone();
+    if request.list_tools {
+        let token = if no_auth {
+            "no-auth".to_string()
+        } else {
+            fetch_remote_mcp_token(
+                &cp_url,
+                &service_token,
+                &request.user_id,
+                &workspace_id,
+                &server_id,
+                &request.scope,
+            )
+            .await
+            .map_err(|error| {
+                let (status, code) = match error {
+                    RemoteMcpError::AuthorizationRequired => {
+                        (StatusCode::UNAUTHORIZED, "authorization_required")
+                    }
+                    _ => (StatusCode::BAD_GATEWAY, "token_broker_unavailable"),
+                };
+                (status, [(axum::http::header::CONTENT_TYPE, "application/problem+json")], AxumJson(serde_json::json!({"type":format!("https://xihe.dev/problems/{code}"),"title":"Token broker failed","status":status.as_u16(),"code":code.to_ascii_uppercase(),"detail":"Token broker request failed","requestId":uuid::Uuid::new_v4().to_string()})))
+            })?
+        };
+        let connector = RemoteMcpConnector::new_with_context(
+            &request.endpoint,
+            token,
+            Duration::from_secs(30),
+            binding,
+            store,
+        )
+        .map_err(remote_mcp_error_response)?;
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        connector
+            .initialize(&cancellation)
+            .await
+            .map_err(remote_mcp_error_response)?;
+        return connector
+            .tools_list(&cancellation)
+            .await
+            .map(AxumJson)
+            .map_err(remote_mcp_error_response);
+    }
+    let token = if no_auth {
+        "no-auth".to_string()
+    } else {
+        fetch_remote_mcp_token(
             &cp_url,
             &service_token,
             &request.user_id,
@@ -894,10 +970,8 @@ async fn remote_mcp_call_handler(
                 _ => (StatusCode::BAD_GATEWAY, "token_broker_unavailable"),
             };
             (status, [(axum::http::header::CONTENT_TYPE, "application/problem+json")], AxumJson(serde_json::json!({"type":format!("https://xihe.dev/problems/{code}"),"title":"Token broker failed","status":status.as_u16(),"code":code.to_ascii_uppercase(),"detail":"Token broker request failed","requestId":uuid::Uuid::new_v4().to_string()})))
-        })?;
-    let store = REMOTE_REQUEST_STATES
-        .get_or_init(RequestStateStore::default)
-        .clone();
+        })?
+    };
     let result = run_remote_mcp_call(
         &request.endpoint,
         token,
@@ -909,7 +983,8 @@ async fn remote_mcp_call_handler(
     )
     .await;
     let result = match result {
-        Err(RemoteMcpError::AuthorizationRequired) => {
+        // No-auth servers never enter the broker refresh loop (single attempt).
+        Err(RemoteMcpError::AuthorizationRequired) if !no_auth => {
             let refreshed = fetch_remote_mcp_token(
                 &cp_url,
                 &service_token,
@@ -1993,5 +2068,208 @@ async fn idle_reaper_loop(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_handler_tests {
+    use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use tokio::net::TcpListener;
+
+    const TEST_WS: &str = "ws-test";
+
+    #[allow(unsafe_code)]
+    fn allow_local_http() {
+        // Edition 2024: env mutation is unsafe; confined to this test binary,
+        // which has no other readers of this flag.
+        unsafe {
+            std::env::set_var("XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL", "true");
+        }
+    }
+
+    fn spec_json(ws_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "workspaceId": ws_id,
+            "generation": 1,
+            "sandboxSpecHash": "a".repeat(64),
+            "sandboxSpec": {"profile": "strict"},
+            "storageBackend": "host_directory",
+            "storageRef": ws_id,
+        })
+    }
+
+    async fn cp_stub() -> String {
+        async fn handler(Path(ws_id): Path<String>) -> impl IntoResponse {
+            if ws_id == "ws-missing" {
+                return (StatusCode::NOT_FOUND, "not found").into_response();
+            }
+            AxumJson(spec_json(&ws_id)).into_response()
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind cp stub");
+        let addr = listener.local_addr().expect("cp stub addr").to_string();
+        let app = Router::new().route(
+            "/internal/v1/runtime/workspaces/{ws_id}/execution-spec",
+            get(handler),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve cp stub");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn fake_mcp() -> String {
+        async fn handler(request: Request<Body>) -> impl IntoResponse {
+            let (_parts, body) = request.into_parts();
+            let bytes = to_bytes(body, usize::MAX).await.expect("read fake body");
+            let payload: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("fake received JSON");
+            let id = payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
+            let response = match payload.get("method").and_then(|m| m.as_str()) {
+                Some("initialize") => serde_json::json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": {"protocolVersion": "2026-07-28", "capabilities": {}}
+                }),
+                Some("tools/list") => serde_json::json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": {"tools": [
+                        {"name": "fake_echo", "description": "Echo",
+                         "inputSchema": {"type": "object"}}
+                    ]}
+                }),
+                Some("tools/call") => serde_json::json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": {"content": [{"type": "text", "text": "wire-ok"}]}
+                }),
+                _ => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+            };
+            (
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                response.to_string(),
+            )
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind fake mcp");
+        let addr = listener.local_addr().expect("fake mcp addr").to_string();
+        let app = Router::new().fallback(any(handler));
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve fake mcp");
+        });
+        format!("http://{addr}/mcp")
+    }
+
+    async fn test_state(cp_url: &str) -> Arc<AppState> {
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+        let client = xihe_runtime::hydrate::ExecutionSpecClient::new(cp_url, "test-token");
+        let ensurer = Arc::new(WorkspaceEnsurer::from_env_with_client(
+            registry.clone(),
+            manager.clone(),
+            client,
+        ));
+        let router = Arc::new(WorkspaceExecutionRouter::new(
+            ensurer.clone(),
+            manager.clone(),
+            registry.clone(),
+        ));
+        Arc::new(AppState {
+            registry,
+            manager,
+            device_id: "test-device".to_string(),
+            workspace_ensurer: ensurer,
+            router,
+            ready: Arc::new(AtomicBool::new(true)),
+        })
+    }
+
+    fn auth_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer dev-token-not-secure".parse().expect("auth header"),
+        );
+        headers
+    }
+
+    fn call_request(endpoint: &str, list_tools: bool) -> RemoteMcpCallRequest {
+        RemoteMcpCallRequest {
+            endpoint: endpoint.to_string(),
+            tool: if list_tools {
+                String::new()
+            } else {
+                "fake_echo".to_string()
+            },
+            arguments: serde_json::json!({"value": "hello"}),
+            user_id: "u-1".to_string(),
+            scope: "mcp:tools".to_string(),
+            request_state: None,
+            auth_mode: "no-auth".to_string(),
+            list_tools,
+        }
+    }
+
+    /// PLAN-242 M2.5 (Fake 门): tools/call 经身份校验直达 Fake，
+    /// 且不建容器、不写注册表。
+    #[tokio::test]
+    async fn remote_call_reaches_fake_without_container() {
+        allow_local_http();
+        let cp_url = cp_stub().await;
+        let endpoint = fake_mcp().await;
+        let app = test_state(&cp_url).await;
+
+        let result = remote_mcp_call_handler(
+            Path((TEST_WS.to_string(), "fake".to_string())),
+            State(app.clone()),
+            auth_headers(),
+            AxumJson(call_request(&endpoint, false)),
+        )
+        .await
+        .expect("remote call succeeds");
+
+        assert_eq!(result.0["content"][0]["text"], "wire-ok");
+        assert!(app.registry.status(TEST_WS).await.is_none());
+        assert!(app.manager.lock().await.list_workspaces().is_empty());
+    }
+
+    /// PLAN-242 M2.5 (Fake 门): listTools 返回工具表，同样不建容器。
+    #[tokio::test]
+    async fn remote_list_returns_tools_without_container() {
+        allow_local_http();
+        let cp_url = cp_stub().await;
+        let endpoint = fake_mcp().await;
+        let app = test_state(&cp_url).await;
+
+        let result = remote_mcp_call_handler(
+            Path((TEST_WS.to_string(), "fake".to_string())),
+            State(app.clone()),
+            auth_headers(),
+            AxumJson(call_request(&endpoint, true)),
+        )
+        .await
+        .expect("remote list succeeds");
+
+        assert_eq!(result.0["tools"][0]["name"], "fake_echo");
+        assert!(app.registry.status(TEST_WS).await.is_none());
+    }
+
+    /// PLAN-242 M2.3: 未知 workspace fail-closed（404），不建容器。
+    #[tokio::test]
+    async fn remote_call_unknown_workspace_fails_closed() {
+        allow_local_http();
+        let cp_url = cp_stub().await;
+        let endpoint = fake_mcp().await;
+        let app = test_state(&cp_url).await;
+
+        let error = remote_mcp_call_handler(
+            Path(("ws-missing".to_string(), "fake".to_string())),
+            State(app.clone()),
+            auth_headers(),
+            AxumJson(call_request(&endpoint, false)),
+        )
+        .await
+        .expect_err("unknown workspace must fail");
+
+        assert_eq!(error.0, StatusCode::NOT_FOUND);
+        assert!(app.manager.lock().await.list_workspaces().is_empty());
     }
 }

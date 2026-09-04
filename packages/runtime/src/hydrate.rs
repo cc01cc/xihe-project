@@ -249,6 +249,18 @@ impl WorkspaceEnsurer {
         Self::new(registry, manager, ExecutionSpecClient::from_env(), host_root)
     }
 
+    /// Test/embedding entry point: explicit spec client (no env reads).
+    pub fn from_env_with_client(
+        registry: Arc<WorkspaceRegistry>,
+        manager: Arc<Mutex<WorkspaceManager>>,
+        client: ExecutionSpecClient,
+    ) -> Self {
+        let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT")
+            .ok()
+            .map(PathBuf::from);
+        Self::new(registry, manager, client, host_root)
+    }
+
     async fn lock_for(&self, workspace_id: &str) -> Arc<Mutex<()>> {
         let mut locks = self.locks.lock().await;
         locks
@@ -262,6 +274,26 @@ impl WorkspaceEnsurer {
         self.registry.mark_failed(workspace_id, &detail).await;
         error!(workspace_id, error = %detail, "workspace materialization failed");
         Err(error)
+    }
+
+    /// PLAN-242 M2: identity-only check for remote MCP calls. Fetches the
+    /// targeted ExecutionSpec (fail-closed on unknown id) without creating
+    /// any container or host directory.
+    pub async fn ensure_workspace_identity(&self, workspace_id: &str) -> Result<()> {
+        if !is_safe_workspace_id(workspace_id) {
+            return self
+                .failure(
+                    workspace_id,
+                    RuntimeError::InvalidExecutionSpec {
+                        workspace_id: workspace_id.to_string(),
+                        detail: "workspaceId contains invalid route characters".to_string(),
+                    },
+                )
+                .await;
+        }
+        let workspace_lock = self.lock_for(workspace_id).await;
+        let _guard = workspace_lock.lock().await;
+        self.client.fetch_for_workspace(workspace_id).await.map(|_| ())
     }
 
     pub async fn ensure_workspace_materialized(
@@ -587,5 +619,87 @@ mod tests {
         assert!(workspace_path.join(".xihe-sentinel").is_file());
         assert_eq!(registry.status("ws-1").await.unwrap().state, MaterializationState::Ready);
         mock.assert_async().await;
+    }
+
+    /// PLAN-242 M2: identity check passes on a valid spec without creating
+    /// any container, registry entry, or sentinel file.
+    #[tokio::test]
+    async fn identity_check_passes_without_materializing_container() {
+        let mut server = Server::new_async().await;
+        let hash = "a".repeat(64);
+        let mock = server
+            .mock(
+                "GET",
+                "/internal/v1/runtime/workspaces/ws-1/execution-spec",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(spec_body("ws-1", 1, &hash))
+            .create_async()
+            .await;
+
+        let host_root = tempfile::tempdir().unwrap();
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let ensurer = WorkspaceEnsurer::new(
+            registry.clone(),
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new(&server.url(), "test-token"),
+            Some(host_root.path().to_path_buf()),
+        );
+
+        ensurer.ensure_workspace_identity("ws-1").await.unwrap();
+        assert!(registry.status("ws-1").await.is_none());
+        mock.assert_async().await;
+    }
+
+    /// PLAN-242 M2: unknown workspace ids fail closed (no silent fallback).
+    #[tokio::test]
+    async fn identity_check_fails_closed_on_unknown_workspace() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock(
+                "GET",
+                "/internal/v1/runtime/workspaces/ws-missing/execution-spec",
+            )
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let ensurer = WorkspaceEnsurer::new(
+            Arc::new(WorkspaceRegistry::new()),
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new(&server.url(), "test-token"),
+            None,
+        );
+
+        let error = ensurer
+            .ensure_workspace_identity("ws-missing")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, RuntimeError::ExecutionSpecNotFound(_)),
+            "unexpected error: {error}"
+        );
+        mock.assert_async().await;
+    }
+
+    /// PLAN-242 M2: unsafe workspace ids are rejected before any CP lookup.
+    #[tokio::test]
+    async fn identity_check_rejects_unsafe_workspace_id() {
+        let ensurer = WorkspaceEnsurer::new(
+            Arc::new(WorkspaceRegistry::new()),
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new("http://127.0.0.1:9", "test-token"),
+            None,
+        );
+
+        let error = ensurer
+            .ensure_workspace_identity("../evil")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, RuntimeError::InvalidExecutionSpec { .. }),
+            "unexpected error: {error}"
+        );
     }
 }
