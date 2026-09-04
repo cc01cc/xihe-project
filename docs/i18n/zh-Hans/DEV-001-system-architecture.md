@@ -47,7 +47,7 @@ flowchart LR
 
 ### 1.2. Agent 模块 — Python / LangChain
 
-职责：LLM 调用、多 Agent 编排、工具选择、规划决策。Python + LangChain + litellm（`ChatLiteLLM`，100+ Provider）、uv、长驻后端服务；不碰文件系统/Shell，只做"思考"。
+职责：LLM 调用（直调 provider，不经 CP，见 DEV-013 §2.3）、多 Agent 编排、工具选择、规划决策。Python + LangChain + litellm（`ChatLiteLLM`，100+ Provider）、uv、长驻后端服务；不碰文件系统/Shell，只做"思考"。
 
 | 方面 | 选型 |
 |------|------|

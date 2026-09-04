@@ -62,6 +62,8 @@ LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters
 
 `XiheLiteLLM` 与 `MockChatModel` 实现 `LLMProvider`，方法为 `complete()` / `stream_complete()`。
 
+**调用路径（直调，不经 CP）**：Agent 经 litellm **直调** provider（api_base 写死各家 URL）；key/模型名来自 `LLMConfig.from_config_client()`（ConfigService 启动拉取）+ `XIHE_*_API_KEY` env 兜底。CP 只提供初始配置，不管每次传输；CP 也不组装 LLM 请求、不持有 provider key（BYOK 多租户之前不考虑 CP 代理，见 PLAN-243 Decision 1）。
+
 - 为兼容 LangGraph 编排，`XiheLiteLLM` 仍继承 `ChatLiteLLM`。
 - 未来切换到非 LangGraph 编排层时可移除该继承。
 
