@@ -1,0 +1,83 @@
+/* Typeset: rendered-markdown typography rhythm for chat messages.
+ * Scoped to .xihe-chat-markdown (markstream-vue output). Type-only layer:
+ * no layout, no colors beyond currentColor inheritance. */
+
+.xihe-chat-markdown {
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  overflow-wrap: break-word;
+}
+
+.xihe-chat-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.xihe-chat-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+/* NOTE: `p` margins stay under main.css compact override (chat density wins);
+   rhythm below covers the remaining block elements. */
+.xihe-chat-markdown ul,
+.xihe-chat-markdown ol,
+.xihe-chat-markdown pre,
+.xihe-chat-markdown blockquote,
+.xihe-chat-markdown table {
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+}
+
+.xihe-chat-markdown h1,
+.xihe-chat-markdown h2,
+.xihe-chat-markdown h3,
+.xihe-chat-markdown h4 {
+  font-weight: 600;
+  line-height: 1.4;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+}
+
+.xihe-chat-markdown h1 { font-size: 1.25em; }
+.xihe-chat-markdown h2 { font-size: 1.125em; }
+.xihe-chat-markdown h3 { font-size: 1em; }
+
+.xihe-chat-markdown ul,
+.xihe-chat-markdown ol {
+  padding-left: 1.5em;
+}
+
+.xihe-chat-markdown ul { list-style-type: disc; }
+.xihe-chat-markdown ol { list-style-type: decimal; }
+
+.xihe-chat-markdown li + li {
+  margin-top: 0.25em;
+}
+
+.xihe-chat-markdown blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 1em;
+  opacity: 0.9;
+}
+
+.xihe-chat-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875em;
+}
+
+.xihe-chat-markdown th,
+.xihe-chat-markdown td {
+  border: 1px solid var(--border);
+  padding: 0.375em 0.75em;
+  text-align: left;
+}
+
+.xihe-chat-markdown th {
+  font-weight: 600;
+}
+
+.xihe-chat-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.25em 0;
+}

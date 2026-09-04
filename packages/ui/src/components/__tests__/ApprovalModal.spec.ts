@@ -49,4 +49,25 @@ describe('ApprovalModal', () => {
     if (rejectBtn.length) await rejectBtn[0].trigger('click')
     expect(wrapper.emitted('reject')).toBeTruthy()
   })
+
+  // Scripted human-in-the-loop flow (no @shadcn/helpers: it requires AI SDK
+  // peers, Xihe uses a custom SSE transport — PLAN-243 M2.1 decision).
+  // Script: approve tc-1, then reject tc-2; each decision carries its own id
+  // and closes the modal.
+  it('scripted flow: approve then reject carries per-decision ids', async () => {
+    const wrapper = mountModal({ toolCall: mockToolCall, show: true }),
+      approveBtn = wrapper.findAll('button').filter(b => b.text().includes('Approve'))
+    expect(approveBtn.length).toBeGreaterThan(0)
+    await approveBtn[0].trigger('click')
+    expect(wrapper.emitted('approve')![0]).toEqual(['tc-1'])
+    expect(wrapper.emitted('close')).toBeTruthy()
+
+    const tc2 = { ...mockToolCall, id: 'tc-2', name: 'write_file' }
+    await wrapper.setProps({ toolCall: tc2, show: true })
+    const rejectBtn = wrapper.findAll('button').filter(b => b.text().includes('Reject'))
+    expect(rejectBtn.length).toBeGreaterThan(0)
+    await rejectBtn[0].trigger('click')
+    expect(wrapper.emitted('reject')![0]).toEqual(['tc-2'])
+    expect(wrapper.emitted('approve')).toHaveLength(1)
+  })
 })

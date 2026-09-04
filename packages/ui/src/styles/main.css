@@ -7,6 +7,7 @@
 @import "markstream-vue/index.tailwind.css" layer(components);
 @import "./scroll-fade.css";
 @import "./shimmer.css";
+@import "./typeset.css";
 
 /* Keep chat bubbles compact; markstream's document paragraph spacing is too large for messages. */
 .xihe-chat-markdown p,
