@@ -21,6 +21,8 @@ updated: 2026-09-03
 | `xihe-container-runtime` | 容器内（镜像预装） | `--oneshot` 模式：stdin 单 operation JSON → stdout 单 result JSON，EOF 即边界；处理文件/命令工具与 `/tmp/xihe-jobs` 后台任务 |
 | `xihe-mcp-bridge` | 容器内（镜像预装） | STDIO bridge：用户 STDIO MCP server ↔ HTTP（`POST /{server_id}`，30s 超时 / 1MB 缓冲；`/_spawn`、`/_kill/{id}`、`/_health` 管理端点） |
 
+> 两者平行无调用：bridge 不调 container-runtime，container-runtime 无 HTTP server，唯一交集是同住一个容器（端到端工具路径见 DEV-016）。remote MCP 不进容器，走 host 出网（身份校验，不建容器）。
+
 ## 2. 执行边界（PLAN-235）
 
 - Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作**全部在 Sandbox 内执行**，Runtime host 进程不直接读写 WorkspaceStorage，无 container failure → host fallback。

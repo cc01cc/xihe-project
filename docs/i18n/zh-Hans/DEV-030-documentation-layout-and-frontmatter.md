@@ -170,7 +170,10 @@ INDEX.md 等纯导航文件不需要特殊设置——LYJ 端自动排除。
 | 连接代数 | generation | SSE 会话连接的递增版本号，用于隔离新旧 emitter |
 | 轮次 | run / runId | 一次 `POST /api/v1/chat` 触发的单次模型执行 |
 | 消息分区 | MessagePart | 流式消息的内容单元（text/reasoning/citation/artifact） |
-| 工具命名空间 | tool namespace | 工具名前缀机制（当前未接线，见 DEV-014 §3） |
+| 工具命名空间 | tool namespace | 冲突时加 `serverId__` 前缀的按需隔离（sticky 落盘永不晋升，见 DEV-016 §4） |
+| 服务标识 | serverId | 路由键：STDIO 取用户配置顶层 key，remote 取 `mcp_servers` 表行 |
+| 工具代数 | tool generation | 每次 `tools/list` 合并递增，随审计四元组记录，用于历史回放 |
+| 免鉴权远端 | no-auth remote | `authMode=no-auth` 的公开 remote server，跳过 CP token broker |
 | 沙盒 | Sandbox | per-workspace Docker 容器执行面 |
 | 桥 | bridge（xihe-mcp-bridge） | 容器内 STDIO MCP server ↔ HTTP 的桥接进程 |
 | 画像 | profile（Strict/Coding/Isolated） | Workspace 隔离等级，PLAN-235 后全部进 Sandbox 执行 |

@@ -41,8 +41,8 @@ flowchart LR
 
 ## 3. MCP 反代与工具命名空间
 
-- `McpProxyController`：验 session-id HMAC 签名 + 提取 ws_id；`tools/list` 按原名合并系统工具 + 各 STDIO server 工具并建 tool→server 映射（5min TTL 缓存）；`tools/call` 查表路由；系统工具优先（同名用户工具跳过 + 告警）。
-- `ToolNameRewriter`（`read_file` ↔ `runtime__read_file`）：已实现且有单测，但当前未被 controller 接线（`@Component` 零注入），实际按原名转发；启用前缀路由须先接线。
+- `McpProxyController`：验 session-id HMAC 签名 + 提取 ws_id；`tools/list` 合并系统工具 + 各 STDIO server 工具 + 各 remote server 工具并建 tool→server 映射（5min TTL 缓存）+ sticky 别名落盘；`tools/call` 按三路（系统/stdio/remote）查表路由；命名 sticky（冲突仅新者加前缀，永不晋升）。
+- `ToolNameRewriter`（`read_file` ↔ `serverId__read_file`）：冲突时命名策略，已接线（PLAN-242 M2；全量前缀不取）。
 - 服务间调用统一 `Authorization: Bearer`；自有 JSON 用 camelCase + RFC 9457 Problem Details（`code` + `requestId`）。
 
 ## 4. OAuth 与 token broker

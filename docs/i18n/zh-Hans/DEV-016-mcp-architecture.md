@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 16
 status: active
 created: 2026-06-03
-updated: 2026-09-03
+updated: 2026-09-04
 ---
 
 # DEV-016: MCP 三层路由架构
@@ -32,14 +32,14 @@ flowchart TD
     end
     subgraph CP["CP McpProxyController (Java)"]
         C1["1. 验 session-id 签名 + 提取 ws_id"]
-        C2["2. tools/list: 合并系统工具 + 各 STDIO server 工具<br/>tool_name → server_id 映射 (5min TTL)"]
-        C3["3. tools/call: 按 tool name 查表路由"]
-        C4["4. 系统工具优先 (同名用户工具跳过 + 告警)"]
+        C2["2. tools/list: 合并系统工具 + 各 STDIO server 工具 + 各 remote server 工具<br/>tool_name → server_id 映射 (5min TTL) + sticky 别名表"]
+        C3["3. tools/call: 按 tool name 查表路由 (stdio / remote / 系统三路)"]
+        C4["4. 命名 sticky: system 裸名优先, 冲突仅新者加 server 前缀<br/>映射落盘永不晋升 (mcp_tool_aliases)"]
     end
     subgraph GW["Runtime Gateway (Rust / Axum)"]
         G1["/mcp (any): 系统工具调用"]
-        G2["/remote-mcp/../call (POST): 远程 MCP"]
-        G3["/mcp/spawn (POST 启动 / GET 列表)<br/>/mcp/spawn/{id} (DELETE 停止)<br/>/mcp/stdio/{id} (POST 调用)"]
+        G2["/remote-mcp/{ws}/{server}/call (POST): 远程 MCP (身份校验, 不建容器)"]
+        G3["/mcp/spawn (HTTP 预留 deprecated, 实际由轮询驱动)<br/>/mcp/stdio/{id} (POST 调用)"]
         G4["配置轮询 30s: 读 CP mcpServers JSON, diff 后管理"]
     end
     subgraph SB["容器 xihe-workspace-ws_{id}"]
@@ -63,7 +63,8 @@ sequenceDiagram
   CP->>CP: 验 session-id → 读 DB mcpServers
   CP->>RT: /mcp (系统 tools/list)
   CP->>RT: /mcp/stdio/{id} (各 STDIO tools/list)
-  CP->>CP: 合并 + tool→server 映射 (5min TTL)
+  CP->>RT: /remote-mcp/{ws}/{server}/call listTools (各 remote tools/list, 身份校验不建容器)
+  CP->>CP: 合并 + tool→server 映射 (5min TTL) + sticky 别名落盘
   CP-->>Agent: 合并工具列表
 ```
 
@@ -76,8 +77,10 @@ sequenceDiagram
   CP->>CP: 查 tool→server 映射
   alt 系统工具
     CP->>RT: /mcp → exec 进 Sandbox 执行
-  else 用户工具
+  else STDIO 用户工具
     CP->>RT: /mcp/stdio/{id} → bridge STDIN/STDOUT
+  else remote 工具
+    CP->>RT: /remote-mcp/{ws}/{server}/call → host 出网 (身份校验, 不建容器)
   end
   CP-->>Agent: 透传结果
 ```
@@ -89,8 +92,12 @@ sequenceDiagram
 | MCP transport | Streamable HTTP | MCP 社区已废弃 SSE |
 | STDIO 桥接方式 | Rust bridge binary | shell 无法处理 JSON-RPC streaming |
 | Bridge 部署 | 多阶段构建进 workspace 镜像（builder 编译双 binary + COPY） | 无 bind mount |
-| 路由策略 | tool-name based | Agent 无需感知 server_id |
-| 工具冲突 | 系统优先 + 告警 | 保证平台工具可用性 |
+| 路由策略 | tool-name based（三路：系统 / stdio / remote，`McpServer` 表命中即 remote） | Agent 无需感知 server_id |
+| 工具冲突 | sticky：system 裸名优先，冲突仅新者加 `serverId__` 前缀，映射落盘永不晋升 | 无冲突零改名；历史按 `(serverId, backendName, generation)` 回放 |
+| serverId 来源 | 双源：STDIO 为用户配置键透传，remote 为 `mcp_servers` 表行 | 无 id 生成器；表命中优先于 JSON key |
+| remote 执行 | 身份校验（Spec 存在性 + 授权），不建容器；unknown 显式失败 | 防越权/计费逃逸；SSRF 靠 allowlist + DNS |
+| remote 认证 | `authMode: oauth/no-auth`；no-auth 跳过 broker（多余 Bearer 经实测被忽略） | 公开 server 免 OAuth |
+| spawn 状态 | HTTP 三端点 deprecated 预留，实际由 30s 轮询自同步驱动 | 删逻辑前需确认 admin/排障依赖 |
 | 配置格式 | Claude Desktop JSON textarea | 业界标准，用户直接复制粘贴 |
 | 配置存储 | PostgreSQL JSONB | 类型校验 + 索引支持 |
 | workspace 隔离 | task-local（非 env var） | 支持多 workspace 单进程 |
@@ -117,6 +124,8 @@ sequenceDiagram
   → Runtime: diff 当前 bridge 列表 → spawn/stop
 ```
 
+remote server 不走上式，走 `mcp_servers` 表（OAuth 授权或 `authMode=no-auth` 直写）：`workspaceId/name/endpoint/authConfig/enabled/authMode`，CP 按表判定分流，Runtime 经 CP broker 取短期 token（no-auth 跳过）。
+
 ## 7. 测试策略
 
 | 层级 | 内容 | 命令 |
@@ -139,7 +148,9 @@ sequenceDiagram
 | `packages/runtime/src/mcp_process.rs` | Gateway 侧 STDIO 管理 |
 | `packages/runtime/src/workspace.rs` | 容器 + bridge 生命周期 |
 | `packages/runtime/src/main.rs` | 路由注册 + 配置轮询 |
-| `packages/control-plane/.../McpProxyController.java` | CP 层路由代理 |
+| `packages/control-plane/.../McpProxyController.java` | CP 层路由代理（三路分流 + sticky 合并） |
+| `packages/control-plane/.../entity/McpServer.java`（`authMode`） | remote server 行（含 no-auth 标记） |
+| `packages/control-plane/.../entity/McpToolAlias.java` | sticky 别名落盘（`workspace_id + issued_name` 主键） |
 | `packages/control-plane/.../ConfigController.java` | MCP 配置 API |
 | `packages/ui/src/views/settings/ConfigSettings.vue`（mcpJson textarea + saveMcpConfig，未设独立 MCP 设置页） | MCP 配置 UI |
 

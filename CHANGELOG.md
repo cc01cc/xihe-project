@@ -16,6 +16,7 @@
 - MCPClientManager workspace_id fail-fast：实际执行 MCP 初始化时缺少 workspace 会明确失败，纯 chat 启动不触发该路径。
 - 统一 HTTP API 契约：公开 API 使用 `/api/v1`、服务间 API 使用 `/internal/v1`，统一 Bearer 鉴权、camelCase 和 Problem Details；MCP/OAuth 协议字段保持原样。
 - Remote MCP 最小闭环：UI OAuth（Authorization Code + PKCE）→ CP callback/加密 credential → Agent 只连 CP logical endpoint → Runtime 短期 token 调用远程 MCP，401 经 CP broker 单次 refresh/retry；requestState 绑定/TTL/一次性消费。
+- CP remote 接线（PLAN-242 M2）：`forwardToRuntime` 按 `mcp_servers` 表命中分三路（系统/`/mcp`、stdio/`/mcp/stdio/{id}`、remote/`/remote-mcp/{ws}/{server}/call`）；remote 只做身份校验不建容器；`mcp_servers.auth_mode` 支持 `no-auth` 公开 server（跳过 broker）；工具命名 sticky（冲突仅新者加前缀，`mcp_tool_aliases` 落盘永不晋升）；`spawn` HTTP 三端点标 deprecated（轮询自同步为正道）。
 - 日志安全与可观测性：四模块序列化层统一脱敏（token/JWT/Bearer/PEM → `***redacted***`），`X-Request-Id` 由 CP 生成并向 Runtime/Agent 贯通，审计日志持久化至 `logs/audit.log`，新增 `scripts/scan-log-secrets.mjs` 泄露扫描门禁。
 - UI 响应式修复：移动端根据 viewport 使用侧栏抽屉，收起时隐藏内部内容，补充移动导航入口；侧栏背景和导航图标改用有效的主题变量与 `@lucide/vue` 组件。
 - Agent 非致命路径治理：无 embedding 凭据时跳过 RAG enrichment 并让 RAG ingest/search 返回 503；MCP 初始化延迟到 workspace 请求；事件存储时间统一使用带时区 UTC。

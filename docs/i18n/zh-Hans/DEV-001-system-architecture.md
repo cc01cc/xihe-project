@@ -141,7 +141,7 @@ MVP 零额外基础设施（无消息队列/WS 网关）；后续可按需引入
 ### 1.6. 设计备注
 
 - **统一 MCP 反向代理**：Agent 所有 MCP 调用指向 CP 单一入口，按工具名前缀路由后端；Agent 不感知后端分布。（历史设计名：DESIGN-007）
-- **工具名命名空间**：`ToolNameRewriter`（`read_file` ↔ `runtime__read_file`）已实现且有单测，但当前 `McpProxyController` 未接线（实际经 `RequestRewriter` 按原名合并转发）；如需启用前缀路由须先接线。（历史设计名：DESIGN-009）
+- **工具名命名空间**：`ToolNameRewriter`（`read_file` ↔ `serverId__read_file`）冲突时策略，已接线（PLAN-242 M2；无冲突零改名，映射落盘永不晋升）。（历史设计名：DESIGN-009）
 - **工具自发现**：Runtime 经标准 `tools/list` 暴露 Schema，Agent 经 CP 自动发现，零手动同步。
 - **零 MCP SDK 依赖（CP 侧）**：CP 纯 HTTP 反代，直接解析 JSON-RPC 做权限检查与改写。（历史设计名：DESIGN-001）
 
