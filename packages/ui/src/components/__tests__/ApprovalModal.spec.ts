@@ -51,7 +51,8 @@ describe('ApprovalModal', () => {
   })
 
   // Scripted human-in-the-loop flow (no @shadcn/helpers: it requires AI SDK
-  // peers, Xihe uses a custom SSE transport — PLAN-243 M2.1 decision).
+  // peers, Xihe's chat runs on fetch-event-source + custom session management
+  // — PLAN-243 M2.1 decision).
   // Script: approve tc-1, then reject tc-2; each decision carries its own id
   // and closes the modal.
   it('scripted flow: approve then reject carries per-decision ids', async () => {
