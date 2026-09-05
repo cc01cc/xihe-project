@@ -163,7 +163,7 @@ catch (e) {
 |--------|------|------|
 | Console | `console.log/debug/warn/error` | 开发调试 |
 | IndexedDB | Dexie (`XiheLogDB.logs`) | 本地持久化，10k 条上限，自动清理 |
-| Telemetry batch | POST `/api/v1/telemetry/logs` 或 `/api/v1/telemetry/anonymous` | 5s 间隔，50 条/批，64KB 上限；**当前 UI 侧已禁用发送**（`sendTelemetry` 直接丢弃），CP 端点保留 |
+| Telemetry batch | POST `/api/v1/telemetry/logs` | 5s 间隔，50 条/批，64KB 上限；**当前 UI 侧已禁用发送**（`sendTelemetry` 直接丢弃），CP 端点保留 |
 
 支持 `logger.exportLogs()` / `logger.download()` 导出和下载日志。
 
@@ -174,9 +174,10 @@ CP `TelemetryController` 接收前端遥测日志：
 | 端点 | 认证 | 限流 | 说明 |
 |------|------|------|------|
 | `POST /api/v1/telemetry/logs` | JWT (`@PreAuthorize`) | 无 | 已登录用户遥测 |
-| `POST /api/v1/telemetry/anonymous` | 无 | 每设备每 60s 仅 1 次（内存） | 匿名设备遥测 |
 
-写入 `{XIHE_LOG_DIR}/telemetry.log`（日轮转，7d / 500MB / 100MB，JSONL）。
+> 旧 `POST /api/v1/telemetry/anonymous` 已移除（PLAN-245）：该路径实际被 `/api/v1/**` 角色门槛拦截、从未可用，且无消费者；遥测统一走 JWT 端点。
+
+写入 `{XIHE_LOG_DIR}/telemetry.log`（日轮转，7d / 500MB / 100MB，JSONL；经 `RedactingLogstashEncoder` 脱敏）。
 
 ## 5. 审计日志
 
@@ -273,3 +274,75 @@ node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
 - 每个 catch 必须有日志
 - 异常日志必须包含 stacktrace（`exc_info=True` / `e` as parameter / `{e:?}`）
 - 禁止 `except: pass` / `catch {}` / `catch (Exception ignored)`
+
+## 8. 日志编写规范（LogRecord v1，PLAN-245）
+
+### 8.1 字段契约
+
+每条跨模块结构化日志（JSONL）至少包含必填字段；场景字段按需携带：
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `timestamp` | ✅ | RFC 3339 UTC（或 Unix 毫秒） |
+| `level` | ✅ | trace/debug/info/warn/error |
+| `service` | ✅ | cp / agent / runtime / ui |
+| `event` | ✅ | 稳定事件名（snake_case，如 `channel_connected`） |
+| `requestId` | 场景 | 请求链路关联（CP 入口生成） |
+| `runId` | 场景 | chat run 关联 |
+| `sessionId` / `workspaceId` / `deviceId` | 场景 | 租户/设备上下文 |
+| `operation` | 场景 | 被执行的操作名 |
+| `outcome` | 场景 | ok / failed / cancelled |
+| `durationMs` | 场景 | 耗时 |
+| `errorCode` | 失败时 | 稳定错误码（大写，如 `AGENT_TIMEOUT`） |
+
+### 8.2 级别使用场景
+
+| 级别 | 场景 |
+|------|------|
+| `trace` | Runtime 内部细节（帧解析、exec 中间态） |
+| `debug` | 解析回退、连接细节、正常取消、高频事件采样 |
+| `info` | 启动/就绪、状态变更、操作成功、连接建立/断开 |
+| `warn` | 重试、降级、可恢复失败、用户拒绝、心跳超时 |
+| `error` | 操作失败、未处理异常、持久化失败 |
+
+### 8.3 异常分类处理
+
+| 异常类别 | 级别 | 要求 |
+|---------|------|------|
+| 正常取消 / 客户端断开 | info/debug | 记稳定事件 + reason，不带 stacktrace |
+| 预期校验失败（4xx 类） | warn | 记稳定 errorCode + 脱敏 detail |
+| 可恢复外部调用失败 | warn | 记 attempt/重试上下文；不记原始 body |
+| 未预期异常 | error | 必须带 stacktrace |
+| 任何异常 | — | 禁止静默吞掉（`catch {}` / `except: pass`） |
+
+### 8.4 禁止清单（红线）
+
+- Token、Cookie、密码、`Authorization` 原文、API key。
+- Prompt / 消息正文 / 工具参数原文 / stdout 内容。
+- 宿主机绝对路径、容器 IP、完整 env。
+- 原始 provider error body（只记 status + errorCode）。
+
+## 9. 日志采集边界（外部采集器，PLAN-245）
+
+### 9.1 架构
+
+```text
+各模块 stdout / 本地 JSONL（LogRecord v1 字段）
+   → 外部 collector（tail 文件或容器 stdout）
+   → 本地磁盘缓冲 / 批量 / 压缩 / 重试
+   → HTTPS / OTLP / 云厂商日志服务
+```
+
+CP 不做日志中心：不新增 CP 日志汇聚端点；`/api/v1/logs`、`/api/v1/telemetry/logs` 仅是客户端事件入口。采集失败不得阻塞业务请求；投递语义 at-least-once，下游按日志 ID 去重。
+
+### 9.2 采集路径
+
+| 模式 | 来源 | 说明 |
+|------|------|------|
+| `dev:host` | `logs/cp.log`、`logs/agent.log`、`logs/runtime.log.*` | collector tail 文件并维护 offset；日志轮转（Runtime 按日）后续读新文件 |
+| Compose | 容器 stdout/stderr 或日志目录只读挂载 | 优先容器 stdout（`XIHE_LOG_DIR=/logs` 已落盘时挂只读卷） |
+| 生产 | 平台采集器（DaemonSet/sidecar/主机 agent） | 启用 TLS + 服务认证 + disk buffer；collector 选型按部署环境定（推荐 OTLP 兼容） |
+
+### 9.3 双重脱敏
+
+应用侧脱敏（既有 RedactingWriter / RedactingLogstashEncoder / log_redact patcher）是第一道边界；collector 侧应再配置 drop/rewrite 规则兜底。`node scripts/scan-log-secrets.mjs` 为最终门禁，覆盖 channel/LogRecord JSON 字段。

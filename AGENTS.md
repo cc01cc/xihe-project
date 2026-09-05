@@ -193,7 +193,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 | **环境变量** | 运行前固定（端口/DB/JWT） | `.env.example` → `.env.dev`（gitignore） | ❌ |
 | **ConfigService** | 运行时可改（API key/模型/日志） | `config.import.example.jsonc` → `config.import.local.jsonc`（gitignore） | ✅ UI / API |
 
-日常 host 开发推荐 `mise run dev:host`；`mise run dev:full` 仅用于一次性全容器场景，会自动导入 `config.import.local.jsonc`。配置生效优先级推荐为：OS 引导变量 → `.env.dev` → ConfigService / UI Settings。
+日常 host 开发推荐 `mise run dev:host`；`mise run dev:full` 仅用于一次性全容器场景，CP ready 后按导入语义处理 `config.import.local.jsonc`（默认打印 reset-admin 指引，`XIHE_DEV_ADMIN_PASSWORD` 显式启用）。配置生效优先级推荐为：启动环境变量 → `.env.dev` → ConfigService / UI Settings；三类配置归属速查见 DEV-003 §2。
 
 ## Testing
 

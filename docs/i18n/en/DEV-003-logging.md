@@ -152,7 +152,7 @@ catch (e) {
 |----------------|--------|-------------|
 | Console | `console.log/debug/warn/error` | Development debugging |
 | IndexedDB | Dexie (`XiheLogDB.logs`) | Local persistence, 10k entry limit, auto-cleanup |
-| Telemetry batch | POST `/api/v1/telemetry/logs` or `/anonymous` | 5s interval, 50 entries/batch, 64KB limit |
+| Telemetry batch | POST `/api/v1/telemetry/logs` | 5s interval, 50 entries/batch, 64KB limit; **UI-side sending is intentionally disabled** (`sendTelemetry` drops the batch), CP endpoint retained |
 
 Supports `logger.exportLogs()` / `logger.download()` for exporting and downloading logs.
 
@@ -163,9 +163,10 @@ CP `TelemetryController` receives frontend telemetry logs:
 | Endpoint | Auth | Rate Limit | Description |
 |----------|------|------------|-------------|
 | `POST /api/v1/telemetry/logs` | JWT (`@PreAuthorize`) | None | Logged-in user telemetry |
-| `POST /api/v1/telemetry/anonymous` | None | 100 req/min/device (in-memory) | Anonymous device telemetry |
 
-Writes to `{XIHE_LOG_DIR}/telemetry.log` (daily rotation, 7d / 500MB / 100MB, JSONL).
+> The former `POST /api/v1/telemetry/anonymous` endpoint has been removed (PLAN-245): it was blocked by the `/api/v1/**` role gate, never reachable anonymously, and had no consumers. Telemetry uses the JWT endpoint only.
+
+Writes to `{XIHE_LOG_DIR}/telemetry.log` (daily rotation, 7d / 500MB / 100MB, JSONL; redacted via `RedactingLogstashEncoder`).
 
 ## 5. Audit Logging
 

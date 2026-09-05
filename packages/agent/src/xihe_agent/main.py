@@ -13,12 +13,12 @@ from contextlib import asynccontextmanager, suppress
 from typing import Any
 from uuid import uuid4
 
+import litellm
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import BaseMessage
 from litellm import get_llm_provider
-import litellm
 
 # Suppress litellm verbose debugging that prints Authorization headers and
 # full request payloads (curl -H 'Authorization: ...'). The redaction boundary

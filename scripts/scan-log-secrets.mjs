@@ -14,6 +14,8 @@ const PATTERNS = [
   { name: 'bearer-token', re: /Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi },
   { name: 'jwt', re: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
   { name: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
+  // XH Channel (PLAN-245): envelope payloads must never carry secrets; catch
+  // Authorization/pwd-style keys inside channel/LogRecord JSON fields.
   {
     name: 'quoted-secret-field',
     re: new RegExp(

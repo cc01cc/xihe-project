@@ -2,11 +2,11 @@ package com.cc01cc.p.xihe.cp.telemetry;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
-import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.rolling.RollingFileAppender;
 import ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy;
 import ch.qos.logback.core.util.FileSize;
+import com.cc01cc.p.xihe.cp.logging.RedactingLogstashEncoder;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -16,14 +16,13 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/api/v1/telemetry")
 public class TelemetryController {
 
     private static final Logger telemetryLogger;
-    private final ConcurrentHashMap<String, Long> rateLimitCache = new ConcurrentHashMap<>();
+    private final String logDir;
 
     static {
         LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
@@ -33,20 +32,19 @@ public class TelemetryController {
         RollingFileAppender<ILoggingEvent> appender = new RollingFileAppender<>();
         appender.setContext(context);
         appender.setName("TELEMETRY_FILE");
-        appender.setFile(System.getProperty("XIHE_LOG_DIR", "logs") + "/telemetry.log");
+        appender.setFile(System.getProperty("XIHE_LOG_DIR", System.getenv().getOrDefault("XIHE_LOG_DIR", "logs")) + "/telemetry.log");
 
         SizeAndTimeBasedRollingPolicy<ILoggingEvent> policy = new SizeAndTimeBasedRollingPolicy<>();
         policy.setContext(context);
         policy.setParent(appender);
-        policy.setFileNamePattern(System.getProperty("XIHE_LOG_DIR", "logs") + "/telemetry.log.%d{yyyy-MM-dd}.%i.gz");
+        policy.setFileNamePattern(System.getProperty("XIHE_LOG_DIR", System.getenv().getOrDefault("XIHE_LOG_DIR", "logs")) + "/telemetry.log.%d{yyyy-MM-dd}.%i.gz");
         policy.setMaxHistory(7);
         policy.setTotalSizeCap(FileSize.valueOf("500MB"));
         policy.setMaxFileSize(FileSize.valueOf("100MB"));
         policy.start();
 
-        PatternLayoutEncoder encoder = new PatternLayoutEncoder();
+        RedactingLogstashEncoder encoder = new RedactingLogstashEncoder();
         encoder.setContext(context);
-        encoder.setPattern("%msg%n");
         encoder.start();
 
         appender.setRollingPolicy(policy);
@@ -55,23 +53,14 @@ public class TelemetryController {
         telemetryLogger.addAppender(appender);
     }
 
-    @Value("${XIHE_LOG_DIR:logs}")
-    private String logDir;
+    public TelemetryController(@Value("${XIHE_LOG_DIR:logs}") String logDir) {
+        this.logDir = logDir;
+    }
 
     @PostMapping("/logs")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     public ResponseEntity<Map<String, String>> ingestAuth(@RequestBody TelemetryEntry.BatchRequest request) {
         writeEntries(request, "client");
-        return ResponseEntity.ok(Map.of("status", "ok"));
-    }
-
-    @PostMapping("/anonymous")
-    public ResponseEntity<Map<String, String>> ingestAnonymous(@RequestBody TelemetryEntry.BatchRequest request) {
-        if (!checkRateLimit(request.getDevice_id())) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                    .body(Map.of("status", "rate_limited"));
-        }
-        writeEntries(request, "client-anon");
         return ResponseEntity.ok(Map.of("status", "ok"));
     }
 
@@ -89,17 +78,6 @@ public class TelemetryController {
             );
             telemetryLogger.info(msg);
         }
-    }
-
-    private boolean checkRateLimit(String deviceId) {
-        if (deviceId == null) return true;
-        long now = System.currentTimeMillis();
-        Long last = rateLimitCache.get(deviceId);
-        if (last != null && (now - last) < 60_000) {
-            return false;
-        }
-        rateLimitCache.put(deviceId, now);
-        return true;
     }
 
     private static String escapeJson(String value) {

@@ -226,8 +226,6 @@ paths:
     post: { operationId: ingestLogs, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
   /api/v1/telemetry/logs:
     post: { operationId: ingestTelemetry, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
-  /api/v1/telemetry/anonymous:
-    post: { operationId: ingestAnonymousTelemetry, responses: { '200': { description: Accepted } } }
   /api/v1/config/{domain}:
     get: { operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Configuration map } } }
   /api/v1/config/admin/{domain}:

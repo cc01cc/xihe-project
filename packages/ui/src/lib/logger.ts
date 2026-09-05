@@ -163,13 +163,15 @@ class Logger {
   }
 
   private async sendTelemetry(payload: string): Promise<void> {
-    // Backend does not have telemetry endpoint yet — disable sending to avoid 404 errors
+    // Telemetry sending is intentionally disabled (CP endpoint exists at
+    // /api/v1/telemetry/logs but the UI opts out). Do not re-enable without
+    // reviewing the batching/redaction contract in DEV-004.
     void payload
     return
   }
 
   private clearBatchOnPageHide(): void {
-    // Backend does not have telemetry endpoint yet — discard queued telemetry on unload
+    // Telemetry sending is intentionally disabled — discard queued telemetry on unload
     this.batch.splice(0, this.batch.length)
   }
 

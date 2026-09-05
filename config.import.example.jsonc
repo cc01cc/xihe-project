@@ -3,7 +3,8 @@
   // xihe 配置导入模板 — Admin Layer
   // =========================================================================
   // 用法:
-  //   cp config.import.example.jsonc config.import.local.jsonc
+  //   PowerShell: Copy-Item config.import.example.jsonc config.import.local.jsonc
+  //   Git Bash:   cp config.import.example.jsonc config.import.local.jsonc
   //   # 填入真实 API key
   //   curl -X POST /api/v1/config/import \
   //     -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -41,6 +42,9 @@
   },
 
   // logging — Admin Layer
+  // 说明：logLevel/levelAgent/levelCp/levelRuntime 由 schema 校验；
+  // instructions/userName 不在 logging schema 内（Agent 读取，见 xihe_agent/main.py），
+  // 依赖 ConfigService.importJsonc 绕过 schema 校验才可经本文件导入——如收紧校验请改走 UI Settings。
   "logging": {
     "logLevel": "debug",
     "levelAgent": "debug",
@@ -55,8 +59,9 @@
   },
 
   // workspace-config — Admin Layer
+  // 说明：workspacePath 字段已废弃（Runtime 明确 storageRef 判死，无 fallback）；
+  // profile 为 Sandbox 执行 profile（strict/coding/isolated）。
   "workspace-config": {
-    "workspacePath": "./workspace",
     "workspaceId": "ws_default",
     "image": "xihe/workspace:latest",
     "dockerImage": "xihe/workspace:latest",

@@ -41,9 +41,9 @@ flowchart TD
 
 UI 入口 `/settings/config` 分 3 个 tab 对应三层。
 
-## 2. 引导环境变量（.env.dev）
+## 2. 启动环境变量（.env.dev）
 
-仅基础设施启动变量走 OS 环境变量（`.env.example` → `.env.dev`，gitignore，不可运行时修改）：
+仅基础设施启动变量走进程启动环境变量（"启动环境变量"指服务启动前由 Shell、mise、`.env.dev` 或脚本注入进程的变量，修改后通常需重启；`.env.example` → `.env.dev`，gitignore，不可运行时修改）：
 
 | 变量 | 说明 |
 |------|------|
@@ -55,7 +55,15 @@ UI 入口 `/settings/config` 分 3 个 tab 对应三层。
 | `XIHE_LOAD_DOTENV` | `0`：各模块不从 `.env` 读取应用层配置 |
 | `XIHE_LOG_LEVEL` / `XIHE_LOG_LEVEL_<MODULE>` | 日志等级回退链（详见 DEV-004） |
 
-生效优先级：OS 引导变量 → `.env.dev` → ConfigService / UI Settings。
+生效优先级：启动环境变量 → `.env.dev` → ConfigService / UI Settings（按变量归属分别生效，见下表）。
+
+**配置归属速查**：
+
+| 配置类别 | 归属 | 生效方式 |
+|---------|------|---------|
+| 端口、DB 连接、JWT secret、模块间 URL、service token、Workspace 根 | 启动环境变量 / `.env.dev` | 重启生效 |
+| Provider/API key、模型、部分日志等级、embedding、user-preference | ConfigService（运行时） | 立即生效 |
+| Agent LLM 环境变量兜底（`XIHE_LLM_PROVIDER`、`XIHE_MODEL`、`XIHE_*_API_KEY` 等） | Agent env fallback（`llm/base.py`） | 仅 ConfigClient 不可用或对应 key 缺失时兜底，双轨并存为已知现状 |
 
 ## 3. ConfigService（运行时配置）
 
