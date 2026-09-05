@@ -5,6 +5,11 @@ const externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === '1'
 const e2eProfile = process.env.XIHE_E2E_PROFILE || 'all'
 const headed = process.env.XIHE_E2E_HEADED === '1'
 const browserChannel = process.env.XIHE_E2E_BROWSER_CHANNEL
+const viewport = (() => {
+  const match = /^(\d+)x(\d+)$/.exec(process.env.XIHE_E2E_VIEWPORT ?? '')
+  if (match) return { width: Number(match[1]), height: Number(match[2]) }
+  return { width: 1920, height: 1080 }
+})()
 
 export default defineConfig({
   testDir: '..',
@@ -15,7 +20,7 @@ export default defineConfig({
     baseURL: `http://localhost:${UI_PORT}`,
     headless: !headed,
     ...(browserChannel ? { channel: browserChannel } : {}),
-    viewport: { width: 1920, height: 1080 },
+    viewport,
     deviceScaleFactor: 2,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',

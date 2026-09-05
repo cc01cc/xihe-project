@@ -57,6 +57,13 @@ async function openChat(page: Page, auth: Auth) {
   await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 }
 
+async function expectNoHorizontalOverflow(page: Page) {
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  )
+  expect(overflow).toBeLessThanOrEqual(1)
+}
+
 test.describe('PLAN-247 Chat availability @host', () => {
   if (mode === 'missing') {
     test('missing credentials preserve input and create no messages', async ({ page, request }) => {
@@ -72,6 +79,7 @@ test.describe('PLAN-247 Chat availability @host', () => {
     await expect(textarea).toHaveValue(text)
     const id = await sessionId(request, auth)
     await expect.poll(async () => (await messages(request, auth, id)).length, { timeout: 5000 }).toBe(0)
+    await expectNoHorizontalOverflow(page)
     await page.screenshot({ path: test.info().outputPath('PLAN-247-host-no-credentials.png'), fullPage: true })
     })
   }
@@ -91,6 +99,7 @@ test.describe('PLAN-247 Chat availability @host', () => {
     const id = await sessionId(request, auth)
     const stored = await messages(request, auth, id)
     expect(stored.some((message: { role?: string }) => message.role === 'ASSISTANT')).toBe(false)
+    await expectNoHorizontalOverflow(page)
     await page.screenshot({ path: test.info().outputPath('PLAN-247-host-credential-error.png'), fullPage: true })
     })
   }
@@ -139,7 +148,14 @@ test.describe('PLAN-247 Chat availability @host', () => {
     }, { timeout: 30000 }).toBeGreaterThan(0)
     await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 30000 })
     expect(mcpRequests).toEqual([])
+    await expectNoHorizontalOverflow(page)
     await page.screenshot({ path: test.info().outputPath('PLAN-247-host-fake-success.png'), fullPage: true })
+
+    await page.reload({ waitUntil: 'load' })
+    await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(text, { exact: true })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText(/deepseek fake/)).toBeVisible({ timeout: 15000 })
+    await expectNoHorizontalOverflow(page)
     })
   }
 
@@ -156,6 +172,7 @@ test.describe('PLAN-247 Chat availability @host', () => {
       const stored = await messages(request, auth, id)
       return stored.some((message: { runStatus?: string }) => message.runStatus === 'ambiguous')
     }, { timeout: 30000 }).toBe(true)
+    await expectNoHorizontalOverflow(page)
     await page.screenshot({ path: test.info().outputPath('PLAN-247-host-run-ambiguous.png'), fullPage: true })
     })
   }
