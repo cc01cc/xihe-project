@@ -95,7 +95,7 @@ class TestLLMConfig:
 
         cfg = LLMConfig.from_env()
         assert cfg.provider == "xiaomi"
-        assert cfg.model == "mimo-v2-omni"
+        assert cfg.model == "mimo-v2.5"
         assert cfg.api_base == "https://api.xiaomimimo.com/v1"
 
     def test_from_config_client_uses_xiaomi_specific_values(self):
@@ -116,7 +116,7 @@ class TestLLMConfig:
         assert cfg.api_base == "https://api.xiaomimimo.com/v1"
         assert cfg.model == "mimo-v2.5"
 
-    def test_from_config_client_aligns_stale_provider_with_configured_model(self):
+    def test_from_config_client_keeps_explicit_provider_with_different_user_model(self):
         client = ConfigClient("http://test-cp", "test-token")
         client._admin_cache["llm-provider"] = {
             "defaultProvider": "deepseek",
@@ -129,9 +129,9 @@ class TestLLMConfig:
 
         cfg = LLMConfig.from_config_client(client)
 
-        assert cfg.provider == "xiaomi"
-        assert cfg.api_key == "sk-mimo-test"
-        assert cfg.api_base == "https://api.xiaomimimo.com/v1"
+        assert cfg.provider == "deepseek"
+        assert cfg.api_key == ""
+        assert cfg.model == "mimo-v2.5"
 
 
 class TestCreateLLM:

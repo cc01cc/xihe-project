@@ -67,6 +67,8 @@ src/xihe_agent/
 - `snake_case` 命名
 - 配置通过 ConfigClient 从 CP 获取，不从环境变量直接读取
 - model 格式为 `provider/model`（litellm 要求）
+- Agent 启动和周期 refresh 使用 atomic runtime snapshot；`llmReady` 必须独立于 HTTP liveness，并按 `missing_credentials`/`invalid_credentials`/`unreachable`/`model_unavailable`/`ready` fail-closed
+- `/internal/v1/agent/chat` 显式接收 `provider`、`model` 和 `toolMode`；`toolMode=none` 不初始化 MCP，`workspace` 模式必须绑定 workspace 且不得复用其他 workspace 的 MCP context
 - 每个 catch 必须有日志 + stacktrace
 - `interfaces/` 目录下禁止直接 import `langchain*`；LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph

@@ -32,7 +32,7 @@ PROVIDER_DEFAULTS: dict[ProviderName, dict[str, Any]] = {
     },
     "xiaomi": {
         "api_base": "https://api.xiaomimimo.com/v1",
-        "model": "mimo-v2-omni",
+        "model": "mimo-v2.5",
     },
     "ollama": {
         "api_base": "http://localhost:11434/v1",
@@ -114,17 +114,10 @@ class LLMConfig(BaseModel):
 
     @classmethod
     def from_config_client(cls, cc: "ConfigClient") -> "LLMConfig":
-        provider_str = (
-            cc.get("llm-provider", "defaultProvider")
-            or _provider_for_model(cc.get("user-preference", "defaultModel") or "")
-        )
+        provider_str = cc.get("llm-provider", "defaultProvider")
         model = cc.get("user-preference", "defaultModel")
         if not provider_str:
             provider_str = _provider_for_model(model) if model else "mock"
-        else:
-            inferred_provider = _provider_for_model(model) if model else provider_str
-            if inferred_provider != provider_str and cc.get_provider(inferred_provider):
-                provider_str = inferred_provider
 
         provider: ProviderName = cast(ProviderName, provider_str)
 

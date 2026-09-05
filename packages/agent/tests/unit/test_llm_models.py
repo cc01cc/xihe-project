@@ -19,7 +19,7 @@ async def test_list_models_no_config_returns_empty(patch_config_client):
 
     patch_config_client.config_client = None
     result = await list_models()
-    assert result == {"models": {}}
+    assert result == {"models": {}, "providers": {}, "configRevision": ""}
 
 
 @pytest.mark.asyncio
@@ -43,5 +43,52 @@ async def test_list_models_empty_providers(patch_config_client):
     from xihe_agent.llm.models import list_models
 
     patch_config_client.config_client.get_providers.return_value = {}
+    patch_config_client.config_client.config_revision = ""
     result = await list_models()
-    assert result == {"models": {}}
+    assert result == {"models": {}, "providers": {}, "configRevision": ""}
+
+
+@pytest.mark.asyncio
+async def test_list_models_success_includes_chat_capability(patch_config_client):
+    from xihe_agent.llm.models import list_models
+
+    patch_config_client.config_client.config_revision = "rev-1"
+    patch_config_client.config_client.get_providers.return_value = {
+        "xiaomi": {"apiKey": "test-key", "baseUrl": "https://provider.test/v1"},
+    }
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "data": [{"id": "mimo-v2.5"}, {"id": "mimo-v2.5-asr"}],
+    }
+    with patch("xihe_agent.llm.models.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        mock_client.get.return_value = response
+
+        result = await list_models()
+
+    assert result["models"]["xiaomi"] == ["mimo-v2.5", "mimo-v2.5-asr"]
+    models = result["providers"]["xiaomi"]["models"]
+    assert models[0]["capabilities"]["chat"] is True
+    assert models[1]["capabilities"]["chat"] is False
+    assert result["providers"]["xiaomi"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_list_models_auth_failure_has_actionable_status(patch_config_client):
+    from xihe_agent.llm.models import list_models
+
+    patch_config_client.config_client.config_revision = "rev-2"
+    patch_config_client.config_client.get_providers.return_value = {
+        "openai": {"apiKey": "invalid-key", "baseUrl": "https://provider.test/v1"},
+    }
+    response = MagicMock(status_code=401)
+    with patch("xihe_agent.llm.models.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        mock_client.get.return_value = response
+
+        result = await list_models()
+
+    assert result["providers"]["openai"]["status"] == "invalid_credentials"
+    assert result["providers"]["openai"]["reasonCode"] == "LLM_CREDENTIALS_INVALID"

@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager, suppress
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import litellm
@@ -19,14 +19,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import BaseMessage
 from litellm import get_llm_provider
-
-# Suppress litellm verbose debugging that prints Authorization headers and
-# full request payloads (curl -H 'Authorization: ...'). The redaction boundary
-# already masks Bearer/JWT, but litellm's own masking (Be****3z) still triggers
-# the scan-log-secrets gate. Disable verbose at the source.
-litellm.suppress_debug_info = True  # type: ignore[attr-defined]
-with suppress(Exception):
-    litellm.set_verbose = False  # type: ignore[attr-defined]
 from loguru import logger
 
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
@@ -43,13 +35,20 @@ from xihe_agent.context import (
 from xihe_agent.dotenv_loader import load_project_env
 from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
-from xihe_agent.llm.base import LLMConfig, create_llm
-from xihe_agent.llm.models import _models_router
+from xihe_agent.llm.base import LLMConfig, ProviderName, create_llm
+from xihe_agent.llm.models import _models_router, fetch_model_catalog
 from xihe_agent.llm.models import router as models_router
 from xihe_agent.rag import EmbeddingService, LiteLLMEmbeddings, VectorStore
 from xihe_agent.rag import chunk_document as rag_chunk
 from xihe_agent.registry.registry import WorkerRegistry
 from xihe_agent.tools import GenerateImageAgentTool, GenerateImageTool, ProviderManager
+
+# Suppress litellm verbose debugging that prints Authorization headers and
+# full request payloads. The redaction boundary already masks Bearer/JWT, but
+# disabling verbose output at the source keeps credentials out of logs.
+litellm.suppress_debug_info = True  # type: ignore[attr-defined]
+with suppress(Exception):
+    litellm.set_verbose = False  # type: ignore[attr-defined]
 
 
 def get_env(name: str) -> str | None:
@@ -114,41 +113,38 @@ logger.add(
 
 
 # Override log level from CP ConfigService
-async def _apply_cp_log_level():
+def _configure_log_level(level_name: str) -> None:
+    level = normalize_agent_log_level(level_name)
+    log_dir = get_env("XIHE_LOG_DIR") or "logs"
+    logger.remove()
+    logger.add(sys.stderr, level=level.upper())
+    logger.add(
+        os.path.join(log_dir, "agent.log"),
+        rotation="100 MB",
+        retention=7,
+        level=level.upper(),
+        serialize=True,
+    )
+
+
+async def _apply_cp_log_level() -> None:
     try:
-        config_client = ConfigClient()
-        level = await config_client.get("logging", "levelAgent")
+        level = config_client.get("logging", "levelAgent")
         if level:
-            level = normalize_agent_log_level(level)
-            logger.remove()  # Remove all handlers
-            _log_dir = get_env("XIHE_LOG_DIR") or "logs"
-            logger.add(sys.stderr, level=level.upper())
-            logger.add(
-                os.path.join(_log_dir, "agent.log"),
-                rotation="100 MB", retention=7,
-                level=level.upper(), serialize=True,
-            )
+            _configure_log_level(level)
     except Exception:
-        logger.warning("CP unreachable at startup, keeping current log level", exc_info=True)
+        logger.warning("CP log level unavailable, keeping current level", exc_info=True)
 
 
-async def _poll_log_level():
+async def _poll_runtime_config() -> None:
     while True:
         try:
-            config_client = ConfigClient()
-            level = await config_client.get("logging", "levelAgent")
-            if level:
-                level = normalize_agent_log_level(level)
-                logger.remove()  # Remove all handlers
-                _log_dir = get_env("XIHE_LOG_DIR") or "logs"
-                logger.add(sys.stderr, level=level.upper())
-                logger.add(
-                    os.path.join(_log_dir, "agent.log"),
-                    rotation="100 MB", retention=7,
-                    level=level.upper(), serialize=True,
-                )
+            await reload_runtime_config(reason="periodic")
         except Exception:
-            logger.warning("CP log-level poll failed, keeping current level", exc_info=True)
+            logger.warning(
+                "[LIFECYCLE] service=agent event=config_refresh_failed reason=periodic",
+                exc_info=True,
+            )
         await asyncio.sleep(30)
 
 
@@ -276,6 +272,11 @@ worker_registry: WorkerRegistry | None = None
 _watcher_observer: Any = None
 _watcher_event_handler: Any = None
 _agent_status: str = "starting"  # starting | ok | degraded
+_llm_ready: str = "unknown"
+_llm_verified_at: str | None = None
+_runtime_config_revision: str = ""
+_model_catalog: dict[str, Any] = {"models": {}, "providers": {}, "configRevision": ""}
+_runtime_refresh_lock = asyncio.Lock()
 
 
 def _log_token_usage(result: Any) -> None:
@@ -289,6 +290,131 @@ def _log_token_usage(result: Any) -> None:
                         meta.get("total_tokens", "?"))
     except Exception:
         logger.debug("Token usage metadata not available")
+
+
+def _derive_llm_ready(
+    report: dict[str, Any],
+    catalog: dict[str, Any],
+    config: LLMConfig,
+) -> tuple[str, str | None]:
+    required_status = (
+        report.get("domains", {})
+        .get("llm-provider", {})
+        .get("effective", "unknown")
+    )
+    if required_status in {"unreachable", "unauthorized", "invalid_response"}:
+        return "unknown", None
+    if config.provider == "mock":
+        return "ready", None
+
+    provider_info = catalog.get("providers", {}).get(config.provider)
+    if not isinstance(provider_info, dict):
+        return "missing_credentials", None
+
+    provider_status = provider_info.get("status")
+    if provider_status == "missing_credentials":
+        return "missing_credentials", None
+    if provider_status == "invalid_credentials":
+        return "invalid_credentials", None
+    if provider_status == "unreachable":
+        return "unreachable", None
+    if provider_status == "invalid_response":
+        return "model_unavailable", None
+    if provider_status != "ready":
+        return "unknown", None
+
+    model_entries = provider_info.get("models", [])
+    model_names = {
+        item.get("name")
+        for item in model_entries
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    chat_models = {
+        item.get("name")
+        for item in model_entries
+        if isinstance(item, dict)
+        and item.get("capabilities", {}).get("chat") is True
+    }
+    if config.model and config.model not in model_names:
+        return "model_unavailable", provider_info.get("verifiedAt")
+    if config.model and config.model not in chat_models:
+        return "model_unavailable", provider_info.get("verifiedAt")
+    return "ready", provider_info.get("verifiedAt")
+
+
+def _llm_readiness_error_code(readiness: str) -> str:
+    return {
+        "missing_credentials": "LLM_NOT_CONFIGURED",
+        "invalid_credentials": "LLM_CREDENTIALS_INVALID",
+        "unreachable": "LLM_PROVIDER_UNREACHABLE",
+        "model_unavailable": "LLM_MODEL_UNAVAILABLE",
+    }.get(readiness, "AGENT_UNAVAILABLE")
+
+
+def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
+    """Map provider failures to safe, stable client-facing error semantics."""
+    text = str(error).lower()
+    if any(marker in text for marker in ("missing credentials", "api key", "apikey")):
+        return "LLM_NOT_CONFIGURED", "Provider credentials are not configured", True
+    if any(marker in text for marker in ("authentication", "unauthorized", "401", "403")):
+        return "LLM_CREDENTIALS_INVALID", "Provider credentials were rejected", False
+    if any(marker in text for marker in ("timeout", "timed out")):
+        return "LLM_PROVIDER_UNREACHABLE", "Provider request timed out", True
+    if any(marker in text for marker in ("connection", "connect", "dns", "unreachable")):
+        return "LLM_PROVIDER_UNREACHABLE", "Provider is unreachable", True
+    return "AGENT_STREAM_FAILED", "Agent stream failed", True
+
+
+async def reload_runtime_config(reason: str) -> dict[str, Any]:
+    """Refresh config-derived dependencies and swap their runtime snapshot atomically."""
+    global llm_config, image_provider_manager, generate_image_tool
+    global AGENT_INSTRUCTIONS, AGENT_USER_NAME, USE_SUPERVISOR, USE_REGISTRY
+    global _llm_ready, _llm_verified_at, _runtime_config_revision, _model_catalog, _agent_status
+
+    async with _runtime_refresh_lock:
+        report = await config_client.sync_with_retry()
+        if report.get("refreshed"):
+            staged_llm_config = LLMConfig.from_config_client(config_client)
+            staged_image_manager = ProviderManager.from_config_client(config_client)
+            staged_catalog = await fetch_model_catalog(config_client)
+        else:
+            staged_llm_config = llm_config
+            staged_image_manager = image_provider_manager
+            staged_catalog = _model_catalog
+
+        staged_ready, staged_verified_at = _derive_llm_ready(
+            report,
+            staged_catalog,
+            staged_llm_config,
+        )
+
+        llm_config = staged_llm_config
+        image_provider_manager = staged_image_manager
+        generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
+        _model_catalog = staged_catalog
+        _llm_ready = staged_ready
+        _llm_verified_at = staged_verified_at
+        _runtime_config_revision = config_client.config_revision
+        _refresh_embedding_config()
+
+        if cc_instructions := config_client.get("logging", "instructions"):
+            AGENT_INSTRUCTIONS = cc_instructions
+        if cc_user_name := config_client.get("logging", "userName"):
+            AGENT_USER_NAME = cc_user_name
+        USE_SUPERVISOR = config_client.get_bool("logging", "useSupervisor")
+        USE_REGISTRY = config_client.get_bool("logging", "useRegistry")
+        _agent_status = "ok" if staged_ready == "ready" else "degraded"
+
+        logger.info(
+            "[LIFECYCLE] service=agent event=runtime_config_swapped reason={} revision={} llmReady={} provider={} model={} verifiedAt={}",
+            reason,
+            _runtime_config_revision,
+            _llm_ready,
+            llm_config.provider,
+            llm_config.model,
+            _llm_verified_at or "none",
+        )
+        return report
 
 
 async def _enrich_with_rag_context(content: str, instructions: str) -> str:
@@ -317,7 +443,7 @@ async def _get_mcp_tools(workspace_id: str | None) -> list[Any]:
     if mcp_manager.initialized and mcp_manager.workspace_id != workspace_id:
         # This process owns one MCP workspace in the minimal boundary. Never
         # reuse tools discovered for a different workspace.
-        return []
+        raise RuntimeError("MCP workspace context cannot be reused across workspaces")
 
     try:
         await mcp_manager.initialize(workspace_id=workspace_id)
@@ -327,23 +453,34 @@ async def _get_mcp_tools(workspace_id: str | None) -> list[Any]:
             workspace_id,
             e,
         )
-        return []
+        raise RuntimeError("MCP workspace initialization failed") from e
     return mcp_manager.tools
+
+
+async def _get_tools_for_mode(tool_mode: str, workspace_id: str | None) -> list[Any]:
+    """Keep the pure chat path free of MCP discovery and tool construction."""
+    if tool_mode == "none":
+        return []
+    if tool_mode == "workspace" and not workspace_id:
+        raise RuntimeError("workspaceId is required for workspace tool mode")
+    return await _get_mcp_tools(workspace_id)
 
 
 def get_llm_initialization_status() -> dict[str, Any]:
     return {
         "provider": llm_config.provider,
         "model": llm_config.model,
-        "api_base": llm_config.api_base,
         "configured": bool(llm_config.api_key) or llm_config.provider == "mock",
+        "readiness": _llm_ready,
+        "configRevision": _runtime_config_revision,
+        "verifiedAt": _llm_verified_at,
     }
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global worker_registry, _watcher_observer, _watcher_event_handler
-    global llm_config, image_provider_manager, generate_image_tool, AGENT_INSTRUCTIONS, AGENT_USER_NAME, USE_SUPERVISOR, USE_REGISTRY
+    global AGENT_INSTRUCTIONS, AGENT_USER_NAME, USE_SUPERVISOR, USE_REGISTRY
     global _agent_status
 
     logger.info(
@@ -353,45 +490,28 @@ async def lifespan(app: FastAPI):
         CP_URL,
     )
 
-    # Override log level from CP ConfigService at startup
-    await _apply_cp_log_level()
-
-    # Start background poll for log level changes
-    poll_task = asyncio.create_task(_poll_log_level())
-
-    # Sync CP config and re-initialize after sync
-    config_sync_succeeded = False
+    # Config sync, provider preflight, and readiness form one atomic startup path.
     try:
-        await config_client.sync_with_retry()
-        llm_config = LLMConfig.from_config_client(config_client)
-        image_provider_manager = ProviderManager.from_config_client(config_client)
-        generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
-        _refresh_embedding_config()
-        if cc_instructions := config_client.get("logging", "instructions"):
-            AGENT_INSTRUCTIONS = cc_instructions
-        if cc_user_name := config_client.get("logging", "userName"):
-            AGENT_USER_NAME = cc_user_name
-        USE_SUPERVISOR = config_client.get_bool("logging", "useSupervisor")
-        USE_REGISTRY = config_client.get_bool("logging", "useRegistry")
-        config_sync_succeeded = True
-        logger.info(
-            "[LIFECYCLE] service=agent event=config_sync_ok provider={} model={} configured={} providerConfigured={}",
-            llm_config.provider,
-            llm_config.model,
-            bool(llm_config.api_key) or llm_config.provider == "mock",
-            bool(config_client.get_provider(llm_config.provider)),
-        )
+        await reload_runtime_config(reason="startup")
     except Exception as e:
-        logger.error("[LIFECYCLE] service=agent event=config_sync_failed error={}", e, exc_info=True)
-        # Keep status as "starting" — health endpoint will report starting
+        _agent_status = "degraded"
+        logger.error(
+            "[LIFECYCLE] service=agent event=config_sync_failed error={}",
+            e,
+            exc_info=True,
+        )
+
+    await _apply_cp_log_level()
+    poll_task = asyncio.create_task(_poll_runtime_config())
 
     # MCP is request-scoped; pure chat must not trigger remote discovery at startup.
     logger.info("[LIFECYCLE] service=agent event=mcp_init_deferred reason=lazy_request")
 
-    # Mark agent as ready only after config sync (MCP is optional).
-    if config_sync_succeeded:
-        _agent_status = "ok"
-        logger.info("[LIFECYCLE] service=agent event=status_change from=starting to=ok reason=config_sync_complete")
+    logger.info(
+        "[LIFECYCLE] service=agent event=status_change from=starting to={} reason=runtime_config_loaded llmReady={}",
+        _agent_status,
+        _llm_ready,
+    )
 
     # Recover any sessions configured for crash recovery before accepting traffic.
     recover_ids = _parse_recover_session_ids()
@@ -414,7 +534,9 @@ async def lifespan(app: FastAPI):
 
         model = create_llm(llm_config)
         custom_tools = [approval_tool, generate_image_tool]
-        mcp_tools = await _get_mcp_tools(get_env("XIHE_WORKSPACE_ID"))
+        # Registry startup must not initialize MCP. Workspace/tool requests
+        # discover tools lazily in the request-scoped workspace path.
+        mcp_tools: list[Any] = []
         _workers_dir = config_client.get("logging", "workersDir")
         worker_registry = WorkerRegistry(workers_dir=_workers_dir)
         worker_registry.load_all(model, mcp_tools, custom_tools)
@@ -515,8 +637,80 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     run_id: str = request.headers.get("X-Chat-Run-Id") or data.get("runId") or str(uuid4())
     user_name: str = data.get("userName", AGENT_USER_NAME)
     model_override: str | None = data.get("model")
+    provider_override: str | None = data.get("provider")
+    tool_mode: str = data.get("toolMode", "none")
     instructions: str = data.get("instructions", AGENT_INSTRUCTIONS)
     chat_history_raw: list[dict[str, Any]] = data.get("history", [])
+
+    if _llm_ready != "ready":
+        error_code = _llm_readiness_error_code(_llm_ready)
+        return JSONResponse(
+            status_code=503,
+            media_type="application/problem+json",
+            headers={"X-Request-Id": request_id},
+            content={
+                "type": "https://xihe.dev/problems/llm-not-ready",
+                "title": "LLM is not ready",
+                "status": 503,
+                "code": error_code,
+                "detail": f"Agent LLM readiness is {_llm_ready}",
+                "retryable": True,
+                "provider": llm_config.provider,
+                "model": model_override or llm_config.model,
+                "requestId": request_id,
+                "runId": run_id,
+            },
+        )
+
+    if tool_mode not in {"none", "workspace"}:
+        return JSONResponse(
+            status_code=400,
+            media_type="application/problem+json",
+            headers={"X-Request-Id": request_id},
+            content={
+                "type": "https://xihe.dev/problems/invalid-tool-mode",
+                "title": "Invalid tool mode",
+                "status": 400,
+                "code": "INVALID_REQUEST",
+                "detail": "toolMode must be none or workspace",
+                "requestId": request_id,
+                "runId": run_id,
+            },
+        )
+
+    request_config = llm_config
+    if provider_override and provider_override != llm_config.provider:
+        provider_info = _model_catalog.get("providers", {}).get(provider_override)
+        provider_runtime = config_client.get_provider(provider_override)
+        if not isinstance(provider_info, dict) or provider_info.get("status") != "ready" or not provider_runtime:
+            return JSONResponse(
+                status_code=503,
+                media_type="application/problem+json",
+                headers={"X-Request-Id": request_id},
+                content={
+                    "type": "https://xihe.dev/problems/model-unavailable",
+                    "title": "Provider is not ready",
+                    "status": 503,
+                    "code": "LLM_MODEL_UNAVAILABLE",
+                    "detail": "Selected provider is not ready",
+                    "retryable": True,
+                    "provider": provider_override,
+                    "model": model_override or "",
+                    "requestId": request_id,
+                    "runId": run_id,
+                },
+            )
+        request_config = LLMConfig(
+            provider=cast(ProviderName, provider_override),
+            api_key=str(provider_runtime.get("apiKey", "")),
+            api_base=str(provider_runtime.get("baseUrl", "")),
+            model=str(provider_runtime.get("model", "")),
+            timeout=llm_config.timeout,
+            max_tokens=llm_config.max_tokens,
+            temperature=llm_config.temperature,
+        )
+    if model_override:
+        request_config = request_config.with_model(model_override)
 
     logger.info(
         "[LIFECYCLE] service=agent event=chat_stream_started requestId={} sessionId={} workspaceId={} runId={} provider={} model={} contentLength={}",
@@ -524,8 +718,8 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
         session_id,
         workspace_id,
         run_id,
-        llm_config.provider,
-        model_override or llm_config.model,
+        request_config.provider,
+        request_config.model,
         len(content),
     )
 
@@ -533,13 +727,19 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     instructions = await _enrich_with_rag_context(content, instructions)
 
     chat_history = _deserialize_messages(chat_history_raw)
-    cfg = llm_config.with_model(model_override) if model_override else llm_config
-    model = create_llm(cfg)
+    model = create_llm(request_config)
+    request_runner = LangGraphRunner(
+        model_factory=lambda _model: create_llm(request_config),
+        event_store=cp_event_store_client,
+    )
 
     async def event_stream():
         terminal_sent = False
         error_sent = False
         error_seen = False
+        llm_request_started = False
+        terminal_outcome = "success"
+        terminal_error_code: str | None = None
         token_count = 0
         assistant_chars = 0
         event_index = 0
@@ -551,8 +751,8 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             return payload
 
         try:
-            mcp_tools = await _get_mcp_tools(workspace_id)
-            if USE_SUPERVISOR:
+            mcp_tools = await _get_tools_for_mode(tool_mode, workspace_id)
+            if USE_SUPERVISOR and tool_mode == "workspace":
                 # Supervisor path remains on legacy tools until full migration.
                 from langchain_core.messages import HumanMessage
 
@@ -588,7 +788,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 context.runtime_state["user_name"] = user_name
                 context.runtime_state["instructions"] = instructions
 
-                all_tools = [approval_tool, generate_image_tool]
+                all_tools = [] if tool_mode == "none" else [approval_tool, generate_image_tool]
                 if mcp_tools:
                     all_tools = list(mcp_tools) + all_tools
 
@@ -596,13 +796,14 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 messages.append(TextMessage(role="human", content=content))
 
                 config = RunnerConfig(
-                    model=model_override or llm_config.model,
+                    model=model_override or request_config.model,
                     system_prompt=instructions,
                     tools=all_tools,
                     context=context,
                 )
 
-                async for event in agent_runner.stream(messages, config):
+                llm_request_started = True
+                async for event in request_runner.stream(messages, config):
                     if event.type == "token":
                         token_chars = _content_length(event.data.get("content"))
                         token_count += 1
@@ -620,45 +821,70 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         yield render_sse("token", correlated_data(event.data))
                     elif event.type == "error":
                         error_seen = True
+                        terminal_error_code, error_detail, retryable = _classify_llm_exception(
+                            RuntimeError(str(event.data.get("error", "Agent stream failed")))
+                        )
+                        terminal_outcome = (
+                            "ambiguous"
+                            if llm_request_started and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
+                            else "partial" if assistant_chars > 0 else "error"
+                        )
                         if not error_sent:
                             error_sent = True
                             yield render_sse("error", correlated_data({
-                                "code": "AGENT_STREAM_FAILED",
-                                "detail": "Agent stream failed",
+                                "code": terminal_error_code,
+                                "detail": error_detail,
+                                "retryable": retryable,
+                                "outcome": terminal_outcome,
                                 "type": "error",
                             }))
                     elif event.type == "done":
                         if terminal_sent:
                             continue
                         terminal_sent = True
-                        yield render_sse("done", correlated_data({**event.data, "type": "done"}))
+                        done_data = {**event.data, "type": "done", "outcome": terminal_outcome}
+                        if terminal_error_code:
+                            done_data["errorCode"] = terminal_error_code
+                        yield render_sse("done", correlated_data(done_data))
                     else:
                         yield render_sse(event.type, correlated_data(event.data))
-        except Exception:
+        except Exception as exc:
             error_seen = True
+            terminal_error_code, error_detail, retryable = _classify_llm_exception(exc)
+            terminal_outcome = (
+                "ambiguous"
+                if llm_request_started and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
+                else "partial" if assistant_chars > 0 else "error"
+            )
             logger.exception(
-                "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode=AGENT_STREAM_FAILED",
+                "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode={}",
                 request_id,
                 session_id,
                 workspace_id,
                 run_id,
+                terminal_error_code,
             )
             if not error_sent:
                 error_sent = True
                 yield render_sse("error", correlated_data({
-                    "code": "AGENT_STREAM_FAILED",
-                    "detail": "Agent stream failed",
+                    "code": terminal_error_code,
+                    "detail": error_detail,
+                    "retryable": retryable,
+                    "outcome": terminal_outcome,
                     "type": "error",
                 }))
 
         if not terminal_sent:
             terminal_sent = True
+            if not error_seen:
+                terminal_outcome = "ambiguous"
             done_data: dict[str, Any] = {
                 "type": "done",
                 "synthetic": True,
+                "outcome": terminal_outcome,
             }
-            if error_seen:
-                done_data["errorCode"] = "AGENT_STREAM_FAILED"
+            if error_seen and terminal_error_code:
+                done_data["errorCode"] = terminal_error_code
             yield render_sse("done", correlated_data(done_data))
 
         logger.info(
@@ -669,7 +895,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             run_id,
             token_count,
             assistant_chars,
-            "error" if error_seen else "ok",
+            terminal_outcome,
         )
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -826,6 +1052,10 @@ async def health():
     llm_status = get_llm_initialization_status()
     return {
         "status": _agent_status,
+        "liveness": "up" if _agent_status != "starting" else "starting",
+        "llmReady": _llm_ready,
+        "configRevision": _runtime_config_revision,
+        "configSync": config_client.last_sync_report,
         "llm": llm_status,
         "cpUrl": CP_URL,
         "mcpInitialized": mcp_manager.initialized,

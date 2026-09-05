@@ -18,6 +18,8 @@ class TestConfigClientInit:
         assert client._system_cache == {}
         assert client._provider_cache == {}
         assert client._last_fetch == 0.0
+        assert client.config_revision == ""
+        assert client.last_sync_report["ok"] is False
 
     def test_stores_constructor_args(self, client):
         assert client.cp_url == "http://test-cp:8080"
@@ -159,12 +161,15 @@ class TestConfigClientSync:
         mock_client.get = mock_get
 
         c = ConfigClient("http://cp:8080", "token")
-        await c.sync()
+        report = await c.sync()
 
         assert c._admin_cache.get("logging") == {"logLevel": "debug"}
         assert c._admin_cache.get("llm-provider") == {"openaiApiKey": "sk-test"}
         assert c._system_cache.get("infrastructure") == {"dbUrl": "jdbc:test"}
         assert c._last_fetch > 0
+        assert report["ok"] is True
+        assert report["domains"]["llm-provider"]["effective"] == "ok"
+        assert report["revision"] == c.config_revision
 
     @patch("httpx.AsyncClient")
     async def test_sync_handles_non_200_gracefully(self, mock_httpx):
@@ -177,10 +182,12 @@ class TestConfigClientSync:
         mock_client.get = mock_get
 
         c = ConfigClient("http://cp:8080", "token")
-        await c.sync()
+        report = await c.sync()
 
         assert c._admin_cache == {}
         assert c._system_cache == {}
+        assert report["ok"] is False
+        assert report["domains"]["llm-provider"]["effective"] == "unreachable"
 
     @patch("httpx.AsyncClient")
     async def test_sync_handles_connection_error(self, mock_httpx):
@@ -193,10 +200,39 @@ class TestConfigClientSync:
         mock_client.get = mock_get
 
         c = ConfigClient("http://cp:8080", "token")
-        await c.sync()
+        report = await c.sync()
 
         assert c._admin_cache == {}
         assert c._system_cache == {}
+        assert report["ok"] is False
+        assert report["domains"]["llm-provider"]["effective"] == "unreachable"
+
+    @patch("httpx.AsyncClient")
+    async def test_sync_failure_keeps_previous_snapshot(self, mock_httpx):
+        mock_client = AsyncMock()
+        mock_httpx.return_value.__aenter__.return_value = mock_client
+
+        async def successful_get(url, **kwargs):
+            if "/admin/llm-provider" in url:
+                return _mock_response(200, {"openaiApiKey": "sk-first"})
+            return _mock_response(404)
+
+        mock_client.get = successful_get
+        c = ConfigClient("http://cp:8080", "token")
+        await c.sync()
+        previous_revision = c.config_revision
+
+        async def failed_get(url, **kwargs):
+            if "/admin/llm-provider" in url:
+                return _mock_response(500)
+            return _mock_response(404)
+
+        mock_client.get = failed_get
+        report = await c.sync()
+
+        assert report["ok"] is False
+        assert c.get_provider("openai")["apiKey"] == "sk-first"
+        assert c.config_revision == previous_revision
 
 
 class TestConfigClientSyncWithRetry:
