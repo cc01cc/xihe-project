@@ -15,6 +15,9 @@ public class Message {
     @Column(name = "session_id", nullable = false, length = 36)
     private String sessionId;
 
+    @Column(name = "run_id", length = 36)
+    private String runId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private MessageRole role;
@@ -49,6 +52,9 @@ public class Message {
 
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
+
+    public String getRunId() { return runId; }
+    public void setRunId(String runId) { this.runId = runId; }
 
     public MessageRole getRole() { return role; }
     public void setRole(MessageRole role) { this.role = role; }

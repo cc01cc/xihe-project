@@ -81,6 +81,18 @@ class ConfigControllerTest extends AbstractH2Test {
     }
 
     @Test
+    void putUserConfig_llmProviderApiKey_rejectsOwnershipViolation() {
+        HttpHeaders headers = authHeaders(userToken());
+
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/user/llm-provider"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("openaiApiKey", "sk-user-secret"), headers), Map.class);
+
+        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+        assertEquals("CONFIG_OWNERSHIP_VIOLATION", resp.getBody().get("code"));
+    }
+
+    @Test
     void putUserConfig_embedding_succeeds() {
         HttpHeaders headers = authHeaders(userToken());
 
@@ -193,6 +205,23 @@ class ConfigControllerTest extends AbstractH2Test {
         Map body = resp.getBody();
         assertNotNull(body);
         assertEquals("sk-abcdefghijklmnopqrst", body.get("openaiApiKey"));
+    }
+
+    @Test
+    void getProviders_masksKeysForUser() {
+        HttpHeaders adminHeaders = authHeaders(adminToken());
+        restTemplate.exchange(url("/api/v1/config/admin/llm-provider"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("openaiApiKey", "sk-abcdefghijklmnopqrst"), adminHeaders), Map.class);
+
+        ResponseEntity<List> resp = restTemplate.exchange(
+            url("/api/v1/providers"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(userToken())), List.class);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        Map<?, ?> provider = (Map<?, ?>) resp.getBody().get(0);
+        assertEquals("openai", provider.get("provider"));
+        assertTrue(provider.get("apiKey").toString().contains("****"));
+        assertEquals("", provider.get("baseUrl"));
     }
 
     @Test

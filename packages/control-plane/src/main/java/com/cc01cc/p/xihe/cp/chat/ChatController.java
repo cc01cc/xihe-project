@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.File;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
@@ -31,8 +33,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +55,7 @@ public class ChatController {
     private final SessionService sessionService;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
+    private final ChatRunRepository chatRunRepository;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
@@ -67,6 +72,7 @@ public class ChatController {
             SessionService sessionService,
             MessageRepository messageRepository,
             FileRepository fileRepository,
+            ChatRunRepository chatRunRepository,
             HealthMonitor healthMonitor,
             RequestQueue requestQueue) {
         this.agentHttpClient = HttpClient.newBuilder()
@@ -77,6 +83,7 @@ public class ChatController {
         this.sessionService = sessionService;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
+        this.chatRunRepository = chatRunRepository;
         this.healthMonitor = healthMonitor;
         this.requestQueue = requestQueue;
 
@@ -89,13 +96,18 @@ public class ChatController {
                     if (!acquireRun(req.sessionId(), runId)) {
                         logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
                                 requestId, req.sessionId(), runId);
+                        markQueuedRequestFailed(req, requestId, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
                         return;
                     }
                     logger.info("[LIFECYCLE] service=cp event=requestRedelivered requestId={} sessionId={} runId={} outcome=accepted",
                             requestId, req.sessionId(), runId);
-                    execAsync(req.sessionId(), req.content(), req.model(), List.of(),
+                    execAsync(req.sessionId(), req.content(), req.provider(), req.model(), req.toolMode(), req.attachments(),
                             req.userId(), req.workspaceId(), requestId, runId);
-                });
+                }, req -> markQueuedRequestFailed(
+                        req,
+                        nonBlankOrGenerated(req.requestId()),
+                        "AGENT_UNAVAILABLE",
+                        "Queued chat request could not be delivered"));
             }
         });
     }
@@ -122,52 +134,10 @@ public class ChatController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @PostMapping("/api/v1/exec")
-    public ResponseEntity<Map<String, Object>> exec(@RequestBody Map<String, Object> request) {
-        String sessionId = (String) request.get("sessionId");
-        String content = (String) request.getOrDefault("content", "");
-        String model = (String) request.get("model");
-        String userId = TenantContext.getUserId();
-        String workspaceId = TenantContext.getWorkspaceId();
-        if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
-        }
-        if (sessionId == null || sessionId.isBlank()) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
-        }
-        try {
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
-        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
-        }
-
-        if (!sseManager.hasEmitter(sessionId)) {
-            logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} errorCode=SSE_SUBSCRIPTION_REQUIRED",
-                    currentRequestId(), sessionId);
-            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "SSE_SUBSCRIPTION_REQUIRED", "An active SSE subscription is required");
-        }
-
-        String requestId = currentRequestId();
-        String runId = UUID.randomUUID().toString();
-        if (!acquireRun(sessionId, runId)) {
-            logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
-                    requestId, sessionId, runId);
-            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
-        }
-
-        logger.info("[LIFECYCLE] service=cp event=chat_run_started requestId={} sessionId={} runId={} contentLength={}",
-                requestId, sessionId, runId, content.length());
-        execAsync(sessionId, content, model, List.of(), userId, workspaceId, requestId, runId);
-        return ResponseEntity.accepted().body(Map.of(
-            "status", "accepted",
-            "sessionId", sessionId,
-            "runId", runId
-        ));
-    }
-
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @PostMapping("/api/v1/chat")
-    public ResponseEntity<Map<String, Object>> chat(@RequestBody Map<String, Object> request) {
+    public ResponseEntity<Map<String, Object>> chat(
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
+            @RequestBody Map<String, Object> request) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
@@ -178,7 +148,16 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
         }
         String content = (String) request.getOrDefault("content", "");
+        String provider = (String) request.get("provider");
         String model = (String) request.get("model");
+        String toolMode = (String) request.getOrDefault("toolMode", "none");
+        String idempotencyKey = idempotencyHeader == null || idempotencyHeader.isBlank()
+                ? UUID.randomUUID().toString()
+                : idempotencyHeader.trim();
+        if (idempotencyKey.length() > 128) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Idempotency-Key exceeds 128 characters");
+        }
 
         try {
             sessionService.requireWorkspace(userId, workspaceId);
@@ -213,21 +192,13 @@ public class ChatController {
                 ));
         }
 
-        // Agent down → queue request
+        // LLM readiness is separate from HTTP liveness. Do not let an
+        // unknown/non-ready Agent enter the async or transport queue path.
         HealthMonitor.ServiceHealth agentHealth = healthMonitor.getAgentHealth();
-        if ("down".equals(agentHealth.status())) {
-            boolean queued = requestQueue.enqueue(sessionId, content, model, userId, workspaceId, requestId, runId);
-            if (queued) {
-                logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
-                        requestId, sessionId, runId);
-                return ResponseEntity.accepted().body(Map.of(
-                    "status", "queued",
-                    "sessionId", sessionId,
-                    "runId", runId,
-                    "reason", "agent_down"
-                ));
-            }
-            // Queue full → fall through to attempt direct call
+        boolean transportOnlyFailure = "down".equals(agentHealth.status())
+                && "ready".equals(agentHealth.llmReady());
+        if (!transportOnlyFailure && !healthMonitor.isAgentLlmReady()) {
+            return llmNotReadyResponse(requestId, runId, healthMonitor.getAgentLlmReady());
         }
 
         Session session;
@@ -278,6 +249,20 @@ public class ChatController {
             }
         }
 
+        String requestHash = requestHash(content, provider, model, toolMode, attachmentIds);
+        ChatRun existingRun = chatRunRepository
+                .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
+                .orElse(null);
+        if (existingRun != null) {
+            if (!requestHash.equals(existingRun.getRequestHash())) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.CONFLICT,
+                        "IDEMPOTENCY_KEY_CONFLICT",
+                        "Idempotency-Key was already used for a different request");
+            }
+            return ResponseEntity.accepted().body(runResponse(existingRun));
+        }
+
         if (!acquireRun(sessionId, runId)) {
             logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
                     requestId, sessionId, runId);
@@ -286,9 +271,17 @@ public class ChatController {
 
         boolean handedOff = false;
         try {
+            ChatRun chatRun = new ChatRun(
+                    runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,
+                    provider, model, toolMode, "accepted");
+            chatRunRepository.save(chatRun);
+
             Message userMessage = new Message(sessionId, MessageRole.USER, content);
+            userMessage.setRunId(runId);
             userMessage.setAttachments(attachmentsJson);
             messageRepository.save(userMessage);
+            chatRun.setUserMessageId(userMessage.getId());
+            chatRunRepository.save(chatRun);
 
             if (!attachmentIds.isEmpty()) {
                 for (String fileId : attachmentIds) {
@@ -303,7 +296,30 @@ public class ChatController {
             logger.info("[LIFECYCLE] service=cp event=chat_message_persisted requestId={} sessionId={} runId={} messageId={} attachments={}",
                     requestId, sessionId, runId, userMessage.getId(), attachmentIds.size());
 
-            execAsync(sessionId, content, model, attachmentInfos, userId, workspaceId, requestId, runId);
+            // Agent down with a previously ready LLM -> queue transport recovery.
+            if (transportOnlyFailure) {
+                chatRun.setStatus("queued");
+                chatRunRepository.save(chatRun);
+                boolean queued = requestQueue.enqueue(
+                        sessionId, content, provider, model, toolMode, attachmentInfos,
+                        userId, workspaceId, requestId, runId);
+                if (queued) {
+                    logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
+                            requestId, sessionId, runId);
+                    handedOff = true;
+                    return ResponseEntity.accepted().body(Map.of(
+                        "status", "queued",
+                        "sessionId", sessionId,
+                        "messageId", userMessage.getId(),
+                        "runId", runId,
+                        "reason", "agent_down"
+                    ));
+                }
+                chatRun.setStatus("accepted");
+                chatRunRepository.save(chatRun);
+            }
+
+            execAsync(sessionId, content, provider, model, toolMode, attachmentInfos, userId, workspaceId, requestId, runId);
             handedOff = true;
             return ResponseEntity.accepted().body(Map.of(
                 "status", "accepted",
@@ -327,7 +343,7 @@ public class ChatController {
         );
     }
 
-    private void execAsync(String sessionId, String content, String model,
+    private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
                            String userId, String workspaceId, String requestId, String runId) {
         Thread worker = new Thread(() -> {
@@ -335,6 +351,7 @@ public class ChatController {
             MDC.put("chatRunId", runId);
             AtomicBoolean terminalSent = new AtomicBoolean(false);
             try {
+                transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);
                 agentRequest.put("content", content);
@@ -343,6 +360,10 @@ public class ChatController {
                 agentRequest.put("requestId", requestId);
                 agentRequest.put("runId", runId);
                 agentRequest.put("stream", true);
+                if (provider != null && !provider.isBlank()) {
+                    agentRequest.put("provider", provider);
+                }
+                agentRequest.put("toolMode", toolMode == null || toolMode.isBlank() ? "none" : toolMode);
                 if (model != null && !model.isEmpty()) {
                     agentRequest.put("model", model);
                 }
@@ -381,43 +402,67 @@ public class ChatController {
                 long elapsedMs = System.currentTimeMillis() - startMs;
 
                 if (response.statusCode() >= 400) {
-                    try (InputStream ignored = response.body()) {
-                        // Do not log an upstream body: it may contain provider details or credentials.
+                    String upstreamBody;
+                    try (InputStream errorBody = response.body()) {
+                        upstreamBody = new String(errorBody.readAllBytes(), StandardCharsets.UTF_8);
                     }
-                    logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=AGENT_UNAVAILABLE upstreamStatus={} durationMs={}",
-                            requestId, sessionId, runId, response.statusCode(), elapsedMs);
+                    Map<?, ?> upstreamProblem = asMap(parsePayload("error", upstreamBody));
+                    String upstreamCode = safeErrorCode(stringValue(upstreamProblem, "code"));
+                    String detail = safeErrorDetail(upstreamCode);
+                    logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode={} upstreamStatus={} durationMs={}",
+                            requestId, sessionId, runId, upstreamCode, response.statusCode(), elapsedMs);
                     healthMonitor.getAgentBreaker().recordFailure();
-                    sendRunErrorAndDone(sessionId, requestId, runId, "AGENT_UNAVAILABLE", "Agent service unavailable", terminalSent);
+                sendRunErrorAndDone(sessionId, requestId, runId, upstreamCode, detail, "error", terminalSent);
                     return;
                 }
 
                 healthMonitor.getAgentBreaker().recordSuccess();
                 logger.info("[LIFECYCLE] service=cp event=chat_run_forwarded requestId={} sessionId={} runId={} status={} durationMs={}",
                         requestId, sessionId, runId, response.statusCode(), elapsedMs);
-                String assistantContent;
+                StreamRelayResult relayResult;
                 try (InputStream agentStream = response.body()) {
-                    assistantContent = relayAgentStream(sessionId, agentStream, requestId, runId, terminalSent);
+                    relayResult = relayAgentStream(sessionId, agentStream, requestId, runId, terminalSent);
                 }
+                String assistantContent = relayResult.assistantContent();
                 logger.info("[LIFECYCLE] service=cp event=chat_run_finished requestId={} sessionId={} runId={} assistantChars={}",
                         requestId, sessionId, runId, assistantContent == null ? 0 : assistantContent.length());
 
                 if (assistantContent != null && !assistantContent.isBlank()) {
                     Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, assistantContent);
+                    assistantMessage.setRunId(runId);
                     messageRepository.save(assistantMessage);
+                    chatRunRepository.findById(runId).ifPresent(run -> {
+                        run.setAssistantMessageId(assistantMessage.getId());
+                        chatRunRepository.save(run);
+                    });
                     logger.info("[LIFECYCLE] service=cp event=chat_assistant_persisted requestId={} sessionId={} runId={} messageId={} assistantChars={}",
                             requestId, sessionId, runId, assistantMessage.getId(), assistantContent.length());
                 }
+
+                String outcome = relayResult.outcome();
+                String status = "success".equals(outcome)
+                        ? "succeeded"
+                        : "partial".equals(outcome) ? "partial" : "ambiguous".equals(outcome) ? "ambiguous" : "failed";
+                transitionRun(
+                        runId,
+                        List.of("running", "streaming"),
+                        status,
+                        outcome,
+                        relayResult.errorCode(),
+                        null,
+                        relayResult.tokenCount(),
+                        assistantContent == null ? 0 : assistantContent.length());
 
             } catch (java.net.http.HttpTimeoutException e) {
                 logger.warn("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=AGENT_TIMEOUT timeoutMs=30000",
                         requestId, sessionId, runId, e);
                 healthMonitor.getAgentBreaker().recordFailure();
-                sendRunErrorAndDone(sessionId, requestId, runId, "AGENT_TIMEOUT", "Agent request timed out after 30 seconds", terminalSent);
+                sendRunErrorAndDone(sessionId, requestId, runId, "AGENT_TIMEOUT", "Agent request timed out after 30 seconds", "ambiguous", terminalSent);
             } catch (Exception e) {
                 logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=CHAT_EXECUTION_FAILED",
                         requestId, sessionId, runId, e);
                 healthMonitor.getAgentBreaker().recordFailure();
-                sendRunErrorAndDone(sessionId, requestId, runId, "CHAT_EXECUTION_FAILED", "Chat execution failed", terminalSent);
+                sendRunErrorAndDone(sessionId, requestId, runId, "CHAT_EXECUTION_FAILED", "Chat execution failed", "error", terminalSent);
             } finally {
                 releaseRun(sessionId, runId, "run_finished");
                 MDC.remove("requestId");
@@ -433,24 +478,108 @@ public class ChatController {
     }
 
     private void sendRunErrorAndDone(String sessionId, String requestId, String runId,
-                                     String errorCode, String detail, AtomicBoolean terminalSent) {
+                                     String errorCode, String detail, String outcome,
+                                     AtomicBoolean terminalSent) {
         if (!terminalSent.compareAndSet(false, true)) {
             logger.warn("[LIFECYCLE] service=cp event=chat_run_terminal_ignored requestId={} sessionId={} runId={} errorCode={} reason=terminal_already_sent",
                     requestId, sessionId, runId, errorCode);
             return;
         }
+        String terminalStatus = "ambiguous".equals(outcome) ? "ambiguous" : "failed";
+        transitionRun(runId, List.of("accepted", "queued", "running", "streaming"),
+                terminalStatus, outcome, errorCode, detail, 0, 0);
         sseManager.send(sessionId, "error", Map.of(
                 "code", errorCode,
                 "requestId", requestId,
                 "runId", runId,
                 "detail", detail,
+                "retryable", isRetryableError(errorCode),
+                "outcome", outcome,
                 "type", "error"));
         sseManager.send(sessionId, "done", Map.of(
                 "type", "done",
                 "requestId", requestId,
                 "runId", runId,
                 "errorCode", errorCode,
+                "outcome", outcome,
                 "synthetic", true));
+    }
+
+    private void transitionRun(String runId, List<String> expectedStatuses, String status,
+                               String outcome, String errorCode, String errorDetail,
+                               int tokenCount, int assistantChars) {
+        if (runId == null || runId.isBlank()) {
+            return;
+        }
+        int updated = chatRunRepository.transition(
+                runId, expectedStatuses, status, outcome, errorCode, errorDetail,
+                tokenCount, assistantChars);
+        if (updated == 0) {
+            logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={}",
+                    runId, status);
+        }
+    }
+
+    private String safeErrorCode(String code) {
+        if (code == null) {
+            return "AGENT_UNAVAILABLE";
+        }
+        return switch (code) {
+            case "LLM_NOT_CONFIGURED", "LLM_CREDENTIALS_INVALID", "LLM_PROVIDER_UNREACHABLE",
+                    "LLM_MODEL_UNAVAILABLE", "AGENT_UNAVAILABLE", "AGENT_TIMEOUT",
+                    "AGENT_CIRCUIT_OPEN", "AGENT_STREAM_FAILED", "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS",
+                    "IDEMPOTENCY_KEY_CONFLICT" -> code;
+            default -> "AGENT_UNAVAILABLE";
+        };
+    }
+
+    private String safeErrorDetail(String code) {
+        return switch (code) {
+            case "LLM_NOT_CONFIGURED" -> "Provider credentials are not configured";
+            case "LLM_CREDENTIALS_INVALID" -> "Provider credentials were rejected";
+            case "LLM_PROVIDER_UNREACHABLE" -> "Provider is unreachable";
+            case "LLM_MODEL_UNAVAILABLE" -> "Selected model is unavailable";
+            case "AGENT_TIMEOUT" -> "Agent request timed out";
+            case "AGENT_CIRCUIT_OPEN" -> "Agent service is temporarily unavailable";
+            case "SSE_SUBSCRIPTION_REQUIRED" -> "An active SSE subscription is required";
+            case "CHAT_IN_PROGRESS" -> "A chat run is already active for this session";
+            case "IDEMPOTENCY_KEY_CONFLICT" -> "Idempotency-Key was already used for a different request";
+            default -> "Agent service unavailable";
+        };
+    }
+
+    private boolean isRetryableError(String code) {
+        return switch (code) {
+            case "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS", "IDEMPOTENCY_KEY_CONFLICT" -> false;
+            default -> true;
+        };
+    }
+
+    private ResponseEntity<Map<String, Object>> llmNotReadyResponse(
+            String requestId, String runId, String readiness) {
+        String code = switch (readiness) {
+            case "missing_credentials" -> "LLM_NOT_CONFIGURED";
+            case "invalid_credentials" -> "LLM_CREDENTIALS_INVALID";
+            case "unreachable" -> "LLM_PROVIDER_UNREACHABLE";
+            case "model_unavailable" -> "LLM_MODEL_UNAVAILABLE";
+            default -> "AGENT_UNAVAILABLE";
+        };
+        String detail = "unknown".equals(readiness)
+                ? "Agent LLM readiness is unknown"
+                : "Agent LLM is not ready: " + readiness;
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "5")
+                .contentType(MediaType.parseMediaType("application/problem+json"))
+                .header("X-Request-Id", requestId)
+                .body(Map.of(
+                        "type", "https://xihe.dev/problems/llm-not-ready",
+                        "title", "LLM is not ready",
+                        "status", 503,
+                        "code", code,
+                        "detail", detail,
+                        "retryable", true,
+                        "requestId", requestId,
+                        "runId", runId));
     }
 
     private boolean acquireRun(String sessionId, String runId) {
@@ -465,6 +594,17 @@ public class ChatController {
             logger.debug("[LIFECYCLE] service=cp event=chat_run_lease_release_ignored sessionId={} runId={} reason={}",
                     sessionId, runId, reason);
         }
+    }
+
+    private void markQueuedRequestFailed(RequestQueue.QueuedRequest request, String requestId,
+                                         String errorCode, String detail) {
+        String runId = request.runId();
+        if (runId == null || runId.isBlank()) {
+            return;
+        }
+        releaseRun(request.sessionId(), runId, "queue_drop");
+        sendRunErrorAndDone(
+                request.sessionId(), requestId, runId, errorCode, detail, "error", new AtomicBoolean(false));
     }
 
     private String currentRequestId() {
@@ -489,12 +629,48 @@ public class ChatController {
         return List.of();
     }
 
-    private String relayAgentStream(String sessionId, InputStream agentStream,
-                                    String requestId, String runId,
-                                    AtomicBoolean terminalSent) throws Exception {
+    private String requestHash(String content, String provider, String model,
+                               String toolMode, List<String> attachmentIds) {
+        try {
+            Map<String, Object> canonical = new LinkedHashMap<>();
+            canonical.put("content", content == null ? "" : content);
+            canonical.put("provider", provider == null ? "" : provider);
+            canonical.put("model", model == null ? "" : model);
+            canonical.put("toolMode", toolMode == null || toolMode.isBlank() ? "none" : toolMode);
+            canonical.put("attachments", attachmentIds == null ? List.of() : attachmentIds);
+            byte[] bytes = objectMapper.writeValueAsBytes(canonical);
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Unable to calculate request hash", e);
+        }
+    }
+
+    private Map<String, Object> runResponse(ChatRun run) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", run.getStatus());
+        response.put("sessionId", run.getSessionId());
+        response.put("runId", run.getId());
+        if (run.getUserMessageId() != null) {
+            response.put("messageId", run.getUserMessageId());
+        }
+        if (run.getTerminalOutcome() != null) {
+            response.put("outcome", run.getTerminalOutcome());
+        }
+        if (run.getErrorCode() != null) {
+            response.put("errorCode", run.getErrorCode());
+        }
+        return response;
+    }
+
+    private StreamRelayResult relayAgentStream(String sessionId, InputStream agentStream,
+                                               String requestId, String runId,
+                                               AtomicBoolean terminalSent) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
         Map<String, Integer> eventCounts = new LinkedHashMap<>();
         boolean doneSeen = false;
+        boolean streamingMarked = false;
+        String outcome = "success";
+        String errorCode = null;
         int eventIndex = 0;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
             String eventName = "message";
@@ -507,7 +683,30 @@ public class ChatController {
                     recordStreamEvent(eventCounts, eventName, data.length(), requestId, sessionId, runId, eventIndex);
                     boolean isDone = "done".equals(eventName);
                     doneSeen = doneSeen || isDone;
+                    if (!streamingMarked && ("token".equals(eventName) || "message".equals(eventName))) {
+                        transitionRun(runId, List.of("running"), "streaming", null, null, null, 0, 0);
+                        streamingMarked = true;
+                    }
                     collectEventContent(assistantContent, eventName, data.toString());
+                    if ("error".equals(eventName)) {
+                        Map<?, ?> errorPayload = asMap(parsePayload(eventName, data.toString()));
+                        errorCode = stringValue(errorPayload, "code");
+                        String eventOutcome = stringValue(errorPayload, "outcome");
+                        outcome = "ambiguous".equals(eventOutcome)
+                                ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
+                    } else if (isDone) {
+                        Map<?, ?> donePayload = asMap(parsePayload(eventName, data.toString()));
+                        String doneOutcome = stringValue(donePayload, "outcome");
+                        String doneErrorCode = stringValue(donePayload, "errorCode");
+                        if (doneErrorCode != null) {
+                            errorCode = doneErrorCode;
+                            String doneOutcomeValue = stringValue(donePayload, "outcome");
+                            outcome = "ambiguous".equals(doneOutcomeValue)
+                                    ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
+                        } else if (doneOutcome != null) {
+                            outcome = doneOutcome;
+                        }
+                    }
                     if (!isDone || terminalSent.compareAndSet(false, true)) {
                         dispatchEvent(sessionId, eventName, data.toString());
                     }
@@ -535,7 +734,30 @@ public class ChatController {
             recordStreamEvent(eventCounts, eventName, data.length(), requestId, sessionId, runId, eventIndex);
             boolean isDone = "done".equals(eventName);
             doneSeen = doneSeen || isDone;
+            if (!streamingMarked && ("token".equals(eventName) || "message".equals(eventName))) {
+                transitionRun(runId, List.of("running"), "streaming", null, null, null, 0, 0);
+                streamingMarked = true;
+            }
             collectEventContent(assistantContent, eventName, data.toString());
+            if ("error".equals(eventName)) {
+                Map<?, ?> errorPayload = asMap(parsePayload(eventName, data.toString()));
+                errorCode = stringValue(errorPayload, "code");
+                String eventOutcome = stringValue(errorPayload, "outcome");
+                outcome = "ambiguous".equals(eventOutcome)
+                        ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
+            } else if (isDone) {
+                Map<?, ?> donePayload = asMap(parsePayload(eventName, data.toString()));
+                String doneOutcome = stringValue(donePayload, "outcome");
+                String doneErrorCode = stringValue(donePayload, "errorCode");
+                if (doneErrorCode != null) {
+                    errorCode = doneErrorCode;
+                    String doneOutcomeValue = stringValue(donePayload, "outcome");
+                    outcome = "ambiguous".equals(doneOutcomeValue)
+                            ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
+                } else if (doneOutcome != null) {
+                    outcome = doneOutcome;
+                }
+            }
             if (!isDone || terminalSent.compareAndSet(false, true)) {
                 dispatchEvent(sessionId, eventName, data.toString());
             }
@@ -544,14 +766,33 @@ public class ChatController {
             logger.warn("[LIFECYCLE] service=cp event=chat_run_missing_done requestId={} sessionId={} runId={} errorCode=AGENT_DONE_MISSING",
                     requestId, sessionId, runId);
             if (terminalSent.compareAndSet(false, true)) {
-                dispatchEvent(sessionId, "done", "{\"type\":\"done\",\"synthetic\":true}");
+                dispatchEvent(sessionId, "done", "{\"type\":\"done\",\"outcome\":\"ambiguous\",\"synthetic\":true}");
             }
+            outcome = "ambiguous";
             eventCounts.put("done", 1);
         }
         logger.info("[LIFECYCLE] service=cp event=chat_stream_relay_finished requestId={} sessionId={} runId={} tokenCount={} assistantChars={}",
                 requestId, sessionId, runId, eventCounts.getOrDefault("token", 0), assistantContent.length());
-        return assistantContent.toString();
+        return new StreamRelayResult(
+                assistantContent.toString(), outcome, errorCode,
+                eventCounts.getOrDefault("token", 0));
     }
+
+    private Map<?, ?> asMap(Object value) {
+        return value instanceof Map<?, ?> map ? map : Map.of();
+    }
+
+    private String stringValue(Map<?, ?> payload, String key) {
+        Object value = payload.get(key);
+        return value instanceof String string && !string.isBlank() ? string : null;
+    }
+
+    private record StreamRelayResult(
+            String assistantContent,
+            String outcome,
+            String errorCode,
+            int tokenCount
+    ) {}
 
     private void recordStreamEvent(Map<String, Integer> eventCounts, String eventName, int payloadLength,
                                    String requestId, String sessionId, String runId, int eventIndex) {

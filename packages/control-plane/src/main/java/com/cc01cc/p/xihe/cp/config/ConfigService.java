@@ -20,6 +20,9 @@ import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.*;
 
 @Service
@@ -127,7 +130,7 @@ public class ConfigService {
                     String value = df.getValue().isNull() ? "" : df.getValue().asText();
                     entries.put(df.getKey(), value);
                 }
-                putLayerInternal(DEFAULT_ENV, layer, domain, entries, "import");
+                putLayer(DEFAULT_ENV, layer, domain, entries, "import");
             }
         }
     }
@@ -174,12 +177,78 @@ public class ConfigService {
     @Transactional
     public void putLayer(String environment, String layer, String domain,
                          Map<String, String> entries, String changedBy) {
+        rejectUserProviderSecrets(layer, domain, entries);
         List<String> errors = validateBySchema(domain, entries);
         if (!errors.isEmpty()) {
             throw new IllegalArgumentException(
                 "Schema validation failed: " + String.join("; ", errors));
         }
+        if ("llm-provider".equals(domain)) {
+            List<String> providerErrors = validateProviderBinding(environment, layer, entries);
+            if (!providerErrors.isEmpty()) {
+                throw new IllegalArgumentException(
+                    "Provider validation failed: " + String.join("; ", providerErrors));
+            }
+        }
         putLayerInternal(environment, layer, domain, entries, changedBy);
+    }
+
+    private void rejectUserProviderSecrets(String layer, String domain, Map<String, String> entries) {
+        if (!"user".equals(layer) || !"llm-provider".equals(domain)) {
+            return;
+        }
+        boolean containsSecret = entries.keySet().stream().anyMatch(ConfigService::isProviderSecretKey);
+        if (containsSecret) {
+            throw new ConfigOwnershipException("Provider credentials belong to the admin layer");
+        }
+    }
+
+    private static boolean isProviderSecretKey(String key) {
+        String normalized = key.toLowerCase(Locale.ROOT);
+        return normalized.contains("apikey")
+            || normalized.contains("secret")
+            || normalized.contains("password")
+            || normalized.contains("token");
+    }
+
+    private List<String> validateProviderBinding(
+            String environment, String layer, Map<String, String> entries) {
+        Map<String, String> candidate = resolveDomain(environment, "llm-provider");
+        candidate.putAll(entries);
+        List<String> errors = new ArrayList<>();
+        String defaultProvider = candidate.getOrDefault("defaultProvider", "").trim();
+        if (!defaultProvider.isEmpty()) {
+            Set<String> supported = Set.of("openai", "deepseek", "xiaomi", "anthropic", "dashscope");
+            if (!supported.contains(defaultProvider)) {
+                errors.add("defaultProvider is unsupported: " + defaultProvider);
+            } else if (candidate.getOrDefault(defaultProvider + "ApiKey", "").isBlank()) {
+                errors.add("defaultProvider requires a non-empty " + defaultProvider + "ApiKey");
+            }
+        }
+        for (String key : List.of("baseUrl", "openaiApiBase", "deepseekApiBase", "xiaomiApiBase")) {
+            String value = candidate.getOrDefault(key, "").trim();
+            if (!value.isEmpty()) {
+                try {
+                    URI uri = URI.create(value);
+                    if (!"http".equalsIgnoreCase(uri.getScheme())
+                            && !"https".equalsIgnoreCase(uri.getScheme())) {
+                        errors.add(key + " must use http or https");
+                    }
+                    if (value.length() > 2048) {
+                        errors.add(key + " exceeds 2048 characters");
+                    }
+                } catch (IllegalArgumentException e) {
+                    errors.add(key + " is not a valid URL");
+                }
+            }
+        }
+        return errors;
+    }
+
+    public static class ConfigOwnershipException extends IllegalArgumentException {
+        public ConfigOwnershipException(String message) {
+            super(message);
+        }
     }
 
     private void putLayerInternal(String environment, String layer, String domain,
@@ -238,10 +307,27 @@ public class ConfigService {
         audit.setLayer(entity.getLayer());
         audit.setDomain(entity.getDomain());
         audit.setConfigKey(entity.getConfigKey());
-        audit.setOldValue(oldValue);
-        audit.setNewValue(newValue);
+        audit.setOldValue(auditValue(entity, oldValue));
+        audit.setNewValue(auditValue(entity, newValue));
         audit.setChangedBy(changedBy);
         auditRepo.save(audit);
+    }
+
+    private String auditValue(ConfigEntity entity, String value) {
+        if (!"llm-provider".equals(entity.getDomain())
+                || !isProviderSecretKey(entity.getConfigKey())) {
+            return value;
+        }
+        if (value == null || value.isBlank()) {
+            return "missing";
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            return "present:" + HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
     private List<String> validateBySchema(String domain, Map<String, String> entries) {

@@ -106,6 +106,11 @@ public class ConfigController {
             configService.putLayer("default", "user", domain, body, "user");
             log.info("User config updated: domain={}, keys={}", domain, body.size());
             return ResponseEntity.ok(Map.of("status", "ok", "keys", body.size()));
+        } catch (ConfigService.ConfigOwnershipException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN,
+                    "CONFIG_OWNERSHIP_VIOLATION",
+                    "Provider credentials belong to the admin layer");
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Configuration update is invalid");
         }
@@ -163,7 +168,10 @@ public class ConfigController {
         for (String p : providerKeys) {
             String apiKey = merged.get(p + "ApiKey");
             if (apiKey != null && !apiKey.isEmpty()) {
-                result.add(new ProviderConfig(p, apiKey, baseUrl));
+                result.add(new ProviderConfig(
+                        p,
+                        isAdmin() ? apiKey : maskIfNotAdmin(p + "ApiKey", apiKey),
+                        isAdmin() ? baseUrl : ""));
             }
         }
         return ResponseEntity.ok(result);

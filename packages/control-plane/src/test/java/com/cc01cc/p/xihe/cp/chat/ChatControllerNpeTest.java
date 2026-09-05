@@ -23,14 +23,14 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatControllerNpeTest extends AbstractH2Test {
 
     @Test
-    void execAsync_catchBlockHandlesNullMessageWithoutNpe() {
+    void chatAsync_catchBlockHandlesNullMessageWithoutNpe() {
         var headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         var body = Map.of("sessionId", "npe-test", "content", "Hello");
         var request = new HttpEntity<>(body, headers);
 
         assertDoesNotThrow(() -> {
-            ResponseEntity<Map> response = restTemplate.postForEntity(url("/api/v1/exec"), request, Map.class);
+            ResponseEntity<Map> response = restTemplate.postForEntity(url("/api/v1/chat"), request, Map.class);
             assertTrue(
                 response.getStatusCode().is4xxClientError() || response.getStatusCode().is2xxSuccessful(),
                 "Should return either 409 (no SSE) or 202 (accepted)"

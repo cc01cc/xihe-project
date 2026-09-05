@@ -31,7 +31,7 @@ class SecurityConfigTest extends AbstractH2Test {
     @Test
     void protectedEndpointRejectsNoAuth() {
         ResponseEntity<Map> response = restTemplate.postForEntity(
-                baseUrl + "/api/v1/exec", Map.of(), Map.class);
+                baseUrl + "/api/v1/chat", Map.of(), Map.class);
         assertEquals(HttpStatus.UNAUTHORIZED.value(), response.getStatusCode().value());
     }
 
@@ -52,7 +52,7 @@ class SecurityConfigTest extends AbstractH2Test {
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(Map.of("sessionId", "default"), headers);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/exec", HttpMethod.POST, entity, Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, entity, Map.class);
         assertNotEquals(HttpStatus.UNAUTHORIZED.value(), response.getStatusCode().value());
     }
 

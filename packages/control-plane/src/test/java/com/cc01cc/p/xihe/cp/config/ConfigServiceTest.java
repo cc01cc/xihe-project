@@ -167,6 +167,20 @@ class ConfigServiceTest {
     }
 
     @Test
+    void putLayer_masksProviderSecretInAudit() {
+        cleanDb();
+        String secret = "sk-provider-secret-for-test";
+        configService.putLayer("default", "admin", "llm-provider",
+            Map.of("openaiApiKey", secret), "admin");
+
+        List<ConfigAuditEntity> audits = auditRepo.findAll();
+        ConfigAuditEntity audit = audits.get(audits.size() - 1);
+        assertTrue(audit.getNewValue().startsWith("present:"));
+        assertFalse(audit.getNewValue().contains(secret));
+        assertFalse(audit.getNewValue().contains("sk-provider"));
+    }
+
+    @Test
     void putLayer_tracksChangedBy() {
         cleanDb();
         configService.putLayer("default", "admin", "logging",
@@ -191,6 +205,46 @@ class ConfigServiceTest {
     void importJsonc_invalidContent_throws() {
         assertThrows(IllegalArgumentException.class, () ->
             configService.importJsonc("not json", "admin"));
+    }
+
+    @Test
+    void importJsonc_acceptsOpenAiProviderBinding() {
+        cleanDb();
+        configService.importJsonc("""
+            {
+              "llm-provider": {
+                "defaultProvider": "openai",
+                "openaiApiKey": "sk-fake-openai-key",
+                "openaiModel": "fake-openai",
+                "openaiApiBase": "http://127.0.0.1:13642/openai/v1"
+              },
+              "user-preference": { "defaultModel": "fake-openai" }
+            }
+            """, "admin");
+
+        assertEquals("openai", configService.resolve("default", "llm-provider", "defaultProvider"));
+        assertEquals("fake-openai", configService.resolve("default", "user-preference", "defaultModel"));
+    }
+
+    @Test
+    void importJsonc_acceptsFakeProviderMatrix() {
+        cleanDb();
+        configService.importJsonc("""
+            {
+              "llm-provider": {
+                "defaultProvider": "openai",
+                "openaiApiKey": "sk-fake-openai-key",
+                "openaiModel": "fake-openai",
+                "openaiApiBase": "http://127.0.0.1:28131/openai/v1",
+                "deepseekApiKey": "fake-deepseek-key",
+                "deepseekModel": "fake-deepseek",
+                "deepseekApiBase": "http://127.0.0.1:28131/deepseek/v1"
+              },
+              "user-preference": { "defaultModel": "fake-openai" }
+            }
+            """, "admin");
+
+        assertEquals("fake-deepseek", configService.resolve("default", "llm-provider", "deepseekModel"));
     }
 
     @Test

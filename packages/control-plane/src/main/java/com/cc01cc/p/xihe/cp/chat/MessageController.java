@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -29,15 +30,18 @@ public class MessageController {
     private static final Logger logger = LoggerFactory.getLogger(MessageController.class);
 
     private final MessageRepository messageRepository;
+    private final ChatRunRepository chatRunRepository;
     private final FileRepository fileRepository;
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
 
     public MessageController(MessageRepository messageRepository,
+                             ChatRunRepository chatRunRepository,
                              FileRepository fileRepository,
                              SessionService sessionService,
                              ObjectMapper objectMapper) {
         this.messageRepository = messageRepository;
+        this.chatRunRepository = chatRunRepository;
         this.fileRepository = fileRepository;
         this.sessionService = sessionService;
         this.objectMapper = objectMapper;
@@ -102,6 +106,16 @@ public class MessageController {
         dto.put("role", message.getRole().name());
         dto.put("content", message.getContent());
         dto.put("createdAt", message.getCreatedAt());
+        if (message.getRunId() != null) {
+            chatRunRepository.findById(message.getRunId()).ifPresent(run -> {
+                dto.put("runId", run.getId());
+                dto.put("runStatus", run.getStatus());
+                dto.put("terminalOutcome", run.getTerminalOutcome());
+                dto.put("errorCode", run.getErrorCode());
+                dto.put("errorDetail", run.getErrorDetail());
+                dto.put("partial", "partial".equals(run.getStatus()));
+            });
+        }
         if (message.getAttachments() != null && !message.getAttachments().isBlank()) {
             try {
                 List<Map<String, Object>> attachments = objectMapper.readValue(

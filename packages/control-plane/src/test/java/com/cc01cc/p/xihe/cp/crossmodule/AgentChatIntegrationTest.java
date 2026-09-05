@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -51,6 +52,9 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private HealthMonitor healthMonitor;
+
     private String token;
     private String userId;
     private String workspaceId;
@@ -58,6 +62,13 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     @BeforeEach
     void setUp() {
         super.setUp();
+        wireMock.resetAll();
+        wireMock.stubFor(get(urlEqualTo("/internal/v1/agent/health"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}")));
+        healthMonitor.pollHealth();
         token = registerAndLogin();
 
         userId = jwtTokenProvider.getUserIdFromToken(token);
@@ -109,9 +120,9 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
-    void execForwardsStreamingRequestToAgent() {
-        String sessionId = "exec-" + UUID.randomUUID().toString().substring(0, 8);
-        Session session = new Session(workspaceId, userId, "Exec Test");
+    void chatForwardsStreamingRequestToAgent() {
+        String sessionId = "chat-stream-" + UUID.randomUUID().toString().substring(0, 8);
+        Session session = new Session(workspaceId, userId, "Chat Stream Test");
         session.setId(sessionId);
         sessionRepository.save(session);
 
@@ -131,12 +142,13 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         );
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/api/v1/exec"),
+                url("/api/v1/chat"),
                 HttpMethod.POST,
                 entityWithAuth(body, token),
                 Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure"))
                 .withRequestBody(matchingJsonPath("$.stream", equalTo("true")))
@@ -164,6 +176,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat")));
     }
 

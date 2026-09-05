@@ -7,6 +7,8 @@
     "xiaomiApiKey": { "type": "string" },
     "dashscopeApiKey": { "type": "string" },
     "defaultProvider": { "type": "string" },
+    "openaiModel": { "type": "string" },
+    "openaiApiBase": { "type": "string", "format": "uri" },
     "deepseekModel": { "type": "string" },
     "deepseekApiBase": { "type": "string", "format": "uri" },
     "xiaomiModel": { "type": "string" },

@@ -21,6 +21,7 @@ import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -30,20 +31,24 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -72,6 +77,9 @@ class ChatControllerTest extends AbstractH2Test {
     private FileRepository fileRepository;
 
     @Autowired
+    private ChatRunRepository chatRunRepository;
+
+    @Autowired
     private SseEmitterManager sseEmitterManager;
 
     @Autowired
@@ -80,11 +88,17 @@ class ChatControllerTest extends AbstractH2Test {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private HealthMonitor healthMonitor;
+
     @LocalServerPort
     private int serverPort;
 
     private static HttpServer agentServer;
     private static int agentPort;
+    private static final AtomicReference<String> AGENT_HEALTH = new AtomicReference<>(
+            "{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+    private static final AtomicReference<Boolean> AGENT_AVAILABLE = new AtomicReference<>(true);
 
     private String authToken;
     private String userId;
@@ -95,6 +109,19 @@ class ChatControllerTest extends AbstractH2Test {
     static void configureProperties(DynamicPropertyRegistry registry) {
         try {
             agentServer = HttpServer.create(new InetSocketAddress(0), 0);
+            agentServer.createContext("/internal/v1/agent/health", exchange -> {
+                if (!AGENT_AVAILABLE.get()) {
+                    exchange.sendResponseHeaders(503, -1);
+                    exchange.close();
+                    return;
+                }
+                byte[] body = AGENT_HEALTH.get().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream output = exchange.getResponseBody()) {
+                    output.write(body);
+                }
+            });
             agentServer.start();
             agentPort = agentServer.getAddress().getPort();
         } catch (IOException e) {
@@ -116,6 +143,8 @@ class ChatControllerTest extends AbstractH2Test {
         });
 
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);
+        AGENT_AVAILABLE.set(true);
+        healthMonitor.pollHealth();
 
         String email = "chat-ctrl-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         ResponseEntity<AuthResponse> reg = restTemplate.postForEntity(
@@ -168,7 +197,8 @@ class ChatControllerTest extends AbstractH2Test {
         file.setSizeBytes(tempFile.length());
         file = fileRepository.save(file);
 
-        String sseBody = "data: {\"content\":\"hello\"}\n\n";
+        String sseBody = "event: token\ndata: {\"content\":\"hello\"}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
         agentServer.createContext("/internal/v1/agent/chat", exchange -> {
             try {
                 exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
@@ -213,6 +243,186 @@ class ChatControllerTest extends AbstractH2Test {
         Message assistantMsg = messages.stream().filter(m -> m.getRole() == MessageRole.ASSISTANT).findFirst().orElse(null);
         assertNotNull(assistantMsg, "Assistant reply should be persisted");
         assertEquals("hello", assistantMsg.getContent());
+        ChatRun run = chatRunRepository.findById((String) response.getBody().get("runId")).orElseThrow();
+        assertEquals("succeeded", run.getStatus());
+        assertEquals("success", run.getTerminalOutcome());
+        assertEquals(userMsg.getId(), run.getUserMessageId());
+        assertEquals(assistantMsg.getId(), run.getAssistantMessageId());
+    }
+
+    @Test
+    void chat_whenLlmIsNotReady_returns503BeforePersisting() {
+        AGENT_HEALTH.set("{\"status\":\"degraded\",\"liveness\":\"up\",\"llmReady\":\"missing_credentials\",\"configRevision\":\"test-revision\"}");
+        try {
+            healthMonitor.pollHealth();
+            long before = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).size();
+
+            Map<String, Object> request = Map.of(
+                    "sessionId", sessionId,
+                    "content", "This must not be persisted",
+                    "workspaceId", workspaceId,
+                    "userId", userId
+            );
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(authToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            RestTemplate noErrorClient = new RestTemplate();
+            noErrorClient.setErrorHandler(new org.springframework.web.client.DefaultResponseErrorHandler() {
+                @Override
+                public boolean hasError(HttpStatusCode statusCode) {
+                    return false;
+                }
+            });
+            ResponseEntity<Map> response = noErrorClient.exchange(
+                    baseUrl + "/api/v1/chat", HttpMethod.POST,
+                    new HttpEntity<>(request, headers), Map.class);
+
+            assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+            assertEquals("LLM_NOT_CONFIGURED", response.getBody().get("code"));
+            assertEquals(before, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).size());
+        } finally {
+            AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+        }
+    }
+
+    @Test
+    void chat_whenAgentIsDownAndLastReadinessWasNotReady_doesNotQueue() {
+        AGENT_HEALTH.set("{\"status\":\"degraded\",\"liveness\":\"up\",\"llmReady\":\"missing_credentials\",\"configRevision\":\"test-revision\"}");
+        try {
+            healthMonitor.pollHealth();
+            AGENT_AVAILABLE.set(false);
+            healthMonitor.pollHealth();
+            long before = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).size();
+
+            Map<String, Object> request = Map.of(
+                    "sessionId", sessionId,
+                    "content", "This must not be queued",
+                    "workspaceId", workspaceId,
+                    "userId", userId
+            );
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(authToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            RestTemplate noErrorClient = new RestTemplate();
+            noErrorClient.setErrorHandler(new org.springframework.web.client.DefaultResponseErrorHandler() {
+                @Override
+                public boolean hasError(HttpStatusCode statusCode) {
+                    return false;
+                }
+            });
+
+            ResponseEntity<Map> response = noErrorClient.exchange(
+                    baseUrl + "/api/v1/chat", HttpMethod.POST,
+                    new HttpEntity<>(request, headers), Map.class);
+
+            assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+            assertEquals("LLM_NOT_CONFIGURED", response.getBody().get("code"));
+            assertEquals(before, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).size());
+        } finally {
+            AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+        }
+    }
+
+    @Test
+    void chat_repeatedIdempotencyKeyDoesNotStartSecondRun() throws IOException, InterruptedException {
+        AtomicReference<Integer> agentCalls = new AtomicReference<>(0);
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            agentCalls.updateAndGet(value -> value + 1);
+            byte[] body = ("event: token\ndata: {\"content\":\"once\"}\n\n"
+                    + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Idempotent message",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", "idempotency-test-key");
+
+        ResponseEntity<Map> first = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+        ResponseEntity<Map> second = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+
+        assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
+        assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
+        assertEquals(first.getBody().get("runId"), second.getBody().get("runId"));
+        Thread.sleep(500);
+        assertEquals(1, agentCalls.get());
+        assertEquals("succeeded", chatRunRepository.findById((String) first.getBody().get("runId")).orElseThrow().getStatus());
+
+        Map<String, Object> conflictingRequest = Map.of(
+                "sessionId", sessionId,
+                "content", "A different payload",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+        ResponseEntity<Map> conflict = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(conflictingRequest, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
+        assertEquals("IDEMPOTENCY_KEY_CONFLICT", conflict.getBody().get("code"));
+    }
+
+    @Test
+    void chat_whenAgentStreamEndsWithoutDone_marksRunAmbiguousAndDoesNotRetry() throws IOException, InterruptedException {
+        AtomicReference<Integer> agentCalls = new AtomicReference<>(0);
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            agentCalls.updateAndGet(value -> value + 1);
+            byte[] body = "event: token\ndata: {\"content\":\"possibly charged\"}\n\n"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+
+        String idempotencyKey = "ambiguous-stream-key";
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "May have executed",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", idempotencyKey);
+
+        ResponseEntity<Map> first = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
+
+        List<Message> messages = pollMessages(5000);
+        assertTrue(messages.stream().anyMatch(message -> "possibly charged".equals(message.getContent())));
+        ChatRun run = chatRunRepository.findById((String) first.getBody().get("runId")).orElseThrow();
+        assertEquals("ambiguous", run.getStatus());
+        assertEquals("ambiguous", run.getTerminalOutcome());
+
+        ResponseEntity<Map> duplicate = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, duplicate.getStatusCode());
+        assertEquals(first.getBody().get("runId"), duplicate.getBody().get("runId"));
+        assertEquals(1, agentCalls.get());
     }
 
     @Test

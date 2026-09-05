@@ -22,6 +22,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
@@ -79,6 +80,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private HealthMonitor healthMonitor;
+
     private String authToken;
     private String userId;
     private String workspaceId;
@@ -105,7 +109,8 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
                 }
             });
             agentServer.createContext("/internal/v1/agent/health", exchange -> {
-                byte[] response = "{\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
+                byte[] response = "{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}"
+                        .getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
                 exchange.sendResponseHeaders(200, response.length);
                 try (OutputStream output = exchange.getResponseBody()) {
@@ -121,6 +126,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        healthMonitor.pollHealth();
         String email = "chat-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         RegisterRequest register = new RegisterRequest(email, TestDataFactory.PASSWORD, "ChatIntTest");
         ResponseEntity<AuthResponse> regResponse = restTemplate.postForEntity(

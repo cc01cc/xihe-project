@@ -45,6 +45,10 @@ public class StatusController {
         agentResult.put("name", "Agent");
         agentResult.put("key", "agent");
         agentResult.put("status", agentHealth.status());
+        agentResult.put("liveness", agentHealth.liveness());
+        agentResult.put("llmReady", agentHealth.llmReady());
+        agentResult.put("configRevision", agentHealth.configRevision());
+        agentResult.put("verifiedAt", agentHealth.verifiedAt());
         agentResult.put("consecutiveFailures", agentHealth.consecutiveFailures());
         agentResult.put("circuitBreaker", healthMonitor.getAgentBreaker().getState().name());
         services.add(agentResult);
