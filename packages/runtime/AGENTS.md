@@ -61,6 +61,7 @@ src/
 - 启动时只完成 Runtime 自身 liveness/readiness；通过 Bearer 按 `workspaceId` 定向获取 `WorkspaceExecutionSpec`，首次文件/命令/MCP 操作时再 materialize Workspace Sandbox。
 - Sandbox Container 创建、重建和删除只处理临时执行实体，必须保留 WorkspaceStorage 文件。
 - Strict Sandbox 使用 `network_mode=none`，不发布端口，Workspace 操作同样经 per-request exec；Coding/Isolated 的 loopback 端口仅保留用于健康检查，不用于 Workspace 操作。
+- Handler 级 Fake 门：`main.rs` 内 `#[cfg(test)]` 模块直调 handler，stub CP（execution-spec）+ stub Fake MCP（127.0.0.1 随机端口，需 `XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL=true`），断言结果 + 注册表无容器 + `list_workspaces()` 为空；无 Docker 下最强的完成证据（见 `remote_handler_tests`）。
 
 ## Permissions
 
