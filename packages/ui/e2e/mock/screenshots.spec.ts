@@ -15,7 +15,7 @@ const allRoutes: Route[] = [
   { path: '/settings/knowledge', name: 'settings-knowledge', requiresAuth: true },
   { path: '/settings/data', name: 'settings-data', requiresAuth: true },
   { path: '/settings/monitoring', name: 'settings-monitoring', requiresAuth: true },
-  { path: '/workspace', name: 'workspace', requiresAuth: true },
+  { path: '/workspace/ws-e2e-1', name: 'workspace', requiresAuth: true },
 ]
 
 for (const route of allRoutes) {

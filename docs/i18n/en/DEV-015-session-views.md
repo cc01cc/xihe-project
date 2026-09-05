@@ -2,13 +2,15 @@
 title: DEV-015 - Session Views Design
 category: dev-guide
 lang: en
-status: active
+status: superseded
 sidebar_order: 15
 created: 2026-07-06
-updated: 2026-09-02
+updated: 2026-09-05
 ---
 
 # DEV-015: Session Views Design
+
+> ⚠️ **Superseded (2026-09-05)**: The zh-Hans canonical doc set renumbers DEV-015 to Runtime Architecture and moves Session architecture to `DEV-017-session-architecture.md`. This English document is retained as historical reference for the PLAN-029/PLAN-230 session-views design; do not treat its numbering or `/workspace/:workspaceId?` optional-parameter rationale as current design. Canonical references: zh-Hans `DEV-017-session-architecture.md` + `DEV-010-ui-architecture.md`.
 
 > This document describes the view-layer implementation of PLAN-029-XH-unified-session-architecture: routing, `ChatPanel` embedding, and chat ↔ workspace switching. It is aimed at frontend developers and assumes the reader has already read RFC-001 and ADR-001.
 >

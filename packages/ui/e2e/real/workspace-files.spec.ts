@@ -82,7 +82,7 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
         res.text().then((t) => mcpBodies.push(`${res.status()} ${t.slice(0, 300)}`)).catch(() => {})
       }
     })
-    await page.goto('/workspace', { waitUntil: 'load' })
+    await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
 
     const fileEntry = page.locator('text=e2e-note.md').first()
     try {
@@ -104,7 +104,7 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
   })
 
   test('file delete confirm dialog renders destructive action with correct layering', async ({ page }) => {
-    await page.goto('/workspace', { waitUntil: 'load' })
+    await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
     const fileEntry = page.locator('text=e2e-note.md').first()
     await expect(fileEntry).toBeVisible({ timeout: 15000 })
 
@@ -135,7 +135,7 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
     })
     const token = (await r.json()).accessToken
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
-    await page.goto('/workspace', { waitUntil: 'load' })
+    await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
     await page.waitForTimeout(1500)
     await expect(page).toHaveScreenshot('workspace-empty-state.png')
   })

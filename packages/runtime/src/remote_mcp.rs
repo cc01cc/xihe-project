@@ -151,6 +151,10 @@ pub struct RemoteMcpConnector {
     next_id: AtomicU64,
     session_id: Mutex<Option<String>>,
     last_event_id: Mutex<Option<String>>,
+    /// MCP servers may negotiate down from our default (e.g. DeepWiki caps
+    /// at 2025-11-25 and rejects later calls carrying 2026-07-28).
+    /// Captured from the initialize result; defaults to MCP_PROTOCOL_VERSION.
+    protocol_version: Mutex<String>,
     pub request_states: RequestStateStore,
     request_state_binding: RequestStateBinding,
 }
@@ -203,6 +207,7 @@ impl RemoteMcpConnector {
             next_id: AtomicU64::new(1),
             session_id: Mutex::new(None),
             last_event_id: Mutex::new(None),
+            protocol_version: Mutex::new(MCP_PROTOCOL_VERSION.to_string()),
             request_states,
             request_state_binding,
         })
@@ -223,6 +228,17 @@ impl RemoteMcpConnector {
                 cancellation,
             )
             .await?;
+        // Adopt the server-negotiated version for all subsequent calls.
+        if let Some(negotiated) = result
+            .get("protocolVersion")
+            .and_then(serde_json::Value::as_str)
+            && !negotiated.is_empty()
+        {
+            *self
+                .protocol_version
+                .lock()
+                .expect("protocol version mutex poisoned") = negotiated.to_string();
+        }
         self.notify("notifications/initialized", json!({}), cancellation)
             .await?;
         Ok(result)
@@ -369,9 +385,14 @@ impl RemoteMcpConnector {
     }
 
     fn request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let protocol_version = self
+            .protocol_version
+            .lock()
+            .expect("protocol version mutex poisoned")
+            .clone();
         let request = request
             .bearer_auth(&self.bearer_token)
-            .header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION);
+            .header("MCP-Protocol-Version", protocol_version);
         if let Some(session_id) = self
             .session_id
             .lock()
@@ -714,8 +735,45 @@ mod tests {
         }
     }
 
-    fn json_response(body: Value, session: Option<(&str, &str)>) -> Response<Body> {
-        let mut response = Response::new(Body::from(body.to_string()));
+    async fn versioned_handler(
+        State(seen): State<Arc<Mutex<Vec<(String, String)>>>>,
+        request: Request<Body>,
+    ) -> Response<Body> {
+        let (parts, body) = request.into_parts();
+        let bytes = to_bytes(body, usize::MAX).await.expect("read body");
+        let payload: Value = serde_json::from_slice(&bytes).expect("JSON");
+        let method = payload
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let version = parts
+            .headers
+            .get("mcp-protocol-version")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        seen.lock()
+            .expect("seen mutex poisoned")
+            .push((method.clone(), version));
+        let id = payload.get("id").cloned().unwrap_or(Value::Null);
+        let body = if method == "initialize" {
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": id,
+                "result": {"protocolVersion": "2025-11-25", "capabilities": {}}
+            })
+        } else if method == "tools/list" {
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": id,
+                "result": {"tools": []}
+            })
+        } else {
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": {}})
+        };
+        json_response(body, None)
+    }
+
+    fn json_response(body: Value, session: Option<(&str, &str)>) -> Response<Body> {        let mut response = Response::new(Body::from(body.to_string()));
         response.headers_mut().insert(
             "content-type",
             "application/json".parse().expect("content type"),
@@ -765,12 +823,13 @@ mod tests {
             next_id: AtomicU64::new(1),
             session_id: Mutex::new(None),
             last_event_id: Mutex::new(None),
+            protocol_version: Mutex::new(MCP_PROTOCOL_VERSION.to_string()),
             request_states: states,
             request_state_binding: RequestStateBinding {
                 user_id: "user-1".into(),
-                workspace_id: "ws-1".into(),
+                workspace_id: "workspace-1".into(),
                 server_id: "server-1".into(),
-                scope: "mcp:tools".into(),
+                scope: "read".into(),
             },
         }
     }
@@ -907,6 +966,65 @@ mod tests {
         let error =
             parse_response(json!({"error": {"code": -1, "message": "failed"}})).unwrap_err();
         assert!(matches!(error, RemoteMcpError::JsonRpc(_)));
+    }
+
+    #[tokio::test]
+    async fn initialize_adopts_server_negotiated_protocol_version() {
+        // PLAN-242 live runbook finding: DeepWiki caps at 2025-11-25 and
+        // rejects later calls carrying 2026-07-28. The connector must adopt
+        // the initialize result version for subsequent calls.
+        let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .fallback(any(versioned_handler))
+            .with_state(seen.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let endpoint = format!("http://{}/mcp", listener.local_addr().expect("addr"));
+        let (shutdown, signal) = oneshot::channel();
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    signal.await.ok();
+                })
+                .await
+                .expect("serve");
+        });
+
+        let connector = RemoteMcpConnector {
+            client: Client::builder()
+                .timeout(Duration::from_secs(5))
+                .redirect(Policy::none())
+                .build()
+                .expect("build test client"),
+            endpoint: Url::parse(&endpoint).expect("parse fixture endpoint"),
+            bearer_token: "access-live".into(),
+            next_id: AtomicU64::new(1),
+            session_id: Mutex::new(None),
+            last_event_id: Mutex::new(None),
+            protocol_version: Mutex::new(MCP_PROTOCOL_VERSION.to_string()),
+            request_states: RequestStateStore::default(),
+            request_state_binding: RequestStateBinding {
+                user_id: "user-1".into(),
+                workspace_id: "ws-1".into(),
+                server_id: "server-1".into(),
+                scope: "mcp:tools".into(),
+            },
+        };
+        let cancellation = CancellationToken::new();
+        let initialized = connector.initialize(&cancellation).await.expect("initialize");
+        assert_eq!(initialized["protocolVersion"], "2025-11-25");
+        connector.tools_list(&cancellation).await.expect("tools/list");
+
+        let seen = seen.lock().expect("seen mutex poisoned");
+        let version_of = |method: &str| {
+            seen.iter()
+                .find(|(m, _)| m == method)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(version_of("initialize"), MCP_PROTOCOL_VERSION);
+        assert_eq!(version_of("tools/list"), "2025-11-25");
+        drop(seen);
+        shutdown.send(()).expect("stop fixture");
     }
 
     #[test]

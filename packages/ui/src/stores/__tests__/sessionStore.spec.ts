@@ -32,8 +32,7 @@ beforeEach(() => {
 
 describe('useSessionStore (server canonical)', () => {
   it('createSession POSTs to /sessions and stores the server response', async () => {
-    const auth = mockAuth()
-    auth.currentWorkspaceId
+    mockAuth()
     const store = useSessionStore()
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')

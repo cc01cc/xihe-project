@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
@@ -66,7 +66,9 @@ function handleUpload() {
   ws.openImportDialog()
 }
 
-void ensureSessionForWorkspace
+onMounted(() => {
+  void ensureSessionForWorkspace()
+})
 </script>
 
 <template>
@@ -85,6 +87,18 @@ void ensureSessionForWorkspace
       class="w-96 border-l bg-muted/5 flex flex-col shrink-0"
     >
       <ChatPanel :session-id="sessionId" />
+    </div>
+    <div
+      v-else
+      class="w-96 border-l bg-muted/5 flex flex-col items-center justify-center gap-2 shrink-0"
+    >
+      <p class="text-sm text-muted-foreground">No active session</p>
+      <button
+        class="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90"
+        @click="ensureSessionForWorkspace()"
+      >
+        New Chat
+      </button>
     </div>
 
     <FileContextMenu

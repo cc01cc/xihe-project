@@ -21,7 +21,7 @@ test.describe('Cross-Module — Workspace', () => {
     const token = await registerAndGetToken('ws')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
-    await page.goto('/workspace')
+    await page.goto('/workspace/ws-e2e-1')
     await page.waitForTimeout(2000)
 
     await expect(page.getByText('Files')).toBeVisible({ timeout: 5000 })
@@ -32,7 +32,7 @@ test.describe('Cross-Module — Workspace', () => {
     const token = await registerAndGetToken('ws-empty')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
-    await page.goto('/workspace')
+    await page.goto('/workspace/ws-e2e-1')
     await page.waitForTimeout(3000)
 
     const emptyState = page.getByText('Workspace is empty')
@@ -45,7 +45,7 @@ test.describe('Cross-Module — Workspace', () => {
   })
 
   test('unauthenticated user is redirected to login', async ({ page }) => {
-    await page.goto('/workspace')
+    await page.goto('/workspace/ws-e2e-1')
     await page.waitForURL(/\/login/, { timeout: 5000 })
     expect(page.url()).toContain('/login')
   })

@@ -70,7 +70,7 @@ const router = createRouter({
       component: () => import('../views/auth/RegisterView.vue'),
     },
     {
-      path: '/workspace/:workspaceId?',
+      path: '/workspace/:workspaceId',
       name: 'workspace',
       component: () => import('../layouts/AppLayout.vue'),
       meta: { requiresAuth: true },

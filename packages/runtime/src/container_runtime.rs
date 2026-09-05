@@ -462,12 +462,22 @@ fn cleanup_expired_jobs() -> Result<usize, RuntimeError> {
     for entry in std::fs::read_dir(job_dir).map_err(RuntimeError::Io)? {
         let entry = entry.map_err(RuntimeError::Io)?;
         let meta = entry.metadata().map_err(RuntimeError::Io)?;
-        if let Ok(modified) = meta.modified() { if let Ok(elapsed) = now.duration_since(modified) { if elapsed.as_secs() > JOB_TTL_SECS { let _ = std::fs::remove_dir_all(entry.path()); cleaned += 1; } } }
+        if let Ok(modified) = meta.modified()
+            && let Ok(elapsed) = now.duration_since(modified)
+            && elapsed.as_secs() > JOB_TTL_SECS
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
+            cleaned += 1;
+        }
         let job_id = entry.file_name().to_string_lossy().to_string();
         let job_path = PathBuf::from(JOB_DIR).join(&job_id);
         for fname in ["stdout", "stderr"] {
             let fpath = job_path.join(fname);
-            if let Ok(md) = std::fs::metadata(&fpath) { if md.len() > JOB_CAP as u64 { let _ = std::process::Command::new("sh").arg("-c").arg(format!("head -c {} {} > {}.tmp && mv {}.tmp {}", JOB_CAP, fpath.display(), fpath.display(), fpath.display(), fpath.display())).status(); } }
+            if let Ok(md) = std::fs::metadata(&fpath)
+                && md.len() > JOB_CAP as u64
+            {
+                let _ = std::process::Command::new("sh").arg("-c").arg(format!("head -c {} {} > {}.tmp && mv {}.tmp {}", JOB_CAP, fpath.display(), fpath.display(), fpath.display(), fpath.display())).status();
+            }
         }
     }
     Ok(cleaned)

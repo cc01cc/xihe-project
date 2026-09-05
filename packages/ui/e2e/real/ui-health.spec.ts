@@ -20,7 +20,7 @@ const pages: HealthPage[] = [
   { path: '/settings/knowledge', name: 'settings-knowledge', requiresAuth: true, keySelector: '[data-testid="settings-knowledge-heading"]', benign: ['status of 502'] },
   { path: '/settings/data', name: 'settings-data', requiresAuth: true, keySelector: '[data-testid="settings-data-heading"]', benign: [] as string[] },
   { path: '/settings/monitoring', name: 'settings-monitoring', requiresAuth: true, keySelector: '[data-testid="settings-monitoring-heading"]', benign: [] as string[] },
-  { path: '/workspace', name: 'workspace', requiresAuth: true, keySelector: null, benign: [] as string[], hostOnly: true },
+  { path: '/workspace/ws-e2e-1', name: 'workspace', requiresAuth: true, keySelector: null, benign: [] as string[], hostOnly: true },
   { path: '/login', name: 'login', requiresAuth: false, keySelector: 'input[type="password"]', benign: [] as string[] },
   { path: '/register', name: 'register', requiresAuth: false, keySelector: 'input[type="password"]', benign: [] as string[] },
 ]

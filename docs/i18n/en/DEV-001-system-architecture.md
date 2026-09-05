@@ -116,7 +116,7 @@ Both interfaces share underlying core functions like `fs.rs` — the same busine
 | `POST /internal/v1/runtime/workspaces/delete` | CP → Runtime | Delete workspace (including bridge cleanup) |
 
 **MCP Server** (`rmcp` SDK + `#[tool]` macro): Automatically generates JSON Schema. Runtime has three binaries:
-- `xihe-runtime`: Gateway main process, registers `/workspace/{ws_id}/mcp` series routes; workspace operations run inside the Sandbox via per-request Docker exec through `WorkspaceExecutionRouter` (PLAN-235, no HTTP channel, no instance token, no long-lived worker)
+- `xihe-runtime`: Gateway main process, registers `/internal/v1/runtime/workspaces/{ws_id}/mcp` series routes; workspace operations run inside the Sandbox via per-request Docker exec through `WorkspaceExecutionRouter` (PLAN-235, no HTTP channel, no instance token, no long-lived worker)
 - `xihe-container-runtime`: In-container executor with `--oneshot` CLI mode (single operation JSON on stdin → single result JSON on stdout, EOF-delimited); handles built-in file/command tools and `/tmp/xihe-jobs` state-file background jobs
 - `xihe-mcp-bridge`: In-container STDIO bridge, exposes user-configured STDIO MCP servers as HTTP endpoints
 
@@ -159,7 +159,7 @@ Tool names are mapped by CP reverse proxy when building the tool→server mappin
   - **Single-flight & gate**: `POST /api/v1/chat` validates `hasEmitter(sessionId)` (`409 SSE_SUBSCRIPTION_REQUIRED`) before persisting and atomically acquires an `activeRuns` lease (`409 CHAT_IN_PROGRESS`); `requestId`/`runId` from `RequestIdFilter` are explicitly propagated via `X-Request-Id`/`X-Chat-Run-Id` to `execAsync` and the Agent (never inherited via thread-local `MDC`).
   - **UI transport**: `chatTransport` enforces single flight per session (`connectionGeneration` + `intentionalStops`), bounded backoff reconnect (`onerror` returns 250ms→5s, `onclose` schedules at most one reconnect, no second retry loop), `useSSE.ensureConnected()` plus at most one `SSE_SUBSCRIPTION_REQUIRED` recovery; `SSEStream` replaces streaming parts on every `token` via `chatStore.replaceStreamingParts`, fixing the old `lastSentCount`-only-on-`parts.length`-growth truncation.
 - **MCP Reverse Proxy Channel** (`POST /mcp`): Agent's MCP tool calls parsed by CP as JSON-RPC → tool name extracted → permission check → request rewriting → three-layer routing forwarding:
-  - **Layer 1 (CP)**: Authentication + tool-name routing, system tools → Runtime `/workspace/{ws_id}/mcp`, user STDIO tools → `/workspace/{ws_id}/mcp/stdio/{server_id}`
+  - **Layer 1 (CP)**: Authentication + tool-name routing, system tools → Runtime `/internal/v1/runtime/workspaces/{ws_id}/mcp`, user STDIO tools → `/internal/v1/runtime/workspaces/{ws_id}/mcp/stdio/{server_id}`
   - **Layer 2 (Runtime Gateway)**: Per-workspace dispatch, `CURRENT_WS_ID` task-local injection
   - **Layer 3 (In-container bridge)**: `xihe-mcp-bridge` manages STDIO subprocesses, HTTP ↔ STDIN/STDOUT bridging
   - See [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md)
@@ -252,9 +252,9 @@ sequenceDiagram
 
   Note over Human,RT: Scenario C: File Operations (UI → CP → Runtime via REST)
   Human->>UI: Open/upload file
-  UI->>CP: REST POST /api/v1/files/upload or /workspace/{ws_id}/files/read
+  UI->>CP: REST POST /api/v1/files/upload
   CP->>CP: Auth + workspace resolution
-  CP->>RT: REST POST /workspace/{ws_id}/files/write or /read (binary/JSON)
+  CP->>RT: REST POST /internal/v1/runtime/workspaces/{ws_id}/files/write or /read (binary/JSON)
   RT->>CP: REST response (file content/status)
   CP->>UI: REST response
 
