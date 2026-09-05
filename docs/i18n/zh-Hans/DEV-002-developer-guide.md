@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 2
 status: active
 created: 2026-05-28
-updated: 2026-09-03
+updated: 2026-09-05
 ---
 
 # DEV-002: 开发者指南
@@ -193,3 +193,19 @@ Chat SSE 结构化事件与日志字段见 DEV-004 §6.3；UI 传输层见 DEV-0
 - 集成：`mise run test:integration`（T2；T3 需 Docker）。
 - E2E：`mise run test:e2e`（Compose-compatible，排除 `@host`）；`mise run test:e2e:host`（需先 `dev:host`，每轮隔离 DB/host root，成功/失败/中断必 teardown）。
 - 全量：`mise run validate:full`。策略详见 DEV-020/021/022/023。
+
+## 6. Rust 构建缓存策略
+
+> 约束：H 盘为开发专供，不迁移 `CARGO_TARGET_DIR`。`packages/runtime/target/` 在 stable cargo 下无自动回收（`-Zgc` 仅管 `~/.cargo` 全局缓存，不管本地 `target/`），叠加 Windows PDB（150~200MB/个）+ 4 bin + 11 test target，多 hash 孤儿可堆到 40GB（2026-09-05 实测 39.5GB，H 剩 1.6GB）。单次编译不需要 40GB，常态活集约 6~10GB。
+
+水位线（`target/`）：正常 ≤12GB，告警 15GB，强制 20GB；H 余量 <5GB 直接走强制。
+
+日常（双周，无重编代价）：`mise run clean:runtime-sweep`（`cargo sweep --time 7 && cargo sweep --maxsize 12GB`，只删孤儿 rlib/pdb/rmeta，活指纹保留）。前提一次性 `cargo install cargo-sweep`。注意 `--time 14` 在高频构建下可能清零（孤儿全部 <14 天），以 `--maxsize` 为准。
+
+月度/告警（小代价）：删 `target/debug/incremental`（sweep 不处理增量目录，它是最大头，实测 20.3GB/286 个残留目录）。代价下次本地增量构建 +1~2min，deps 指纹不受影响，不触发全量重编。
+
+特殊：工具链切换（mise pin 1.88 vs 本机 rustup 漂移即产生整套孤儿）/ `Cargo.lock` 大升级后 `cargo clean -p xihe-runtime`；诡异链接错误 `cargo clean`；`build:runtime` 发版后 `cargo clean --release`（release 产物日常用不到，实测 sweep 后 release 1.9GB→0.1GB）。
+
+实测（2026-09-05）：`target` 39.5→4.1GB（sweep 清 deps 孤儿 ~17GB + 增量清除 ~20GB），H 余量 1.6→27.3GB；sweep 后离线增量构建 70s（deps 复用、无重编）、`cargo test --lib` 137 passed/17s、`cargo check --all-targets` 52s。
+
+注意：构建尾段若报 `failed to remove ...exe（os error 5 拒绝访问）`，为 `mise run dev:host` 常驻的 xihe-runtime 进程占住旧 exe，属预期行为；停栈后重链即可，不影响上述验证结论。

@@ -86,7 +86,8 @@ mise run validate
 | `mise run format` | 格式化代码 | UI + Agent + Runtime |
 | `mise run validate` | 全量验证 — lint + typecheck + build + test | Docker 自动管理 |
 | `mise run validate:full` | 完整验证 + 集成 + E2E | 需 Docker |
-| `mise run clean` | 清理日志与构建产物 | — |
+| `mise run clean` | 清理日志与构建产物 | 核选项，删全部 target |
+| `mise run clean:runtime-sweep` | 清理 Rust 孤儿产物（7 天+/12GB 上限，保留活指纹） | 双周日常，策略见 DEV-002 §6 |
 | `mise run image:workspace:build` | 构建 workspace 容器镜像 | — |
 
 ### 文件级命令

@@ -300,3 +300,9 @@ alias = "reset-admin"
 run = "rm -rf logs packages/*/target packages/*/dist packages/*/coverage"
 description = "Remove build artifacts, logs, and temporary files"
 alias = "clean"
+
+[tasks."clean:runtime-sweep"]
+run = "cargo sweep --time 7 && cargo sweep --maxsize 12GB"
+description = "Sweep orphaned Rust artifacts (7d+ / 12GB cap, keeps live fingerprints, no rebuild)"
+dir = "packages/runtime"
+alias = "clean:runtime-sweep"
