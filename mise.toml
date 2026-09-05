@@ -9,7 +9,6 @@ uv = "latest"
 java = "temurin-25"
 maven = "3.9"
 rust = "1.88"
-task = "3"
 
 [tasks.setup]
 depends = ["setup:ui", "setup:agent", "setup:cp", "setup:runtime"]

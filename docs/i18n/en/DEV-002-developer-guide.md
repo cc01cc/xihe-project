@@ -80,7 +80,7 @@ Using `mise` in the root directory is recommended for toolchain management and c
 mise install
 ```
 
-If the current shell hasn't executed `mise activate`, root tasks are recommended to use `mise run ...` format. `task` / `Taskfile.yml` are deprecated, retained only for backwards compatibility.
+If the current shell hasn't executed `mise activate`, root tasks are recommended to use `mise run ...` format. `task` / `Taskfile.yml` have been removed (PLAN-245 M5); `mise run ...` is the only entry point.
 
 ```bash
 node --version  # v22+
@@ -181,13 +181,17 @@ curl -s http://localhost:12633/health              # Expected: OK (inside Docker
 
 #### Mode B: Host Development (CP runs on host, for unit tests)
 
-```bash
-# Option B1: H2 in-memory database (zero configuration, recommended)
-XIHE_CP_DATASOURCE_URL="jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE" \
-XIHE_CP_DATASOURCE_DRIVER="org.h2.Driver" \
-XIHE_CP_DATASOURCE_USERNAME="sa" \
-XIHE_CP_DATASOURCE_PASSWORD="" \
-mvn spring-boot:run -f packages/control-plane/pom.xml
+```powershell
+# Option B1: H2 in-memory database (no external DB required; PowerShell example)
+$env:XIHE_CP_DATASOURCE_URL = 'jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1'
+$env:XIHE_CP_DATASOURCE_DRIVER = 'org.h2.Driver'
+$env:XIHE_CP_DATASOURCE_USERNAME = 'sa'
+$env:XIHE_CP_DATASOURCE_PASSWORD = ''
+$env:XIHE_CP_JPA_DIALECT = 'org.hibernate.dialect.H2Dialect'
+$env:SPRING_FLYWAY_ENABLED = 'false'
+$env:SPRING_JPA_HIBERNATE_DDL_AUTO = 'create-drop'
+
+mvn -f packages/control-plane/pom.xml spring-boot:run
 
 # Option B2: PostgreSQL container (requires Docker running first)
 docker compose up -d postgres
@@ -235,22 +239,22 @@ curl http://localhost:8080/config/llm-provider \
 **Method B: JSONC Import** (batch initialization, recommended for dev startup)
 
 ```bash
-# Import configuration to admin layer
-curl -X POST http://localhost:8080/config/import \
+# Import configuration to admin layer (canonical path: /api/v1/config/import)
+curl -X POST http://localhost:12631/api/v1/config/import \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d @config.import.local.jsonc
 ```
 
-`mise run dev:full` automatically executes this import (after CP is ready).
+`mise run dev:full` does **not** auto-import by default: `DataSeeder` generates a random admin password that is never printed, so the script cannot log in. After CP is ready, run `mise run reset-admin` to obtain the password and import manually, or set `XIHE_DEV_ADMIN_PASSWORD` (OS env only; never commit to scripts/git/logs) to enable automatic import.
 
 JSONC supports comments and trailing commas; you can directly copy MCP configuration snippets from Claude Desktop / Cursor.
 
 #### Development Workflow
 
-1. **`cp config.import.example.jsonc config.import.local.jsonc`** — Fill in API keys
-2. **`mise run dev:full`** — Docker Compose startup + automatic import of `config.import.local.jsonc` after CP is ready
-3. **Runtime debugging** — `PUT /config/admin/{domain}` or UI settings page modification, takes effect immediately
+1. **`cp config.import.example.jsonc config.import.local.jsonc`** — Fill in API keys (PowerShell: `Copy-Item`)
+2. **`mise run dev:full`** — Docker Compose startup; import `config.import.local.jsonc` manually after CP is ready (see above)
+3. **Runtime debugging** — `PUT /api/v1/config/admin/{domain}` or UI settings page modification, takes effect immediately
 
 #### Configuration Clients
 
@@ -439,7 +443,7 @@ mvn -Pnative native:compile
 
 ### 6.1. CP Logs
 
-By default, each `task *:dev` in the root directory writes process logs to `logs/<module>.log`. The four default file names are:
+By default, each `mise run dev:*` task in the root directory writes process logs to `logs/<module>.log`. The four default file names are:
 
 - `logs/ui.log`
 - `logs/agent.log`

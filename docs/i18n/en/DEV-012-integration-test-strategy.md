@@ -327,7 +327,7 @@ verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
 
 ```bash
 # Full integration test (includes T3 when Docker available, T2 only otherwise)
-task integration:test
+mise run test:integration
 
 # Run each module independently
 # CP all tests (including T1 + T2 unit + T2 crossmodule)
@@ -353,7 +353,7 @@ cargo test --test cp_real_integration_test
 docker compose down
 
 # Update coverage baseline
-task integration:test && task coverage:report
+mise run test:integration
 ```
 
 ## 6. CI Strategy

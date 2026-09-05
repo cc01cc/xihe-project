@@ -37,7 +37,7 @@ xihe/
 包管理规则：
 
 - 根 `pnpm-workspace.yaml` 仍有效（`packages/*` 约束 + 构建白名单），但日常不走 pnpm workspace 安装：UI 依赖仅在 `packages/ui/` 内用 pnpm 管理。
-- `Taskfile.yml` 仅保留作向后兼容（首行已声明弃用），统一入口为 `mise run ...`。
+- `Taskfile.yml` 已移除（PLAN-245 M5），统一入口为 `mise run ...`。
 
 ## 2. 环境与安装
 
@@ -96,15 +96,34 @@ sequenceDiagram
 
 ### 模式 B：Docker Compose 全栈（一次性基线）
 
+> ⚠️ **拓扑限制（先读）**：当前 Compose 不提供 Runtime 建 Sandbox 所需的 Docker Engine socket 与容器内 WorkspaceStorage 映射（`docker-compose.yml` 中 runtime 仅挂载 `./logs/runtime:/logs`）。因此 Compose 模式**不能替代 `dev:host` 主链路**，workspace/MCP/截图类验证必须在 host 模式执行，不得把 Compose 失败归因于 host v1。
+
 ```bash
-docker compose up -d --build   # 或 mise run dev:full（自动导入 config.import.local.jsonc）
+docker compose up -d --build   # 或 mise run dev:full（CP ready 后按导入语义处理 config.import.local.jsonc，见下）
 ```
 
-启动 postgres + control-plane + agent + runtime（UI 宿主）。端口映射：CP 8080→12631、Agent 8000→12632、Runtime 8001→12633、PG 5432→12634。资源约束 pg 512m / cp 768m / agent 640m / runtime 128m，沙盒 512MB + 2 CPU。**Compose 不提供 Runtime 建 Sandbox 所需的 Docker Engine socket 与 WorkspaceStorage 映射，不能替代 `dev:host` 主链路。**
+启动 postgres + control-plane + agent + runtime（UI 宿主）。端口映射：CP 8080→12631、Agent 8000→12632、Runtime 8001→12633、PG 5432→12634。资源约束 pg 512m / cp 768m / agent 640m / runtime 128m，沙盒 512MB + 2 CPU。
+
+`dev:full` 导入语义（`scripts/dev-all.sh`）：默认**不自动导入**——`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印，脚本无法登录。启动后执行 `mise run reset-admin` 获取密码并手动 `POST /api/v1/config/import`；或设置 `XIHE_DEV_ADMIN_PASSWORD`（仅经 OS 环境变量注入，禁止写入脚本/git/日志）显式启用自动导入。
 
 ### 模式 C：单模块宿主测试
 
-CP 支持 H2 内存库零配置启动（`XIHE_CP_DATASOURCE_URL="jdbc:h2:mem:xihe;..." mvn spring-boot:run -f packages/control-plane/pom.xml`）；文件级命令见 A03-xihe/AGENTS.md（UI lint/typecheck/test:unit、Agent 单文件 pytest、CP 单类 mvn、Runtime `cargo test --lib`）。
+CP 支持无外部数据库的 H2 独立启动（需同时覆盖 datasource URL/driver/dialect 并关闭 Flyway，PowerShell 示例）：
+
+```powershell
+# 仅启动 CP，使用内存 H2，不依赖 PostgreSQL 或 Docker
+$env:XIHE_CP_DATASOURCE_URL = 'jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1'
+$env:XIHE_CP_DATASOURCE_DRIVER = 'org.h2.Driver'
+$env:XIHE_CP_DATASOURCE_USERNAME = 'sa'
+$env:XIHE_CP_DATASOURCE_PASSWORD = ''
+$env:XIHE_CP_JPA_DIALECT = 'org.hibernate.dialect.H2Dialect'
+$env:SPRING_FLYWAY_ENABLED = 'false'
+$env:SPRING_JPA_HIBERNATE_DDL_AUTO = 'create-drop'
+
+mvn -f packages/control-plane/pom.xml spring-boot:run
+```
+
+文件级命令见 A03-xihe/AGENTS.md（UI lint/typecheck/test:unit、Agent 单文件 pytest、CP 单类 mvn、Runtime `cargo test --lib`）。
 
 ## 4. 全栈调试（自 DEV-005-fullstack 并入）
 
@@ -113,13 +132,46 @@ CP 支持 H2 内存库零配置启动（`XIHE_CP_DATASOURCE_URL="jdbc:h2:mem:xih
 mise run dev:host
 
 # 2. 逐端点验证（公开 /api/v1，服务间 /internal/v1）
-TOKEN=$(curl -s -X POST "http://localhost:12631/api/v1/auth/login" \
+# 以下为 Bash/Git Bash 示例（Windows 建议在 Git Bash 中执行）
+```
+
+```bash
+# 2.1 登录并提取 JWT accessToken；登录失败时后续请求会得到 401
+#   -sS：静默但保留错误输出；-X POST：登录接口；-H：JSON 头
+TOKEN=$(
+  curl -sS -X POST "http://localhost:12631/api/v1/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"...","password":"..."}' |
+  python3 -c 'import sys,json; print(json.load(sys.stdin)["accessToken"])'
+)
+
+# 2.2 创建一个真实 Session（/events 要求 Session 已属于当前用户和 Workspace，不会自动创建）
+SESSION_ID=$(
+  curl -sS -X POST "http://localhost:12631/api/v1/sessions" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d '{"title":"curl verification"}' |
+  python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])'
+)
+
+# 2.3 终端 A：保持 SSE 长连接（阻塞；用第二个终端执行 2.4/2.5）
+#   -N 禁止 curl 缓冲输出，实时看到 connected/token/done
+#   仅测试 SSE 握手时可在命令末尾追加 --max-time 3（超时退出属预期）
+curl -sS -N \
+  -H 'Accept: text/event-stream' \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:12631/api/v1/events?sessionId=$SESSION_ID"
+```
+
+```bash
+# 2.4 终端 B：查询模型列表
+curl -sS -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/models"
+
+# 2.5 终端 B：提交聊天任务（返回 202 + runId；token/done 在终端 A 的 SSE 中返回）
+curl -sS -X POST "http://localhost:12631/api/v1/chat" \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"email":"...","password":"..."}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
-curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/events?sessionId=test" --max-time 3
-curl -s 'http://localhost:12631/api/v1/models' -H "Authorization: Bearer $TOKEN"
-curl -s -X POST 'http://localhost:12631/api/v1/chat' -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' -d '{"sessionId":"test","content":"hi"}'
+  -d "{\"sessionId\":\"$SESSION_ID\",\"content\":\"hi\"}"
 ```
 
 | 陷阱 | 排查 |
