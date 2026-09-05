@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
-import { getProviderInfo, inferProviderFromModel, type ModelCache } from '../types/provider'
+import { getProviderInfo, type ModelCache } from '../types/provider'
 import type { SessionModelBinding, ModelFavorite } from '../types'
 import { request } from '../composables/api'
 
@@ -17,15 +17,14 @@ export const useConfigStore = defineStore('config', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  const modelCache = useLocalStorage<ModelCache>(MODEL_CACHE_KEY, { models: {} })
+  const modelCache = useLocalStorage<ModelCache>(MODEL_CACHE_KEY, { models: {}, providers: {} })
   const sessionModels = useLocalStorage<Record<string, SessionModelBinding>>(SESSION_MODELS_KEY, {})
   const modelFavorites = useLocalStorage<ModelFavorite[]>(MODEL_FAVORITES_KEY, [])
   const modelError = ref<string | null>(null)
 
   function findProviderForModel(modelId: string): string | undefined {
-    const models = modelCache.value.models ?? {}
-    for (const [provider, modelIds] of Object.entries(models)) {
-      if (modelIds.includes(modelId)) return provider
+    for (const provider of Object.keys(modelCache.value.providers ?? {})) {
+      if (getChatModels(provider).includes(modelId)) return provider
     }
     return undefined
   }
@@ -97,9 +96,23 @@ export const useConfigStore = defineStore('config', () => {
     return sessionModels.value[sessionId]
   }
 
+  function isChatModelAvailable(provider: string, model: string): boolean {
+    const catalog = modelCache.value.providers?.[provider]
+    if (!catalog || catalog.status !== 'ready') return false
+    return catalog.models.some((entry) => entry.name === model && entry.capabilities.chat)
+  }
+
+  function getChatModels(provider: string): string[] {
+    const catalog = modelCache.value.providers?.[provider]
+    if (!catalog || catalog.status !== 'ready') return []
+    return catalog.models.filter((entry) => entry.capabilities.chat).map((entry) => entry.name)
+  }
+
   function getEffectiveModel(sessionId: string): SessionModelBinding | undefined {
     const sessionBinding = sessionModels.value[sessionId]
-    if (sessionBinding) return sessionBinding
+    if (sessionBinding && isChatModelAvailable(sessionBinding.provider, sessionBinding.model)) {
+      return sessionBinding
+    }
 
     const llmProvider = mergedConfig.value['llm-provider'] ?? {}
     const userPreference = mergedConfig.value['user-preference'] ?? {}
@@ -110,15 +123,14 @@ export const useConfigStore = defineStore('config', () => {
     if (defaultModel) {
       const provider = defaultProvider
         || findProviderForModel(defaultModel)
-        || inferProviderFromModel(defaultModel)
-      if (provider) {
+      if (provider && isChatModelAvailable(provider, defaultModel)) {
         return { provider, model: defaultModel }
       }
     }
 
     if (defaultProvider) {
       const info = getProviderInfo(defaultProvider)
-      if (info) {
+      if (info && isChatModelAvailable(defaultProvider, info.defaultModel)) {
         return { provider: defaultProvider, model: info.defaultModel }
       }
     }
@@ -143,11 +155,28 @@ export const useConfigStore = defineStore('config', () => {
     return modelFavorites.value.some(f => f.provider === provider && f.model === model)
   }
 
+  function clearForUserSwitch() {
+    mergedConfig.value = {}
+    modelCache.value = { models: {}, providers: {} }
+    sessionModels.value = {}
+    modelFavorites.value = []
+    modelError.value = null
+  }
+
   async function fetchModels() {
     try {
       modelError.value = null
-      const data = await request<{ models?: Record<string, string[]> }>('/models')
-      modelCache.value = { models: data.models ?? {}, lastFetched: Date.now() }
+      const data = await request<{
+        models?: Record<string, string[]>
+        providers?: ModelCache['providers']
+        configRevision?: string
+      }>('/models')
+      modelCache.value = {
+        models: data.models ?? {},
+        providers: data.providers ?? {},
+        configRevision: data.configRevision,
+        lastFetched: Date.now(),
+      }
     } catch (e) {
       modelError.value = e instanceof Error ? e.message : 'Failed to fetch models'
     }
@@ -168,9 +197,12 @@ export const useConfigStore = defineStore('config', () => {
     getActiveModel,
     getEffectiveModel,
     findProviderForModel,
+    isChatModelAvailable,
+    getChatModels,
     setSessionModel,
     toggleFavorite,
     isFavorite,
+    clearForUserSwitch,
     fetchModels,
   }
 })

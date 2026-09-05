@@ -7,6 +7,18 @@ beforeEach(() => {
   localStorage.clear()
 })
 
+function seedReadyModel(store: ReturnType<typeof useConfigStore>, provider: string, model: string) {
+  store.modelCache = {
+    models: { [provider]: [model] },
+    providers: {
+      [provider]: {
+        status: 'ready',
+        models: [{ name: model, capabilities: { chat: true, vision: false, tools: false } }],
+      },
+    },
+  }
+}
+
 describe('useConfigStore', () => {
   describe('mergedConfig persistence', () => {
     it('loads persisted mergedConfig from localStorage', () => {
@@ -89,6 +101,7 @@ describe('useConfigStore', () => {
   describe('getEffectiveModel', () => {
     it('returns session binding when set', () => {
       const store = useConfigStore()
+      seedReadyModel(store, 'deepseek', 'deepseek-chat')
       store.setSessionModel('s1', 'deepseek', 'deepseek-chat')
 
       expect(store.getEffectiveModel('s1')).toEqual({ provider: 'deepseek', model: 'deepseek-chat' })
@@ -100,12 +113,14 @@ describe('useConfigStore', () => {
         'llm-provider': { defaultProvider: 'openai' },
         'user-preference': { defaultModel: 'gpt-4o' },
       }
+      seedReadyModel(store, 'openai', 'gpt-4o')
 
       expect(store.getEffectiveModel('s1')).toEqual({ provider: 'openai', model: 'gpt-4o' })
     })
 
-    it('infers provider from defaultModel when defaultProvider is absent', () => {
+    it('uses catalog provider when defaultProvider is absent', () => {
       const store = useConfigStore()
+      seedReadyModel(store, 'deepseek', 'deepseek-chat')
       store.mergedConfig = {
         'llm-provider': {},
         'user-preference': { defaultModel: 'deepseek-chat' },
@@ -116,7 +131,7 @@ describe('useConfigStore', () => {
 
     it('uses modelCache to resolve provider for defaultModel', () => {
       const store = useConfigStore()
-      store.modelCache = { models: { xiaomi: ['mimo-v2.5'] } }
+      seedReadyModel(store, 'xiaomi', 'mimo-v2.5')
       store.mergedConfig = {
         'llm-provider': {},
         'user-preference': { defaultModel: 'mimo-v2.5' },
@@ -131,6 +146,7 @@ describe('useConfigStore', () => {
         'llm-provider': { defaultProvider: 'anthropic' },
         'user-preference': {},
       }
+      seedReadyModel(store, 'anthropic', 'claude-sonnet-4-20250514')
 
       expect(store.getEffectiveModel('s1')).toEqual({ provider: 'anthropic', model: 'claude-sonnet-4-20250514' })
     })
@@ -142,6 +158,7 @@ describe('useConfigStore', () => {
 
     it('session binding takes precedence over default config', () => {
       const store = useConfigStore()
+      seedReadyModel(store, 'deepseek', 'deepseek-reasoner')
       store.setSessionModel('s1', 'deepseek', 'deepseek-reasoner')
       store.mergedConfig = {
         'llm-provider': { defaultProvider: 'openai' },
@@ -155,14 +172,14 @@ describe('useConfigStore', () => {
   describe('findProviderForModel', () => {
     it('finds provider from modelCache', () => {
       const store = useConfigStore()
-      store.modelCache = { models: { openai: ['gpt-4o'] } }
+      seedReadyModel(store, 'openai', 'gpt-4o')
 
       expect(store.findProviderForModel('gpt-4o')).toBe('openai')
     })
 
     it('returns undefined when model is not in cache', () => {
       const store = useConfigStore()
-      store.modelCache = { models: {} }
+      store.modelCache = { models: {}, providers: {} }
 
       expect(store.findProviderForModel('unknown')).toBeUndefined()
     })
@@ -187,6 +204,31 @@ describe('useConfigStore', () => {
       await store.fetchModels()
 
       expect(store.modelError).toBe('Network error')
+    })
+  })
+
+  describe('user switch isolation', () => {
+    it('clears config, model, session and favorite caches', () => {
+      const store = useConfigStore()
+      store.mergedConfig = { 'llm-provider': { defaultProvider: 'openai' } }
+      store.modelCache = {
+        models: { openai: ['gpt-4o'] },
+        providers: {
+          openai: {
+            status: 'ready',
+            models: [{ name: 'gpt-4o', capabilities: { chat: true, vision: false, tools: false } }],
+          },
+        },
+      }
+      store.setSessionModel('session-a', 'openai', 'gpt-4o')
+      store.toggleFavorite('openai', 'gpt-4o')
+
+      store.clearForUserSwitch()
+
+      expect(store.mergedConfig).toEqual({})
+      expect(store.modelCache).toEqual({ models: {}, providers: {} })
+      expect(store.getActiveModel('session-a')).toBeUndefined()
+      expect(store.modelFavorites).toEqual([])
     })
   })
 })

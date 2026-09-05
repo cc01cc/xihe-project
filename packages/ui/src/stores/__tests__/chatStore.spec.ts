@@ -137,6 +137,35 @@ describe('useChatStore', () => {
     expect(store.getMessages('s1')).toEqual([])
   })
 
+  it('removes an empty assistant when the stream fails', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.markStreamingError('s1', {
+      code: 'LLM_CREDENTIALS_INVALID',
+      detail: 'Provider credentials were rejected',
+      retryable: true,
+      outcome: 'error',
+    })
+    expect(store.getMessages('s1')).toEqual([])
+    expect(store.isStreaming('s1')).toBe(false)
+  })
+
+  it('preserves ambiguous terminal state for partial content', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.appendToParts('s1', { type: 'text', content: 'possibly charged' })
+    store.markStreamingError('s1', {
+      code: 'AGENT_TIMEOUT',
+      detail: 'Provider result is uncertain',
+      retryable: false,
+      outcome: 'ambiguous',
+    })
+    const message = store.getMessages('s1')[0]
+    expect(message.runStatus).toBe('ambiguous')
+    expect(message.terminalOutcome).toBe('ambiguous')
+    expect(message.retryable).toBe(false)
+  })
+
   it('clearSession removes all data for a session', () => {
     const store = useChatStore()
     store.addMessage('s1', {

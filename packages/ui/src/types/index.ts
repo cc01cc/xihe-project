@@ -28,7 +28,6 @@ export interface Session {
   createdAt: string
   updatedAt: string
   workspaceId?: string
-  modelId?: string
   modelProvider?: string
   modelName?: string
   context?: SessionContext
@@ -74,6 +73,12 @@ export interface Message {
   attachments?: AttachmentFile[]
   marker?: 'status' | 'date' | 'tool'
   status?: string
+  runId?: string
+  runStatus?: 'queued' | 'accepted' | 'running' | 'streaming' | 'succeeded' | 'failed' | 'partial' | 'ambiguous' | 'cancelled'
+  terminalOutcome?: 'success' | 'error' | 'partial' | 'ambiguous'
+  errorCode?: string
+  error?: string
+  retryable?: boolean
 }
 
 export interface ProviderConfig {
@@ -122,6 +127,15 @@ export type SSEEventType = 'token' | 'tool_call' | 'tool_result' | 'approval_req
 export interface SSEEvent {
   type: SSEEventType
   data: Record<string, unknown>
+}
+
+export interface ChatRunResponse {
+  status: 'queued' | 'accepted' | 'running' | 'streaming' | 'succeeded' | 'failed' | 'partial' | 'ambiguous' | 'cancelled'
+  sessionId: string
+  runId: string
+  messageId?: string
+  outcome?: 'success' | 'error' | 'partial' | 'ambiguous'
+  errorCode?: string
 }
 
 export interface AgentState {

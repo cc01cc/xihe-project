@@ -72,18 +72,28 @@ export function getModelTags(_provider: string, model: string): string[] {
   return tags
 }
 
-export function inferProviderFromModel(modelId: string): string | undefined {
-  const lower = modelId.toLowerCase()
-  if (lower.startsWith('deepseek')) return 'deepseek'
-  if (lower.startsWith('claude')) return 'anthropic'
-  if (lower.startsWith('gpt') || lower.startsWith('o1') || lower.startsWith('o3')) return 'openai'
-  if (lower.startsWith('mimo')) return 'xiaomi'
-  const builtin = getProviderInfo(lower)
-  if (builtin) return builtin.id
-  return undefined
-}
-
 export interface ModelCache {
   models: Record<string, string[]>
+  providers?: Record<string, ProviderCatalog>
+  configRevision?: string
   lastFetched?: number
+}
+
+export interface ModelCapabilities {
+  chat: boolean
+  vision: boolean
+  tools: boolean
+}
+
+export interface CatalogModel {
+  name: string
+  capabilities: ModelCapabilities
+}
+
+export interface ProviderCatalog {
+  status: 'ready' | 'missing_credentials' | 'invalid_credentials' | 'unreachable' | 'invalid_response' | 'model_unavailable'
+  reasonCode?: string | null
+  models: CatalogModel[]
+  verifiedAt?: string | null
+  configRevision?: string
 }

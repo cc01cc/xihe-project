@@ -42,6 +42,7 @@ const emit = defineEmits<{
   approve: [id: string]
   reject: [id: string]
   delete: [id: string]
+  retry: [id: string]
 }>()
 
 const isUser = computed(() => props.message.role === 'user')
@@ -109,6 +110,7 @@ function handleDelete() {
 }
 
 const canDelete = computed(() => !isMarker.value && props.message.role !== 'system')
+const canRetry = computed(() => Boolean(props.message.error && props.message.retryable))
 
 onUnmounted(() => {
   props.message.attachments?.forEach((attachment) => {
@@ -196,6 +198,23 @@ onUnmounted(() => {
           <p v-else class="text-sm">{{ props.message.content }}</p>
         </BubbleContent>
       </Bubble>
+
+      <div
+        v-if="message.error"
+        class="mt-1.5 flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive"
+        data-testid="message-error"
+      >
+        <span>{{ message.errorCode ? `${message.errorCode}: ` : '' }}{{ message.error }}</span>
+        <button
+          v-if="canRetry"
+          type="button"
+          class="font-medium underline underline-offset-2 hover:no-underline"
+          data-testid="message-retry-button"
+          @click="emit('retry', message.id)"
+        >
+          Retry
+        </button>
+      </div>
 
       <div
         v-if="message.toolCalls?.length"

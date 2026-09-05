@@ -86,7 +86,7 @@ onMounted(() => {
       v-if="sessionId"
       class="w-96 border-l bg-muted/5 flex flex-col shrink-0"
     >
-      <ChatPanel :session-id="sessionId" />
+       <ChatPanel :session-id="sessionId" tool-mode="workspace" />
     </div>
     <div
       v-else

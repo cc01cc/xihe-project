@@ -7,6 +7,11 @@ export interface ProblemDetails {
   code: string
   detail?: string
   requestId: string
+  runId?: string
+  provider?: string
+  model?: string
+  retryable?: boolean
+  outcome?: string
 }
 
 export interface ApiWorkspace {
@@ -25,7 +30,6 @@ export interface ApiSession {
   workspaceId?: string
   createdAt?: string
   updatedAt?: string
-  modelId?: string
   modelProvider?: string
   modelName?: string
 }
@@ -79,7 +83,6 @@ function normalizeSession(value: unknown): SessionResponse {
     workspaceId: typeof record.workspaceId === 'string' ? record.workspaceId : workspace?.id,
     createdAt: typeof record.createdAt === 'string' ? record.createdAt : undefined,
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : undefined,
-    modelId: typeof record.modelId === 'string' ? record.modelId : undefined,
     modelProvider: typeof record.modelProvider === 'string' ? record.modelProvider : undefined,
     modelName: typeof record.modelName === 'string' ? record.modelName : undefined,
     workspace,
@@ -118,6 +121,11 @@ export async function apiErrorFromResponse(res: Response): Promise<never> {
     code: problem.code ?? 'API_ERROR',
     detail: problem.detail || `API error ${problem.status ?? res.status}`,
     requestId: problem.requestId || res.headers?.get('X-Request-Id') || 'unknown',
+    runId: problem.runId,
+    provider: problem.provider,
+    model: problem.model,
+    retryable: problem.retryable,
+    outcome: problem.outcome,
   })
 }
 
@@ -266,7 +274,7 @@ export const api = {
       body: JSON.stringify(body),
     }))
   },
-  async updateSession(id: string, patch: { title?: string; modelId?: string; modelProvider?: string; modelName?: string }): Promise<SessionResponse> {
+  async updateSession(id: string, patch: { title?: string; modelProvider?: string; modelName?: string }): Promise<SessionResponse> {
     return normalizeSession(await request<unknown>(`/sessions/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
@@ -276,7 +284,7 @@ export const api = {
     return apiDelete(`/sessions/${encodeURIComponent(id)}`)
   },
   getMessages(sessionId: string) {
-    return request<Array<{ id: string; sessionId: string; role: string; content: string; createdAt: string; attachments?: Array<{ fileId: string; name: string; type: string; size: number }> }>>(`/sessions/${encodeURIComponent(sessionId)}/messages`)
+    return request<Array<{ id: string; sessionId: string; role: string; content: string; createdAt: string; runId?: string; runStatus?: string; terminalOutcome?: string; errorCode?: string; error?: string; retryable?: boolean; attachments?: Array<{ fileId: string; name: string; type: string; size: number }> }>>(`/sessions/${encodeURIComponent(sessionId)}/messages`)
   },
   deleteMessage(sessionId: string, messageId: string) {
     return apiDelete(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`)

@@ -4,6 +4,7 @@ import { api, type ApiWorkspace } from '../composables/api'
 import { logger } from '../lib/logger'
 import { useSessionStore } from './session'
 import { useChatStore } from './chat'
+import { useConfigStore } from './config'
 import type { User } from '../types'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -96,6 +97,12 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const chatStore = useChatStore()
       chatStore.clearForUserSwitch()
+    } catch {
+      // Pinia not yet initialised — store will start fresh on next access.
+    }
+    try {
+      const configStore = useConfigStore()
+      configStore.clearForUserSwitch()
     } catch {
       // Pinia not yet initialised — store will start fresh on next access.
     }

@@ -71,8 +71,7 @@ const triggerLabel = computed(() => {
 })
 
 const hasProviders = computed(() => {
-  const models = configStore.modelCache.models ?? {}
-  return Object.keys(models).length > 0
+  return Object.keys(configStore.modelCache.providers ?? {}).length > 0
 })
 
 const hasConfiguredProvider = computed(() => {
@@ -89,7 +88,12 @@ const hasConfiguredProvider = computed(() => {
 const searchQuery = computed(() => searchTerm.value.toLowerCase().trim())
 
 const providerGroups = computed(() => {
-  const models = configStore.modelCache.models ?? {}
+  const models = Object.fromEntries(
+    Object.keys(configStore.modelCache.providers ?? {}).map((provider) => [
+      provider,
+      configStore.getChatModels(provider),
+    ]),
+  )
   const q = searchQuery.value
   return Object.entries(models)
     .filter(([, modelIds]) => modelIds.length > 0)
@@ -111,9 +115,9 @@ const filteredFavorites = computed(() => {
   const favs = configStore.modelFavorites
   if (favs.length === 0) return []
   const q = searchQuery.value
-  return q
-    ? favs.filter((f) => matchModel(f.provider, f.model, q))
-    : favs
+  return favs
+    .filter((favorite) => configStore.isChatModelAvailable(favorite.provider, favorite.model))
+    .filter((favorite) => !q || matchModel(favorite.provider, favorite.model, q))
 })
 
 const hasAnyModels = computed(
@@ -121,8 +125,9 @@ const hasAnyModels = computed(
 )
 
 const hasAnyUnfilteredModels = computed(() => {
-  const models = configStore.modelCache.models ?? {}
-  return Object.values(models).some((ids) => ids.length > 0)
+  return Object.keys(configStore.modelCache.providers ?? {}).some(
+    (provider) => configStore.getChatModels(provider).length > 0,
+  )
 })
 
 function matchModel(provider: string, model: string, q: string): boolean {
@@ -149,21 +154,33 @@ function toggleGroup(provider: string) {
   setGroupCollapsed(provider, !isGroupCollapsed(provider))
 }
 
-function selectModel(value: string) {
+async function selectModel(value: string) {
   const slash = value.indexOf('/')
   if (slash < 0) return
   const provider = value.slice(0, slash)
   const model = value.slice(slash + 1)
   const sessionId = sessionStore.currentSessionId
+  if (sessionId && !configStore.isChatModelAvailable(provider, model)) {
+    toast.error('Selected model is not currently available for chat')
+    return
+  }
   if (sessionId) {
-    configStore.setSessionModel(sessionId, provider, model)
-    void sessionStore
-      .updateSession(sessionId, { modelProvider: provider, modelName: model, modelId: value })
-      .catch((cause: unknown) => {
-        const message = cause instanceof ApiError ? cause.message : 'Failed to persist model binding'
-        logger.warn('Persist model binding failed', cause)
-        toast.error(message)
+    try {
+      const updated = await sessionStore.updateSession(sessionId, {
+        modelProvider: provider,
+        modelName: model,
       })
+      configStore.setSessionModel(
+        sessionId,
+        updated.modelProvider ?? provider,
+        updated.modelName ?? model,
+      )
+    } catch (cause: unknown) {
+      const message = cause instanceof ApiError ? cause.message : 'Failed to persist model binding'
+      logger.warn('Persist model binding failed', cause)
+      toast.error(message)
+      return
+    }
   }
   open.value = false
   searchTerm.value = ''
@@ -180,7 +197,7 @@ function goToSettings() {
 
 function handleSelect(event: { detail: { value?: string } }) {
   const value = event.detail.value
-  if (value) selectModel(value)
+  if (value) void selectModel(value)
 }
 
 function formatContext(ctx?: number): string {

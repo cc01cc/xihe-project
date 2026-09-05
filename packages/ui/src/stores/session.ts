@@ -32,7 +32,6 @@ function toSession(record: ApiSession): Session {
     createdAt: record.createdAt ?? now,
     updatedAt: record.updatedAt ?? record.createdAt ?? now,
     workspaceId: record.workspaceId,
-    modelId: record.modelId,
     modelProvider: record.modelProvider,
     modelName: record.modelName,
     context: createEmptyContext(),
@@ -165,14 +164,6 @@ export const useSessionStore = defineStore('session', () => {
     return session
   }
 
-  /** @deprecated Use configStore.setSessionModel(provider, model) instead. model binding moved to configStore in PLAN-056. */
-  function setSessionModelId(id: string, modelId: string) {
-    const session = sessions.value.find((s) => s.id === id)
-    if (session) {
-      session.modelId = modelId
-    }
-  }
-
   async function deleteSession(id: string): Promise<void> {
     await api.deleteSession(id)
     const index = sessions.value.findIndex((s) => s.id === id)
@@ -186,7 +177,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function updateSession(
     id: string,
-    patch: { title?: string; modelId?: string; modelProvider?: string; modelName?: string },
+    patch: { title?: string; modelProvider?: string; modelName?: string },
   ): Promise<Session> {
     const updated = toSession(await api.updateSession(id, patch))
     upsertSession(updated)
@@ -276,7 +267,6 @@ export const useSessionStore = defineStore('session', () => {
     selectSession,
     updateSessionTitle,
     updateSession,
-    setSessionModelId,
     updateSessionContext,
     setSessionAgents,
     setRAGContext,

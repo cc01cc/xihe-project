@@ -107,6 +107,20 @@ describe('useSSE', () => {
     expect(onToken).toHaveBeenCalledWith('hello', undefined)
   })
 
+  it('does not start content lifecycle before the first token', async () => {
+    const transport = createTransportController()
+    const { connect } = useSSE('test-session-id')
+    const onStart = vi.fn()
+    connect({ onStart })
+    await flushPromises()
+
+    await transport.simulateMessage('status', JSON.stringify({ status: 'thinking' }))
+    expect(onStart).not.toHaveBeenCalled()
+
+    await transport.simulateMessage('token', JSON.stringify({ content: 'hello' }))
+    expect(onStart).toHaveBeenCalledTimes(1)
+  })
+
   it('emits status via onStatus callback', async () => {
     const transport = createTransportController()
     const { connect } = useSSE('test-session-id')
@@ -134,7 +148,10 @@ describe('useSSE', () => {
     const onError = vi.fn()
     connect({ onError })
     await flushPromises()
-    expect(onError).toHaveBeenCalledWith('connect failed')
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'SSE_CONNECTION_FAILED',
+      detail: 'connect failed',
+    }))
   })
 
   it('does not emit transport retry errors via onError callback', async () => {

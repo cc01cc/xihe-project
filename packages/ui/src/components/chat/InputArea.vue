@@ -125,8 +125,6 @@ async function handleSend() {
     emit('send', text)
   }
 
-  input.value = ''
-  attachments.value = []
 }
 
 function stopInput() {
@@ -227,6 +225,13 @@ function handleTranscript(text: string) {
 function attachmentObjectUrl(file: File): string {
   return URL.createObjectURL(file)
 }
+
+function clearDraft() {
+  input.value = ''
+  attachments.value = []
+}
+
+defineExpose({ clearDraft })
 </script>
 
 <template>

@@ -78,6 +78,12 @@ async function loadSessionMessages(sessionId: string) {
       content: msg.content,
       parts: msg.role.toLowerCase() === 'assistant' ? parseRawToParts(msg.content) : undefined,
       timestamp: msg.createdAt,
+      runId: msg.runId,
+      runStatus: msg.runStatus as Message['runStatus'],
+      terminalOutcome: msg.terminalOutcome as Message['terminalOutcome'],
+      errorCode: msg.errorCode,
+      error: msg.error,
+      retryable: msg.retryable,
       attachments: msg.attachments?.map((att) => ({
         id: att.fileId,
         fileId: att.fileId,

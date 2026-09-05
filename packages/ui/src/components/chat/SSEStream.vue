@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { useSSE } from '../../composables/useSSE'
+import { useSSE, type SSEErrorPayload } from '../../composables/useSSE'
 import { useStreamParser } from '../../composables/useStreamParser'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
@@ -8,11 +8,15 @@ import { useConfigStore } from '../../stores/config'
 import { useWorkspaceAgentSync } from '../../composables/useWorkspaceAgentSync'
 import { toast } from 'vue-sonner'
 import { logger } from '../../lib/logger'
+import type { ChatRunResponse } from '../../types'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sessionId: string
   active: boolean
-}>()
+  toolMode?: 'none' | 'workspace'
+}>(), {
+  toolMode: 'none',
+})
 
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
@@ -22,6 +26,7 @@ const { handleToolCall } = useWorkspaceAgentSync()
 const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(
   computed(() => props.sessionId),
 )
+let activeRunId: string | undefined
 
 watch(
   () => props.sessionId,
@@ -35,10 +40,11 @@ watch(
 
 function connectSession(id: string) {
   const parser = useStreamParser()
+  let terminalError: SSEErrorPayload | null = null
   connect({
     onStart: () => {
       parser.reset()
-      chatStore.createStreamingMessage(id)
+      chatStore.createStreamingMessage(id, activeRunId)
     },
     onToken: (token: string, hint?) => {
       if (hint === 'reasoning') {
@@ -64,18 +70,29 @@ function connectSession(id: string) {
         })
       }
     },
-    onDone: () => {
+    onDone: (outcome?: string) => {
       parser.finalize()
       if (parser.parts.value.length > 0) {
         chatStore.replaceStreamingParts(id, parser.parts.value)
       }
-      chatStore.finalizeStreaming(id)
+      if (outcome === 'error' || outcome === 'partial' || outcome === 'ambiguous') {
+        chatStore.markStreamingError(id, terminalError ?? {
+          code: outcome === 'ambiguous' ? 'AGENT_STREAM_AMBIGUOUS' : 'AGENT_STREAM_FAILED',
+          detail: outcome === 'ambiguous' ? 'The provider result is uncertain; retry requires confirmation' : 'Agent stream failed',
+          runId: activeRunId,
+          retryable: outcome !== 'ambiguous',
+          outcome,
+        })
+      } else {
+        chatStore.finalizeStreaming(id)
+      }
       agentStore.setStatus('idle')
     },
-    onError: (msg: string) => {
-      chatStore.finalizeStreaming(id)
+    onError: (payload: SSEErrorPayload) => {
+      terminalError = payload
+      chatStore.markStreamingError(id, payload)
       agentStore.setStatus('error')
-      toast.error(msg)
+      toast.error(`${payload.code}: ${payload.detail}`)
     },
     onToolCall: (name: string, args: Record<string, unknown>) => {
       handleToolCall(name, args)
@@ -83,9 +100,9 @@ function connectSession(id: string) {
   })
 }
 
-async function handleSend(content: string, options?: { attachments?: string[] }) {
+async function handleSend(content: string, options?: { attachments?: string[]; toolMode?: 'none' | 'workspace' }): Promise<ChatRunResponse | null> {
   const sessionId = props.sessionId
-  if (!sessionId) return
+  if (!sessionId) return null
 
   if (!isConnected.value) {
     connectSession(sessionId)
@@ -95,13 +112,26 @@ async function handleSend(content: string, options?: { attachments?: string[] })
       logger.warn(msg)
       agentStore.setStatus('idle')
       toast.error(msg)
-      return
+      return null
     }
   }
 
   const binding = configStore.getEffectiveModel(sessionId)
   const model = binding?.model ?? ''
-  await sendMessage({ content, model, sessionId, attachments: options?.attachments })
+  const result = await sendMessage({
+    content,
+    model,
+    provider: binding?.provider,
+    toolMode: options?.toolMode ?? props.toolMode,
+    idempotencyKey: crypto.randomUUID(),
+    sessionId,
+    attachments: options?.attachments,
+  })
+  if (result) {
+    activeRunId = result.runId
+    agentStore.setStatus('thinking')
+  }
+  return result
 }
 
 function waitForConnection(timeoutMs: number): Promise<boolean> {

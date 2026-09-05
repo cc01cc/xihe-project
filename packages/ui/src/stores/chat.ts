@@ -51,7 +51,7 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  function createStreamingMessage(sessionId: string): string {
+  function createStreamingMessage(sessionId: string, runId?: string): string {
     const id = crypto.randomUUID()
     const message: Message = {
       id,
@@ -60,6 +60,8 @@ export const useChatStore = defineStore('chat', () => {
       content: '',
       timestamp: new Date().toISOString(),
       isStreaming: true,
+      runId,
+      runStatus: 'streaming',
     }
     addMessage(sessionId, message)
     streamingMessageId.value[sessionId] = id
@@ -130,10 +132,52 @@ export const useChatStore = defineStore('chat', () => {
     const message = messages.value[sessionId]?.find((msg) => msg.id === messageId)
     if (message) {
       message.isStreaming = false
+      message.runStatus = 'succeeded'
+      message.terminalOutcome = 'success'
       if (message.parts) {
         message.content = message.parts
           .filter((p) => p.type === 'text')
           .map((p) => p.content)
+          .join('')
+      }
+    }
+
+    streamingMessageId.value[sessionId] = null
+  }
+
+  function markStreamingError(sessionId: string, error: {
+    code: string
+    detail: string
+    runId?: string
+    retryable?: boolean
+    outcome?: string
+  }) {
+    const messageId = streamingMessageId.value[sessionId]
+    if (!messageId) return
+
+    const message = messages.value[sessionId]?.find((msg) => msg.id === messageId)
+    if (message) {
+      const hasContent = Boolean(
+        message.content || message.parts?.some((part) => part.type !== 'citation' && Boolean(part.content)),
+      )
+      if (!hasContent) {
+        messages.value[sessionId] = messages.value[sessionId].filter((msg) => msg.id !== messageId)
+        streamingMessageId.value[sessionId] = null
+        return
+      }
+      message.isStreaming = false
+      message.errorCode = error.code
+      message.error = error.detail
+      message.retryable = error.retryable ?? true
+      message.runId = error.runId ?? message.runId
+      const ambiguous = error.outcome === 'ambiguous'
+      const partial = !ambiguous && (hasContent || error.outcome === 'partial')
+      message.runStatus = ambiguous ? 'ambiguous' : partial ? 'partial' : 'failed'
+      message.terminalOutcome = ambiguous ? 'ambiguous' : partial ? 'partial' : 'error'
+      if (message.parts) {
+        message.content = message.parts
+          .filter((part) => part.type === 'text')
+          .map((part) => part.content)
           .join('')
       }
     }
@@ -181,6 +225,7 @@ export const useChatStore = defineStore('chat', () => {
     appendToParts,
     replaceStreamingParts,
     finalizeStreaming,
+    markStreamingError,
     clearSession,
     deleteSession,
     clearAllData,

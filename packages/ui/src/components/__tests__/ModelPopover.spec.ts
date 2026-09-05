@@ -70,6 +70,22 @@ function mountPopover() {
   })
 }
 
+function readyModelCache(models: Record<string, string[]>) {
+  return {
+    models,
+    providers: Object.fromEntries(Object.entries(models).map(([provider, modelIds]) => [
+      provider,
+      {
+        status: 'ready' as const,
+        models: modelIds.map((name) => ({
+          name,
+          capabilities: { chat: true, vision: false, tools: false },
+        })),
+      },
+    ])),
+  }
+}
+
 async function openContent(wrapper: ReturnType<typeof mountPopover>) {
   const trigger = wrapper.find('button')
   await trigger.trigger('click')
@@ -151,6 +167,7 @@ describe('ModelPopover', () => {
     await createSessionInStore('mp-1', 'Model chat')
     const configStore = useConfigStore()
     const sessionStore = useSessionStore()
+    configStore.modelCache = readyModelCache({ deepseek: ['deepseek-chat'] })
     configStore.setSessionModel(sessionStore.currentSessionId!, 'deepseek', 'deepseek-chat')
     vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
 
@@ -171,6 +188,7 @@ describe('ModelPopover', () => {
         'user-preference': { defaultModel: 'gpt-4o' },
       },
     })
+    configStore.modelCache = readyModelCache({ openai: ['gpt-4o'] })
     vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
 
     const wrapper = mountPopover()
@@ -192,7 +210,7 @@ describe('ModelPopover', () => {
 
   it('shows "No models available" when providers exist but all empty', async () => {
     const configStore = useConfigStore()
-    configStore.modelCache = { models: { deepseek: [], openai: [] } }
+    configStore.modelCache = readyModelCache({ deepseek: [], openai: [] })
     vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
 
     const wrapper = mountPopover()
@@ -202,9 +220,7 @@ describe('ModelPopover', () => {
   })
   it('renders provider group headers', async () => {
     const configStore = useConfigStore()
-    configStore.modelCache = {
-      models: { deepseek: ['deepseek-chat', 'deepseek-reasoner'], openai: ['gpt-4o'] },
-    }
+    configStore.modelCache = readyModelCache({ deepseek: ['deepseek-chat', 'deepseek-reasoner'], openai: ['gpt-4o'] })
     vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
 
     const wrapper = mountPopover()
@@ -216,9 +232,7 @@ describe('ModelPopover', () => {
 
   it('renders model IDs with provider names', async () => {
     const configStore = useConfigStore()
-    configStore.modelCache = {
-      models: { deepseek: ['deepseek-chat'] },
-    }
+    configStore.modelCache = readyModelCache({ deepseek: ['deepseek-chat'] })
     vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
 
     const wrapper = mountPopover()
@@ -232,9 +246,7 @@ describe('ModelPopover', () => {
     await createSessionInStore('mp-3', 'Select me')
     const configStore = useConfigStore()
     const sessionStore = useSessionStore()
-    configStore.modelCache = {
-      models: { deepseek: ['deepseek-chat', 'deepseek-reasoner'] },
-    }
+    configStore.modelCache = readyModelCache({ deepseek: ['deepseek-chat', 'deepseek-reasoner'] })
     vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
     const updateSpy = vi
       .spyOn(globalThis, 'fetch')
@@ -263,9 +275,7 @@ describe('ModelPopover', () => {
 
   it('toggles favorite when star clicked', async () => {
     const configStore = useConfigStore()
-    configStore.modelCache = {
-      models: { deepseek: ['deepseek-chat'] },
-    }
+    configStore.modelCache = readyModelCache({ deepseek: ['deepseek-chat'] })
     vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
 
     const wrapper = mountPopover()
@@ -285,9 +295,7 @@ describe('ModelPopover', () => {
 
   it('filters models by search', async () => {
     const configStore = useConfigStore()
-    configStore.modelCache = {
-      models: { deepseek: ['deepseek-chat', 'deepseek-reasoner'], openai: ['gpt-4o'] },
-    }
+    configStore.modelCache = readyModelCache({ deepseek: ['deepseek-chat', 'deepseek-reasoner'], openai: ['gpt-4o'] })
     vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
 
     const wrapper = mountPopover()
