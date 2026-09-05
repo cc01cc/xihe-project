@@ -68,9 +68,13 @@ public class SecurityConfig {
                 .requestMatchers("/swagger-ui.html").permitAll()
                 .requestMatchers("/health").permitAll()
                 .requestMatchers("/error").permitAll()
-                 .requestMatchers("/logs").permitAll()
-                 .requestMatchers("/api/v1/mcp").hasAnyRole("USER", "ADMIN", "INTERNAL_SERVICE")
-                 .requestMatchers("/api/v1/**").hasAnyRole("USER", "ADMIN")
+                // XH Channel WS endpoint (PLAN-245): auth is enforced by the
+                // ChannelHandshakeInterceptor on the Upgrade request; Spring
+                // Security must not pre-empt it, otherwise the Runtime cannot
+                // exchange its service token via headers.
+                .requestMatchers("/internal/v1/channel").permitAll()
+                .requestMatchers("/api/v1/mcp").hasAnyRole("USER", "ADMIN", "INTERNAL_SERVICE")
+                .requestMatchers("/api/v1/**").hasAnyRole("USER", "ADMIN")
                 .requestMatchers("/internal/v1/**").hasRole("INTERNAL_SERVICE")
                 .anyRequest().authenticated()
             )

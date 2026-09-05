@@ -12,6 +12,7 @@ pub async fn heartbeat_loop(
     api_token: String,
     device_id: String,
     ct: tokio_util::sync::CancellationToken,
+    channel: Option<Arc<crate::channel::ChannelClient>>,
 ) {
     let mut ticker = interval(Duration::from_secs(30));
     let client = Client::builder()
@@ -25,6 +26,15 @@ pub async fn heartbeat_loop(
                 break;
             }
             _ = ticker.tick() => {
+                // Single-sink rule (PLAN-245): when the channel is connected,
+                // the app-level heartbeat rides the channel and the HTTP POST
+                // idles. On channel loss we automatically fall back to HTTP.
+                if let Some(channel) = &channel
+                    && channel.is_connected()
+                {
+                    info!("heartbeat: suppressed (channel active) deviceId={}", device_id);
+                    continue;
+                }
                 let status = if ready.load(Ordering::Relaxed) { "ready" } else { "blocked" };
                 let url = format!("{cp_url}/internal/v1/runtime/heartbeat");
                 let result = client

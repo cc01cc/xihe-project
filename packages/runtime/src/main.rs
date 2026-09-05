@@ -1528,6 +1528,22 @@ async fn main() -> anyhow::Result<()> {
 
     let ct = tokio_util::sync::CancellationToken::new();
 
+    // XH Channel (PLAN-245): when XIHE_CHANNEL_URL is set, run the outbound
+    // WebSocket control channel. Connection liveness drives the single-sink
+    // rule (channel up → HTTP heartbeat idle; down → HTTP fallback).
+    let channel_client = xihe_runtime::channel::ChannelClient::from_env(device_id.clone())
+        .map(Arc::new);
+    if let Some(channel) = channel_client.clone() {
+        tracing::info!("channel: enabled url={}", channel.url);
+        let channel_ct = ct.child_token();
+        tokio::spawn(async move {
+            let summaries = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+            channel.run(summaries, channel_ct).await;
+        });
+    } else {
+        tracing::info!("channel: disabled (XIHE_CHANNEL_URL not set); using HTTP heartbeat");
+    }
+
     let reaper_registry = registry.clone();
     let reaper_ct = ct.child_token();
     tokio::spawn(async move {
@@ -1557,7 +1573,7 @@ async fn main() -> anyhow::Result<()> {
     let hb_device_id = device_id.clone();
     let hb_ct = ct.child_token();
     tokio::spawn(async move {
-        heartbeat::heartbeat_loop(hb_ready, hb_cp_url, hb_api_token, hb_device_id, hb_ct).await;
+        heartbeat::heartbeat_loop(hb_ready, hb_cp_url, hb_api_token, hb_device_id, hb_ct, channel_client).await;
     });
     let _ = reaper_ready_marker;
 
