@@ -171,9 +171,10 @@ test.describe('PLAN-247 Chat availability @host', () => {
     await expect(page.getByText('mimo-v2.5', { exact: true }).first()).toBeVisible({ timeout: 15000 })
     const modelSearch = page.getByTestId('model-popover-search')
     await modelSearch.fill('mimo-v2.5')
-    await expect(page.getByTestId('model-item-xiaomi/mimo-v2.5')).toBeVisible()
-    await modelSearch.press('ArrowDown')
-    await modelSearch.press('Enter')
+    // Click the exact item: keyboard navigation may highlight a different
+    // prefix match (e.g. mimo-v2.5-pro), which would still be valid but would
+    // assert the wrong binding below.
+    await page.getByTestId('model-item-xiaomi/mimo-v2.5').click()
 
     const id = await sessionId(request, auth)
     await expect.poll(async () => {
