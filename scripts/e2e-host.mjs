@@ -33,6 +33,12 @@ let fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT ?? String(portBase + 12)
 const llmModeArg = process.argv.find((arg) => arg.startsWith('--llm-mode='))
 const llmMode = process.env.XIHE_E2E_LLM_MODE ?? llmModeArg?.slice('--llm-mode='.length) ?? 'mock'
 const skipRuntime = process.argv.includes('--skip-runtime')
+// Supplementary real-provider sampling (PLAN-247, requires explicit user
+// approval per run). The key travels only via this env var into the CP Admin
+// API import below; it is never logged, never written to fixtures, and never
+// committed. When set, the Fake LLM fixture is skipped and llmMode is used
+// only for spec selection.
+const realXiaomiKey = process.env.XIHE_E2E_REAL_XIAOMI_KEY ?? ''
 const fakeMcpAccessToken = randomPassword(24)
 const e2eAdminPassword = randomPassword(24)
 
@@ -284,7 +290,7 @@ async function startFixtures() {
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
     } },
   ]
-  if (llmMode !== 'mock') {
+  if (llmMode !== 'mock' && !realXiaomiKey) {
     fixtures.push({ name: 'Fake LLM', script: 'fake-llm-server.mjs', port: fakeLlmPort, env: {
       XIHE_FAKE_LLM_PORT: fakeLlmPort,
       XIHE_FAKE_LLM_MODE: llmMode,
@@ -312,6 +318,31 @@ async function configureFakeLlm() {
   })
   if (!login.ok) throw new Error(`fake LLM admin login failed: HTTP ${login.status}`)
   const loginBody = await login.json()
+  if (realXiaomiKey) {
+    const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${loginBody.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        'llm-provider': {
+          defaultProvider: 'xiaomi',
+          xiaomiApiKey: realXiaomiKey,
+          xiaomiModel: 'mimo-v2.5',
+        },
+        'user-preference': {
+          defaultModel: 'mimo-v2.5',
+        },
+      }),
+    })
+    if (!imported.ok) {
+      const problem = await imported.text()
+      throw new Error(`real provider config import failed: HTTP ${imported.status} ${problem.slice(0, 500)}`)
+    }
+    console.log('[e2e-host] real Xiaomi configuration imported (key redacted from all evidence)')
+    return
+  }
   const fakeBase = `http://127.0.0.1:${fakeLlmPort}`
   const config = llmMode === 'missing'
     ? {
@@ -559,7 +590,7 @@ async function main() {
         extraEnv: {
           XIHE_AGENT_PORT: agentPort,
           XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
-          XIHE_LLM_PROVIDER: llmMode === 'mock' ? 'mock' : 'openai',
+          XIHE_LLM_PROVIDER: realXiaomiKey ? 'xiaomi' : llmMode === 'mock' ? 'mock' : 'openai',
         },
         healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
       }),

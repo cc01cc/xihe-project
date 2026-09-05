@@ -159,6 +159,50 @@ test.describe('PLAN-247 Chat availability @host', () => {
     })
   }
 
+  if (mode === 'real') {
+    test('real Xiaomi streams a reply and persists the canonical binding', async ({ page, request }) => {
+    test.setTimeout(180000)
+    const auth = await register(request, 'real-xiaomi')
+    await openChat(page, auth)
+
+    const trigger = page.getByTestId('model-popover-trigger')
+    await expect(trigger).toBeVisible()
+    await trigger.click()
+    await expect(page.getByText('mimo-v2.5', { exact: true }).first()).toBeVisible({ timeout: 15000 })
+    const modelSearch = page.getByTestId('model-popover-search')
+    await modelSearch.fill('mimo-v2.5')
+    await expect(page.getByTestId('model-item-xiaomi/mimo-v2.5')).toBeVisible()
+    await modelSearch.press('ArrowDown')
+    await modelSearch.press('Enter')
+
+    const id = await sessionId(request, auth)
+    await expect.poll(async () => {
+      const response = await request.get(`${CP_URL}/api/v1/sessions/${id}`, {
+        headers: {
+          Authorization: `Bearer ${auth.accessToken}`,
+          'X-Workspace-Id': auth.workspaceId,
+        },
+      })
+      if (!response.ok()) return ''
+      const body = await response.json()
+      return `${body.modelProvider ?? ''}/${body.modelName ?? ''}`
+    }, { timeout: 15000 }).toBe('xiaomi/mimo-v2.5')
+
+    const text = `real-${Date.now()}`
+    await page.locator('textarea').fill(text)
+    await page.keyboard.press('Enter')
+    await expect(page.getByText(text, { exact: true })).toBeVisible({ timeout: 15000 })
+    await expect.poll(async () => {
+      const stored = await messages(request, auth, id)
+      return stored.filter((message: { role?: string; content?: string }) =>
+        message.role === 'ASSISTANT' && (message.content?.length ?? 0) > 0).length
+    }, { timeout: 120000 }).toBeGreaterThan(0)
+    await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 60000 })
+    await expectNoHorizontalOverflow(page)
+    await page.screenshot({ path: test.info().outputPath('PLAN-247-host-real-xiaomi.png'), fullPage: true })
+    })
+  }
+
   if (mode === 'disconnect') {
     test('provider disconnect is durable ambiguous and not auto-retried', async ({ page, request }) => {
     const auth = await register(request, 'ambiguous-disconnect')
