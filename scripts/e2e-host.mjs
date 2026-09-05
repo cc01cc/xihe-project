@@ -17,7 +17,11 @@ const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const uvCommand = process.platform === 'win32' ? 'uv.exe' : 'uv'
 const nodeCommand = process.execPath
 
-const portBase = 27000 + (Math.abs(hashString(e2eRunId)) % 1500)
+const portBaseRaw = 27000 + (Math.abs(hashString(e2eRunId)) % 1500)
+// 27339 is excluded at OS level (HTTP.sys AURASDK reservation, see
+// `netsh int ipv4 show excludedportrange`). Service ports below are used
+// without probing, so shift the block when it would overlap the dead port.
+const portBase = portBaseRaw <= 27339 && 27339 < portBaseRaw + 13 ? portBaseRaw + 20 : portBaseRaw
 const uiPort = process.env.XIHE_UI_PORT ?? String(portBase)
 const cpPort = process.env.XIHE_CP_PORT ?? String(portBase + 1)
 const agentPort = process.env.XIHE_AGENT_PORT ?? String(portBase + 2)
