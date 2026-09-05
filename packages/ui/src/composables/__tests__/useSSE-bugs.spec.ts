@@ -147,8 +147,10 @@ describe('BUG-6: /chat 409 when SSE subscription is missing', () => {
     connect({ onError })
     await sendMessage({ content: 'Hello' })
 
-    expect(error.value).toBe('API error 409')
-    expect(onError).toHaveBeenCalledWith('API error 409')
+    // PLAN-247: errors carry a stable code plus safe detail, delivered as a
+    // structured payload (not a bare string).
+    expect(error.value).toBe('API_ERROR: API error 409')
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'API_ERROR' }))
   })
 
   it('sendMessage should reset streaming state on 409', async () => {
@@ -167,15 +169,26 @@ describe('BUG-6: /chat 409 when SSE subscription is missing', () => {
 })
 
 describe('BUG-7: streaming lifecycle callbacks', () => {
-  it('sendMessage invokes onStart before the first token arrives', async () => {
+  it('starts the content lifecycle on the first token, not on send', async () => {
+    let onmessage: ((event: { event: string; data: string }) => void) | undefined
+    vi.mocked(chatTransport.sendMessages).mockImplementation((_sessionId: string, options: {
+      onmessage?: typeof onmessage
+    }) => {
+      onmessage = options.onmessage
+      return Promise.resolve()
+    })
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 202 })
     vi.stubGlobal('fetch', fetchSpy)
     const onStart = vi.fn()
 
+    // PLAN-247: the assistant row is created on first content, so onStart
+    // must not fire for transport status alone.
     const { connect, sendMessage } = useSSE('test-session')
     connect({ onStart })
     await sendMessage({ content: 'Hello' })
+    expect(onStart).not.toHaveBeenCalled()
 
+    await onmessage?.({ event: 'token', data: JSON.stringify({ content: 'Hello' }) })
     expect(onStart).toHaveBeenCalledTimes(1)
   })
 
@@ -192,6 +205,10 @@ describe('BUG-7: streaming lifecycle callbacks', () => {
     connect({ onError })
     await sendMessage({ content: 'Hello' })
 
-    expect(onError).toHaveBeenCalledWith(expect.stringContaining('Agent'))
+    // PLAN-247: stable code plus safe detail in a structured payload.
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'AGENT_UNAVAILABLE',
+      detail: expect.stringContaining('Agent'),
+    }))
   })
 })
