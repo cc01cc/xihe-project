@@ -20,6 +20,8 @@
     "deepseekModel": "deepseek-v4-flash",
     "deepseekApiBase": "https://api.deepseek.com/v1",
     "openaiApiKey": "",
+    "openaiModel": "gpt-4o",
+    "openaiApiBase": "https://api.openai.com/v1",
     "xiaomiApiKey": "",
     "xiaomiModel": "mimo-v2.5",
     "xiaomiApiBase": "https://api.xiaomimimo.com/v1",

@@ -24,7 +24,7 @@
 ### Changed
 
 - Runtime Workspace 执行边界（PLAN-235）：三 profile 统一 per-request Docker exec，`xihe-container-runtime` 新增 `--oneshot` CLI 模式（stdin 单帧 → stdout 单帧，EOF 即边界）；删除 host fs fallback、`container_addr` HTTP 路径、instance token；background tools 改为 `/tmp/xihe-jobs` 状态文件约定（opaque `jobId` + `cancel_background_process`，TTL 15min/上限 100 job/1MiB）；FS 写路径经 rustix openat2（`RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`）helper。
-- Chat SSE API 契约（PLAN-230）：`GET /api/v1/events?sessionId=` 明确为会话级持久 SSE（`docs/api/openapi.yaml`：`done` 仅结束 run、不关闭 SSE，`heartbeat` 15s，错误边界 `SSE_SUBSCRIPTION_REQUIRED`/`CHAT_IN_PROGRESS`/`AGENT_CIRCUIT_OPEN`）；`POST /api/v1/chat` 与 `POST /api/v1/exec` 共用同一订阅检查与单并发语义。
+- Chat SSE API 契约（PLAN-230）：`GET /api/v1/events?sessionId=` 明确为会话级持久 SSE（`docs/api/openapi.yaml`：`done` 仅结束 run、不关闭 SSE，`heartbeat` 15s，错误边界 `SSE_SUBSCRIPTION_REQUIRED`/`CHAT_IN_PROGRESS`/`AGENT_CIRCUIT_OPEN`）；`POST /api/v1/chat` 负责唯一的聊天提交入口。
 - Runtime 迁移至 Rust edition 2024 与 rmcp 3.1.4（MCP protocol `2026-07-28`）；测试基础设施修复：`e2e-real.mjs` 隔离端口全量生效，Runtime 全量测试可编译执行（201 passed / 3 ignored）。
 
 - 实现 Agent 崩溃恢复：启动时可通过 `XIHE_RECOVER_SESSION_IDS` 从 CP Event Store 重放事件并重建会话状态

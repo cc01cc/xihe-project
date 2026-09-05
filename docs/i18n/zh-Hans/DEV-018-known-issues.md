@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 18
 status: active
 created: 2026-09-02
-updated: 2026-09-03
+updated: 2026-09-06
 ---
 
 # DEV-018: Known Issues (Supplement)
@@ -40,6 +40,13 @@ updated: 2026-09-03
 - **Runtime CWD 测试**: `dotenv_loader` 测试会临时切换 process CWD，测试 helper 已用 mutex 串行化；默认并行 `cargo test --lib` 可稳定运行。
 - **Runtime per-request exec 延迟（PLAN-235）**: Workspace 操作经 Docker exec 单次往返，M0 spike 手工实测均值约 136ms（不可复现锚点，仅供参考）；高频批量操作若不可接受，以纯性能优化另行评估 HTTP 通道，不改变 operation core。
 - **Runtime 后台 job 状态文件（PLAN-235）**: job 状态存于容器 `/tmp/xihe-jobs/<jobId>/`，容器重建即自然孤儿化；查询旧 jobId 返回 not found 属设计内行为，非数据丢失。
+
+## PLAN-247 已修复边界
+
+- Chat provider readiness 由 Agent 明确报告，CP 对 `unknown`/non-ready fail-closed；缺凭据不会创建 ChatRun、Message 或空 assistant。
+- ChatRun、`Message.runId` 和 Idempotency-Key 持久化执行终态；断流且无法证明 provider 未执行时为 `ambiguous`，禁止自动重试。
+- 普通 Chat 固定 `toolMode=none`，Agent 启动不做 MCP discovery；Workspace/tool 操作才按 workspace 懒加载 MCP，跨 workspace 复用会 fail-fast。
+- provider catalog 只返回状态、模型能力和验证时间；ConfigAudit 的 provider secret 只保留 present/missing 与 fingerprint。
 
 ## Code
 

@@ -185,7 +185,8 @@ packages/agent/tests/
 
 | 里程碑 | 状态 | 说明 |
 |--------|------|------|
-| M1-M5 全部任务 | ✅ 已完成 | 执行表全部 ✅ |
+| M1-M4 | ✅ 已完成 | readiness、ChatRun/error、catalog/binding、纯 Chat/MCP 边界已完成定向验证 |
+| M5 | ⚠️ 部分完成 | fake LLM Host 场景已建立并完成部分 `--skip-runtime` 验证；Chrome Beta headed + Runtime 全栈证据仍待补齐 |
 | 覆盖率达标 | ⚠️ 未达到 | 全部模块低于目标 |
 
 ### PLAN-052 — 单元测试缺口补齐（当前）
@@ -204,5 +205,12 @@ packages/agent/tests/
 | P1 | CP ExportService + ImportService + AuditLogger + SseEmitter | ⏳ 待实施 |
 | P1 | Agent mcp_client | ⏳ 待实施 |
 | P2 | CP 安全过滤器 + Runtime fetch + Agent main (partial) | ⏳ 待实施 |
+
+### 8. PLAN-247 状态机与契约测试
+
+- Agent：覆盖 `llmReady` fail-closed、provider error classification、纯 Chat MCP suppression、workspace context conflict 和 workspace MCP init failure。
+- CP：覆盖 ChatRun 持久化、幂等 replay/conflict、missing `done` ambiguity、Agent down 与最近 readiness 的 queue 判定、provider/model forward 和 ConfigAudit fingerprint。
+- UI：覆盖首 content 创建 assistant、空失败移除、partial/ambiguous 终态、retry 草稿保留、ready chat-capable 模型过滤和 user switch cache 清理。
+- Host：fake LLM fixture 只证明受控 provider 行为；必须结合真实 CP/Agent/UI 进程、readiness、请求链路和 teardown 结果，不能用 fixture 直连替代。
 
 详见 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。

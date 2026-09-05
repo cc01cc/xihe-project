@@ -154,7 +154,7 @@ Tool names are mapped by CP reverse proxy when building the tool→server mappin
 
 **CP Three-Channel Responsibilities**:
 
-- **Chat Channel** (`POST /api/v1/chat` / `POST /api/v1/exec` + persistent `GET /api/v1/events` SSE): UI commands relayed through CP → Agent, Agent streaming responses distributed through CP to UI
+- **Chat Channel** (`POST /api/v1/chat` + persistent `GET /api/v1/events` SSE): UI commands relayed through CP → Agent, Agent streaming responses distributed through CP to UI
   - **Session-scoped persistent SSE** (PLAN-230): `GET /api/v1/events?sessionId=` maintains one live emitter per session (`SseEmitterManager` stores `{sessionId, generation, emitter}` with `compareAndRemove`), each `POST /api/v1/chat` creates a `runId` and `done` ends the run only — **not** the session SSE, which is reused for subsequent turns. A `heartbeat` every 15s keeps the connection observable without entering `MessagePart` or resetting run counters.
   - **Single-flight & gate**: `POST /api/v1/chat` validates `hasEmitter(sessionId)` (`409 SSE_SUBSCRIPTION_REQUIRED`) before persisting and atomically acquires an `activeRuns` lease (`409 CHAT_IN_PROGRESS`); `requestId`/`runId` from `RequestIdFilter` are explicitly propagated via `X-Request-Id`/`X-Chat-Run-Id` to `execAsync` and the Agent (never inherited via thread-local `MDC`).
   - **UI transport**: `chatTransport` enforces single flight per session (`connectionGeneration` + `intentionalStops`), bounded backoff reconnect (`onerror` returns 250ms→5s, `onclose` schedules at most one reconnect, no second retry loop), `useSSE.ensureConnected()` plus at most one `SSE_SUBSCRIPTION_REQUIRED` recovery; `SSEStream` replaces streaming parts on every `token` via `chatStore.replaceStreamingParts`, fixing the old `lastSentCount`-only-on-`parts.length`-growth truncation.
@@ -422,3 +422,11 @@ See `plans/PLAN-030-XH-chat-attachment-backend.md` and `plans/PLAN-031-XH-chat-a
 - The Runtime host-side connector performs remote MCP initialize, tools/list, tools/call, and controlled egress. Workspace sandboxes do not directly access the public network.
 - Fake OAuth and Fake MCP are real integration/E2E fixtures. They must verify PKCE, Bearer authentication, refresh/revoke, MCP protocol behavior, and cleanup.
 - PLAN-190 owns the remote MCP/OAuth data path. PLAN-191 owns the later unified API paths, fields, errors, and service boundaries.
+
+## 9. ChatRun and Tool Boundary (PLAN-247)
+
+- `POST /api/v1/chat` is the only chat submission endpoint; `GET /api/v1/events?sessionId=` is persistent session SSE and `done` terminates only the current run.
+- After the CP gate passes, CP persists a `ChatRun` and user `Message`, deduplicated by `(userId, sessionId, Idempotency-Key)`; `Message.runId` links the durable terminal outcome.
+- `success`, `error`, `partial`, and `ambiguous` are distinct outcomes. A disconnect whose provider execution cannot be ruled out is `ambiguous`, with no automatic retry; a confirmed manual retry uses a new idempotency key.
+- The UI creates an assistant bubble only after the first token/reasoning/artifact; an empty failure leaves no ghost row and exposes both inline state and a toast.
+- Normal Chat is fixed to `toolMode=none` and does not trigger MCP discovery. Workspace/tool actions explicitly use `toolMode=workspace`; Agent MCP clients never reuse tools across workspaces and fail fast when isolation is unavailable.

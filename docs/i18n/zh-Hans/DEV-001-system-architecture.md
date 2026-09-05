@@ -207,3 +207,11 @@ chat 与 workspace 是同一 Session 的不同视图：
 - UI 发起 Authorization Code + PKCE；CP 保存加密 refresh token，按 user/workspace/server 发短期 access token。
 - Agent 只连 CP logical MCP endpoint；Runtime host-side connector 负责远程 MCP 出网；workspace sandbox 不直接出网。
 - Fake OAuth/Fake MCP 只作真实 integration/E2E fixture。
+
+## 6. ChatRun 与工具边界（PLAN-247）
+
+- `POST /api/v1/chat` 是唯一聊天提交入口；`GET /api/v1/events?sessionId=` 是会话级持久 SSE，`done` 只结束当前 run。
+- CP 在 gate 通过后持久化 `ChatRun` 与 user `Message`，以 `(userId, sessionId, Idempotency-Key)` 幂等；`Message.runId` 关联 durable terminal outcome。
+- `success`、`error`、`partial`、`ambiguous` 是不同终态。连接断开且无法证明 provider 未执行时为 `ambiguous`，禁止自动 retry；人工确认后使用新 idempotency key。
+- UI 仅在首个 token/reasoning/artifact 后创建 assistant bubble；空失败不会留下 ghost row，错误同时有 inline 状态和 Toast。
+- 普通 Chat 固定 `toolMode=none`，不触发 MCP discovery；Workspace/tool 操作显式使用 `toolMode=workspace`。Agent MCP client 不跨 workspace 复用，无法隔离时 fail-fast。

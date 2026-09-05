@@ -80,13 +80,13 @@ All page navigations use `load`/`domcontentloaded` plus concrete DOM visibility 
 
 ### 1.3 Project Strategy
 
-xihe uses a single Playwright project (chromium). xihe is a tool-type SPA primarily targeting desktop users, so multi-viewport coverage is not needed at this time.
+xihe uses a single Playwright project (chromium). Desktop coverage is complemented by explicit mobile viewport specs; host-only scenarios are marked `@host` and run against an isolated native stack.
 
 ## 2. Screenshot and Visual Regression Plan
 
 ### 2.1 Baseline Tracking
 
-Visual regression uses Playwright `toHaveScreenshot()`. Baseline files are stored in `*-snapshots/` directories and tracked directly by git:
+Visual regression uses Playwright `toHaveScreenshot()`. A03 currently ignores `*-snapshots/*.png`; local baselines are diagnostic artifacts and are not fresh-checkout evidence:
 
 ```
 e2e/mock/login.spec.ts-snapshots/
@@ -116,7 +116,7 @@ test-results/         # Failed test screenshots/diffs
 screenshots/          # Manual screenshot archive (not used by project, reserved for future)
 ```
 
-`*-snapshots/` is not in gitignore — baseline files are tracked by git.
+`*-snapshots/` is currently in A03's gitignore. A repository-level baseline gate requires a separate reviewed decision.
 
 ### 2.4 Historical Notes
 
@@ -143,6 +143,19 @@ npx playwright test e2e/real/
 # Update visual baselines
 npx playwright test e2e/mock/ --update-snapshots
 ```
+
+### 3.1 PLAN-247 Fake LLM Host Matrix
+
+The Host runner imports a controlled provider configuration through the CP Admin API before starting Agent, so these tests exercise the real ConfigService boundary:
+
+```bash
+node scripts/e2e-host.mjs --llm-mode=missing e2e/real/chat-availability.spec.ts
+node scripts/e2e-host.mjs --llm-mode=invalid e2e/real/chat-availability.spec.ts
+node scripts/e2e-host.mjs --llm-mode=success e2e/real/chat-availability.spec.ts
+node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.ts
+```
+
+`missing` omits credentials, `invalid` makes the fake provider return 401, `success` emits at least two SSE tokens, and `disconnect` closes after the first token. Set `XIHE_E2E_HEADED=1` and `XIHE_E2E_BROWSER_CHANNEL=chrome-beta` for Chrome Beta headed runs. Each run uses isolated database, host root, ports, and evidence output.
 
 ## 4. References
 

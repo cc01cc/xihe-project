@@ -173,7 +173,13 @@ packages/agent/tests/
 
 See `plans/PLAN-052-unit-test-gap-fill.md` §2.1 for the complete gap list.
 
-### 7.2 Known Limitations
+### 7.2 PLAN-247 additions
+
+- Agent tests cover readiness fail-closed behavior, provider error classification, pure-chat MCP suppression, and workspace-context conflict detection.
+- CP tests cover ChatRun persistence, idempotency conflict/replay, missing `done` ambiguity, provider/model forwarding, and configuration audit fingerprinting.
+- UI tests cover first-content assistant creation, empty failure removal, partial/ambiguous terminal state, retry draft retention, and ready chat-capable model filtering.
+
+### 7.3 Known Limitations
 
 - 9 UI api-integration tests need backend, not pure unit tests
 - Runtime timeout functionality not implemented, corresponding tests are `#[ignore]`
@@ -185,7 +191,8 @@ See `plans/PLAN-052-unit-test-gap-fill.md` §2.1 for the complete gap list.
 
 | Milestone | Status | Description |
 |-----------|--------|-------------|
-| M1-M5 all tasks | ✅ Completed | All execution table items ✅ |
+| M1-M4 | ✅ Completed | Readiness, ChatRun/error, catalog/binding, and pure Chat/MCP boundaries have focused verification |
+| M5 | ⚠️ Partial | Fake LLM Host cases have partial `--skip-runtime` evidence; Chrome Beta headed and full Runtime evidence remain pending |
 | Coverage targets met | ⚠️ Not reached | All modules below target |
 
 ### PLAN-052 — Unit Test Gap Fill (Current)

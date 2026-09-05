@@ -62,7 +62,7 @@ LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters
 
 `XiheLiteLLM` 与 `MockChatModel` 实现 `LLMProvider`，方法为 `complete()` / `stream_complete()`。
 
-**调用路径（直调，不经 CP）**：Agent 经 litellm **直调** provider（api_base 写死各家 URL）；key/模型名来自 `LLMConfig.from_config_client()`（ConfigService 启动拉取）+ `XIHE_*_API_KEY` env 兜底。CP 只提供初始配置，不管每次传输；CP 也不组装 LLM 请求、不持有 provider key（BYOK 多租户之前不考虑 CP 代理，见 PLAN-243 Decision 1）。
+**调用路径（直调，不经 CP）**：Agent 经 litellm **直调** provider；key/模型名来自 `LLMConfig.from_config_client()` 拉取的 ConfigService Admin layer。CP 负责配置治理与 relay，不组装 LLM 请求；运行日志、catalog 和 health 不暴露 provider key/base URL。
 
 - 为兼容 LangGraph 编排，`XiheLiteLLM` 仍继承 `ChatLiteLLM`。
 - 未来切换到非 LangGraph 编排层时可移除该继承。
@@ -159,6 +159,12 @@ if recover_ids:
 ### 5.2 MCPClientManager
 
 `MCPClientManager.tools` 返回 `list[BaseAgentTool]`（`MCPAgentTool` 包装），完成工具层 public API 与 LangChain 的解耦。
+
+### 5.3 Readiness、模型目录与工具模式（PLAN-247）
+
+- Agent liveness 与 LLM readiness 分离；`unknown`、missing、invalid、unreachable 和 model unavailable 均不放行新 Chat。
+- 配置 refresh 以 revision 为边界原子替换 runtime snapshot；provider model catalog 记录 status、reasonCode、capabilities 和 verifiedAt，不返回 key/base URL。
+- `toolMode=none` 不调用 `_get_mcp_tools()`，也不注入 approval/image/MCP tools；只有 `toolMode=workspace` 才按请求 workspace 懒加载 MCP。MCP manager 发现结果不得跨 workspace 复用。
 
 ## 6. 相关文件
 

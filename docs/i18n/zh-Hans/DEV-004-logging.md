@@ -266,6 +266,12 @@ node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
 - 命中即退出码 1；读取失败或权限失败本身也使门禁失败（`throw` 而非静默 `continue`）。
 - 该命令是 PLAN-195 M6 与 PLAN-230 M4 的安全门禁。
 
+### 6.5 ChatRun 与 provider 审计（PLAN-247）
+
+- Chat 生命周期日志必须同时携带 `requestId`、`runId`、`sessionId`、`outcome` 和必要的 `errorCode`；异步 CP worker 使用显式参数传递关联 ID。
+- provider 仅记录 provider/model/status/duration/errorCode 和 token/字符计数，不记录 prompt、token 内容、raw response 或凭据。
+- ConfigAudit 对 provider secret 只记录 `present`/`missing` 与不可逆 fingerprint；Admin 配置 GET 的开发 raw-read 例外不得进入日志、trace、截图或 evidence。
+
 ## 7. 错误日志规范
 
 异常日志约定维护在当前 workspace 的通用 skill 中。

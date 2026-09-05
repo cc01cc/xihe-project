@@ -227,6 +227,12 @@ node scripts/scan-log-secrets.mjs [path ...]   # defaults to logs/
 
 Scans for `Bearer`/JWT/PEM/`Authorization:`/JSON sensitive fields; any hit exits 1. An unreadable file or permission failure itself fails the gate (throws instead of silent `continue`). This command is the gate for PLAN-195 M6 and PLAN-230 M4.
 
+### 6.5 ChatRun and Provider Audit (PLAN-247)
+
+- Chat lifecycle logs carry `requestId`, `runId`, `sessionId`, `outcome`, and the relevant `errorCode`; asynchronous CP workers receive correlation IDs explicitly.
+- Provider logs contain only provider/model/status/duration/errorCode and token/character counts. Prompts, token content, raw responses, and credentials are excluded.
+- ConfigAudit stores only `present`/`missing` plus an irreversible fingerprint for provider secrets. The development Admin raw-read exception must never enter logs, traces, screenshots, or evidence.
+
 ## 7. Error Logging Standards
 
 Exception logging conventions are maintained in the workspace skills.

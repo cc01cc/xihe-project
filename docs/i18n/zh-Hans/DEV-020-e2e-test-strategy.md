@@ -180,6 +180,19 @@ npx playwright test e2e/mock/ --update-snapshots
 
 `dev:full`/T3 Compose 当前不提供 Runtime 创建 Sandbox 所需的 Docker Engine socket 和宿主 WorkspaceStorage 映射，因此不作为 host-directory、Sandbox recreate 或 Runtime remote MCP 的完成门。Host E2E 不连接长期 dev DB，必须使用每轮隔离数据库和 host root。移动端 screenshot 必须在服务健康且数据加载稳定后复核，不能因 Compose 错误态直接更新基线。
 
+### 3.1 PLAN-247 fake LLM Host matrix
+
+Host runner 支持隔离 fake provider，配置通过 CP Admin API 导入后再启动 Agent，避免绕过真实 ConfigService：
+
+```bash
+node scripts/e2e-host.mjs --llm-mode=missing e2e/real/chat-availability.spec.ts
+node scripts/e2e-host.mjs --llm-mode=invalid e2e/real/chat-availability.spec.ts
+node scripts/e2e-host.mjs --llm-mode=success e2e/real/chat-availability.spec.ts
+node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.ts
+```
+
+`--llm-mode` 只选择受控 fixture 行为：missing 不提供 key，invalid 让 models/chat 返回 401，success 返回至少两个 SSE token，disconnect 在首个 token 后断开。可用 `XIHE_E2E_HEADED=1` 和 `XIHE_E2E_BROWSER_CHANNEL=chrome-beta` 启用 Chrome Beta headed 模式；每轮仍使用独立 DB、host root、端口和 evidence 输出。
+
 ## 4. 参考
 
 - XH E2E profile、readiness 和实际结果矩阵：维护在 workspace 私有 internal 层（不在本仓库分发）

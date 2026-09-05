@@ -22,3 +22,9 @@ updated: 2026-09-03
 | **不用 `console.warn` 替代错误** | catch 块必须有用户可见的反馈（Toast），不能只 `console.warn` |
 | **dynamic import 改 static（新测试目标）** | 新测试文件中 `await import()` 改为顶层 `import`，避免模块加载竞争导致 flaky；存量 20+ 处动态 import 逐步迁移 |
 | **jsdom 限制** | `Image.onload`、`canvas.toBlob` 在 jsdom 中不可靠，需要 mock |
+
+### PLAN-247 fake LLM 边界
+
+`packages/ui/e2e/fixtures/fake-llm-server.mjs` 仅用于 Host/真实进程场景的受控 provider：`missing`、`invalid`、`success` 和 `disconnect`。配置必须通过 CP Admin API 导入，不能直接改 Agent 环境变量绕过 ConfigService；fixture request log 只记录 provider/model/status/count，不记录凭据。
+
+Host runner 的 fake LLM 结果必须与浏览器、CP、Agent 的真实调用图及 teardown 结果一起记录。直接调用 fixture 或单元 mock 不能作为 ChatRun、MCP 边界或 UI 终态的完成证据。

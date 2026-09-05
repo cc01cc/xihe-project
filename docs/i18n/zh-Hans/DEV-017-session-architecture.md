@@ -31,7 +31,9 @@ Chat 用 `sessionId`，Workspace 用 `workspaceId`，禁止互充（PLAN-222）�
 
 状态机：Active（可交互）→ Archived（前端不加载，数据按服务端契约保留/清理）→ 删除（服务端 API）。
 
-`modelId` 字段读路径仍保留（`@deprecated` 转 `configStore` session-model，双轨并存，非已删除）。
+Session 的模型绑定 canonical 形态为 `modelProvider + modelName`；`modelId` 不再由 UI 写入或推断。刷新时按服务端 pair rehydrate，provider/model catalog 不可用时不创建本地有效 binding。
+
+ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`terminalOutcome`、`errorCode` 和 `partial` 不能在刷新时被当作普通成功 assistant；`ambiguous` 需要人工确认后使用新的幂等键重试。
 
 ## 2. Store 职责边界（选项 B：共享 + 视图分离）
 
@@ -59,4 +61,4 @@ Chat 用 `sessionId`，Workspace 用 `workspaceId`，禁止互充（PLAN-222）�
 
 ## 附录：RFC-001 历史设计（已退役）
 
-RFC-001（PLAN-029 产出，PLAN-222 覆盖后 deprecated）定义了统一 Session 的初版领域模型与状态图，核心结论（服务端 canonical source、Session-scoped 附件、fileContext 引用）已并入正文；`modelId` 字段废弃（由 `configStore` session-model 绑定接管）。原文见 git 历史。
+RFC-001（PLAN-029 产出，PLAN-222 覆盖后 deprecated）定义了统一 Session 的初版领域模型与状态图，核心结论（服务端 canonical source、Session-scoped 附件、fileContext 引用）已并入正文；旧 `modelId` 三字段绑定已由 `modelProvider + modelName` canonical pair 取代。原文见 git 历史。

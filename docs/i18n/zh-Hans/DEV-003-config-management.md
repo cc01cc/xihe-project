@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 3
 status: active
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-06
 ---
 
 # DEV-003: 配置管理
@@ -98,3 +98,20 @@ curl -X POST http://localhost:12631/api/v1/config/import \
 | CP | 内建 `ConfigService` | 直接读库 |
 | Agent | `config_client.py` | 启动拉取缓存 |
 | Runtime | `config_client.rs` | 启动拉取 + 定期刷新 |
+
+## 4. Agent readiness 与模型目录
+
+配置同步成功只表示 CP/Agent 配置来源可达，不表示 provider 可以实际调用。Agent 将 HTTP liveness、配置同步和 `llmReady` 分开暴露：
+
+| `llmReady` | 含义 | 新 Chat 行为 |
+|------------|------|------------|
+| `unknown` | 必需 domain 同步失败、响应无效或状态未知 | fail-closed，返回 503 |
+| `missing_credentials` | 当前 provider 没有 key | 返回 `LLM_NOT_CONFIGURED` |
+| `invalid_credentials` | provider `/models` 或 Chat 返回认证失败 | 返回 `LLM_CREDENTIALS_INVALID` |
+| `unreachable` | provider 超时或网络不可达 | 返回 `LLM_PROVIDER_UNREACHABLE` |
+| `model_unavailable` | 默认/选择的模型不在可用 chat catalog | 返回 `LLM_MODEL_UNAVAILABLE` |
+| `ready` | provider preflight 和当前模型均可用 | 允许新 Chat |
+
+Agent 启动和周期 refresh 使用同一 atomic runtime snapshot。模型目录通过 `/internal/v1/agent/models` 返回 provider 状态、`chat` capability、`verifiedAt` 和 `configRevision`，不返回 key 或 base URL；UI 只展示 ready 且 `chat=true` 的模型。
+
+Provider credential 只归 CP admin layer。USER 可以读取脱敏配置和安全 provider 状态，但不能写入 `llm-provider` secret；ConfigAudit 对 provider secret 只保存 `present/missing` 和不可逆 fingerprint。开发 MVP 的 ADMIN 配置 GET raw-read 例外不得扩展到 health、catalog、日志、trace 或截图证据。

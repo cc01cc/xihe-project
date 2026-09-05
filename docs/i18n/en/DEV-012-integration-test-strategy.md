@@ -323,6 +323,12 @@ verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
 
 **Stub tests that only verify status=200 are prohibited**. Every T2 test must use `verify()` to assert that CP's outgoing request body/headers contain correct fields — this is the verification value of T2.
 
+### 4.1 PLAN-247 ChatRun and tool boundary coverage
+
+The CP integration contract includes durable `ChatRun` state, `(userId, sessionId, Idempotency-Key)` deduplication, request-hash conflicts, and conditional terminal transitions. A stream that ends without a terminal `done` is `ambiguous`; it is never auto-retried. Normal Chat uses `toolMode=none` and must not call MCP discovery, while Workspace actions explicitly use `toolMode=workspace`.
+
+The Host fake-LLM matrix adds missing-credential, provider-401, multi-token success, provider-disconnect, model capability filtering, and canonical provider/model binding scenarios. Direct fixture requests are supplementary only; the browser tests assert the UI request and visible result.
+
 ## 5. Run Commands
 
 ```bash

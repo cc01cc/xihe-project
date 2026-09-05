@@ -103,32 +103,23 @@ paths:
         The accepted run streams `token` events followed by a terminal `done` over the persistent session SSE —
         `done` ends the run, not the SSE connection. The SSE remains reusable for the next chat.
       security: [{ bearerAuth: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, maxLength: 128 }
+          description: Reuses an existing run for the same request hash; conflicting payloads return 409.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [sessionId, content]
-              properties:
-                sessionId: { type: string, description: Target session ID }
-                content: { type: string, description: User message content }
-                model: { type: string, description: Optional model override }
-                attachments: { type: array, items: { type: string }, description: Attachment fileIds bound to the session }
+            schema: { $ref: '#/components/schemas/ChatRequest' }
       responses:
         '202':
           description: Accepted — run enqueued, progress via SSE
           content:
             application/json:
-              schema:
-                type: object
-                required: [status, sessionId, runId]
-                properties:
-                  status: { type: string, enum: [accepted, queued] }
-                  sessionId: { type: string }
-                  messageId: { type: string }
-                  runId: { type: string }
-                  reason: { type: string }
+              schema: { $ref: '#/components/schemas/ChatRunResponse' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -182,41 +173,25 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
-  /api/v1/exec:
-    post:
-      operationId: executeChat
-      summary: Execute chat via legacy exec path (shares chat SSE contract)
-      description: |
-        Shares the same session-SSE contract as `POST /api/v1/chat`: an active `GET /api/v1/events?sessionId=` is required before the run is accepted, and `done` does not close the SSE.
-        Exists for backward compatibility; new clients should use `/api/v1/chat`.
-        Request validation, `409 SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`, and SSE event order are identical to `/api/v1/chat`.
+  /api/v1/models:
+    get:
+      operationId: listModels
+      summary: List verified provider models for Chat
+      description: Returns provider status, reason codes, chat capabilities, verification time, and config revision without credentials or base URLs.
       security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [sessionId, content]
-              properties:
-                sessionId: { type: string }
-                content: { type: string }
-                model: { type: string }
       responses:
-        '202':
-          description: Accepted — shares chat SSE contract
+        '200':
+          description: Provider/model catalog
           content:
             application/json:
               schema:
                 type: object
-                required: [status, sessionId, runId]
+                required: [providers, models]
                 properties:
-                  status: { type: string, enum: [accepted] }
-                  sessionId: { type: string }
-                  runId: { type: string }
-        '400': { $ref: '#/components/responses/Problem' }
+                  providers: { type: object, additionalProperties: true }
+                  models: { type: object, additionalProperties: { type: array, items: { type: string } } }
+                  configRevision: { type: string }
         '401': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
   /api/v1/health:
     get: { operationId: health, responses: { '200': { description: Healthy } } }
@@ -367,6 +342,8 @@ components:
     Session: { type: object, required: [id, workspaceId, title, archived], properties: { id: { type: string }, workspaceId: { type: string }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] } } }
+    ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string }, model: { type: string }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } } } }
+    ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
     StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }
@@ -386,3 +363,8 @@ components:
         code: { type: string }
         detail: { type: string }
         requestId: { type: string }
+        runId: { type: string }
+        provider: { type: string }
+        model: { type: string }
+        retryable: { type: boolean }
+        outcome: { type: string, enum: [success, error, partial, ambiguous] }

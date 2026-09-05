@@ -181,6 +181,8 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
   - 会话级持久 SSE（PLAN-230）：`GET /api/v1/events?sessionId=` 为单会话单活连接（`SseEmitterManager` generation + `compareAndRemove`），`done` 仅结束 run、不关闭 SSE，`heartbeat` 15s 不进业务气泡；`POST /api/v1/chat` 需已建立订阅（`409 SSE_SUBSCRIPTION_REQUIRED`）且单并发（`409 CHAT_IN_PROGRESS`），`requestId`/`runId` 经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传。
   - 流式渲染：`useStreamParser` 将 token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`），`SSEStream` 每 `token` 调用 `chatStore.replaceStreamingParts` 整量替换当前流式 parts（修复旧 `lastSentCount` 仅 `parts.length` 增长时追加导致的卡首字符）；`Message.parts` 替代旧 `marked`，`useMarkdown` 仅处理纯 Markdown。
   - 真实流式：`XiheLiteLLM._astream()` 显式 `streaming=True` 使 `astream_events` 产生 `on_chat_model_stream` 多 token，`sse_adapter` 按 `run_id` 去重使 `on_chat_model_end` 仅作无流 fallback；多 `token` 事件驱动气泡在 `done` 前多次增长。
+  - ChatRun（PLAN-247）：CP 在 LLM readiness gate 和 SSE subscription 通过后按 `(userId, sessionId, Idempotency-Key)` 持久化 run；`Message.runId` 关联 `success/error/partial/ambiguous` 终态，同 key 不重复启动 Agent，ambiguous 只能用新 key 手动重试。
+  - Provider/model binding：UI、CP、Agent 全链路传递 `provider` + `model` + `toolMode`；`modelProvider + modelName` 是 session canonical pair，普通 Chat 固定 `toolMode=none`，Workspace/tool 操作显式使用 `workspace`。
 - **配置**: 3-tier (system > admin > user)，CP ConfigService 统一管理
 - **Service 纯函数**: Service 不依赖 ConfigClient，配置由调用方解析后传入
 - **提交**: Conventional Commits，pass `mise run validate` 后可提交

@@ -27,7 +27,7 @@ flowchart LR
 
 ## 1. 三通道
 
-- **聊天通道**：`POST /api/v1/chat`（`202` + `runId`，指令发送）+ `GET /api/v1/events?sessionId=`（会话级持久 SSE，流接收）；`POST /api/v1/exec` 并存。CP 中转 UI↔Agent，流式分发到 UI。**注意**：CP 只转运聊天流量（租约/透传/审计），不组装 LLM 请求、不代理模型调用——模型调用由 Agent 直调 provider（见 DEV-013 §2.3）。
+- **聊天通道**：`POST /api/v1/chat`（`202` + `runId`，指令发送）+ `GET /api/v1/events?sessionId=`（会话级持久 SSE，流接收）。CP 中转 UI↔Agent，流式分发到 UI。**注意**：CP 只转运聊天流量（租约/透传/审计），不组装 LLM 请求、不代理模型调用——模型调用由 Agent 直调 provider（见 DEV-013 §2.3）。
 - **MCP 反向代理通道**（`POST /api/v1/mcp`，另有同前缀 GET/DELETE）：JSON-RPC 解析 → 工具名提取 → 权限检查 → 请求改写 → 三层路由转发（详见 DEV-016）。CP 为纯 HTTP 反代，不依赖 MCP SDK。
 - **状态分发通道**：Runtime MCP notification → CP 分发到 UI（SSE）与 Agent（透传）。
 
@@ -57,4 +57,11 @@ flowchart LR
 - **文件**：`WorkspaceFileController` 转发 Runtime REST（含二进制上传）；`GET /api/v1/workspaces/{workspaceId}/environment` 为只读诊断视图。
 - **遥测**：`TelemetryController` 收前端日志（`POST /api/v1/telemetry/logs` 需 JWT；`/anonymous` 限流），写 `telemetry.log`。
 - **审计**：`AuditLogger` 记录 MCP 工具调用与策略决策，持久化到 `audit.log`（脱敏 encoder），内存保留最近 1000 条查询视图。
+
+## 6. ChatRun 与错误终态（PLAN-247）
+
+- readiness gate、SSE subscription 和 single-flight 通过后，CP 才创建 `ChatRun` 与 user `Message`；gate 前失败不产生历史消息。
+- `ChatRun` 以 `(userId, sessionId, Idempotency-Key)` 唯一约束并保存 request hash；重复同 payload 返回既有 run，不重复启动 Agent；同 key 不同 payload 返回 `IDEMPOTENCY_KEY_CONFLICT`。
+- Agent provider failure 进入 `failed`/`partial`，流断开或缺少终态进入 `ambiguous`；`ambiguous` 不自动 retry，人工确认后使用新的幂等键。
+- `/api/v1/exec` 已删除，所有聊天 caller 统一迁移至 `/api/v1/chat`。
 - **健康**：`/actuator/health`；方法级 `@PreAuthorize`（禁类级，避免与 `/health` 冲突）。

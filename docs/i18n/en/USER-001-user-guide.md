@@ -66,6 +66,8 @@ mise run validate:full  # Unit + integration + E2E
 4. After the first reply finishes, the SSE stays open — you can send the next message **without refreshing** and still get incremental `token`s. `done` ends the turn only, not the session SSE.
 5. If the connection drops due to network jitter, the UI automatically reconnects with 250ms→5s backoff and shows “recovering”; after reconnect it reloads the canonical content.
 
+When sending fails, the input remains in the composer. A failure before a run is created is not added to history and leaves no empty assistant bubble; deterministic failures can be retried. If the provider may already have executed when the connection drops, the run is marked `ambiguous`; the system does not retry automatically, and a confirmed retry uses a new run.
+
 **Consecutive & streaming verification (PLAN-230)**: Real long replies should produce multiple `token` events with several visible growths before `done`; a single-shot appearance means the single-token fallback (provider without streaming). Inspect `Network → events` for `token`/`done` counts.
 
 ### 2.2. Multimodal
@@ -125,6 +127,8 @@ System has 5 built-in preset Providers, also supports custom OpenAI-compatible P
 | `custom` | Any OpenAI-compatible API | API Key (if applicable) |
 
 Providers can be managed in the model configuration on the settings page. Selecting a preset auto-fills model name and Base URL.
+
+The model selector shows only verified, chat-capable models. ASR/TTS models are excluded from Chat. Provider credentials belong to the Admin configuration layer; regular users receive status without secrets.
 
 ### 3.2. Environment Variables
 
