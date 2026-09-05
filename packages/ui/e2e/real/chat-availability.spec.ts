@@ -171,10 +171,11 @@ test.describe('PLAN-247 Chat availability @host', () => {
     await expect(page.getByText('mimo-v2.5', { exact: true }).first()).toBeVisible({ timeout: 15000 })
     const modelSearch = page.getByTestId('model-popover-search')
     await modelSearch.fill('mimo-v2.5')
-    // Click the exact item: keyboard navigation may highlight a different
-    // prefix match (e.g. mimo-v2.5-pro), which would still be valid but would
-    // assert the wrong binding below.
-    await page.getByTestId('model-item-xiaomi/mimo-v2.5').click()
+    // The exact item is the first filter match (plain Enter selects it).
+    // ArrowDown would move highlight to mimo-v2.5-pro; .click() never
+    // stabilizes because the open popover list re-renders continuously.
+    await expect(page.getByTestId('model-item-xiaomi/mimo-v2.5')).toBeVisible()
+    await modelSearch.press('Enter')
 
     const id = await sessionId(request, auth)
     await expect.poll(async () => {
