@@ -25,7 +25,6 @@ test.describe('Config Settings', () => {
       })
     }
     await page.route('**/api/v1/events**', (route) => route.fulfill({ status: 200, headers: { 'Content-Type': 'text/event-stream' }, body: 'retry: 5000\n\n' }))
-    await page.route('**/api/v1/exec', (route) => route.fulfill({ status: 200, body: 'OK' }))
   }
 
   test('shows loading state', async ({ page }) => {
@@ -35,7 +34,6 @@ test.describe('Config Settings', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) })
     })
     await page.route('**/api/v1/events**', (route) => route.fulfill({ status: 200, headers: { 'Content-Type': 'text/event-stream' }, body: 'retry: 5000\n\n' }))
-    await page.route('**/api/v1/exec', (route) => route.fulfill({ status: 200, body: 'OK' }))
     await page.goto('/settings/config', { waitUntil: 'load' })
     await expect(page.locator('text=加载中...')).toBeVisible()
     await expect(page).toHaveScreenshot('config-loading.png')
@@ -45,7 +43,6 @@ test.describe('Config Settings', () => {
     await page.route('**/api/v1/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) }))
     await page.route('**/api/v1/config/**', (route) => route.abort('connectionrefused'))
     await page.route('**/api/v1/events**', (route) => route.fulfill({ status: 200, headers: { 'Content-Type': 'text/event-stream' }, body: 'retry: 5000\n\n' }))
-    await page.route('**/api/v1/exec', (route) => route.fulfill({ status: 200, body: 'OK' }))
     await page.goto('/settings/config', { waitUntil: 'load' })
     await page.waitForTimeout(1000)
     await expect(page).toHaveScreenshot('config-error.png')

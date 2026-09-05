@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
+import { createServer as createTcpServer } from 'node:net'
 
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
@@ -22,9 +23,14 @@ const cpPort = process.env.XIHE_CP_PORT ?? String(portBase + 1)
 const agentPort = process.env.XIHE_AGENT_PORT ?? String(portBase + 2)
 const runtimePort = process.env.XIHE_RUNTIME_PORT ?? String(portBase + 3)
 const pgPort = process.env.XIHE_PG_PORT ?? String(portBase + 4)
-const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? String(portBase + 10)
-const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portBase + 11)
+let fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? String(portBase + 10)
+let fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portBase + 11)
+let fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT ?? String(portBase + 12)
+const llmModeArg = process.argv.find((arg) => arg.startsWith('--llm-mode='))
+const llmMode = process.env.XIHE_E2E_LLM_MODE ?? llmModeArg?.slice('--llm-mode='.length) ?? 'mock'
+const skipRuntime = process.argv.includes('--skip-runtime')
 const fakeMcpAccessToken = randomPassword(24)
+const e2eAdminPassword = randomPassword(24)
 
 const pgDatabase = `xihe_e2e_${e2eRunId.replace(/[^a-z0-9]/gi, '_')}`
 const pgUser = 'xihe'
@@ -64,6 +70,32 @@ function randomPassword(length) {
     result += charset[bytes[i] % charset.length]
   }
   return result
+}
+
+function reservePort(preferredPort) {
+  return new Promise((resolve, reject) => {
+    const probe = createTcpServer()
+    const listen = (port) => probe.listen(port, '127.0.0.1')
+    probe.once('error', (error) => {
+      if (error.code === 'EADDRINUSE' && preferredPort !== '0') {
+        listen(0)
+        return
+      }
+      reject(error)
+    })
+    probe.once('listening', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      probe.close(() => resolve(String(port)))
+    })
+    listen(Number(preferredPort))
+  })
+}
+
+async function reserveFixturePorts() {
+  if (!process.env.XIHE_FAKE_OAUTH_PORT) fakeOAuthPort = await reservePort(fakeOAuthPort)
+  if (!process.env.XIHE_FAKE_MCP_PORT) fakeMcpPort = await reservePort(fakeMcpPort)
+  if (!process.env.XIHE_FAKE_LLM_PORT) fakeLlmPort = await reservePort(fakeLlmPort)
 }
 
 function isWithin(child, parent) {
@@ -115,10 +147,13 @@ function runCapture(program, args, options = {}) {
   })
 }
 
-async function waitForHttp(name, url, timeoutMs = readinessTimeoutMs, headers = {}) {
+async function waitForHttp(name, url, timeoutMs = readinessTimeoutMs, headers = {}, child = null) {
   const deadline = Date.now() + timeoutMs
   let lastError = 'not ready'
   while (Date.now() < deadline) {
+    if (child && child.exitCode !== null) {
+      throw new Error(`${name} exited before becoming ready (code=${child.exitCode})`)
+    }
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 2_000)
     try {
@@ -186,7 +221,8 @@ async function launchNativeService({ name, cmd, args, cwd, extraEnv, healthUrl }
     env: {
       ...process.env,
       XIHE_ENV: 'dev',
-      XIHE_CP_API_TOKEN: serviceToken,
+       XIHE_CP_API_TOKEN: serviceToken,
+       XIHE_AGENT_API_TOKEN: serviceToken,
       XIHE_E2E_RUN_ID: e2eRunId,
       XIHE_WORKSPACE_HOST_ROOT: hostRoot,
       XIHE_LOG_DIR: e2eLogDir,
@@ -206,7 +242,7 @@ async function launchNativeService({ name, cmd, args, cwd, extraEnv, healthUrl }
   child.once('error', (error) => {
     console.error(`[e2e-host] native ${name} error: ${error.message}`)
   })
-  await waitForHttp(name, healthUrl)
+  await waitForHttp(name, healthUrl, readinessTimeoutMs, {}, child)
 }
 
 async function launchUIVite() {
@@ -230,7 +266,7 @@ async function launchUIVite() {
   child.once('error', (error) => {
     console.error(`[e2e-host] ui error: ${error.message}`)
   })
-  await waitForHttp('UI', `http://127.0.0.1:${uiPort}`)
+  await waitForHttp('UI', `http://127.0.0.1:${uiPort}`, readinessTimeoutMs, {}, child)
 }
 
 async function startFixtures() {
@@ -244,6 +280,12 @@ async function startFixtures() {
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
     } },
   ]
+  if (llmMode !== 'mock') {
+    fixtures.push({ name: 'Fake LLM', script: 'fake-llm-server.mjs', port: fakeLlmPort, env: {
+      XIHE_FAKE_LLM_PORT: fakeLlmPort,
+      XIHE_FAKE_LLM_MODE: llmMode,
+    } })
+  }
   for (const { name, script, port, env } of fixtures) {
     const child = spawnCommand(nodeCommand, [join(uiDir, 'e2e', 'fixtures', script)], {
       cwd: projectDir,
@@ -253,8 +295,58 @@ async function startFixtures() {
     })
     dockerProcesses.push({ name, child })
     child.once('error', (error) => console.error(`[e2e-host] ${name} process error: ${error.message}`))
-    await waitForHttp(name, `http://localhost:${port}/health`)
+    await waitForHttp(name, `http://localhost:${port}/health`, readinessTimeoutMs, {}, child)
   }
+}
+
+async function configureFakeLlm() {
+  const cpBaseUrl = `http://127.0.0.1:${cpPort}`
+  const login = await fetch(`${cpBaseUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@xihe.local', password: e2eAdminPassword }),
+  })
+  if (!login.ok) throw new Error(`fake LLM admin login failed: HTTP ${login.status}`)
+  const loginBody = await login.json()
+  const fakeBase = `http://127.0.0.1:${fakeLlmPort}`
+  const config = llmMode === 'missing'
+    ? {
+        'llm-provider': {
+          defaultProvider: '',
+          openaiApiKey: '',
+          openaiApiBase: `${fakeBase}/openai/v1`,
+        },
+        'user-preference': {
+          defaultModel: 'gpt-fake',
+        },
+      }
+    : {
+        'llm-provider': {
+          defaultProvider: 'openai',
+          openaiApiKey: llmMode === 'invalid' ? 'sk-fake-invalid-key' : 'sk-fake-openai-key',
+          openaiModel: 'fake-openai',
+          openaiApiBase: `${fakeBase}/openai/v1`,
+          deepseekApiKey: 'fake-deepseek-key',
+          deepseekModel: 'fake-deepseek',
+          deepseekApiBase: `${fakeBase}/deepseek/v1`,
+        },
+        'user-preference': {
+          defaultModel: 'fake-openai',
+        },
+      }
+  const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${loginBody.accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(config),
+  })
+  if (!imported.ok) {
+    const problem = await imported.text()
+    throw new Error(`fake LLM config import failed: HTTP ${imported.status} ${problem.slice(0, 500)}`)
+  }
+  console.log(`[e2e-host] fake LLM configuration imported mode=${llmMode}`)
 }
 
 async function removeRunSandboxContainers() {
@@ -298,7 +390,7 @@ async function recycleHostRoot() {
 }
 
 async function runPlaywright() {
-  const testArgs = process.argv.slice(2).filter((arg) => !['--keep'].includes(arg))
+  const testArgs = process.argv.slice(2).filter((arg) => !['--keep', '--skip-runtime'].includes(arg) && !arg.startsWith('--llm-mode='))
   const playwrightTestArgs = testArgs.length > 0 ? testArgs : ['e2e/real']
   return run(pnpmCommand, [
     'exec',
@@ -325,6 +417,9 @@ async function runPlaywright() {
       XIHE_FAKE_OAUTH_PORT: fakeOAuthPort,
       XIHE_FAKE_MCP_PORT: fakeMcpPort,
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
+      XIHE_E2E_LLM_MODE: llmMode,
+      XIHE_E2E_HEADED: process.env.XIHE_E2E_HEADED ?? '0',
+      XIHE_E2E_BROWSER_CHANNEL: process.env.XIHE_E2E_BROWSER_CHANNEL ?? 'chrome-beta',
     },
   })
 }
@@ -422,6 +517,9 @@ async function cleanup() {
 async function main() {
   console.log(`[e2e-host] runId=${e2eRunId} ports ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort} pg=${pgPort}`)
   console.log(`[e2e-host] isolated pg project=${pgProjectName} db=${pgDatabase} hostRoot=${hostRoot}`)
+  if (skipRuntime) console.log('[e2e-host] --skip-runtime set; this run validates chat-only paths without Sandbox execution')
+  await reserveFixturePorts()
+  await startFixtures()
   if (externalServer) {
     console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')
   } else {
@@ -434,18 +532,21 @@ async function main() {
       XIHE_CP_DATASOURCE_USERNAME: pgUser,
       XIHE_CP_DATASOURCE_PASSWORD: pgPassword,
       XIHE_CP_JWT_SECRET: `e2e-${e2eRunId}-jwt-secret`,
-      XIHE_AGENT_URL: `http://127.0.0.1:${agentPort}/internal/v1/agent/chat`,
-      XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
-    }
-    await Promise.all([
-      launchNativeService({
-        name: 'control-plane',
-        cmd: 'mvn.cmd',
-        args: ['-q', '-DskipTests', 'spring-boot:run'],
-        cwd: join(projectDir, 'packages', 'control-plane'),
-        extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
-        healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
-      }),
+       XIHE_AGENT_URL: `http://127.0.0.1:${agentPort}/internal/v1/agent/chat`,
+       XIHE_AGENT_BASE_URL: `http://127.0.0.1:${agentPort}`,
+       XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
+       XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword,
+     }
+    await launchNativeService({
+      name: 'control-plane',
+      cmd: 'mvn.cmd',
+      args: ['-q', '-DskipTests', 'spring-boot:run'],
+      cwd: join(projectDir, 'packages', 'control-plane'),
+      extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
+      healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
+    })
+    if (llmMode !== 'mock') await configureFakeLlm()
+    const nativeServices = [
       launchNativeService({
         name: 'agent',
         cmd: uvCommand,
@@ -454,11 +555,11 @@ async function main() {
         extraEnv: {
           XIHE_AGENT_PORT: agentPort,
           XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
-          XIHE_LLM_PROVIDER: 'mock',
+          XIHE_LLM_PROVIDER: llmMode === 'mock' ? 'mock' : 'openai',
         },
         healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
       }),
-      launchNativeService({
+      ...(skipRuntime ? [] : [launchNativeService({
         name: 'runtime',
         cmd: 'cargo',
         args: ['run', '--bin', 'xihe-runtime'],
@@ -469,12 +570,12 @@ async function main() {
           XIHE_WORKSPACE_IMAGE: 'xihe/workspace:latest',
         },
         healthUrl: `http://127.0.0.1:${runtimePort}/health`,
-      }),
-    ])
-    await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
-     await launchUIVite()
+      })]),
+    ]
+    await Promise.all(nativeServices)
+    if (!skipRuntime) await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
+    await launchUIVite()
   }
-  await startFixtures()
   const result = await runPlaywright()
   const teardown = await cleanup()
   if (!teardown.ok) {

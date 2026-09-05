@@ -64,24 +64,50 @@ def _collect_stream_text(events) -> str:
     raise AssertionError("SSE stream ended before done event")
 
 
+def _create_session(base_url: str, name: str) -> tuple[str, dict[str, str]]:
+    email = f"{name}-{os.getpid()}@test.com"
+    registration = httpx.post(
+        f"{base_url}/api/v1/auth/register",
+        json={"email": email, "password": "Pass1234!", "name": name},
+        timeout=10,
+        trust_env=False,
+    )
+    assert registration.status_code == 201, registration.text
+    auth = registration.json()
+    headers = {
+        "Authorization": f"Bearer {auth['accessToken']}",
+        "X-Workspace-Id": auth["workspaceId"],
+    }
+    session = httpx.post(
+        f"{base_url}/api/v1/sessions",
+        json={"title": name},
+        headers=headers,
+        timeout=10,
+        trust_env=False,
+    )
+    assert session.status_code == 201, session.text
+    return session.json()["id"], headers
+
+
 def test_e2e_chat(backend_stack):
     """User sends message → Agent replies via CP → UI receives SSE."""
-    session_id = "e2e-test"
-    events_url = f"{backend_stack['cp_url']}/v1/events?session_id={session_id}"
+    session_id, headers = _create_session(backend_stack["cp_url"], "e2e-chat")
+    events_url = f"{backend_stack['cp_url']}/api/v1/events?sessionId={session_id}"
 
-    with httpx.stream("GET", events_url, timeout=30, trust_env=False) as events_response:
+    with httpx.stream("GET", events_url, headers=headers, timeout=30, trust_env=False) as events_response:
         assert events_response.status_code == 200
         events = _iter_sse_events(events_response.iter_lines())
         _wait_for_connected_event(events)
 
-        exec_response = httpx.post(
-            f"{backend_stack['cp_url']}/v1/exec",
-            json={"session_id": session_id, "content": "你好", "stream": True},
+        chat_response = httpx.post(
+            f"{backend_stack['cp_url']}/api/v1/chat",
+            json={"sessionId": session_id, "content": "你好", "stream": True, "toolMode": "none"},
+            headers=headers,
             timeout=30,
             trust_env=False,
         )
-        assert exec_response.status_code == 202
-        assert exec_response.json()["status"] == "accepted"
+        assert chat_response.status_code == 202
+        assert chat_response.json()["status"] == "accepted"
 
         streamed_text = _collect_stream_text(events)
         assert streamed_text
@@ -90,22 +116,23 @@ def test_e2e_chat(backend_stack):
 
 def test_e2e_tool_call(backend_stack):
     """User asks to read file → Agent calls tool → returns file content."""
-    session_id = "e2e-tool-test"
-    events_url = f"{backend_stack['cp_url']}/v1/events?session_id={session_id}"
+    session_id, headers = _create_session(backend_stack["cp_url"], "e2e-tool")
+    events_url = f"{backend_stack['cp_url']}/api/v1/events?sessionId={session_id}"
 
-    with httpx.stream("GET", events_url, timeout=30, trust_env=False) as events_response:
+    with httpx.stream("GET", events_url, headers=headers, timeout=30, trust_env=False) as events_response:
         assert events_response.status_code == 200
         events = _iter_sse_events(events_response.iter_lines())
         _wait_for_connected_event(events)
 
-        exec_response = httpx.post(
-            f"{backend_stack['cp_url']}/v1/exec",
-            json={"session_id": session_id, "content": "读取 test.txt", "stream": True},
+        chat_response = httpx.post(
+            f"{backend_stack['cp_url']}/api/v1/chat",
+            json={"sessionId": session_id, "content": "读取 test.txt", "stream": True, "toolMode": "workspace"},
+            headers=headers,
             timeout=30,
             trust_env=False,
         )
-        assert exec_response.status_code == 202
-        assert exec_response.json()["status"] == "accepted"
+        assert chat_response.status_code == 202
+        assert chat_response.json()["status"] == "accepted"
 
         streamed_text = _collect_stream_text(events)
         assert "Hello from xihe workspace" in streamed_text
@@ -113,14 +140,15 @@ def test_e2e_tool_call(backend_stack):
 
 def test_e2e_health(backend_stack):
     """All services should be healthy."""
-    response = httpx.get(f"{backend_stack['cp_url']}/health", timeout=5, trust_env=False)
+    _, headers = _create_session(backend_stack["cp_url"], "e2e-health")
+    response = httpx.get(f"{backend_stack['cp_url']}/api/v1/health", timeout=5, trust_env=False)
     assert response.json()["status"] == "UP"
 
-    response = httpx.get(f"{backend_stack['agent_url']}/health", timeout=5, trust_env=False)
-    assert response.json()["status"] == "ok"
+    response = httpx.get(f"{backend_stack['agent_url']}/internal/v1/agent/health", timeout=5, trust_env=False)
+    assert response.json()["liveness"] == "up"
 
     response = httpx.post(
-        f"{backend_stack['cp_url']}/mcp",
+        f"{backend_stack['cp_url']}/api/v1/mcp",
         json={
             "jsonrpc": "2.0",
             "method": "initialize",
@@ -131,7 +159,7 @@ def test_e2e_health(backend_stack):
             },
             "id": 1,
         },
-        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+        headers={**headers, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
         timeout=10,
         trust_env=False,
     )

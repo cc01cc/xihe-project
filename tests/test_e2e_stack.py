@@ -24,11 +24,11 @@ class TestServiceHealth:
         assert r.json()["status"] == "UP"
 
     def test_agent_health(self):
-        r = httpx.get(f"{AGENT_URL}/health", timeout=5)
+        r = httpx.get(f"{AGENT_URL}/internal/v1/agent/health", timeout=5)
         assert r.status_code == 200
         data = r.json()
-        assert data["llm"]["configured"] is True
-        assert data["llm"]["provider"] == "deepseek"
+        assert data["liveness"] == "up"
+        assert data["llmReady"] == "ready"
 
     def test_runtime_health(self):
         r = httpx.get(f"{RUNTIME_URL}/health", timeout=5)
@@ -54,7 +54,7 @@ class TestAuthFlow:
         return f"e2e-{int(time.time() * 1000)}@xihe.test"
 
     def test_register_returns_tokens(self):
-        r = httpx.post(f"{CP_URL}/auth/register", json={
+        r = httpx.post(f"{CP_URL}/api/v1/auth/register", json={
             "email": self._unique_email(), "password": "Pass1234!", "name": "E2E"
         }, timeout=10)
         assert r.status_code in [200, 201]
@@ -65,20 +65,20 @@ class TestAuthFlow:
 
     def test_register_duplicate_email_rejected(self):
         email = self._unique_email()
-        httpx.post(f"{CP_URL}/auth/register", json={
+        httpx.post(f"{CP_URL}/api/v1/auth/register", json={
             "email": email, "password": "Pass1234!", "name": "Dup"
         }, timeout=10)
-        r = httpx.post(f"{CP_URL}/auth/register", json={
+        r = httpx.post(f"{CP_URL}/api/v1/auth/register", json={
             "email": email, "password": "Pass1234!", "name": "Dup2"
         }, timeout=10)
         assert r.status_code == 400
 
     def test_login_with_valid_credentials(self):
         email = self._unique_email()
-        httpx.post(f"{CP_URL}/auth/register", json={
+        httpx.post(f"{CP_URL}/api/v1/auth/register", json={
             "email": email, "password": "Pass1234!", "name": "Login"
         }, timeout=10)
-        r = httpx.post(f"{CP_URL}/auth/login", json={
+        r = httpx.post(f"{CP_URL}/api/v1/auth/login", json={
             "email": email, "password": "Pass1234!"
         }, timeout=10)
         assert r.status_code == 200
@@ -86,21 +86,21 @@ class TestAuthFlow:
 
     def test_login_with_wrong_password(self):
         email = self._unique_email()
-        httpx.post(f"{CP_URL}/auth/register", json={
+        httpx.post(f"{CP_URL}/api/v1/auth/register", json={
             "email": email, "password": "correctpass", "name": "Wrong"
         }, timeout=10)
-        r = httpx.post(f"{CP_URL}/auth/login", json={
+        r = httpx.post(f"{CP_URL}/api/v1/auth/login", json={
             "email": email, "password": "incorrectpass"
         }, timeout=10)
         assert r.status_code == 401
 
     def test_refresh_token_returns_new_tokens(self):
         email = self._unique_email()
-        reg = httpx.post(f"{CP_URL}/auth/register", json={
+        reg = httpx.post(f"{CP_URL}/api/v1/auth/register", json={
             "email": email, "password": "Pass1234!", "name": "Refresh"
         }, timeout=10)
         refresh = reg.json()["refreshToken"]
-        r = httpx.post(f"{CP_URL}/auth/refresh", json={
+        r = httpx.post(f"{CP_URL}/api/v1/auth/refresh", json={
             "refreshToken": refresh
         }, timeout=10)
         assert r.status_code == 200
@@ -113,32 +113,39 @@ class TestAuthFlow:
 class TestChatFlow:
     """认证后聊天请求链路。"""
 
-    def _get_token(self):
+    def _create_session(self):
         email = f"chat-{int(time.time() * 1000)}@xihe.test"
-        r = httpx.post(f"{CP_URL}/auth/register", json={
+        r = httpx.post(f"{CP_URL}/api/v1/auth/register", json={
             "email": email, "password": "Pass1234!", "name": "Chatter"
         }, timeout=10)
-        return r.json()["accessToken"]
+        data = r.json()
+        headers = {
+            "Authorization": f"Bearer {data['accessToken']}",
+            "X-Workspace-Id": data["workspaceId"],
+        }
+        session = httpx.post(
+            f"{CP_URL}/api/v1/sessions", json={"title": "Chatter"}, headers=headers, timeout=10
+        )
+        assert session.status_code == 201, session.text
+        return session.json()["id"], headers
 
     def test_chat_requires_auth(self):
-        r = httpx.post(f"{CP_URL}/v1/chat", json={"content": "hello"}, timeout=5)
+        r = httpx.post(f"{CP_URL}/api/v1/chat", json={"content": "hello"}, timeout=5)
         assert r.status_code == 401
 
     def test_chat_returns_accepted(self):
-        token = self._get_token()
-        session_id = f"chat-{int(time.time() * 1000)}"
-        r = httpx.post(f"{CP_URL}/v1/chat",
-            json={"content": "hello", "session_id": session_id},
-            headers={"Authorization": f"Bearer {token}"},
+        session_id, headers = self._create_session()
+        r = httpx.post(f"{CP_URL}/api/v1/chat",
+            json={"content": "hello", "sessionId": session_id, "toolMode": "none"},
+            headers=headers,
             timeout=15)
         assert r.status_code in [200, 201, 202, 409]  # 409 = session already exists
 
     def test_chat_persists_message(self):
-        token = self._get_token()
-        session_id = f"persist-{int(time.time() * 1000)}"
-        r = httpx.post(f"{CP_URL}/v1/chat",
-            json={"content": "持久化测试", "session_id": session_id},
-            headers={"Authorization": f"Bearer {token}"},
+        session_id, headers = self._create_session()
+        r = httpx.post(f"{CP_URL}/api/v1/chat",
+            json={"content": "持久化测试", "sessionId": session_id, "toolMode": "none"},
+            headers=headers,
             timeout=15)
         assert r.status_code in [200, 201, 202, 409]
 
@@ -148,16 +155,16 @@ class TestModuleCommunication:
 
     def test_agent_sees_cp_url(self):
         """Agent 容器通过 Docker 网络访问 CP。"""
-        r = httpx.get(f"{AGENT_URL}/health", timeout=5)
+        r = httpx.get(f"{AGENT_URL}/internal/v1/agent/health", timeout=5)
         data = r.json()
-        assert data["cp_url"] == "http://control-plane:8080"
+        assert data["cpUrl"] == "http://control-plane:8080"
 
     def test_agent_mcp_status_expected(self):
         """Agent MCP 连接状态（未配置时为 degraded，属正常）。"""
-        r = httpx.get(f"{AGENT_URL}/health", timeout=5)
+        r = httpx.get(f"{AGENT_URL}/internal/v1/agent/health", timeout=5)
         data = r.json()
-        # MCP 初始化可能成功或失败，取决于 CP 配置
-        assert "mcp_initialized" in data
+        assert data["mcpInitialized"] is False
+        assert data["toolsCount"] == 0
 
     def test_runtime_mcp_endpoint_accessible(self):
         """Runtime MCP 端点可达。"""

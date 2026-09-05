@@ -24,17 +24,21 @@ MCP_HEADERS = {
 }
 
 
-def _get_auth_token() -> str:
+def _get_auth_headers() -> dict[str, str]:
     """注册并获取 JWT token。"""
     email = f"mcp-test-{int(time.time() * 1000)}@xihe.test"
     r = httpx.post(
-        f"{CP_URL}/auth/register",
+        f"{CP_URL}/api/v1/auth/register",
         json={"email": email, "password": "Pass1234!", "name": "MCP Test"},
         timeout=10,
         trust_env=False,
     )
-    assert r.status_code in [200, 201], f"Register failed: {r.status_code} {r.text}"
-    return r.json()["accessToken"]
+    assert r.status_code == 201, f"Register failed: {r.status_code} {r.text}"
+    data = r.json()
+    return {
+        "Authorization": f"Bearer {data['accessToken']}",
+        "X-Workspace-Id": data["workspaceId"],
+    }
 
 
 def _mcp_init(base_url: str, headers: dict) -> httpx.Response:
@@ -91,27 +95,25 @@ class TestCPMcpProxy:
 
     def test_cp_mcp_requires_auth(self):
         """CP MCP 端点未认证时返回 401。"""
-        r = _mcp_init(CP_URL, MCP_HEADERS)
+        r = _mcp_init(f"{CP_URL}/api/v1", MCP_HEADERS)
         assert r.status_code == 401
 
     def test_cp_mcp_initialize_with_auth(self):
         """CP MCP 端点认证后可发送 initialize。"""
-        token = _get_auth_token()
-        headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
-        r = _mcp_init(CP_URL, headers)
+        headers = {**MCP_HEADERS, **_get_auth_headers()}
+        r = _mcp_init(f"{CP_URL}/api/v1", headers)
         assert r.status_code == 200
         assert "mcp-session-id" in r.headers
 
     def test_cp_proxies_tools_list(self):
         """CP 转发 tools/list 返回 Runtime 工具列表。"""
-        token = _get_auth_token()
-        headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
+        headers = {**MCP_HEADERS, **_get_auth_headers()}
 
-        init_resp = _mcp_init(CP_URL, headers)
+        init_resp = _mcp_init(f"{CP_URL}/api/v1", headers)
         assert init_resp.status_code == 200
         session_id = init_resp.headers.get("mcp-session-id")
 
-        tools_resp = _mcp_call(CP_URL, session_id, "tools/list", {}, 2, headers)
+        tools_resp = _mcp_call(f"{CP_URL}/api/v1", session_id, "tools/list", {}, 2, headers)
         assert tools_resp.status_code == 200
 
         payload = _extract_mcp_result(tools_resp.text)
@@ -122,14 +124,13 @@ class TestCPMcpProxy:
 
     def test_cp_proxies_tools_call(self):
         """CP 转发 tools/call 到 Runtime 并返回结果。"""
-        token = _get_auth_token()
-        headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
+        headers = {**MCP_HEADERS, **_get_auth_headers()}
 
-        init_resp = _mcp_init(CP_URL, headers)
+        init_resp = _mcp_init(f"{CP_URL}/api/v1", headers)
         session_id = init_resp.headers.get("mcp-session-id")
 
         call_resp = _mcp_call(
-            CP_URL, session_id, "tools/call",
+            f"{CP_URL}/api/v1", session_id, "tools/call",
             {"name": "list_directory", "arguments": {"path": "/tmp"}},
             3, headers
         )

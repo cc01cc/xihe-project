@@ -52,9 +52,6 @@ for (const route of allRoutes) {
       })
     })
 
-    await page.route('**/api/v1/exec', async (route2) => {
-      await route2.fulfill({ status: 200, body: 'OK' })
-    })
 
     await page.route('**/api/v1/**', async (route2) => {
       await route2.fulfill({

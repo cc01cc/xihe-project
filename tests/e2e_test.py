@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CP_DIR = ROOT / "packages/control-plane"
 AGENT_DIR = ROOT / "packages/agent"
 RUNTIME_DIR = ROOT / "packages/runtime"
+CP_URL = "http://localhost:8080"
 
 SERVICES = []
 
@@ -55,52 +56,66 @@ async def test_chat_sse():
     log("\n=== 测试 Chat SSE 流 ===")
     
     # 1. 注册用户
-    async with httpx.AsyncClient() as c:
-        reg = await c.post("http://localhost:8080/auth/register", json={
+    async with httpx.AsyncClient(trust_env=False) as c:
+        reg = await c.post(f"{CP_URL}/api/v1/auth/register", json={
             "email": "e2e@test.com", "password": "Pass1234!", "name": "E2E"
         })
-        if reg.status_code != 200:
+        if reg.status_code != 201:
             log(f"⚠️ 注册失败 ({reg.status_code})，尝试登录...")
-            login = await c.post("http://localhost:8080/auth/login", json={
+            login = await c.post(f"{CP_URL}/api/v1/auth/login", json={
                 "email": "e2e@test.com", "password": "Pass1234!"
             })
             if login.status_code != 200:
                 log("❌ 登录也失败，跳过 chat 测试")
                 return False
-            token = login.json()["accessToken"]
+            auth = login.json()
         else:
-            token = reg.json()["accessToken"]
+            auth = reg.json()
+
+        headers = {
+            "Authorization": f"Bearer {auth['accessToken']}",
+            "X-Workspace-Id": auth["workspaceId"],
+            "Content-Type": "application/json",
+        }
+        session = await c.post(f"{CP_URL}/api/v1/sessions", json={"title": "E2E"}, headers=headers)
+        if session.status_code != 201:
+            log(f"❌ 创建 session 失败 ({session.status_code})")
+            return False
+        session_id = session.json()["id"]
     
-    log("✅ 认证成功")
-    
-    # 2. 发送聊天请求
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient() as c:
-        chat_resp = await c.post("http://localhost:8080/v1/chat", 
-            json={"content": "用中文说你好", "session_id": "e2e-test"},
-            headers=headers)
-        
-        if chat_resp.status_code == 202:
-            log("✅ Chat 请求接受 (202)")
-        else:
-            log(f"⚠️ Chat 响应: {chat_resp.status_code}")
-    
-    # 3. 验证 SSE 事件
-    log("等待 SSE 事件...")
-    async with httpx.AsyncClient() as c:
+        log("✅ 认证成功")
+
+        # 2. Subscribe before sending the chat request.
+        log("等待 SSE 事件...")
         try:
-            async with c.stream("GET", "http://localhost:8080/v1/events?session=e2e-test",
-                               headers=headers, timeout=30) as resp:
+            async with c.stream(
+                "GET", f"{CP_URL}/api/v1/events?sessionId={session_id}", headers=headers, timeout=30
+            ) as resp:
+                if resp.status_code != 200:
+                    log(f"❌ SSE 连接失败 ({resp.status_code})")
+                    return False
                 events = []
+                chat_sent = False
                 async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
-                        data = json.loads(line[6:])
-                        events.append(data["type"])
-                        if data["type"] == "token":
-                            pass  # 累积 token
-                        elif data["type"] == "done":
-                            break
-                
+                    if not line.startswith("data: "):
+                        continue
+                    data = json.loads(line[6:])
+                    event_type = data["type"]
+                    events.append(event_type)
+                    if event_type == "connected" and not chat_sent:
+                        chat_resp = await c.post(
+                            f"{CP_URL}/api/v1/chat",
+                            json={"content": "用中文说你好", "sessionId": session_id, "toolMode": "none"},
+                            headers=headers,
+                        )
+                        if chat_resp.status_code != 202:
+                            log(f"⚠️ Chat 响应: {chat_resp.status_code}")
+                            return False
+                        log("✅ Chat 请求接受 (202)")
+                        chat_sent = True
+                    if event_type == "done":
+                        break
+
                 log(f"SSE 事件序列: {' → '.join(events)}")
                 assert "token" in events, "缺少 token 事件"
                 assert "done" in events, "缺少 done 事件"
@@ -108,7 +123,6 @@ async def test_chat_sse():
                 return True
         except Exception as e:
             log(f"❌ SSE 流错误: {e}")
-            # Agent 可能未连接 CP → Runtime，fallback 验证健康检查
             return False
 
 async def test_health_endpoints():
@@ -116,8 +130,8 @@ async def test_health_endpoints():
     log("\n=== 验证健康检查 ===")
     
     endpoints = [
-        ("CP", "http://localhost:8080/actuator/health"),
-        ("Agent", "http://localhost:8000/health"),
+        ("CP", f"{CP_URL}/actuator/health"),
+        ("Agent", "http://localhost:8000/internal/v1/agent/health"),
         ("Runtime", "http://localhost:8001/health"),
     ]
     

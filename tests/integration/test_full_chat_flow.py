@@ -22,27 +22,38 @@ os.environ.pop("all_proxy", None)
 class TestFullChatFlow:
     """验证注册 → 登录 → 发消息 → SSE 响应完整链路。"""
 
-    def _register_and_login(self, cp_url: str) -> str:
+    def _create_session(self, cp_url: str, name: str) -> tuple[str, dict[str, str]]:
         email = f"flow-{int(time.time() * 1000)}@test.com"
         r = httpx.post(
-            f"{cp_url}/auth/register",
+            f"{cp_url}/api/v1/auth/register",
             json={"email": email, "password": "Pass1234!", "name": "Flow Test"},
             timeout=10,
             trust_env=False,
         )
-        assert r.status_code in [200, 201]
-        return r.json()["accessToken"]
+        assert r.status_code == 201
+        auth = r.json()
+        headers = {
+            "Authorization": f"Bearer {auth['accessToken']}",
+            "X-Workspace-Id": auth["workspaceId"],
+        }
+        session = httpx.post(
+            f"{cp_url}/api/v1/sessions",
+            json={"title": name},
+            headers=headers,
+            timeout=10,
+            trust_env=False,
+        )
+        assert session.status_code == 201, session.text
+        return session.json()["id"], headers
 
     def test_register_login_send_message(self, backend_stack):
         """完整流程：注册 → 登录 → 发消息 → 接受请求。"""
         cp_url = backend_stack["cp_url"]
-        token = self._register_and_login(cp_url)
-
-        session_id = f"flow-{int(time.time() * 1000)}"
+        session_id, headers = self._create_session(cp_url, "Flow Test")
         r = httpx.post(
-            f"{cp_url}/v1/chat",
-            json={"content": "hello", "session_id": session_id},
-            headers={"Authorization": f"Bearer {token}"},
+            f"{cp_url}/api/v1/chat",
+            json={"content": "hello", "sessionId": session_id, "toolMode": "none"},
+            headers=headers,
             timeout=15,
             trust_env=False,
         )
@@ -51,7 +62,7 @@ class TestFullChatFlow:
     def test_chat_without_auth_rejected(self, backend_stack):
         """未认证请求被拒绝。"""
         r = httpx.post(
-            f"{backend_stack['cp_url']}/v1/chat",
+            f"{backend_stack['cp_url']}/api/v1/chat",
             json={"content": "hello"},
             timeout=5,
             trust_env=False,
@@ -61,11 +72,9 @@ class TestFullChatFlow:
     def test_chat_sse_stream(self, backend_stack):
         """SSE 事件流可连接并接收数据。"""
         cp_url = backend_stack["cp_url"]
-        token = self._register_and_login(cp_url)
-        session_id = f"sse-{int(time.time() * 1000)}"
+        session_id, headers = self._create_session(cp_url, "SSE Test")
 
-        events_url = f"{cp_url}/v1/events?session_id={session_id}"
-        headers = {"Authorization": f"Bearer {token}"}
+        events_url = f"{cp_url}/api/v1/events?sessionId={session_id}"
         with httpx.stream("GET", events_url, headers=headers, timeout=5, trust_env=False) as resp:
             assert resp.status_code == 200
             # 读取前几行验证 SSE 格式
@@ -82,36 +91,46 @@ class TestFullChatFlow:
 class TestSessionIsolation:
     """验证不同会话互相隔离。"""
 
-    def _get_token(self, cp_url: str) -> str:
-        email = f"iso-{int(time.time() * 1000)}@test.com"
-        r = httpx.post(
-            f"{cp_url}/auth/register",
-            json={"email": email, "password": "Pass1234!", "name": "Isolation Test"},
-            timeout=10,
-            trust_env=False,
+    def _create_session(
+        self, cp_url: str, title: str, headers: dict[str, str] | None = None
+    ) -> tuple[str, dict[str, str]]:
+        if headers is None:
+            email = f"iso-{int(time.time() * 1000)}@test.com"
+            r = httpx.post(
+                f"{cp_url}/api/v1/auth/register",
+                json={"email": email, "password": "Pass1234!", "name": "Isolation Test"},
+                timeout=10,
+                trust_env=False,
+            )
+            assert r.status_code == 201
+            auth = r.json()
+            headers = {
+                "Authorization": f"Bearer {auth['accessToken']}",
+                "X-Workspace-Id": auth["workspaceId"],
+            }
+        session = httpx.post(
+            f"{cp_url}/api/v1/sessions", json={"title": title}, headers=headers, timeout=10, trust_env=False
         )
-        assert r.status_code in [200, 201]
-        return r.json()["accessToken"]
+        assert session.status_code == 201, session.text
+        return session.json()["id"], headers
 
     def test_multiple_sessions_isolated(self, backend_stack):
         """不同会话的消息互不干扰。"""
         cp_url = backend_stack["cp_url"]
-        token = self._get_token(cp_url)
-
-        session_a = f"sess-a-{int(time.time() * 1000)}"
-        session_b = f"sess-b-{int(time.time() * 1000)}"
+        session_a, headers = self._create_session(cp_url, "Session A")
+        session_b, _ = self._create_session(cp_url, "Session B", headers)
 
         r1 = httpx.post(
-            f"{cp_url}/v1/chat",
-            json={"content": "session A message", "session_id": session_a},
-            headers={"Authorization": f"Bearer {token}"},
+            f"{cp_url}/api/v1/chat",
+            json={"content": "session A message", "sessionId": session_a, "toolMode": "none"},
+            headers=headers,
             timeout=15,
             trust_env=False,
         )
         r2 = httpx.post(
-            f"{cp_url}/v1/chat",
-            json={"content": "session B message", "session_id": session_b},
-            headers={"Authorization": f"Bearer {token}"},
+            f"{cp_url}/api/v1/chat",
+            json={"content": "session B message", "sessionId": session_b, "toolMode": "none"},
+            headers=headers,
             timeout=15,
             trust_env=False,
         )
@@ -122,14 +141,13 @@ class TestSessionIsolation:
     def test_concurrent_requests_same_session(self, backend_stack):
         """同一会话并发请求不会崩溃。"""
         cp_url = backend_stack["cp_url"]
-        token = self._get_token(cp_url)
-        session_id = f"concurrent-{int(time.time() * 1000)}"
+        session_id, headers = self._create_session(cp_url, "Concurrent")
 
         def send_chat(i: int) -> int:
             r = httpx.post(
-                f"{cp_url}/v1/chat",
-                json={"content": f"msg-{i}", "session_id": session_id},
-                headers={"Authorization": f"Bearer {token}"},
+                f"{cp_url}/api/v1/chat",
+                json={"content": f"msg-{i}", "sessionId": session_id, "toolMode": "none"},
+                headers=headers,
                 timeout=15,
                 trust_env=False,
             )
@@ -145,27 +163,35 @@ class TestSessionIsolation:
 class TestChatPersistence:
     """验证消息持久化。"""
 
-    def _get_token(self, cp_url: str) -> str:
+    def _create_session(self, cp_url: str) -> tuple[str, dict[str, str]]:
         email = f"persist-{int(time.time() * 1000)}@test.com"
         r = httpx.post(
-            f"{cp_url}/auth/register",
+            f"{cp_url}/api/v1/auth/register",
             json={"email": email, "password": "Pass1234!", "name": "Persist Test"},
             timeout=10,
             trust_env=False,
         )
-        assert r.status_code in [200, 201]
-        return r.json()["accessToken"]
+        assert r.status_code == 201
+        auth = r.json()
+        headers = {
+            "Authorization": f"Bearer {auth['accessToken']}",
+            "X-Workspace-Id": auth["workspaceId"],
+        }
+        session = httpx.post(
+            f"{cp_url}/api/v1/sessions", json={"title": "Persistence"}, headers=headers, timeout=10, trust_env=False
+        )
+        assert session.status_code == 201, session.text
+        return session.json()["id"], headers
 
     def test_chat_persists_message(self, backend_stack):
         """聊天消息被持久化。"""
         cp_url = backend_stack["cp_url"]
-        token = self._get_token(cp_url)
-        session_id = f"persist-{int(time.time() * 1000)}"
+        session_id, headers = self._create_session(cp_url)
 
         r = httpx.post(
-            f"{cp_url}/v1/chat",
-            json={"content": "持久化测试消息", "session_id": session_id},
-            headers={"Authorization": f"Bearer {token}"},
+            f"{cp_url}/api/v1/chat",
+            json={"content": "持久化测试消息", "sessionId": session_id, "toolMode": "none"},
+            headers=headers,
             timeout=15,
             trust_env=False,
         )

@@ -96,7 +96,7 @@ def _build_stack_env(workspace: Path) -> dict[str, str]:
             "XIHE_UI_PORT": ui_port,
             "XIHE_CP_URL": f"http://{LOCAL_HOST}:{cp_port}",
             "XIHE_CP_BASE_URL": f"http://{LOCAL_HOST}:{cp_port}",
-            "XIHE_AGENT_URL": f"http://{LOCAL_HOST}:{agent_port}/chat",
+            "XIHE_AGENT_URL": f"http://{LOCAL_HOST}:{agent_port}/internal/v1/agent/chat",
             "XIHE_RUNTIME_URL": f"http://{LOCAL_HOST}:{runtime_port}/mcp",
             "XIHE_AGENT_HOST": LOCAL_HOST,
             "XIHE_RUNTIME_HOST": LOCAL_HOST,
@@ -172,7 +172,7 @@ def _wait_for(description: str, probe: Any) -> None:
 
 def _runtime_ready(runtime_url: str) -> bool:
     response = httpx.post(
-        f"{runtime_url}/mcp",
+        runtime_url,
         json={
             "jsonrpc": "2.0",
             "method": "initialize",
@@ -191,18 +191,19 @@ def _runtime_ready(runtime_url: str) -> bool:
 
 
 def _cp_ready(cp_url: str) -> bool:
-    response = httpx.get(f"{cp_url}/health", timeout=5, trust_env=False)
+    response = httpx.get(f"{cp_url}/actuator/health", timeout=5, trust_env=False)
     return response.status_code == 200 and response.json().get("status") == "UP"
 
 
 def _agent_ready(agent_url: str) -> bool:
-    response = httpx.get(f"{agent_url}/health", timeout=5, trust_env=False)
+    response = httpx.get(f"{agent_url}/internal/v1/agent/health", timeout=5, trust_env=False)
     data = response.json()
     return (
         response.status_code == 200
-        and data.get("status") == "ok"
-        and data.get("mcp_initialized") is True
-        and data.get("tools_count") == 3
+        and data.get("liveness") == "up"
+        and data.get("llmReady") == "ready"
+        and data.get("mcpInitialized") is False
+        and data.get("toolsCount") == 0
     )
 
 
