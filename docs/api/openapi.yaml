@@ -32,7 +32,7 @@ paths:
       operationId: createWorkspace
       security: [{ bearerAuth: [] }]
       requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceCreateRequest' } } } }
-      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '409': { $ref: '#/components/responses/Problem' } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } }
   /api/v1/workspaces/{workspaceId}:
     get: { operationId: getWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
@@ -150,7 +150,7 @@ paths:
           description: Session to subscribe to (must belong to current workspace/user)
       responses:
         '200':
-          description: SSE stream — one event per line `event: <name>` + `data: <json>`
+          description: 'SSE stream — one event per line `event: <name>` + `data: <json>`'
           content:
             text/event-stream:
               schema:
@@ -177,22 +177,105 @@ paths:
     get:
       operationId: listModels
       summary: List verified provider models for Chat
-      description: Returns provider status, reason codes, chat capabilities, verification time, and config revision without credentials or base URLs.
+      description: Returns the current user's visible provider connections and verified models without credentials or raw provider configuration.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
           description: Provider/model catalog
           content:
             application/json:
-              schema:
-                type: object
-                required: [providers, models]
-                properties:
-                  providers: { type: object, additionalProperties: true }
-                  models: { type: object, additionalProperties: { type: array, items: { type: string } } }
-                  configRevision: { type: string }
+              schema: { $ref: '#/components/schemas/ProviderModelCatalog' }
         '401': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/provider-catalog:
+    get:
+      operationId: listProviderCatalog
+      summary: List connectable provider definitions
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Non-secret provider definitions
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProviderCatalogResponse' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+  /api/v1/provider-connections:
+    get:
+      operationId: listProviderConnections
+      summary: List provider connections visible to the current user
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Masked connection summaries
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnectionListResponse' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createProviderConnection
+      summary: Create and persist an encrypted provider connection
+      description: Scope is derived from the authenticated user and workspace role; clients cannot self-assign SYSTEM scope.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnectionCreateRequest' } } }
+      responses:
+        '201':
+          description: Connection saved in verifying state
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/provider-connections/{connectionId}:
+    parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
+    patch:
+      operationId: updateProviderConnection
+      summary: Update provider connection metadata or replace credential
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnectionUpdateRequest' } } }
+      responses:
+        '200':
+          description: Updated connection
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteProviderConnection
+      summary: Disable and remove a provider connection
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/provider-connections/{connectionId}/verify:
+    post:
+      operationId: verifyProviderConnection
+      summary: Verify a persisted provider connection
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Verification finished and connection status updated
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnectionVerifyResponse' } } }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /internal/v1/provider-leases/redeem:
+    post:
+      operationId: redeemProviderCredentialLease
+      summary: Redeem a short-lived provider credential lease
+      description: Service-to-service only. The response contains an in-memory credential and must never be logged or returned to a browser.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProviderCredentialLeaseRedeemRequest' } } }
+      responses:
+        '200':
+          description: In-memory credential grant
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProviderCredentialLeaseGrant' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/health:
     get: { operationId: health, responses: { '200': { description: Healthy } } }
   /api/v1/status:
@@ -214,8 +297,6 @@ paths:
   /api/v1/providers:
     get: { operationId: listProviders, security: [{ bearerAuth: [] }], responses: { '200': { description: Providers } } }
     put: { operationId: updateProviders, security: [{ bearerAuth: [] }], responses: { '200': { description: Updated } } }
-  /api/v1/models:
-    get: { operationId: listModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Models } } }
   /api/v1/sessions/{sessionId}/messages:
     get: { operationId: listMessages, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Messages } } }
   /api/v1/sessions/{sessionId}/messages/{messageId}:
@@ -230,8 +311,6 @@ paths:
     delete: { operationId: deleteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/files/upload:
     post: { operationId: uploadFile, security: [{ bearerAuth: [] }], responses: { '201': { description: Uploaded } } }
-  /api/v1/files/split-pdf:
-    post: { operationId: splitPdf, security: [{ bearerAuth: [] }], responses: { '200': { description: Split result } } }
   /api/v1/rag/stats:
     get: { operationId: ragStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics } } }
   /api/v1/rag/ingest:
@@ -245,6 +324,8 @@ paths:
      put: { operationId: putMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
   /api/v1/workspaces/{workspaceId}/environment:
      get: { operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/workspaces/{workspaceId}/materialize:
+     post: { operationId: materializeWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll environment for progress }, '404': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/context/{sessionId}/events:
     get: { operationId: readContextEvents, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Events } } }
     post: { operationId: appendContextEvent, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '201': { description: Appended } } }
@@ -253,7 +334,11 @@ paths:
   /internal/v1/runtime/remote-mcp/{workspaceId}/{serverId}/call:
     post: { operationId: runtimeRemoteMcpCall, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: MCP response }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/chat:
-    post: { operationId: agentChat, security: [{ bearerAuth: [] }], responses: { '200': { description: SSE stream, content: { text/event-stream: {} } } } }
+    post:
+      operationId: agentChat
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentChatRequest' } } } }
+      responses: { '200': { description: SSE stream, content: { text/event-stream: {} } }, '400': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } }
   /internal/v1/agent/rag/ingest:
     post: { operationId: agentRagIngest, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { multipart/form-data: { schema: { $ref: '#/components/schemas/RagIngestRequest' } } } }, responses: { '200': { description: RAG result, content: { application/json: { schema: { $ref: '#/components/schemas/RagIngestResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/rag/search:
@@ -263,7 +348,12 @@ paths:
   /internal/v1/agent/rag/documents/{docId}:
     delete: { operationId: agentRagDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/DeletedResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/models:
-    get: { operationId: agentModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Models } } }
+    get: { operationId: agentModelsLegacy, security: [{ bearerAuth: [] }], responses: { '200': { description: Legacy global models } } }
+    post:
+      operationId: agentScopedModels
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScopedModelCatalogRequest' } } } }
+      responses: { '200': { description: Scoped models, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderModelCatalog' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } }
   /internal/v1/agent/embedding-models:
     get: { operationId: agentEmbeddingModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Embedding models } } }
   /internal/v1/agent/health:
@@ -302,6 +392,8 @@ paths:
     get: { operationId: getWorkspaceExecutionSpec, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Targeted workspace execution specification, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceExecutionSpec' } } } }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/{workspaceId}/status:
     get: { operationId: getRuntimeWorkspaceStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Runtime workspace materialization status }, '404': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/materialize:
+    post: { operationId: triggerRuntimeWorkspaceMaterialize, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll status for progress }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/heartbeat:
     post: { operationId: runtimeHeartbeat, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeHeartbeatRequest' } } } }, responses: { '200': { description: Accepted }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/delete:
@@ -337,13 +429,184 @@ components:
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: string } } }
     Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
-    WorkspaceCreateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
+    WorkspaceCreateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Sandbox profile for the initial ExecutionSpec. Unknown values are rejected with 400 INVALID_PROFILE.' }, image: { type: string, description: 'Sandbox image for the initial ExecutionSpec. Must be allowlisted; v1 only accepts xihe/workspace:latest. Unknown values are rejected with 400 INVALID_IMAGE.' } } }
     WorkspaceUpdateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
-    Session: { type: object, required: [id, workspaceId, title, archived], properties: { id: { type: string }, workspaceId: { type: string }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
-    SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] } } }
-    SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] } } }
-    ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string }, model: { type: string }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } } } }
-    ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+    Session: { type: object, required: [id, workspaceId, title, archived], properties: { id: { type: string }, workspaceId: { type: string }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
+    SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
+    ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } } } }
+    ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+    ProviderCatalogResponse:
+       type: object
+       required: [catalogRevision, providers]
+       properties:
+         catalogRevision: { type: string }
+         providers: { type: array, items: { $ref: '#/components/schemas/ProviderDefinition' } }
+    ProviderDefinition:
+       type: object
+       required: [id, displayName, adapter, modelDiscovery, credential, supports]
+       properties:
+         id: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{1,127}$' }
+         displayName: { type: string }
+         category: { type: string, enum: [recommended, other, custom] }
+         adapter: { type: string, enum: [native-litellm, openai-compatible, manual-model] }
+         litellmProvider: { type: [string, 'null'] }
+         defaultBaseUrl: { type: [string, 'null'], format: uri }
+         modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
+         credential: { $ref: '#/components/schemas/ProviderCredentialDefinition' }
+         supports: { $ref: '#/components/schemas/ProviderSupports' }
+    ProviderCredentialDefinition:
+       type: object
+       required: [type, required]
+       properties:
+         type: { type: string, enum: [api-key, none] }
+         required: { type: boolean }
+         placeholder: { type: [string, 'null'] }
+    ProviderSupports:
+       type: object
+       required: [customBaseUrl, streaming]
+       properties:
+         customBaseUrl: { type: boolean }
+         streaming: { type: boolean }
+         tools: { type: boolean }
+         vision: { type: boolean }
+    ProviderConnectionListResponse:
+       type: object
+       required: [connections]
+       properties:
+         connections: { type: array, items: { $ref: '#/components/schemas/ProviderConnection' } }
+    ProviderConnection:
+       type: object
+       required: [id, providerId, label, scope, hasKey, enabled, status, revision]
+       properties:
+         id: { type: string, format: uuid, readOnly: true }
+         providerId: { type: string }
+         label: { type: string, maxLength: 128 }
+         scope: { type: string, enum: [USER, WORKSPACE, SYSTEM], readOnly: true }
+         workspaceId: { type: [string, 'null'], readOnly: true }
+         baseUrl: { type: [string, 'null'], format: uri }
+         hasKey: { type: boolean, readOnly: true }
+         maskedKey: { type: [string, 'null'], readOnly: true }
+         enabled: { type: boolean }
+         status: { type: string, enum: [unverified, verifying, ready, invalid_credentials, unreachable, disabled] }
+         lastVerifiedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+         lastErrorCode: { type: [string, 'null'], readOnly: true }
+         modelCount: { type: integer, minimum: 0, readOnly: true }
+         revision: { type: integer, minimum: 1, readOnly: true }
+    ProviderConnectionCreateRequest:
+       type: object
+       required: [providerId, label]
+       properties:
+         providerId: { type: string }
+         label: { type: string, minLength: 1, maxLength: 128 }
+         scope: { type: string, enum: [USER, WORKSPACE], default: USER, description: 'Scope is still authorization-checked by CP; clients cannot create SYSTEM connections.' }
+         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true }
+         baseUrl: { type: [string, 'null'], format: uri }
+         modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
+         manualModels: { type: array, items: { type: string }, maxItems: 256 }
+    ProviderConnectionUpdateRequest:
+       type: object
+       minProperties: 1
+       properties:
+         label: { type: string, minLength: 1, maxLength: 128 }
+         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true }
+         baseUrl: { type: [string, 'null'], format: uri }
+         enabled: { type: boolean }
+         modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
+         manualModels: { type: array, items: { type: string }, maxItems: 256 }
+    ProviderConnectionVerifyResponse:
+       type: object
+       required: [connection, models]
+       properties:
+         connection: { $ref: '#/components/schemas/ProviderConnection' }
+         models: { type: array, items: { $ref: '#/components/schemas/ProviderModel' } }
+    ProviderModelCatalog:
+       type: object
+       required: [providers, models, configRevision]
+       properties:
+         providers: { type: object, additionalProperties: { $ref: '#/components/schemas/ProviderModelProvider' } }
+         models: { type: object, additionalProperties: { type: array, items: { type: string } } }
+         configRevision: { type: string }
+    ProviderModelProvider:
+       type: object
+       required: [connectionId, scope, displayName, connectionStatus, models]
+       properties:
+         connectionId: { type: string, format: uuid }
+         scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
+         displayName: { type: string }
+         connectionStatus: { type: string, enum: [unverified, verifying, ready, invalid_credentials, unreachable, disabled] }
+         reasonCode: { type: [string, 'null'] }
+         verifiedAt: { type: [string, 'null'], format: date-time }
+         models: { type: array, items: { $ref: '#/components/schemas/ProviderModel' } }
+    ProviderModel:
+       type: object
+       required: [name, capabilities]
+       properties:
+         name: { type: string }
+         source: { type: [string, 'null'], enum: [remote, litellm, curated, manual, null] }
+         verifiedAt: { type: [string, 'null'], format: date-time }
+         capabilities: { $ref: '#/components/schemas/ProviderModelCapabilities' }
+    ProviderModelCapabilities:
+       type: object
+       required: [chat, vision, tools]
+       properties:
+         chat: { type: boolean }
+         vision: { type: boolean }
+         tools: { type: boolean }
+         audio: { type: [boolean, 'null'] }
+         video: { type: [boolean, 'null'] }
+         pdf: { type: [boolean, 'null'] }
+    ProviderCredentialLeaseRedeemRequest:
+       type: object
+       required: [lease, runId, providerConnectionId, provider, model]
+       properties:
+         lease: { type: string, writeOnly: true }
+         runId: { type: string }
+         providerConnectionId: { type: string, format: uuid }
+         provider: { type: string }
+         model: { type: string }
+    ProviderCredentialLeaseGrant:
+       type: object
+       required: [provider, routeProvider, model, baseUrl]
+       properties:
+         provider: { type: string }
+         routeProvider: { type: string }
+         model: { type: string }
+         baseUrl: { type: [string, 'null'], format: uri }
+         apiKey: { type: [string, 'null'], writeOnly: true, description: 'Internal service response only; never log or forward to a browser.' }
+         connectionRevision: { type: integer, minimum: 1 }
+         modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
+         manualModels: { type: array, items: { type: string } }
+    ScopedModelCatalogRequest:
+       type: object
+       required: [connections]
+       properties:
+         connections: { type: array, items: { $ref: '#/components/schemas/ScopedModelConnection' } }
+    ScopedModelConnection:
+       type: object
+       required: [lease, runId, connectionId, providerId, connectionRevision]
+       properties:
+         lease: { type: string, writeOnly: true }
+         runId: { type: string }
+         connectionId: { type: string, format: uuid }
+         providerId: { type: string }
+         scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
+         displayName: { type: string }
+         connectionRevision: { type: integer, minimum: 1 }
+    AgentChatRequest:
+       type: object
+       required: [sessionId, content, stream]
+       properties:
+         sessionId: { type: string }
+         content: { type: string }
+         stream: { type: boolean, default: true }
+         provider: { type: string }
+         model: { type: string }
+         toolMode: { type: string, enum: [none, workspace], default: none }
+         credentialLease: { type: string, writeOnly: true }
+         providerConnectionId: { type: string, format: uuid }
+         connectionRevision: { type: integer, minimum: 1 }
+         attachments: { type: array, items: { type: object, additionalProperties: true } }
     OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
     StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }

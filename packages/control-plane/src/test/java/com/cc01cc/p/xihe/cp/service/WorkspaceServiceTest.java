@@ -92,4 +92,33 @@ class WorkspaceServiceTest {
         Workspace second = workspaceService.getOrCreateDefaultWorkspace(user.getId());
         assertEquals(first.getId(), second.getId());
     }
+
+    @Test
+    void createWorkspace_profilePassthroughAndImageAllowlist() {
+        String userId = java.util.UUID.randomUUID().toString();
+        Workspace ws = workspaceService.createWorkspace(
+                "strict-test", null, userId, "STRICT", null);
+        assertNotNull(workspaceRepository.findByIdAndDeletedAtIsNull(ws.getId()).orElse(null));
+    }
+
+    @Test
+    void createWorkspace_invalidProfileReturns400() {
+        String userId = java.util.UUID.randomUUID().toString();
+        com.cc01cc.p.xihe.cp.config.CpApiException e = assertThrows(
+                com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> workspaceService.createWorkspace("bad-profile", null, userId, "containerd", null));
+        assertEquals("INVALID_PROFILE", e.getCode());
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, e.getStatus());
+    }
+
+    @Test
+    void createWorkspace_disallowedImageReturns400() {
+        String userId = java.util.UUID.randomUUID().toString();
+        com.cc01cc.p.xihe.cp.config.CpApiException e = assertThrows(
+                com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> workspaceService.createWorkspace(
+                        "bad-image", null, userId, "coding", "evil/image:latest"));
+        assertEquals("INVALID_IMAGE", e.getCode());
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, e.getStatus());
+    }
 }

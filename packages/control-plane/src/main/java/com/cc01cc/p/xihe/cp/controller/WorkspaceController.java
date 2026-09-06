@@ -59,7 +59,9 @@ public class WorkspaceController {
         try {
             String name = request == null || request.name() == null ? "Default Workspace" : request.name();
             String description = request == null ? null : request.description();
-            Workspace workspace = workspaceService.createWorkspace(name, description, userId);
+            String profile = request == null || request.profile() == null ? "coding" : request.profile();
+            String image = request == null ? null : request.image();
+            Workspace workspace = workspaceService.createWorkspace(name, description, userId, profile, image);
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(workspace));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -108,6 +110,6 @@ public class WorkspaceController {
         return ResponseEntity.ok(view);
     }
 
-    public record CreateWorkspaceRequest(String name, String description) {}
+    public record CreateWorkspaceRequest(String name, String description, String profile, String image) {}
     public record UpdateWorkspaceRequest(String name, String description) {}
 }

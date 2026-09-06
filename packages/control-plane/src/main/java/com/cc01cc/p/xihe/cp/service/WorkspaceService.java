@@ -30,13 +30,22 @@ public class WorkspaceService {
 
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceService.class);
 
+    /** Allowed sandbox security profiles for initial ExecutionSpec (PLAN-262 decision 10/13). */
+    private static final java.util.Set<String> ALLOWED_PROFILES =
+            java.util.Set.of("strict", "coding", "isolated");
+
+    /** Allowed sandbox images (PLAN-262 decision 13: allowlist only). */
+    private static final java.util.Set<String> ALLOWED_IMAGES =
+            java.util.Set.of("xihe/workspace:latest");
+
+    private static final String DEFAULT_IMAGE = "xihe/workspace:latest";
+
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
     private final UserRepository userRepository;
     private final WorkspaceExecutionSpecService executionSpecService;
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
-    private final String workspaceImage;
     private final String serviceToken;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
@@ -45,7 +54,6 @@ public class WorkspaceService {
                             WorkspaceExecutionSpecService executionSpecService,
                             RestTemplate restTemplate,
                             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
-                            @Value("${cp.workspace-image:xihe/workspace:latest}") String workspaceImage,
                             @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
@@ -53,7 +61,6 @@ public class WorkspaceService {
         this.executionSpecService = executionSpecService;
         this.restTemplate = restTemplate;
         this.runtimeUrl = runtimeUrl;
-        this.workspaceImage = workspaceImage;
         this.serviceToken = serviceToken;
     }
 
@@ -76,11 +83,17 @@ public class WorkspaceService {
     /** Creates the one active workspace allowed for a user. */
     @Transactional
     public Workspace createWorkspace(String name, String ownerId) {
-        return createWorkspace(name, null, ownerId);
+        return createWorkspace(name, null, ownerId, "coding", null);
     }
 
     @Transactional
     public Workspace createWorkspace(String name, String description, String ownerId) {
+        return createWorkspace(name, description, ownerId, "coding", null);
+    }
+
+    @Transactional
+    public Workspace createWorkspace(String name, String description, String ownerId,
+            String profile, String image) {
         requireNonBlank(ownerId, "ownerId");
         if (userRepository.findByIdForUpdate(ownerId).isPresent()
                 && !workspaceRepository.findActiveByMemberUserId(ownerId).isEmpty()) {
@@ -89,7 +102,8 @@ public class WorkspaceService {
         if (!workspaceRepository.findActiveByMemberUserId(ownerId).isEmpty()) {
             throw workspaceAlreadyExists();
         }
-        return createWorkspaceLocked(name, description, ownerId);
+        return createWorkspaceLocked(name, description, ownerId,
+                normalizeProfile(profile), normalizeImage(image));
     }
 
     @Transactional(readOnly = true)
@@ -186,6 +200,11 @@ public class WorkspaceService {
     }
 
     private Workspace createWorkspaceLocked(String name, String description, String ownerId) {
+        return createWorkspaceLocked(name, description, ownerId, "coding", DEFAULT_IMAGE);
+    }
+
+    private Workspace createWorkspaceLocked(String name, String description, String ownerId,
+            String profile, String image) {
         requireNonBlank(name, "name");
         Workspace workspace = new Workspace(name.trim(), ownerId);
         workspace.setDescription(description);
@@ -195,11 +214,34 @@ public class WorkspaceService {
         workspace = workspaceRepository.save(workspace);
         workspaceUserRepository.save(new WorkspaceUser(workspace.getId(), ownerId, WorkspaceRole.OWNER));
 
-        String initialSpec = "{\"image\":\"" + workspaceImage + "\",\"profile\":\"coding\"}";
+        String initialSpec = "{\"image\":\"" + image + "\",\"profile\":\"" + profile + "\"}";
         executionSpecService.createExecutionSpec(workspace.getId(), initialSpec, ownerId, "create");
-        logger.info("Workspace created: id={} name={} storageRef={}",
-                workspace.getId(), workspace.getName(), workspace.getStorageRef());
+        logger.info("Workspace created: id={} name={} storageRef={} profile={} image={}",
+                workspace.getId(), workspace.getName(), workspace.getStorageRef(), profile, image);
         return workspace;
+    }
+
+    private String normalizeProfile(String profile) {
+        String normalized = profile == null || profile.isBlank()
+                ? "coding" : profile.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!ALLOWED_PROFILES.contains(normalized)) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_PROFILE",
+                    "profile must be one of: strict, coding, isolated");
+        }
+        return normalized;
+    }
+
+    private String normalizeImage(String image) {
+        String normalized = image == null || image.isBlank() ? DEFAULT_IMAGE : image.trim();
+        if (!ALLOWED_IMAGES.contains(normalized)) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_IMAGE",
+                    "image must be one of the allowlisted images: xihe/workspace:latest");
+        }
+        return normalized;
     }
 
     private void ensureOwner(Workspace workspace, String ownerId) {
