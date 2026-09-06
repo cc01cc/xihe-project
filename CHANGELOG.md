@@ -20,6 +20,9 @@
 - 日志安全与可观测性：四模块序列化层统一脱敏（token/JWT/Bearer/PEM → `***redacted***`），`X-Request-Id` 由 CP 生成并向 Runtime/Agent 贯通，审计日志持久化至 `logs/audit.log`，新增 `scripts/scan-log-secrets.mjs` 泄露扫描门禁。
 - UI 响应式修复：移动端根据 viewport 使用侧栏抽屉，收起时隐藏内部内容，补充移动导航入口；侧栏背景和导航图标改用有效的主题变量与 `@lucide/vue` 组件。
 - Agent 非致命路径治理：无 embedding 凭据时跳过 RAG enrichment 并让 RAG ingest/search 返回 503；MCP 初始化延迟到 workspace 请求；事件存储时间统一使用带时区 UTC。
+- Workspace 管理面 UI（PLAN-262 M0-M4）：创建弹窗（名称/描述/profile 三选/image 白名单只读，空态唯一入口）+ 设置弹窗（改名 PATCH/删除 DELETE + 名称二次确认）；文件右键菜单基于 reka-ui ContextMenu 重写（Rename/Move/Duplicate/New File/New Directory/Delete）；文件树基于 reka-ui TreeRoot/TreeItem 重写（受控 expanded、搜索过滤高亮、操作后保持展开）；移动端独立 IA（树 Sheet + Chat 底部抽屉 + 全屏弹窗）；Environment 五态分色 + 恢复说明 + 手动刷新 + Prepare 按钮（异步 materialize + 轮询）。
+- CP workspace 创建契约扩展（PLAN-262 M2）：`POST /api/v1/workspaces` 接受可选 profile/image（白名单：strict/coding/isolated + xihe/workspace:latest，非法 400 INVALID_PROFILE/INVALID_IMAGE），initialSpec 按选择生成；`POST /api/v1/workspaces/{id}/materialize` 异步触发物化代理（202，归属校验 404，Runtime 不可达 502）。
+- Runtime 主动物化端点（PLAN-262 M4）：`POST /internal/v1/runtime/workspaces/{id}/materialize` 仅触发返回 202（lock 内幂等），进度复用既有 per-workspace status 端点。
 
 ### Changed
 
@@ -59,6 +62,7 @@
 
 ### Fixed
 
+- Workspace 正确性修复（PLAN-262 M1）：目录判定改用 API `type` 字段（`v1.2` 目录/`Makefile` 不再误判）；删除/创建等待真实结果后分支 toast（消除假成功）；二进制上传走 `POST /api/v1/files/upload` FormData 保真通道（PNG/字体不再经 UTF-8 损坏）；`splitPdf` 在 CP 无 split-pdf 路由时 fail-closed 显式报错（openapi 删除漂移声明）。
 - Chat SSE 生命周期与连续消息（PLAN-230）：修复 CP 每轮 `finally complete(sessionId)` 导致会话 SSE 一次性化及旧 `onCompletion` 按 `sessionId` 误删新连接的竞态（`SseEmitterManager` 增加 `generation`/`compareAndRemove` + `stale_cleanup_ignored`），移除 per-run 关闭、仅在客户端断开/session 删除/不可写时清理；修复 UI 长回复单 text part 卡首字符（`SSEStream` 每 `token` `replaceStreamingParts` 整量替换）；修复假流式 `stream=False` 单 `token`（`XiheLiteLLM` 真实 `streaming=True`）。
 - 修复 Runtime Windows 本地构建与测试兼容性：隔离 Unix socket/symlink 代码，并统一 Windows canonical path 的 workspace 相对路径处理
 - 将 CP JSON Schema 校验迁移到 `json-schema-validator 3.0.7` 的 `SchemaRegistry`/`Schema`/`Error` API

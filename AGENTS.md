@@ -177,6 +177,9 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Agent 术语**: 代码包用 Agent 模块 (module)，运行进程用 Agent 服务 (server)，运行时单元用 Agent Worker (Worker)
 - **异常日志**: 每个 catch 必须有日志 + stacktrace，禁止 silent catch
 - **UI**: reka-ui + Tailwind v4；聊天组件使用自研 MessageScroller / Message / Bubble / Attachment / Marker 五个组件族；Toast 为唯一反馈渠道
+  - reka-ui 封装契约（PLAN-258 实证）：`ComboboxContent position=popper` 必须显式 `ComboboxAnchor` 包裹触发器，否则内容自参考内部 Input 定位到视口外且零报错；`CollapsibleTrigger` 已自带切换，触发按钮不得再绑额外 click handler（双重翻转 = 永远不折叠）
+  - workspace UI 基座（PLAN-262）：文件树/右键菜单基于 reka-ui `Tree`/`ContextMenu` 原语 + `shadcn-vue add` 拷贝封装（零新增运行时依赖）；`AlertDialogAction` 点击无条件关闭——需校验失败保持打开的场景用普通 destructive `Button`；reka-ui MenuItem 程序化选择在 jsdom 下不可行，交互连接层由 Playwright 覆盖
+  - workspace 管理（PLAN-262）：`POST /api/v1/workspaces` 接受 profile（strict/coding/isolated）+ image（白名单 v1 仅 `xihe/workspace:latest`），initialSpec 按选择生成；`POST /api/v1/workspaces/{id}/materialize` 异步触发（202）+ 轮询 environment；创建入口 = 无 workspace 空态；物理目录 `hostRoot/workspaceId` 派生，宿主机可直接系统文件操作访问
 - **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；消息附件已持久化到后端 Session 专属空间，刷新后仍可渲染（详见 DEV-001 §7、DEV-017）。
   - 会话级持久 SSE（PLAN-230）：`GET /api/v1/events?sessionId=` 为单会话单活连接（`SseEmitterManager` generation + `compareAndRemove`），`done` 仅结束 run、不关闭 SSE，`heartbeat` 15s 不进业务气泡；`POST /api/v1/chat` 需已建立订阅（`409 SSE_SUBSCRIPTION_REQUIRED`）且单并发（`409 CHAT_IN_PROGRESS`），`requestId`/`runId` 经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传。
   - 流式渲染：`useStreamParser` 将 token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`），`SSEStream` 每 `token` 调用 `chatStore.replaceStreamingParts` 整量替换当前流式 parts（修复旧 `lastSentCount` 仅 `parts.length` 增长时追加导致的卡首字符）；`Message.parts` 替代旧 `marked`，`useMarkdown` 仅处理纯 Markdown。

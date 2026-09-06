@@ -28,9 +28,10 @@ updated: 2026-09-03
 ## 2. 视图分层
 
 - **ChatView**（`components/chat/ChatView.vue`）：全屏 chat，含标题栏；内嵌 `ChatPanel :session-id`；挂载时从后端加载历史消息。
-- **WorkspaceView**（`components/workspace/WorkspaceView.vue`）：左文件树（`w-60`）+ 中编辑器/工具栏 + 右 `ChatPanel`（`w-96` 固定宽）。
+- **WorkspaceView**（`components/workspace/WorkspaceView.vue`）：左文件树（`w-60`，`FileTree` + reka-ui `TreeRoot/TreeItem` 受控 expanded）+ 中编辑器/工具栏 + 右 `ChatPanel`（`w-96` 固定宽）；无 workspace 时显示空态（决策 11：唯一的创建入口）+ `WorkspaceCreateDialog`（名称/描述/profile 三选/image 只读白名单）；`WorkspaceSettingsDialog`（改名/PATCH、删除/DELETE + 二次确认）；移动端（<768px）为独立 IA（§7：树 Sheet + Chat 底部抽屉）。
 - **ChatPanel**（`components/chat/ChatPanel.vue`）：唯一可嵌入对话组件（消息列表 + 输入框 + SSEStream）；接收 `sessionId` prop；附件写入入口 `handleSend`。
-- **WorkspaceToolbar**：Session 下拉（保留 workspace route 切换）+ 「切换回 chat」按钮 + 刷新/上传。
+- **WorkspaceToolbar**：Session 下拉（保留 workspace route 切换）+ 「切换回 chat」按钮 + Environment 入口 + Workspace settings 入口 + 上传/刷新。
+- **FileNodeMenu**（`components/workspace/FileNodeMenu.vue`）：reka-ui `ContextMenu` 封装；文件：Rename/Move/Duplicate/Copy Path/Delete；目录：New File/New Directory/Rename/Move；文本走 `write_file` MCP，二进制走 `POST /api/v1/files/upload` FormData（PLAN-262 M0/B-3）。
 - **Sidebar**：「New Chat」创建 Session；Session 列表点击跳 `/chat/:sessionId`；「Workspace」按钮跳 `/workspace/:currentWorkspaceId`（缺失时 fail-closed）。
 
 ## 3. 五组件族
@@ -85,3 +86,23 @@ flowchart LR
 `ChatPanel` 默认使用 `toolMode=none`；`ChatView` 不提供工具总开关，`WorkspaceView` 才显式传入 `toolMode=workspace`。`SSEStream` 将 `provider`、`model`、`toolMode` 和新的 `Idempotency-Key` 一并提交。
 
 发送状态分为 transport run 与 assistant content 两层：CP 返回 `runId` 后才加入 user message，首个 token/reasoning/artifact 才创建 assistant。`error`、`partial`、`ambiguous` 会结束发送态并保留可恢复状态；空 assistant 直接移除，inline error 与 Toast 使用同一 payload。
+
+## 7. Workspace 移动端独立 IA（PLAN-262 决策 15）
+
+移动端（`<768px`，Tailwind `md:` 断点）不是桌面三栏的响应式压缩，而是独立信息架构：
+
+- **单栏栈**：顶栏汉堡按钮（唤出文件树 Sheet）+ 面包屑 + Environment 入口；编辑器全屏；桌面左右栏 `hidden md:flex` 隐藏。
+- **文件树**：`Sheet side="left"` 全高抽屉（`MobileWorkspaceSheet.vue`），树组件与桌面共用 `FileTree`（同一 store/受控 expanded）。
+- **Chat**：底部抽屉（`MobileChatSheet.vue`，`Sheet side="bottom"` `h-[75vh]`）+ 右下角浮动 Chat 按钮；与桌面 `ChatPanel` 共用 Session store。
+- **右键菜单**：移动端长按触发 ContextMenu（reka-ui 原生语义），复杂操作走底部操作 Sheet。
+- **弹窗**：Create/Settings/Prepare 在移动端全屏 Sheet 化（`SheetContent side="bottom"`）。
+- **验收**：桌面 1440 为 M3/M4 Visual 基线；移动 390px 独立 Playwright viewport + 截图验收（PLAN-262 §5.1）。
+
+## 8. workspace 复杂 UI 基座（PLAN-262 决策 14）
+
+workspace 文件管理 UI 基于 reka-ui 无头原语 + `shadcn-vue add` 拷贝式封装（`components/ui/context-menu/`、`components/ui/tree/`），**零新增运行时依赖**：
+
+- **ContextMenu**（`ContextMenu/ContextMenuTrigger/Content/Item/Separator`）：键盘导航/焦点管理/ARIA/子菜单内置；`@select` 为选择事件（`preventDefault` 可阻止关闭）；长按=移动端右键。
+- **Tree**（`TreeRoot/TreeItem`，受控 `v-model:expanded`）：`getKey=node.path`、`getChildren=node.children`；`expandedPaths`（store `Set`）↔ 数组双向映射；`update:expanded` 在搜索态下不回写（搜索展开为临时并集）。
+- **约束**：`TreeVirtualizer` 封装已就位但默认关闭（当前树全量递归加载，虚拟化收益待大数据量验证）；`AlertDialogAction` 点击无条件关闭——需“校验失败保持打开”的场景（如删除二次确认）必须用普通 destructive `Button`（PLAN-262 E-3）。
+- **测试约束**：reka-ui MenuItem 的程序化选择在 jsdom 下不可行（内部 armed ref 无法被合成事件置位，6 种组合已验证）；组件交互连接层由 Playwright 覆盖，单测只覆盖菜单内容判定与 store 分支（PLAN-262 §5.1 备注）。

@@ -39,7 +39,7 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 
 - **useSessionStore**（`stores/session.ts`，跨视图）：`sessions`、`currentSessionId`、`searchQuery`、附件投影、`fileContext`；独占创建/删除/重命名 Session；`setFileContext`/`setSessionAgents`/`setRAGContext`/`setMCPContext`。
 - **useChatStore**（`stores/chat.ts`，视图层）：按 Session 分组 `messages`、`streamingMessageId`；`getMessages/addMessage/addMarker`；流式三件套 `createStreamingMessage` / `replaceStreamingParts`（整量替换 MessagePart[]，PLAN-230）/ `finalizeStreaming`；不存 Session 元数据与 Agent/RAG/MCP 配置。
-- **useWorkspaceStore**（`stores/workspace.ts`，视图层）：`fileTree`、`expandedPaths`、`openFiles`、`activeFilePath`、`uploadQueue`；`syncActiveFileToSession()` 回写文件上下文；不存 Session 元数据。v1 无导入入口。
+- **useWorkspaceStore**（`stores/workspace.ts`，视图层）：`fileTree`、`expandedPaths`、`openFiles`、`activeFilePath`、`uploadQueue`；`syncActiveFileToSession()` 回写文件上下文；不存 Session 元数据。文件变更操作（`renameNode/moveNode/duplicateNode/createDirectory`）返回 `Promise<boolean>`，调用方按结果分支 toast（禁假成功，PLAN-262 M1/B-2）；`refreshAfterMutation` 保持展开态；上传按 MIME 分派（文本 `write_file` MCP / 二进制 `POST /api/v1/files/upload`，PLAN-262 M0/B-3）。v1 无导入入口。
 
 ## 3. 跨 Store 同步
 
