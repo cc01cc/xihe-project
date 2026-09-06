@@ -49,6 +49,7 @@ export const useSessionStore = defineStore('session', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   let loadPromise: Promise<Session[]> | null = null
+  let createPromise: Promise<Session> | null = null
   let storeGeneration = 0
 
   // Cross-view state that is intentionally not persisted via localStorage.
@@ -92,8 +93,14 @@ export const useSessionStore = defineStore('session', () => {
     return groups
   })
 
-  function replaceFromServer(records: ApiSession[]) {
+  function replaceFromServer(records: ApiSession[], preserveCurrentId?: string | null) {
+    const preserved = preserveCurrentId
+      ? sessions.value.find((session) => session.id === preserveCurrentId)
+      : undefined
     sessions.value = records.map(toSession)
+    if (preserved && !sessions.value.some((session) => session.id === preserved.id)) {
+      sessions.value.unshift(preserved)
+    }
     if (currentSessionId.value && !sessions.value.some((session) => session.id === currentSessionId.value)) {
       currentSessionId.value = null
     }
@@ -111,13 +118,20 @@ export const useSessionStore = defineStore('session', () => {
   async function loadSessions(): Promise<Session[]> {
     if (loadPromise) return loadPromise
     const generation = storeGeneration
+    const currentAtLoadStart = currentSessionId.value
     loading.value = true
     error.value = null
     loadPromise = (async () => {
       try {
         const response = await api.getSessions()
         if (generation !== storeGeneration) return sessions.value
-        replaceFromServer(response.sessions)
+        // A stale GET can finish after createSession has inserted a new local
+        // session. Preserve that current session rather than clearing it.
+        const currentAtLoadEnd = currentSessionId.value
+        const createdDuringLoad = currentAtLoadEnd && currentAtLoadEnd !== currentAtLoadStart
+          ? currentAtLoadEnd
+          : null
+        replaceFromServer(response.sessions, createdDuringLoad)
         return sessions.value
       } catch (cause) {
         if (generation === storeGeneration) {
@@ -149,12 +163,20 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function createSession(title = 'New Chat'): Promise<Session> {
-    const response = await api.createSession(title)
-    const session = toSession(response)
-    upsertSession(session)
-    currentSessionId.value = session.id
-    error.value = null
-    return session
+    if (createPromise) return createPromise
+    createPromise = (async () => {
+      const response = await api.createSession(title)
+      const session = toSession(response)
+      upsertSession(session)
+      currentSessionId.value = session.id
+      error.value = null
+      return session
+    })()
+    try {
+      return await createPromise
+    } finally {
+      createPromise = null
+    }
   }
 
   function ensureSession(id: string): Session | null {

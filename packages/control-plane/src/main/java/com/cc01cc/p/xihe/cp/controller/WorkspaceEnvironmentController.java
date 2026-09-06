@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.LinkedHashMap;
@@ -83,10 +84,14 @@ public class WorkspaceEnvironmentController {
             // no spec yet; treat as unassigned
         }
         RuntimeHeartbeatController.RuntimeHeartbeatRequest heartbeat = heartbeatController.latestHeartbeat();
+        Map<String, Object> workspaceRuntime = readWorkspaceRuntimeStatus(workspaceId);
+        String materializationStatus = workspaceRuntime.getOrDefault("status", "unbound").toString();
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("workspaceId", workspaceId);
-        response.put("status", heartbeat == null ? "unbound" : heartbeat.status());
+        // Heartbeat is device-wide. It cannot prove that this workspace has
+        // been materialized, so the per-workspace Runtime status is canonical.
+        response.put("status", materializationStatus);
         response.put("storageBackend", valueOrDefault(workspace.getStorageBackend(), "host_directory"));
         response.put("storageRef", valueOrDefault(workspace.getStorageRef(), workspaceId));
 
@@ -97,11 +102,51 @@ public class WorkspaceEnvironmentController {
         response.put("executionSpec", assignmentView);
 
         Map<String, Object> runtimeView = new LinkedHashMap<>();
-        runtimeView.put("status", heartbeat == null ? "unbound" : heartbeat.status());
+        runtimeView.put("status", materializationStatus);
         runtimeView.put("deviceId", heartbeat == null ? "" : heartbeat.deviceId());
         runtimeView.put("lastHeartbeatAt", heartbeat == null ? "" : heartbeat.observedAt());
+        if (workspaceRuntime.containsKey("state")) {
+            runtimeView.put("materializationState", workspaceRuntime.get("state"));
+        }
+        if (workspaceRuntime.containsKey("lastError")) {
+            runtimeView.put("lastError", workspaceRuntime.get("lastError"));
+        }
         response.put("runtime", runtimeView);
         return ResponseEntity.ok(response);
+    }
+
+    private Map<String, Object> readWorkspaceRuntimeStatus(String workspaceId) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(serviceToken);
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/status",
+                    org.springframework.http.HttpMethod.GET,
+                    new HttpEntity<>(headers),
+                    Map.class);
+            Map<String, Object> body = response.getBody();
+            if (body == null) return Map.of("status", "unbound");
+            Map<String, Object> result = new LinkedHashMap<>(body);
+            result.put("status", mapRuntimeState(body.get("state")));
+            return result;
+        } catch (HttpClientErrorException.NotFound e) {
+            return Map.of("status", "unbound");
+        } catch (Exception e) {
+            logger.warn("Workspace Runtime status unavailable workspaceId={}: {}",
+                    workspaceId, e.getMessage());
+            return Map.of("status", "blocked", "lastError", "Runtime status unavailable");
+        }
+    }
+
+    private String mapRuntimeState(Object rawState) {
+        String state = rawState == null ? "" : rawState.toString().toLowerCase();
+        return switch (state) {
+            case "ready" -> "ready";
+            case "materializing" -> "materializing";
+            case "failed" -> "blocked";
+            case "released", "" -> "unbound";
+            default -> "degraded";
+        };
     }
 
     private String valueOrDefault(String value, String fallback) {

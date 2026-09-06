@@ -118,6 +118,10 @@ public class SessionController {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", session.getId());
         view.put("title", session.getTitle());
+        // WorkspaceView uses the list projection to select an existing session
+        // when entering a workspace. Omitting this field makes direct workspace
+        // navigation create a duplicate session.
+        view.put("workspaceId", session.getWorkspaceId());
         return view;
     }
 

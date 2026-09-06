@@ -26,7 +26,7 @@ function handleOpenChange(open: boolean) {
       <SheetHeader class="px-4 pt-4 pb-2 text-left">
         <SheetTitle>文件</SheetTitle>
       </SheetHeader>
-      <div class="flex-1 min-h-0 overflow-hidden" @click="emit('close')">
+      <div class="flex-1 min-h-0 overflow-hidden">
         <FileTreePanel />
       </div>
     </SheetContent>

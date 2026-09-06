@@ -59,7 +59,7 @@ const searchExpanded = computed(() => {
     :get-key="(node: FileNode) => node.path"
     :get-children="(node: FileNode) => node.children"
     class="py-1"
-    @update:expanded="(next: string[]) => { if (!searchQuery.trim()) expandedArray = next }"
+    @update:expanded="(next: string[]) => { if (!props.searchQuery.trim()) expandedArray = next }"
   >
     <TreeNodeList :nodes="displayTree" :level="0" :search-query="searchQuery" />
   </Tree>

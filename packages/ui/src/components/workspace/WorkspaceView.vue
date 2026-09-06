@@ -49,6 +49,18 @@ async function ensureSessionForWorkspace() {
   if (!auth.currentWorkspaceId) return null
   if (sessionStore.currentSessionId) return sessionStore.currentSessionId
   try {
+    // Direct workspace navigation can race App/ChatView session hydration.
+    // Finish the canonical server projection before deciding to create one;
+    // createSession itself is single-flight for the remaining empty case.
+    await sessionStore.loadSessions()
+    if (sessionStore.currentSessionId) return sessionStore.currentSessionId
+    const existing = sessionStore.sessions.find(
+      (session) => session.workspaceId === auth.currentWorkspaceId,
+    )
+    if (existing) {
+      sessionStore.selectSession(existing.id)
+      return existing.id
+    }
     const session = await sessionStore.createSession()
     return session.id
   } catch (cause) {

@@ -54,7 +54,7 @@ function highlightName(name: string, query?: string): string {
 <template>
   <ul>
     <li v-for="node in nodes" :key="node.path">
-      <TreeItem v-slot="{ isExpanded }" as-child :value="node" :level="level" @select="handleSelect(node)">
+      <TreeItem v-slot="{ isExpanded }" :value="node" :level="level" @select="handleSelect(node)">
         <FileNodeMenu :node="node">
           <button
             class="flex w-full items-center gap-1 py-1 text-sm rounded hover:bg-accent/50 transition-colors select-none text-left"
@@ -69,8 +69,13 @@ function highlightName(name: string, query?: string): string {
             <span v-else class="truncate flex-1 ml-1" v-html="highlightName(node.name, searchQuery)" />
           </button>
         </FileNodeMenu>
+        <TreeNodeList
+          v-if="isExpanded && node.children && node.children.length > 0"
+          :nodes="node.children"
+          :level="level + 1"
+          :search-query="searchQuery"
+        />
       </TreeItem>
-      <TreeNodeList v-if="node.children && node.children.length > 0" :nodes="node.children" :level="level + 1" :search-query="searchQuery" />
     </li>
   </ul>
 </template>
