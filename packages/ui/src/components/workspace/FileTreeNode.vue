@@ -12,7 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [path: string]
   toggle: [path: string]
-  contextmenu: [path: string, event: MouseEvent]
+  contextmenu: [path: string, type: FileNode['type'], event: MouseEvent]
 }>()
 
 const indent = computed(() => `${props.depth * 16 + 8}px`)
@@ -49,7 +49,7 @@ function handleClick() {
 }
 
 function handleContextmenu(e: MouseEvent) {
-  emit('contextmenu', props.node.path, e)
+  emit('contextmenu', props.node.path, props.node.type, e)
 }
 </script>
 
@@ -78,7 +78,7 @@ function handleContextmenu(e: MouseEvent) {
         :expanded-paths="expandedPaths"
         @select="(p: string) => emit('select', p)"
         @toggle="(p: string) => emit('toggle', p)"
-        @contextmenu="(p: string, e: MouseEvent) => emit('contextmenu', p, e)"
+        @contextmenu="(p: string, t: FileNode['type'], e: MouseEvent) => emit('contextmenu', p, t, e)"
       />
     </template>
   </div>

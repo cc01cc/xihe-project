@@ -1,6 +1,50 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useWorkspaceStore } from '../workspace'
+import { ApiError, api } from '../../composables/api'
+
+vi.mock('../../composables/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../composables/api')>()
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      deleteFile: vi.fn(),
+      writeFile: vi.fn(),
+      readFile: vi.fn(),
+      listDirectory: vi.fn(),
+      moveFile: vi.fn(),
+      copyFile: vi.fn(),
+      createDirectory: vi.fn(),
+    },
+  }
+})
+
+vi.mock('../../composables/fileService', () => ({
+  readFilePreview: vi.fn(),
+}))
+
+vi.mock('../session', () => ({
+  useSessionStore: () => ({
+    currentSessionId: null,
+    currentSessionAttachments: [],
+    currentSessionFileContext: undefined,
+    currentAgentIds: [],
+    setFileContext: vi.fn(),
+  }),
+}))
+
+vi.mock('../auth', () => ({
+  useAuthStore: () => ({
+    currentWorkspaceId: 'ws-test',
+  }),
+}))
+
+const mockedApi = vi.mocked(api, true)
+
+function problemError(status: number, code: string): ApiError {
+  return new ApiError({ status, code, detail: code, requestId: 'test' })
+}
 
 describe('workspace store highlightFile', () => {
   beforeEach(() => {
@@ -34,5 +78,146 @@ describe('workspace store highlightFile', () => {
     const store = useWorkspaceStore()
     store.highlightFile('README.md')
     expect(store.expandedPaths.has('README.md')).toBe(true)
+  })
+})
+
+describe('workspace store deleteNode (B-2 failure semantics)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('returns true and clears the open file on success', async () => {
+    mockedApi.deleteFile.mockResolvedValue(undefined)
+    mockedApi.listDirectory.mockResolvedValue({ entries: [] })
+    const store = useWorkspaceStore()
+    store.openFiles.set('gone.txt', {
+      path: 'gone.txt',
+      name: 'gone.txt',
+      content: '',
+      originalContent: '',
+      language: 'plaintext',
+      modified: false,
+      loading: false,
+    })
+    const result = await store.deleteNode('gone.txt')
+    expect(result).toBe(true)
+    expect(store.openFiles.has('gone.txt')).toBe(false)
+  })
+
+  it('returns false and records treeError on 404 (no throw, no fake success)', async () => {
+    mockedApi.deleteFile.mockRejectedValue(problemError(404, 'FILE_NOT_FOUND'))
+    const store = useWorkspaceStore()
+    const result = await store.deleteNode('missing.txt')
+    expect(result).toBe(false)
+    expect(store.treeError).toContain('Failed to delete')
+  })
+
+  it('returns false and records treeError on 500', async () => {
+    mockedApi.deleteFile.mockRejectedValue(problemError(500, 'RUNTIME_ERROR'))
+    const store = useWorkspaceStore()
+    const result = await store.deleteNode('x.txt')
+    expect(result).toBe(false)
+    expect(store.treeError).toContain('Failed to delete')
+  })
+})
+
+describe('workspace store createFile (Q-3 same-mode fix)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('returns true on success', async () => {
+    mockedApi.writeFile.mockResolvedValue({ success: true })
+    mockedApi.listDirectory.mockResolvedValue({ entries: [] })
+    const store = useWorkspaceStore()
+    const result = await store.createFile('src', 'new.ts')
+    expect(result).toBe(true)
+    expect(mockedApi.writeFile).toHaveBeenCalledWith('src/new.ts', '', 'ws-test')
+  })
+
+  it('returns false and records treeError on failure', async () => {
+    mockedApi.writeFile.mockRejectedValue(problemError(400, 'INVALID_REQUEST'))
+    const store = useWorkspaceStore()
+    const result = await store.createFile('', 'bad')
+    expect(result).toBe(false)
+    expect(store.treeError).toContain('Failed to create file')
+  })
+})
+
+describe('workspace store rename/move/duplicate/mkdir (M3)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('renameNode validates name and remaps open file', async () => {
+    mockedApi.listDirectory.mockResolvedValue({ entries: [] })
+    const store = useWorkspaceStore()
+    expect(await store.renameNode('a.txt', '')).toBe(false)
+    expect(await store.renameNode('a.txt', 'b/c')).toBe(false)
+    expect(store.treeError).toContain('Invalid name')
+
+    store.openFiles.set('a.txt', {
+      path: 'a.txt',
+      name: 'a.txt',
+      content: 'x',
+      originalContent: 'x',
+      language: 'plaintext',
+      modified: false,
+      loading: false,
+    })
+    store.activeFilePath = 'a.txt'
+    mockedApi.moveFile.mockResolvedValue({ success: true })
+    const result = await store.renameNode('a.txt', 'b.txt')
+    expect(result).toBe(true)
+    expect(mockedApi.moveFile).toHaveBeenCalledWith('a.txt', 'b.txt', 'ws-test')
+    expect(store.activeFilePath).toBe('b.txt')
+    expect(store.openFiles.has('b.txt')).toBe(true)
+  })
+
+  it('renameNode records treeError on backend failure', async () => {
+    mockedApi.moveFile.mockRejectedValue(problemError(404, 'FILE_NOT_FOUND'))
+    const store = useWorkspaceStore()
+    expect(await store.renameNode('a.txt', 'b.txt')).toBe(false)
+    expect(store.treeError).toContain('Failed to rename')
+  })
+
+  it('moveNode closes the file and keeps expansion', async () => {
+    mockedApi.moveFile.mockResolvedValue({ success: true })
+    mockedApi.listDirectory.mockResolvedValue({ entries: [] })
+    const store = useWorkspaceStore()
+    store.openFiles.set('src/a.txt', {
+      path: 'src/a.txt',
+      name: 'a.txt',
+      content: '',
+      originalContent: '',
+      language: 'plaintext',
+      modified: false,
+      loading: false,
+    })
+    const result = await store.moveNode('src/a.txt', 'dst')
+    expect(result).toBe(true)
+    expect(mockedApi.moveFile).toHaveBeenCalledWith('src/a.txt', 'dst/a.txt', 'ws-test')
+    expect(store.openFiles.has('src/a.txt')).toBe(false)
+  })
+
+  it('duplicateNode appends -copy before extension', async () => {
+    mockedApi.copyFile.mockResolvedValue({ success: true })
+    mockedApi.listDirectory.mockResolvedValue({ entries: [] })
+    const store = useWorkspaceStore()
+    expect(await store.duplicateNode('src/a.txt')).toBe(true)
+    expect(mockedApi.copyFile).toHaveBeenCalledWith('src/a.txt', 'src/a-copy.txt', 'ws-test')
+  })
+
+  it('createDirectory validates name and calls mkdir', async () => {
+    mockedApi.createDirectory.mockResolvedValue({ success: true })
+    mockedApi.listDirectory.mockResolvedValue({ entries: [] })
+    const store = useWorkspaceStore()
+    expect(await store.createDirectory('src', '')).toBe(false)
+    expect(await store.createDirectory('src', 'a/b')).toBe(false)
+    expect(await store.createDirectory('src', 'assets')).toBe(true)
+    expect(mockedApi.createDirectory).toHaveBeenCalledWith('src/assets', 'ws-test')
   })
 })

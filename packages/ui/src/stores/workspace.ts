@@ -64,33 +64,29 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function fetchDirectoryTree(dirPath: string): Promise<FileNode[]> {
     const nodes: FileNode[] = []
-    try {
-      const res = await api.listDirectory(dirPath, requireWorkspaceId())
-      const entries = res.entries ?? []
-      const dirs = entries.filter((e: any) => e.type === 'directory').sort((a: any, b: any) => a.name.localeCompare(b.name))
-      const files = entries.filter((e: any) => e.type === 'file').sort((a: any, b: any) => a.name.localeCompare(b.name))
-      for (const dir of dirs) {
-        const childPath = dirPath ? `${dirPath}/${dir.name}` : dir.name
-        nodes.push({
-          name: dir.name,
-          path: childPath,
-          type: 'directory',
-          children: await fetchDirectoryTree(childPath),
-        })
-      }
-      for (const file of files) {
-        const filePath = dirPath ? `${dirPath}/${file.name}` : file.name
-        nodes.push({
-          name: file.name,
-          path: filePath,
-          type: 'file',
-          size: file.size,
-          modified: file.modified,
-          mimeType: detectMimeType(file.name),
-        })
-      }
-    } catch (e) {
-      logger.warn('Failed to list directory: ' + (e instanceof Error ? e.message : String(e)))
+    const res = await api.listDirectory(dirPath, requireWorkspaceId())
+    const entries = res.entries ?? []
+    const dirs = entries.filter((e: any) => e.type === 'directory').sort((a: any, b: any) => a.name.localeCompare(b.name))
+    const files = entries.filter((e: any) => e.type === 'file').sort((a: any, b: any) => a.name.localeCompare(b.name))
+    for (const dir of dirs) {
+      const childPath = dirPath ? `${dirPath}/${dir.name}` : dir.name
+      nodes.push({
+        name: dir.name,
+        path: childPath,
+        type: 'directory',
+        children: await fetchDirectoryTree(childPath),
+      })
+    }
+    for (const file of files) {
+      const filePath = dirPath ? `${dirPath}/${file.name}` : file.name
+      nodes.push({
+        name: file.name,
+        path: filePath,
+        type: 'file',
+        size: file.size,
+        modified: file.modified,
+        mimeType: detectMimeType(file.name),
+      })
     }
     return nodes
   }
@@ -113,6 +109,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     loading.value = true
     treeError.value = null
     try {
+      // E2E seeding hook (mock profile only): lets Playwright inject a tree
+      // without a live CP+MCP chain. Never set by production code.
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const seed = localStorage.getItem('xihe-mock-filetree')
+          if (seed) {
+            fileTree.value = JSON.parse(seed) as FileNode[]
+            return
+          }
+        } catch {
+          // fall through to the real chain
+        }
+      }
       fileTree.value = await fetchDirectoryTree('')
     } catch (e) {
       treeError.value = (e as Error).message
@@ -200,26 +209,133 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  async function deleteNode(path: string) {
+  async function deleteNode(path: string): Promise<boolean> {
     try {
       await api.deleteFile(path, requireWorkspaceId())
       closeFile(path)
-      await loadTree()
+      const slash = path.lastIndexOf('/')
+      await refreshAfterMutation(slash >= 0 ? path.substring(0, slash) : '')
       return true
     } catch (e) {
-      treeError.value = `Failed to delete: ${(e as Error).message}`
+      const message = e instanceof Error ? e.message : String(e)
+      treeError.value = `Failed to delete: ${message}`
+      logger.warn('Delete failed: ' + message)
       return false
     }
   }
 
-  async function createFile(parentDir: string, name: string) {
+  async function createFile(parentDir: string, name: string): Promise<boolean> {
     const fullPath = parentDir ? `${parentDir}/${name}` : name
     try {
       await api.writeFile(fullPath, '', requireWorkspaceId())
-      await loadTree()
+      await refreshAfterMutation(parentDir)
       return true
     } catch (e) {
-      treeError.value = `Failed to create file: ${(e as Error).message}`
+      const message = e instanceof Error ? e.message : String(e)
+      treeError.value = `Failed to create file: ${message}`
+      logger.warn('Create file failed: ' + message)
+      return false
+    }
+  }
+
+  /** Reload the tree while keeping the current expansion state (M3 task 3.4). */
+  async function refreshAfterMutation(keepExpandedDir?: string) {
+    if (keepExpandedDir) {
+      const next = new Set(expandedPaths.value)
+      const parts = keepExpandedDir.split('/')
+      let current = ''
+      for (const part of parts) {
+        if (!part) continue
+        current = current ? `${current}/${part}` : part
+        next.add(current)
+      }
+      expandedPaths.value = next
+    }
+    await loadTree()
+  }
+
+  async function renameNode(oldPath: string, newName: string): Promise<boolean> {
+    const trimmed = newName.trim()
+    if (!trimmed || trimmed.includes('/')) {
+      treeError.value = 'Invalid name: must be non-empty and contain no path separators'
+      return false
+    }
+    const slash = oldPath.lastIndexOf('/')
+    const newPath = slash >= 0 ? `${oldPath.substring(0, slash + 1)}${trimmed}` : trimmed
+    if (newPath === oldPath) return true
+    try {
+      await api.moveFile(oldPath, newPath, requireWorkspaceId())
+      if (activeFilePath.value === oldPath) {
+        const file = openFiles.value.get(oldPath)
+        openFiles.value.delete(oldPath)
+        if (file) {
+          file.path = newPath
+          file.name = trimmed
+          openFiles.value.set(newPath, file)
+        }
+        activeFilePath.value = newPath
+      }
+      await refreshAfterMutation(slash >= 0 ? oldPath.substring(0, slash) : '')
+      return true
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      treeError.value = `Failed to rename: ${message}`
+      logger.warn('Rename failed: ' + message)
+      return false
+    }
+  }
+
+  async function moveNode(from: string, toDir: string): Promise<boolean> {
+    const name = from.split('/').pop() || from
+    const to = toDir ? `${toDir}/${name}` : name
+    if (to === from) return true
+    try {
+      await api.moveFile(from, to, requireWorkspaceId())
+      closeFile(from)
+      await refreshAfterMutation(toDir)
+      return true
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      treeError.value = `Failed to move: ${message}`
+      logger.warn('Move failed: ' + message)
+      return false
+    }
+  }
+
+  async function duplicateNode(path: string): Promise<boolean> {
+    const slash = path.lastIndexOf('/')
+    const dir = slash >= 0 ? path.substring(0, slash) : ''
+    const base = slash >= 0 ? path.substring(slash + 1) : path
+    const dot = base.lastIndexOf('.')
+    const copyName = dot > 0 ? `${base.substring(0, dot)}-copy${base.substring(dot)}` : `${base}-copy`
+    const to = dir ? `${dir}/${copyName}` : copyName
+    try {
+      await api.copyFile(path, to, requireWorkspaceId())
+      await refreshAfterMutation(dir)
+      return true
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      treeError.value = `Failed to duplicate: ${message}`
+      logger.warn('Duplicate failed: ' + message)
+      return false
+    }
+  }
+
+  async function createDirectory(parentDir: string, name: string): Promise<boolean> {
+    const trimmed = name.trim()
+    if (!trimmed || trimmed.includes('/')) {
+      treeError.value = 'Invalid directory name: must be non-empty and contain no path separators'
+      return false
+    }
+    const fullPath = parentDir ? `${parentDir}/${trimmed}` : trimmed
+    try {
+      await api.createDirectory(fullPath, requireWorkspaceId())
+      await refreshAfterMutation(parentDir)
+      return true
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      treeError.value = `Failed to create directory: ${message}`
+      logger.warn('Create directory failed: ' + message)
       return false
     }
   }
@@ -260,6 +376,21 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     uploadQueue.value.splice(index, 1)
   }
 
+  const TEXT_EXTENSIONS = new Set([
+    'md', 'txt', 'csv', 'json', 'yaml', 'yml', 'toml', 'xml', 'svg',
+    'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'rs', 'java', 'go',
+    'vue', 'svelte', 'css', 'scss', 'html', 'sh', 'bash', 'sql', 'log', 'gitignore',
+  ])
+
+  function isTextualFile(file: File): boolean {
+    if (file.type.startsWith('text/')) return true
+    if (file.type === 'application/json' || file.type === 'application/xml'
+      || file.type === 'application/yaml' || file.type === 'application/javascript'
+      || file.type === 'application/x-yaml') return true
+    const ext = file.name.split('.').pop()?.toLowerCase() || ''
+    return TEXT_EXTENSIONS.has(ext)
+  }
+
   async function executeUpload(targetDir: string, splitPreference?: boolean) {
     for (const item of uploadQueue.value) {
       if (item.status === 'cancelled') continue
@@ -271,10 +402,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           formData.append('file', item.file)
           formData.append('splitPreference', 'true')
           await apiPost('/api/v1/files/upload', formData)
-        } else {
+        } else if (isTextualFile(item.file)) {
           const text = await item.file.text()
           const fullPath = targetDir ? `${targetDir}/${item.name}` : item.name
           await api.writeFile(fullPath, text, requireWorkspaceId())
+        } else {
+          // Binary files must preserve raw bytes: route through the CP upload
+          // proxy (POST /api/v1/files/upload), which forwards the body to the
+          // Runtime binary write endpoint. UTF-8 text() decode would corrupt them.
+          const formData = new FormData()
+          formData.append('file', item.file)
+          await apiPost('/api/v1/files/upload', formData)
         }
         item.status = 'done'
       } catch (e) {
@@ -286,21 +424,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function splitPdf(path: string) {
-    try {
-      const res = await apiPost<{ chunks: string[] }>('/api/v1/files/split-pdf', JSON.stringify({ path }))
-      const file = openFiles.value.get(path)
-      if (file) {
-        file.chunks = res.chunks
-        file.chunkIndex = 0
-        if (res.chunks.length > 0) {
-          const chunkRes = await api.readFile(res.chunks[0], requireWorkspaceId())
-          file.content = chunkRes.content
-          file.originalContent = chunkRes.content
-        }
-      }
-    } catch (e) {
-      treeError.value = `Split failed: ${(e as Error).message}`
-    }
+    // B-4 (PLAN-262 decision 17): the CP /api/v1/files/split-pdf route does not
+    // exist (openapi drift). Fail closed instead of letting the request 404.
+    treeError.value = 'PDF splitting is temporarily unavailable: the backend endpoint is not deployed.'
+    logger.warn('splitPdf requested but /api/v1/files/split-pdf has no CP implementation: ' + path)
   }
 
   async function loadFullContent(path: string) {
@@ -324,7 +451,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     showImportDialog, uploadQueue,
     loadTree, refreshTree, toggleExpand, highlightFile,
     openFile, closeFile, updateFileContent, saveFile,
-    deleteNode, createFile, splitPdf, loadFullContent,
+    deleteNode, createFile, renameNode, moveNode, duplicateNode, createDirectory,
+    refreshAfterMutation,
+    splitPdf, loadFullContent,
     openImportDialog, closeImportDialog, addToUploadQueue, removeFromUploadQueue, executeUpload,
     syncActiveFileToSession,
   }

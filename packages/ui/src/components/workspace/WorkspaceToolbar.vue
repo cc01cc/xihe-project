@@ -11,6 +11,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   upload: []
+  settings: []
+  files: []
 }>()
 
 const router = useRouter()
@@ -55,6 +57,13 @@ function switchSession(id: string) {
 
 <template>
   <div class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-background/80">
+    <button
+      class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
+      title="Files"
+      @click="emit('files')"
+    >
+      <span class="i-lucide-panel-left size-3.5" />
+    </button>
     <div class="flex items-center gap-1 text-xs text-muted-foreground flex-1">
       <span class="i-lucide-folder-tree size-3.5" />
       <template v-if="breadcrumb.length > 0">
@@ -104,6 +113,14 @@ function switchSession(id: string) {
         @click="openEnvironment"
       >
         Environment
+      </button>
+      <button
+        data-testid="workspace-toolbar-settings"
+        class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
+        title="Workspace settings"
+        @click="emit('settings')"
+      >
+        <span class="i-lucide-settings-2 size-3.5" />
       </button>
       <button
         class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"

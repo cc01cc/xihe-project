@@ -7,6 +7,7 @@ import BaseModal from '../shared/BaseModal.vue'
 
 const props = defineProps<{
   path: string
+  nodeType: 'file' | 'directory'
   x: number
   y: number
 }>()
@@ -16,7 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const ws = useWorkspaceStore()
-const isDir = ref(false)
+const isDir = props.nodeType === 'directory'
 const showDeleteModal = ref(false)
 const showNewFileModal = ref(false)
 const deleteLoading = ref(false)
@@ -25,7 +26,6 @@ const newFileName = ref('')
 const menuRef = ref<HTMLElement | null>(null)
 
 onMounted(() => {
-  isDir.value = !props.path.includes('.')
   document.addEventListener('click', handleOutsideClick)
 })
 
@@ -39,19 +39,17 @@ function handleOutsideClick(e: MouseEvent) {
   emit('close')
 }
 
-function handleDelete() {
-  showDeleteModal.value = true
-}
-
-function confirmDelete() {
+async function confirmDelete() {
   deleteLoading.value = true
   try {
-    ws.deleteNode(props.path)
-    toast.success(`Deleted "${props.path}"`)
-  } catch {
-    toast.error(`Failed to delete "${props.path}"`)
+    const deleted = await ws.deleteNode(props.path)
+    if (deleted) toast.success(`Deleted "${props.path}"`)
+    // deleteNode reports failures via treeError and returns false; no success toast.
+  } finally {
+    deleteLoading.value = false
+    showDeleteModal.value = false
+    emit('close')
   }
-  deleteLoading.value = false
 }
 
 function handleCopyPath() {
@@ -59,17 +57,22 @@ function handleCopyPath() {
   emit('close')
 }
 
+function handleDelete() {
+  showDeleteModal.value = true
+}
+
 function handleNewFile() {
   newFileName.value = ''
   showNewFileModal.value = true
 }
 
-function confirmNewFile() {
+async function confirmNewFile() {
   const name = newFileName.value.trim()
   if (!name) return
-  const parentDir = isDir.value ? props.path : props.path.substring(0, props.path.lastIndexOf('/'))
-  ws.createFile(parentDir, name)
-  toast.success(`Created "${name}"`)
+  const parentDir = isDir ? props.path : props.path.substring(0, props.path.lastIndexOf('/'))
+  const created = await ws.createFile(parentDir, name)
+  if (created) toast.success(`Created "${name}"`)
+  else toast.error(`Failed to create "${name}"`)
   showNewFileModal.value = false
   emit('close')
 }

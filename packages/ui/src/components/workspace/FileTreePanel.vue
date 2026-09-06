@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useWorkspaceStore } from '../../stores/workspace'
-import FileTreeNode from './FileTreeNode.vue'
-
-const emit = defineEmits<{
-  contextmenu: [path: string, event: MouseEvent]
-}>()
+import FileTree from './FileTree.vue'
 
 const ws = useWorkspaceStore()
+const searchQuery = ref('')
 
 onMounted(() => {
   if (ws.fileTree.length === 0) {
@@ -15,23 +12,36 @@ onMounted(() => {
   }
 })
 
-function handleSelect(path: string) {
-  ws.openFile(path)
-}
+const filteredTree = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return null
+  return { query: q }
+})
 
-function handleToggle(path: string) {
-  ws.toggleExpand(path)
-}
-
-function handleContextmenu(path: string, event: MouseEvent) {
-  emit('contextmenu', path, event)
+function clearSearch() {
+  searchQuery.value = ''
 }
 </script>
 
 <template>
   <div class="flex flex-col h-full">
-    <div class="flex items-center justify-between px-3 py-2 border-b shrink-0">
-      <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Files</span>
+    <div class="flex items-center gap-1 px-2 py-2 border-b shrink-0">
+      <div class="relative flex-1">
+        <span class="i-lucide-search absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+        <input
+          v-model="searchQuery"
+          placeholder="过滤文件树"
+          class="w-full pl-7 pr-6 py-1 text-xs rounded border bg-background placeholder:text-muted-foreground focus:outline-none"
+        />
+        <button
+          v-if="searchQuery"
+          class="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-accent text-muted-foreground"
+          title="Clear"
+          @click="clearSearch"
+        >
+          <span class="i-lucide-x size-3" />
+        </button>
+      </div>
       <button
         class="p-1 rounded hover:bg-accent text-muted-foreground transition-colors"
         title="Refresh"
@@ -59,18 +69,8 @@ function handleContextmenu(path: string, event: MouseEvent) {
       <p class="text-sm text-muted-foreground">Workspace is empty</p>
     </div>
 
-    <div v-else class="flex-1 overflow-y-auto py-1">
-      <FileTreeNode
-        v-for="node in ws.fileTree"
-        :key="node.path"
-        :node="node"
-        :depth="0"
-        :selected-path="ws.activeFilePath"
-        :expanded-paths="ws.expandedPaths"
-        @select="handleSelect"
-        @toggle="handleToggle"
-        @contextmenu="handleContextmenu"
-      />
+    <div v-else class="flex-1 overflow-y-auto py-1 px-1">
+      <FileTree :search-query="filteredTree?.query ?? ''" />
     </div>
   </div>
 </template>

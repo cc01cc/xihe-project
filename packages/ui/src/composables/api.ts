@@ -32,6 +32,8 @@ export interface ApiSession {
   updatedAt?: string
   modelProvider?: string
   modelName?: string
+  providerConnectionId?: string
+  connectionRevision?: number
 }
 
 export interface SessionResponse extends ApiSession {
@@ -274,7 +276,7 @@ export const api = {
       body: JSON.stringify(body),
     }))
   },
-  async updateSession(id: string, patch: { title?: string; modelProvider?: string; modelName?: string }): Promise<SessionResponse> {
+  async updateSession(id: string, patch: { title?: string; modelProvider?: string; modelName?: string; providerConnectionId?: string }): Promise<SessionResponse> {
     return normalizeSession(await request<unknown>(`/sessions/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
@@ -336,6 +338,18 @@ export const api = {
     await callRuntimeTool<string>('delete_file', { path }, workspaceId)
     return { success: true }
   },
+  async moveFile(from: string, to: string, workspaceId: string) {
+    await callRuntimeTool<string>('move_file', { from, to }, workspaceId)
+    return { success: true }
+  },
+  async copyFile(from: string, to: string, workspaceId: string) {
+    await callRuntimeTool<string>('copy_file', { from, to }, workspaceId)
+    return { success: true }
+  },
+  async createDirectory(path: string, workspaceId: string) {
+    await callRuntimeTool<string>('mkdir', { path }, workspaceId)
+    return { success: true }
+  },
   getMcpConfig(wsId: string) {
     return request<{ mcpServers?: string | Record<string, unknown> }>(`/workspaces/${encodeURIComponent(wsId)}/mcp-config`, {
       headers: workspaceHeaders(wsId),
@@ -347,6 +361,21 @@ export const api = {
   async getWorkspace(wsId: string): Promise<ApiWorkspace> {
     return normalizeWorkspaceResponse(await request<unknown>(`/workspaces/${encodeURIComponent(wsId)}`, {
       headers: workspaceHeaders(wsId),
+    }))
+  },
+  async createWorkspace(input: {
+    name?: string
+    description?: string | null
+    profile?: 'strict' | 'coding' | 'isolated'
+  }): Promise<ApiWorkspace> {
+    const body: Record<string, unknown> = {}
+    if (input.name !== undefined) body.name = input.name
+    if (input.description !== undefined) body.description = input.description
+    if (input.profile !== undefined) body.profile = input.profile
+    // image is server-allowlisted (v1: xihe/workspace:latest); UI keeps it read-only.
+    return normalizeWorkspaceResponse(await request<unknown>('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify(body),
     }))
   },
   async updateWorkspace(wsId: string, patch: { name?: string; description?: string | null }): Promise<ApiWorkspace> {
@@ -372,6 +401,13 @@ export const api = {
       assignment?: { status: string; generation: number; sandboxSpecHash: string }
       runtime: { status: string; deviceId: string; lastHeartbeatAt: string }
     }>(`/workspaces/${encodeURIComponent(wsId)}/environment`, {
+      headers: workspaceHeaders(wsId),
+    })
+  },
+  /** M4: trigger async materialization (202). Poll getWorkspaceEnvironment for progress. */
+  materializeWorkspace(wsId: string) {
+    return request<{ status: string }>(`/workspaces/${encodeURIComponent(wsId)}/materialize`, {
+      method: 'POST',
       headers: workspaceHeaders(wsId),
     })
   },
