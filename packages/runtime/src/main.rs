@@ -1367,6 +1367,58 @@ async fn workspace_status_handler(
     }
 }
 
+/// PLAN-262 M4 (decision 12): explicit async materialization trigger.
+/// Returns 202 immediately with the current materialization state; the caller
+/// polls GET .../status for progress. Reuses the idempotent per-workspace
+/// ensure path without blocking on Sandbox creation or image pulls.
+async fn workspace_materialize_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+) -> Result<(StatusCode, AxumJson<serde_json::Value>), (StatusCode, AxumJson<serde_json::Value>)> {
+    if !xihe_runtime::hydrate::is_safe_workspace_id(&ws_id) {
+        return Err(runtime_problem(RuntimeError::InvalidExecutionSpec {
+            workspace_id: ws_id.clone(),
+            detail: "workspaceId contains invalid route characters".to_string(),
+        }));
+    }
+    // Fast path: already materialized and in sync with CP spec.
+    if let Some(status) = app.registry.status(&ws_id).await
+        && status.state == xihe_runtime::gateway::MaterializationState::Ready
+    {
+        return Ok((StatusCode::ACCEPTED, AxumJson(serde_json::to_value(status).map_err(|error| {
+            runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
+                workspace_id: ws_id.clone(),
+                detail: format!("serialize workspace status: {error}"),
+            })
+        })?)));
+    }
+    app.registry.mark_materializing(&ws_id).await;
+    let app_clone = Arc::clone(&app);
+    let ws_id_clone = ws_id.clone();
+    tokio::spawn(async move {
+        match app_clone.ensure_workspace(&ws_id_clone).await {
+            Ok(_) => {
+                tracing::info!("Explicit materialization completed: ws_id={}", ws_id_clone);
+            }
+            Err(error) => {
+                tracing::warn!("Explicit materialization failed: ws_id={} error={}", ws_id_clone, error);
+            }
+        }
+    });
+    let status = app.registry.status(&ws_id).await.ok_or_else(|| {
+        runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
+            workspace_id: ws_id.clone(),
+            detail: "materialization trigger accepted but status unavailable".to_string(),
+        })
+    })?;
+    Ok((StatusCode::ACCEPTED, AxumJson(serde_json::to_value(status).map_err(|error| {
+        runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
+            workspace_id: ws_id.clone(),
+            detail: format!("serialize workspace status: {error}"),
+        })
+    })?)))
+}
+
 async fn create_workspace_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<CreateWorkspaceRequest>,
@@ -1637,6 +1689,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/status",
             get(workspace_status_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/materialize",
+            post(workspace_materialize_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/delete",

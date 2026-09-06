@@ -129,7 +129,7 @@ fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn is_safe_workspace_id(workspace_id: &str) -> bool {
+pub fn is_safe_workspace_id(workspace_id: &str) -> bool {
     !workspace_id.is_empty()
         && workspace_id
             .bytes()
