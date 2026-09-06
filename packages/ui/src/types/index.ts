@@ -30,6 +30,8 @@ export interface Session {
   workspaceId?: string
   modelProvider?: string
   modelName?: string
+  providerConnectionId?: string
+  connectionRevision?: number
   context?: SessionContext
 }
 
@@ -113,6 +115,8 @@ export interface MCPConfig {
 export interface SessionModelBinding {
   provider: string
   model: string
+  connectionId?: string
+  connectionRevision?: number
 }
 
 export interface ModelFavorite {

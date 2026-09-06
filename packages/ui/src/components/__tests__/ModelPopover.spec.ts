@@ -230,6 +230,31 @@ describe('ModelPopover', () => {
     wrapper.unmount()
   })
 
+  it('collapses and reopens provider groups from the group header', async () => {
+    const configStore = useConfigStore()
+    configStore.modelCache = readyModelCache({ deepseek: ['deepseek-chat'] })
+    vi.spyOn(configStore, 'fetchModels').mockResolvedValue(undefined)
+
+    const wrapper = mountPopover()
+    await openContent(wrapper)
+    const group = document.body.querySelector('[data-testid="model-group-deepseek"]') as HTMLElement
+    const header = group.querySelector('button') as HTMLButtonElement
+
+    expect(group.getAttribute('data-state')).toBe('open')
+    expect(group.querySelector('[data-state="open"]')).toBeTruthy()
+
+    header.click()
+    await nextTick()
+    expect(group.getAttribute('data-state')).toBe('closed')
+    expect(group.querySelector('[data-state="closed"]')).toBeTruthy()
+
+    header.click()
+    await nextTick()
+    expect(group.getAttribute('data-state')).toBe('open')
+    expect(group.querySelector('[data-state="open"]')).toBeTruthy()
+    wrapper.unmount()
+  })
+
   it('renders model IDs with provider names', async () => {
     const configStore = useConfigStore()
     configStore.modelCache = readyModelCache({ deepseek: ['deepseek-chat'] })

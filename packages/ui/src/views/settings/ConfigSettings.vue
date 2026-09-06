@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import { useConfigStore } from '../../stores/config'
 import ConfigDomainPanel, { type DomainField } from '../../components/settings/ConfigDomainPanel.vue'
+import ProviderHub from '../../components/settings/ProviderHub.vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 import { api, request } from '../../composables/api'
@@ -352,7 +353,7 @@ async function handleReset(domain: string, key: string) {
   <div>
     <BackToChatButton />
     <SettingsNav />
-    <div class="max-w-2xl mx-auto px-4 py-6">
+    <div class="mx-auto w-full max-w-6xl space-y-2 px-6 py-6">
       <h2 data-testid="settings-config-heading" class="text-lg font-semibold mb-4">{{ t('settings.configTab') }}</h2>
 
       <div v-if="fetchError" class="mb-3 px-3 py-2 text-sm bg-red-100 text-red-800 rounded">
@@ -378,8 +379,12 @@ async function handleReset(domain: string, key: string) {
 
         <div class="space-y-1">
           <template v-for="domain in visibleDomains()" :key="domain">
+            <ProviderHub
+              v-if="domain === 'llm-provider' && activeTab !== 'system'"
+              :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
+            />
             <ConfigDomainPanel
-              v-if="domain !== 'mcp'"
+              v-else-if="domain !== 'mcp'"
               :domain="domain"
               :title="domainLabels[domain] || domain"
               :entries="configStore.mergedConfig[domain] || {}"

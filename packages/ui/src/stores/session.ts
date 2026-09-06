@@ -34,6 +34,8 @@ function toSession(record: ApiSession): Session {
     workspaceId: record.workspaceId,
     modelProvider: record.modelProvider,
     modelName: record.modelName,
+    providerConnectionId: record.providerConnectionId,
+    connectionRevision: record.connectionRevision,
     context: createEmptyContext(),
   }
 }
@@ -177,7 +179,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function updateSession(
     id: string,
-    patch: { title?: string; modelProvider?: string; modelName?: string },
+    patch: { title?: string; modelProvider?: string; modelName?: string; providerConnectionId?: string },
   ): Promise<Session> {
     const updated = toSession(await api.updateSession(id, patch))
     upsertSession(updated)

@@ -94,6 +94,10 @@ export interface ProviderCatalog {
   status: 'ready' | 'missing_credentials' | 'invalid_credentials' | 'unreachable' | 'invalid_response' | 'model_unavailable'
   reasonCode?: string | null
   models: CatalogModel[]
+  connectionId?: string
+  connectionRevision?: number
+  scope?: 'USER' | 'WORKSPACE' | 'SYSTEM'
+  displayName?: string
   verifiedAt?: string | null
   configRevision?: string
 }

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
+  ComboboxAnchor,
   ComboboxRoot,
   ComboboxTrigger,
   ComboboxInput,
@@ -99,12 +100,15 @@ const providerGroups = computed(() => {
     .filter(([, modelIds]) => modelIds.length > 0)
     .map(([provider, modelIds]) => {
       const info = getProviderInfo(provider)
+      const catalog = configStore.modelCache.providers?.[provider]
       const filtered = q
         ? modelIds.filter((model) => matchModel(provider, model, q))
         : modelIds
       return {
         provider,
-        name: info?.name ?? provider,
+        name: catalog?.displayName ?? info?.name ?? provider,
+        connectionId: catalog?.connectionId,
+        connectionRevision: catalog?.connectionRevision,
         models: filtered,
       }
     })
@@ -150,15 +154,12 @@ function setGroupCollapsed(provider: string, collapsed: boolean) {
   }
 }
 
-function toggleGroup(provider: string) {
-  setGroupCollapsed(provider, !isGroupCollapsed(provider))
-}
-
 async function selectModel(value: string) {
   const slash = value.indexOf('/')
   if (slash < 0) return
   const provider = value.slice(0, slash)
   const model = value.slice(slash + 1)
+  const catalog = configStore.modelCache.providers?.[provider]
   const sessionId = sessionStore.currentSessionId
   if (sessionId && !configStore.isChatModelAvailable(provider, model)) {
     toast.error('Selected model is not currently available for chat')
@@ -169,11 +170,14 @@ async function selectModel(value: string) {
       const updated = await sessionStore.updateSession(sessionId, {
         modelProvider: provider,
         modelName: model,
+        providerConnectionId: catalog?.connectionId,
       })
       configStore.setSessionModel(
         sessionId,
         updated.modelProvider ?? provider,
         updated.modelName ?? model,
+        updated.providerConnectionId ?? catalog?.connectionId,
+        updated.connectionRevision ?? catalog?.connectionRevision,
       )
     } catch (cause: unknown) {
       const message = cause instanceof ApiError ? cause.message : 'Failed to persist model binding'
@@ -216,16 +220,18 @@ onMounted(() => {
     ignore-filter
     class="relative inline-block"
   >
-    <ComboboxTrigger as-child>
-      <button
-        data-testid="model-popover-trigger"
-        class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-dashed bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors max-w-[240px] truncate"
-      >
-        <span class="i-lucide-cpu size-3 shrink-0" />
-        <span class="truncate">{{ triggerLabel }}</span>
-        <span class="i-lucide-chevron-up size-3 shrink-0 opacity-50" />
-      </button>
-    </ComboboxTrigger>
+    <ComboboxAnchor as-child>
+      <ComboboxTrigger as-child>
+        <button
+          data-testid="model-popover-trigger"
+          class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-dashed bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors max-w-[240px] truncate"
+        >
+          <span class="i-lucide-cpu size-3 shrink-0" />
+          <span class="truncate">{{ triggerLabel }}</span>
+          <span class="i-lucide-chevron-up size-3 shrink-0 opacity-50" />
+        </button>
+      </ComboboxTrigger>
+    </ComboboxAnchor>
 
     <ComboboxPortal>
       <ComboboxContent
@@ -336,7 +342,6 @@ onMounted(() => {
                     <CollapsibleTrigger as-child>
                       <button
                         class="w-full flex items-center gap-1 hover:text-foreground transition-colors"
-                        @click.stop="toggleGroup(group.provider)"
                       >
                         <span
                           :class="isGroupCollapsed(group.provider) ? 'i-lucide-chevron-right' : 'i-lucide-chevron-down'"

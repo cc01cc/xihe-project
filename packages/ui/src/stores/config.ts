@@ -138,8 +138,17 @@ export const useConfigStore = defineStore('config', () => {
     return undefined
   }
 
-  function setSessionModel(sessionId: string, provider: string, model: string) {
-    sessionModels.value = { ...sessionModels.value, [sessionId]: { provider, model } }
+  function setSessionModel(
+    sessionId: string,
+    provider: string,
+    model: string,
+    connectionId?: string,
+    connectionRevision?: number,
+  ) {
+    sessionModels.value = {
+      ...sessionModels.value,
+      [sessionId]: { provider, model, connectionId, connectionRevision },
+    }
   }
 
   function toggleFavorite(provider: string, model: string) {
