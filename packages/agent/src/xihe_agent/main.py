@@ -641,8 +641,11 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     tool_mode: str = data.get("toolMode", "none")
     instructions: str = data.get("instructions", AGENT_INSTRUCTIONS)
     chat_history_raw: list[dict[str, Any]] = data.get("history", [])
+    credential_lease: str | None = data.get("credentialLease") or None
+    provider_connection_id: str | None = data.get("providerConnectionId") or None
+    connection_revision = data.get("connectionRevision")
 
-    if _llm_ready != "ready":
+    if _llm_ready != "ready" and not credential_lease:
         error_code = _llm_readiness_error_code(_llm_ready)
         return JSONResponse(
             status_code=503,
@@ -678,8 +681,54 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             },
         )
 
-    request_config = llm_config
-    if provider_override and provider_override != llm_config.provider:
+    request_config: LLMConfig
+    if credential_lease:
+        try:
+            grant = await config_client.redeem_provider_lease({
+                "lease": credential_lease,
+                "runId": run_id,
+                "providerConnectionId": provider_connection_id or "",
+                "providerId": provider_override or "",
+                "model": model_override or "",
+                "connectionRevision": int(connection_revision or 0),
+            })
+        except Exception as exc:
+            logger.warning(
+                "Provider credential lease unavailable runId={} connectionId={} errorType={}",
+                run_id,
+                provider_connection_id,
+                type(exc).__name__,
+            )
+            return JSONResponse(
+                status_code=503,
+                media_type="application/problem+json",
+                headers={"X-Request-Id": request_id},
+                content={
+                    "type": "https://xihe.dev/problems/provider-connection-unavailable",
+                    "title": "Provider connection unavailable",
+                    "status": 503,
+                    "code": "PROVIDER_CONNECTION_UNAVAILABLE",
+                    "detail": "The selected provider connection is unavailable",
+                    "retryable": True,
+                    "provider": provider_override or "",
+                    "model": model_override or "",
+                    "requestId": request_id,
+                    "runId": run_id,
+                },
+            )
+        request_config = LLMConfig(
+            provider=str(grant.get("provider", provider_override or "")),
+            route_provider=str(grant.get("routeProvider", grant.get("provider", ""))),
+            api_key=str(grant.get("apiKey") or ""),
+            api_base=str(grant.get("baseUrl") or ""),
+            model=str(grant.get("model") or model_override or ""),
+            timeout=llm_config.timeout,
+            max_tokens=llm_config.max_tokens,
+            temperature=llm_config.temperature,
+        )
+    else:
+        request_config = llm_config
+    if not credential_lease and provider_override and provider_override != llm_config.provider:
         provider_info = _model_catalog.get("providers", {}).get(provider_override)
         provider_runtime = config_client.get_provider(provider_override)
         if not isinstance(provider_info, dict) or provider_info.get("status") != "ready" or not provider_runtime:

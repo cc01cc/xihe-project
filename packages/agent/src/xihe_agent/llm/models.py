@@ -35,8 +35,9 @@ def _now_iso() -> str:
 
 
 def _model_capabilities(provider: str, model_id: str) -> dict[str, bool]:
-    if provider not in {"openai", "deepseek", "xiaomi", "anthropic", "dashscope"}:
-        return {"chat": False, "vision": False, "tools": False}
+    # The connection Catalog, rather than this function's provider allowlist,
+    # is the authority for which adapters are enabled. Keep the conservative
+    # suffix exclusions for endpoints that are clearly not chat models.
     chat = not bool(re.search(r"(?:-|_)(?:asr|tts)$", model_id, re.IGNORECASE))
     return {"chat": chat, "vision": False, "tools": False}
 
@@ -138,11 +139,132 @@ async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
     }
 
 
+async def fetch_connection_catalog(
+        config_client: Any,
+        connections: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Fetch a user-scoped catalog using CP-issued credential leases."""
+    results: dict[str, list[str]] = {}
+    provider_catalog: dict[str, dict[str, Any]] = {}
+    async with httpx.AsyncClient() as client:
+        for descriptor in connections:
+            provider_id = str(descriptor.get("providerId", ""))
+            connection_id = str(descriptor.get("connectionId", ""))
+            catalog_key = provider_id
+            if not provider_id or not connection_id or catalog_key in provider_catalog:
+                continue
+            try:
+                grant = await config_client.redeem_provider_lease({
+                    "lease": descriptor.get("lease"),
+                    "runId": descriptor.get("runId", ""),
+                    "providerConnectionId": connection_id,
+                    "providerId": provider_id,
+                    "model": "*",
+                    "connectionRevision": int(descriptor.get("connectionRevision", 0)),
+                })
+                status = "ready"
+                reason_code = None
+                models: list[dict[str, Any]] = []
+                manual_models = grant.get("manualModels")
+                if grant.get("modelDiscovery") == "manual" and isinstance(manual_models, list):
+                    models = [
+                        {"name": str(model_id), "capabilities": _model_capabilities(provider_id, str(model_id))}
+                        for model_id in manual_models
+                        if isinstance(model_id, str) and model_id
+                    ]
+                    if not models:
+                        status = "invalid_response"
+                        reason_code = "LLM_MODEL_CATALOG_INVALID"
+                else:
+                    api_key = grant.get("apiKey") or ""
+                    base_url = str(grant.get("baseUrl") or "").rstrip("/")
+                    if not base_url:
+                        raise RuntimeError("Provider Base URL is missing")
+                    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                    response = await client.get(
+                        f"{base_url}/models",
+                        headers=headers,
+                        timeout=5,
+                    )
+                    if response.status_code in (401, 403):
+                        status = "invalid_credentials"
+                        reason_code = "LLM_CREDENTIALS_INVALID"
+                    elif response.status_code >= 400:
+                        status = "unreachable"
+                        reason_code = "LLM_PROVIDER_UNREACHABLE"
+                    else:
+                        data = response.json()
+                        raw_models = data.get("data") if isinstance(data, dict) else None
+                        if not isinstance(raw_models, list):
+                            status = "invalid_response"
+                            reason_code = "LLM_MODEL_CATALOG_INVALID"
+                        else:
+                            for item in raw_models:
+                                model_id = item.get("id") if isinstance(item, dict) else None
+                                if not isinstance(model_id, str) or not model_id:
+                                    status = "invalid_response"
+                                    reason_code = "LLM_MODEL_CATALOG_INVALID"
+                                    models = []
+                                    break
+                                models.append({
+                                    "name": model_id,
+                                    "capabilities": _model_capabilities(provider_id, model_id),
+                                })
+                results[catalog_key] = [model["name"] for model in models]
+                provider_catalog[catalog_key] = {
+                    "connectionId": connection_id,
+                    "scope": descriptor.get("scope", "USER"),
+                    "displayName": descriptor.get("displayName", provider_id),
+                    "connectionStatus": status,
+                    "status": status,
+                    "reasonCode": reason_code,
+                    "models": models,
+                    "verifiedAt": _now_iso() if status == "ready" else None,
+                    "connectionRevision": descriptor.get("connectionRevision"),
+                    "configRevision": config_client.config_revision,
+                }
+            except Exception as exc:
+                logger.warning(
+                    "Scoped model catalog failed provider={} connectionId={} errorType={}",
+                    provider_id,
+                    connection_id,
+                    type(exc).__name__,
+                )
+                results[catalog_key] = []
+                provider_catalog[catalog_key] = {
+                    "connectionId": connection_id,
+                    "scope": descriptor.get("scope", "USER"),
+                    "displayName": descriptor.get("displayName", provider_id),
+                    "connectionStatus": "unreachable",
+                    "status": "unreachable",
+                    "reasonCode": "LLM_PROVIDER_UNREACHABLE",
+                    "models": [],
+                    "verifiedAt": None,
+                    "connectionRevision": descriptor.get("connectionRevision"),
+                    "configRevision": config_client.config_revision,
+                }
+    return {
+        "models": results,
+        "providers": provider_catalog,
+        "configRevision": config_client.config_revision,
+    }
+
+
 @router.get("/internal/v1/agent/models")
 async def list_models(_token: None = Depends(verify_service_token)):
     """Proxy to each provider's /v1/models and preserve status semantics."""
     cc = _models_router.config_client
     return await fetch_model_catalog(cc)
+
+
+@router.post("/internal/v1/agent/models")
+async def list_scoped_models(request: Request, _token: None = Depends(verify_service_token)):
+    cc = _models_router.config_client
+    data = await request.json()
+    connections = data.get("connections", []) if isinstance(data, dict) else []
+    if not isinstance(connections, list):
+        raise HTTPException(status_code=400, detail="connections must be an array")
+    return await fetch_connection_catalog(cc, connections)
 
 
 @router.get("/internal/v1/agent/embedding-models")

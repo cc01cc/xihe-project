@@ -278,6 +278,27 @@ class ConfigClient:
     def get_provider(self, provider: str) -> dict[str, Any] | None:
         return self._provider_cache.get(provider)
 
+    async def redeem_provider_lease(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Redeem a short-lived CP credential lease without persisting the key."""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.cp_url}/internal/v1/provider-leases/redeem",
+                headers={"Authorization": f"Bearer {self.api_token}"},
+                json=payload,
+                timeout=5,
+            )
+        if response.status_code >= 400:
+            logger.warning(
+                "ConfigClient: provider lease redeem failed status={} code={}",
+                response.status_code,
+                response.json().get("code") if response.headers.get("content-type", "").startswith("application/json") else "unknown",
+            )
+            raise RuntimeError("Provider credential lease is unavailable")
+        data = response.json()
+        if not isinstance(data, dict):
+            raise RuntimeError("Provider credential lease response is invalid")
+        return data
+
     @property
     def last_fetch(self) -> float:
         return self._last_fetch

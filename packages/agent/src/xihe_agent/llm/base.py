@@ -1,6 +1,6 @@
 import os
 from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 
 from xihe_agent.interfaces.llm import LLMProvider, LLMRequest, LLMToken
 
-ProviderName = Literal["deepseek", "openai", "anthropic", "ollama", "mock", "xiaomi"]
+ProviderName = str
 
-PROVIDER_DEFAULTS: dict[ProviderName, dict[str, Any]] = {
+PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "deepseek": {
         "api_base": "https://api.deepseek.com/v1",
         "model": "deepseek-chat",
@@ -42,7 +42,7 @@ PROVIDER_DEFAULTS: dict[ProviderName, dict[str, Any]] = {
 }
 
 
-def _provider_for_model(model_id: str) -> ProviderName:
+def _provider_for_model(model_id: str) -> str:
     model_lower = model_id.lower()
     if "mimo" in model_lower or "xiaomi" in model_lower:
         return "xiaomi"
@@ -58,7 +58,8 @@ def _provider_for_model(model_id: str) -> ProviderName:
 
 
 class LLMConfig(BaseModel):
-    provider: ProviderName = "deepseek"
+    provider: str = "deepseek"
+    route_provider: str = ""
     api_key: str = ""
     api_base: str = ""
     model: str = ""
@@ -69,6 +70,7 @@ class LLMConfig(BaseModel):
     def with_model(self, model: str) -> "LLMConfig":
         return LLMConfig(
             provider=self.provider,
+            route_provider=self.route_provider,
             api_key=self.api_key,
             api_base=self.api_base,
             model=model or self.model,
@@ -84,12 +86,9 @@ class LLMConfig(BaseModel):
         if not provider_str and model:
             provider_str = _provider_for_model(model)
 
-        provider: ProviderName = cast(
-            ProviderName,
-            provider_str or "mock",
-        )
+        provider = provider_str or "mock"
 
-        env_key_map: dict[ProviderName, str] = {
+        env_key_map: dict[str, str] = {
             "deepseek": "XIHE_DEEPSEEK_API_KEY",
             "openai": "XIHE_OPENAI_API_KEY",
             "anthropic": "XIHE_ANTHROPIC_API_KEY",
@@ -119,9 +118,9 @@ class LLMConfig(BaseModel):
         if not provider_str:
             provider_str = _provider_for_model(model) if model else "mock"
 
-        provider: ProviderName = cast(ProviderName, provider_str)
+        provider = provider_str
 
-        env_key_map: dict[ProviderName, str] = {
+        env_key_map: dict[str, str] = {
             "deepseek": "deepseekApiKey",
             "openai": "openaiApiKey",
             "anthropic": "anthropicApiKey",
@@ -189,12 +188,13 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
             # LiteLLM has a native openai-compatible Xiaomi provider. Keep the
             # provider prefix so LiteLLM selects the correct adapter instead of
             # treating MiMo as an arbitrary OpenAI-compatible endpoint.
+            route_provider = cfg.route_provider or (
+                "xiaomi_mimo" if cfg.provider == "xiaomi" else cfg.provider
+            )
             litellm_provider = (
                 "openai"
                 if cfg.provider == "xiaomi" and use_openai_compat_for_tools
-                else "xiaomi_mimo"
-                if cfg.provider == "xiaomi"
-                else cfg.provider
+                else route_provider
             )
             model = f"{litellm_provider}/{model}"
         llm_kwargs: dict[str, Any] = {

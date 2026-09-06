@@ -92,3 +92,43 @@ async def test_list_models_auth_failure_has_actionable_status(patch_config_clien
 
     assert result["providers"]["openai"]["status"] == "invalid_credentials"
     assert result["providers"]["openai"]["reasonCode"] == "LLM_CREDENTIALS_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_scoped_catalog_redeems_lease_and_fetches_models():
+    from xihe_agent.llm.models import fetch_connection_catalog
+
+    config_client = MagicMock()
+    config_client.config_revision = "connection-rev"
+    config_client.redeem_provider_lease = AsyncMock(return_value={
+        "provider": "deepseek",
+        "routeProvider": "deepseek",
+        "model": "*",
+        "baseUrl": "https://provider.test/v1",
+        "apiKey": "sk-scoped",
+        "connectionRevision": 4,
+        "modelDiscovery": "remote-models",
+        "manualModels": [],
+    })
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"data": [{"id": "deepseek-chat"}]}
+
+    with patch("xihe_agent.llm.models.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        mock_client.get.return_value = response
+
+        result = await fetch_connection_catalog(config_client, [{
+            "lease": "pl-test",
+            "runId": "catalog-run",
+            "connectionId": "conn-1",
+            "providerId": "deepseek",
+            "scope": "USER",
+            "displayName": "DeepSeek",
+            "connectionRevision": 4,
+        }])
+
+    config_client.redeem_provider_lease.assert_awaited_once()
+    assert result["models"]["deepseek"] == ["deepseek-chat"]
+    assert result["providers"]["deepseek"]["connectionId"] == "conn-1"
+    assert result["providers"]["deepseek"]["status"] == "ready"
