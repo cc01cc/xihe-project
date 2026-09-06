@@ -15,6 +15,7 @@ import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
+import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +59,7 @@ public class ChatController {
     private final ChatRunRepository chatRunRepository;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
+    private final ProviderCredentialLeaseService credentialLeases;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     @Value("${cp.agent-url:http://localhost:12632/chat}")
@@ -74,7 +76,8 @@ public class ChatController {
             FileRepository fileRepository,
             ChatRunRepository chatRunRepository,
             HealthMonitor healthMonitor,
-            RequestQueue requestQueue) {
+            RequestQueue requestQueue,
+            ProviderCredentialLeaseService credentialLeases) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -86,6 +89,7 @@ public class ChatController {
         this.chatRunRepository = chatRunRepository;
         this.healthMonitor = healthMonitor;
         this.requestQueue = requestQueue;
+        this.credentialLeases = credentialLeases;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -209,6 +213,12 @@ public class ChatController {
             String title = content.length() > 50 ? content.substring(0, 50) + "..." : content;
             session = sessionService.createWithId(sessionId, userId, workspaceId, title, null, null);
         }
+        if (session.getProviderConnectionId() != null) {
+            // A bound Session is authoritative. Do not allow the browser's display
+            // hints to switch the credential or model used by this run.
+            provider = session.getModelProvider();
+            model = session.getModelName();
+        }
 
         List<String> attachmentIds = extractAttachmentIds(request);
         List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachmentInfos = new ArrayList<>();
@@ -274,6 +284,8 @@ public class ChatController {
             ChatRun chatRun = new ChatRun(
                     runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,
                     provider, model, toolMode, "accepted");
+            chatRun.setProviderConnectionId(session.getProviderConnectionId());
+            chatRun.setConnectionRevision(session.getConnectionRevision());
             chatRunRepository.save(chatRun);
 
             Message userMessage = new Message(sessionId, MessageRole.USER, content);
@@ -352,6 +364,24 @@ public class ChatController {
             AtomicBoolean terminalSent = new AtomicBoolean(false);
             try {
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
+                ChatRun persistedRun = chatRunRepository.findById(runId)
+                        .orElseThrow(() -> new IllegalStateException("Chat run not found"));
+                String effectiveProvider = persistedRun.getProvider() == null
+                        ? provider : persistedRun.getProvider();
+                String effectiveModel = persistedRun.getModel() == null
+                        ? model : persistedRun.getModel();
+                ProviderCredentialLeaseService.IssuedLease credentialLease = null;
+                if (persistedRun.getProviderConnectionId() != null) {
+                    credentialLease = credentialLeases.issue(
+                            userId,
+                            workspaceId,
+                            sessionId,
+                            runId,
+                            persistedRun.getProviderConnectionId(),
+                            effectiveProvider,
+                            effectiveModel,
+                            persistedRun.getConnectionRevision());
+                }
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);
                 agentRequest.put("content", content);
@@ -360,12 +390,17 @@ public class ChatController {
                 agentRequest.put("requestId", requestId);
                 agentRequest.put("runId", runId);
                 agentRequest.put("stream", true);
-                if (provider != null && !provider.isBlank()) {
-                    agentRequest.put("provider", provider);
+                if (effectiveProvider != null && !effectiveProvider.isBlank()) {
+                    agentRequest.put("provider", effectiveProvider);
                 }
                 agentRequest.put("toolMode", toolMode == null || toolMode.isBlank() ? "none" : toolMode);
-                if (model != null && !model.isEmpty()) {
-                    agentRequest.put("model", model);
+                if (effectiveModel != null && !effectiveModel.isEmpty()) {
+                    agentRequest.put("model", effectiveModel);
+                }
+                if (credentialLease != null) {
+                    agentRequest.put("credentialLease", credentialLease.token());
+                    agentRequest.put("providerConnectionId", persistedRun.getProviderConnectionId());
+                    agentRequest.put("connectionRevision", persistedRun.getConnectionRevision());
                 }
                 if (!attachments.isEmpty()) {
                     List<Map<String, Object>> agentAttachments = new ArrayList<>();
@@ -650,6 +685,8 @@ public class ChatController {
         response.put("status", run.getStatus());
         response.put("sessionId", run.getSessionId());
         response.put("runId", run.getId());
+        response.put("providerConnectionId", run.getProviderConnectionId());
+        response.put("connectionRevision", run.getConnectionRevision());
         if (run.getUserMessageId() != null) {
             response.put("messageId", run.getUserMessageId());
         }

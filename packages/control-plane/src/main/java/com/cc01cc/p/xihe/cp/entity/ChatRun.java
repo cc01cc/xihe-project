@@ -41,6 +41,12 @@ public class ChatRun {
     @Column(length = 100)
     private String model;
 
+    @Column(name = "provider_connection_id", length = 36)
+    private String providerConnectionId;
+
+    @Column(name = "connection_revision")
+    private Long connectionRevision;
+
     @Column(name = "tool_mode", nullable = false, length = 20)
     private String toolMode = "none";
 
@@ -119,6 +125,10 @@ public class ChatRun {
     public void setProvider(String provider) { this.provider = provider; }
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
+    public String getProviderConnectionId() { return providerConnectionId; }
+    public void setProviderConnectionId(String providerConnectionId) { this.providerConnectionId = providerConnectionId; }
+    public Long getConnectionRevision() { return connectionRevision; }
+    public void setConnectionRevision(Long connectionRevision) { this.connectionRevision = connectionRevision; }
     public String getToolMode() { return toolMode; }
     public void setToolMode(String toolMode) { this.toolMode = toolMode; }
     public String getUserMessageId() { return userMessageId; }

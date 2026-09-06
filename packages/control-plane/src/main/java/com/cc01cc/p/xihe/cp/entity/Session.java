@@ -26,6 +26,12 @@ public class Session {
     @Column(name = "model_name", length = 100)
     private String modelName;
 
+    @Column(name = "provider_connection_id", length = 36)
+    private String providerConnectionId;
+
+    @Column(name = "connection_revision")
+    private Long connectionRevision;
+
     @Column(nullable = false)
     private boolean archived;
 
@@ -71,6 +77,12 @@ public class Session {
 
     public String getModelName() { return modelName; }
     public void setModelName(String modelName) { this.modelName = modelName; }
+
+    public String getProviderConnectionId() { return providerConnectionId; }
+    public void setProviderConnectionId(String providerConnectionId) { this.providerConnectionId = providerConnectionId; }
+
+    public Long getConnectionRevision() { return connectionRevision; }
+    public void setConnectionRevision(Long connectionRevision) { this.connectionRevision = connectionRevision; }
 
     public boolean isArchived() { return archived; }
     public void setArchived(boolean archived) { this.archived = archived; }

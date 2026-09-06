@@ -59,6 +59,10 @@ public final class EnvelopeEncryptionService {
         }
     }
 
+    public String currentVersion() {
+        return currentVersion;
+    }
+
     public String decrypt(String envelope, String associatedData) {
         if (envelope == null) {
             throw new IllegalArgumentException("envelope must not be null");

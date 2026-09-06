@@ -6,11 +6,13 @@ import java.security.MessageDigest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 @Configuration
 public class OAuthCryptoConfig {
 
     @Bean
+    @Primary
     EnvelopeEncryptionService envelopeEncryptionService(
             @Value("${cp.oauth.encryption-key:}") String configuredKey,
             @Value("${cp.oauth.allow-dev-key:true}") boolean allowDevKey) {

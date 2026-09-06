@@ -58,7 +58,8 @@ public class SessionController {
         String workspaceId = TenantContext.getWorkspaceId();
         try {
             String title = request == null ? null : request.title();
-            Session session = sessionService.create(userId, workspaceId, title, null, null);
+            String providerConnectionId = request == null ? null : request.providerConnectionId();
+            Session session = sessionService.create(userId, workspaceId, title, null, null, providerConnectionId);
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -76,8 +77,9 @@ public class SessionController {
             String title = request == null ? null : request.title();
             String modelProvider = request == null ? null : request.modelProvider();
             String modelName = request == null ? null : request.modelName();
+            String providerConnectionId = request == null ? null : request.providerConnectionId();
             Session session = sessionService.update(sessionId, userId, workspaceId,
-                    title, modelProvider, modelName);
+                    title, modelProvider, modelName, providerConnectionId);
             return ResponseEntity.ok(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -104,6 +106,8 @@ public class SessionController {
         view.put("title", session.getTitle());
         view.put("modelProvider", session.getModelProvider());
         view.put("modelName", session.getModelName());
+        view.put("providerConnectionId", session.getProviderConnectionId());
+        view.put("connectionRevision", session.getConnectionRevision());
         view.put("archived", session.isArchived());
         view.put("createdAt", session.getCreatedAt() == null ? null : session.getCreatedAt().toString());
         view.put("updatedAt", session.getUpdatedAt() == null ? null : session.getUpdatedAt().toString());
@@ -117,6 +121,8 @@ public class SessionController {
         return view;
     }
 
-    public record CreateSessionRequest(String title, String modelProvider, String modelName) {}
-    public record UpdateSessionRequest(String title, String modelProvider, String modelName) {}
+    public record CreateSessionRequest(String title, String modelProvider, String modelName,
+                                       String providerConnectionId) {}
+    public record UpdateSessionRequest(String title, String modelProvider, String modelName,
+                                       String providerConnectionId) {}
 }

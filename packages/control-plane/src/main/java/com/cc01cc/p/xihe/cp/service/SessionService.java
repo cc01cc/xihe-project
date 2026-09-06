@@ -2,7 +2,9 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
+import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -25,6 +27,7 @@ public class SessionService {
     private final ContextProjectionRepository contextProjectionRepository;
     private final WorkspaceService workspaceService;
     private final ChatAttachmentService chatAttachmentService;
+    private final ProviderConnectionService providerConnectionService;
 
     public SessionService(SessionRepository sessionRepository,
                           MessageRepository messageRepository,
@@ -32,7 +35,8 @@ public class SessionService {
                           EventStoreRepository eventStoreRepository,
                           ContextProjectionRepository contextProjectionRepository,
                           WorkspaceService workspaceService,
-                          ChatAttachmentService chatAttachmentService) {
+                          ChatAttachmentService chatAttachmentService,
+                          ProviderConnectionService providerConnectionService) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -40,6 +44,7 @@ public class SessionService {
         this.contextProjectionRepository = contextProjectionRepository;
         this.workspaceService = workspaceService;
         this.chatAttachmentService = chatAttachmentService;
+        this.providerConnectionService = providerConnectionService;
     }
 
     @Transactional(readOnly = true)
@@ -52,14 +57,28 @@ public class SessionService {
     @Transactional
     public Session create(String userId, String workspaceId, String title,
                           String modelProvider, String modelName) {
+        return create(userId, workspaceId, title, modelProvider, modelName, null);
+    }
+
+    @Transactional
+    public Session create(String userId, String workspaceId, String title,
+                          String modelProvider, String modelName,
+                          String providerConnectionId) {
         requireWorkspace(userId, workspaceId);
         return createWithId(UUID.randomUUID().toString(), userId, workspaceId,
-                title, modelProvider, modelName);
+                title, modelProvider, modelName, providerConnectionId);
     }
 
     @Transactional
     public Session createWithId(String sessionId, String userId, String workspaceId, String title,
                                 String modelProvider, String modelName) {
+        return createWithId(sessionId, userId, workspaceId, title, modelProvider, modelName, null);
+    }
+
+    @Transactional
+    public Session createWithId(String sessionId, String userId, String workspaceId, String title,
+                                String modelProvider, String modelName,
+                                String providerConnectionId) {
         requireWorkspace(userId, workspaceId);
         if (sessionId == null || sessionId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
@@ -71,6 +90,7 @@ public class SessionService {
         session.setId(sessionId);
         session.setModelProvider(modelProvider);
         session.setModelName(modelName);
+        bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
         return sessionRepository.save(session);
     }
 
@@ -86,6 +106,13 @@ public class SessionService {
     @Transactional
     public Session update(String sessionId, String userId, String workspaceId,
                           String title, String modelProvider, String modelName) {
+        return update(sessionId, userId, workspaceId, title, modelProvider, modelName, null);
+    }
+
+    @Transactional
+    public Session update(String sessionId, String userId, String workspaceId,
+                          String title, String modelProvider, String modelName,
+                          String providerConnectionId) {
         Session session = requireCurrent(sessionId, userId, workspaceId);
         if (title != null) {
             if (title.isBlank()) {
@@ -99,7 +126,36 @@ public class SessionService {
         if (modelName != null) {
             session.setModelName(modelName.isBlank() ? null : modelName.trim());
         }
+        if (providerConnectionId != null) {
+            bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
+        }
         return sessionRepository.save(session);
+    }
+
+    private void bindProviderConnection(
+            Session session,
+            String userId,
+            String workspaceId,
+            String providerConnectionId,
+            String requestedProvider) {
+        if (providerConnectionId == null || providerConnectionId.isBlank()) return;
+        try {
+            ProviderConnection connection = providerConnectionService.requireUsable(providerConnectionId);
+            if (requestedProvider != null && !requestedProvider.isBlank()
+                    && !connection.getProviderId().equals(requestedProvider.trim())) {
+                throw new IllegalArgumentException("Provider connection does not match model provider");
+            }
+            if (!session.getWorkspaceId().equals(workspaceId) || !session.getUserId().equals(userId)) {
+                throw new IllegalArgumentException("Session ownership mismatch");
+            }
+            session.setProviderConnectionId(connection.getId());
+            session.setConnectionRevision(connection.getRevision());
+            if (session.getModelProvider() == null || session.getModelProvider().isBlank()) {
+                session.setModelProvider(connection.getProviderId());
+            }
+        } catch (IllegalArgumentException e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_UNAVAILABLE", e.getMessage());
+        }
     }
 
     @Transactional
