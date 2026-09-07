@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Sticky tool-name alias rows (PLAN-242 M2).
@@ -17,15 +18,15 @@ import java.util.Objects;
 public class McpToolAlias {
 
     @Id
-    @Column(name = "workspace_id", nullable = false, length = 36)
-    private String workspaceId;
+    @Column(name = "workspace_id", nullable = false, columnDefinition = "uuid")
+    private UUID workspaceId;
 
     @Id
     @Column(name = "issued_name", nullable = false, length = 255)
     private String issuedName;
 
-    @Column(name = "server_id", nullable = false, length = 36)
-    private String serverId;
+    @Column(name = "server_id", nullable = false, columnDefinition = "uuid")
+    private UUID serverId;
 
     @Column(name = "backend_name", nullable = false, length = 255)
     private String backendName;
@@ -43,9 +44,9 @@ public class McpToolAlias {
 
     public McpToolAlias(String workspaceId, String issuedName, String serverId,
                         String backendName, long generation) {
-        this.workspaceId = workspaceId;
+        this.workspaceId = UUID.fromString(workspaceId);
         this.issuedName = issuedName;
-        this.serverId = serverId;
+        this.serverId = UUID.fromString(serverId);
         this.backendName = backendName;
         this.generation = generation;
     }
@@ -61,14 +62,14 @@ public class McpToolAlias {
         updatedAt = Instant.now();
     }
 
-    public String getWorkspaceId() { return workspaceId; }
-    public void setWorkspaceId(String workspaceId) { this.workspaceId = workspaceId; }
+    public UUID getWorkspaceId() { return workspaceId; }
+    public void setWorkspaceId(UUID workspaceId) { this.workspaceId = workspaceId; }
 
     public String getIssuedName() { return issuedName; }
     public void setIssuedName(String issuedName) { this.issuedName = issuedName; }
 
-    public String getServerId() { return serverId; }
-    public void setServerId(String serverId) { this.serverId = serverId; }
+    public UUID getServerId() { return serverId; }
+    public void setServerId(UUID serverId) { this.serverId = serverId; }
 
     public String getBackendName() { return backendName; }
     public void setBackendName(String backendName) { this.backendName = backendName; }
@@ -77,12 +78,12 @@ public class McpToolAlias {
     public void setGeneration(long generation) { this.generation = generation; }
 
     public static class McpToolAliasId implements Serializable {
-        private String workspaceId;
+        private UUID workspaceId;
         private String issuedName;
 
         public McpToolAliasId() {}
 
-        public McpToolAliasId(String workspaceId, String issuedName) {
+        public McpToolAliasId(UUID workspaceId, String issuedName) {
             this.workspaceId = workspaceId;
             this.issuedName = issuedName;
         }

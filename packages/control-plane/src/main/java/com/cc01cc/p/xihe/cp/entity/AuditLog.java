@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "audit_logs")
@@ -9,13 +10,15 @@ public class AuditLog {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "id", length = 36)
-    private String id;
+    @Column(name = "id", columnDefinition = "uuid")
+    private UUID id;
 
     @Column(name = "user_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userId;
 
     @Column(name = "workspace_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(nullable = false, length = 100)
@@ -45,8 +48,8 @@ public class AuditLog {
         createdAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
 
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }

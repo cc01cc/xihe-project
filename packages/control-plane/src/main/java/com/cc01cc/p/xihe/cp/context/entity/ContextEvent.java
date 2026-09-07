@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.context.entity;
 
 import jakarta.persistence.*;
+import com.cc01cc.p.xihe.cp.entity.UuidStringConverter;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -14,12 +15,15 @@ public class ContextEvent {
     private UUID id;
 
     @Column(name = "session_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String sessionId;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(name = "user_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userId;
 
     @Column(name = "event_type", nullable = false, length = 50)
@@ -28,7 +32,8 @@ public class ContextEvent {
     @Column(name = "sequence", nullable = false)
     private Long sequence;
 
-    @Column(name = "payload", columnDefinition = "TEXT", nullable = false)
+    @Column(name = "payload", columnDefinition = "jsonb", nullable = false)
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     private String payload;
 
     @Column(name = "correlation_id", length = 36)

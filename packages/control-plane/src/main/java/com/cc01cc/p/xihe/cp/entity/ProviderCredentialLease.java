@@ -1,37 +1,48 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
+import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
+import jakarta.persistence.Convert;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "provider_credential_leases")
 public class ProviderCredentialLease {
 
     @Id
-    @Column(length = 36)
-    private String id;
+    @Column(length = 36, columnDefinition = "uuid")
+    private UUID id;
 
     @Column(name = "lease_hash", nullable = false, unique = true, length = 128)
     private String leaseHash;
 
     @Column(name = "provider_connection_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String providerConnectionId;
 
     @Column(name = "user_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userId;
 
     @Column(name = "workspace_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(name = "session_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String sessionId;
 
     @Column(name = "run_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String runId;
 
     @Column(name = "provider_id", nullable = false, length = 128)
@@ -59,8 +70,8 @@ public class ProviderCredentialLease {
         if (createdAt == null) createdAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
     public String getLeaseHash() { return leaseHash; }
     public void setLeaseHash(String leaseHash) { this.leaseHash = leaseHash; }
     public String getProviderConnectionId() { return providerConnectionId; }

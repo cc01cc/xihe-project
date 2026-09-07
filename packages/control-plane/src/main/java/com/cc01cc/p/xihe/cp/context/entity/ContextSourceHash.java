@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.context.entity;
 
 import jakarta.persistence.*;
+import com.cc01cc.p.xihe.cp.entity.UuidStringConverter;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -15,6 +16,7 @@ public class ContextSourceHash {
     private UUID id;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(name = "source_key", nullable = false, length = 255)

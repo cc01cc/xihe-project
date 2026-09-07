@@ -2,17 +2,19 @@ package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "config_audit")
 public class ConfigAuditEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
     @Column(name = "config_id", nullable = false)
-    private Long configId;
+    @Convert(converter = UuidStringConverter.class)
+    private String configId;
 
     @Column(length = 32)
     private String environment;
@@ -45,11 +47,11 @@ public class ConfigAuditEntity {
         changedAt = Instant.now();
     }
 
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
 
-    public Long getConfigId() { return configId; }
-    public void setConfigId(Long configId) { this.configId = configId; }
+    public String getConfigId() { return configId; }
+    public void setConfigId(String configId) { this.configId = configId; }
 
     public String getEnvironment() { return environment; }
     public void setEnvironment(String environment) { this.environment = environment; }

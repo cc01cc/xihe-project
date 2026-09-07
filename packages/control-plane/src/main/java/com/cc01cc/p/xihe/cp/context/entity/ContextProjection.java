@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.context.entity;
 
 import jakarta.persistence.*;
+import com.cc01cc.p.xihe.cp.entity.UuidStringConverter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import java.time.Instant;
@@ -16,12 +17,15 @@ public class ContextProjection {
     private UUID id;
 
     @Column(name = "session_id", nullable = false, unique = true, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String sessionId;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(name = "user_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userId;
 
     @Column(name = "projection_type", nullable = false, length = 50)

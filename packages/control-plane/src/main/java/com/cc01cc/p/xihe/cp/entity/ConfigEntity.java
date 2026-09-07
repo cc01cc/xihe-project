@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "config", uniqueConstraints = {
@@ -12,8 +13,8 @@ import java.time.Instant;
 public class ConfigEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
     @Column(nullable = false, length = 64)
     private String environment = "default";
@@ -51,8 +52,8 @@ public class ConfigEntity {
         updatedAt = Instant.now();
     }
 
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
 
     public String getEnvironment() { return environment; }
     public void setEnvironment(String environment) { this.environment = environment; }

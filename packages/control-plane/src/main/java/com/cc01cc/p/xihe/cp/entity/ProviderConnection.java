@@ -11,6 +11,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "provider_connections", uniqueConstraints = @UniqueConstraint(
@@ -30,8 +31,8 @@ public class ProviderConnection {
     public static final String STATUS_DISABLED = "DISABLED";
 
     @Id
-    @Column(length = 36)
-    private String id;
+    @Column(length = 36, columnDefinition = "uuid")
+    private UUID id;
 
     @Column(name = "owner_type", nullable = false, length = 16)
     private String ownerType;
@@ -99,8 +100,8 @@ public class ProviderConnection {
         updatedAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
     public String getOwnerType() { return ownerType; }
     public void setOwnerType(String ownerType) { this.ownerType = ownerType; }
     public String getOwnerId() { return ownerId; }

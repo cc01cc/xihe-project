@@ -1,13 +1,21 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Convert;
 import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Convert;
 import jakarta.persistence.GenerationType;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
+import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Index;
+import jakarta.persistence.Convert;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -27,6 +35,7 @@ public class WorkspaceExecutionSpec {
     private UUID id;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(nullable = false)

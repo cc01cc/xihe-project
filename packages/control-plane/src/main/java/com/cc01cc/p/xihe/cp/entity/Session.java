@@ -2,19 +2,22 @@ package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "sessions")
 public class Session {
 
     @Id
-    @Column(name = "id", length = 36)
-    private String id;
+    @Column(name = "id", columnDefinition = "uuid")
+    private UUID id;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(name = "user_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userId;
 
     @Column(length = 255)
@@ -27,6 +30,7 @@ public class Session {
     private String modelName;
 
     @Column(name = "provider_connection_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String providerConnectionId;
 
     @Column(name = "connection_revision")
@@ -60,8 +64,8 @@ public class Session {
         updatedAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
 
     public String getWorkspaceId() { return workspaceId; }
     public void setWorkspaceId(String workspaceId) { this.workspaceId = workspaceId; }

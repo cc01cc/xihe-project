@@ -1,7 +1,9 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.*;
+import jakarta.persistence.Convert;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "users")
@@ -9,8 +11,8 @@ public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "id", length = 36)
-    private String id;
+    @Column(name = "id", columnDefinition = "uuid")
+    private UUID id;
 
     @Column(nullable = false, unique = true, length = 255)
     private String email;
@@ -57,8 +59,8 @@ public class User {
         updatedAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
 
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }

@@ -1,32 +1,43 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
+import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.Convert;
 import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
+import jakarta.persistence.Convert;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "approval_requests")
 public class ChatApproval {
 
     @Id
-    @Column(name = "request_id", length = 36)
-    private String requestId;
+    @Column(name = "request_id", columnDefinition = "uuid")
+    private UUID requestId;
 
     @Column(name = "run_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String runId;
 
     @Column(name = "session_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String sessionId;
 
     @Column(name = "user_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userId;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(nullable = false, length = 80)
@@ -64,7 +75,7 @@ public class ChatApproval {
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
                         String workspaceId, String tool, String action, String details,
                         String state, Instant expiresAt) {
-        this.requestId = requestId;
+        this.requestId = UUID.fromString(requestId);
         this.runId = runId;
         this.sessionId = sessionId;
         this.userId = userId;
@@ -88,7 +99,7 @@ public class ChatApproval {
         updatedAt = Instant.now();
     }
 
-    public String getRequestId() { return requestId; }
+    public UUID getRequestId() { return requestId; }
     public String getRunId() { return runId; }
     public String getSessionId() { return sessionId; }
     public String getUserId() { return userId; }

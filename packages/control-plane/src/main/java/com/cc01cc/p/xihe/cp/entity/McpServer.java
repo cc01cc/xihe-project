@@ -2,16 +2,18 @@ package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "mcp_servers")
 public class McpServer {
 
     @Id
-    @Column(name = "id", length = 36)
-    private String id;
+    @Column(name = "id", columnDefinition = "uuid")
+    private UUID id;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(nullable = false, length = 255)
@@ -45,7 +47,7 @@ public class McpServer {
 
     @PrePersist
     protected void onCreate() {
-        if (id == null) id = java.util.UUID.randomUUID().toString();
+        if (id == null) id = java.util.UUID.randomUUID();
         createdAt = Instant.now();
         updatedAt = Instant.now();
     }
@@ -55,8 +57,8 @@ public class McpServer {
         updatedAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
 
     public String getWorkspaceId() { return workspaceId; }
     public void setWorkspaceId(String workspaceId) { this.workspaceId = workspaceId; }

@@ -1,16 +1,26 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import java.time.Instant;
+import java.util.UUID;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Convert;
 import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Convert;
 import jakarta.persistence.GenerationType;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
+import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.Convert;
 import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
+import jakarta.persistence.Convert;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Convert;
 
 @Entity
 @Table(name = "oauth_credentials", uniqueConstraints = @UniqueConstraint(
@@ -19,16 +29,19 @@ public class OAuthCredential {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(length = 36)
-    private String id;
+    @Column(length = 36, columnDefinition = "uuid")
+    private UUID id;
 
     @Column(name = "user_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userId;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(name = "server_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String serverId;
 
     @Column(name = "client_id", nullable = false, length = 255)
@@ -73,8 +86,8 @@ public class OAuthCredential {
         updatedAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
     public String getWorkspaceId() { return workspaceId; }

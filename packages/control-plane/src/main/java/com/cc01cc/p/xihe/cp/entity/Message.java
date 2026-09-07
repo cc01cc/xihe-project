@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "messages")
@@ -9,13 +10,15 @@ public class Message {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "id", length = 36)
-    private String id;
+    @Column(name = "id", columnDefinition = "uuid")
+    private UUID id;
 
     @Column(name = "session_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String sessionId;
 
     @Column(name = "run_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String runId;
 
     @Enumerated(EnumType.STRING)
@@ -47,8 +50,8 @@ public class Message {
         createdAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
 
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }

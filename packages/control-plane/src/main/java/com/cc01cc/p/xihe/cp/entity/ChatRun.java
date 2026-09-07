@@ -1,14 +1,22 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
+import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.Convert;
 import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
+import jakarta.persistence.Convert;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Convert;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "chat_runs", uniqueConstraints = @UniqueConstraint(
@@ -17,16 +25,19 @@ import java.time.Instant;
 public class ChatRun {
 
     @Id
-    @Column(name = "id", length = 36)
-    private String id;
+    @Column(name = "id", columnDefinition = "uuid")
+    private UUID id;
 
     @Column(name = "session_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String sessionId;
 
     @Column(name = "user_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userId;
 
     @Column(name = "workspace_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
     @Column(name = "idempotency_key", nullable = false, length = 128)
@@ -42,6 +53,7 @@ public class ChatRun {
     private String model;
 
     @Column(name = "provider_connection_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String providerConnectionId;
 
     @Column(name = "connection_revision")
@@ -51,9 +63,11 @@ public class ChatRun {
     private String toolMode = "none";
 
     @Column(name = "user_message_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String userMessageId;
 
     @Column(name = "assistant_message_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
     private String assistantMessageId;
 
     @Column(nullable = false, length = 24)
@@ -85,7 +99,7 @@ public class ChatRun {
     public ChatRun(String id, String sessionId, String userId, String workspaceId,
                    String idempotencyKey, String requestHash, String provider,
                    String model, String toolMode, String status) {
-        this.id = id;
+        this.id = UUID.fromString(id);
         this.sessionId = sessionId;
         this.userId = userId;
         this.workspaceId = workspaceId;
@@ -109,8 +123,8 @@ public class ChatRun {
         updatedAt = Instant.now();
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
     public String getUserId() { return userId; }
