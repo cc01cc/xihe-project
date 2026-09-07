@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { OpenFile } from '../../types'
+import { X } from '@lucide/vue'
 
 defineProps<{
   openFiles: OpenFile[]
@@ -35,7 +36,7 @@ const emit = defineEmits<{
         aria-label="Close tab"
         @click.stop="emit('close', file.path)"
       >
-        <span class="i-lucide-x size-3" />
+         <X class="size-3" aria-hidden="true" />
       </button>
     </div>
   </div>

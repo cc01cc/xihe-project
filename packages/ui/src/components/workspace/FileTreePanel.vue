@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
+import { LoaderCircle, RefreshCw, Search, X } from '@lucide/vue'
 import { useWorkspaceStore } from '../../stores/workspace'
 import FileTree from './FileTree.vue'
 
@@ -7,9 +8,7 @@ const ws = useWorkspaceStore()
 const searchQuery = ref('')
 
 onMounted(() => {
-  if (ws.fileTree.length === 0) {
-    ws.loadTree()
-  }
+  void ws.loadTree()
 })
 
 const filteredTree = computed(() => {
@@ -27,7 +26,7 @@ function clearSearch() {
   <div class="flex flex-col h-full">
     <div class="flex items-center gap-1 px-2 py-2 border-b shrink-0">
       <div class="relative flex-1">
-        <span class="i-lucide-search absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+        <Search class="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
         <input
           v-model="searchQuery"
           placeholder="过滤文件树"
@@ -39,7 +38,7 @@ function clearSearch() {
           title="Clear"
           @click="clearSearch"
         >
-          <span class="i-lucide-x size-3" />
+          <X class="size-3" />
         </button>
       </div>
       <button
@@ -47,12 +46,12 @@ function clearSearch() {
         title="Refresh"
         @click="ws.refreshTree()"
       >
-        <span class="i-lucide-refresh-cw size-3.5" />
+        <RefreshCw class="size-3.5" />
       </button>
     </div>
 
-    <div v-if="ws.loading" class="flex-1 flex items-center justify-center">
-      <span class="i-lucide-loader-circle size-5 animate-spin text-muted-foreground" />
+    <div v-if="ws.loading" data-testid="workspace-tree-loading" class="flex-1 flex items-center justify-center">
+       <LoaderCircle class="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
     </div>
 
     <div v-else-if="ws.treeError" class="flex-1 flex flex-col items-center justify-center gap-2 p-4">
@@ -65,8 +64,8 @@ function clearSearch() {
       </button>
     </div>
 
-    <div v-else-if="ws.fileTree.length === 0" class="flex-1 flex items-center justify-center">
-      <p class="text-sm text-muted-foreground">Workspace is empty</p>
+    <div v-else-if="ws.fileTree.length === 0" data-testid="workspace-empty-state" class="flex-1 flex items-center justify-center">
+       <p class="text-sm text-muted-foreground">工作区暂无文件</p>
     </div>
 
     <div v-else class="flex-1 overflow-y-auto py-1 px-1">

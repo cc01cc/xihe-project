@@ -62,7 +62,10 @@ public class WorkspaceController {
             String profile = request == null || request.profile() == null ? "coding" : request.profile();
             String image = request == null ? null : request.image();
             Workspace workspace = workspaceService.createWorkspace(name, description, userId, profile, image);
-            return ResponseEntity.status(HttpStatus.CREATED).body(toView(workspace));
+            // toView already returns a ResponseEntity. Nesting it as the body
+            // serializes `{body, headers, statusCode}` and hides workspace.id
+            // from the UI response.
+            return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -97,6 +100,10 @@ public class WorkspaceController {
     }
 
     private ResponseEntity<Map<String, Object>> toView(Workspace workspace) {
+        return ResponseEntity.ok(toMap(workspace));
+    }
+
+    private Map<String, Object> toMap(Workspace workspace) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", workspace.getId());
         view.put("name", workspace.getName());
@@ -107,7 +114,7 @@ public class WorkspaceController {
         view.put("generation", workspace.getGeneration());
         view.put("createdAt", workspace.getCreatedAt() == null ? null : workspace.getCreatedAt().toString());
         view.put("updatedAt", workspace.getUpdatedAt() == null ? null : workspace.getUpdatedAt().toString());
-        return ResponseEntity.ok(view);
+        return view;
     }
 
     public record CreateWorkspaceRequest(String name, String description, String profile, String image) {}

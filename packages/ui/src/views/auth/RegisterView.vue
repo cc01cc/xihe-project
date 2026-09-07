@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import { Sun } from '@lucide/vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -41,7 +42,7 @@ async function handleSubmit() {
   <div class="flex items-center justify-center min-h-screen bg-muted/30">
     <div class="w-full max-w-md p-8 bg-background rounded-xl shadow-sm border">
       <div class="text-center mb-6">
-        <div class="text-3xl mb-2"><span class="i-lucide-sun size-8" /></div>
+         <div class="mb-2 text-3xl"><Sun class="mx-auto size-8" aria-hidden="true" /></div>
         <h1 class="text-2xl font-bold">{{ t('register.title') }}</h1>
       </div>
       <p class="text-sm text-muted-foreground mb-6">{{ t('login.hint') }}</p>

@@ -1,10 +1,12 @@
-import { ref, computed, watch } from 'vue'
+import { ref, shallowRef, computed, watch } from 'vue'
 import { logger } from '../lib/logger'
 
 type PdfSource = (() => string | ArrayBuffer | null) | string | ArrayBuffer | null
 
 export function usePdfDocument(src: PdfSource) {
-  const pdfDoc = ref<any>(null)
+  // pdfjs proxy objects use private fields; deep Vue reactivity changes the
+  // receiver for methods such as getPage() and breaks those private fields.
+  const pdfDoc = shallowRef<any>(null)
   const numPages = ref(0)
   const loading = ref(false)
   const error = ref<string | null>(null)

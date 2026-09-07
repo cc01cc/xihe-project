@@ -130,6 +130,101 @@ test.describe('Chat', () => {
     await expect(page.locator('button[aria-label="chat.send"], button[aria-label="发送"]')).toBeVisible({ timeout: 5000 })
   })
 
+  test('shows a retryable stream error and recovers through retry', async ({ page }) => {
+    await setupMockAuth(page, {
+      sse: {
+        tokens: ['partial response'],
+        retryTokens: ['recovered response'],
+        errorAfterTokens: {
+          code: 'PROVIDER_TEMPORARY',
+          detail: 'Provider temporarily unavailable',
+          retryable: true,
+        },
+        delayMs: 50,
+      },
+    })
+    await setupMockSessions(page, { sessions: [{ id: 'retry-session', title: 'Retry Test' }] })
+
+    await page.goto('/chat/retry-session')
+    const textarea = page.locator('textarea')
+    await textarea.fill('Try again')
+    await textarea.press('Enter')
+
+    await expect(page.getByText('partial response')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByTestId('message-error')).toContainText('PROVIDER_TEMPORARY')
+    const retry = page.getByTestId('message-retry-button')
+    await expect(retry).toBeVisible()
+    await retry.click()
+    await expect(page.getByText('recovered response')).toBeVisible({ timeout: 10000 })
+    await expect(page).toHaveScreenshot('chat-retry-recovered.png')
+  })
+
+  test('voice input appends a final transcript to the composer', async ({ page }) => {
+    await page.addInitScript(() => {
+      class MockSpeechRecognition {
+        static instance: MockSpeechRecognition | null = null
+        onresult: ((event: unknown) => void) | null = null
+        onend: (() => void) | null = null
+        onerror: ((event: unknown) => void) | null = null
+
+        constructor() {
+          MockSpeechRecognition.instance = this
+        }
+
+        start() {}
+        stop() { this.onend?.() }
+      }
+      Object.defineProperty(window, 'SpeechRecognition', {
+        configurable: true,
+        value: MockSpeechRecognition,
+      })
+    })
+    await setupMockAuth(page)
+    await setupMockSessions(page, { sessions: [{ id: 'voice-session', title: 'Voice Test' }] })
+
+    await page.goto('/chat/voice-session')
+    const voiceButton = page.getByTitle('语音输入')
+    await expect(voiceButton).toBeVisible()
+    await voiceButton.click()
+    await page.evaluate(() => {
+      const recognition = (window as typeof window & {
+        SpeechRecognition: { instance?: { onresult?: (event: unknown) => void } }
+      }).SpeechRecognition.instance
+      recognition?.onresult?.({
+        resultIndex: 0,
+        results: [{ isFinal: true, 0: { transcript: '来自语音' } }],
+      })
+    })
+    await expect(page.getByTestId('chat-input')).toHaveValue('来自语音')
+    await expect(page).toHaveScreenshot('chat-voice-transcript.png')
+  })
+
+  test('attachment upload failure keeps the draft and shows a toast', async ({ page }, testInfo) => {
+    await setupMockAuth(page)
+    await setupMockSessions(page, { sessions: [{ id: 'upload-failure-session', title: 'Upload Failure' }] })
+    await page.route('**/api/v1/sessions/upload-failure-session/attachments', (route) => route.fulfill({
+      status: 500,
+      contentType: 'application/problem+json',
+      body: JSON.stringify({ code: 'ATTACHMENT_UPLOAD_FAILED', detail: 'Attachment service unavailable' }),
+    }))
+
+    await page.goto('/chat/upload-failure-session')
+    await page.getByTestId('file-upload-input').setInputFiles({
+      name: 'notes.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Notes'),
+    })
+    await page.getByTestId('chat-input').fill('Keep this draft')
+    await page.getByTestId('chat-input').press('Enter')
+    await expect(page.getByTestId('chat-input')).toHaveValue('Keep this draft')
+    await expect(page.getByTestId('attachment-upload-error')).toBeVisible()
+    await expect(page.getByTestId('attachment-retry-button')).toBeVisible()
+    await expect(page.getByTestId('attachment-error-remove-button')).toBeVisible()
+    await expect(page.locator('[data-sonner-toast]')).toContainText('Attachment service unavailable')
+    await page.screenshot({ path: testInfo.outputPath('plan-269-attachment-failure-full.png') })
+    await expect(page).toHaveScreenshot('chat-attachment-upload-failure.png')
+  })
+
   test('new user message is marked as scroll anchor', async ({ page }) => {
     await setupMockAuth(page, {
       sse: { tokens: ['reply '] },

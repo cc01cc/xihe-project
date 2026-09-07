@@ -16,7 +16,8 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 watch(() => props.modelValue, (v) => { text.value = v })
 
-function onInput() {
+function onInput(event: Event) {
+  text.value = (event.target as HTMLTextAreaElement).value
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     emit('update:modelValue', text.value)
@@ -25,7 +26,7 @@ function onInput() {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div data-testid="workspace-code-editor" class="flex flex-col h-full">
     <div class="flex items-center justify-between px-3 py-1 border-b bg-muted/30 shrink-0">
       <span class="text-[10px] font-mono text-muted-foreground uppercase">{{ language }}</span>
       <span class="text-[10px] text-muted-foreground">{{ text.split('\n').length }} lines</span>

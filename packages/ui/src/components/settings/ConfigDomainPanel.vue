@@ -41,7 +41,10 @@ function toggle() {
 }
 
 function handleSave() {
-  emit('save', { ...editing.value })
+  const body = Object.fromEntries(
+    Object.entries(editing.value).filter(([, value]) => value !== ''),
+  )
+  emit('save', body)
 }
 
 function handleReset(key: string) {
@@ -50,7 +53,7 @@ function handleReset(key: string) {
 </script>
 
 <template>
-  <div class="border rounded-lg mb-2 overflow-hidden">
+  <div :data-testid="`config-domain-${domain}`" class="border rounded-lg mb-2 overflow-hidden">
     <button
       class="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
       @click="toggle"

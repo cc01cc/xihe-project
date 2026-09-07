@@ -20,11 +20,26 @@ const expandedArray = computed({
   },
 })
 
+function isRuntimeArtifact(name: string): boolean {
+  return name.startsWith('.xihe-') || /^container-runtime\.log(?:\..*)?$/.test(name)
+}
+
+function hideRuntimeArtifacts(nodes: FileNode[]): FileNode[] {
+  return nodes.flatMap((node) => {
+    if (isRuntimeArtifact(node.name)) return []
+    const children = node.children ? hideRuntimeArtifacts(node.children) : undefined
+    if (node.type === 'directory' && node.name === 'logs' && children?.length === 0) return []
+    return [{ ...node, ...(children ? { children } : {}) }]
+  })
+}
+
+const userTree = computed(() => hideRuntimeArtifacts(ws.fileTree))
+
 /** Frontend filter over the loaded tree (M3 task 3.5): matches name substring,
  *  keeps ancestors of matches, and auto-expands them. Empty query = full tree. */
 const displayTree = computed((): FileNode[] => {
   const q = props.searchQuery.trim().toLowerCase()
-  if (!q) return ws.fileTree
+  if (!q) return userTree.value
   const filter = (nodes: FileNode[]): FileNode[] => {
     const out: FileNode[] = []
     for (const n of nodes) {
@@ -35,7 +50,7 @@ const displayTree = computed((): FileNode[] => {
     }
     return out
   }
-  return filter(ws.fileTree)
+  return filter(userTree.value)
 })
 
 const searchExpanded = computed(() => {

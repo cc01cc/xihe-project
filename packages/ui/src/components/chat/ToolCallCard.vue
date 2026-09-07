@@ -7,6 +7,8 @@ import {
   CheckCircle,
   XCircle,
   Clock,
+  Bot,
+  ChevronDown,
 } from '@lucide/vue'
 
 const props = defineProps<{
@@ -53,7 +55,12 @@ const duration = computed(() => {
       class="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent/50"
       @click="expanded = !expanded"
     >
-      <span :class="[statusIcons[toolCall.status] || 'i-lucide-bot', 'size-4 shrink-0', statusColors[toolCall.status] || 'text-muted-foreground']" />
+       <component
+         :is="statusIcons[toolCall.status] || Bot"
+         class="size-4 shrink-0"
+         :class="statusColors[toolCall.status] || 'text-muted-foreground'"
+         aria-hidden="true"
+       />
       <span class="font-medium flex-1 text-left truncate">{{ toolCall.name }}</span>
       <span v-if="duration" class="text-xs text-muted-foreground tabular-nums">{{ duration }}</span>
       <span
@@ -62,10 +69,11 @@ const duration = computed(() => {
       >
         {{ t(`chat.toolStatus.${toolCall.status}`) }}
       </span>
-      <span
-        class="i-lucide-chevron-down size-4 text-muted-foreground transition-transform"
-        :class="expanded ? 'rotate-180' : ''"
-      />
+       <ChevronDown
+         class="size-4 text-muted-foreground transition-transform"
+         :class="expanded ? 'rotate-180' : ''"
+         aria-hidden="true"
+       />
     </button>
 
     <div v-if="expanded" class="space-y-2 border-t px-3 pb-3 pt-2 text-xs">

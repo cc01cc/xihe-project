@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import { logger } from '../../lib/logger'
+import { Search } from '@lucide/vue'
 import {
   createProviderConnection,
   deleteProviderConnection,
@@ -196,6 +197,7 @@ async function save() {
     await load()
     if (verification.connection.status === 'READY') toast.success('Provider 已连接并验证')
     else toast.warning(`Provider ${statusLabel(verification.connection.status)}`)
+    saving.value = false
     closeForm()
   } catch (cause: unknown) {
     logger.warn('Provider Hub save failed', cause)
@@ -242,7 +244,7 @@ onMounted(() => { void load() })
   >
     <header>
       <div class="text-xs font-semibold uppercase tracking-widest text-primary">连接层</div>
-      <h3 class="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">Providers</h3>
+       <h3 class="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">Provider 连接</h3>
       <p class="mt-1.5 text-sm text-muted-foreground">
         连接模型服务。密钥由 Control Plane 加密保存，不写入浏览器存储。
       </p>
@@ -258,7 +260,7 @@ onMounted(() => { void load() })
     <template v-else>
       <div class="flex flex-col gap-2.5 sm:flex-row sm:items-center">
         <label class="flex flex-1 items-center gap-2.5 rounded-lg border bg-background px-3.5 py-2.5">
-          <span class="i-lucide-search size-4 shrink-0 text-muted-foreground" />
+           <Search class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <input
             v-model="search"
             data-testid="provider-connection-search"
@@ -272,7 +274,7 @@ onMounted(() => { void load() })
           class="shrink-0 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
           :disabled="providers.length === 0"
           @click="openPicker"
-        >＋ 连接 Provider</button>
+         >＋ 连接 Provider</button>
       </div>
 
       <section>
@@ -352,7 +354,7 @@ onMounted(() => { void load() })
         <header class="border-b px-5 py-4">
           <h3 class="text-lg font-semibold">选择 Provider</h3>
           <label class="mt-3 flex items-center gap-2.5 rounded-lg border bg-background px-3 py-2">
-            <span class="i-lucide-search size-4 shrink-0 text-muted-foreground" />
+             <Search class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <input
               v-model="pickerSearch"
               data-testid="provider-picker-search"

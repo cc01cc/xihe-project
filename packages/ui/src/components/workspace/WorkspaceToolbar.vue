@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
+import { FolderTree, PanelLeft, RefreshCw, Settings2, Upload } from '@lucide/vue'
 
 const props = defineProps<{
   workspaceId: string
@@ -32,7 +33,7 @@ const breadcrumb = computed(() => {
 
 const workspaceLabel = computed(() => {
   const id = props.workspaceId || auth.currentWorkspaceId || ''
-  return id ? `WS ${id.slice(0, 6)}` : 'Workspace'
+  return auth.workspace?.name || (id ? `Workspace ${id.slice(0, 6)}` : 'Workspace')
 })
 
 function handleRefresh() {
@@ -60,12 +61,13 @@ function switchSession(id: string) {
     <button
       class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
       title="Files"
+      aria-label="Files"
       @click="emit('files')"
     >
-      <span class="i-lucide-panel-left size-3.5" />
+      <PanelLeft class="size-3.5" />
     </button>
-    <div class="flex items-center gap-1 text-xs text-muted-foreground flex-1">
-      <span class="i-lucide-folder-tree size-3.5" />
+    <div class="flex min-w-0 items-center gap-1 pr-12 text-xs text-muted-foreground flex-1" :title="props.workspaceId">
+      <FolderTree class="size-3.5" />
       <template v-if="breadcrumb.length > 0">
         <span
           v-for="(part, i) in breadcrumb"
@@ -81,16 +83,16 @@ function switchSession(id: string) {
           </span>
         </span>
       </template>
-      <span v-else class="text-muted-foreground/60">{{ workspaceLabel }}</span>
+       <span v-else class="truncate text-foreground/80 font-medium">{{ workspaceLabel }}</span>
     </div>
 
-    <div class="flex items-center gap-1">
+     <div class="flex items-center gap-1 max-md:hidden">
       <select
         :value="sessionStore.currentSessionId ?? ''"
         class="text-xs bg-background border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
         @change="switchSession(($event.target as HTMLSelectElement).value)"
       >
-        <option value="" disabled>Session</option>
+                <option value="" disabled>会话</option>
         <option
           v-for="session in sessionStore.sessions"
           :key="session.id"
@@ -104,7 +106,7 @@ function switchSession(id: string) {
         title="Switch to chat"
         @click="switchToChat"
       >
-        Chat
+         聊天
       </button>
       <button
         data-testid="workspace-toolbar-environment"
@@ -112,7 +114,7 @@ function switchSession(id: string) {
         title="View workspace environment"
         @click="openEnvironment"
       >
-        Environment
+         环境
       </button>
       <button
         data-testid="workspace-toolbar-settings"
@@ -120,21 +122,21 @@ function switchSession(id: string) {
         title="Workspace settings"
         @click="emit('settings')"
       >
-        <span class="i-lucide-settings-2 size-3.5" />
+        <Settings2 class="size-3.5" />
       </button>
       <button
         class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
         title="Upload files"
         @click="emit('upload')"
       >
-        <span class="i-lucide-upload size-3.5" />
+        <Upload class="size-3.5" />
       </button>
       <button
         class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
         title="Refresh"
         @click="handleRefresh"
       >
-        <span class="i-lucide-refresh-cw size-3.5" />
+        <RefreshCw class="size-3.5" />
       </button>
     </div>
   </div>

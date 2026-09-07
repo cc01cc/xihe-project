@@ -186,6 +186,74 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         }
     }
 
+    @Test
+    void createWorkspaceReturnsFlatWorkspaceJson() {
+        String email = "create-shape-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(
+                url("/api/v1/auth/register"),
+                java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "Create Shape"),
+                java.util.Map.class);
+        assertEquals(201, registration.getStatusCode().value());
+        String ownerId = userIdOf(email);
+        String existingWorkspaceId = (String) registration.getBody().get("workspaceId");
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
+                .willReturn(aResponse().withStatus(200)));
+        workspaceService.deleteWorkspace(existingWorkspaceId, ownerId);
+
+        String token = (String) registration.getBody().get("accessToken");
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        org.springframework.http.ResponseEntity<java.util.Map> response = restTemplate.postForEntity(
+                url("/api/v1/workspaces"),
+                new org.springframework.http.HttpEntity<>(java.util.Map.of(
+                        "name", "Created Workspace", "profile", "strict"), headers),
+                java.util.Map.class);
+
+        assertEquals(201, response.getStatusCode().value());
+        assertNotNull(response.getBody());
+        assertTrue(response.getBody().get("id") instanceof String);
+        assertEquals("Created Workspace", response.getBody().get("name"));
+        assertFalse(response.getBody().containsKey("body"), "Response must not nest ResponseEntity as body");
+        createdWorkspace = workspaceRepository.findByIdAndDeletedAtIsNull(
+                (String) response.getBody().get("id")).orElseThrow();
+    }
+
+    @Test
+    void environmentUsesPerWorkspaceStatusInsteadOfGlobalHeartbeat() {
+        String email = "env-status-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(
+                url("/api/v1/auth/register"),
+                java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "Env Status"),
+                java.util.Map.class);
+        assertEquals(201, registration.getStatusCode().value());
+        String workspaceId = (String) registration.getBody().get("workspaceId");
+        createdWorkspace = workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).orElseThrow();
+        String token = (String) registration.getBody().get("accessToken");
+
+        org.springframework.http.HttpHeaders internalHeaders = new org.springframework.http.HttpHeaders();
+        internalHeaders.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        internalHeaders.setBearerAuth("dev-token-not-secure");
+        restTemplate.postForEntity(
+                url("/internal/v1/runtime/heartbeat"),
+                new org.springframework.http.HttpEntity<>(java.util.Map.of("deviceId", "device-global", "status", "ready"), internalHeaders),
+                java.util.Map.class);
+        wireMock.stubFor(get(urlEqualTo("/internal/v1/runtime/workspaces/" + workspaceId + "/status"))
+                .willReturn(aResponse().withStatus(404)));
+
+        org.springframework.http.HttpHeaders userHeaders = new org.springframework.http.HttpHeaders();
+        userHeaders.setBearerAuth(token);
+        org.springframework.http.ResponseEntity<java.util.Map> response = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/environment"),
+                org.springframework.http.HttpMethod.GET,
+                new org.springframework.http.HttpEntity<>(userHeaders),
+                java.util.Map.class);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("unbound", response.getBody().get("status"));
+        assertEquals("unbound", ((java.util.Map<?, ?>) response.getBody().get("runtime")).get("status"));
+    }
+
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.UserRepository userRepository;
 

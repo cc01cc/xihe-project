@@ -80,7 +80,6 @@ const domainSchemas: Record<string, DomainField[]> = {
     { key: 'defaultModel', label: t('settings.fieldDefaultModel'), type: 'text' },
     { key: 'maxTokens', label: t('settings.fieldMaxTokens'), type: 'number' },
     { key: 'temperature', label: t('settings.fieldTemperature'), type: 'number' },
-    { key: 'timeout', label: t('settings.fieldTimeout'), type: 'number' },
     { key: 'theme', label: t('settings.fieldTheme'), type: 'select', options: [
       { label: t('settings.light'), value: 'light' },
       { label: t('settings.dark'), value: 'dark' },
@@ -137,7 +136,7 @@ function currentWorkspaceId(): string {
 const builtInTools = [
   'read_file', 'write_file', 'list_directory', 'execute_command',
   'glob', 'grep', 'edit_file', 'delete_file',
-  'read_file_range', 'create_directory', 'move_file',
+    'read_file_range', 'mkdir', 'move_file',
   'search_code', 'web_fetch', 'list_files',
   'file_exists', 'get_file_info', 'zip_directory',
   'unzip_file', 'download_file',

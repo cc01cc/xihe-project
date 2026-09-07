@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xihe.dev/schemas/plan-269-evidence.schema.json",
+  "title": "PLAN-269 UI acceptance evidence",
+  "type": "object",
+  "required": ["plan", "generatedAt", "browserConsumer", "browser", "runs", "uncoveredFlows"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "plan": { "const": "PLAN-269" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "browserConsumer": { "const": true },
+    "browser": {
+      "type": "object",
+      "required": ["channel", "workers"],
+      "properties": {
+        "channel": { "const": "chrome-beta" },
+        "workers": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "runs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/run" }
+    },
+    "uncoveredFlows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "reason", "nextEvidence"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "enum": ["not-covered", "not-applicable", "blocked"] },
+          "reason": { "type": "string" },
+          "nextEvidence": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "required": [
+        "id", "profile", "command", "status", "testCount", "viewports",
+        "pageStates", "actions", "requestResponse", "persistence", "cleanup", "artifacts"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "profile": { "enum": ["mock", "real-host"] },
+        "command": { "type": "string" },
+        "status": { "enum": ["passed", "partial", "blocked"] },
+        "testCount": { "type": "integer", "minimum": 0 },
+        "viewports": { "type": "array", "items": { "type": "string" } },
+        "pageStates": { "type": "array", "items": { "type": "string" } },
+        "actions": { "type": "array", "items": { "type": "string" } },
+        "requestResponse": { "type": "string" },
+        "persistence": { "type": "string" },
+        "cleanup": { "type": "string" },
+        "artifacts": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

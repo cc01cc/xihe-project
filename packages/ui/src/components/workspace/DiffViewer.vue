@@ -32,5 +32,5 @@ watch(() => [props.original, props.modified], renderDiff)
 </script>
 
 <template>
-  <div ref="editorRef" class="h-full w-full border rounded-lg overflow-hidden" />
+  <div ref="editorRef" data-testid="workspace-diff-viewer" class="h-full w-full border rounded-lg overflow-hidden" />
 </template>

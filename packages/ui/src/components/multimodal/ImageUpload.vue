@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { logger } from '../../lib/logger'
+import { Image as ImageIcon } from '@lucide/vue'
 
 const emit = defineEmits<{
   upload: [files: File[]]
@@ -92,7 +93,7 @@ function handleInputChange(e: Event) {
         :title="t('chat.image')"
         @click="fileInput?.click()"
       >
-        <span class="i-lucide-image size-4" />
+         <ImageIcon class="size-4" aria-hidden="true" />
       </button>
       <input
         ref="fileInput"

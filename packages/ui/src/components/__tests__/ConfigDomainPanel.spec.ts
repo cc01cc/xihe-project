@@ -120,10 +120,8 @@ describe('ConfigDomainPanel', () => {
     const emitted = wrapper.emitted('save')
     expect(emitted).toBeTruthy()
     expect(emitted![0][0]).toEqual({
-      defaultProvider: '',
       apiKey: 'sk-old',
       model: 'new-model',
-      maxTokens: '',
     })
   })
 

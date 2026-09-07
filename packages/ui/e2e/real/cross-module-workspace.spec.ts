@@ -24,7 +24,7 @@ test.describe('Cross-Module — Workspace', () => {
     await page.goto('/workspace/ws-e2e-1')
     await page.waitForTimeout(2000)
 
-    await expect(page.getByText('Files')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByTestId('workspace-toolbar-settings')).toBeVisible({ timeout: 5000 })
     expect(page.url()).toContain('/workspace')
   })
 
@@ -35,13 +35,8 @@ test.describe('Cross-Module — Workspace', () => {
     await page.goto('/workspace/ws-e2e-1')
     await page.waitForTimeout(3000)
 
-    const emptyState = page.getByText('Workspace is empty')
-    const filesHeading = page.getByText('Files')
-    await expect(filesHeading).toBeVisible({ timeout: 5000 })
-
-    const hasEmptyState = await emptyState.isVisible().catch(() => false)
-    const hasFileTree = await page.locator('.i-lucide-folder, .i-lucide-file').first().isVisible().catch(() => false)
-    expect(hasEmptyState || hasFileTree).toBe(true)
+    await expect(page.getByTestId('workspace-toolbar-settings')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('工作区暂无文件')).toBeVisible({ timeout: 10000 })
   })
 
   test('unauthenticated user is redirected to login', async ({ page }) => {

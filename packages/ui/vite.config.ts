@@ -80,6 +80,10 @@ export default defineConfig(({ mode }) => {
         server: {
             port: uiPort,
             strictPort: false,
+            fs: {
+                // pdfjs-dist is hoisted to the workspace root by pnpm.
+                allow: [path.resolve(__dirname, '../..'), path.resolve(__dirname, '../../..')],
+            },
             proxy: {
                 "/api": {
                     target: cpBaseUrl,

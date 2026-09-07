@@ -1,5 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { Component } from 'vue'
+import {
+  Database,
+  File,
+  FileCode2,
+  FileJson,
+  FileText,
+  Folder,
+  FolderOpen,
+  Image,
+  Settings2,
+  Table2,
+  Terminal,
+} from '@lucide/vue'
 import type { FileNode } from '../../types'
 
 const props = defineProps<{
@@ -19,25 +33,25 @@ const indent = computed(() => `${props.depth * 16 + 8}px`)
 const isExpanded = computed(() => props.expandedPaths.has(props.node.path))
 const isSelected = computed(() => props.selectedPath === props.node.path)
 
-function getIcon(): string {
-  if (props.node.type === 'directory') return isExpanded.value ? 'i-lucide-folder-open' : 'i-lucide-folder'
+function getIcon(): Component {
+  if (props.node.type === 'directory') return isExpanded.value ? FolderOpen : Folder
   const ext = props.node.name.split('.').pop()?.toLowerCase()
-  const map: Record<string, string> = {
-    md: 'i-lucide-file-text', pdf: 'i-lucide-file-text',
-    ts: 'i-lucide-file-code', tsx: 'i-lucide-file-code',
-    js: 'i-lucide-file-code', jsx: 'i-lucide-file-code',
-    py: 'i-lucide-file-code', rs: 'i-lucide-file-code',
-    java: 'i-lucide-file-code', go: 'i-lucide-file-code',
-    vue: 'i-lucide-file-code',
-    json: 'i-lucide-file-json', yaml: 'i-lucide-file-json', yml: 'i-lucide-file-json',
-    css: 'i-lucide-file-code', html: 'i-lucide-file-code',
-    png: 'i-lucide-image', jpg: 'i-lucide-image', jpeg: 'i-lucide-image',
-    gif: 'i-lucide-image', svg: 'i-lucide-image', webp: 'i-lucide-image',
-    toml: 'i-lucide-settings', sql: 'i-lucide-database',
-    sh: 'i-lucide-terminal', txt: 'i-lucide-file-text',
-    log: 'i-lucide-file-text', csv: 'i-lucide-table',
+  const map: Record<string, Component> = {
+    md: FileText, pdf: FileText,
+    ts: FileCode2, tsx: FileCode2,
+    js: FileCode2, jsx: FileCode2,
+    py: FileCode2, rs: FileCode2,
+    java: FileCode2, go: FileCode2,
+    vue: FileCode2,
+    json: FileJson, yaml: FileJson, yml: FileJson,
+    css: FileCode2, html: FileCode2,
+    png: Image, jpg: Image, jpeg: Image,
+    gif: Image, svg: Image, webp: Image,
+    toml: Settings2, sql: Database,
+    sh: Terminal, txt: FileText,
+    log: FileText, csv: Table2,
   }
-  return map[ext || ''] || 'i-lucide-file'
+  return map[ext || ''] || File
 }
 
 function handleClick() {
@@ -65,7 +79,7 @@ function handleContextmenu(e: MouseEvent) {
       <span class="w-4 shrink-0 text-[10px] text-muted-foreground">
         {{ node.type === 'directory' ? (isExpanded ? '▼' : '▶') : '' }}
       </span>
-      <span :class="[getIcon(), 'size-3.5 shrink-0']" />
+      <component :is="getIcon()" class="size-3.5 shrink-0" aria-hidden="true" />
       <span class="truncate flex-1 ml-1">{{ node.name }}</span>
     </div>
     <template v-if="node.type === 'directory' && isExpanded && node.children">

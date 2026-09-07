@@ -20,6 +20,10 @@ function detectLanguage(path: string): string {
   return map[ext] || 'plaintext'
 }
 
+function isRuntimeArtifact(name: string): boolean {
+  return name.startsWith('.xihe-') || /^container-runtime\.log(?:\..*)?$/.test(name)
+}
+
 export const useWorkspaceStore = defineStore('workspace', () => {
   const sessionStore = useSessionStore()
   const authStore = useAuthStore()
@@ -46,6 +50,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const expandedPaths = ref<Set<string>>(new Set())
   const loading = ref(false)
   const treeError = ref<string | null>(null)
+  const loadedWorkspaceId = ref<string | null>(null)
 
   const openFiles = ref<Map<string, OpenFile>>(new Map())
   const activeFilePath = ref<string | null>(null)
@@ -65,16 +70,18 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function fetchDirectoryTree(dirPath: string): Promise<FileNode[]> {
     const nodes: FileNode[] = []
     const res = await api.listDirectory(dirPath, requireWorkspaceId())
-    const entries = res.entries ?? []
+    const entries = (res.entries ?? []).filter((entry: any) => !isRuntimeArtifact(entry.name))
     const dirs = entries.filter((e: any) => e.type === 'directory').sort((a: any, b: any) => a.name.localeCompare(b.name))
     const files = entries.filter((e: any) => e.type === 'file').sort((a: any, b: any) => a.name.localeCompare(b.name))
     for (const dir of dirs) {
       const childPath = dirPath ? `${dirPath}/${dir.name}` : dir.name
+      const children = await fetchDirectoryTree(childPath)
+      if (dir.name === 'logs' && children.length === 0) continue
       nodes.push({
         name: dir.name,
         path: childPath,
         type: 'directory',
-        children: await fetchDirectoryTree(childPath),
+        children,
       })
     }
     for (const file of files) {
@@ -106,6 +113,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function loadTree() {
+    const currentWorkspaceId = workspaceId.value
+    if (!currentWorkspaceId || loading.value || loadedWorkspaceId.value === currentWorkspaceId) return
+
     loading.value = true
     treeError.value = null
     try {
@@ -116,6 +126,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           const seed = localStorage.getItem('xihe-mock-filetree')
           if (seed) {
             fileTree.value = JSON.parse(seed) as FileNode[]
+            loadedWorkspaceId.value = currentWorkspaceId
             return
           }
         } catch {
@@ -123,6 +134,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         }
       }
       fileTree.value = await fetchDirectoryTree('')
+      loadedWorkspaceId.value = currentWorkspaceId
     } catch (e) {
       treeError.value = (e as Error).message
     } finally {
@@ -132,6 +144,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function refreshTree() {
     expandedPaths.value = new Set()
+    loadedWorkspaceId.value = null
     await loadTree()
   }
 
@@ -192,8 +205,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function updateFileContent(path: string, content: string) {
     const file = openFiles.value.get(path)
     if (file) {
-      file.content = content
-      file.modified = content !== file.originalContent
+      openFiles.value.set(path, {
+        ...file,
+        content,
+        modified: content !== file.originalContent,
+      })
     }
   }
 
@@ -202,8 +218,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!file || !file.modified) return
     try {
       await api.writeFile(path, file.content, requireWorkspaceId())
-      file.originalContent = file.content
-      file.modified = false
+      openFiles.value.set(path, {
+        ...file,
+        originalContent: file.content,
+        modified: false,
+      })
     } catch (e) {
       treeError.value = `Failed to save ${path}: ${(e as Error).message}`
     }
@@ -251,6 +270,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       }
       expandedPaths.value = next
     }
+    loadedWorkspaceId.value = null
     await loadTree()
   }
 
@@ -420,7 +440,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         item.error = (e as Error).message
       }
     }
-    await loadTree()
+    await refreshAfterMutation()
   }
 
   async function splitPdf(path: string) {

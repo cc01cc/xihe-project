@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Volume2, VolumeX } from '@lucide/vue'
 import { logger } from '../../lib/logger'
 
 const props = defineProps<{
@@ -40,9 +41,7 @@ function stop() {
     :title="t('multimodal.speak')"
     @click="isSpeaking ? stop() : speak()"
   >
-    <span
-      class="size-4"
-      :class="isSpeaking ? 'i-lucide-volume-x' : 'i-lucide-volume-2'"
-    />
+    <VolumeX v-if="isSpeaking" class="size-4" aria-hidden="true" />
+    <Volume2 v-else class="size-4" aria-hidden="true" />
   </button>
 </template>

@@ -20,6 +20,7 @@ import {
 } from 'reka-ui'
 import { useConfigStore } from '../../stores/config'
 import { useSessionStore } from '../../stores/session'
+import { ChevronDown, ChevronRight, ChevronUp, Cpu, Star, StarOff } from '@lucide/vue'
 import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
@@ -226,9 +227,9 @@ onMounted(() => {
           data-testid="model-popover-trigger"
           class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-dashed bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors max-w-[240px] truncate"
         >
-          <span class="i-lucide-cpu size-3 shrink-0" />
-          <span class="truncate">{{ triggerLabel }}</span>
-          <span class="i-lucide-chevron-up size-3 shrink-0 opacity-50" />
+           <Cpu class="size-3 shrink-0" aria-hidden="true" />
+           <span class="truncate">{{ triggerLabel }}</span>
+           <ChevronUp class="size-3 shrink-0 opacity-50" aria-hidden="true" />
         </button>
       </ComboboxTrigger>
     </ComboboxAnchor>
@@ -299,7 +300,7 @@ onMounted(() => {
               class="py-1"
             >
               <ComboboxLabel class="px-2 py-1 text-xs font-medium text-muted-foreground flex items-center gap-1">
-                <span class="i-lucide-star size-3" />
+                 <Star class="size-3" aria-hidden="true" />
                 {{ t('chat.favorites') }}
               </ComboboxLabel>
               <ComboboxItem
@@ -319,10 +320,12 @@ onMounted(() => {
                   @click.stop.prevent="toggleFav(fav.provider, fav.model)"
                   @pointerdown.stop
                 >
-                  <span
-                    :class="configStore.isFavorite(fav.provider, fav.model) ? 'i-lucide-star text-yellow-500' : 'i-lucide-star-off opacity-30'"
-                    class="size-3"
-                  />
+                   <Star
+                     v-if="configStore.isFavorite(fav.provider, fav.model)"
+                     class="size-3 text-yellow-500"
+                     aria-hidden="true"
+                   />
+                   <StarOff v-else class="size-3 opacity-30" aria-hidden="true" />
                 </button>
               </ComboboxItem>
             </ComboboxGroup>
@@ -343,10 +346,12 @@ onMounted(() => {
                       <button
                         class="w-full flex items-center gap-1 hover:text-foreground transition-colors"
                       >
-                        <span
-                          :class="isGroupCollapsed(group.provider) ? 'i-lucide-chevron-right' : 'i-lucide-chevron-down'"
-                          class="size-3"
-                        />
+                         <ChevronRight
+                           v-if="isGroupCollapsed(group.provider)"
+                           class="size-3"
+                           aria-hidden="true"
+                         />
+                         <ChevronDown v-else class="size-3" aria-hidden="true" />
                         <span>{{ group.name }}</span>
                         <span class="text-[10px] opacity-60 ml-auto">{{ group.models.length }}</span>
                       </button>
@@ -386,10 +391,12 @@ onMounted(() => {
                         @click.stop.prevent="toggleFav(group.provider, model)"
                         @pointerdown.stop
                       >
-                        <span
-                          :class="configStore.isFavorite(group.provider, model) ? 'i-lucide-star text-yellow-500' : 'i-lucide-star-off opacity-30'"
-                          class="size-3"
-                        />
+                         <Star
+                           v-if="configStore.isFavorite(group.provider, model)"
+                           class="size-3 text-yellow-500"
+                           aria-hidden="true"
+                         />
+                         <StarOff v-else class="size-3 opacity-30" aria-hidden="true" />
                       </button>
                     </ComboboxItem>
                   </CollapsibleContent>

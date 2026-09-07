@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Paperclip } from '@lucide/vue'
 
 const emit = defineEmits<{
   upload: [files: File[]]
@@ -38,7 +39,7 @@ function handleDrop(e: DragEvent) {
       :title="t('chat.attachFile')"
       @click="fileInput?.click()"
     >
-      <span class="i-lucide-paperclip size-4" />
+       <Paperclip class="size-4" aria-hidden="true" />
     </button>
     <input
       ref="fileInput"

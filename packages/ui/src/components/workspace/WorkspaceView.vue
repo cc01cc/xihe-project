@@ -7,6 +7,7 @@ import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
+import { FolderTree } from '@lucide/vue'
 import WorkspaceToolbar from './WorkspaceToolbar.vue'
 import WorkspaceCreateDialog from './WorkspaceCreateDialog.vue'
 import WorkspaceSettingsDialog from './WorkspaceSettingsDialog.vue'
@@ -100,7 +101,7 @@ onMounted(() => {
        The create dialog is the sole creation entry (409 makes it purely defensive). -->
   <div v-if="!auth.workspace" class="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
     <div class="flex size-16 items-center justify-center rounded-2xl border border-dashed">
-      <span class="i-lucide-folder-tree size-7 text-muted-foreground" />
+       <FolderTree class="size-7 text-muted-foreground" aria-hidden="true" />
     </div>
     <h2 class="text-lg font-semibold">暂无工作区</h2>
     <p class="max-w-sm text-sm text-muted-foreground">
@@ -110,7 +111,7 @@ onMounted(() => {
       class="px-4 py-2 text-sm rounded bg-primary text-primary-foreground hover:opacity-90"
       @click="showCreateDialog = true"
     >
-      Create workspace
+       创建工作区
     </button>
     <p class="max-w-md text-xs text-muted-foreground border-t border-dashed pt-3">
       每账号同时持有 1 个活动工作区 · 物理目录由系统按 hostRoot/workspaceId 派生，宿主机可直接访问
@@ -135,18 +136,25 @@ onMounted(() => {
       v-if="sessionId"
       class="w-96 border-l bg-muted/5 flex-col shrink-0 hidden md:flex"
     >
+       <div
+         class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground"
+         :title="`workspace=${workspaceId} session=${sessionId}`"
+       >
+         <span class="font-medium text-foreground/80">{{ auth.workspace?.name ?? '工作区对话' }}</span>
+         <span class="text-muted-foreground/60">工作区对话</span>
+       </div>
        <ChatPanel :session-id="sessionId" tool-mode="workspace" />
     </div>
     <div
       v-else
       class="w-96 border-l bg-muted/5 flex-col items-center justify-center gap-2 shrink-0 hidden md:flex"
     >
-      <p class="text-sm text-muted-foreground">No active session</p>
+       <p class="text-sm text-muted-foreground">暂无活动会话</p>
       <button
         class="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90"
         @click="ensureSessionForWorkspace()"
       >
-        New Chat
+         新建对话
       </button>
     </div>
 

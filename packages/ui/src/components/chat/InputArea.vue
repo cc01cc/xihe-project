@@ -35,6 +35,7 @@ const { t } = useI18n()
 const input = ref('')
 const isComposing = ref(false)
 const attachments = ref<File[]>([])
+const attachmentErrors = ref<Record<string, string>>({})
 const showSlashMenu = ref(false)
 const slashFilter = ref('')
 const selectedSlashIndex = ref(0)
@@ -107,10 +108,12 @@ async function handleSend() {
 
   if (attachments.value.length > 0) {
     isUploading.value = true
+    attachmentErrors.value = {}
     try {
       const { success, failed } = await uploadAttachments(props.sessionId, attachments.value)
       if (failed.length > 0) {
         for (const item of failed) {
+          attachmentErrors.value[item.name] = item.reason
           toast.error(`${item.name}: ${item.reason}`)
         }
       }
@@ -215,6 +218,12 @@ function addAttachmentBlob(blob: Blob) {
 }
 
 function removeAttachment(index: number) {
+  const file = attachments.value[index]
+  if (file) {
+    const nextErrors = { ...attachmentErrors.value }
+    delete nextErrors[file.name]
+    attachmentErrors.value = nextErrors
+  }
   attachments.value.splice(index, 1)
 }
 
@@ -229,6 +238,7 @@ function attachmentObjectUrl(file: File): string {
 function clearDraft() {
   input.value = ''
   attachments.value = []
+  attachmentErrors.value = {}
 }
 
 defineExpose({ clearDraft })
@@ -247,7 +257,10 @@ defineExpose({ clearDraft })
           class="relative group"
           data-testid="selected-attachment"
         >
-          <div class="w-16 h-16 rounded border bg-muted/30 flex items-center justify-center text-xs text-muted-foreground overflow-hidden">
+          <div
+            class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded border bg-muted/30 text-xs text-muted-foreground"
+            :class="attachmentErrors[file.name] ? 'border-destructive' : ''"
+          >
             <img
               v-if="file.type.startsWith('image/')"
               :src="attachmentObjectUrl(file)"
@@ -257,12 +270,37 @@ defineExpose({ clearDraft })
               v-else
               class="p-1"
             >{{ file.name }}</span>
+            <span
+              v-if="attachmentErrors[file.name]"
+              class="absolute inset-x-0 bottom-0 bg-destructive px-1 py-0.5 text-center text-[9px] font-medium text-destructive-foreground"
+            >{{ t('multimodal.uploadFailed') }}</span>
           </div>
           <button
             class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
             data-testid="remove-attachment-button"
             @click="removeAttachment(i)"
           >×</button>
+          <div
+            v-if="attachmentErrors[file.name]"
+            data-testid="attachment-upload-error"
+            class="mt-1 w-16 space-y-1 text-[10px] text-destructive"
+          >
+            <span class="block truncate" :title="attachmentErrors[file.name]">{{ t('multimodal.uploadFailed') }}</span>
+            <div class="flex gap-1">
+              <button
+                type="button"
+                data-testid="attachment-retry-button"
+                class="font-medium underline underline-offset-2 hover:no-underline"
+                @click="handleSend"
+              >{{ t('common.retry') }}</button>
+              <button
+                type="button"
+                data-testid="attachment-error-remove-button"
+                class="font-medium underline underline-offset-2 hover:no-underline"
+                @click="removeAttachment(i)"
+              >{{ t('settings.removeServer') }}</button>
+            </div>
+          </div>
         </div>
       </div>
 

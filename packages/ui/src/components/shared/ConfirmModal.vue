@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { CheckCircle, LoaderCircle } from '@lucide/vue'
 import BaseModal from './BaseModal.vue'
 
 defineProps<{
@@ -48,7 +49,7 @@ function onClose() {
     <p v-if="description" class="text-sm text-muted-foreground mb-4">{{ description }}</p>
 
     <div v-if="succeeded" class="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 mb-4">
-      <span class="i-lucide-check-circle size-4" />
+      <CheckCircle class="size-4" aria-hidden="true" />
       <span>Operation completed</span>
     </div>
 
@@ -69,7 +70,7 @@ function onClose() {
         :disabled="loading"
         @click="onConfirm"
       >
-        <span v-if="loading" class="i-lucide-loader-circle size-3 animate-spin inline-block mr-1" />
+        <LoaderCircle v-if="loading" class="mr-1 inline-block size-3 animate-spin" aria-hidden="true" />
         {{ confirmLabel || 'Confirm' }}
       </button>
     </div>

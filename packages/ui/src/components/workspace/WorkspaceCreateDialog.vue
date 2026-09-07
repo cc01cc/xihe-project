@@ -11,6 +11,7 @@ import DialogTitle from '../ui/dialog/DialogTitle.vue'
 import DialogDescription from '../ui/dialog/DialogDescription.vue'
 import DialogFooter from '../ui/dialog/DialogFooter.vue'
 import { Button } from '../ui/button'
+import { LoaderCircle } from '@lucide/vue'
 import { Input } from '../ui/input'
 import RadioGroup from '../ui/radio-group/RadioGroup.vue'
 import RadioGroupItem from '../ui/radio-group/RadioGroupItem.vue'
@@ -138,7 +139,7 @@ function handleOpenChange(open: boolean) {
       <DialogFooter>
         <Button variant="outline" @click="emit('close')">取消</Button>
         <Button :disabled="!canSubmit" @click="handleCreate">
-          <span v-if="saving" class="i-lucide-loader-circle size-3 animate-spin inline-block mr-1" />
+           <LoaderCircle v-if="saving" class="mr-1 inline-block size-3 animate-spin" aria-hidden="true" />
           创建
         </Button>
       </DialogFooter>

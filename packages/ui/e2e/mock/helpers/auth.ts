@@ -2,6 +2,12 @@ import type { Page } from '@playwright/test'
 
 export interface MockSSEStream {
   tokens: string[]
+  retryTokens?: string[]
+  errorAfterTokens?: {
+    code: string
+    detail: string
+    retryable?: boolean
+  }
   delayMs?: number
 }
 
@@ -37,12 +43,13 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
   })
 
   if (options.sse) {
-    await page.addInitScript(({ tokens, delayMs }) => {
+    await page.addInitScript(({ tokens, retryTokens, errorAfterTokens, delayMs }) => {
       const originalFetch = window.fetch.bind(window)
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null
       let streamClosed = false
       let streamReady = false
       let streamEmitted = false
+      let shouldFail = Boolean(errorAfterTokens)
 
       const encode = (value: string) => new TextEncoder().encode(value)
       const event = (name: string, data: unknown) =>
@@ -52,10 +59,17 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         if (!streamController || streamClosed || streamEmitted) return
         streamEmitted = true
         try {
-          for (const token of tokens) {
+          const responseTokens = shouldFail ? tokens : (retryTokens ?? tokens)
+          for (const token of responseTokens) {
             if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
             if (!streamController || streamClosed) return
             streamController.enqueue(encode(event('token', { content: token })))
+          }
+          if (shouldFail && errorAfterTokens) {
+            streamController.enqueue(encode(event('error', errorAfterTokens)))
+            shouldFail = false
+            streamEmitted = false
+            return
           }
           if (!streamClosed) {
             streamController.enqueue(encode(event('done', {})))
@@ -99,7 +113,12 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
 
         return originalFetch(input, init)
       }
-    }, { tokens: options.sse.tokens, delayMs: options.sse.delayMs ?? 0 })
+    }, {
+      tokens: options.sse.tokens,
+      retryTokens: options.sse.retryTokens,
+      errorAfterTokens: options.sse.errorAfterTokens,
+      delayMs: options.sse.delayMs ?? 0,
+    })
   }
 
   if (!options.sse) {

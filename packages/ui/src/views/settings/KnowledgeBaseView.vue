@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { logger } from '../../lib/logger'
 import { apiDelete, apiGet, apiPost } from '../../composables/api'
+import { AlertCircle, LoaderCircle } from '@lucide/vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 
@@ -64,12 +65,12 @@ async function removeDoc(id: string) {
     <h3 data-testid="settings-knowledge-heading" class="font-medium">{{ t('settings.knowledgeBase') }}</h3>
 
     <div v-if="loading" class="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
-      <span class="i-lucide-loader-circle size-4 animate-spin" />
+       <LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
       Loading documents...
     </div>
 
     <div v-else-if="loadError" class="flex flex-col items-center gap-2 py-8 text-sm text-destructive">
-      <span class="i-lucide-alert-circle size-6" />
+       <AlertCircle class="size-6" aria-hidden="true" />
       <p>{{ loadError }}</p>
       <button class="text-xs text-primary hover:underline" @click="loadDocuments">Retry</button>
     </div>

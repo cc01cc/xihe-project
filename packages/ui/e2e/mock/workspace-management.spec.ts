@@ -65,7 +65,7 @@ test.describe('Workspace management dialogs (PLAN-262 M2)', () => {
     })
     await page.goto('/workspace/new')
     await expect(page.getByText('暂无工作区')).toBeVisible()
-    await page.getByRole('button', { name: 'Create workspace' }).click()
+    await page.getByRole('button', { name: '创建工作区' }).click()
 
     const dialog = page.getByTestId('workspace-create-dialog')
     await expect(dialog).toBeVisible()

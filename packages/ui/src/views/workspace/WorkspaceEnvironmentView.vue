@@ -5,6 +5,7 @@ import { api, ApiError } from '../../composables/api'
 import { useAuthStore } from '../../stores/auth'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
+import { LoaderCircle, RefreshCw } from '@lucide/vue'
 
 type Environment = Awaited<ReturnType<typeof api.getWorkspaceEnvironment>>
 
@@ -144,10 +145,10 @@ onBeforeUnmount(stopPolling)
   <section class="min-h-full bg-background px-4 py-8 sm:px-8">
     <div class="mx-auto max-w-5xl">
       <header class="mb-8 border-b pb-5">
-        <p class="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Workspace</p>
-        <h1 data-testid="workspace-environment-heading" class="mt-2 text-2xl font-semibold tracking-tight">Environment status</h1>
+        <p class="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">工作区</p>
+        <h1 data-testid="workspace-environment-heading" class="mt-2 text-2xl font-semibold tracking-tight">环境状态</h1>
         <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Read-only view of the active assignment, storage binding and Runtime observation.
+          查看当前执行配置、存储绑定和 Runtime 运行状态。
         </p>
       </header>
 
@@ -157,17 +158,17 @@ onBeforeUnmount(stopPolling)
           title="Refresh"
           @click="loadEnvironment()"
         >
-          <span class="i-lucide-refresh-cw size-3.5 inline-block mr-1" />
+           <RefreshCw class="mr-1 inline-block size-3.5" aria-hidden="true" />
           刷新
         </button>
       </div>
 
-      <div v-if="loading" class="rounded-lg border p-6 text-sm text-muted-foreground">Loading environment...</div>
+       <div v-if="loading" class="rounded-lg border p-6 text-sm text-muted-foreground">正在加载环境...</div>
       <div v-else-if="error" class="rounded-lg border border-destructive/40 p-6 text-sm text-destructive">{{ error }}</div>
       <div v-else-if="environment" class="space-y-5">
         <div class="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-5">
           <div>
-            <p class="text-sm text-muted-foreground">Workspace ID</p>
+             <p class="text-sm text-muted-foreground">工作区 ID</p>
             <p class="mt-1 break-all font-mono text-sm">{{ environment.workspaceId }}</p>
           </div>
           <span
@@ -202,34 +203,34 @@ onBeforeUnmount(stopPolling)
             data-testid="workspace-prepare-button"
             @click="handlePrepare"
           >
-            <span v-if="preparing" class="i-lucide-loader-circle size-3 animate-spin inline-block mr-1" />
+             <LoaderCircle v-if="preparing" class="mr-1 inline-block size-3 animate-spin" aria-hidden="true" />
             {{ preparing ? 'Preparing…' : 'Prepare workspace' }}
           </button>
         </div>
 
         <div class="grid gap-5 md:grid-cols-2">
           <article class="rounded-lg border p-5">
-            <h2 class="font-medium">Storage</h2>
+             <h2 class="font-medium">存储</h2>
             <dl class="mt-4 space-y-3 text-sm">
-              <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Backend</dt><dd>{{ environment.storageBackend }}</dd></div>
-              <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Reference</dt><dd class="break-all font-mono text-right">{{ environment.storageRef }}</dd></div>
+               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">后端</dt><dd>{{ environment.storageBackend }}</dd></div>
+               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">引用</dt><dd class="break-all font-mono text-right">{{ environment.storageRef }}</dd></div>
               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">宿主机访问</dt><dd class="text-right text-emerald-700 dark:text-emerald-300">✓ 系统文件操作直访</dd></div>
             </dl>
           </article>
           <article class="rounded-lg border p-5">
-            <h2 class="font-medium">Execution spec</h2>
+             <h2 class="font-medium">执行配置</h2>
             <dl class="mt-4 space-y-3 text-sm">
-              <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Status</dt><dd>{{ (environment.executionSpec ?? environment.assignment)?.status ?? 'unknown' }}</dd></div>
-              <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Generation</dt><dd>{{ (environment.executionSpec ?? environment.assignment)?.generation ?? '—' }}</dd></div>
-              <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Spec hash</dt><dd class="break-all font-mono text-right">{{ (environment.executionSpec ?? environment.assignment)?.sandboxSpecHash || 'None' }}</dd></div>
+               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">状态</dt><dd>{{ (environment.executionSpec ?? environment.assignment)?.status ?? 'unknown' }}</dd></div>
+               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">代数</dt><dd>{{ (environment.executionSpec ?? environment.assignment)?.generation ?? '—' }}</dd></div>
+               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">配置摘要</dt><dd class="break-all font-mono text-right">{{ (environment.executionSpec ?? environment.assignment)?.sandboxSpecHash || '无' }}</dd></div>
             </dl>
           </article>
           <article class="rounded-lg border p-5 md:col-span-2">
-            <h2 class="font-medium">Runtime</h2>
+             <h2 class="font-medium">运行时</h2>
             <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-              <div><dt class="text-muted-foreground">Status</dt><dd class="mt-1">{{ environment.runtime.status }}</dd></div>
-              <div><dt class="text-muted-foreground">Device</dt><dd class="mt-1 break-all font-mono">{{ environment.runtime.deviceId || 'Not observed' }}</dd></div>
-              <div><dt class="text-muted-foreground">Last heartbeat</dt><dd class="mt-1 break-all">{{ environment.runtime.lastHeartbeatAt || 'Not observed' }}</dd></div>
+               <div><dt class="text-muted-foreground">状态</dt><dd class="mt-1">{{ environment.runtime.status }}</dd></div>
+               <div><dt class="text-muted-foreground">设备</dt><dd class="mt-1 break-all font-mono">{{ environment.runtime.deviceId || '未观测到' }}</dd></div>
+               <div><dt class="text-muted-foreground">最近心跳</dt><dd class="mt-1 break-all">{{ environment.runtime.lastHeartbeatAt || '未观测到' }}</dd></div>
             </dl>
           </article>
         </div>

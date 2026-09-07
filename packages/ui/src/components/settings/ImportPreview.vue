@@ -75,20 +75,20 @@ function handleCancel() {
     <BaseModal :show="showModal" :title="t('settings.importPreview')" @close="handleCancel">
       <div v-if="importData" class="space-y-2 text-sm">
         <div class="flex justify-between">
-          <span class="text-muted-foreground">File</span>
+           <span class="text-muted-foreground">{{ t('settings.importFile') }}</span>
           <span>{{ importData.file.name }}</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-muted-foreground">Size</span>
-          <span>{{ (importData.file.size / 1024).toFixed(1) }} KB</span>
+           <span class="text-muted-foreground">{{ t('settings.importSize') }}</span>
+           <span>{{ importData.file.size < 1024 ? `${importData.file.size} B` : `${(importData.file.size / 1024).toFixed(1)} KB` }}</span>
         </div>
         <div class="border-t my-2" />
         <div class="flex justify-between">
-          <span class="text-muted-foreground">Chat sessions</span>
+           <span class="text-muted-foreground">{{ t('settings.importChats') }}</span>
           <span>{{ importData.chatCount }}</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-muted-foreground">Messages</span>
+           <span class="text-muted-foreground">{{ t('settings.importMessages') }}</span>
           <span>{{ importData.messageCount }}</span>
         </div>
       </div>

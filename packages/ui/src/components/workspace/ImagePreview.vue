@@ -15,7 +15,7 @@ function resetZoom() { scale.value = 1 }
 </script>
 
 <template>
-  <div class="flex flex-col items-center justify-center p-4 h-full">
+  <div data-testid="workspace-image-preview" class="flex flex-col items-center justify-center p-4 h-full">
     <img
       :src="content"
       :alt="fileName"

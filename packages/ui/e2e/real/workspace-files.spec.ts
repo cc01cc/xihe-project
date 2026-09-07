@@ -64,6 +64,32 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
     const writeText = await write.text()
     expect(write.status(), `seed write_file failed: ${write.status()} ${writeText}`).toBe(200)
     expect(writeText, `write_file returned error: ${writeText}`).not.toContain('"error"')
+
+    const mutationWrite = await request.post(`${CP_URL}/api/v1/mcp`, {
+      headers: sessionHeaders,
+      data: {
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        id: 4,
+        params: { name: 'write_file', arguments: { path: 'mutation.md', content: '# Mutation fixture' } },
+      },
+    })
+    const mutationWriteText = await mutationWrite.text()
+    expect(mutationWrite.status(), `mutation fixture write failed: ${mutationWrite.status()} ${mutationWriteText}`).toBe(200)
+    expect(mutationWriteText, `mutation fixture write returned error: ${mutationWriteText}`).not.toContain('"error"')
+
+    const nestedWrite = await request.post(`${CP_URL}/api/v1/mcp`, {
+      headers: sessionHeaders,
+      data: {
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        id: 5,
+        params: { name: 'write_file', arguments: { path: 'archive/seed.md', content: '# Archive fixture' } },
+      },
+    })
+    const nestedWriteText = await nestedWrite.text()
+    expect(nestedWrite.status(), `nested fixture write failed: ${nestedWrite.status()} ${nestedWriteText}`).toBe(200)
+    expect(nestedWriteText, `nested fixture write returned error: ${nestedWriteText}`).not.toContain('"error"')
   })
 
   test.beforeEach(async ({ page }) => {
@@ -109,7 +135,7 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
     await expect(fileEntry).toBeVisible({ timeout: 15000 })
 
     await fileEntry.click({ button: 'right' })
-    const deleteItem = page.getByRole('button', { name: /^Delete$|^删除$/ }).first()
+    const deleteItem = page.getByRole('menuitem', { name: /^Delete…$|^Delete$|^删除…$|^删除$/ }).first()
     await expect(deleteItem).toBeVisible({ timeout: 8000 })
     await deleteItem.click()
 
@@ -127,6 +153,56 @@ test.describe('@host Workspace — File Panel & Delete Flow', () => {
     })
     expect(hit).toBe(true)
     await expect(page).toHaveScreenshot('workspace-delete-dialog.png')
+  })
+
+  test('renames, duplicates, moves and deletes a file through the UI', async ({ page }) => {
+    await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
+    const original = page.getByRole('button', { name: 'mutation.md', exact: true })
+    await expect(original).toBeVisible({ timeout: 15000 })
+
+    await original.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: /^Rename$/ }).click()
+    const renameModal = page.getByTestId('modal-content')
+    await expect(renameModal).toBeVisible()
+    await renameModal.getByRole('textbox').fill('renamed.md')
+    await renameModal.getByRole('button', { name: 'Rename', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'renamed.md', exact: true })).toBeVisible({ timeout: 15000 })
+    await expect(original).not.toBeVisible()
+
+    const renamed = page.getByRole('button', { name: 'renamed.md', exact: true })
+    await renamed.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: /^Duplicate$/ }).click()
+    const duplicate = page.getByRole('button', { name: 'renamed-copy.md', exact: true })
+    await expect(duplicate).toBeVisible({ timeout: 15000 })
+
+    await duplicate.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: /^Move to/ }).click()
+    const moveModal = page.getByTestId('modal-content')
+    await expect(moveModal).toBeVisible()
+    await moveModal.getByRole('textbox').fill('archive')
+    await moveModal.getByRole('button', { name: 'Move', exact: true }).click()
+    await expect(duplicate).not.toBeVisible({ timeout: 15000 })
+
+    const archive = page.getByRole('button', { name: /archive$/ })
+    const moved = page.getByRole('button', { name: 'renamed-copy.md', exact: true })
+    await expect(moved).toBeVisible({ timeout: 15000 })
+    await archive.click()
+    await expect(moved).not.toBeVisible()
+    await archive.click()
+    await expect(moved).toBeVisible()
+
+    await moved.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: /^Delete/ }).click()
+    const deleteModal = page.getByTestId('modal-content')
+    await expect(deleteModal).toContainText('archive/renamed-copy.md')
+    await deleteModal.getByRole('button', { name: 'Delete', exact: true }).click()
+    await expect(moved).not.toBeVisible({ timeout: 15000 })
+
+    await page.reload({ waitUntil: 'load' })
+    await expect(page.getByRole('button', { name: 'renamed.md', exact: true })).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: /archive$/ }).click()
+    await expect(page.getByRole('button', { name: 'renamed-copy.md', exact: true })).not.toBeVisible()
+    await expect(page).toHaveScreenshot('workspace-file-mutations.png')
   })
 
   test('workspace empty state is centered and styled', async ({ page, request }) => {

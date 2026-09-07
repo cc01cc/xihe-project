@@ -55,10 +55,10 @@ describe('api.login', () => {
     fetchSpy.mockResolvedValueOnce({
       ok: false,
       status: 401,
-      json: () => Promise.resolve({ error: 'Unauthorized' }),
+       json: () => Promise.resolve({ code: 'INVALID_CREDENTIALS', detail: 'Invalid credentials' }),
     } as Response)
 
-    await expect(api.login('bad@test.com', INVALID_PASSWORD)).rejects.toThrow('Session expired')
+    await expect(api.login('bad@test.com', INVALID_PASSWORD)).rejects.toThrow('Invalid credentials')
   })
 
   it('clears token and redirects to login on 401 for protected paths', async () => {

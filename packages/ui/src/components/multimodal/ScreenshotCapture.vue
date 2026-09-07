@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { logger } from '../../lib/logger'
+import { Camera } from '@lucide/vue'
 
 const emit = defineEmits<{
   capture: [blob: Blob]
@@ -46,6 +47,6 @@ async function capture() {
     :disabled="isCapturing"
     @click="capture"
   >
-    <span class="i-lucide-camera size-4" />
+     <Camera class="size-4" aria-hidden="true" />
   </button>
 </template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ClipboardCopy, FilePlus, Trash2 } from '@lucide/vue'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { toast } from 'vue-sonner'
 import ConfirmModal from '../shared/ConfirmModal.vue'
@@ -89,14 +90,14 @@ async function confirmNewFile() {
       class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left"
       @click="handleNewFile"
     >
-      <span class="i-lucide-file-plus size-3.5" />
+      <FilePlus class="size-3.5" aria-hidden="true" />
       New File
     </button>
     <button
       class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left"
       @click="handleCopyPath"
     >
-      <span class="i-lucide-copy size-3.5" />
+      <ClipboardCopy class="size-3.5" aria-hidden="true" />
       Copy Path
     </button>
     <hr class="my-1 border-t" />
@@ -104,7 +105,7 @@ async function confirmNewFile() {
       class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-destructive text-left"
       @click="handleDelete"
     >
-      <span class="i-lucide-trash-2 size-3.5" />
+      <Trash2 class="size-3.5" aria-hidden="true" />
       Delete
     </button>
   </div>

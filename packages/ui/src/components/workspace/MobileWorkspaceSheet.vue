@@ -3,6 +3,7 @@ import Sheet from '../ui/sheet/Sheet.vue'
 import SheetContent from '../ui/sheet/SheetContent.vue'
 import SheetHeader from '../ui/sheet/SheetHeader.vue'
 import SheetTitle from '../ui/sheet/SheetTitle.vue'
+import SheetDescription from '../ui/sheet/SheetDescription.vue'
 import FileTreePanel from './FileTreePanel.vue'
 
 withDefaults(defineProps<{
@@ -25,6 +26,7 @@ function handleOpenChange(open: boolean) {
     <SheetContent side="left" class="p-0 gap-0 md:hidden" data-testid="mobile-files-sheet">
       <SheetHeader class="px-4 pt-4 pb-2 text-left">
         <SheetTitle>文件</SheetTitle>
+        <SheetDescription>浏览和管理当前 workspace 的文件。</SheetDescription>
       </SheetHeader>
       <div class="flex-1 min-h-0 overflow-hidden">
         <FileTreePanel />

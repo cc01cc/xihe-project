@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { FileText } from '@lucide/vue'
 import { useWorkspaceStore } from '../../stores/workspace'
 import type { OpenFile } from '../../types'
 import EditorTabBar from './EditorTabBar.vue'
@@ -14,19 +15,22 @@ const ws = useWorkspaceStore()
 const diffMode = ref(false)
 
 const activeFile = computed<OpenFile | null>(() => ws.activeFile)
+function hasKnownExtension(path: string, extensions: string[]) {
+  const name = path.split('/').pop()?.toLowerCase() ?? ''
+  return extensions.some((ext) => name.endsWith(`.${ext}`) || name.includes(`.${ext}.`))
+}
+
 const isImage = computed(() => {
   const f = activeFile.value
   if (!f) return false
-  const ext = f.path.split('.').pop()?.toLowerCase()
-  return ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext || '')
+  return hasKnownExtension(f.path, ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'])
 })
-const isMarkdown = computed(() => activeFile.value?.path.endsWith('.md') ?? false)
-const isPdf = computed(() => activeFile.value?.path.toLowerCase().endsWith('.pdf') ?? false)
+const isMarkdown = computed(() => activeFile.value ? hasKnownExtension(activeFile.value.path, ['md']) : false)
+const isPdf = computed(() => activeFile.value ? hasKnownExtension(activeFile.value.path, ['pdf']) : false)
 const isCode = computed(() => {
   const f = activeFile.value
   if (!f) return false
-  const ext = f.path.split('.').pop()?.toLowerCase()
-  return ['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'java', 'go', 'vue', 'css', 'html', 'json', 'yaml', 'yml', 'sql', 'xml', 'sh', 'bash', 'toml', 'c', 'cpp', 'h', 'txt', 'log', 'csv'].includes(ext || '')
+  return hasKnownExtension(f.path, ['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'java', 'go', 'vue', 'css', 'html', 'json', 'yaml', 'yml', 'sql', 'xml', 'sh', 'bash', 'toml', 'c', 'cpp', 'h', 'txt', 'log', 'csv'])
 })
 
 function handleContentUpdate(content: string) {
@@ -72,8 +76,8 @@ function handleLoadFullContent() {
 
     <div v-if="!activeFile" class="flex-1 flex items-center justify-center">
       <div class="text-center">
-        <span class="i-lucide-file-text size-12 text-muted-foreground/30 mx-auto" />
-        <p class="mt-2 text-sm text-muted-foreground">Select a file from the tree</p>
+         <FileText class="mx-auto size-12 text-muted-foreground/30" aria-hidden="true" />
+         <p class="mt-2 text-sm text-muted-foreground">从文件树选择文件</p>
       </div>
     </div>
 
@@ -100,7 +104,7 @@ function handleLoadFullContent() {
           :disabled="!activeFile.modified"
           @click="handleSave"
         >
-          {{ activeFile.modified ? 'Save' : 'Saved' }}
+           {{ activeFile.modified ? '保存' : '已保存' }}
         </button>
       </div>
       <!-- Truncation banner -->
@@ -108,12 +112,12 @@ function handleLoadFullContent() {
         v-if="activeFile.truncated"
         class="flex items-center justify-between px-3 py-1.5 text-xs bg-amber-50 text-amber-900 border-b"
       >
-        <span>Content truncated. Only part of the file is shown.</span>
+         <span>内容已截断，仅显示文件的一部分。</span>
         <button
           class="px-2 py-0.5 rounded bg-amber-600 text-white hover:bg-amber-700"
           @click="handleLoadFullContent"
         >
-          Load Full
+           加载完整内容
         </button>
       </div>
       <div class="flex-1 overflow-hidden">
@@ -130,14 +134,14 @@ function handleLoadFullContent() {
             class="px-2 py-0.5 text-xs rounded border hover:bg-muted transition-colors"
             @click="toggleDiff"
           >
-            {{ diffMode ? 'Edit' : 'Diff' }}
+             {{ diffMode ? '编辑' : '差异' }}
           </button>
           <button
             class="px-2 py-0.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30"
             :disabled="!activeFile.modified"
             @click="handleSave"
           >
-            {{ activeFile.modified ? 'Save' : 'Saved' }}
+             {{ activeFile.modified ? '保存' : '已保存' }}
           </button>
         </div>
       </div>
@@ -146,12 +150,12 @@ function handleLoadFullContent() {
         v-if="activeFile.truncated"
         class="flex items-center justify-between px-3 py-1.5 text-xs bg-amber-50 text-amber-900 border-b"
       >
-        <span>Content truncated. Only part of the file is shown.</span>
+         <span>内容已截断，仅显示文件的一部分。</span>
         <button
           class="px-2 py-0.5 rounded bg-amber-600 text-white hover:bg-amber-700"
           @click="handleLoadFullContent"
         >
-          Load Full
+           加载完整内容
         </button>
       </div>
       <div v-if="diffMode && activeFile" class="flex-1 overflow-hidden">
@@ -171,12 +175,12 @@ function handleLoadFullContent() {
         v-if="activeFile.truncated"
         class="flex items-center justify-between px-3 py-1.5 text-xs bg-amber-50 text-amber-900 border-b"
       >
-        <span>Content truncated. Only part of the file is shown.</span>
+         <span>内容已截断，仅显示文件的一部分。</span>
         <button
           class="px-2 py-0.5 rounded bg-amber-600 text-white hover:bg-amber-700"
           @click="handleLoadFullContent"
         >
-          Load Full
+           加载完整内容
         </button>
       </div>
       <div class="flex-1">

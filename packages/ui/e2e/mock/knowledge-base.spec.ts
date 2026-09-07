@@ -54,7 +54,7 @@ test.describe('Knowledge Base', () => {
     await expect(page.locator('text=requirements.pdf')).toBeVisible()
     await expect(page.locator('text=architecture.md')).toBeVisible()
     await expect(page.locator('text=notes.txt')).toBeVisible()
-    await expect(page.locator('button:has-text("common.delete")')).toHaveCount(3)
+    await expect(page.locator('button:has-text("删除")')).toHaveCount(3)
     await expect(page).toHaveScreenshot('knowledge-documents.png')
   })
 })

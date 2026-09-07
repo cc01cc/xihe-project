@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import MarkdownRender from 'markstream-vue'
+import { Bold, Code, Heading, Italic, Link, List } from '@lucide/vue'
 
 const props = defineProps<{
   modelValue: string
@@ -16,7 +17,8 @@ const showSource = ref(false)
 
 watch(() => props.modelValue, (v) => { text.value = v })
 
-function onInput() {
+function onInput(event: Event) {
+  text.value = (event.target as HTMLTextAreaElement).value
   emit('update:modelValue', text.value)
 }
 </script>
@@ -27,63 +29,64 @@ function onInput() {
       <button
         class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
         :disabled="readonly"
-        title="Bold"
+         title="粗体"
         @click="text += '**bold**'"
       >
-        <span class="i-lucide-bold size-3.5" />
+         <Bold class="size-3.5" aria-hidden="true" />
       </button>
       <button
         class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
         :disabled="readonly"
-        title="Italic"
+         title="斜体"
         @click="text += '*italic*'"
       >
-        <span class="i-lucide-italic size-3.5" />
+         <Italic class="size-3.5" aria-hidden="true" />
       </button>
       <button
         class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
         :disabled="readonly"
-        title="Heading"
+         title="标题"
         @click="text += '\n## heading'"
       >
-        <span class="i-lucide-heading size-3.5" />
+         <Heading class="size-3.5" aria-hidden="true" />
       </button>
       <button
         class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
         :disabled="readonly"
-        title="Code"
+         title="代码"
         @click="text += '\n```\ncode\n```'"
       >
-        <span class="i-lucide-code size-3.5" />
+         <Code class="size-3.5" aria-hidden="true" />
       </button>
       <button
         class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
         :disabled="readonly"
-        title="Link"
+         title="链接"
         @click="text += '[text](url)'"
       >
-        <span class="i-lucide-link size-3.5" />
+         <Link class="size-3.5" aria-hidden="true" />
       </button>
       <button
         class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
         :disabled="readonly"
-        title="List"
+         title="列表"
         @click="text += '\n- item'"
       >
-        <span class="i-lucide-list size-3.5" />
+         <List class="size-3.5" aria-hidden="true" />
       </button>
       <div class="flex-1" />
       <button
         class="p-1 rounded hover:bg-accent text-muted-foreground text-xs"
         @click="showSource = !showSource"
       >
-        {{ showSource ? 'Preview' : 'Source' }}
+         {{ showSource ? '预览' : '源码' }}
       </button>
     </div>
 
     <div v-if="showSource" class="flex-1 p-0">
       <textarea
         :value="text"
+        data-testid="workspace-markdown-source"
         class="w-full h-full p-4 font-mono text-sm bg-background resize-none focus:outline-none"
         :readonly="readonly"
         @input="onInput"

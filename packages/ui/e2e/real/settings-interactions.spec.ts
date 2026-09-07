@@ -14,11 +14,12 @@ async function registerAndLogin(page: import('@playwright/test').Page, request: 
   await page.addInitScript(({ token, user, workspaceId }) => {
     localStorage.setItem('xihe-token', token)
     localStorage.setItem('xihe-user', JSON.stringify({ ...user, workspaceId }))
+    localStorage.setItem('xihe-workspace', JSON.stringify({ id: workspaceId, name: 'Default Workspace' }))
   }, { token: auth.accessToken, user: auth.user, workspaceId: auth.workspaceId })
   return auth
 }
 
-test.describe('Settings — Tier Tabs & Interactions', () => {
+test.describe('@host Settings — Tier Tabs & Interactions', () => {
   test('config layer tabs switch without layout shift', async ({ page, request }) => {
     await registerAndLogin(page, request, 'tier-tabs')
     await page.goto('/settings/config', { waitUntil: 'load' })
@@ -43,16 +44,16 @@ test.describe('Settings — Tier Tabs & Interactions', () => {
     if (await userTab.count() > 0) await userTab.click()
     await page.waitForTimeout(500)
 
-    const firstPanel = page.locator('button').filter({ hasText: /logging|rag|llm|mcp|embedding|workspace/i }).first()
-    await expect(firstPanel).toBeVisible({ timeout: 8000 })
-    await firstPanel.click()
+    const loggingPanel = page.getByTestId('config-domain-logging')
+    await expect(loggingPanel).toBeVisible({ timeout: 8000 })
+    await loggingPanel.locator(':scope > button').click()
     await page.waitForTimeout(500)
 
-    const editInput = page.locator('input[type="text"]').first()
+    const editInput = loggingPanel.locator('input[type="text"]').first()
     await expect(editInput).toBeVisible({ timeout: 8000 })
     await editInput.fill(`e2e-${Date.now()}`)
 
-    const saveBtn = page.locator('button').filter({ hasText: /save|保存/i }).first()
+    const saveBtn = loggingPanel.getByRole('button', { name: '保存', exact: true })
     await expect(saveBtn).toBeVisible()
     await saveBtn.click()
 
@@ -71,6 +72,36 @@ test.describe('Settings — Tier Tabs & Interactions', () => {
     await expect(page).toHaveScreenshot('settings-save-toast.png')
   })
 
+  test('user config save survives a page reload', async ({ page, request }) => {
+    await registerAndLogin(page, request, 'config-reload')
+    await page.goto('/settings/config', { waitUntil: 'load' })
+    await expect(page.getByTestId('settings-config-heading')).toBeVisible({ timeout: 10000 })
+    let userPreferenceSaveStatus: number | null = null
+    page.on('response', (response) => {
+      if (response.url().includes('/api/v1/config/user/user-preference')) {
+        userPreferenceSaveStatus = response.status()
+      }
+    })
+
+    await page.getByRole('button', { name: '用户', exact: true }).click()
+    const preferencePanel = page.getByTestId('config-domain-user-preference')
+    await preferencePanel.locator(':scope > button').click()
+    const defaultModel = preferencePanel.locator('input[type="text"]').first()
+    const value = `e2e-reload-${Date.now()}`
+    await defaultModel.fill(value)
+    await preferencePanel.getByRole('button', { name: '保存', exact: true }).click()
+    await expect.poll(() => userPreferenceSaveStatus, { timeout: 10000 }).toBe(200)
+    await expect(page.getByText(/用户偏好.*已保存/)).toBeVisible({ timeout: 10000 })
+
+    await page.reload({ waitUntil: 'load' })
+    await expect(page.getByTestId('settings-config-heading')).toBeVisible({ timeout: 10000 })
+    await page.getByRole('button', { name: '用户', exact: true }).click()
+    const reloadedPreferencePanel = page.getByTestId('config-domain-user-preference')
+    await reloadedPreferencePanel.locator(':scope > button').click()
+    await expect(reloadedPreferencePanel.locator('input[type="text"]').first()).toHaveValue(value)
+    await expect(page).toHaveScreenshot('settings-user-config-reloaded.png')
+  })
+
   test('monitoring page table columns stay within viewport', async ({ page, request }) => {
     await registerAndLogin(page, request, 'monitor-cols')
     await page.goto('/settings/monitoring', { waitUntil: 'load' })
@@ -86,7 +117,7 @@ test.describe('Settings — Tier Tabs & Interactions', () => {
   })
 })
 
-test.describe('Settings — Remote MCP OAuth button states', () => {
+test.describe('@host Settings — Remote MCP OAuth button states', () => {
   test('authorize button transitions through pending to authorized with screenshots', async ({ page, request }) => {
     const auth = await registerAndLogin(page, request, 'oauth-states')
     const serverId = randomUUID()
@@ -103,7 +134,7 @@ test.describe('Settings — Remote MCP OAuth button states', () => {
             oauth: {
               clientId: 'xihe-e2e-client',
               authorizationEndpoint: `http://localhost:${fakeOAuthPort}/authorize`,
-              tokenEndpoint: `http://host.docker.internal:${fakeOAuthPort}/token`,
+              tokenEndpoint: `http://127.0.0.1:${fakeOAuthPort}/token`,
               redirectUri: `http://localhost:${uiPort}/settings/config`,
               scope: 'mcp:tools',
             },

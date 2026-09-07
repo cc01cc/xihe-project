@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount } from 'vue'
+import { X } from '@lucide/vue'
 
 defineProps<{
   title?: string
@@ -27,7 +28,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
           <div v-if="title" class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-semibold">{{ title }}</h2>
             <button class="p-1 rounded hover:bg-accent" aria-label="Close" @click="emit('close')">
-              <span class="i-lucide-x size-4" />
+               <X class="size-4" aria-hidden="true" />
             </button>
           </div>
           <slot />

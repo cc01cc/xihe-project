@@ -1,0 +1,122 @@
+{
+  "$schema": "./PLAN-269-evidence.schema.json",
+  "plan": "PLAN-269",
+  "generatedAt": "2026-09-07T07:10:30.413Z",
+  "browserConsumer": true,
+  "browser": {
+    "channel": "chrome-beta",
+    "workers": 1
+  },
+  "runs": [
+    {
+      "id": "mock-full-ui",
+      "profile": "mock",
+      "command": "pnpm exec playwright test --config=e2e/playwright.config.ts e2e/mock/full-ui-acceptance.spec.ts",
+      "status": "passed",
+      "testCount": 13,
+      "viewports": ["1920x1080", "390x844"],
+      "pageStates": ["route", "auth-error", "register-error", "search", "provider", "settings-import", "knowledge-upload", "editor-saved", "mobile-sheets", "pdf", "editor-branches", "screen-capture"],
+      "actions": ["navigate", "click", "fill", "submit", "upload", "filter", "save", "open-sheet", "close-sheet"],
+      "requestResponse": "page.route boundaries are exercised by browser actions; editor, provider and upload assertions inspect the resulting UI state",
+      "persistence": "mock API/store state only",
+      "cleanup": "Playwright context and local Vite webServer closed",
+      "artifacts": ["e2e/mock/full-ui-acceptance.spec.ts-snapshots/", "test-results/"]
+    },
+    {
+      "id": "mock-chat",
+      "profile": "mock",
+      "command": "pnpm exec playwright test --config=e2e/playwright.config.ts e2e/mock/chat.spec.ts",
+      "status": "passed",
+      "testCount": 11,
+      "viewports": ["1920x1080"],
+      "pageStates": ["empty", "history", "streaming", "stopped", "retry-recovered", "voice-transcript", "attachment-upload-error"],
+      "actions": ["send", "stop", "retry", "setInputFiles", "toggle-voice", "dispatch-final-transcript"],
+      "requestResponse": "mock SSE emits delayed token/error/done events; attachment 500 is surfaced through the browser upload path",
+      "persistence": "mock session/message state only",
+      "cleanup": "Playwright context and local Vite webServer closed",
+      "artifacts": ["e2e/mock/chat.spec.ts-snapshots/", "test-results/"]
+    },
+    {
+      "id": "mock-viewport-matrix",
+      "profile": "mock",
+      "command": "pnpm exec playwright test --config=e2e/playwright.config.ts e2e/mock/viewport-matrix.spec.ts",
+      "status": "passed",
+      "testCount": 5,
+      "viewports": ["3840x2160", "2560x1440", "1920x1080", "1280x720", "390x844"],
+      "pageStates": ["settings-shell", "workspace-shell", "chat-shell", "mobile-files", "mobile-chat"],
+      "actions": ["navigate", "open-sheet", "close-sheet"],
+      "requestResponse": "deterministic mock service boundaries; each test asserts required page markers and horizontal overflow",
+      "persistence": "mock API/store state only",
+      "cleanup": "Playwright context and local Vite webServer closed",
+      "artifacts": ["e2e/mock/viewport-matrix.spec.ts-snapshots/"]
+    },
+    {
+      "id": "real-core-ui",
+      "profile": "real-host",
+      "command": "node scripts/e2e-host.mjs e2e/real/full-ui-acceptance.spec.ts",
+      "status": "passed",
+      "testCount": 6,
+      "viewports": ["1920x1080", "390x844"],
+      "pageStates": ["session-deleted", "workspace-editor-saved", "environment-ready", "workspace-uploaded", "provider-picker", "mobile-files", "mobile-chat"],
+      "actions": ["register", "navigate", "rename", "delete", "write-through-editor", "prepare", "upload", "open-provider-picker", "open-sheet", "close-sheet"],
+      "requestResponse": "browser actions reached native UI, CP, Agent, Runtime and MCP; editor readback and Environment transitions were asserted",
+      "persistence": "real CP/Runtime/PostgreSQL/host-root state for the isolated run",
+      "cleanup": "isolated PostgreSQL container/volume/network, four Sandbox containers, native services, ports and host root removed",
+      "artifacts": ["e2e/real/full-ui-acceptance.spec.ts-snapshots/", "test-results/.last-run.json"]
+    },
+    {
+      "id": "real-workspace-files",
+      "profile": "real-host",
+      "command": "node scripts/e2e-host.mjs e2e/real/workspace-files.spec.ts",
+      "status": "passed",
+      "testCount": 4,
+      "viewports": ["1920x1080"],
+      "pageStates": ["file-selected", "delete-confirm", "file-mutations", "empty-workspace"],
+      "actions": ["rename", "duplicate", "move", "expand", "collapse", "delete", "reload"],
+      "requestResponse": "MCP fixture uses actual mkdir-compatible nested write; UI mutation actions reached Runtime-backed file operations",
+      "persistence": "real tree reload verified renamed file remains and deleted duplicate is absent",
+      "cleanup": "isolated PostgreSQL container/volume/network, Sandbox containers, native services, ports and host root removed",
+      "artifacts": ["e2e/real/workspace-files.spec.ts-snapshots/", "test-results/.last-run.json"]
+    },
+    {
+      "id": "real-settings",
+      "profile": "real-host",
+      "command": "node scripts/e2e-host.mjs e2e/real/settings-interactions.spec.ts",
+      "status": "passed",
+      "testCount": 5,
+      "viewports": ["1920x1080"],
+      "pageStates": ["tier-tabs", "save-toast", "user-config-reloaded", "monitoring", "oauth-authorized"],
+      "actions": ["switch-tab", "expand-domain", "edit", "save", "reload", "authorize"],
+      "requestResponse": "UI config save returned 200 and OAuth PKCE flow reached the fake provider token exchange",
+      "persistence": "user-preference value was visible after page reload; MCP OAuth state reached authorized",
+      "cleanup": "isolated PostgreSQL container/volume/network, native services, ports and host root removed",
+      "artifacts": ["e2e/real/settings-interactions.spec.ts-snapshots/", "test-results/.last-run.json"]
+    }
+  ],
+  "uncoveredFlows": [
+    {
+      "id": "CHAT-APPROVAL",
+      "status": "blocked",
+      "reason": "Agent does not currently emit a user-addressable approval_request with request id, and CP has no authenticated UI response proxy",
+      "nextEvidence": "Add Agent SSE approval event plus CP user-scoped response proxy, then add real host approve/reject flow"
+    },
+    {
+      "id": "ERR-SSE-RECOVERY",
+      "status": "not-covered",
+      "reason": "Mock retry is covered, but real timeout/reconnect/Agent or Runtime unavailable recovery is not",
+      "nextEvidence": "Add deterministic real-process failure injection and browser recovery assertions"
+    },
+    {
+      "id": "MEDIA-REAL",
+      "status": "not-covered",
+      "reason": "Voice and attachment failures use controlled/mock browser paths; real hardware and native attachment failure are not covered",
+      "nextEvidence": "Add explicit host media permission/fixture profile and real upload failure injection"
+    },
+    {
+      "id": "DOC-REAL-PDF",
+      "status": "not-covered",
+      "reason": "Application-path PDF is covered by mock; real host PDF branch remains unverified",
+      "nextEvidence": "Upload sample.pdf through real Workspace UI and assert FileEditor to PdfViewer canvas"
+    }
+  ]
+}

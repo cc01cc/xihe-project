@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { Check, LoaderCircle, Upload, X } from '@lucide/vue'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { formatFileSize } from '../../lib/fileSize'
 
@@ -51,8 +52,8 @@ function handleCancel() {
 <template>
   <Teleport to="body">
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg">
-        <h2 class="text-lg font-semibold mb-4">Import Files</h2>
+       <div data-testid="workspace-import-dialog" class="w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg">
+         <h2 class="text-lg font-semibold mb-4">导入文件</h2>
 
         <div
           class="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors"
@@ -62,8 +63,8 @@ function handleCancel() {
           @drop.prevent="handleDrop"
           @click="fileInput?.click()"
         >
-          <span class="i-lucide-upload size-8 text-muted-foreground mx-auto mb-2" />
-          <p class="text-sm text-muted-foreground">Drop files here or click to select</p>
+           <Upload class="mx-auto mb-2 size-8 text-muted-foreground" aria-hidden="true" />
+           <p class="text-sm text-muted-foreground">将文件拖到这里，或点击选择</p>
         </div>
 
         <input ref="fileInput" type="file" multiple class="hidden" @change="handleFileChange" />
@@ -76,21 +77,21 @@ function handleCancel() {
           >
             <span class="truncate flex-1">{{ item.name }}</span>
             <span class="text-muted-foreground">{{ formatFileSize(item.size) }}</span>
-            <span v-if="item.status === 'done'" class="i-lucide-check size-3 text-green-600" />
-            <span v-else-if="item.status === 'error'" class="i-lucide-x size-3 text-destructive" :title="item.error" />
-            <span v-else-if="item.status === 'uploading'" class="i-lucide-loader-circle size-3 animate-spin" />
+             <Check v-if="item.status === 'done'" class="size-3 text-green-600" aria-hidden="true" />
+             <X v-else-if="item.status === 'error'" class="size-3 text-destructive" :title="item.error" aria-hidden="true" />
+             <LoaderCircle v-else-if="item.status === 'uploading'" class="size-3 animate-spin" aria-hidden="true" />
             <button class="p-0.5 hover:text-destructive" aria-label="Remove file" @click="removeItem(i)">
-              <span class="i-lucide-x size-3" />
+               <X class="size-3" aria-hidden="true" />
             </button>
           </div>
         </div>
 
-        <div class="mt-2">
-          <label class="text-xs text-muted-foreground">Target directory (optional):</label>
+         <div class="mt-2">
+           <label class="text-xs text-muted-foreground">目标目录（可选）：</label>
           <input
             v-model="targetDir"
             class="w-full mt-1 px-2 py-1 text-sm rounded border bg-background"
-            placeholder="e.g. src/docs"
+             placeholder="例如 src/docs"
           />
         </div>
 
@@ -106,14 +107,14 @@ function handleCancel() {
             class="px-3 py-1.5 text-sm rounded border hover:bg-accent"
             @click="handleCancel"
           >
-            Cancel
+             取消
           </button>
           <button
             class="px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
             :disabled="ws.uploadQueue.length === 0"
             @click="handleImport"
           >
-            Import
+             导入
           </button>
         </div>
       </div>

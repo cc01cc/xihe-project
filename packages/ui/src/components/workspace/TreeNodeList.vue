@@ -1,4 +1,18 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
+import {
+  Database,
+  File,
+  FileCode2,
+  FileJson,
+  FileText,
+  Folder,
+  FolderOpen,
+  Image,
+  Settings2,
+  Table2,
+  Terminal,
+} from '@lucide/vue'
 import { useWorkspaceStore } from '../../stores/workspace'
 import type { FileNode } from '../../types'
 import TreeItem from '../ui/tree/TreeItem.vue'
@@ -12,25 +26,25 @@ defineProps<{
 
 const ws = useWorkspaceStore()
 
-function getIcon(node: FileNode, isExpanded: boolean): string {
-  if (node.type === 'directory') return isExpanded ? 'i-lucide-folder-open' : 'i-lucide-folder'
+function getIcon(node: FileNode, isExpanded: boolean): Component {
+  if (node.type === 'directory') return isExpanded ? FolderOpen : Folder
   const ext = node.name.split('.').pop()?.toLowerCase()
-  const map: Record<string, string> = {
-    md: 'i-lucide-file-text', pdf: 'i-lucide-file-text',
-    ts: 'i-lucide-file-code', tsx: 'i-lucide-file-code',
-    js: 'i-lucide-file-code', jsx: 'i-lucide-file-code',
-    py: 'i-lucide-file-code', rs: 'i-lucide-file-code',
-    java: 'i-lucide-file-code', go: 'i-lucide-file-code',
-    vue: 'i-lucide-file-code',
-    json: 'i-lucide-file-json', yaml: 'i-lucide-file-json', yml: 'i-lucide-file-json',
-    css: 'i-lucide-file-code', html: 'i-lucide-file-code',
-    png: 'i-lucide-image', jpg: 'i-lucide-image', jpeg: 'i-lucide-image',
-    gif: 'i-lucide-image', svg: 'i-lucide-image', webp: 'i-lucide-image',
-    toml: 'i-lucide-settings', sql: 'i-lucide-database',
-    sh: 'i-lucide-terminal', txt: 'i-lucide-file-text',
-    log: 'i-lucide-file-text', csv: 'i-lucide-table',
+  const map: Record<string, Component> = {
+    md: FileText, pdf: FileText,
+    ts: FileCode2, tsx: FileCode2,
+    js: FileCode2, jsx: FileCode2,
+    py: FileCode2, rs: FileCode2,
+    java: FileCode2, go: FileCode2,
+    vue: FileCode2,
+    json: FileJson, yaml: FileJson, yml: FileJson,
+    css: FileCode2, html: FileCode2,
+    png: Image, jpg: Image, jpeg: Image,
+    gif: Image, svg: Image, webp: Image,
+    toml: Settings2, sql: Database,
+    sh: Terminal, txt: FileText,
+    log: FileText, csv: Table2,
   }
-  return map[ext || ''] || 'i-lucide-file'
+  return map[ext || ''] || File
 }
 
 function handleSelect(node: FileNode) {
@@ -64,7 +78,7 @@ function highlightName(name: string, query?: string): string {
             <span class="w-4 shrink-0 text-[10px] text-muted-foreground">
               {{ node.type === 'directory' ? (isExpanded ? '▼' : '▶') : '' }}
             </span>
-            <span :class="[getIcon(node, isExpanded), 'size-3.5 shrink-0']" />
+            <component :is="getIcon(node, isExpanded)" class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span v-if="!searchQuery" class="truncate flex-1 ml-1">{{ node.name }}</span>
             <span v-else class="truncate flex-1 ml-1" v-html="highlightName(node.name, searchQuery)" />
           </button>

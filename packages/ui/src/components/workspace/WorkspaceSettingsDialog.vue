@@ -8,6 +8,7 @@ import Dialog from '../ui/dialog/Dialog.vue'
 import DialogContent from '../ui/dialog/DialogContent.vue'
 import DialogHeader from '../ui/dialog/DialogHeader.vue'
 import DialogTitle from '../ui/dialog/DialogTitle.vue'
+import DialogDescription from '../ui/dialog/DialogDescription.vue'
 import DialogFooter from '../ui/dialog/DialogFooter.vue'
 import AlertDialog from '../ui/alert-dialog/AlertDialog.vue'
 import AlertDialogContent from '../ui/alert-dialog/AlertDialogContent.vue'
@@ -18,6 +19,7 @@ import AlertDialogFooter from '../ui/alert-dialog/AlertDialogFooter.vue'
 import AlertDialogCancel from '../ui/alert-dialog/AlertDialogCancel.vue'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
+import { LoaderCircle } from '@lucide/vue'
 
 const props = withDefaults(defineProps<{
   open: boolean
@@ -114,6 +116,7 @@ function handleOpenChange(open: boolean) {
     <DialogContent data-testid="workspace-settings-dialog">
       <DialogHeader>
         <DialogTitle>Workspace settings</DialogTitle>
+        <DialogDescription>修改 workspace 信息或执行逻辑删除。</DialogDescription>
       </DialogHeader>
 
       <div class="grid gap-4 py-2">
@@ -143,7 +146,7 @@ function handleOpenChange(open: boolean) {
         <div class="flex gap-2">
           <Button variant="outline" @click="emit('close')">取消</Button>
           <Button :disabled="saving" @click="handleSave">
-            <span v-if="saving" class="i-lucide-loader-circle size-3 animate-spin inline-block mr-1" />
+             <LoaderCircle v-if="saving" class="mr-1 inline-block size-3 animate-spin" aria-hidden="true" />
             保存
           </Button>
         </div>
@@ -179,7 +182,7 @@ function handleOpenChange(open: boolean) {
           data-testid="workspace-delete-confirm-btn"
           @click="() => void handleDelete()"
         >
-          <span v-if="deleting" class="i-lucide-loader-circle size-3 animate-spin inline-block mr-1" />
+           <LoaderCircle v-if="deleting" class="mr-1 inline-block size-3 animate-spin" aria-hidden="true" />
           确认删除
         </Button>
       </AlertDialogFooter>

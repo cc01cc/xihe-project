@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { logger } from '../../lib/logger'
+import { Mic } from '@lucide/vue'
 
 const emit = defineEmits<{
   transcript: [text: string]
@@ -71,7 +72,7 @@ function toggleRecording() {
       @click="toggleRecording"
       @touchstart.prevent="toggleRecording"
     >
-      <span class="i-lucide-mic size-4" />
+       <Mic class="size-4" aria-hidden="true" />
     </button>
   </div>
 </template>

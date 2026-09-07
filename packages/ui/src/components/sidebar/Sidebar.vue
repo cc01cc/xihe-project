@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   CircleUser,
@@ -31,10 +31,13 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const auth = useAuthStore()
+
+const isWorkspaceRoute = computed(() => route?.path?.startsWith('/workspace') ?? false)
 
 const sidebarStyle = computed(() => ({
   width: props.open ? `min(${props.width}px, calc(100vw - 1rem))` : '0px',
@@ -148,6 +151,8 @@ function handleLogout() {
       <button
         data-testid="sidebar-workspace"
         class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+        :class="{ 'bg-sidebar-accent': isWorkspaceRoute }"
+        :aria-current="isWorkspaceRoute ? 'page' : undefined"
         @click="navigateToWorkspace"
       >
         <FolderTree class="size-4" />

@@ -10,6 +10,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '../ui/context-menu'
+import { ClipboardCopy, CopyPlus, FilePlus, FolderInput, FolderPlus, Pencil, Trash2 } from '@lucide/vue'
 import BaseModal from '../shared/BaseModal.vue'
 
 const props = defineProps<{
@@ -168,45 +169,45 @@ function copyPath() {
     <ContextMenuContent data-testid="file-context-menu">
       <template v-if="!isDir">
         <ContextMenuItem @select="openRename">
-          <span class="i-lucide-pencil size-3.5" />
+           <Pencil class="size-3.5" aria-hidden="true" />
           Rename
         </ContextMenuItem>
         <ContextMenuItem @select="openMove">
-          <span class="i-lucide-folder-input size-3.5" />
+           <FolderInput class="size-3.5" aria-hidden="true" />
           Move to…
         </ContextMenuItem>
         <ContextMenuItem @select="() => void confirmDuplicate()">
-          <span class="i-lucide-copy-plus size-3.5" />
+           <CopyPlus class="size-3.5" aria-hidden="true" />
           Duplicate
         </ContextMenuItem>
         <ContextMenuSeparator />
       </template>
       <template v-else>
         <ContextMenuItem @select="openNewFile">
-          <span class="i-lucide-file-plus size-3.5" />
+           <FilePlus class="size-3.5" aria-hidden="true" />
           New File
         </ContextMenuItem>
         <ContextMenuItem @select="openNewDir">
-          <span class="i-lucide-folder-plus size-3.5" />
+           <FolderPlus class="size-3.5" aria-hidden="true" />
           New Directory
         </ContextMenuItem>
         <ContextMenuItem @select="openRename">
-          <span class="i-lucide-pencil size-3.5" />
+           <Pencil class="size-3.5" aria-hidden="true" />
           Rename
         </ContextMenuItem>
         <ContextMenuItem @select="openMove">
-          <span class="i-lucide-folder-input size-3.5" />
+           <FolderInput class="size-3.5" aria-hidden="true" />
           Move to…
         </ContextMenuItem>
         <ContextMenuSeparator />
       </template>
       <ContextMenuItem @select="copyPath">
-        <span class="i-lucide-clipboard-copy size-3.5" />
+         <ClipboardCopy class="size-3.5" aria-hidden="true" />
         Copy Path
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem variant="destructive" @select="showDeleteModal = true">
-        <span class="i-lucide-trash-2 size-3.5" />
+         <Trash2 class="size-3.5" aria-hidden="true" />
         Delete…
       </ContextMenuItem>
     </ContextMenuContent>
