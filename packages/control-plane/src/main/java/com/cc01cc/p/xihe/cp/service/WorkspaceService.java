@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.Optional;
 
 @Service
@@ -70,14 +71,14 @@ public class WorkspaceService {
      */
     @Transactional
     public Workspace getOrCreateDefaultWorkspace(String userId) {
-        User user = userRepository.findByIdForUpdate(userId)
+        User user = userRepository.findByIdForUpdate(UUID.fromString(userId))
                 .orElseThrow(() -> new CpApiException(
                         org.springframework.http.HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
         List<Workspace> existing = workspaceRepository.findActiveByMemberUserId(user.getId());
         if (!existing.isEmpty()) {
             return existing.get(0);
         }
-        return createWorkspaceLocked("Default Workspace", null, user.getId());
+        return createWorkspaceLocked("Default Workspace", null, user.getId().toString());
     }
 
     /** Creates the one active workspace allowed for a user. */
@@ -95,11 +96,11 @@ public class WorkspaceService {
     public Workspace createWorkspace(String name, String description, String ownerId,
             String profile, String image) {
         requireNonBlank(ownerId, "ownerId");
-        if (userRepository.findByIdForUpdate(ownerId).isPresent()
-                && !workspaceRepository.findActiveByMemberUserId(ownerId).isEmpty()) {
+        if (userRepository.findByIdForUpdate(UUID.fromString(ownerId)).isPresent()
+                && !workspaceRepository.findActiveByMemberUserId(UUID.fromString(ownerId)).isEmpty()) {
             throw workspaceAlreadyExists();
         }
-        if (!workspaceRepository.findActiveByMemberUserId(ownerId).isEmpty()) {
+        if (!workspaceRepository.findActiveByMemberUserId(UUID.fromString(ownerId)).isEmpty()) {
             throw workspaceAlreadyExists();
         }
         return createWorkspaceLocked(name, description, ownerId,
@@ -111,7 +112,7 @@ public class WorkspaceService {
         if (userId == null || userId.isBlank()) {
             return Optional.empty();
         }
-        return workspaceRepository.findActiveByMemberUserId(userId).stream().findFirst();
+        return workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst();
     }
 
     @Transactional(readOnly = true)
@@ -121,12 +122,12 @@ public class WorkspaceService {
 
     @Transactional(readOnly = true)
     public List<Workspace> getWorkspacesByUser(String userId) {
-        return workspaceRepository.findActiveByMemberUserId(userId);
+        return workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId));
     }
 
     @Transactional(readOnly = true)
     public Workspace requireActiveWorkspace(String workspaceId) {
-        return workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId)
+        return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new CpApiException(
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "WORKSPACE_NOT_FOUND",
@@ -137,7 +138,7 @@ public class WorkspaceService {
     public Workspace requireAccessibleWorkspace(String workspaceId, String userId) {
         Workspace workspace = requireActiveWorkspace(workspaceId);
         if (userId == null || workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isEmpty()) {
+                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
             throw new CpApiException(
                     org.springframework.http.HttpStatus.NOT_FOUND,
                     "WORKSPACE_NOT_FOUND",
@@ -148,9 +149,9 @@ public class WorkspaceService {
 
     @Transactional(readOnly = true)
     public boolean isWorkspaceMember(String workspaceId, String userId) {
-        return workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isPresent()
+        return workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isPresent()
                 && userId != null
-                && workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent();
+                && workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isPresent();
     }
 
     @Transactional(readOnly = true)
@@ -158,7 +159,7 @@ public class WorkspaceService {
         if (!isWorkspaceMember(workspaceId, userId)) {
             return null;
         }
-        return workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId)
+        return workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId))
                 .map(WorkspaceUser::getRole)
                 .map(Enum::name)
                 .orElse(null);
@@ -166,7 +167,7 @@ public class WorkspaceService {
 
     @Transactional
     public Workspace updateWorkspace(String workspaceId, String ownerId, String name, String description) {
-        Workspace workspace = workspaceRepository.findByIdForUpdate(workspaceId)
+        Workspace workspace = workspaceRepository.findByIdForUpdate(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new CpApiException(
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "WORKSPACE_NOT_FOUND",
@@ -184,7 +185,7 @@ public class WorkspaceService {
 
     @Transactional
     public Workspace deleteWorkspace(String workspaceId, String ownerId) {
-        Workspace workspace = workspaceRepository.findByIdForUpdate(workspaceId)
+        Workspace workspace = workspaceRepository.findByIdForUpdate(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new CpApiException(
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "WORKSPACE_NOT_FOUND",
@@ -210,12 +211,12 @@ public class WorkspaceService {
         workspace.setDescription(description);
         workspace.setStorageBackend("host_directory");
         workspace = workspaceRepository.save(workspace);
-        workspace.setStorageRef(workspace.getId());
+        workspace.setStorageRef(workspace.getId().toString());
         workspace = workspaceRepository.save(workspace);
-        workspaceUserRepository.save(new WorkspaceUser(workspace.getId(), ownerId, WorkspaceRole.OWNER));
+        workspaceUserRepository.save(new WorkspaceUser(workspace.getId().toString(), ownerId, WorkspaceRole.OWNER));
 
         String initialSpec = "{\"image\":\"" + image + "\",\"profile\":\"" + profile + "\"}";
-        executionSpecService.createExecutionSpec(workspace.getId(), initialSpec, ownerId, "create");
+        executionSpecService.createExecutionSpec(workspace.getId().toString(), initialSpec, ownerId, "create");
         logger.info("Workspace created: id={} name={} storageRef={} profile={} image={}",
                 workspace.getId(), workspace.getName(), workspace.getStorageRef(), profile, image);
         return workspace;

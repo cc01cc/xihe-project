@@ -97,7 +97,7 @@ public class ProviderConnectionService {
         }
 
         ProviderConnection connection = new ProviderConnection();
-        connection.setId(UUID.randomUUID().toString());
+        connection.setId(UUID.randomUUID());
         connection.setOwnerType(scope);
         connection.setOwnerId(ownerId);
         connection.setProviderId(input.providerId());
@@ -203,7 +203,7 @@ public class ProviderConnectionService {
     public void delete(String id) {
         ProviderConnection connection = requireVisible(id);
         ensureCanManage(connection);
-        revokeLeases(connection.getId());
+        revokeLeases(connection.getId().toString());
         audit(connection, "DELETED", connection.getStatus(), "DELETED");
         repository.delete(connection);
     }
@@ -217,7 +217,7 @@ public class ProviderConnectionService {
     }
 
     public ProviderConnection requireVisible(String id) {
-        ProviderConnection connection = repository.findById(id)
+        ProviderConnection connection = repository.findById(UUID.fromString(id))
                 .orElseThrow(() -> new IllegalArgumentException("Provider connection not found"));
         String userId = requireUserId();
         if (ProviderConnection.OWNER_USER.equals(connection.getOwnerType())
@@ -237,7 +237,7 @@ public class ProviderConnectionService {
     }
 
     public ProviderConnection requireUsableForOwner(String id, String userId, String workspaceId) {
-        ProviderConnection connection = repository.findById(id)
+        ProviderConnection connection = repository.findById(UUID.fromString(id))
                 .orElseThrow(() -> new IllegalArgumentException("Provider connection not found"));
         boolean visible = (ProviderConnection.OWNER_USER.equals(connection.getOwnerType())
                 && connection.getOwnerId().equals(userId))
@@ -358,8 +358,8 @@ public class ProviderConnectionService {
 
     private void audit(ProviderConnection connection, String action, String fromStatus, String toStatus) {
         ProviderConnectionAudit entry = new ProviderConnectionAudit();
-        entry.setId(UUID.randomUUID().toString());
-        entry.setProviderConnectionId(connection.getId());
+        entry.setId(UUID.randomUUID());
+        entry.setProviderConnectionId(connection.getId().toString());
         entry.setOwnerType(connection.getOwnerType());
         entry.setOwnerId(connection.getOwnerId());
         entry.setProviderId(connection.getProviderId());
@@ -409,7 +409,7 @@ public class ProviderConnectionService {
             masked = credential.length() <= 4 ? "****" : "****" + credential.substring(credential.length() - 4);
         }
         return new ProviderConnectionView(
-                connection.getId(), connection.getProviderId(), connection.getLabel(),
+                connection.getId().toString(), connection.getProviderId(), connection.getLabel(),
                 connection.getOwnerType(), connection.getOwnerId(), connection.getBaseUrl(),
                 credential != null, masked, connection.isEnabled(), connection.getStatus(),
                 connection.getLastVerifiedAt(), connection.getLastErrorCode(), connection.getRevision());

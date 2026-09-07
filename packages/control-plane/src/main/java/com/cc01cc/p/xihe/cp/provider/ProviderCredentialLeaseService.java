@@ -80,9 +80,9 @@ public class ProviderCredentialLeaseService {
         }
         String token = "pl_" + randomToken();
         ProviderCredentialLease lease = new ProviderCredentialLease();
-        lease.setId(UUID.randomUUID().toString());
+        lease.setId(UUID.randomUUID());
         lease.setLeaseHash(hash(token));
-        lease.setProviderConnectionId(connection.getId());
+        lease.setProviderConnectionId(connection.getId().toString());
         lease.setUserId(userId);
         lease.setWorkspaceId(workspaceId);
         lease.setSessionId(sessionId);
@@ -108,7 +108,7 @@ public class ProviderCredentialLeaseService {
                 || !lease.getModel().equals(request.model())) {
             throw new IllegalArgumentException("Provider credential lease binding mismatch");
         }
-        ProviderConnection connection = connectionRepository.findById(lease.getProviderConnectionId())
+        ProviderConnection connection = connectionRepository.findById(UUID.fromString(lease.getProviderConnectionId()))
                 .orElseThrow(() -> new IllegalArgumentException("Provider connection not found"));
         if (!connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())) {
             throw new IllegalArgumentException("Provider connection is not ready");

@@ -124,7 +124,7 @@ public class ChatAttachmentService {
                 entity.setSizeBytes(file.getSize());
                 entity.setStoragePath(tempPath.toString());
                 entity = fileRepository.save(entity);
-                String fileId = entity.getId();
+                String fileId = entity.getId().toString();
 
                 Path finalPath = sessionDir.resolve(fileId);
                 Files.move(tempPath, finalPath);
@@ -147,7 +147,7 @@ public class ChatAttachmentService {
     public void delete(String sessionId, String fileId, String userId, String workspaceId) {
         verifyWorkspaceMembership(userId, workspaceId);
         requireOwnedSession(sessionId, workspaceId, userId);
-        File file = fileRepository.findByIdAndSessionId(fileId, sessionId)
+        File file = fileRepository.findByIdAndSessionId(UUID.fromString(fileId), sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Attachment not found: " + fileId));
         verifyFileOwnership(file, userId, workspaceId);
         deletePhysicalFile(file.getStoragePath());
@@ -159,7 +159,7 @@ public class ChatAttachmentService {
     public File getMetadata(String sessionId, String fileId, String userId, String workspaceId) {
         verifyWorkspaceMembership(userId, workspaceId);
         requireOwnedSession(sessionId, workspaceId, userId);
-        File file = fileRepository.findByIdAndSessionId(fileId, sessionId)
+        File file = fileRepository.findByIdAndSessionId(UUID.fromString(fileId), sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Attachment not found: " + fileId));
         verifyFileOwnership(file, userId, workspaceId);
         return file;
@@ -202,19 +202,19 @@ public class ChatAttachmentService {
     }
 
     private void ensureSessionExists(String sessionId, String workspaceId, String userId) {
-        Optional<Session> existing = sessionRepository.findById(sessionId);
+        Optional<Session> existing = sessionRepository.findById(UUID.fromString(sessionId));
         if (existing.isPresent()) {
             requireOwnedSession(existing.get(), workspaceId, userId);
             return;
         }
         Session session = new Session(workspaceId, userId, "Attachment Upload");
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
         logger.info("Session created for attachments session={} workspace={}", sessionId, workspaceId);
     }
 
     private Session requireOwnedSession(String sessionId, String workspaceId, String userId) {
-        Session session = sessionRepository.findById(sessionId)
+        Session session = sessionRepository.findById(UUID.fromString(sessionId))
                 .orElseThrow(() -> new IllegalArgumentException("Session not found"));
         return requireOwnedSession(session, workspaceId, userId);
     }
@@ -238,8 +238,8 @@ public class ChatAttachmentService {
         if (workspaceId == null || userId == null) {
             throw new IllegalArgumentException("Workspace or user context missing");
         }
-        if (workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isEmpty()
-                || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isEmpty()) {
+        if (workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isEmpty()
+                || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
             throw new IllegalArgumentException("User is not a member of the workspace");
         }
     }

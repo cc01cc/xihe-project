@@ -83,11 +83,11 @@ public class SessionService {
         if (sessionId == null || sessionId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
         }
-        if (sessionRepository.findById(sessionId).isPresent()) {
+        if (sessionRepository.findById(UUID.fromString(sessionId)).isPresent()) {
             throw new CpApiException(HttpStatus.CONFLICT, "SESSION_ALREADY_EXISTS", "Session already exists");
         }
         Session session = new Session(workspaceId, userId, normalizeTitle(title));
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         session.setModelProvider(modelProvider);
         session.setModelName(modelName);
         bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
@@ -98,7 +98,7 @@ public class SessionService {
     public Session requireCurrent(String sessionId, String userId, String workspaceId) {
         requireWorkspace(userId, workspaceId);
         return sessionRepository.findByIdAndUserIdAndWorkspaceIdAndArchivedFalse(
-                        sessionId, userId, workspaceId)
+                        UUID.fromString(sessionId), userId, workspaceId)
                 .orElseThrow(() -> new CpApiException(
                         HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
     }
@@ -148,7 +148,7 @@ public class SessionService {
             if (!session.getWorkspaceId().equals(workspaceId) || !session.getUserId().equals(userId)) {
                 throw new IllegalArgumentException("Session ownership mismatch");
             }
-            session.setProviderConnectionId(connection.getId());
+            session.setProviderConnectionId(connection.getId().toString());
             session.setConnectionRevision(connection.getRevision());
             if (session.getModelProvider() == null || session.getModelProvider().isBlank()) {
                 session.setModelProvider(connection.getProviderId());

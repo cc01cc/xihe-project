@@ -90,7 +90,7 @@ public class ChatAttachmentController {
         try {
             File file = chatAttachmentService.getMetadata(sessionId, fileId, userId, workspaceId);
             AttachmentInfo info = new AttachmentInfo(
-                    file.getId(),
+                    file.getId().toString(),
                     file.getFilename(),
                     file.getMimeType(),
                     file.getSizeBytes(),

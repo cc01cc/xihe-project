@@ -295,14 +295,14 @@ public class ConfigService {
         }
     }
 
-    public List<ConfigAuditEntity> getAuditLogByConfigId(Long configId) {
+    public List<ConfigAuditEntity> getAuditLogByConfigId(String configId) {
         return auditRepo.findByConfigIdOrderByChangedAtDesc(configId);
     }
 
     private void createAudit(ConfigEntity entity, String oldValue,
                              String newValue, String changedBy) {
         ConfigAuditEntity audit = new ConfigAuditEntity();
-        audit.setConfigId(entity.getId());
+        audit.setConfigId(entity.getId().toString());
         audit.setEnvironment(entity.getEnvironment());
         audit.setLayer(entity.getLayer());
         audit.setDomain(entity.getDomain());

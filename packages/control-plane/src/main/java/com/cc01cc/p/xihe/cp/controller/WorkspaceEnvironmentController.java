@@ -1,13 +1,29 @@
 package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -63,7 +79,7 @@ public class WorkspaceEnvironmentController {
     public ResponseEntity<?> getEnvironment(
             @PathVariable String workspaceId,
             Authentication authentication) {
-        Workspace workspace = workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).orElse(null);
+        Workspace workspace = workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).orElse(null);
         if (workspace == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("code", "WORKSPACE_NOT_FOUND", "detail", "Workspace not found"));

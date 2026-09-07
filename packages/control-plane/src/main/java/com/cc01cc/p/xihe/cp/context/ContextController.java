@@ -18,8 +18,11 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.Map;
+import java.util.UUID;
 import java.util.Optional;
+import java.util.UUID;
 
 @RestController
     @RequestMapping("/internal/v1/context")
@@ -196,7 +199,7 @@ public class ContextController {
         // Workspace membership is required. Session ownership is not verified here
         // because the session may be created concurrently by the Agent module.
         return workspaceUserRepository
-                .findByIdWorkspaceIdAndIdUserId(workspaceId, userId)
+                .findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId))
                 .isPresent();
     }
 
@@ -205,14 +208,14 @@ public class ContextController {
         if (tokenUserId != null) return tokenUserId;
         // Internal service calls carry no JWT; resolve from the Session row.
         // No implicit default: unknown session means no user context.
-        return sessionRepository.findById(sessionId).map(s -> s.getUserId()).orElse(null);
+        return sessionRepository.findById(UUID.fromString(sessionId)).map(s -> s.getUserId()).orElse(null);
     }
 
     private String resolveWorkspaceId(String sessionId) {
         String tokenWorkspaceId = TenantContext.getWorkspaceId();
         if (tokenWorkspaceId != null) return tokenWorkspaceId;
         // No silent "default" workspace fallback; unknown session fails access check.
-        return sessionRepository.findById(sessionId).map(s -> s.getWorkspaceId()).orElse(null);
+        return sessionRepository.findById(UUID.fromString(sessionId)).map(s -> s.getWorkspaceId()).orElse(null);
     }
 
     private ResponseEntity<?> forbidden() {

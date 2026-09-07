@@ -17,7 +17,7 @@ public class UserResponse {
 
     public static UserResponse from(User user) {
         UserResponse resp = new UserResponse();
-        resp.id = user.getId();
+        resp.id = user.getId().toString();
         resp.email = user.getEmail();
         resp.name = user.getName();
         resp.avatar = user.getAvatar();

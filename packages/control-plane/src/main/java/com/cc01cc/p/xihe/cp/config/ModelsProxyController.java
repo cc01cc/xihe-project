@@ -109,7 +109,7 @@ public class ModelsProxyController {
             }
             ProviderCredentialLeaseService.IssuedLease lease = leaseService.issue(
                     userId, workspaceId, null, catalogRunId,
-                    connection.getId(), connection.getProviderId(), "*");
+                    connection.getId().toString(), connection.getProviderId(), "*");
             Map<String, Object> descriptor = new LinkedHashMap<>();
             descriptor.put("lease", lease.token());
             descriptor.put("runId", catalogRunId);

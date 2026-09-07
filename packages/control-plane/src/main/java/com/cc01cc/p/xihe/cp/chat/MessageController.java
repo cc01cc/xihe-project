@@ -19,9 +19,13 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.UUID;
 import java.util.LinkedHashMap;
+import java.util.UUID;
 import java.util.List;
+import java.util.UUID;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/sessions/{sessionId}/messages")
@@ -84,7 +88,7 @@ public class MessageController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
-        Message message = messageRepository.findById(messageId).orElse(null);
+        Message message = messageRepository.findById(UUID.fromString(messageId)).orElse(null);
         if (message == null || !sessionId.equals(message.getSessionId())) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.NOT_FOUND, "MESSAGE_NOT_FOUND", "Message not found");
@@ -107,7 +111,7 @@ public class MessageController {
         dto.put("content", message.getContent());
         dto.put("createdAt", message.getCreatedAt());
         if (message.getRunId() != null) {
-            chatRunRepository.findById(message.getRunId()).ifPresent(run -> {
+            chatRunRepository.findById(UUID.fromString(message.getRunId())).ifPresent(run -> {
                 dto.put("runId", run.getId());
                 dto.put("runStatus", run.getStatus());
                 dto.put("terminalOutcome", run.getTerminalOutcome());

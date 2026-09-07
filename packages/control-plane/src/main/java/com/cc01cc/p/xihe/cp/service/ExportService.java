@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Service
 public class ExportService {
@@ -48,11 +49,11 @@ public class ExportService {
         var sessions = sessionRepository.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(userId);
         for (var session : sessions) {
             ObjectNode s = chats.addObject();
-            s.put("id", session.getId());
+            s.put("id", session.getId().toString());
             s.put("title", session.getTitle());
             s.put("createdAt", session.getCreatedAt().toString());
             ArrayNode msgs = s.putArray("messages");
-            var messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId());
+            var messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId().toString());
             for (var msg : messages) {
                 ObjectNode m = msgs.addObject();
                 m.put("role", msg.getRole().name());

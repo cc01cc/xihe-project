@@ -22,6 +22,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Workspace file endpoints always go through the Runtime. CP no longer reads
@@ -65,13 +66,13 @@ public class WorkspaceFileController {
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
         }
         try {
-            File file = fileRepository.findById(fileId).orElse(null);
+            File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
             if (file == null) {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "File not found");
             }
             Session session = file.getSessionId() == null
-                    ? null : sessionRepository.findById(file.getSessionId()).orElse(null);
+                    ? null : sessionRepository.findById(UUID.fromString(file.getSessionId())).orElse(null);
             if (session == null
                     || session.isArchived()
                     || !workspaceId.equals(session.getWorkspaceId())
@@ -81,8 +82,8 @@ public class WorkspaceFileController {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
             }
-            if (workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isEmpty()
-                    || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isEmpty()) {
+            if (workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).isEmpty()
+                    || workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "File access denied");
             }
@@ -118,7 +119,7 @@ public class WorkspaceFileController {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
             }
-            if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(wsId, userId).isEmpty()) {
+            if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(wsId), UUID.fromString(userId)).isEmpty()) {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found");
             }

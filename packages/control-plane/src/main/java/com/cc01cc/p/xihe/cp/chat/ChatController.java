@@ -230,7 +230,7 @@ public class ChatController {
         List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachmentInfos = new ArrayList<>();
         if (!attachmentIds.isEmpty()) {
             for (String fileId : attachmentIds) {
-                File file = fileRepository.findById(fileId).orElse(null);
+                File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
                 if (file == null) {
                     return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "ATTACHMENT_NOT_FOUND", "Attachment not found");
                 }
@@ -241,7 +241,7 @@ public class ChatController {
                     return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Attachment does not belong to session");
                 }
                 attachmentInfos.add(new com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo(
-                    file.getId(), file.getFilename(), file.getMimeType(), file.getSizeBytes(), "/api/v1/files/" + file.getId()
+                    file.getId().toString(), file.getFilename(), file.getMimeType(), file.getSizeBytes(), "/api/v1/files/" + file.getId()
                 ));
             }
         }
@@ -298,14 +298,14 @@ public class ChatController {
             userMessage.setRunId(runId);
             userMessage.setAttachments(attachmentsJson);
             messageRepository.save(userMessage);
-            chatRun.setUserMessageId(userMessage.getId());
+            chatRun.setUserMessageId(userMessage.getId().toString());
             chatRunRepository.save(chatRun);
 
             if (!attachmentIds.isEmpty()) {
                 for (String fileId : attachmentIds) {
-                    File file = fileRepository.findById(fileId).orElse(null);
+                    File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
                     if (file != null) {
-                        file.setMessageId(userMessage.getId());
+                        file.setMessageId(userMessage.getId().toString());
                         fileRepository.save(file);
                     }
                 }
@@ -370,7 +370,7 @@ public class ChatController {
             AtomicBoolean terminalSent = new AtomicBoolean(false);
             try {
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
-                ChatRun persistedRun = chatRunRepository.findById(runId)
+                ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))
                         .orElseThrow(() -> new IllegalStateException("Chat run not found"));
                 String effectiveProvider = persistedRun.getProvider() == null
                         ? provider : persistedRun.getProvider();
@@ -473,8 +473,8 @@ public class ChatController {
                     Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, assistantContent);
                     assistantMessage.setRunId(runId);
                     messageRepository.save(assistantMessage);
-                    chatRunRepository.findById(runId).ifPresent(run -> {
-                        run.setAssistantMessageId(assistantMessage.getId());
+                    chatRunRepository.findById(UUID.fromString(runId)).ifPresent(run -> {
+                        run.setAssistantMessageId(assistantMessage.getId().toString());
                         chatRunRepository.save(run);
                     });
                     logger.info("[LIFECYCLE] service=cp event=chat_assistant_persisted requestId={} sessionId={} runId={} messageId={} assistantChars={}",
@@ -554,7 +554,7 @@ public class ChatController {
             return;
         }
         int updated = chatRunRepository.transition(
-                runId, expectedStatuses, status, outcome, errorCode, errorDetail,
+                UUID.fromString(runId), expectedStatuses, status, outcome, errorCode, errorDetail,
                 tokenCount, assistantChars);
         if (updated == 0) {
             logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={}",

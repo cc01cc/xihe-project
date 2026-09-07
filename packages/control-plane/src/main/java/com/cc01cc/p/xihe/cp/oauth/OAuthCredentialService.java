@@ -10,6 +10,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -198,13 +199,13 @@ public class OAuthCredentialService {
 
     private void ensureWorkspaceServerAccess(String userId, String workspaceId, String serverId) {
         ensureWorkspaceAccess(userId, workspaceId);
-        mcpServerRepository.findById(serverId)
+        mcpServerRepository.findById(UUID.fromString(serverId))
                 .filter(server -> workspaceId.equals(server.getWorkspaceId()) && server.isEnabled())
                 .orElseThrow(() -> new IllegalArgumentException("mcp_server_not_found"));
     }
 
     private void ensureWorkspaceAccess(String userId, String workspaceId) {
-        Workspace workspace = workspaceRepository.findById(workspaceId)
+        Workspace workspace = workspaceRepository.findById(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new IllegalArgumentException("workspace_not_found"));
         boolean owner = userId.equals(workspace.getOwnerId());
         boolean member = workspaceUserRepository.existsById(new WorkspaceUserId(workspaceId, userId));
@@ -216,7 +217,7 @@ public class OAuthCredentialService {
         if (request.remoteEndpoint() == null || request.remoteEndpoint().isBlank()) {
             throw new IllegalArgumentException("remoteEndpoint must not be blank");
         }
-        OAuthCredentialService.this.mcpServerRepository.findById(request.serverId()).ifPresentOrElse(server -> {
+        OAuthCredentialService.this.mcpServerRepository.findById(UUID.fromString(request.serverId())).ifPresentOrElse(server -> {
             if (!request.workspaceId().equals(server.getWorkspaceId())) {
                 throw new IllegalArgumentException("mcp_server_forbidden");
             }
@@ -225,7 +226,7 @@ public class OAuthCredentialService {
             mcpServerRepository.save(server);
         }, () -> {
             McpServer server = new McpServer(request.workspaceId(), request.serverId(), request.remoteEndpoint());
-            server.setId(request.serverId());
+            server.setId(UUID.fromString(request.serverId()));
             server.setEnabled(true);
             mcpServerRepository.save(server);
         });

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -48,7 +49,7 @@ public class ApprovalService {
             throw new CpApiException(HttpStatus.BAD_GATEWAY, "AGENT_EVENT_ID_MISMATCH",
                     "Agent approval event does not match the active chat run");
         }
-        ChatRun run = chatRunRepository.findById(runId).orElseThrow(() -> new CpApiException(
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow(() -> new CpApiException(
                 HttpStatus.BAD_GATEWAY, "AGENT_EVENT_ID_MISMATCH", "Approval event references an unknown chat run"));
         if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())
                 || !sessionId.equals(run.getSessionId())) {
@@ -62,7 +63,7 @@ public class ApprovalService {
                     "Approval request payload exceeds the size limit");
         }
         Instant expiresAt = parseExpiresAt(payload.get("expiresAt"));
-        ChatApproval existing = approvalRepository.findById(requestId).orElse(null);
+        ChatApproval existing = approvalRepository.findById(UUID.fromString(requestId)).orElse(null);
         if (existing != null) {
             if (!runId.equals(existing.getRunId()) || !sessionId.equals(existing.getSessionId())
                     || !userId.equals(existing.getUserId()) || !workspaceId.equals(existing.getWorkspaceId())) {
@@ -89,8 +90,7 @@ public class ApprovalService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> replayPending(String sessionId, String userId, String workspaceId) {
         return approvalRepository
-                .findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
-                        sessionId, userId, workspaceId, REPLAYABLE_STATES)
+                .findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(sessionId, userId, workspaceId, REPLAYABLE_STATES)
                 .stream()
                 .filter(approval -> approval.getExpiresAt().isAfter(Instant.now()))
                 .map(approval -> toPayload(approval, true))
@@ -99,7 +99,7 @@ public class ApprovalService {
 
     @Transactional
     public Map<String, Object> decide(String requestId, String userId, String workspaceId, boolean approved) {
-        ChatApproval approval = approvalRepository.findOwnedForUpdate(requestId, userId, workspaceId)
+        ChatApproval approval = approvalRepository.findOwnedForUpdate(UUID.fromString(requestId), userId, workspaceId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "APPROVAL_NOT_FOUND", "Approval request not found"));
         if (approval.getExpiresAt().isBefore(Instant.now()) && !isTerminal(approval.getState())) {
             approval.setState("expired");

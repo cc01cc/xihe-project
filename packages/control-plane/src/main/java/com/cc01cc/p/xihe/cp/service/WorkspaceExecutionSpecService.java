@@ -1,11 +1,23 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceExecutionSpecRepository;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.util.SandboxSpecHashUtil;
+
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,7 +54,7 @@ public class WorkspaceExecutionSpecService {
         // or the workspace row within the same transaction; re-locking with
         // findByIdForUpdate after a save() can produce a stale entity copy and
         // triggers StaleObjectStateException.
-        Workspace workspace = workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId)
+        Workspace workspace = workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new CpApiException(
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found"));
         int generation = workspace.getGeneration() == null ? 1 : workspace.getGeneration() + 1;
@@ -72,7 +84,7 @@ public class WorkspaceExecutionSpecService {
 
     @Transactional(readOnly = true)
     public WorkspaceExecutionSpec findCurrentExecutionSpec(String workspaceId) {
-        workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId)
+        workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId))
                 .orElseThrow(() -> new CpApiException(
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found"));
         return specRepository.findTopByWorkspaceIdOrderByGenerationDesc(workspaceId)

@@ -11,6 +11,8 @@ import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
+import java.util.UUID;
+
 @Service
 public class AuthService {
 
@@ -69,23 +71,23 @@ public class AuthService {
         }
 
         String userId = jwtTokenProvider.getUserIdFromRefreshToken(request.getRefreshToken());
-        User user = userRepository.findById(userId)
+        User user = userRepository.findById(UUID.fromString(userId))
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
         return createAuthResponse(user);
     }
 
     public UserResponse getCurrentUser(String userId) {
-        User user = userRepository.findById(userId)
+        User user = userRepository.findById(UUID.fromString(userId))
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
         return UserResponse.from(user);
     }
 
     private AuthResponse createAuthResponse(User user) {
-        String workspaceId = workspaceService.getOrCreateDefaultWorkspace(user.getId()).getId();
+        String workspaceId = workspaceService.getOrCreateDefaultWorkspace(user.getId().toString()).getId().toString();
         String accessToken = jwtTokenProvider.createAccessToken(
-                user.getId(), user.getEmail(), user.getRole().name(), workspaceId);
-        String refreshToken = jwtTokenProvider.createRefreshToken(user.getId());
+                user.getId().toString(), user.getEmail(), user.getRole().name(), workspaceId);
+        String refreshToken = jwtTokenProvider.createRefreshToken(user.getId().toString());
 
         return new AuthResponse(accessToken, refreshToken, 900,
                 UserResponse.from(user), workspaceId);

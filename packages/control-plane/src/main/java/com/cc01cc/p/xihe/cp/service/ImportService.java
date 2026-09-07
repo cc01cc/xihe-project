@@ -13,6 +13,8 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 
 import java.time.Instant;
+import java.util.UUID;
+import java.util.UUID;
 
 @Service
 public class ImportService {
@@ -44,12 +46,16 @@ public class ImportService {
             }
             for (JsonNode chat : chats) {
                 String id = chat.get("id").asText();
-                if (sessionRepository.existsById(id)) {
+                UUID parsedId = null;
+                try { parsedId = UUID.fromString(id); } catch (IllegalArgumentException e) {
+                    result.addSkipped(id); continue;
+                }
+                if (sessionRepository.existsById(parsedId)) {
                     result.addSkipped(id);
                     continue;
                 }
                 Session session = new Session();
-                session.setId(id);
+                session.setId(parsedId);
                 session.setUserId(userId);
                 session.setTitle(chat.get("title").asText("Imported"));
                 session.setCreatedAt(Instant.parse(chat.get("createdAt").asText()));

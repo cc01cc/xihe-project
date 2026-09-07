@@ -33,6 +33,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.UUID;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -282,7 +283,7 @@ public class McpProxyController {
             long generation = nextGeneration(wsId);
             Map<String, McpToolAlias> known = new HashMap<>();
             try {
-                for (McpToolAlias alias : aliases.findByWorkspaceId(wsId)) {
+                for (McpToolAlias alias : aliases.findByWorkspaceId(UUID.fromString(wsId))) {
                     known.put(alias.getServerId() + "\0" + alias.getBackendName(), alias);
                 }
             } catch (Exception e) {
@@ -311,9 +312,9 @@ public class McpProxyController {
                         issued = null;
                     }
                     if (issued == null) {
-                        issued = stickyIssuedName(server.getId(), backend, !seenNames.contains(backend));
+                        issued = stickyIssuedName(server.getId().toString(), backend, !seenNames.contains(backend));
                         try {
-                            McpToolAlias row = new McpToolAlias(wsId, issued, server.getId(), backend, generation);
+                            McpToolAlias row = new McpToolAlias(wsId, issued, server.getId().toString(), backend, generation);
                             aliases.save(row);
                             known.put(key, row);
                         } catch (Exception e) {
@@ -328,7 +329,7 @@ public class McpProxyController {
                         }
                     }
                     if (!mapping.containsKey(issued)) {
-                        mapping.put(issued, server.getId());
+                        mapping.put(issued, server.getId().toString());
                         Map<String, Object> published = new HashMap<>(tool);
                         published.put("name", issued);
                         allTools.add(published);
@@ -559,7 +560,7 @@ public class McpProxyController {
     /** PLAN-242 M2: a serverId backed by an enabled McpServer row is remote. */
     private Optional<McpServer> remoteServer(String wsId, String serverId) {
         try {
-            return mcpServers.findById(serverId)
+            return mcpServers.findById(UUID.fromString(serverId))
                     .filter(server -> wsId.equals(server.getWorkspaceId()) && server.isEnabled());
         } catch (Exception e) {
             logger.warn("Remote server lookup failed, falling back to stdio: {}", e.getMessage());
@@ -600,7 +601,7 @@ public class McpProxyController {
                 if (issued == null || issued.isEmpty()) {
                     return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Tool name is required");
                 }
-                String backend = aliases.findByWorkspaceIdAndIssuedName(wsId, issued)
+                String backend = aliases.findByWorkspaceIdAndIssuedName(UUID.fromString(wsId), issued)
                         .map(McpToolAlias::getBackendName).orElseGet(() -> backendFromIssued(issued));
                 JsonNode params;
                 try {
@@ -633,7 +634,7 @@ public class McpProxyController {
             HttpHeaders responseHeaders = new HttpHeaders();
             responseHeaders.set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
             audit.record(sessionId, method, "allow",
-                    aliasDetail(server.getId(), request.path("tool").asText(""), currentGeneration(wsId)));
+                    aliasDetail(server.getId().toString(), request.path("tool").asText(""), currentGeneration(wsId)));
             return new ResponseEntity<>(response.body(), responseHeaders,
                     HttpStatus.valueOf(response.statusCode()));
         } catch (Exception e) {
@@ -761,7 +762,7 @@ public class McpProxyController {
             }
 
             if (applicationSessionId != null) {
-                Session session = sessionRepository.findById(applicationSessionId).orElse(null);
+                Session session = sessionRepository.findById(UUID.fromString(applicationSessionId)).orElse(null);
                 if (!matchesSession(session, workspaceId, null)) {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
@@ -797,7 +798,7 @@ public class McpProxyController {
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "User context does not match authenticated user"));
             }
             if (applicationSessionId != null) {
-                Session session = sessionRepository.findById(applicationSessionId).orElse(null);
+                Session session = sessionRepository.findById(UUID.fromString(applicationSessionId)).orElse(null);
                 if (!matchesSession(session, workspaceId, userId)) {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
