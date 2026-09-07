@@ -7,7 +7,7 @@ sidebar_order: 19
 status: active
 created: 2026-09-07
 updated: 2026-09-07
-description: XH PostgreSQL 全量表结构速查：22 张业务表按 6 域分组、ER 关系、字段约束索引、V1~V22 迁移对照与本地查看方法
+description: XH PostgreSQL 全量表结构速查：22 张业务表按 6 域分组、ER 关系、字段约束与索引、V1~V22 迁移对照与本地查看方法
 tags:
   - postgres
   - flyway
@@ -29,6 +29,7 @@ tags:
 | 时间风格 | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` 或 `TIMESTAMPTZ DEFAULT NOW()`，混用是历史遗留，新表用后者 |
 | 删除语义 | `workspaces.deleted_at` 软删 + 部分唯一索引；`messages/context_*` 随 `sessions` 级联删；`files.message_id` 置空 |
 | 扩展 | `postgres-init/01-enable-pgvector.sql` 只做 `CREATE EXTENSION IF NOT EXISTS vector`，`V3` 重申一次保证幂等 |
+| 表格式约定 | 每张表：字段表（一行一字段，`约束` 列只放单列约束）+ 表下索引注释（`CREATE INDEX` 与跨列唯一约束） |
 
 关键入口：
 
@@ -46,7 +47,7 @@ tags:
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 flowchart LR
-    subgraph ID[身份协作]
+    subgraph ID["身份协作"]
         USERS["users"]
         WORKSPACES["workspaces"]
         WU["workspace_users"]
@@ -55,10 +56,10 @@ flowchart LR
         RUNS["chat_runs"]
         APPROVAL["approval_requests"]
     end
-    subgraph WS[Workspace 执行]
+    subgraph WS["Workspace 执行"]
         EXECSPECS["workspace_execution_specs"]
     end
-    subgraph MCP[MCP 与 Provider]
+    subgraph MCP["MCP 与 Provider"]
         MCPSRV["mcp_servers"]
         ALIAS["mcp_tool_aliases"]
         OAUTH["oauth_credentials"]
@@ -66,18 +67,20 @@ flowchart LR
         LEASE["provider_credential_leases"]
         PROVAUDIT["provider_connection_audit"]
     end
-    subgraph CFG[配置与 RAG]
+    subgraph CFG["配置与 RAG"]
         CONFIG["config"]
         CONFIGAUDIT["config_audit"]
-        CHUNKS["document_chunks"]
         CTXEVT["context_events"]
         CTXPROJ["context_projections"]
         CTXHASH["context_source_hashes"]
+        CHUNKS["document_chunks"]
     end
-    subgraph FILE[文件审计]
+    subgraph FILE["文件审计"]
         FILES["files"]
         AUDIT["audit_logs"]
     end
+
+    %% ID 内部主链
     USERS --> WORKSPACES
     USERS --> WU
     WORKSPACES --> WU
@@ -87,18 +90,27 @@ flowchart LR
     SESSIONS --> RUNS
     RUNS --> MESSAGES
     RUNS --> APPROVAL
+
+    %% ID → WS
     WORKSPACES --> EXECSPECS
+
+    %% ID → MCP 与 MCP 内部
     WORKSPACES --> MCPSRV
     MCPSRV --> ALIAS
     MCPSRV --> OAUTH
+    PROV --> LEASE
+
+    %% ID → CFG 与 CFG 内部
     SESSIONS --> CTXEVT
     SESSIONS --> CTXPROJ
+    CONFIG --> CONFIGAUDIT
+
+    %% ID → FILE
     SESSIONS --> FILES
     MESSAGES --> FILES
-    PROV --> LEASE
 ```
 
-代码锚点：ER 节点名即表名，DDL 见 §4 迁移对照，Entity 见附录 A。
+代码锚点：节点 = 表名；边 = 外键（含 `provider_connection_id`、`mcp_tool_aliases.server_id` 等无 FK 约束的逻辑外键）；无边节点（`audit_logs`/`document_chunks`/`context_source_hashes`/`provider_connection_audit`）为独立或弱关联表，关联字段见 §3。DDL 见 §4 迁移对照，Entity 见附录 A。
 
 ## 3. 按域表详情
 
@@ -106,236 +118,470 @@ flowchart LR
 
 **users**（`V1`，Entity `entity/User.java`）：唯一登录主体，`role` 仅 `USER/ADMIN`。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | VARCHAR(36) | PK | UUID 字符串 |
-| email | VARCHAR(255) | UNIQUE + `idx_users_email` | 登录键，`DataSeeder` seed `admin@xihe.local` |
+| email | VARCHAR(255) | NOT NULL UNIQUE | 登录键，`DataSeeder` seed `admin@xihe.local` |
 | password_hash | VARCHAR(255) | NOT NULL | BCrypt，不存明文 |
 | role | VARCHAR(20) | NOT NULL DEFAULT 'USER' | `USER` / `ADMIN` |
-| name / avatar | VARCHAR(100) / VARCHAR(512) | nullable | 展示用 |
+| name | VARCHAR(100) | nullable | 展示用 |
+| avatar | VARCHAR(512) | nullable | 展示用 |
 | settings | TEXT | nullable | 遗留自由字段，用户偏好以 `config` 表为准 |
-| created_at / updated_at | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | 无自动更新触发器，靠 JPA 维护 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | 创建时间 |
+| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | 无自动更新触发器，靠 JPA 维护 |
+
+> 索引：`idx_users_email (email)`
 
 ### 3.2 协作（workspaces / workspace_users / sessions / messages / chat_runs / approval_requests）
 
 **workspaces**（`V1` + `V2/V11/V14`，Entity `entity/Workspace.java`）：`owner_id` 拥有者，`deleted_at` 软删后同 owner 可重建。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
-| id / name / description | VARCHAR(36) / VARCHAR(255) / TEXT | PK / NOT NULL | 基础 |
-| owner_id | VARCHAR(36) | FK `users(id)` + `idx_workspaces_owner_id` | 拥有者 |
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | VARCHAR(36) | PK | — |
+| name | VARCHAR(255) | NOT NULL | — |
+| description | TEXT | nullable | — |
+| owner_id | VARCHAR(36) | NOT NULL FK `users(id)` | 拥有者 |
 | settings | TEXT | nullable | 遗留，结构化配置走 `config` |
 | storage_path | VARCHAR(512) | nullable（`V2`） | 遗留绝对路径，仅回填 `storage_ref` 用 |
 | storage_backend | VARCHAR(32) | DEFAULT 'host_directory'（`V11`） | 当前 v1 仅 `host_directory` |
-| storage_ref | VARCHAR(64) | nullable | `host_directory` 根下 `workspaceId` 派生，由 `storage_path` basename 回填 |
-| generation | INT | DEFAULT 0 | 当前执行代数，与 `workspace_execution_specs.generation` 对齐 |
-| sandbox_spec_hash / sandbox_spec | VARCHAR(64) / JSONB | nullable | 当前生效规格快照 |
-| deleted_at | TIMESTAMPTZ | nullable（`V14`）+ 部分索引 `idx_workspaces_owner_active WHERE deleted_at IS NULL` + 部分唯一 `uq_workspaces_active_owner(owner_id) WHERE deleted_at IS NULL` | 软删，删后不阻塞同 owner 新建 |
+| storage_ref | VARCHAR(64) | nullable（`V11`） | `host_directory` 根下 `workspaceId` 派生，由 `storage_path` basename 回填 |
+| generation | INT | DEFAULT 0（`V11`） | 当前执行代数，与 `workspace_execution_specs.generation` 对齐 |
+| sandbox_spec_hash | VARCHAR(64) | nullable（`V11`） | 当前生效规格哈希 |
+| sandbox_spec | JSONB | nullable（`V11`） | 当前生效规格快照 |
+| deleted_at | TIMESTAMPTZ | nullable（`V14`） | 软删标记，删后不阻塞同 owner 新建 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_workspaces_owner_id (owner_id)`
+> - `idx_workspaces_owner_active (owner_id, created_at) WHERE deleted_at IS NULL` — 部分索引，活跃 workspace 查询（`V14`）
+> - 唯一约束 `uq_workspaces_active_owner (owner_id) WHERE deleted_at IS NULL` — 部分唯一，软删后同 owner 可重建（`V14`）
 
 **workspace_users**（`V1` + `V14` 加复合索引，Entity `entity/WorkspaceUser.java`）：多对多成员。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
-| workspace_id / user_id | VARCHAR(36) | 联合 PK + `idx_workspace_users_user_id` + `idx_workspace_users_user_workspace(user_id, workspace_id)` | 双向查 |
-| role | VARCHAR(20) | DEFAULT 'MEMBER' | 成员角色 |
-| created_at | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | 加入时间 |
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id)`，联合 PK | 归属 |
+| user_id | VARCHAR(36) | NOT NULL FK `users(id)`，联合 PK | 成员 |
+| role | VARCHAR(20) | NOT NULL DEFAULT 'MEMBER' | 成员角色 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | 加入时间 |
+
+> 索引：
+> - `idx_workspace_users_user_id (user_id)`
+> - `idx_workspace_users_user_workspace (user_id, workspace_id)` — 双向查（`V14`）
 
 **sessions**（`V1` + `V14/V19`，Entity `entity/Session.java`）：服务端 canonical 会话，详见 [DEV-017](DEV-017-session-architecture.md)。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | VARCHAR(36) | PK | 会话键，SSE `sessionId` 即此 |
-| workspace_id / user_id | VARCHAR(36) | FK + `idx_sessions_workspace_id/user_id` + 复合 `idx_sessions_workspace_user_active(workspace_id, user_id, archived, created_at DESC)` | 归属 |
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id)` | 归属 |
+| user_id | VARCHAR(36) | NOT NULL FK `users(id)` | 归属 |
 | title | VARCHAR(255) | nullable | 列表展示 |
-| model_provider / model_name | VARCHAR(50) / VARCHAR(100) | nullable | canonical pair，普通 chat `toolMode=none` |
-| provider_connection_id / connection_revision | VARCHAR(36) / BIGINT | nullable，无 FK（`V19`）+ `idx_sessions_provider_connection` | 逻辑绑定，不做外键避免跨域耦合 |
-| archived | BOOLEAN | DEFAULT FALSE + `idx_sessions_archived` | 归档非删除 |
+| model_provider | VARCHAR(50) | nullable | canonical pair 前半 |
+| model_name | VARCHAR(100) | nullable | canonical pair 后半，普通 chat `toolMode=none` |
+| archived | BOOLEAN | NOT NULL DEFAULT FALSE | 归档非删除 |
+| provider_connection_id | VARCHAR(36) | nullable，无 FK（`V19`） | 逻辑绑定，不做外键避免跨域耦合 |
+| connection_revision | BIGINT | nullable（`V19`） | 绑定时的连接版本 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_sessions_workspace_id (workspace_id)`
+> - `idx_sessions_user_id (user_id)`
+> - `idx_sessions_archived (archived)`
+> - `idx_sessions_workspace_user_active (workspace_id, user_id, archived, created_at DESC)` — 会话列表复合索引（`V14`）
+> - `idx_sessions_provider_connection (provider_connection_id)`（`V19`）
 
 **messages**（`V1` + `V6/V14/V16`，Entity `entity/Message.java`）：`session_id` 级联删（`V14` 重建 FK 加 `ON DELETE CASCADE`）。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
-| id / session_id | VARCHAR(36) | PK / FK `sessions(id) ON DELETE CASCADE` + `idx_messages_session_id` | 删会话清消息 |
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | VARCHAR(36) | PK | — |
+| session_id | VARCHAR(36) | NOT NULL FK `sessions(id) ON DELETE CASCADE` | 删会话清消息 |
 | role | VARCHAR(20) | NOT NULL | `user/assistant/system/tool` 等，见 `MessageRole` |
 | content | TEXT | NOT NULL | 正文 |
 | metadata | TEXT | nullable | 遗留自由字段 |
-| attachments | JSONB | nullable（`V6`） | 内联附件摘要， canonical 附件在 `files` |
-| run_id | VARCHAR(36) | FK `chat_runs(id)` nullable（`V16`）+ `idx_messages_run_id` | 归属轮次，见 §3.2 `chat_runs` |
-| created_at | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | 排序键 |
+| attachments | JSONB | nullable（`V6`） | 内联附件摘要，canonical 附件在 `files` |
+| run_id | VARCHAR(36) | nullable FK `chat_runs(id)`（`V16`） | 归属轮次，见 §3.2 `chat_runs` |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | 排序键 |
+
+> 索引：
+> - `idx_messages_session_id (session_id)`
+> - `idx_messages_run_id (run_id)`（`V16`）
 
 **chat_runs**（`V16` + `V19/V22`，Entity `entity/ChatRun.java`）：一次 `POST /api/v1/chat` 的持久化轮次（PLAN-247），同幂等键不重复起 Agent。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
-| id / session_id / user_id / workspace_id | VARCHAR(36) | PK / FK | 四元归属 |
-| idempotency_key / request_hash | VARCHAR(128) / VARCHAR(64) | NOT NULL + UNIQUE `(user_id, session_id, idempotency_key)` | 同 key 同 payload 返回既有 run，不同 payload 报冲突 |
-| provider / model / tool_mode | VARCHAR(50/100/20) | `tool_mode` DEFAULT 'none' | 全链路透传，见 AGENTS.md Chat 架构 |
-| user_message_id / assistant_message_id | VARCHAR(36) | nullable，无 FK | 逻辑关联，避免循环 FK |
-| status / terminal_outcome | VARCHAR(24) | NOT NULL | `success/error/partial/ambiguous` 等终态 |
-| error_code / error_detail | VARCHAR(64) / TEXT | nullable | `error_code` 给 UI 分支，`error_detail` 脱敏后写 |
-| token_count / assistant_chars | INTEGER | DEFAULT 0 | 计量 |
-| provider_connection_id / connection_revision | VARCHAR(36) / BIGINT | nullable（`V19`）+ `idx_chat_runs_provider_connection` | 本轮实际用的连接快照 |
-| lease_owner / lease_expires_at | VARCHAR(80) / TIMESTAMPTZ | nullable（`V22`）+ `idx_chat_runs_active_lease(session_id, status, lease_expires_at)` | 单并发租约，防双发 |
-| created_at / updated_at | TIMESTAMPTZ | DEFAULT NOW() | `idx_chat_runs_session_created(session_id, created_at)` |
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | VARCHAR(36) | PK | — |
+| session_id | VARCHAR(36) | NOT NULL FK `sessions(id)` | 归属 |
+| user_id | VARCHAR(36) | NOT NULL FK `users(id)` | 归属 |
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id)` | 归属 |
+| idempotency_key | VARCHAR(128) | NOT NULL | 幂等键，见下方唯一约束 |
+| request_hash | VARCHAR(64) | NOT NULL | 请求 payload 哈希，同 key 比对 |
+| provider | VARCHAR(50) | nullable | 全链路透传 |
+| model | VARCHAR(100) | nullable | 全链路透传 |
+| tool_mode | VARCHAR(20) | NOT NULL DEFAULT 'none' | 普通 chat `none`，workspace 操作 `workspace` |
+| user_message_id | VARCHAR(36) | nullable，无 FK | 逻辑关联，避免循环 FK |
+| assistant_message_id | VARCHAR(36) | nullable，无 FK | 逻辑关联，避免循环 FK |
+| status | VARCHAR(24) | NOT NULL | 运行态 |
+| terminal_outcome | VARCHAR(24) | nullable | `success/error/partial/ambiguous` 终态 |
+| error_code | VARCHAR(64) | nullable | 给 UI 分支 |
+| error_detail | TEXT | nullable | 脱敏后写 |
+| token_count | INTEGER | NOT NULL DEFAULT 0 | 计量 |
+| assistant_chars | INTEGER | NOT NULL DEFAULT 0 | 计量 |
+| provider_connection_id | VARCHAR(36) | nullable，无 FK（`V19`） | 本轮实际用的连接 |
+| connection_revision | BIGINT | nullable（`V19`） | 连接版本快照 |
+| lease_owner | VARCHAR(80) | nullable（`V22`） | 单并发租约持有者，防双发 |
+| lease_expires_at | TIMESTAMPTZ | nullable（`V22`） | 租约过期时间 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
+
+> 索引：
+> - `idx_chat_runs_session_created (session_id, created_at)`
+> - `idx_chat_runs_provider_connection (provider_connection_id, connection_revision)`（`V19`）
+> - `idx_chat_runs_active_lease (session_id, status, lease_expires_at)` — 活跃租约判定（`V22`）
+> - 唯一约束 `(user_id, session_id, idempotency_key)` — 同 key 不重复起 run，同 key 不同 payload 报冲突
 
 **approval_requests**（`V21`，Entity `entity/ChatApproval.java` 对应 `approval_requests` 表）：工具高危操作人审。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | request_id | VARCHAR(36) | PK | 请求键 |
-| run_id / session_id / user_id / workspace_id | VARCHAR(36) | FK NOT NULL | 四元归属，`run_id→chat_runs` |
-| tool / action / details | VARCHAR(80) / VARCHAR(512) / TEXT | NOT NULL | 待审批动作 |
-| state / approved | VARCHAR(24) / BOOLEAN nullable | NOT NULL | `pending/approved/rejected/expired` 等，`approved` 空表未决 |
-| expires_at / decided_at | TIMESTAMPTZ | NOT NULL / nullable | 超时自动过期 |
+| run_id | VARCHAR(36) | NOT NULL FK `chat_runs(id)` | 归属轮次 |
+| session_id | VARCHAR(36) | NOT NULL FK `sessions(id)` | 归属 |
+| user_id | VARCHAR(36) | NOT NULL FK `users(id)` | 归属 |
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id)` | 归属 |
+| tool | VARCHAR(80) | NOT NULL | 待审批工具 |
+| action | VARCHAR(512) | NOT NULL | 待审批动作 |
+| details | TEXT | nullable | 动作详情 |
+| state | VARCHAR(24) | NOT NULL | `pending/approved/rejected/expired` 等 |
+| approved | BOOLEAN | nullable | 空表未决 |
+| expires_at | TIMESTAMPTZ | NOT NULL | 超时自动过期 |
+| decided_at | TIMESTAMPTZ | nullable | 决策时间 |
 | dispatch_error_code | VARCHAR(64) | nullable | 下发失败码 |
-| created_at / updated_at | TIMESTAMPTZ | DEFAULT NOW() | 索引 `idx_approval_requests_session_state` + `idx_approval_requests_run_state` |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
+
+> 索引：
+> - `idx_approval_requests_session_state (session_id, user_id, workspace_id, state, created_at)`
+> - `idx_approval_requests_run_state (run_id, state)`
 
 ### 3.3 Workspace 执行（workspace_execution_specs）
 
 **workspace_execution_specs**（`V11` 建 `workspace_assignments`，`V12` 加唯一，`V13` 重命名，Entity `entity/WorkspaceExecutionSpec.java`）：期望执行规格（非调度绑定，`V13` 注释原名误导已纠正）。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | UUID | PK DEFAULT `gen_random_uuid()` | 内部分配键 |
-| workspace_id | VARCHAR(36) | FK `workspaces(id) ON DELETE CASCADE` | 删 workspace 清规格 |
-| generation | INT | NOT NULL + 联合唯一 `uq_workspace_execution_specs_workspace_generation(workspace_id, generation)` + 普通 `idx_...` | 单调递增，Runtime 按 `workspaceId` 懒加载对应用代 |
-| sandbox_spec_hash / sandbox_spec | VARCHAR(64) / JSONB NOT NULL | — | 规格内容与哈希，`workspaces` 镜像当前代 |
-| storage_backend / storage_ref | VARCHAR(32/64) | NOT NULL | 与 `workspaces` 同义，历史行保留当时值 |
-| actor / reason | VARCHAR(255/512) | nullable | 谁因何创建此代 |
-| created_at | TIMESTAMPTZ | DEFAULT NOW() | 代创建时间即版本序 |
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id) ON DELETE CASCADE` | 删 workspace 清规格 |
+| generation | INT | NOT NULL | 单调递增，Runtime 按 `workspaceId` 懒加载对应用代 |
+| sandbox_spec_hash | VARCHAR(64) | NOT NULL | 规格哈希，`workspaces` 镜像当前代 |
+| sandbox_spec | JSONB | NOT NULL | 规格内容，`workspaces` 镜像当前代 |
+| storage_backend | VARCHAR(32) | NOT NULL DEFAULT 'host_directory' | 与 `workspaces` 同义，历史行保留当时值 |
+| storage_ref | VARCHAR(64) | NOT NULL | 与 `workspaces` 同义，历史行保留当时值 |
+| actor | VARCHAR(255) | nullable | 谁创建此代 |
+| reason | VARCHAR(512) | nullable | 因何创建此代 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 代创建时间即版本序 |
+
+> 索引：
+> - `idx_workspace_execution_specs_workspace_generation (workspace_id, generation)`
+> - 唯一约束 `uq_workspace_execution_specs_workspace_generation (workspace_id, generation)` — 同代唯一
 
 ### 3.4 MCP 与 Provider（mcp_servers / mcp_tool_aliases / oauth_credentials / provider_connections / provider_credential_leases / provider_connection_audit）
 
 **mcp_servers**（`V1` + `V15`，Entity `entity/McpServer.java`）：workspace 下 remote/stdio server 注册。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
-| id / workspace_id | VARCHAR(36) | PK / FK + `idx_mcp_servers_workspace_id` | 归属 |
-| name / endpoint | VARCHAR(255/512) | NOT NULL | `serverId` 路由键见 DEV-030 附录 |
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | VARCHAR(36) | PK | — |
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id)` | 归属 |
+| name | VARCHAR(255) | NOT NULL | `serverId` 路由键见 DEV-030 附录 |
+| endpoint | VARCHAR(512) | NOT NULL | 服务端点 |
 | auth_config | TEXT | nullable | 遗留，OAuth 密文已迁 `oauth_credentials` |
-| auth_mode | VARCHAR(16) | DEFAULT 'oauth'（`V15`） | `oauth` / `no-auth`（公开免 broker） |
-| enabled | BOOLEAN | DEFAULT TRUE | 禁用即摘流 |
+| enabled | BOOLEAN | NOT NULL DEFAULT TRUE | 禁用即摘流 |
+| auth_mode | VARCHAR(16) | NOT NULL DEFAULT 'oauth'（`V15`） | `oauth` / `no-auth`（公开免 broker） |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：`idx_mcp_servers_workspace_id (workspace_id)`
 
 **mcp_tool_aliases**（`V15`，Entity `entity/McpToolAlias.java`）：sticky 工具别名，冲突仅新者加前缀、永不晋升。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
-| workspace_id / issued_name | VARCHAR(36/255) | 联合 PK | 下发名全局键 |
-| server_id / backend_name | VARCHAR(36/255) | NOT NULL + `idx_mcp_tool_aliases_server(workspace_id, server_id)` | 真实后端 |
-| generation | BIGINT | DEFAULT 0 | 每次 `tools/list` 合并递增，审计回放用 |
-| created_at / updated_at | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | — |
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id)`，联合 PK | 归属 |
+| issued_name | VARCHAR(255) | NOT NULL，联合 PK | 下发名 |
+| server_id | VARCHAR(36) | NOT NULL | 真实后端 server |
+| backend_name | VARCHAR(255) | NOT NULL | 真实后端工具名 |
+| generation | BIGINT | NOT NULL DEFAULT 0 | 每次 `tools/list` 合并递增，审计回放用 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：`idx_mcp_tool_aliases_server (workspace_id, server_id)`
 
 **oauth_credentials**（`V9`，Entity `entity/OAuthCredential.java`）：CP token broker 持久化的加密 refresh token。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | VARCHAR(36) | PK | — |
-| user_id / workspace_id / server_id | VARCHAR(36) | FK `users/workspaces/mcp_servers` + UNIQUE `(user_id, workspace_id, server_id)` + 双索引 | 单用户单空间单服单凭证 |
-| client_id / token_endpoint / redirect_uri / scope | VARCHAR(255/512/512/1024) | NOT NULL | OAuth 接线四件套 |
-| refresh_token_ciphertext / encryption_key_version | TEXT / VARCHAR(32) | NOT NULL | 信封加密，版本用于轮转 |
-| status | VARCHAR(32) | DEFAULT 'AUTHORIZED' | 授权态 |
+| user_id | VARCHAR(36) | NOT NULL FK `users(id)` | 归属 |
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id)` | 归属 |
+| server_id | VARCHAR(36) | NOT NULL FK `mcp_servers(id)` | 归属 |
+| client_id | VARCHAR(255) | NOT NULL | OAuth client |
+| token_endpoint | VARCHAR(512) | NOT NULL | token 端点 |
+| redirect_uri | VARCHAR(512) | NOT NULL | 回跳地址 |
+| scope | VARCHAR(1024) | NOT NULL | 授权范围 |
+| refresh_token_ciphertext | TEXT | NOT NULL | 信封加密密文 |
+| encryption_key_version | VARCHAR(32) | NOT NULL | 密钥版本，用于轮转 |
+| status | VARCHAR(32) | NOT NULL DEFAULT 'AUTHORIZED' | 授权态 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_oauth_credentials_workspace (workspace_id)`
+> - `idx_oauth_credentials_server (server_id)`
+> - 唯一约束 `(user_id, workspace_id, server_id)` — 单用户单空间单服单凭证
 
 **provider_connections**（`V18`，Entity `entity/ProviderConnection.java`）：LLM Provider 连接（PLAN-261），三级归属。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | VARCHAR(36) | PK | — |
-| owner_type / owner_id | VARCHAR(16/64) | CHECK `SYSTEM/WORKSPACE/USER` + UNIQUE `(owner_type, owner_id, provider_id)` + `idx_provider_connections_owner` | 作用域 |
-| provider_id / label | VARCHAR(128) | NOT NULL | 如 `openai/deepseek` + 展示名 |
+| owner_type | VARCHAR(16) | NOT NULL CHECK `SYSTEM/WORKSPACE/USER` | 作用域 |
+| owner_id | VARCHAR(64) | NOT NULL | 作用域 ID |
+| provider_id | VARCHAR(128) | NOT NULL | 如 `openai/deepseek` |
+| label | VARCHAR(128) | NOT NULL | 展示名 |
 | base_url | VARCHAR(2048) | nullable | 自建网关覆盖 |
-| credential_ciphertext / encryption_key_version | TEXT / VARCHAR(32) | — | 与 OAuth 同模式，独立 key |
-| enabled / status | BOOLEAN / VARCHAR(32) | CHECK `UNVERIFIED/VERIFYING/READY/INVALID_CREDENTIALS/UNREACHABLE/DISABLED` + `idx_provider_connections_provider_status` | 可用态 |
-| model_discovery / manual_models | VARCHAR(32) / JSONB | CHECK `remote-models/litellm-catalog/curated/manual` | 模型来源 |
-| revision | BIGINT | DEFAULT 1 | 每次改连接 +1，`sessions/chat_runs` 存快照比对 |
-| last_verified_at / last_error_code | TIMESTAMPTZ / VARCHAR(64) | nullable | 连通性 |
+| credential_ciphertext | TEXT | nullable | 信封加密，独立 key |
+| encryption_key_version | VARCHAR(32) | NOT NULL | 密钥版本 |
+| enabled | BOOLEAN | NOT NULL DEFAULT TRUE | 启用开关 |
+| status | VARCHAR(32) | NOT NULL DEFAULT 'UNVERIFIED' CHECK `UNVERIFIED/VERIFYING/READY/INVALID_CREDENTIALS/UNREACHABLE/DISABLED` | 可用态 |
+| model_discovery | VARCHAR(32) | NOT NULL DEFAULT 'remote-models' CHECK `remote-models/litellm-catalog/curated/manual` | 模型来源 |
+| manual_models | JSONB | nullable | 手工模型清单 |
+| revision | BIGINT | NOT NULL DEFAULT 1 | 每次改连接 +1，`sessions/chat_runs` 存快照比对 |
+| last_verified_at | TIMESTAMPTZ | nullable | 连通性验证时间 |
+| last_error_code | VARCHAR(64) | nullable | 最近错误码 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_provider_connections_owner (owner_type, owner_id, enabled)`
+> - `idx_provider_connections_provider_status (provider_id, status, enabled)`
+> - 唯一约束 `(owner_type, owner_id, provider_id)` — 同 scope 同 provider 一条
 
 **provider_credential_leases**（`V18`，Entity `entity/ProviderCredentialLease.java`）：发给 Agent 的一次性短期凭证租约。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
-| id / lease_hash | VARCHAR(36/128) | PK / UNIQUE | `lease_hash` 给 Agent 兑换 |
-| provider_connection_id | VARCHAR(36) | FK CASCADE | 删连接清租约 |
-| user_id / workspace_id / session_id / run_id | VARCHAR(36) | nullable（除 user 外）+ `idx_..._binding(connection, user, run)` | 最小闭环绑定 |
-| provider_id / model | VARCHAR(128/255) | NOT NULL | 本次允许的模型 |
-| expires_at / redeemed_at / revoked_at | TIMESTAMPTZ | `expires_at` NOT NULL + `idx_..._expiry` | 一次性，过期/兑换/吊销三态 |
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | VARCHAR(36) | PK | — |
+| lease_hash | VARCHAR(128) | NOT NULL UNIQUE | Agent 兑换键 |
+| provider_connection_id | VARCHAR(36) | NOT NULL FK `provider_connections(id) ON DELETE CASCADE` | 删连接清租约 |
+| user_id | VARCHAR(36) | NOT NULL | 发放对象 |
+| workspace_id | VARCHAR(36) | nullable | 绑定空间 |
+| session_id | VARCHAR(36) | nullable | 绑定会话 |
+| run_id | VARCHAR(36) | nullable | 绑定轮次 |
+| provider_id | VARCHAR(128) | NOT NULL | 本次允许的 provider |
+| model | VARCHAR(255) | NOT NULL | 本次允许的模型 |
+| expires_at | TIMESTAMPTZ | NOT NULL | 过期时间 |
+| redeemed_at | TIMESTAMPTZ | nullable | 兑换时间 |
+| revoked_at | TIMESTAMPTZ | nullable | 吊销时间 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_provider_credential_leases_expiry (expires_at)` — 过期扫描
+> - `idx_provider_credential_leases_binding (provider_connection_id, user_id, run_id)` — 绑定查询
 
 **provider_connection_audit**（`V20`，Entity `entity/ProviderConnectionAudit.java`）：只追加审计，`provider_connection_id` 可空（删连接后仍留痕）。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | VARCHAR(36) | PK | — |
 | provider_connection_id | VARCHAR(36) | nullable，无 FK | 故意不级联 |
-| owner_type / owner_id / provider_id | VARCHAR(16/64/128) | NOT NULL | 冗余当时归属 |
-| action / changed_by | VARCHAR(32/64) | NOT NULL | 谁做了什么 |
-| from_status / to_status | VARCHAR(32) | nullable | 状态变迁 |
-| credential_present / credential_last4 | BOOLEAN / VARCHAR(4) | DEFAULT FALSE | 只存后四位，禁存明文 |
+| owner_type | VARCHAR(16) | NOT NULL | 冗余当时归属 |
+| owner_id | VARCHAR(64) | NOT NULL | 冗余当时归属 |
+| provider_id | VARCHAR(128) | NOT NULL | 冗余当时归属 |
+| action | VARCHAR(32) | NOT NULL | 动作 |
+| changed_by | VARCHAR(64) | NOT NULL | 操作人 |
+| from_status | VARCHAR(32) | nullable | 状态变迁 |
+| to_status | VARCHAR(32) | nullable | 状态变迁 |
+| credential_present | BOOLEAN | NOT NULL DEFAULT FALSE | 是否含凭证 |
+| credential_last4 | VARCHAR(4) | nullable | 只存后四位，禁存明文 |
 | connection_revision | BIGINT | NOT NULL | 当时 revision |
-| created_at | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP + 双索引 `(connection, created_at)` / `(owner, created_at)` | 时间序 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | 时间序 |
+
+> 索引：
+> - `idx_provider_connection_audit_connection (provider_connection_id, created_at)`
+> - `idx_provider_connection_audit_owner (owner_type, owner_id, created_at)`
 
 ### 3.5 配置与 RAG（config / config_audit / document_chunks / context_events / context_projections / context_source_hashes）
 
-**config / config_audit**（`V4` + `V5/V10/V17`，Entity `entity/ConfigEntity.java` / `ConfigAuditEntity.java`）：3-tier 配置 canonical 存储，语义见 [DEV-003](DEV-003-config-management.md)。
+**config**（`V4` + `V5/V10`，Entity `entity/ConfigEntity.java`）：3-tier 配置 canonical 存储，语义见 [DEV-003](DEV-003-config-management.md)。
 
-| 表 | 关键列 | 约束/索引 | 说明 |
-|----|--------|-----------|------|
-| config | `environment VARCHAR(64)`（`V10` 由 32 拓宽）、`layer VARCHAR(16)`、`domain VARCHAR(32)`、`config_key VARCHAR(64)`、`config_value TEXT`、`is_set BOOLEAN DEFAULT TRUE`、`mcp_config JSONB`（`V5`）、`updated_by/at` | UNIQUE `(environment, layer, domain, config_key)` + `idx_config_lookup(environment, layer, domain)` | `layer` 为 `SYSTEM/ADMIN/USER`，`domain` 8 枚举见 AGENTS.md |
-| config_audit | `config_id BIGINT FK config(id)`、`old_value/new_value TEXT`、`changed_by/at` | `idx_config_audit_config_id` | `V17` 把 `llm-provider` 域含 `apikey/secret/password/token` 的历史值改写为 `missing` 或 `present:legacy:<md5>`，禁明文留痕 |
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | BIGSERIAL | PK | 自增主键 |
+| environment | VARCHAR(64) | NOT NULL DEFAULT 'default' | `V10` 由 VARCHAR(32) 拓宽 |
+| layer | VARCHAR(16) | NOT NULL | `SYSTEM/ADMIN/USER` |
+| domain | VARCHAR(32) | NOT NULL | 8 枚举见 AGENTS.md |
+| config_key | VARCHAR(64) | NOT NULL | 配置键 |
+| config_value | TEXT | nullable | 值，敏感项脱敏 |
+| is_set | BOOLEAN | NOT NULL DEFAULT TRUE | 是否已设置 |
+| mcp_config | JSONB | nullable（`V5`） | 遗留 MCP 配置位 |
+| updated_by | VARCHAR(64) | nullable | 修改人 |
+| updated_at | TIMESTAMPTZ | DEFAULT NOW() | 修改时间 |
+
+> 索引：
+> - `idx_config_lookup (environment, layer, domain)`
+> - 唯一约束 `(environment, layer, domain, config_key)` — 四元定位一行
+
+**config_audit**（`V4` + `V17`，Entity `entity/ConfigAuditEntity.java`）：配置变更审计。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | BIGSERIAL | PK | — |
+| config_id | BIGINT | NOT NULL FK `config(id)` | 关联配置行 |
+| environment | VARCHAR(32) | nullable | 当时值 |
+| layer | VARCHAR(16) | nullable | 当时值 |
+| domain | VARCHAR(32) | nullable | 当时值 |
+| config_key | VARCHAR(64) | nullable | 当时值 |
+| old_value | TEXT | nullable | `V17` 把 `llm-provider` 域含 `apikey/secret/password/token` 的历史值改写为 `missing` 或 `present:legacy:<md5>` |
+| new_value | TEXT | nullable | 同上，禁明文留痕 |
+| changed_by | VARCHAR(64) | nullable | 修改人 |
+| changed_at | TIMESTAMPTZ | DEFAULT NOW() | 修改时间 |
+
+> 索引：`idx_config_audit_config_id (config_id)`
 
 **document_chunks**（`V3`）：RAG 向量表，无 FK，独立生命周期。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | VARCHAR(36) | PK | chunk 键 |
 | page_content | TEXT | NOT NULL | 切片正文 |
-| embedding | `vector(1536)` | NOT NULL + `ivfflat (embedding vector_cosine_ops) WITH (lists=100)` | `text-embedding-3-small` 维度，余弦检索 |
-| cmetadata / document_id / chunk_index | JSONB / VARCHAR(36) / INT | `idx_chunks_document_id` | 来源与序号 |
+| embedding | vector(1536) | NOT NULL | `text-embedding-3-small` 维度 |
+| cmetadata | JSONB | nullable | 来源元数据 |
+| document_id | VARCHAR(36) | nullable | 来源文档 |
+| chunk_index | INT | nullable | 切片序号 |
 | created_at | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | — |
 
-**context_events / context_projections / context_source_hashes**（`V7/V8` + `V14` 级联，Entity `context/entity/` 下三件套）：Agent Event Sourcing，见 [DEV-013](DEV-013-agent-architecture.md) 与 [DEV-017](DEV-017-session-architecture.md)。
+> 索引：
+> - `idx_chunks_embedding` — `ivfflat (embedding vector_cosine_ops) WITH (lists=100)`，余弦检索
+> - `idx_chunks_document_id (document_id)`
 
-| 表 | 关键列 | 约束/索引 | 说明 |
-|----|--------|-----------|------|
-| context_events | `session_id FK CASCADE`、`workspace_id/user_id`、`event_type VARCHAR(50)`、`sequence BIGINT`、`payload JSONB`、`correlation_id/causation_id` | UNIQUE `(session_id, sequence)` + 索引 `(session)` / `(session, sequence)` / `(workspace)` / `(event_type)` | 只追加，`sequence` 单会话单调 |
-| context_projections | `session_id UNIQUE FK CASCADE`、`projection_type DEFAULT 'agent_context'`、`latest_sequence`、`payload JSONB` | UNIQUE `(session_id)` + 索引 `(session)` / `(workspace)` | 物化视图，重放 `events` 可重建 |
-| context_source_hashes | `workspace_id`、`source_key VARCHAR(255)`、`hash VARCHAR(64)` | UNIQUE `(workspace_id, source_key)` + 双索引 | 增量源去重 |
+**context_events**（`V7` + `V14` 级联，Entity `context/entity/ContextEvent.java`）：Agent Event Sourcing 事件表，只追加；见 [DEV-013](DEV-013-agent-architecture.md) 与 [DEV-017](DEV-017-session-architecture.md)。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK DEFAULT `gen_random_uuid()` | — |
+| session_id | VARCHAR(36) | NOT NULL FK `sessions(id) ON DELETE CASCADE` | 归属会话 |
+| workspace_id | VARCHAR(36) | NOT NULL | 冗余归属 |
+| user_id | VARCHAR(36) | NOT NULL | 冗余归属 |
+| event_type | VARCHAR(50) | NOT NULL | 事件类型 |
+| sequence | BIGINT | NOT NULL | 单会话单调序号 |
+| payload | JSONB | NOT NULL DEFAULT '{}' | 事件内容 |
+| correlation_id | VARCHAR(36) | nullable | 关联链 |
+| causation_id | VARCHAR(36) | nullable | 因果链 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_context_events_session_id (session_id)`
+> - `idx_context_events_session_sequence (session_id, sequence)`
+> - `idx_context_events_workspace_id (workspace_id)`
+> - `idx_context_events_event_type (event_type)`
+> - 唯一约束 `(session_id, sequence)` — 单会话内序号唯一
+
+**context_projections**（`V7` + `V14` 级联，Entity `context/entity/ContextProjection.java`）：事件物化视图，重放 `context_events` 可重建。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK DEFAULT `gen_random_uuid()` | — |
+| session_id | VARCHAR(36) | NOT NULL UNIQUE FK `sessions(id) ON DELETE CASCADE` | 单会话单投影 |
+| workspace_id | VARCHAR(36) | NOT NULL | 冗余归属 |
+| user_id | VARCHAR(36) | NOT NULL | 冗余归属 |
+| projection_type | VARCHAR(50) | NOT NULL DEFAULT 'agent_context' | 投影类型 |
+| latest_sequence | BIGINT | NOT NULL DEFAULT 0 | 已物化到的事件序号 |
+| payload | JSONB | NOT NULL DEFAULT '{}' | 投影内容 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_context_projections_session_id (session_id)`
+> - `idx_context_projections_workspace_id (workspace_id)`
+
+**context_source_hashes**（`V8`，Entity `context/entity/ContextSourceHash.java`）：增量源哈希去重。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK DEFAULT `gen_random_uuid()` | — |
+| workspace_id | VARCHAR(36) | NOT NULL | 归属 |
+| source_key | VARCHAR(255) | NOT NULL | 源标识 |
+| hash | VARCHAR(64) | NOT NULL | 内容哈希 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_context_source_hashes_workspace_id (workspace_id)`
+> - `idx_context_source_hashes_source_key (source_key)`
+> - 唯一约束 `(workspace_id, source_key)` — 同源一行
 
 ### 3.6 文件审计（files / audit_logs）
 
 **files**（`V1` + `V6`，Entity `entity/File.java`）：附件 canonical，物理路径 `{attachments-base-path}/{sessionId}/{fileId}`，见 [DEV-014 §5](DEV-014-control-plane-architecture.md)。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | VARCHAR(36) | PK | `fileId` 即文件名键 |
-| user_id / workspace_id | VARCHAR(36) | `user_id` FK NOT NULL + `workspace_id` FK nullable + 双索引 | `workspaceId` 空表会话级附件 |
-| session_id / message_id | VARCHAR(36) | FK nullable（`V6`）+ 双索引，`session_id ON DELETE CASCADE`、`message_id ON DELETE SET NULL` | 删会话清附件，删消息保留文件行 |
-| filename / mime_type / size_bytes / storage_path | VARCHAR(255/127) / BIGINT / VARCHAR(512) | NOT NULL（除 mime 外） | 白名单校验 + 500MB 上限在 Controller 层 |
-| created_at | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | orphan 清理 24h 窗口基准 |
+| user_id | VARCHAR(36) | NOT NULL FK `users(id)` | 上传者 |
+| workspace_id | VARCHAR(36) | nullable FK `workspaces(id)` | 空 = 会话级附件 |
+| filename | VARCHAR(255) | NOT NULL | 原始文件名 |
+| mime_type | VARCHAR(127) | nullable | MIME 类型 |
+| size_bytes | BIGINT | NOT NULL DEFAULT 0 | 白名单校验 + 500MB 上限在 Controller 层 |
+| storage_path | VARCHAR(512) | NOT NULL | 物理路径 |
+| session_id | VARCHAR(36) | nullable FK `sessions(id) ON DELETE CASCADE`（`V6`） | 删会话清附件 |
+| message_id | VARCHAR(36) | nullable FK `messages(id) ON DELETE SET NULL`（`V6`） | 删消息保留文件行 |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | orphan 清理 24h 窗口基准 |
+
+> 索引：
+> - `idx_files_user_id (user_id)`
+> - `idx_files_workspace_id (workspace_id)`
+> - `idx_files_session_id (session_id)`（`V6`）
+> - `idx_files_message_id (message_id)`（`V6`）
 
 **audit_logs**（`V1`）：业务审计（MCP 工具调用另写 `audit.log` 文件，见 DEV-014 §5，两者互补）。
 
-| 列 | 类型 | 约束/索引 | 说明 |
-|----|------|-----------|------|
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
 | id | VARCHAR(36) | PK | — |
-| user_id / workspace_id | VARCHAR(36) | FK nullable + 双索引 | 系统动作可空 |
-| action / resource_type / resource_id | VARCHAR(100/50/36) | `action` NOT NULL + `idx_audit_logs_action` | 动作三元组 |
+| user_id | VARCHAR(36) | nullable FK `users(id)` | 系统动作可空 |
+| workspace_id | VARCHAR(36) | nullable FK `workspaces(id)` | 系统动作可空 |
+| action | VARCHAR(100) | NOT NULL | 动作 |
+| resource_type | VARCHAR(50) | nullable | 资源类型 |
+| resource_id | VARCHAR(36) | nullable | 资源 ID |
 | details | TEXT | nullable | 脱敏后 JSON |
-| created_at | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+
+> 索引：
+> - `idx_audit_logs_user_id (user_id)`
+> - `idx_audit_logs_workspace_id (workspace_id)`
+> - `idx_audit_logs_action (action)`
 
 ## 4. 迁移对照（V1~V22）
 
 | 版本 | 文件 | 变更 | 影响表 |
 |------|------|------|--------|
 | V1 | `V1__init_schema.sql` | 8 基表 + 13 索引 | `users/workspaces/workspace_users/sessions/messages/files/mcp_servers/audit_logs` |
-| V2 | `V2__add_workspace_storage_path.sql` | `workspaces` 加列 | `workspaces.storage_path` |
+| V2 | `V2__add_workspace_storage_path.sql` | `workspaces` 加字段 | `workspaces.storage_path` |
 | V3 | `V3__add_document_chunks.sql` | vector 扩展 + RAG 表 + ivfflat 索引 | `document_chunks` |
 | V4 | `V4__config_table.sql` | 配置 + 审计 | `config/config_audit` |
-| V5 | `V5__add_mcp_config.sql` | `config` 加列 | `config.mcp_config` |
+| V5 | `V5__add_mcp_config.sql` | `config` 加字段 | `config.mcp_config` |
 | V6 | `V6__add_session_attachments.sql` | 会话附件 | `files.session_id/message_id`、`messages.attachments`（`U6__undo_session_attachments.sql` 为回滚对子，勿直接执行） |
 | V7 | `V7__context_event_store.sql` | Event Sourcing 双表 | `context_events/context_projections` |
 | V8 | `V8__context_source_hashes.sql` | 增量哈希 | `context_source_hashes` |
 | V9 | `V9__oauth_credentials.sql` | OAuth 凭证 | `oauth_credentials` |
 | V10 | `V10__expand_config_environment.sql` | `environment` 32→64 | `config.environment` |
-| V11 | `V11__add_assignment_and_storage_ref.sql` | 存储五列 + 分配表 + 回填 | `workspaces.storage_backend/ref/generation/sandbox_spec*`、`workspace_assignments` |
+| V11 | `V11__add_assignment_and_storage_ref.sql` | 存储 5 字段 + 分配表 + 回填 | `workspaces.storage_backend/ref/generation/sandbox_spec*`、`workspace_assignments` |
 | V12 | `V12__unique_assignment_generation.sql` | 联合唯一 | `workspace_assignments(workspace_id, generation)` |
 | V13 | `V13__rename_workspace_assignments_to_execution_specs.sql` | 重命名 + 幂等建表 | `workspace_execution_specs`（旧名退役） |
 | V14 | `V14__workspace_lifecycle_constraints.sql` | 软删 + 级联重建 + 复合索引 | `workspaces.deleted_at`、`messages/context_*` FK CASCADE、`sessions/workspace_users` 复合索引 |
@@ -346,7 +592,7 @@ flowchart LR
 | V19 | `V19__session_provider_connection_binding.sql` | 逻辑绑定（无 FK） | `sessions/chat_runs.provider_connection_id+connection_revision` |
 | V20 | `V20__provider_connection_audit.sql` | 连接审计 | `provider_connection_audit` |
 | V21 | `V21__chat_approval_requests.sql` | 人审 | `approval_requests` |
-| V22 | `V22__chat_run_leases.sql` | 租约列 | `chat_runs.lease_owner/lease_expires_at` |
+| V22 | `V22__chat_run_leases.sql` | 租约字段 | `chat_runs.lease_owner/lease_expires_at` |
 
 ## 5. 本地查看与运维
 
