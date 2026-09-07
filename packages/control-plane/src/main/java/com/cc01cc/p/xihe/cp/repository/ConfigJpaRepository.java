@@ -1,12 +1,14 @@
 package com.cc01cc.p.xihe.cp.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 
 import java.util.List;
 import java.util.Optional;
 
-public interface ConfigJpaRepository extends JpaRepository<ConfigEntity, Long> {
+public interface ConfigJpaRepository extends JpaRepository<ConfigEntity, UUID> {
 
     List<ConfigEntity> findByEnvironmentAndLayerAndDomain(
         String environment, String layer, String domain);
