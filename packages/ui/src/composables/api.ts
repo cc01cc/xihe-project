@@ -45,6 +45,12 @@ export interface SessionListResponse {
   workspace?: ApiWorkspace
 }
 
+export interface ChatApprovalDecisionResponse {
+  status: 'accepted' | 'already_decided'
+  requestId: string
+  approved: boolean
+}
+
 type JsonRecord = Record<string, unknown>
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -135,7 +141,8 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
   const hasBody = options?.body !== undefined && options.body !== null
   const includeContentType = hasBody && !(options?.body instanceof FormData)
   const res = await fetch(endpoint(path), { ...options, headers: apiAuthHeaders(options?.headers, includeContentType) })
-  if (res.status === 401) {
+  const isAuthEndpoint = path === '/auth/login' || path === '/auth/register'
+  if (res.status === 401 && !isAuthEndpoint) {
     localStorage.removeItem('xihe-token')
     localStorage.removeItem('xihe-user')
     if (!['/login', '/register'].includes(window.location.pathname)) window.location.href = '/login'
@@ -290,6 +297,12 @@ export const api = {
   },
   deleteMessage(sessionId: string, messageId: string) {
     return apiDelete(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`)
+  },
+  decideChatApproval(requestId: string, approved: boolean): Promise<ChatApprovalDecisionResponse> {
+    return request<ChatApprovalDecisionResponse>(`/chat/approvals/${encodeURIComponent(requestId)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ approved }),
+    })
   },
   getHealth() {
     return request<{ status: string }>('/health')

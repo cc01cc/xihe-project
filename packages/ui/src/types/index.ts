@@ -46,6 +46,19 @@ export interface ToolCall {
   completedAt?: string
 }
 
+export interface ApprovalRequest {
+  requestId: string
+  runId: string
+  sessionId: string
+  workspaceId?: string
+  tool: string
+  action: string
+  details: string
+  expiresAt?: string
+  replayed?: boolean
+  state?: 'pending' | 'dispatching' | 'approved' | 'rejected' | 'expired' | 'dispatch_unknown'
+}
+
 export interface AttachmentFile {
   id: string
   name: string
@@ -145,7 +158,7 @@ export interface ChatRunResponse {
 export interface AgentState {
   status: 'idle' | 'thinking' | 'executing' | 'awaiting_approval' | 'error'
   currentToolCall: ToolCall | null
-  pendingApprovals: ToolCall[]
+  pendingApprovals: ApprovalRequest[]
 }
 
 export type LangChainEventType =

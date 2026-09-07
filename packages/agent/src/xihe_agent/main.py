@@ -21,7 +21,12 @@ from langchain_core.messages import BaseMessage
 from litellm import get_llm_provider
 from loguru import logger
 
-from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
+from xihe_agent.adapters.approval_tool import (
+    ApprovalAgentTool,
+    ApprovalExecutorUnsupportedError,
+    ApprovalTerminalError,
+    ApprovalTool,
+)
 from xihe_agent.adapters.mcp_client import MCPClientManager
 from xihe_agent.adapters.sse_adapter import render_sse
 from xihe_agent.agent_runner import LangGraphRunner
@@ -802,6 +807,9 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
         try:
             mcp_tools = await _get_tools_for_mode(tool_mode, workspace_id)
             if USE_SUPERVISOR and tool_mode == "workspace":
+                raise ApprovalExecutorUnsupportedError(
+                    "Approval is not supported by the buffered supervisor executor"
+                )
                 # Supervisor path remains on legacy tools until full migration.
                 from langchain_core.messages import HumanMessage
 
@@ -836,6 +844,12 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 context = await context_provider.load(session_id, after_sequence=0)
                 context.runtime_state["user_name"] = user_name
                 context.runtime_state["instructions"] = instructions
+                context.metadata.update({
+                    "requestId": request_id,
+                    "runId": run_id,
+                    "sessionId": session_id,
+                    "workspaceId": workspace_id,
+                })
 
                 all_tools = [] if tool_mode == "none" else [approval_tool, generate_image_tool]
                 if mcp_tools:
@@ -897,6 +911,29 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         yield render_sse("done", correlated_data(done_data))
                     else:
                         yield render_sse(event.type, correlated_data(event.data))
+        except ApprovalTerminalError as exc:
+            error_seen = True
+            terminal_error_code = exc.code
+            error_detail = str(exc)
+            retryable = False
+            terminal_outcome = "error"
+            logger.info(
+                "[LIFECYCLE] service=agent event=chat_approval_terminal requestId={} sessionId={} workspaceId={} runId={} errorCode={}",
+                request_id,
+                session_id,
+                workspace_id,
+                run_id,
+                terminal_error_code,
+            )
+            if not error_sent:
+                error_sent = True
+                yield render_sse("error", correlated_data({
+                    "code": terminal_error_code,
+                    "detail": error_detail,
+                    "retryable": retryable,
+                    "outcome": terminal_outcome,
+                    "type": "error",
+                }))
         except Exception as exc:
             error_seen = True
             terminal_error_code, error_detail, retryable = _classify_llm_exception(exc)
@@ -1029,15 +1066,31 @@ async def approval_respond(request: Request, _token: None = Depends(verify_api_t
     data = await request.json()
     request_id = data.get("requestId", "")
     approved = data.get("approved", False)
-    success = approval_tool.resolve_approval(request_id, bool(approved))
-    if success:
-        return {"status": "ok"}
+    status, decision = approval_tool.resolve_approval_status(request_id, bool(approved))
+    if status in {"accepted", "already_decided"}:
+        return {
+            "status": status,
+            "requestId": request_id,
+            "approved": decision,
+        }
+    if status == "conflict":
+        raise HTTPException(status_code=409, detail=f"Approval decision conflict: {request_id}")
+    if status == "expired":
+        raise HTTPException(status_code=410, detail=f"Approval request expired: {request_id}")
     raise HTTPException(status_code=404, detail=f"No pending approval: {request_id}")
 
 
 @app.get("/internal/v1/agent/approval/pending")
 async def approval_pending(_token: None = Depends(verify_api_token)):
     return {"pending": approval_tool.get_pending()}
+
+
+@app.get("/internal/v1/agent/approval/{request_id}")
+async def approval_status(request_id: str, _token: None = Depends(verify_api_token)):
+    status = approval_tool.get_approval_status(request_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Approval request not found: {request_id}")
+    return status
 
 
 @app.post("/internal/v1/agent/mcp/reinit")

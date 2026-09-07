@@ -63,6 +63,10 @@ class LangGraphEventAdapter(EventAdapter):
             return AgentEvent(type="done", data={"type": "done", "run_id": run_id})
 
         if event_type == "on_tool_start":
+            if name == "request_approval":
+                # ApprovalAgentTool publishes a canonical request before it
+                # blocks; do not emit a second legacy tool_call event here.
+                return None
             tool_input = data.get("input", "")
             return AgentEvent(
                 type="tool_call",

@@ -30,6 +30,7 @@ sidebar_order: 0
 - [DEV-016: MCP 架构](DEV-016-mcp-architecture.md)
 - [DEV-017: Session 架构](DEV-017-session-architecture.md)
 - [DEV-018: Known Issues](DEV-018-known-issues.md)
+- [DEV-019: 数据库设计](DEV-019-database-schema.md)
 
 ### 测试
 

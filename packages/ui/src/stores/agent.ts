@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ToolCall, AgentState } from '../types'
+import type { ApprovalRequest, ToolCall, AgentState } from '../types'
 
 export const useAgentStore = defineStore('agent', () => {
   const agentState = ref<AgentState>({
@@ -39,31 +39,33 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function addApprovalRequest(toolCall: ToolCall) {
-    agentState.value.pendingApprovals.push(toolCall)
+  function addApprovalRequest(request: ApprovalRequest) {
+    const existing = agentState.value.pendingApprovals.findIndex((item) => item.requestId === request.requestId)
+    if (existing >= 0) {
+      agentState.value.pendingApprovals[existing] = {
+        ...agentState.value.pendingApprovals[existing],
+        ...request,
+      }
+    } else {
+      agentState.value.pendingApprovals.push(request)
+    }
     agentState.value.status = 'awaiting_approval'
   }
 
-  function approveTool(toolId: string) {
-    const idx = agentState.value.pendingApprovals.findIndex((a) => a.id === toolId)
-    if (idx >= 0) {
-      agentState.value.pendingApprovals.splice(idx, 1)
-      updateToolCall(toolId, { status: 'running' })
-    }
-    if (agentState.value.pendingApprovals.length === 0) {
+  function removeApprovalRequest(requestId: string) {
+    const idx = agentState.value.pendingApprovals.findIndex((item) => item.requestId === requestId)
+    if (idx >= 0) agentState.value.pendingApprovals.splice(idx, 1)
+    if (agentState.value.pendingApprovals.length === 0 && agentState.value.status === 'awaiting_approval') {
       agentState.value.status = 'thinking'
     }
   }
 
-  function rejectTool(toolId: string) {
-    const idx = agentState.value.pendingApprovals.findIndex((a) => a.id === toolId)
-    if (idx >= 0) {
-      agentState.value.pendingApprovals.splice(idx, 1)
-      updateToolCall(toolId, { status: 'failed', result: 'Rejected by user' })
-    }
-    if (agentState.value.pendingApprovals.length === 0) {
-      agentState.value.status = 'idle'
-    }
+  function approveTool(requestId: string) {
+    removeApprovalRequest(requestId)
+  }
+
+  function rejectTool(requestId: string) {
+    removeApprovalRequest(requestId)
   }
 
   function reset() {
@@ -82,6 +84,7 @@ export const useAgentStore = defineStore('agent', () => {
     addToolCall,
     updateToolCall,
     addApprovalRequest,
+    removeApprovalRequest,
     approveTool,
     rejectTool,
     reset,

@@ -25,7 +25,7 @@ class AgentEvent:
     events defined in `interfaces.event`.
     """
 
-    type: str  # "token" | "tool_call" | "tool_result" | "status" | "error" | "done"
+    type: str  # "token" | "tool_call" | "tool_result" | "approval_request" | "status" | "error" | "done"
     data: dict[str, Any]
 
 

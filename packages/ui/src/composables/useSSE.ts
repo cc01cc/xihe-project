@@ -180,13 +180,20 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
       case 'approval_request':
         try {
           const data = JSON.parse(msg.data) as Record<string, unknown>
-          if (data.id) {
+          const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+          if (requestId) {
             const store = useAgentStore()
             store.addApprovalRequest({
-              id: String(data.id),
-              name: String(data.name ?? 'unknown'),
-              arguments: typeof data.arguments === 'string' ? data.arguments : JSON.stringify(data.arguments),
-              status: 'pending',
+              requestId,
+              runId: String(data.runId ?? ''),
+              sessionId: String(data.sessionId ?? activeSessionId ?? ''),
+              workspaceId: typeof data.workspaceId === 'string' ? data.workspaceId : undefined,
+              tool: String(data.tool ?? 'request_approval'),
+              action: String(data.action ?? ''),
+              details: String(data.details ?? ''),
+              expiresAt: typeof data.expiresAt === 'string' ? data.expiresAt : undefined,
+              replayed: data.replayed === true,
+              state: 'pending',
             })
           }
           currentCallbacks.onApprovalRequest?.(data)

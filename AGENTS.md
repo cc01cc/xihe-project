@@ -189,6 +189,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **配置**: 3-tier (system > admin > user)，CP ConfigService 统一管理
 - **Service 纯函数**: Service 不依赖 ConfigClient，配置由调用方解析后传入
 - **提交**: Conventional Commits，pass `mise run validate` 后可提交
+- **跨协议/跨服务变更走 XH 跨包 checklist（2026-09 会话回溯沉淀）**：任何同时涉及 UI/CP/Agent 三层，或新增/修改 SSE 事件、public/internal route、AgentEvent、CP durable record、UI store 类型、OpenAPI、Flyway、env 的改动，必须先按 `one/.agents/skills/xc-cross-cutting-checklist/SKILL.md` 跑契约定稿 → UI/CP/Agent/Runtime 四层落地 → 契约/测试/证据 → 提交与收尾，禁止以 mock 绿代替真实链路，禁止路由/字段跨层漂移；项目级 `AGENTS.md` / DEV-001 / DEV-013 / DEV-014 文档同步按根 AGENTS 状态回写规则执行。
 
 ## Env Files
 

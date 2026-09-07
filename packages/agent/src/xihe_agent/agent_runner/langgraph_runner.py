@@ -1,5 +1,6 @@
 """LangGraph-based AgentRunner implementation."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +18,7 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import BaseModel, create_model
 
+from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunnerConfig
 from xihe_agent.interfaces.context import AgentContext
@@ -81,6 +83,8 @@ class LCToolAdapter(BaseTool):
                     created_at=datetime.now(UTC),
                 )
             )
+        except ApprovalTerminalError:
+            raise
         except Exception as e:
             logger.warning("Failed to append tool.called event: {}", e)
 
@@ -126,6 +130,13 @@ class LangGraphRunner(AgentRunner):
         context = config.context or AgentContext.empty(aggregate_id=str(uuid4()))
         await self._append_prompt_admitted(messages, context)
 
+        approval_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
+
+        async def publish_approval(payload: dict[str, Any]) -> None:
+            await approval_events.put(AgentEvent(type="approval_request", data=payload))
+
+        context.metadata[APPROVAL_EVENT_SINK_KEY] = publish_approval
+
         model = self._model_factory(config.model)
         tools = [self._adapt_tool(t, context) for t in config.tools]
 
@@ -142,12 +153,39 @@ class LangGraphRunner(AgentRunner):
         seen_tool_ids: set[str] = set()
 
         try:
-            async for raw_event in agent.astream_events(inputs, version="v2"):
-                for event in self._translate_raw_event(raw_event, seen_tool_ids):
-                    yield event
+            raw_stream = agent.astream_events(inputs, version="v2").__aiter__()
+            raw_task = asyncio.create_task(raw_stream.__anext__())
+            approval_task = asyncio.create_task(approval_events.get())
+            try:
+                while True:
+                    completed, _ = await asyncio.wait(
+                        {raw_task, approval_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if approval_task in completed:
+                        yield approval_task.result()
+                        approval_task = asyncio.create_task(approval_events.get())
+                    if raw_task in completed:
+                        try:
+                            raw_event = raw_task.result()
+                        except StopAsyncIteration:
+                            break
+                        for event in self._translate_raw_event(raw_event, seen_tool_ids):
+                            yield event
+                        raw_task = asyncio.create_task(raw_stream.__anext__())
+            finally:
+                for task in (raw_task, approval_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(raw_task, approval_task, return_exceptions=True)
+                aclose = getattr(raw_stream, "aclose", None)
+                if aclose is not None:
+                    await aclose()
         except Exception as e:
             logger.error("LangGraph stream failed", exc_info=e)
             yield AgentEvent(type="error", data={"error": str(e)})
+        finally:
+            context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
 
     async def create_agent(
         self,

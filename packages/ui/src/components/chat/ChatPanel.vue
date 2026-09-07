@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
-import { api } from '../../composables/api'
+import { ApiError, api } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import type { AttachmentFile, Message } from '../../types'
 import MessageList from './MessageList.vue'
 import InputArea from './InputArea.vue'
 import SSEStream from './SSEStream.vue'
+import ApprovalModal from './ApprovalModal.vue'
 
 const props = withDefaults(defineProps<{
   sessionId: string
@@ -19,9 +20,31 @@ const props = withDefaults(defineProps<{
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
 
+const suggestions = computed(() => props.toolMode === 'workspace'
+  ? ['列出文件', '打开 README', '解释选中的文件', '查看工作区环境']
+  : ['今天天气怎么样？', '帮我写一封邮件', '解释一下这个概念', '总结一下这段代码'])
+
 const messages = computed(() => chatStore.getMessages(props.sessionId))
 const isStreaming = computed(() => {
-  return agentStore.agentState.status === 'thinking' || agentStore.agentState.status === 'executing'
+  return agentStore.agentState.status === 'thinking'
+    || agentStore.agentState.status === 'executing'
+    || agentStore.agentState.status === 'awaiting_approval'
+})
+
+const pendingApproval = computed(() => agentStore.agentState.pendingApprovals.find(
+  (approval) => approval.sessionId === props.sessionId,
+) ?? null)
+const approvalDismissedFor = ref<string | null>(null)
+const approvalSubmitting = ref(false)
+const approvalError = ref<string | null>(null)
+const showApproval = computed(() => pendingApproval.value !== null
+  && pendingApproval.value.requestId !== approvalDismissedFor.value)
+
+watch(() => pendingApproval.value?.requestId, (requestId) => {
+  if (requestId !== approvalDismissedFor.value) {
+    approvalDismissedFor.value = null
+    approvalError.value = null
+  }
 })
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null)
@@ -84,6 +107,32 @@ function rejectTool(toolId: string) {
   agentStore.rejectTool(toolId)
 }
 
+function dismissApproval() {
+  approvalDismissedFor.value = pendingApproval.value?.requestId ?? null
+  approvalError.value = null
+}
+
+async function decideApproval(approved: boolean) {
+  const approval = pendingApproval.value
+  if (!approval || approvalSubmitting.value) return
+
+  approvalSubmitting.value = true
+  approvalError.value = null
+  try {
+    await api.decideChatApproval(approval.requestId, approved)
+    agentStore.removeApprovalRequest(approval.requestId)
+    approvalDismissedFor.value = null
+  } catch (err) {
+    const message = err instanceof ApiError
+      ? `${err.problem.code}: ${err.problem.detail ?? err.message}`
+      : 'Approval decision failed'
+    approvalError.value = message
+    logger.error('Failed to submit chat approval decision', err)
+  } finally {
+    approvalSubmitting.value = false
+  }
+}
+
 function stopStreaming() {
   streamComponent.value?.stopStreaming?.()
 }
@@ -105,7 +154,7 @@ function stopStreaming() {
       <p class="text-sm text-muted-foreground text-center max-w-md">你好，我是 xihe Agent。有什么我可以帮你的？</p>
       <div class="flex flex-wrap gap-2 justify-center max-w-md">
         <button
-          v-for="suggestion in ['今天天气怎么样？', '帮我写一封邮件', '解释一下这个概念', '总结一下这段代码']"
+           v-for="suggestion in suggestions"
           :key="suggestion"
           class="px-3 py-1.5 text-xs rounded-full border border-border bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
           @click="handleSend(suggestion)"
@@ -121,6 +170,27 @@ function stopStreaming() {
       :is-streaming="isStreaming"
       @send="handleSend"
       @stop="stopStreaming"
+    />
+
+    <div
+      v-if="pendingApproval && !showApproval"
+      data-testid="approval-pending-banner"
+      class="flex items-center justify-between gap-3 border-t bg-muted/40 px-4 py-2 text-sm"
+    >
+      <span>{{ $t('chat.approvalRequired') }}</span>
+      <button class="text-primary underline" type="button" @click="approvalDismissedFor = null">
+        {{ $t('chat.reviewApproval') }}
+      </button>
+    </div>
+
+    <ApprovalModal
+      :approval="pendingApproval"
+      :show="showApproval"
+      :busy="approvalSubmitting"
+      :error="approvalError"
+      @approve="decideApproval(true)"
+      @reject="decideApproval(false)"
+      @close="dismissApproval"
     />
 
     <SSEStream

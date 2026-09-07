@@ -130,6 +130,38 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example: { type: "https://xihe.dev/problems/sse-subscription-required", title: "SSE subscription required", status: 409, code: "SSE_SUBSCRIPTION_REQUIRED", detail: "An active SSE subscription is required", requestId: "req-..." }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/approvals/{requestId}/decision:
+    post:
+      operationId: decideChatApproval
+      summary: Submit a user decision for a pending Chat approval
+      description: |
+        The browser submits an approval decision through Control Plane. The
+        requestId is opaque and must belong to the authenticated user's current
+        workspace/session/run. Control Plane forwards the decision to Agent
+        with the service Bearer; browsers must never call the Agent internal
+        approval endpoint directly. Repeating the same decision is idempotent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9-]{1,128}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatApprovalDecisionRequest' }
+      responses:
+        '200':
+          description: Decision accepted or repeated idempotently
+          content: { application/json: { schema: { $ref: '#/components/schemas/ChatApprovalDecisionResponse' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '410': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
   /api/v1/events:
     get:
       operationId: chatEvents
@@ -140,7 +172,7 @@ paths:
         * `done` terminates a **run**, not the session SSE. The connection stays open across multiple `POST /api/v1/chat` turns and only closes on client disconnect, session deletion, or explicit server termination.
         * The server sends a `heartbeat` comment/event every 15s to keep the connection observable. Heartbeat never enters the message bubble nor resets the run's token count.
         * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
-        * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `tool_call`/`tool_result` (optional) → `token` (one or more) → `done` (exactly one, may carry `errorCode`/`synthetic`). On provider error a single `error` + terminal `done(error)` is sent; the session SSE is retained unless the emitter itself is unwritable.
+         * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
@@ -160,13 +192,13 @@ paths:
                 data: {"sessionId":"sess-123","type":"connected"}
 
                 event: token
-                data: {"content":"hello ","type":"token","run_id":"run-abc"}
+                data: {"content":"hello ","type":"token","runId":"run-abc"}
 
                 event: token
-                data: {"content":"world","type":"token","run_id":"run-abc"}
+                data: {"content":"world","type":"token","runId":"run-abc"}
 
                 event: done
-                data: {"type":"done","run_id":"run-abc"}
+                data: {"type":"done","runId":"run-abc"}
 
                 event: heartbeat
                 data: {"type":"heartbeat","connectionGeneration":2}
@@ -361,9 +393,15 @@ paths:
   /internal/v1/agent/tools:
     get: { operationId: agentTools, security: [{ bearerAuth: [] }], responses: { '200': { description: Agent tools, content: { application/json: { schema: { type: object, required: [tools], properties: { tools: { type: array, items: { type: object } }, customTools: { type: array, items: { type: object } } } } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/approval/respond:
-    post: { operationId: respondApproval, security: [{ bearerAuth: [] }], responses: { '200': { description: Resolved } } }
+    post:
+      operationId: respondApproval
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentApprovalDecisionRequest' } } } }
+      responses: { '200': { description: Resolved or repeated idempotent decision, content: { application/json: { schema: { $ref: '#/components/schemas/AgentApprovalDecisionResponse' } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '410': { $ref: '#/components/responses/Problem' } }
   /internal/v1/agent/approval/pending:
     get: { operationId: pendingApprovals, security: [{ bearerAuth: [] }], responses: { '200': { description: Pending approvals } } }
+  /internal/v1/agent/approval/{requestId}:
+    get: { operationId: approvalStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: requestId, required: true, schema: { type: string } }], responses: { '200': { description: Approval status, content: { application/json: { schema: { $ref: '#/components/schemas/AgentApprovalStatus' } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/mcp/reinit:
     post: { operationId: reinitializeAgentMcp, security: [{ bearerAuth: [] }], responses: { '200': { description: Reinitialized } } }
   /internal/v1/agent/registry/workers:
@@ -435,7 +473,11 @@ components:
     SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } } } }
-    ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+     ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+     ChatApprovalDecisionRequest: { type: object, required: [approved], additionalProperties: false, properties: { approved: { type: boolean } } }
+     ChatApprovalDecisionResponse: { type: object, required: [status, requestId, approved], properties: { status: { type: string, enum: [accepted, already_decided] }, requestId: { type: string }, approved: { type: boolean } } }
+     AgentApprovalDecisionRequest: { type: object, required: [requestId, approved], additionalProperties: false, properties: { requestId: { type: string }, approved: { type: boolean } } }
+     AgentApprovalStatus: { type: object, required: [status, requestId], properties: { status: { type: string, enum: [pending, approved, rejected, expired] }, requestId: { type: string }, runId: { type: string }, sessionId: { type: string }, workspaceId: { type: string }, approved: { type: [boolean, 'null'] }, action: { type: string }, details: { type: string }, expiresAt: { type: string, format: date-time } } }
     ProviderCatalogResponse:
        type: object
        required: [catalogRevision, providers]

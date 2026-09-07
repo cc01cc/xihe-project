@@ -53,6 +53,7 @@ public class ChatController {
     private final HttpClient agentHttpClient;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
+    private final ApprovalService approvalService;
     private final SessionService sessionService;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
@@ -71,6 +72,7 @@ public class ChatController {
     public ChatController(
             ObjectMapper objectMapper,
             SseEmitterManager sseManager,
+            ApprovalService approvalService,
             SessionService sessionService,
             MessageRepository messageRepository,
             FileRepository fileRepository,
@@ -83,6 +85,7 @@ public class ChatController {
             .build();
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
+        this.approvalService = approvalService;
         this.sessionService = sessionService;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -132,6 +135,9 @@ public class ChatController {
         sessionService.requireCurrent(sessionId, userId, workspaceId);
         SseEmitter emitter = sseManager.createEmitter(sessionId);
         sseManager.send(sessionId, "connected", Map.of("sessionId", sessionId, "type", "connected"));
+        for (Map<String, Object> approval : approvalService.replayPending(sessionId, userId, workspaceId)) {
+            sseManager.send(sessionId, "approval_request", approval);
+        }
         logger.info("[LIFECYCLE] service=cp event=chat_sse_connected requestId={} sessionId={} workspaceId={} connectionGeneration={} outcome=ok",
                 currentRequestId(), sessionId, workspaceId, sseManager.connectionGeneration(sessionId));
         return emitter;
@@ -456,7 +462,8 @@ public class ChatController {
                         requestId, sessionId, runId, response.statusCode(), elapsedMs);
                 StreamRelayResult relayResult;
                 try (InputStream agentStream = response.body()) {
-                    relayResult = relayAgentStream(sessionId, agentStream, requestId, runId, terminalSent);
+                    relayResult = relayAgentStream(
+                            sessionId, agentStream, requestId, runId, userId, workspaceId, terminalSent);
                 }
                 String assistantContent = relayResult.assistantContent();
                 logger.info("[LIFECYCLE] service=cp event=chat_run_finished requestId={} sessionId={} runId={} assistantChars={}",
@@ -521,7 +528,7 @@ public class ChatController {
             return;
         }
         String terminalStatus = "ambiguous".equals(outcome) ? "ambiguous" : "failed";
-        transitionRun(runId, List.of("accepted", "queued", "running", "streaming"),
+        transitionRun(runId, List.of("accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching"),
                 terminalStatus, outcome, errorCode, detail, 0, 0);
         sseManager.send(sessionId, "error", Map.of(
                 "code", errorCode,
@@ -563,7 +570,8 @@ public class ChatController {
             case "LLM_NOT_CONFIGURED", "LLM_CREDENTIALS_INVALID", "LLM_PROVIDER_UNREACHABLE",
                     "LLM_MODEL_UNAVAILABLE", "AGENT_UNAVAILABLE", "AGENT_TIMEOUT",
                     "AGENT_CIRCUIT_OPEN", "AGENT_STREAM_FAILED", "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS",
-                    "IDEMPOTENCY_KEY_CONFLICT" -> code;
+                    "IDEMPOTENCY_KEY_CONFLICT", "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
+                    "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH" -> code;
             default -> "AGENT_UNAVAILABLE";
         };
     }
@@ -579,13 +587,20 @@ public class ChatController {
             case "SSE_SUBSCRIPTION_REQUIRED" -> "An active SSE subscription is required";
             case "CHAT_IN_PROGRESS" -> "A chat run is already active for this session";
             case "IDEMPOTENCY_KEY_CONFLICT" -> "Idempotency-Key was already used for a different request";
+            case "APPROVAL_REJECTED" -> "The approval request was rejected";
+            case "APPROVAL_EXPIRED" -> "The approval request expired";
+            case "APPROVAL_EXECUTOR_UNSUPPORTED" -> "The selected agent executor does not support approval";
+            case "APPROVAL_DECISION_CONFLICT" -> "Approval request already has a different decision";
+            case "AGENT_EVENT_ID_MISMATCH" -> "Agent event does not match the active chat run";
             default -> "Agent service unavailable";
         };
     }
 
     private boolean isRetryableError(String code) {
         return switch (code) {
-            case "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS", "IDEMPOTENCY_KEY_CONFLICT" -> false;
+            case "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS", "IDEMPOTENCY_KEY_CONFLICT",
+                    "APPROVAL_REJECTED", "APPROVAL_EXPIRED", "APPROVAL_EXECUTOR_UNSUPPORTED",
+                    "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH" -> false;
             default -> true;
         };
     }
@@ -701,6 +716,7 @@ public class ChatController {
 
     private StreamRelayResult relayAgentStream(String sessionId, InputStream agentStream,
                                                String requestId, String runId,
+                                               String userId, String workspaceId,
                                                AtomicBoolean terminalSent) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
         Map<String, Integer> eventCounts = new LinkedHashMap<>();
@@ -721,7 +737,7 @@ public class ChatController {
                     boolean isDone = "done".equals(eventName);
                     doneSeen = doneSeen || isDone;
                     if (!streamingMarked && ("token".equals(eventName) || "message".equals(eventName))) {
-                        transitionRun(runId, List.of("running"), "streaming", null, null, null, 0, 0);
+                        transitionRun(runId, List.of("running", "awaiting_approval"), "streaming", null, null, null, 0, 0);
                         streamingMarked = true;
                     }
                     collectEventContent(assistantContent, eventName, data.toString());
@@ -745,7 +761,7 @@ public class ChatController {
                         }
                     }
                     if (!isDone || terminalSent.compareAndSet(false, true)) {
-                        dispatchEvent(sessionId, eventName, data.toString());
+                        dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, userId, workspaceId);
                     }
                     eventName = "message";
                     data.setLength(0);
@@ -772,7 +788,7 @@ public class ChatController {
             boolean isDone = "done".equals(eventName);
             doneSeen = doneSeen || isDone;
             if (!streamingMarked && ("token".equals(eventName) || "message".equals(eventName))) {
-                transitionRun(runId, List.of("running"), "streaming", null, null, null, 0, 0);
+                transitionRun(runId, List.of("running", "awaiting_approval"), "streaming", null, null, null, 0, 0);
                 streamingMarked = true;
             }
             collectEventContent(assistantContent, eventName, data.toString());
@@ -796,7 +812,7 @@ public class ChatController {
                 }
             }
             if (!isDone || terminalSent.compareAndSet(false, true)) {
-                dispatchEvent(sessionId, eventName, data.toString());
+                dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, userId, workspaceId);
             }
         }
         if (!doneSeen) {
@@ -883,6 +899,16 @@ public class ChatController {
         }
 
         Object parsedPayload = parsePayload(eventName, payload);
+        sseManager.send(sessionId, eventName, parsedPayload);
+    }
+
+    private void dispatchRelayedEvent(String sessionId, String eventName, String payload,
+                                      String runId, String userId, String workspaceId) {
+        Object parsedPayload = parsePayload(eventName, payload);
+        if ("approval_request".equals(eventName)) {
+            approvalService.recordPending(asMap(parsedPayload), sessionId, runId, userId, workspaceId);
+            transitionRun(runId, List.of("running", "streaming"), "awaiting_approval", null, null, null, 0, 0);
+        }
         sseManager.send(sessionId, eventName, parsedPayload);
     }
 
