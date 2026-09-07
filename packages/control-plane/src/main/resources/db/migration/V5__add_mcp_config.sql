@@ -1,1 +1,0 @@
-ALTER TABLE config ADD COLUMN IF NOT EXISTS mcp_config JSONB;

@@ -58,6 +58,12 @@
         </dependency>
         
         <!-- Migrations -->
+        <!-- Spring Boot 4 moved Flyway auto-config into this module; without it
+             the spring.flyway.* properties are silently ignored (PLAN-280). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-flyway</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>

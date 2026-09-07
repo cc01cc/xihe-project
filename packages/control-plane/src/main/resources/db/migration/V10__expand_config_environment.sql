@@ -1,2 +1,0 @@
-ALTER TABLE config
-    ALTER COLUMN environment TYPE VARCHAR(64);
