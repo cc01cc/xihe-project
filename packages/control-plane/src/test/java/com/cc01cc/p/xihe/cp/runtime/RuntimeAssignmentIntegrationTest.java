@@ -89,7 +89,7 @@ class RuntimeExecutionSpecIntegrationTest extends AbstractIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("dev-token-not-secure");
         ResponseEntity<Map> response = restTemplate.exchange(
-                url("/internal/v1/runtime/workspaces/missing-ws/execution-spec"),
+                url("/internal/v1/runtime/workspaces/00000000-0000-0000-0000-000000000000/execution-spec"),
                 HttpMethod.GET,
                 new HttpEntity<>(headers),
                 Map.class);

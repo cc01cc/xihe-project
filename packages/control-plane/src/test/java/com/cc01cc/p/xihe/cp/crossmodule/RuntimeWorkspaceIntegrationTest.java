@@ -59,7 +59,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 UUID.randomUUID().toString());
 
         assertNotNull(createdWorkspace.getId());
-        assertEquals(createdWorkspace.getId(), createdWorkspace.getStorageRef());
+        assertEquals(createdWorkspace.getId().toString(), createdWorkspace.getStorageRef());
         assertEquals("host_directory", createdWorkspace.getStorageBackend());
 
         wireMock.verify(0, postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces")));
@@ -74,11 +74,11 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         createdWorkspace = workspaceService.createWorkspace(
                 "del-ws-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
 
-        workspaceService.deleteWorkspace(createdWorkspace.getId(), ownerId);
+        workspaceService.deleteWorkspace(createdWorkspace.getId().toString(), ownerId);
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
-                .withRequestBody(matchingJsonPath("$.workspaceId", containing(createdWorkspace.getId())))
-                .withRequestBody(matchingJsonPath("$.storageRef", containing(createdWorkspace.getId()))));
+                .withRequestBody(matchingJsonPath("$.workspaceId", containing(createdWorkspace.getId().toString())))
+                .withRequestBody(matchingJsonPath("$.storageRef", containing(createdWorkspace.getId().toString()))));
 
         assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(createdWorkspace.getId()).isEmpty());
     }
@@ -94,7 +94,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
         com.cc01cc.p.xihe.cp.config.CpApiException exception = assertThrows(
                 com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> workspaceService.deleteWorkspace(createdWorkspace.getId(), ownerId));
+                () -> workspaceService.deleteWorkspace(createdWorkspace.getId().toString(), ownerId));
 
         assertEquals("RUNTIME_CLEANUP_FAILED", exception.getCode());
         assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(createdWorkspace.getId()).isPresent());
@@ -105,7 +105,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     void materializeProxiesToRuntimeAndReturns202() {
         String ownerId = UUID.randomUUID().toString();
         createdWorkspace = workspaceService.createWorkspace("mat-ws", ownerId);
-        String target = createdWorkspace.getId();
+        String target = createdWorkspace.getId().toString();
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/" + target + "/materialize"))
                 .willReturn(aResponse().withStatus(202)
                         .withHeader("Content-Type", "application/json")
@@ -145,7 +145,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
         org.springframework.http.ResponseEntity<java.util.Map> response = restTemplate.postForEntity(
-                url("/api/v1/workspaces/nonexistent-ws/materialize"),
+                url("/api/v1/workspaces/00000000-0000-0000-0000-000000000000/materialize"),
                 new org.springframework.http.HttpEntity<>(java.util.Map.of(), headers),
                 java.util.Map.class);
         assertEquals(404, response.getStatusCode().value());
@@ -156,7 +156,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     void materializeReturns502WhenRuntimeUnreachable() {
         String ownerId = UUID.randomUUID().toString();
         createdWorkspace = workspaceService.createWorkspace("mat502-ws", ownerId);
-        String target = createdWorkspace.getId();
+        String target = createdWorkspace.getId().toString();
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/" + target + "/materialize"))
                 .willReturn(aResponse().withStatus(500)));
 
@@ -216,7 +216,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("Created Workspace", response.getBody().get("name"));
         assertFalse(response.getBody().containsKey("body"), "Response must not nest ResponseEntity as body");
         createdWorkspace = workspaceRepository.findByIdAndDeletedAtIsNull(
-                (String) response.getBody().get("id")).orElseThrow();
+                UUID.fromString((String) response.getBody().get("id"))).orElseThrow();
     }
 
     @Test
@@ -228,7 +228,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 java.util.Map.class);
         assertEquals(201, registration.getStatusCode().value());
         String workspaceId = (String) registration.getBody().get("workspaceId");
-        createdWorkspace = workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).orElseThrow();
+        createdWorkspace = workspaceRepository.findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId)).orElseThrow();
         String token = (String) registration.getBody().get("accessToken");
 
         org.springframework.http.HttpHeaders internalHeaders = new org.springframework.http.HttpHeaders();
@@ -260,6 +260,6 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     private String userIdOf(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new AssertionError("registered user not found: " + email))
-                .getId();
+                .getId().toString();
     }
 }

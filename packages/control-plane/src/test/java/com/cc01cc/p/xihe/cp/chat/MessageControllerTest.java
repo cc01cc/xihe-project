@@ -81,16 +81,16 @@ class MessageControllerTest extends AbstractH2Test {
         String baseToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
-        userId = user.getId();
+        userId = user.getId().toString();
         Workspace ws = workspaceRepository.save(new Workspace("msg-test-workspace", userId));
-        workspaceId = ws.getId();
+        workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
 
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Message Test");
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
 
         message = new Message(sessionId, MessageRole.USER, "Hello");
@@ -127,7 +127,7 @@ class MessageControllerTest extends AbstractH2Test {
                 HttpMethod.DELETE, request, Map.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(message.getId(), response.getBody().get("deleted"));
+        assertEquals(message.getId().toString(), response.getBody().get("deleted"));
         assertFalse(messageRepository.findById(message.getId()).isPresent());
     }
 

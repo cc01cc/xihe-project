@@ -152,15 +152,15 @@ class ChatControllerTest extends AbstractH2Test {
         authToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
-        userId = user.getId();
+        userId = user.getId().toString();
         Workspace ws = workspaceRepository.save(new Workspace("chat-test-workspace", userId));
-        workspaceId = ws.getId();
+        workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Chat Test");
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
     }
 
@@ -235,19 +235,19 @@ class ChatControllerTest extends AbstractH2Test {
         Message userMsg = messages.stream().filter(m -> m.getRole() == MessageRole.USER).findFirst().orElseThrow();
         assertEquals("Message with attachment", userMsg.getContent());
         assertNotNull(userMsg.getAttachments());
-        assertTrue(userMsg.getAttachments().contains(file.getId()));
+        assertTrue(userMsg.getAttachments().contains(file.getId().toString()));
 
         com.cc01cc.p.xihe.cp.entity.File updated = fileRepository.findById(file.getId()).orElseThrow();
-        assertEquals(userMsg.getId(), updated.getMessageId());
+        assertEquals(userMsg.getId().toString(), updated.getMessageId());
 
         Message assistantMsg = messages.stream().filter(m -> m.getRole() == MessageRole.ASSISTANT).findFirst().orElse(null);
         assertNotNull(assistantMsg, "Assistant reply should be persisted");
         assertEquals("hello", assistantMsg.getContent());
-        ChatRun run = chatRunRepository.findById((String) response.getBody().get("runId")).orElseThrow();
+        ChatRun run = chatRunRepository.findById(UUID.fromString((String) response.getBody().get("runId"))).orElseThrow();
         assertEquals("succeeded", run.getStatus());
         assertEquals("success", run.getTerminalOutcome());
-        assertEquals(userMsg.getId(), run.getUserMessageId());
-        assertEquals(assistantMsg.getId(), run.getAssistantMessageId());
+        assertEquals(userMsg.getId().toString(), run.getUserMessageId());
+        assertEquals(assistantMsg.getId().toString(), run.getAssistantMessageId());
     }
 
     @Test
@@ -365,7 +365,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(first.getBody().get("runId"), second.getBody().get("runId"));
         Thread.sleep(500);
         assertEquals(1, agentCalls.get());
-        assertEquals("succeeded", chatRunRepository.findById((String) first.getBody().get("runId")).orElseThrow().getStatus());
+        assertEquals("succeeded", chatRunRepository.findById(UUID.fromString((String) first.getBody().get("runId"))).orElseThrow().getStatus());
 
         Map<String, Object> conflictingRequest = Map.of(
                 "sessionId", sessionId,
@@ -413,7 +413,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         List<Message> messages = pollMessages(5000);
         assertTrue(messages.stream().anyMatch(message -> "possibly charged".equals(message.getContent())));
-        ChatRun run = chatRunRepository.findById((String) first.getBody().get("runId")).orElseThrow();
+        ChatRun run = chatRunRepository.findById(UUID.fromString((String) first.getBody().get("runId"))).orElseThrow();
         assertEquals("ambiguous", run.getStatus());
         assertEquals("ambiguous", run.getTerminalOutcome());
 
@@ -480,7 +480,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertTrue(agentRequest.containsKey("attachments"));
         List<Map<String, Object>> attachments = (List<Map<String, Object>>) agentRequest.get("attachments");
         assertEquals(1, attachments.size());
-        assertEquals(file.getId(), attachments.get(0).get("fileId"));
+        assertEquals(file.getId().toString(), attachments.get(0).get("fileId"));
         assertEquals("/api/v1/files/" + file.getId(), attachments.get(0).get("url"));
         assertEquals(userId, agentRequest.get("userId"));
         assertEquals(userId, capturedUserId[0]);

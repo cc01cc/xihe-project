@@ -14,6 +14,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ContextProjectionServiceTest extends AbstractH2Test {
 
+    private static final String TEST_SESSION_A = "aaaaaaa1-0000-0000-0000-000000000000";
+    private static final String TEST_SESSION_B = "aaaaaaa2-0000-0000-0000-000000000000";
+    private static final String TEST_WS = "aaaaaaa3-0000-0000-0000-000000000000";
+    private static final String TEST_USER = "aaaaaaa4-0000-0000-0000-000000000000";
+
     @Autowired
     private ContextService contextService;
 
@@ -25,22 +30,22 @@ class ContextProjectionServiceTest extends AbstractH2Test {
 
     @Test
     void projectEmptySessionReturnsEmptyContext() {
-        ObjectNode ctx = projectionService.project("session-1", 0L);
-        assertThat(ctx.get("aggregate_id").asText()).isEqualTo("session-1");
+        ObjectNode ctx = projectionService.project(TEST_SESSION_A, 0L);
+        assertThat(ctx.get("aggregate_id").asText()).isEqualTo(TEST_SESSION_A);
         assertThat(ctx.get("latest_sequence").asLong()).isEqualTo(0L);
     }
 
     @Test
     void projectWithEventsBuildsMessages() {
-        String sessionId = "session-2";
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "session.created", Map.of(
-            "workspace_id", "ws-1",
-            "user_id", "user-1",
+        String sessionId = TEST_SESSION_B;
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+            "workspace_id", TEST_WS,
+            "user_id", TEST_USER,
             "epoch_id", "epoch-1",
             "baseline_hash", "hash-1",
             "system_messages", java.util.List.of("You are xihe")
         ));
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "prompt.admitted", Map.of(
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
             "message", Map.of("role", "human", "content", "hello")
         ));
 
@@ -55,18 +60,18 @@ class ContextProjectionServiceTest extends AbstractH2Test {
 
     @Test
     void projectAfterSequenceExcludesEarlierEvents() {
-        String sessionId = "session-3";
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "session.created", Map.of(
-            "workspace_id", "ws-1",
-            "user_id", "user-1",
+        String sessionId = "aaaaaaa5-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+            "workspace_id", TEST_WS,
+            "user_id", TEST_USER,
             "epoch_id", "epoch-1",
             "baseline_hash", "hash-1",
             "system_messages", java.util.List.of("You are xihe")
         ));
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "prompt.admitted", Map.of(
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
             "message", Map.of("role", "human", "content", "first")
         ));
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "prompt.admitted", Map.of(
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
             "message", Map.of("role", "human", "content", "second")
         ));
 

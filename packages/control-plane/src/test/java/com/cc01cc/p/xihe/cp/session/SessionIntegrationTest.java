@@ -82,12 +82,12 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         authToken = regResponse.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
-        userId = user.getId();
+        userId = user.getId().toString();
         // The default workspace is created via the auth flow.
-        var defaultWorkspace = workspaceRepository.findActiveByMemberUserId(userId).stream().findFirst();
-        workspaceId = defaultWorkspace.orElseThrow().getId();
+        var defaultWorkspace = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst();
+        workspaceId = defaultWorkspace.orElseThrow().getId().toString();
         // Backfill membership (auth flow already inserts OWNER; ensure role is set).
-        if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isEmpty()) {
+        if (workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isEmpty()) {
             workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         }
 
@@ -97,7 +97,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     @Test
     void createSession_returnsNewSession() {
         Session session = new Session(workspaceId, userId, "Test Session");
-        session.setId(UUID.randomUUID().toString());
+        session.setId(UUID.randomUUID());
 
         Session saved = sessionRepository.save(session);
 
@@ -116,11 +116,11 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         String sid2 = UUID.randomUUID().toString();
 
         Session s1 = new Session(workspaceId, userId, "Session A");
-        s1.setId(sid1);
+        s1.setId(UUID.fromString(sid1));
         sessionRepository.save(s1);
 
         Session s2 = new Session(workspaceId, userId, "Session B");
-        s2.setId(sid2);
+        s2.setId(UUID.fromString(sid2));
         sessionRepository.save(s2);
 
         List<Session> sessions = sessionRepository.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(userId);
@@ -133,7 +133,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     @Test
     void renameSession_updatesTitle() {
         Session session = new Session(workspaceId, userId, "Original Title");
-        session.setId(UUID.randomUUID().toString());
+        session.setId(UUID.randomUUID());
         sessionRepository.save(session);
 
         Session found = sessionRepository.findById(session.getId()).orElseThrow();
@@ -147,11 +147,11 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     @Test
     void deleteSession_viaService_removesRelatedRows() {
         Session session = sessionService.create(userId, workspaceId, "To Be Deleted", null, null);
-        String sessionId = session.getId();
+        String sessionId = session.getId().toString();
         messageRepository.save(new Message(sessionId, MessageRole.USER, "hello"));
         sessionService.delete(sessionId, userId, workspaceId);
 
-        assertFalse(sessionRepository.findById(sessionId).isPresent());
+        assertFalse(sessionRepository.findById(UUID.fromString(sessionId)).isPresent());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
     }
 
@@ -161,7 +161,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         ResponseEntity<Void> response = restTemplate.exchange(
-                baseUrl + "/api/v1/sessions/" + session.getId(),
+                baseUrl + "/api/v1/sessions/" + session.getId().toString(),
                 HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
         assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
         assertFalse(sessionRepository.findById(session.getId()).isPresent());
@@ -178,8 +178,8 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
                 new HttpEntity<>(headers), Map.class);
         assertEquals(HttpStatus.OK, response.getStatusCode());
         List<Map<String, Object>> items = (List<Map<String, Object>>) response.getBody().get("sessions");
-        assertTrue(items.stream().anyMatch(item -> s1.getId().equals(item.get("id"))));
-        assertTrue(items.stream().anyMatch(item -> s2.getId().equals(item.get("id"))));
+        assertTrue(items.stream().anyMatch(item -> s1.getId().toString().equals(item.get("id"))));
+        assertTrue(items.stream().anyMatch(item -> s2.getId().toString().equals(item.get("id"))));
     }
 
     @Test
@@ -209,7 +209,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
                 baseUrl + "/api/v1/sessions/" + s1.getId(),
                 HttpMethod.GET, new HttpEntity<>(headers), Map.class);
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(s1.getId(), response.getBody().get("id"));
+        assertEquals(s1.getId().toString(), response.getBody().get("id"));
     }
 
     @Test
@@ -238,11 +238,11 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         String sid2 = UUID.randomUUID().toString();
 
         Session s1 = new Session(workspaceId, userId, "Session One");
-        s1.setId(sid1);
+        s1.setId(UUID.fromString(sid1));
         sessionRepository.save(s1);
 
         Session s2 = new Session(workspaceId, userId, "Session Two");
-        s2.setId(sid2);
+        s2.setId(UUID.fromString(sid2));
         sessionRepository.save(s2);
 
         messageRepository.save(new Message(sid1, MessageRole.USER, "Message in session 1"));
@@ -267,14 +267,14 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
                 new RegisterRequest(emailB, TestDataFactory.PASSWORD, "UserB"), AuthResponse.class);
 
         User userB = userRepository.findByEmail(emailB).orElseThrow();
-        String userIdB = userB.getId();
+        String userIdB = userB.getId().toString();
 
         Session sessionA = new Session(workspaceId, userId, "User A Session");
-        sessionA.setId(UUID.randomUUID().toString());
+        sessionA.setId(UUID.randomUUID());
         sessionRepository.save(sessionA);
 
         Session sessionB = new Session(workspaceId, userIdB, "User B Session");
-        sessionB.setId(UUID.randomUUID().toString());
+        sessionB.setId(UUID.randomUUID());
         sessionRepository.save(sessionB);
 
         List<Session> userASessions = sessionRepository.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(userId);

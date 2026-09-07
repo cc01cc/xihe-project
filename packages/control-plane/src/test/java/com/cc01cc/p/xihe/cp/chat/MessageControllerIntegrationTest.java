@@ -64,15 +64,15 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
         String baseToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
-        userId = user.getId();
-        Workspace ws = workspaceRepository.save(new Workspace("msg-int-workspace", userId));
-        workspaceId = ws.getId();
+        userId = user.getId().toString();
+        Workspace ws = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst().orElseThrow();
+        workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Message Int Test");
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
 
         message = new Message(sessionId, MessageRole.USER, "Integration message");
@@ -97,10 +97,10 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
     @Test
     void deleteMessage_hardDeletesAndLeavesOrphanAttachment() {
         com.cc01cc.p.xihe.cp.entity.File file = new com.cc01cc.p.xihe.cp.entity.File(userId, "msg.txt", "/tmp/msg.txt");
-        file.setId(UUID.randomUUID().toString());
+        file.setId(UUID.randomUUID());
         file.setWorkspaceId(workspaceId);
         file.setSessionId(sessionId);
-        file.setMessageId(message.getId());
+        file.setMessageId(message.getId().toString());
         file.setMimeType("text/plain");
         file.setSizeBytes(0);
 
@@ -112,7 +112,7 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
                 HttpMethod.DELETE, new HttpEntity<>(headers), Map.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(message.getId(), response.getBody().get("deleted"));
+        assertEquals(message.getId().toString(), response.getBody().get("deleted"));
         assertFalse(messageRepository.findById(message.getId()).isPresent());
     }
 }

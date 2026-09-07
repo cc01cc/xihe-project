@@ -83,9 +83,9 @@ class WorkspaceIsolationTest {
         // Registration provisions one default workspace per user; reuse those
         // instead of creating extra workspaces (single-active-workspace policy).
         // User A is then added to user B's workspace as MEMBER to exercise isolation.
-        ws1 = workspaceService.findCurrentWorkspace(userA.getId()).orElseThrow();
-        ws2 = workspaceService.findCurrentWorkspace(userB.getId()).orElseThrow();
-        workspaceUserRepository.save(new WorkspaceUser(ws2.getId(), userA.getId(), WorkspaceRole.MEMBER));
+        ws1 = workspaceService.findCurrentWorkspace(userA.getId().toString()).orElseThrow();
+        ws2 = workspaceService.findCurrentWorkspace(userB.getId().toString()).orElseThrow();
+        workspaceUserRepository.save(new WorkspaceUser(ws2.getId().toString(), userA.getId().toString(), WorkspaceRole.MEMBER));
     }
 
     @AfterEach
@@ -95,21 +95,21 @@ class WorkspaceIsolationTest {
 
     @Test
     void sessionWorkspaceIsolation() {
-        Session sessionInWs1 = new Session(ws1.getId(), userA.getId(), "Session in WS-1");
-        sessionInWs1.setId(UUID.randomUUID().toString());
+        Session sessionInWs1 = new Session(ws1.getId().toString(), userA.getId().toString(), "Session in WS-1");
+        sessionInWs1.setId(UUID.randomUUID());
         sessionRepository.save(sessionInWs1);
 
-        Session sessionInWs2 = new Session(ws2.getId(), userB.getId(), "Session in WS-2");
-        sessionInWs2.setId(UUID.randomUUID().toString());
+        Session sessionInWs2 = new Session(ws2.getId().toString(), userB.getId().toString(), "Session in WS-2");
+        sessionInWs2.setId(UUID.randomUUID());
         sessionRepository.save(sessionInWs2);
 
         List<Session> ws1Sessions = sessionRepository
-                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws1.getId());
+                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws1.getId().toString());
         assertEquals(1, ws1Sessions.size());
         assertEquals(sessionInWs1.getTitle(), ws1Sessions.get(0).getTitle());
 
         List<Session> ws2Sessions = sessionRepository
-                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws2.getId());
+                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws2.getId().toString());
         assertEquals(1, ws2Sessions.size());
         assertEquals(sessionInWs2.getTitle(), ws2Sessions.get(0).getTitle());
 
@@ -119,11 +119,11 @@ class WorkspaceIsolationTest {
 
     @Test
     void tenantContextWorkspaceSwitch() {
-        TenantContext.setWorkspaceId(ws1.getId());
+        TenantContext.setWorkspaceId(ws1.getId().toString());
         TenantContext.setWorkspaceRole(WorkspaceRole.OWNER.name());
 
         assertAll("ws-1 context",
-            () -> assertEquals(ws1.getId(), TenantContext.getWorkspaceId()),
+            () -> assertEquals(ws1.getId().toString(), TenantContext.getWorkspaceId()),
             () -> assertEquals(WorkspaceRole.OWNER.name(), TenantContext.getWorkspaceRole())
         );
 
@@ -131,11 +131,11 @@ class WorkspaceIsolationTest {
         assertNull(TenantContext.getWorkspaceId());
         assertNull(TenantContext.getWorkspaceRole());
 
-        TenantContext.setWorkspaceId(ws2.getId());
+        TenantContext.setWorkspaceId(ws2.getId().toString());
         TenantContext.setWorkspaceRole(WorkspaceRole.MEMBER.name());
 
         assertAll("ws-2 context",
-            () -> assertEquals(ws2.getId(), TenantContext.getWorkspaceId()),
+            () -> assertEquals(ws2.getId().toString(), TenantContext.getWorkspaceId()),
             () -> assertEquals(WorkspaceRole.MEMBER.name(), TenantContext.getWorkspaceRole())
         );
 
@@ -144,34 +144,34 @@ class WorkspaceIsolationTest {
 
     @Test
     void workspaceRoleResolution() {
-        String roleA = workspaceService.resolveWorkspaceRole(ws1.getId(), userA.getId());
+        String roleA = workspaceService.resolveWorkspaceRole(ws1.getId().toString(), userA.getId().toString());
         assertEquals(WorkspaceRole.OWNER.name(), roleA);
 
-        String roleB = workspaceService.resolveWorkspaceRole(ws2.getId(), userB.getId());
+        String roleB = workspaceService.resolveWorkspaceRole(ws2.getId().toString(), userB.getId().toString());
         assertEquals(WorkspaceRole.OWNER.name(), roleB);
 
         // user-a is a member of ws-2 (added in setUp) but not the owner.
-        String roleAInWs2 = workspaceService.resolveWorkspaceRole(ws2.getId(), userA.getId());
+        String roleAInWs2 = workspaceService.resolveWorkspaceRole(ws2.getId().toString(), userA.getId().toString());
         assertEquals(WorkspaceRole.MEMBER.name(), roleAInWs2);
 
         // user-b is not a member of ws-1.
-        assertNull(workspaceService.resolveWorkspaceRole(ws1.getId(), userB.getId()));
+        assertNull(workspaceService.resolveWorkspaceRole(ws1.getId().toString(), userB.getId().toString()));
     }
 
     @Test
     void memberCannotAccessOwnerWorkspace() {
-        String roleB = workspaceService.resolveWorkspaceRole(ws1.getId(), userB.getId());
+        String roleB = workspaceService.resolveWorkspaceRole(ws1.getId().toString(), userB.getId().toString());
         assertNull(roleB, "user-b should have no role in ws-1");
     }
 
     @Test
     void jwtTokenWithWorkspaceContextIsValid() {
         String token = TestDataFactory.createWorkspaceToken(
-                userA.getId(), "user-a@test.com", "USER", ws1.getId());
+                userA.getId().toString(), "user-a@test.com", "USER", ws1.getId().toString());
         assertNotNull(token);
         assertTrue(TestDataFactory.tokenProvider().validateToken(token));
-        assertEquals(userA.getId(), TestDataFactory.tokenProvider().getUserIdFromToken(token));
-        assertEquals(ws1.getId(), TestDataFactory.tokenProvider().getWorkspaceIdFromToken(token));
+        assertEquals(userA.getId().toString(), TestDataFactory.tokenProvider().getUserIdFromToken(token));
+        assertEquals(ws1.getId().toString(), TestDataFactory.tokenProvider().getWorkspaceIdFromToken(token));
     }
 
     @Test
@@ -186,15 +186,15 @@ class WorkspaceIsolationTest {
 
     @Test
     void crossWorkspaceSessionQueryReturnsEmpty() {
-        Session sessionInWs1 = new Session(ws1.getId(), userA.getId(), "WS-1 exclusive");
-        sessionInWs1.setId(UUID.randomUUID().toString());
+        Session sessionInWs1 = new Session(ws1.getId().toString(), userA.getId().toString(), "WS-1 exclusive");
+        sessionInWs1.setId(UUID.randomUUID());
         sessionRepository.save(sessionInWs1);
 
         List<Session> ws2Sessions = sessionRepository
-                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws2.getId());
+                .findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(ws2.getId().toString());
         Optional<String> matched = ws2Sessions.stream()
-                .map(Session::getId)
-                .filter(id -> id.equals(sessionInWs1.getId()))
+                .map(s -> s.getId().toString())
+                .filter(id -> id.equals(sessionInWs1.getId().toString()))
                 .findAny();
         assertTrue(matched.isEmpty(), "ws-2 query must not return sessions from ws-1");
     }

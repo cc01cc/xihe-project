@@ -26,7 +26,7 @@ class ExportServiceTest {
 
     @Test
     void exportChats_withNoSessions_returnsEmptyChats() {
-        when(sessionRepo.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(anyString()))
+        when(sessionRepo.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(any()))
             .thenReturn(Collections.emptyList());
         String json = service.exportChats("user-1");
         assertNotNull(json);
@@ -35,7 +35,7 @@ class ExportServiceTest {
 
     @Test
     void exportChats_checksRateLimit() {
-        when(sessionRepo.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(anyString()))
+        when(sessionRepo.findByUserIdAndArchivedFalseOrderByCreatedAtDesc(any()))
             .thenReturn(Collections.emptyList());
         service.exportChats("user-1");
         assertThrows(RuntimeException.class, () -> service.exportChats("user-1"));

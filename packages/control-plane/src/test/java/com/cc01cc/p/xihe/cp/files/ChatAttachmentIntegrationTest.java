@@ -72,15 +72,15 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
         String baseToken = reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
-        userId = user.getId();
-        Workspace ws = workspaceRepository.save(new Workspace("attach-int-workspace", userId));
-        workspaceId = ws.getId();
+        userId = user.getId().toString();
+        Workspace ws = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst().orElseThrow();
+        workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Attachment Int Test");
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
     }
 
@@ -156,11 +156,11 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
                 HttpMethod.POST, request, Map.class);
         Map<String, Object> file = (Map<String, Object>) ((List<?>) uploadResponse.getBody().get("success")).get(0);
         String fileId = (String) file.get("id");
-        assertTrue(fileRepository.findById(fileId).isPresent());
+        assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
 
         chatAttachmentService.deleteSessionAttachments(sessionId);
 
-        assertFalse(fileRepository.findById(fileId).isPresent());
+        assertFalse(fileRepository.findById(UUID.fromString(fileId)).isPresent());
     }
 
     @Autowired

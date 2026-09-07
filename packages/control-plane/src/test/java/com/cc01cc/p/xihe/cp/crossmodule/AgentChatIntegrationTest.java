@@ -74,11 +74,11 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         userId = jwtTokenProvider.getUserIdFromToken(token);
         Workspace ws = new Workspace("Agent Test", userId);
         ws = workspaceRepository.save(ws);
-        workspaceId = ws.getId();
+        workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         token = jwtTokenProvider.createAccessToken(userId, jwtTokenProvider.getEmailFromToken(token), "USER", workspaceId);
 
-        assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent(),
+        assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isPresent(),
                 "Workspace user should be created");
 
         when(sseEmitterManager.hasEmitter(anyString())).thenReturn(true);
@@ -86,7 +86,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void chatForwardsToAgentWithCorrectHeadersAndBody() {
-        String sessionId = "chat-" + UUID.randomUUID().toString().substring(0, 8);
+        String sessionId = UUID.randomUUID().toString();
 
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse()
@@ -121,9 +121,9 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void chatForwardsStreamingRequestToAgent() {
-        String sessionId = "chat-stream-" + UUID.randomUUID().toString().substring(0, 8);
+        String sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Chat Stream Test");
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
 
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
@@ -157,7 +157,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void chatReturns202EvenWhenAgentFails() {
-        String sessionId = "fail-" + UUID.randomUUID().toString().substring(0, 8);
+        String sessionId = UUID.randomUUID().toString();
 
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse().withStatus(500)));

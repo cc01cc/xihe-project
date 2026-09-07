@@ -19,6 +19,8 @@ import static org.mockito.Mockito.*;
 
 class McpProxyTest {
 
+    static final String TEST_WS_UUID = "66666666-6666-6666-6666-666666666666";
+
     private RequestRewriter requestRewriter;
     private PolicyEngine policyEngine;
     private AuditLogger auditLogger;
@@ -139,16 +141,16 @@ class McpProxyTest {
     @SuppressWarnings("unchecked")
     void forwardToRuntime_remoteServer_usesRemotePath() throws Exception {
         com.cc01cc.p.xihe.cp.entity.McpServer server =
-                new com.cc01cc.p.xihe.cp.entity.McpServer("ws-1", "deepwiki", "https://mcp.deepwiki.com/mcp");
-        server.setId("deepwiki");
+                new com.cc01cc.p.xihe.cp.entity.McpServer(TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
+        server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
         server.setEnabled(true);
-        when(mcpServerRepository.findById("deepwiki")).thenReturn(java.util.Optional.of(server));
+        when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
 
-        Object access = accessContext("ws-1", "u-1");
+        Object access = accessContext(TEST_WS_UUID, "u-1");
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
         org.springframework.http.ResponseEntity<String> resp =
                 (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
-                        controller, "forwardToRuntime", "ws-1", "deepwiki", body,
+                        controller, "forwardToRuntime", TEST_WS_UUID, java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()).toString(), body,
                         new org.springframework.http.HttpHeaders(), "sess-1", access);
         assertNotNull(resp);
         assertTrue(resp.getBody().contains("REMOTE_MCP_UNAVAILABLE"),
@@ -158,13 +160,13 @@ class McpProxyTest {
     @Test
     @SuppressWarnings("unchecked")
     void forwardToRuntime_unknownServer_fallsBackToStdioPath() throws Exception {
-        when(mcpServerRepository.findById("ghost")).thenReturn(java.util.Optional.empty());
+        when(mcpServerRepository.findById(java.util.UUID.nameUUIDFromBytes("ghost".getBytes()))).thenReturn(java.util.Optional.empty());
 
-        Object access = accessContext("ws-1", "u-1");
+        Object access = accessContext(TEST_WS_UUID, "u-1");
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
         org.springframework.http.ResponseEntity<String> resp =
                 (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
-                        controller, "forwardToRuntime", "ws-1", "ghost", body,
+                        controller, "forwardToRuntime", TEST_WS_UUID, "ghost", body,
                         new org.springframework.http.HttpHeaders(), "sess-1", access);
         assertNotNull(resp);
         assertTrue(resp.getBody().contains("RUNTIME_UNAVAILABLE"),
@@ -190,7 +192,8 @@ class McpProxyTest {
 
         com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);
-        stub.createContext("/internal/v1/runtime/remote-mcp/ws-1/deepwiki/call", exchange -> {
+        stub.createContext("/internal/v1/runtime/remote-mcp/" + TEST_WS_UUID + "/"
+                + java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()) + "/call", exchange -> {
             String req = new String(exchange.getRequestBody().readAllBytes(),
                     java.nio.charset.StandardCharsets.UTF_8);
             String resp = req.contains("\"listTools\":true")
@@ -209,25 +212,25 @@ class McpProxyTest {
 
             com.cc01cc.p.xihe.cp.entity.McpServer server =
                     new com.cc01cc.p.xihe.cp.entity.McpServer(
-                            "ws-1", "deepwiki", "https://mcp.deepwiki.com/mcp");
-            server.setId("deepwiki");
+                            TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
+            server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
             server.setEnabled(true);
             server.setAuthMode("no-auth");
-            when(mcpServerRepository.findByWorkspaceIdAndEnabledTrue("ws-1"))
+            when(mcpServerRepository.findByWorkspaceIdAndEnabledTrue(TEST_WS_UUID))
                     .thenReturn(java.util.List.of(server));
-            when(mcpServerRepository.findById("deepwiki"))
+            when(mcpServerRepository.findById(server.getId()))
                     .thenReturn(java.util.Optional.of(server));
             when(configRepo.findByEnvironmentAndLayerAndDomainAndConfigKey(
-                    "ws-1", "workspace", "mcp", "mcpServers"))
+                    TEST_WS_UUID, "workspace", "mcp", "mcpServers"))
                     .thenReturn(java.util.Optional.empty());
-            when(aliasRepository.findByWorkspaceId("ws-1")).thenReturn(java.util.List.of());
+            when(aliasRepository.findByWorkspaceId(java.util.UUID.fromString(TEST_WS_UUID))).thenReturn(java.util.List.of());
             when(aliasRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            Object access = accessContext("ws-1", "u-1");
+            Object access = accessContext(TEST_WS_UUID, "u-1");
             String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
             org.springframework.http.ResponseEntity<String> listResp =
                     (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
-                            controller, "handleToolsList", "ws-1", listBody,
+                            controller, "handleToolsList", TEST_WS_UUID, listBody,
                             new org.springframework.http.HttpHeaders(), "sess-1", access);
             assertNotNull(listResp);
             assertTrue(listResp.getBody().contains("fake_echo"),
@@ -241,7 +244,7 @@ class McpProxyTest {
                     + "\"params\":{\"name\":\"fake_echo\",\"arguments\":{}},\"id\":2}";
             org.springframework.http.ResponseEntity<String> callResp =
                     (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
-                            controller, "handleToolsCall", "ws-1", callBody,
+                            controller, "handleToolsCall", TEST_WS_UUID, callBody,
                             new org.springframework.http.HttpHeaders(), "sess-1", access);
             assertNotNull(callResp);
             assertTrue(callResp.getBody().contains("wire-ok"),

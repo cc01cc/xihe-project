@@ -26,6 +26,6 @@ class WorkspaceServiceCustomPathTest {
         assertNotNull(ws.getId());
         assertEquals("host_directory", ws.getStorageBackend());
         // storageRef is now the workspace id; host path is the Runtime's concern.
-        assertEquals(ws.getId(), ws.getStorageRef());
+        assertEquals(ws.getId().toString(), ws.getStorageRef());
     }
 }

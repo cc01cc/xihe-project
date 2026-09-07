@@ -25,7 +25,9 @@ import java.io.IOException;
 public abstract class AbstractIntegrationTest {
 
     @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine")
+    // pgvector-enabled image: the canonical baseline requires the vector
+    // extension (PLAN-280); plain postgres:17-alpine lacks it.
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
             .withDatabaseName("xihe_cp_test")
             .withUsername("test")
             .withPassword(TestDataFactory.PASSWORD);

@@ -17,9 +17,9 @@ class ImportServiceTest {
     @Test
     void importChats_parsesValidJson() {
         String json = """
-            {"chats":[{"id":"s1","title":"Chat 1","createdAt":"2024-01-01T00:00:00Z","messages":[]}]}
+            {"chats":[{"id":"99999999-9999-9999-9999-999999999999","title":"Chat 1","createdAt":"2024-01-01T00:00:00Z","messages":[]}]}
             """;
-        when(sessionRepo.existsById("s1")).thenReturn(false);
+        when(sessionRepo.existsById(java.util.UUID.fromString("99999999-9999-9999-9999-999999999999"))).thenReturn(false);
         ImportService.ImportResult result = service.importChats(json, "user-1");
         assertEquals(1, result.getImported());
         assertEquals(0, result.getSkipped());
@@ -29,9 +29,9 @@ class ImportServiceTest {
     @Test
     void importChats_skipsDuplicateSession() {
         String json = """
-            {"chats":[{"id":"s1","title":"Chat 1","createdAt":"2024-01-01T00:00:00Z","messages":[]}]}
+            {"chats":[{"id":"99999999-9999-9999-9999-999999999999","title":"Chat 1","createdAt":"2024-01-01T00:00:00Z","messages":[]}]}
             """;
-        when(sessionRepo.existsById("s1")).thenReturn(true);
+        when(sessionRepo.existsById(java.util.UUID.fromString("99999999-9999-9999-9999-999999999999"))).thenReturn(true);
         ImportService.ImportResult result = service.importChats(json, "user-1");
         assertEquals(0, result.getImported());
         assertEquals(1, result.getSkipped());
@@ -55,12 +55,12 @@ class ImportServiceTest {
     @Test
     void importChats_parsesMessages() {
         String json = """
-            {"chats":[{"id":"s1","title":"Chat 1","createdAt":"2024-01-01T00:00:00Z","messages":[
+            {"chats":[{"id":"99999999-9999-9999-9999-999999999999","title":"Chat 1","createdAt":"2024-01-01T00:00:00Z","messages":[
                 {"role":"user","content":"hello","createdAt":"2024-01-01T00:00:00Z"},
                 {"role":"assistant","content":"hi","createdAt":"2024-01-01T00:00:01Z"}
             ]}]}
             """;
-        when(sessionRepo.existsById("s1")).thenReturn(false);
+        when(sessionRepo.existsById(java.util.UUID.fromString("99999999-9999-9999-9999-999999999999"))).thenReturn(false);
         ImportService.ImportResult result = service.importChats(json, "user-1");
         assertEquals(1, result.getImported());
         verify(messageRepo, times(2)).save(any());

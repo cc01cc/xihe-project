@@ -49,7 +49,7 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
     private Workspace createWorkspace(String userId) {
         Workspace ws = new Workspace("test-ws", userId);
         ws = workspaceRepository.save(ws);
-        workspaceUserRepository.save(new WorkspaceUser(ws.getId(), userId, WorkspaceRole.OWNER));
+        workspaceUserRepository.save(new WorkspaceUser(ws.getId().toString(), userId, WorkspaceRole.OWNER));
         return ws;
     }
 
@@ -61,7 +61,7 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
         when(runtimeContextSourceClient.readAgents(anyString()))
                 .thenReturn(Optional.of("You are a helpful assistant."));
 
-        Optional<String> hash = refreshService.refresh(sessionId, ws.getId(), userId);
+        Optional<String> hash = refreshService.refresh(sessionId, ws.getId().toString(), userId);
 
         assertThat(hash).isPresent();
         assertThat(eventStoreService.read(sessionId, 0L))
@@ -77,7 +77,7 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
         when(runtimeContextSourceClient.readAgents(anyString()))
                 .thenReturn(Optional.empty());
 
-        Optional<String> hash = refreshService.refresh(sessionId, ws.getId(), userId);
+        Optional<String> hash = refreshService.refresh(sessionId, ws.getId().toString(), userId);
 
         assertThat(hash).isEmpty();
         assertThat(eventStoreService.read(sessionId, 0L)).isEmpty();
@@ -91,17 +91,17 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
                 .thenReturn(Optional.of("You are a helpful assistant."));
 
         String firstSessionId = UUID.randomUUID().toString();
-        Optional<String> firstHash = refreshService.refresh(firstSessionId, ws.getId(), userId);
+        Optional<String> firstHash = refreshService.refresh(firstSessionId, ws.getId().toString(), userId);
         assertThat(firstHash).isPresent();
         assertThat(eventStoreService.read(firstSessionId, 0L))
                 .singleElement()
                 .satisfies(event -> assertThat(event.getEventType()).isEqualTo("context.source_changed"));
 
         String secondSessionId = UUID.randomUUID().toString();
-        Optional<String> secondHash = refreshService.refresh(secondSessionId, ws.getId(), userId);
+        Optional<String> secondHash = refreshService.refresh(secondSessionId, ws.getId().toString(), userId);
         assertThat(secondHash).isPresent().isEqualTo(firstHash);
         assertThat(eventStoreService.read(secondSessionId, 0L)).isEmpty();
-        assertThat(sourceHashRepository.findByWorkspaceIdAndSourceKey(ws.getId(), "AGENTS.md"))
+        assertThat(sourceHashRepository.findByWorkspaceIdAndSourceKey(ws.getId().toString(), "AGENTS.md"))
                 .isPresent()
                 .hasValueSatisfying(record -> assertThat(record.getHash()).isEqualTo(firstHash.get()));
     }
@@ -114,18 +114,18 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
                 .thenReturn(Optional.of("You are a helpful assistant."));
 
         String firstSessionId = UUID.randomUUID().toString();
-        Optional<String> firstHash = refreshService.refresh(firstSessionId, ws.getId(), userId);
+        Optional<String> firstHash = refreshService.refresh(firstSessionId, ws.getId().toString(), userId);
         assertThat(firstHash).isPresent();
 
         when(runtimeContextSourceClient.readAgents(anyString()))
                 .thenReturn(Optional.of("You are a coding assistant."));
         String secondSessionId = UUID.randomUUID().toString();
-        Optional<String> secondHash = refreshService.refresh(secondSessionId, ws.getId(), userId);
+        Optional<String> secondHash = refreshService.refresh(secondSessionId, ws.getId().toString(), userId);
         assertThat(secondHash).isPresent().isNotEqualTo(firstHash);
         assertThat(eventStoreService.read(secondSessionId, 0L))
                 .singleElement()
                 .satisfies(event -> assertThat(event.getEventType()).isEqualTo("context.source_changed"));
-        assertThat(sourceHashRepository.findByWorkspaceIdAndSourceKey(ws.getId(), "AGENTS.md"))
+        assertThat(sourceHashRepository.findByWorkspaceIdAndSourceKey(ws.getId().toString(), "AGENTS.md"))
                 .isPresent()
                 .hasValueSatisfying(record -> assertThat(record.getHash()).isEqualTo(secondHash.get()));
     }

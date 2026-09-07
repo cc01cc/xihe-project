@@ -12,10 +12,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -28,56 +27,70 @@ class ApprovalServiceTest {
     private final ApprovalAgentClient agent = mock(ApprovalAgentClient.class);
     private final ApprovalService service = new ApprovalService(approvals, runs, agent);
 
-    @Test
-    void recordPendingBindsAgentEventToAuthoritativeRun() {
-        ChatRun run = new ChatRun("run-1", "session-1", "user-1", "workspace-1",
-                "idem-1", "hash", "openai", "model", "workspace", "running");
-        when(runs.findById("run-1")).thenReturn(Optional.of(run));
-        when(approvals.findById("approval-1")).thenReturn(Optional.empty());
+    private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
+    private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
+    private static final String TEST_USER = "33333333-3333-3333-3333-333333333333";
+    private static final String TEST_WORKSPACE = "44444444-4444-4444-4444-444444444444";
+    private static final String TEST_SESSION = "55555555-5555-5555-5555-555555555555";
 
-        service.recordPending(Map.of(
-                "requestId", "approval-1",
-                "runId", "run-1",
-                "sessionId", "session-1",
-                "workspaceId", "workspace-1",
+    private Map<String, Object> approvalPayload(String sessionId) {
+        return Map.of(
+                "requestId", TEST_REQUEST_ID,
+                "runId", TEST_RUN_ID,
+                "sessionId", sessionId,
+                "workspaceId", TEST_WORKSPACE,
                 "tool", "request_approval",
                 "action", "delete file",
                 "details", "README.md",
-                "expiresAt", Instant.now().plusSeconds(60).toString()),
-                "session-1", "run-1", "user-1", "workspace-1");
+                "expiresAt", Instant.now().plusSeconds(60).toString());
+    }
+
+    private ChatRun runningRun() {
+        return new ChatRun(TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
+                "idem-1", "hash", "openai", "model", "workspace", "running");
+    }
+
+    @Test
+    void recordPendingBindsAgentEventToAuthoritativeRun() {
+        ChatRun run = runningRun();
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(run));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
+
+        service.recordPending(approvalPayload(TEST_SESSION),
+                TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
 
         ArgumentCaptor<ChatApproval> captor = ArgumentCaptor.forClass(ChatApproval.class);
         verify(approvals).save(captor.capture());
-        assertEquals("approval-1", captor.getValue().getRequestId());
+        assertEquals(TEST_REQUEST_ID, captor.getValue().getRequestId().toString());
         assertEquals("pending", captor.getValue().getState());
-        assertEquals("user-1", captor.getValue().getUserId());
+        assertEquals(TEST_USER, captor.getValue().getUserId());
     }
 
     @Test
     void recordPendingRejectsMismatchedRunIdentity() {
-        ChatRun run = new ChatRun("run-1", "session-1", "user-1", "workspace-1",
-                "idem-1", "hash", "openai", "model", "workspace", "running");
-        when(runs.findById("run-1")).thenReturn(Optional.of(run));
+        ChatRun run = runningRun();
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(run));
 
-        CpApiException error = assertThrows(CpApiException.class, () -> service.recordPending(Map.of(
-                "requestId", "approval-1",
-                "runId", "run-1",
-                "sessionId", "other-session",
-                "action", "delete file"),
-                "session-1", "run-1", "user-1", "workspace-1"));
+        CpApiException error = assertThrows(CpApiException.class, () -> service.recordPending(
+                Map.of(
+                        "requestId", TEST_REQUEST_ID,
+                        "runId", TEST_RUN_ID,
+                        "sessionId", "other-session",
+                        "action", "delete file"),
+                TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE));
 
         assertEquals("AGENT_EVENT_ID_MISMATCH", error.getCode());
     }
 
     @Test
     void decidePersistsApprovedOnlyAfterAgentAccepts() {
-        ChatApproval approval = pending("approval-1", Instant.now().plusSeconds(60));
-        when(approvals.findOwnedForUpdate("approval-1", "user-1", "workspace-1"))
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        when(approvals.findOwnedForUpdate(UUID.fromString(TEST_REQUEST_ID), TEST_USER, TEST_WORKSPACE))
                 .thenReturn(Optional.of(approval));
-        when(agent.respond("approval-1", true))
-                .thenReturn(Map.of("status", "accepted", "requestId", "approval-1", "approved", true));
+        when(agent.respond(TEST_REQUEST_ID, true))
+                .thenReturn(Map.of("status", "accepted", "requestId", TEST_REQUEST_ID, "approved", true));
 
-        Map<String, Object> response = service.decide("approval-1", "user-1", "workspace-1", true);
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, true);
 
         assertEquals("accepted", response.get("status"));
         assertEquals("approved", approval.getState());
@@ -87,12 +100,12 @@ class ApprovalServiceTest {
 
     @Test
     void decideRejectsExpiredApprovalBeforeCallingAgent() {
-        ChatApproval approval = pending("approval-1", Instant.now().minusSeconds(1));
-        when(approvals.findOwnedForUpdate("approval-1", "user-1", "workspace-1"))
+        ChatApproval approval = pending(Instant.now().minusSeconds(1));
+        when(approvals.findOwnedForUpdate(UUID.fromString(TEST_REQUEST_ID), TEST_USER, TEST_WORKSPACE))
                 .thenReturn(Optional.of(approval));
 
         CpApiException error = assertThrows(CpApiException.class,
-                () -> service.decide("approval-1", "user-1", "workspace-1", false));
+                () -> service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, false));
 
         assertEquals(410, error.getStatus().value());
         assertEquals("APPROVAL_EXPIRED", error.getCode());
@@ -100,20 +113,19 @@ class ApprovalServiceTest {
 
     @Test
     void replayIsScopedToTheAuthorizedSessionAndWorkspace() {
-        ChatApproval approval = pending("approval-1", Instant.now().plusSeconds(60));
-        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
-                "session-1", "user-1", "workspace-1", List.of("pending", "dispatching")))
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending", "dispatching")))
                 .thenReturn(List.of(approval));
 
-        List<Map<String, Object>> replay = service.replayPending("session-1", "user-1", "workspace-1");
+        List<Map<String, Object>> replay = service.replayPending(TEST_SESSION, TEST_USER, TEST_WORKSPACE);
 
         assertEquals(1, replay.size());
-        assertEquals("approval-1", replay.get(0).get("requestId"));
+        assertEquals(TEST_REQUEST_ID, replay.get(0).get("requestId").toString());
         assertEquals(true, replay.get(0).get("replayed"));
     }
 
-    private ChatApproval pending(String requestId, Instant expiresAt) {
-        return new ChatApproval(requestId, "run-1", "session-1", "user-1", "workspace-1",
+    private ChatApproval pending(Instant expiresAt) {
+        return new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
                 "request_approval", "delete file", "README.md", "pending", expiresAt);
     }
 }

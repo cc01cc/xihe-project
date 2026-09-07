@@ -14,6 +14,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ContextServiceTest extends AbstractH2Test {
 
+    private static final String TEST_SESSION_A = "aaaaaaa1-0000-0000-0000-000000000000";
+    private static final String TEST_SESSION_B = "aaaaaaa2-0000-0000-0000-000000000000";
+    private static final String TEST_WS = "aaaaaaa3-0000-0000-0000-000000000000";
+    private static final String TEST_USER = "aaaaaaa4-0000-0000-0000-000000000000";
+
     @Autowired
     private ContextService contextService;
 
@@ -25,21 +30,21 @@ class ContextServiceTest extends AbstractH2Test {
 
     @Test
     void forkCreatesNewSessionWithForkedEvent() {
-        String sourceSessionId = "source-session";
-        String newSessionId = "forked-session";
+        String sourceSessionId = "aaaaaaa7-0000-0000-0000-000000000000";
+        String newSessionId = "aaaaaaa8-0000-0000-0000-000000000000";
 
-        contextService.appendEvent(sourceSessionId, "ws-1", "user-1", "session.created", Map.of(
-                "workspace_id", "ws-1",
-                "user_id", "user-1",
+        contextService.appendEvent(sourceSessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS,
+                "user_id", TEST_USER,
                 "epoch_id", "epoch-1",
                 "baseline_hash", "hash-1",
                 "system_messages", List.of("You are xihe")
         ));
-        contextService.appendEvent(sourceSessionId, "ws-1", "user-1", "prompt.admitted", Map.of(
+        contextService.appendEvent(sourceSessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
                 "message", Map.of("role", "human", "content", "hello")
         ));
 
-        Long latestSequence = contextService.fork(sourceSessionId, 2L, newSessionId, "ws-1", "user-1");
+        Long latestSequence = contextService.fork(sourceSessionId, 2L, newSessionId, TEST_WS, TEST_USER);
 
         assertThat(latestSequence).isEqualTo(3L);
         List<com.cc01cc.p.xihe.cp.context.entity.ContextEvent> newEvents = eventStoreService.read(newSessionId, 0L);
@@ -52,20 +57,20 @@ class ContextServiceTest extends AbstractH2Test {
 
     @Test
     void replayReturnsSnapshotAndEvents() {
-        String sessionId = "replay-session";
+        String sessionId = "aaaaaaa6-0000-0000-0000-000000000000";
 
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "session.created", Map.of(
-                "workspace_id", "ws-1",
-                "user_id", "user-1",
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS,
+                "user_id", TEST_USER,
                 "epoch_id", "epoch-1",
                 "baseline_hash", "hash-1",
                 "system_messages", List.of("You are xihe")
         ));
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "prompt.admitted", Map.of(
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
                 "message", Map.of("role", "human", "content", "hello")
         ));
 
-        Map<String, Object> result = contextService.replay(sessionId, "ws-1", "user-1", 0L);
+        Map<String, Object> result = contextService.replay(sessionId, TEST_WS, TEST_USER, 0L);
 
         assertThat(result).containsKey("snapshot");
         assertThat(result).containsKey("events");
@@ -76,23 +81,23 @@ class ContextServiceTest extends AbstractH2Test {
 
     @Test
     void compactAppendsCompactionEventAndClearsMessages() {
-        String sessionId = "compact-session";
+        String sessionId = "aaaaaaac-0000-0000-0000-000000000000";
 
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "session.created", Map.of(
-                "workspace_id", "ws-1",
-                "user_id", "user-1",
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS,
+                "user_id", TEST_USER,
                 "epoch_id", "epoch-1",
                 "baseline_hash", "hash-1",
                 "system_messages", List.of("You are xihe")
         ));
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "prompt.admitted", Map.of(
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
                 "message", Map.of("role", "human", "content", "hello")
         ));
-        contextService.appendEvent(sessionId, "ws-1", "user-1", "prompt.admitted", Map.of(
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
                 "message", Map.of("role", "human", "content", "world")
         ));
 
-        com.cc01cc.p.xihe.cp.context.entity.ContextEvent event = contextService.compact(sessionId, "ws-1", "user-1", 3L);
+        com.cc01cc.p.xihe.cp.context.entity.ContextEvent event = contextService.compact(sessionId, TEST_WS, TEST_USER, 3L);
 
         assertThat(event.getEventType()).isEqualTo("compaction.applied");
         assertThat(event.getSequence()).isEqualTo(4L);

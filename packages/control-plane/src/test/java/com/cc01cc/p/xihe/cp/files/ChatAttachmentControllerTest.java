@@ -85,16 +85,16 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
         reg.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
-        userId = user.getId();
+        userId = user.getId().toString();
         Workspace ws = workspaceRepository.save(new Workspace("attach-test-workspace", userId));
-        workspaceId = ws.getId();
+        workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
 
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Attachment Test");
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
     }
 
@@ -225,7 +225,7 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
                 HttpMethod.POST, uploadRequest, Map.class);
         Map<String, Object> file = (Map<String, Object>) ((List<?>) uploadResponse.getBody().get("success")).get(0);
         String fileId = (String) file.get("id");
-        assertTrue(fileRepository.findById(fileId).isPresent());
+        assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/sessions/" + sessionId + "/attachments/" + fileId,
@@ -233,7 +233,7 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(fileId, response.getBody().get("deleted"));
-        assertFalse(fileRepository.findById(fileId).isPresent());
+        assertFalse(fileRepository.findById(UUID.fromString(fileId)).isPresent());
     }
 
     @Test
@@ -249,11 +249,11 @@ class ChatAttachmentControllerTest extends AbstractH2Test {
         restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
                 new RegisterRequest(otherEmail, TestDataFactory.PASSWORD, "Other"), AuthResponse.class);
         User other = userRepository.findByEmail(otherEmail).orElseThrow();
-        workspaceUserRepository.save(new WorkspaceUser(workspaceId, other.getId(), WorkspaceRole.MEMBER));
-        String otherToken = jwtTokenProvider.createAccessToken(other.getId(), otherEmail, "USER", workspaceId);
+        workspaceUserRepository.save(new WorkspaceUser(workspaceId, other.getId().toString(), WorkspaceRole.MEMBER));
+        String otherToken = jwtTokenProvider.createAccessToken(other.getId().toString(), otherEmail, "USER", workspaceId);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/sessions/" + sessionId + "/attachments/" + owned.getId(),
+                baseUrl + "/api/v1/sessions/" + sessionId + "/attachments/" + owned.getId().toString(),
                 HttpMethod.GET, new HttpEntity<>(authHeaders(otherToken)), Map.class);
 
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());

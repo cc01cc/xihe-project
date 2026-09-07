@@ -4,6 +4,8 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.junit.jupiter.api.Test;
+
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
@@ -50,21 +52,21 @@ class WorkspaceServiceTest {
     void getWorkspace_returnsWorkspace() {
         String userId = java.util.UUID.randomUUID().toString();
         Workspace ws = workspaceService.createWorkspace("get-test", userId);
-        Workspace found = workspaceService.getWorkspace(ws.getId());
+        Workspace found = workspaceService.getWorkspace(ws.getId().toString());
         assertEquals(ws.getId(), found.getId());
     }
 
     @Test
     void getWorkspace_throwsOnNotFound() {
         assertThrows(com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> workspaceService.getWorkspace("nonexistent"));
+                () -> workspaceService.getWorkspace("00000000-0000-0000-0000-000000000000"));
     }
 
     @Test
     void createWorkspace_assignsOwnerRole() {
         String userId = java.util.UUID.randomUUID().toString();
         Workspace ws = workspaceService.createWorkspace("role-test", userId);
-        assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(ws.getId(), userId)
+        assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(ws.getId(), UUID.fromString(userId))
                 .map(wu -> wu.getRole() == WorkspaceRole.OWNER)
                 .orElse(false));
     }
@@ -75,7 +77,7 @@ class WorkspaceServiceTest {
         Workspace ws = workspaceService.createWorkspace("delete-test", userId);
         com.cc01cc.p.xihe.cp.config.CpApiException e = assertThrows(
                 com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> workspaceService.deleteWorkspace(ws.getId(), userId));
+                () -> workspaceService.deleteWorkspace(ws.getId().toString(), userId));
         assertEquals("RUNTIME_CLEANUP_FAILED", e.getCode());
         assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(ws.getId()).isPresent(),
                 "Failed Runtime cleanup must not report a logically deleted workspace");
@@ -88,8 +90,8 @@ class WorkspaceServiceTest {
                 new com.cc01cc.p.xihe.cp.entity.User(
                         "user-default-" + suffix + "@test.com", "hash",
                         com.cc01cc.p.xihe.cp.entity.UserRole.USER, "Default"));
-        Workspace first = workspaceService.createWorkspace("default-test", user.getId());
-        Workspace second = workspaceService.getOrCreateDefaultWorkspace(user.getId());
+        Workspace first = workspaceService.createWorkspace("default-test", user.getId().toString());
+        Workspace second = workspaceService.getOrCreateDefaultWorkspace(user.getId().toString());
         assertEquals(first.getId(), second.getId());
     }
 

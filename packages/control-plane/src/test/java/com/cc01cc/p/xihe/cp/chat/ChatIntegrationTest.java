@@ -134,9 +134,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         authToken = regResponse.getBody().getAccessToken();
 
         User user = userRepository.findByEmail(email).orElseThrow();
-        userId = user.getId();
-        Workspace ws = workspaceRepository.save(new Workspace("test-workspace", userId));
-        workspaceId = ws.getId();
+        userId = user.getId().toString();
+        Workspace ws = workspaceRepository.findActiveByMemberUserId(UUID.fromString(userId)).stream().findFirst().orElseThrow();
+        workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
     }
@@ -164,7 +164,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     @Test
     void postChatWithoutAuthReturns401() {
         Map<String, Object> request = Map.of(
-                "sessionId", "no-auth-session",
+                "sessionId", "aaaaaaad-0000-0000-0000-000000000000",
                 "content", "Hello"
         );
 
@@ -176,7 +176,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void postChatWithAuthReturnsAccepted() {
-        String sessionId = "auth-session-" + UUID.randomUUID().toString().substring(0, 8);
+        String sessionId = UUID.randomUUID().toString();
         createSession(sessionId);
         openSse(sessionId);
         Map<String, Object> request = Map.of(
@@ -204,7 +204,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void messageIsPersistedToDatabase() {
-        String sessionId = "persist-session-" + UUID.randomUUID().toString().substring(0, 8);
+        String sessionId = UUID.randomUUID().toString();
         createSession(sessionId);
         openSse(sessionId);
         Map<String, Object> request = Map.of(
@@ -237,7 +237,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void postChatTwiceAfterDoneKeepsSessionSse() {
-        String sessionId = "repeat-session-" + UUID.randomUUID().toString().substring(0, 8);
+        String sessionId = UUID.randomUUID().toString();
         createSession(sessionId);
         openSse(sessionId);
 
@@ -273,7 +273,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     private void createSession(String sessionId) {
         Session session = new Session(workspaceId, userId, "Integration Chat");
-        session.setId(sessionId);
+        session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
     }
 

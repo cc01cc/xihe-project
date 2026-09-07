@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
 import org.junit.jupiter.api.Test;
+
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
@@ -175,14 +177,15 @@ class McpProxyControllerTest {
     @Test
     void aliasRepository_roundTrip() {
         String owner = java.util.UUID.randomUUID().toString();
-        String wsId = workspaceService.createWorkspace("alias-test", owner).getId();
+        String wsId = workspaceService.createWorkspace("alias-test", owner).getId().toString();
+        java.util.UUID wsUuid = java.util.UUID.fromString(wsId);
 
         aliasRepository.save(new com.cc01cc.p.xihe.cp.entity.McpToolAlias(
-                wsId, "ask_question", "deepwiki", "ask_question", 1L));
+                wsId, "ask_question", java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()).toString(), "ask_question", 1L));
         aliasRepository.save(new com.cc01cc.p.xihe.cp.entity.McpToolAlias(
-                wsId, "github__ask_question", "github", "ask_question", 1L));
+                wsId, "github__ask_question", java.util.UUID.nameUUIDFromBytes("github".getBytes()).toString(), "ask_question", 1L));
 
-        assertTrue(aliasRepository.findByWorkspaceIdAndIssuedName(wsId, "ask_question").isPresent());
-        assertEquals(2, aliasRepository.findByWorkspaceId(wsId).size());
+        assertTrue(aliasRepository.findByWorkspaceIdAndIssuedName(UUID.fromString(wsId), "ask_question").isPresent());
+        assertEquals(2, aliasRepository.findByWorkspaceId(wsUuid).size());
     }
 }
