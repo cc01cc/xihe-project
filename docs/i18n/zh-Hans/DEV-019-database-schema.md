@@ -24,11 +24,11 @@ tags:
 |------|------|
 | 数据库 | PostgreSQL 17 + pgvector，Docker 镜像 `pgvector/pgvector:pg17`，dev 端口 `12634`，库名/用户名 `xihe` |
 | 表数量 | 22 张业务表 + `flyway_schema_history`（Flyway 自维护，不在本文列字段） |
-| 权威顺序 | Flyway SQL > JPA Entity > 本文档；`application.properties` 中 `ddl-auto=update` 仅为 dev 兜底，生产以 Flyway 为准 |
-| 主键风格 | 多数 `VARCHAR(36)`（UUID 字符串）；`config/config_audit` 用 `BIGSERIAL`；`context_*`/`workspace_execution_specs` 用 `UUID DEFAULT gen_random_uuid()` |
-| 时间风格 | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` 或 `TIMESTAMPTZ DEFAULT NOW()`，混用是历史遗留，新表用后者 |
+| 权威顺序 | Flyway SQL > JPA Entity > 本文档；`ddl-auto=validate`（PLAN-280），Flyway 是唯一 schema manager |
+| 主键风格 | 全部 PostgreSQL 原生 `UUID`（PLAN-280）；Java 侧 @Id 为 `UUID` 类型，FK 列为 `String` + `UuidStringConverter` |
+| 时间风格 | 全部 `TIMESTAMPTZ DEFAULT NOW()`（PLAN-280 消除裸 `TIMESTAMP`） |
 | 删除语义 | `workspaces.deleted_at` 软删 + 部分唯一索引；`messages/context_*` 随 `sessions` 级联删；`files.message_id` 置空 |
-| 扩展 | `postgres-init/01-enable-pgvector.sql` 只做 `CREATE EXTENSION IF NOT EXISTS vector`，`V3` 重申一次保证幂等 |
+| 扩展 | `V1` 内 `CREATE EXTENSION IF NOT EXISTS vector`（幂等）；`document_chunks` 由 Agent 侧 langchain_postgres 自建自管，不在 Flyway 链内 |
 | 表格式约定 | 每张表：字段表（一行一字段，`约束` 列只放单列约束）+ 表下索引注释（`CREATE INDEX` 与跨列唯一约束） |
 
 关键入口：
@@ -38,79 +38,115 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 全量迁移 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` ~ `V22__chat_run_leases.sql` |
+| 全量迁移 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql`（PLAN-280 destructive rebaseline，旧 V2~V22/U6 已移出，仅 Git 历史可追溯） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（22 个）+ `context/entity/`（3 个） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
-## 2. ER 关系（域分组）
+> **PLAN-280 rebaseline（2026-09-07）**：本地数据库一次性重建为单一 `V1__init_schema.sql`（21 张表）。统一原生 UUID、TIMESTAMPTZ、显式命名约束与 ON DELETE、`ddl-auto=validate`。旧 V1~V22+U6 迁移链已从 active classpath 移出（仅 Git 历史可追溯）。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复——本文 §2 之后的逐表历史版本标注（`V14`/`V21` 等）仅作演进溯源，不再代表 active migration。
+
+## 2. ER 关系（分域 erDiagram）
+
+> 按域拆成 5 张 `erDiagram`（单图塞 22 表 19 条关系会挤成一团）。基数记法：`||--o{` 1 对 0..N，`||--|{` 1 对 1..N，`}o--||` N..0 对 1。无边实体（独立/弱关联表）单独标注。跨域关系在所属域内展示（如 `sessions → context_events` 属配置域视角）。
+
+### 2.1 身份协作（主链）
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
-flowchart LR
-    subgraph ID["身份协作"]
-        USERS["users"]
-        WORKSPACES["workspaces"]
-        WU["workspace_users"]
-        SESSIONS["sessions"]
-        MESSAGES["messages"]
-        RUNS["chat_runs"]
-        APPROVAL["approval_requests"]
-    end
-    subgraph WS["Workspace 执行"]
-        EXECSPECS["workspace_execution_specs"]
-    end
-    subgraph MCP["MCP 与 Provider"]
-        MCPSRV["mcp_servers"]
-        ALIAS["mcp_tool_aliases"]
-        OAUTH["oauth_credentials"]
-        PROV["provider_connections"]
-        LEASE["provider_credential_leases"]
-        PROVAUDIT["provider_connection_audit"]
-    end
-    subgraph CFG["配置与 RAG"]
-        CONFIG["config"]
-        CONFIGAUDIT["config_audit"]
-        CTXEVT["context_events"]
-        CTXPROJ["context_projections"]
-        CTXHASH["context_source_hashes"]
-        CHUNKS["document_chunks"]
-    end
-    subgraph FILE["文件审计"]
-        FILES["files"]
-        AUDIT["audit_logs"]
-    end
-
-    %% ID 内部主链
-    USERS --> WORKSPACES
-    USERS --> WU
-    WORKSPACES --> WU
-    WORKSPACES --> SESSIONS
-    USERS --> SESSIONS
-    SESSIONS --> MESSAGES
-    SESSIONS --> RUNS
-    RUNS --> MESSAGES
-    RUNS --> APPROVAL
-
-    %% ID → WS
-    WORKSPACES --> EXECSPECS
-
-    %% ID → MCP 与 MCP 内部
-    WORKSPACES --> MCPSRV
-    MCPSRV --> ALIAS
-    MCPSRV --> OAUTH
-    PROV --> LEASE
-
-    %% ID → CFG 与 CFG 内部
-    SESSIONS --> CTXEVT
-    SESSIONS --> CTXPROJ
-    CONFIG --> CONFIGAUDIT
-
-    %% ID → FILE
-    SESSIONS --> FILES
-    MESSAGES --> FILES
+erDiagram
+    users ||--o{ workspaces : owns
+    users ||--o{ workspace_users : "joins (m2m)"
+    workspaces ||--o{ workspace_users : "has (m2m)"
+    workspaces ||--o{ sessions : contains
+    users ||--o{ sessions : creates
+    sessions ||--o{ messages : contains
+    sessions ||--o{ chat_runs : runs
+    chat_runs ||--o{ messages : produces
+    chat_runs ||--o{ approval_requests : requires
 ```
 
-代码锚点：节点 = 表名；边 = 外键（含 `provider_connection_id`、`mcp_tool_aliases.server_id` 等无 FK 约束的逻辑外键）；无边节点（`audit_logs`/`document_chunks`/`context_source_hashes`/`provider_connection_audit`）为独立或弱关联表，关联字段见 §3。DDL 见 §4 迁移对照，Entity 见附录 A。
+- `users → workspaces`：`owner_id` FK + 部分唯一（活跃期每 owner 一个 workspace）
+- `workspace_users`：联合 PK `(workspace_id, user_id)`，多对多关联表
+- `chat_runs → messages`：经 `user_message_id`/`assistant_message_id` 逻辑关联（无 FK 约束）
+- `chat_runs → approval_requests`：`run_id` FK
+
+### 2.2 Workspace 执行
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+erDiagram
+    workspaces ||--o{ workspace_execution_specs : "revisions by generation"
+```
+
+- `workspace_execution_specs.workspace_id` FK CASCADE；联合唯一 `(workspace_id, generation)`，每代一条规格快照
+
+### 2.3 MCP 与 Provider
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+erDiagram
+    workspaces ||--o{ mcp_servers : registers
+    mcp_servers ||--o{ mcp_tool_aliases : exposes
+    mcp_servers ||--o{ oauth_credentials : authorizes
+    provider_connections ||--o{ provider_credential_leases : "leases credentials"
+```
+
+- `mcp_servers` 归属 `workspaces`（`workspace_id` FK，跨域引用身份协作域）
+- `mcp_tool_aliases`：联合 PK `(workspace_id, issued_name)`；`server_id` 为逻辑外键（无 FK 约束）
+- `oauth_credentials`：唯一 `(user_id, workspace_id, server_id)`，三向绑定
+- `provider_credential_leases.provider_connection_id` FK CASCADE；租约发 Agent 一次性使用
+- `provider_connection_audit`：无边实体，`provider_connection_id` 可空（删连接留痕），见 §3.4
+
+### 2.4 配置与 RAG / 上下文
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+erDiagram
+    config ||--o{ config_audit : audited
+    sessions ||--o{ context_events : "appends (es)"
+    sessions ||--|| context_projections : materializes
+```
+
+- `config_audit.config_id` FK config；四元唯一 `(environment, layer, domain, config_key)` 定位配置行
+- `context_events`：UNIQUE `(session_id, sequence)`，Event Sourcing 只追加
+- `context_projections`：UNIQUE `session_id`，单会话单投影，可由事件重放重建
+- `context_source_hashes` / `document_chunks`：无边实体（前者按 `(workspace_id, source_key)` 去重，后者无 FK 独立生命周期），见 §3.5
+
+### 2.5 文件审计
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+erDiagram
+    users ||--o{ files : uploads
+    workspaces |o--o{ files : "scopes (nullable)"
+    sessions ||--o{ files : attaches
+    messages |o--o{ files : "references (set null)"
+```
+
+- `files.user_id` FK NOT NULL；`workspace_id` FK 可空；`session_id` FK CASCADE；`message_id` FK SET NULL
+- `audit_logs`：无边实体，`user_id`/`workspace_id` 均可空 FK，业务审计与 `audit.log` 文件互补，见 §3.6
+
+### 2.6 全局视角（单图总览，弱化布局质量换全貌）
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+erDiagram
+    users ||--o{ workspaces : owns
+    users ||--o{ sessions : creates
+    workspaces ||--o{ sessions : contains
+    sessions ||--o{ messages : contains
+    sessions ||--o{ chat_runs : runs
+    chat_runs ||--o{ messages : produces
+    workspaces ||--o{ workspace_execution_specs : revisions
+    workspaces ||--o{ mcp_servers : registers
+    mcp_servers ||--o{ oauth_credentials : authorizes
+    provider_connections ||--o{ provider_credential_leases : leases
+    config ||--o{ config_audit : audited
+    sessions ||--o{ context_events : appends
+    sessions ||--|| context_projections : materializes
+    sessions ||--o{ files : attaches
+```
+
+代码锚点：实体 = 表名；关系名 = 外键语义（括注为特殊语义：m2m 关联表、无 FK 约束的逻辑外键、nullable、ES 只追加）；无边实体清单见各域小节。字段/索引细节见 §3，DDL 见 §4 迁移对照，Entity 见附录 A。
 
 ## 3. 按域表详情
 

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 数据库 Schema 一次性重新基线化（PLAN-280）：active Flyway 链收敛为单一 `V1__init_schema.sql`（21 表，原生 UUID 主键、`TIMESTAMPTZ`、显式命名 FK/CHECK/UNIQUE/索引与 `ON DELETE`）；`ddl-auto=validate`、`baseline-on-migrate=false`，Flyway 成为唯一 schema manager。**旧本地数据库必须 reset（`mise run dev:reset -- -Reset`），不再兼容**。修复 `spring-boot-flyway` 模块缺失导致的 Flyway 自动配置失效；Testcontainers 镜像切换 `pgvector/pgvector:pg17`。Java 层：@Id 主键统一 `UUID` 类型，FK 列保持 `String` + `UuidStringConverter`，Repository/Service/Controller 同步适配。
 ### Added
 
 - Chat SSE 真实流式（PLAN-230）：`XiheLiteLLM._astream()` 显式 `streaming=True` 使真实 MiMo 产生多 `on_chat_model_stream` token 并经 `LangGraphEventAdapter` 按 `run_id` 去重（`on_chat_model_end` 仅 fallback），`SseEmitterManager` 会话持久 SSE + `generation` + `compareAndRemove` + `heartbeat` 15s，UI `chatTransport` 单飞/退避重连 + `ensureConnected` 受控 409 恢复 + `replaceStreamingParts` 逐 token 实时渲染；真实浏览器 115 distinct lengths（0→704）与截图 `xh-incremental-stream-verified.png` 验证。
