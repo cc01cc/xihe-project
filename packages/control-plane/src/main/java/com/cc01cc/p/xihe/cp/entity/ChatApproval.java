@@ -70,11 +70,18 @@ public class ChatApproval {
     @Column(name = "dispatch_error_code", length = 64)
     private String dispatchErrorCode;
 
+    @Column(name = "snapshot_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
+    private String snapshotId;
+
+    @Column(name = "policy_class", length = 32)
+    private String policyClass;
+
     public ChatApproval() {}
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
                         String workspaceId, String tool, String action, String details,
-                        String state, Instant expiresAt) {
+                        String state, Instant expiresAt, String snapshotId, String policyClass) {
         this.requestId = UUID.fromString(requestId);
         this.runId = runId;
         this.sessionId = sessionId;
@@ -85,6 +92,8 @@ public class ChatApproval {
         this.details = details;
         this.state = state;
         this.expiresAt = expiresAt;
+        this.snapshotId = snapshotId;
+        this.policyClass = policyClass;
     }
 
     @PrePersist
@@ -119,4 +128,8 @@ public class ChatApproval {
     public void setApproved(Boolean approved) { this.approved = approved; }
     public void setDecidedAt(Instant decidedAt) { this.decidedAt = decidedAt; }
     public void setDispatchErrorCode(String dispatchErrorCode) { this.dispatchErrorCode = dispatchErrorCode; }
+    public String getSnapshotId() { return snapshotId; }
+    public String getPolicyClass() { return policyClass; }
+    public void setSnapshotId(String snapshotId) { this.snapshotId = snapshotId; }
+    public void setPolicyClass(String policyClass) { this.policyClass = policyClass; }
 }

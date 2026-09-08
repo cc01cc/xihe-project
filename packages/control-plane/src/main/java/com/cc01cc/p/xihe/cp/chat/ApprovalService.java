@@ -63,6 +63,8 @@ public class ApprovalService {
                     "Approval request payload exceeds the size limit");
         }
         Instant expiresAt = parseExpiresAt(payload.get("expiresAt"));
+        String snapshotId = optional(payload, "snapshotId", null);
+        String policyClass = optional(payload, "policyClass", "unknown");
         ChatApproval existing = approvalRepository.findById(UUID.fromString(requestId)).orElse(null);
         if (existing != null) {
             if (!runId.equals(existing.getRunId()) || !sessionId.equals(existing.getSessionId())
@@ -82,7 +84,9 @@ public class ApprovalService {
                 action,
                 details,
                 "pending",
-                expiresAt));
+                expiresAt,
+                snapshotId,
+                policyClass));
         logger.info("[LIFECYCLE] service=cp event=chat_approval_pending requestId={} sessionId={} runId={}",
                 requestId, sessionId, runId);
     }
@@ -151,6 +155,8 @@ public class ApprovalService {
         payload.put("tool", approval.getTool());
         payload.put("action", approval.getAction());
         payload.put("details", approval.getDetails());
+        payload.put("snapshotId", approval.getSnapshotId());
+        payload.put("policyClass", approval.getPolicyClass());
         payload.put("expiresAt", approval.getExpiresAt());
         payload.put("replayed", replayed);
         return payload;
