@@ -13,8 +13,6 @@ use axum::{
     extract::Path,
     http::{HeaderMap, Request, StatusCode},
 };
-use bollard::Docker;
-use bollard::query_parameters::{RemoveContainerOptions, StopContainerOptions};
 use rmcp::handler::server::wrapper::Json;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ProtocolVersion;
@@ -1597,9 +1595,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let reaper_registry = registry.clone();
+    let reaper_manager = manager.clone();
     let reaper_ct = ct.child_token();
     tokio::spawn(async move {
-        idle_reaper_loop(reaper_registry, reaper_ct).await;
+        idle_reaper_loop(reaper_registry, reaper_manager, reaper_ct).await;
     });
 
     let mcp_manager = mcp_manager();
@@ -2000,16 +1999,9 @@ async fn mcp_config_poll_loop(
 
 async fn idle_reaper_loop(
     registry: Arc<WorkspaceRegistry>,
+    manager: Arc<Mutex<WorkspaceManager>>,
     ct: tokio_util::sync::CancellationToken,
 ) {
-    let docker = match Docker::connect_with_local_defaults() {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Failed to connect to Docker in idle reaper: {}", e);
-            return;
-        }
-    };
-
     let mut ticker = interval(Duration::from_secs(60));
 
     loop {
@@ -2029,7 +2021,6 @@ async fn idle_reaper_loop(
                         }
                     };
                     let ws_id = &instance.ws_id;
-                    let name = format!("xihe-workspace-ws_{ws_id}");
 
                     // Tier 4: 7 days idle — Suspended → Released. The Sandbox container is
                     // already gone in Tier 3; we only mark Released and surface the workspace
@@ -2051,22 +2042,10 @@ async fn idle_reaper_loop(
                         instance.state,
                         InstanceState::Stopped | InstanceState::Suspended | InstanceState::Released
                     );
-                    if is_container_already_stopped
-                        && let Ok(detail) = docker
-                            .inspect_container(&name, None)
-                            .await
-                            .map(|inspect| {
-                                inspect
-                                    .state
-                                    .as_ref()
-                                    .and_then(|value| value.status)
-                                    .map(|status| format!("{status:?}"))
-                                    .unwrap_or_else(|| "unknown".to_string())
-                            })
-                    {
+                    if is_container_already_stopped {
                         tracing::debug!(
-                            "Idle reaper: workspace {} container already non-running (state={}); skipping active tier",
-                            ws_id, detail
+                            "Idle reaper: workspace {} container already non-running (state={:?}); skipping active tier",
+                            ws_id, instance.state
                         );
                         continue;
                     }
@@ -2078,17 +2057,8 @@ async fn idle_reaper_loop(
                         && (instance.state == InstanceState::Stopped
                             || matches!(instance.state, InstanceState::Active | InstanceState::Paused))
                     {
-                        match docker
-                            .remove_container(
-                                &name,
-                                Some(RemoveContainerOptions {
-                                    force: true,
-                                    v: true,
-                                    link: false,
-                                }),
-                            )
-                            .await
-                        {
+                        let mut mgr = manager.lock().await;
+                        match mgr.delete_workspace(ws_id).await {
                             Ok(_) => {
                                 registry.set_state(ws_id, InstanceState::Suspended).await;
                                 registry.unregister(ws_id).await;
@@ -2109,7 +2079,8 @@ async fn idle_reaper_loop(
 
                     // Tier 2: 2 hours idle — Active/Paused → Stopped
                     if elapsed >= Duration::from_secs(7200) && (instance.state == InstanceState::Active || instance.state == InstanceState::Paused) {
-                        match docker.stop_container(&name, Some(StopContainerOptions { t: Some(10), ..Default::default() })).await {
+                        let mgr = manager.lock().await;
+                        match mgr.stop_container(ws_id).await {
                             Ok(_) => {
                                 registry.set_state(ws_id, InstanceState::Stopped).await;
                                 tracing::info!("Idle reaper: stopped container {} (idle >2h)", ws_id);
@@ -2126,7 +2097,8 @@ async fn idle_reaper_loop(
 
                     // Tier 1: 15 minutes idle — Active → Paused
                     if elapsed >= Duration::from_secs(900) && instance.state == InstanceState::Active {
-                        match docker.pause_container(&name).await {
+                        let mgr = manager.lock().await;
+                        match mgr.pause_container(ws_id).await {
                             Ok(_) => {
                                 registry.set_state(ws_id, InstanceState::Paused).await;
                                 tracing::info!("Idle reaper: paused container {} (idle >15m)", ws_id);
