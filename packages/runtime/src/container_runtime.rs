@@ -343,9 +343,16 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
         Err(_) => {
             let pid = child.id();
             if let Some(pid) = pid {
-                let _ = Command::new("sh").arg("-c").arg(format!("kill -- -{} 2>/dev/null; kill -9 -- -{} 2>/dev/null; kill -9 {} 2>/dev/null", pid, pid, pid)).status().await;
+                // Phase 1: SIGTERM (graceful)
+                let _ = Command::new("sh").arg("-c").arg(format!("kill -TERM -- -{} 2>/dev/null", pid)).status().await;
+                // Phase 2: Wait 1s for graceful termination
+                let graceful = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
+                if graceful.is_err() {
+                    // Phase 3: SIGKILL (force)
+                    let _ = Command::new("sh").arg("-c").arg(format!("kill -9 -- -{} 2>/dev/null; kill -9 {} 2>/dev/null", pid, pid)).status().await;
+                    let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+                }
             }
-            let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
             return Err(RuntimeError::Timeout);
         }
     };
@@ -472,10 +479,40 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     if !job_path.exists() { return Err(RuntimeError::InvalidPath(format!("job not found: {job_id}"))); }
     let pid_str = std::fs::read_to_string(job_path.join("pid")).map_err(|_| RuntimeError::InvalidPath("pid not found".into()))?;
     let pid_str = pid_str.trim();
-    let _ = std::process::Command::new("sh").arg("-c").arg(format!("kill -- -{} 2>/dev/null; kill -TERM -- -{} 2>/dev/null; kill -9 -- -{} 2>/dev/null; kill {} 2>/dev/null; kill -9 {} 2>/dev/null", pid_str, pid_str, pid_str, pid_str, pid_str)).status();
-    std::fs::write(job_path.join("meta"), "cancelled").map_err(RuntimeError::Io)?;
+    let pid_num: i32 = pid_str.parse().map_err(|_| RuntimeError::InvalidPath("invalid pid".into()))?;
+
+    // Phase 1: SIGTERM to process group (graceful shutdown)
+    let _ = std::process::Command::new("sh").arg("-c")
+        .arg(format!("kill -TERM -- -{} 2>/dev/null", pid_num))
+        .status();
+
+    // Phase 2: Wait up to 3 seconds for graceful termination
+    let mut terminated = false;
+    for _ in 0..6 {
+        std::thread::sleep(Duration::from_millis(500));
+        let still_running = std::process::Command::new("sh").arg("-c")
+            .arg(format!("kill -0 -- -{} 2>/dev/null || kill -0 {} 2>/dev/null", pid_num, pid_num))
+            .status().map(|s| s.success()).unwrap_or(false);
+        if !still_running { terminated = true; break; }
+    }
+
+    // Phase 3: SIGKILL if still running (force kill)
+    if !terminated {
+        let _ = std::process::Command::new("sh").arg("-c")
+            .arg(format!("kill -9 -- -{} 2>/dev/null; kill -9 {} 2>/dev/null", pid_num, pid_num))
+            .status();
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // Phase 4: Verify process is gone
+    let still_alive = std::process::Command::new("sh").arg("-c")
+        .arg(format!("kill -0 -- -{} 2>/dev/null || kill -0 {} 2>/dev/null", pid_num, pid_num))
+        .status().map(|s| s.success()).unwrap_or(false);
+
+    let status = if still_alive { "failed" } else { "cancelled" };
+    std::fs::write(job_path.join("meta"), status).map_err(RuntimeError::Io)?;
     std::fs::write(job_path.join("updated_at"), chrono::Utc::now().to_rfc3339()).map_err(RuntimeError::Io)?;
-    Ok("cancelled".to_string())
+    Ok(status.to_string())
 }
 
 fn read_job_output(job_id: &str, offset: Option<usize>, limit: Option<usize>) -> Result<String, RuntimeError> {
