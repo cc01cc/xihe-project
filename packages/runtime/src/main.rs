@@ -2036,8 +2036,9 @@ async fn idle_reaper_loop(
                     // in the per-workspace status map. Physical WorkspaceStorage stays intact.
                     if elapsed >= Duration::from_secs(604800) && instance.state == InstanceState::Suspended {
                         registry.set_state(ws_id, InstanceState::Released).await;
+                        registry.unregister(ws_id).await;
                         tracing::info!(
-                            "Idle reaper: released workspace {} (idle >7d); WorkspaceStorage preserved at {}",
+                            "Idle reaper: released workspace {} (idle >7d); cache invalidated, WorkspaceStorage preserved at {}",
                             ws_id,
                             instance.workspace_path
                         );
@@ -2090,8 +2091,9 @@ async fn idle_reaper_loop(
                         {
                             Ok(_) => {
                                 registry.set_state(ws_id, InstanceState::Suspended).await;
+                                registry.unregister(ws_id).await;
                                 tracing::info!(
-                                    "Idle reaper: suspended workspace {} (idle >24h); WorkspaceStorage preserved",
+                                    "Idle reaper: suspended workspace {} (idle >24h); cache invalidated, WorkspaceStorage preserved",
                                     ws_id
                                 );
                             }

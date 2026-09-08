@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 use crate::error::{Result, RuntimeError};
-use crate::gateway::{WorkspaceRegistry, XiheRuntimeInstance};
+use crate::gateway::{InstanceState, WorkspaceRegistry, XiheRuntimeInstance};
 use crate::sandbox::SecurityProfile;
 use crate::storage;
 use crate::workspace::{WorkspaceManager, WorkspaceState};
@@ -272,6 +272,7 @@ impl WorkspaceEnsurer {
     async fn failure<T>(&self, workspace_id: &str, error: RuntimeError) -> Result<T> {
         let detail = error.to_string();
         self.registry.mark_failed(workspace_id, &detail).await;
+        self.registry.unregister(workspace_id).await;
         error!(workspace_id, error = %detail, "workspace materialization failed");
         Err(error)
     }
@@ -358,6 +359,7 @@ impl WorkspaceEnsurer {
             && instance.spec_hash == spec.sandbox_spec_hash
             && instance.profile == profile
             && instance.workspace_path == workspace_path_string
+            && instance.state == InstanceState::Active
         {
             self.registry.update_last_active(workspace_id).await;
             self.registry
@@ -373,38 +375,44 @@ impl WorkspaceEnsurer {
         }
 
         if let Some(instance) = cached_instance.as_ref() {
-            info!(
-                workspace_id,
-                cached_generation = instance.generation,
-                live_generation = spec.generation,
-                cached_spec_hash = %instance.spec_hash,
-                live_spec_hash = %spec.sandbox_spec_hash,
-                "workspace ExecutionSpec drift detected; reconciling"
-            );
+            if !matches!(instance.state, InstanceState::Active) {
+                info!(
+                    workspace_id,
+                    cached_state = ?instance.state,
+                    "workspace cache skipped: container not active (reaper or external stop); reconciling"
+                );
+            } else {
+                info!(
+                    workspace_id,
+                    cached_generation = instance.generation,
+                    live_generation = spec.generation,
+                    cached_spec_hash = %instance.spec_hash,
+                    live_spec_hash = %spec.sandbox_spec_hash,
+                    "workspace ExecutionSpec drift detected; reconciling"
+                );
+            }
         }
 
         self.registry.mark_materializing(workspace_id).await;
         let force_recreate = cached_instance.is_some();
 
-        let container_state = match profile {
-            SecurityProfile::Strict => {
-                if let Err(error) = tokio::fs::create_dir_all(&workspace_path).await {
-                    return self.failure(workspace_id, RuntimeError::Io(error)).await;
-                }
-                let sentinel = workspace_path.join(".xihe-sentinel");
-                if let Err(error) = tokio::fs::write(
-                    &sentinel,
-                    format!("sentinel-{workspace_id}"),
-                )
-                .await
+        let container_state = {
+            let mut manager = self.manager.lock().await;
+            let result = if force_recreate {
+                manager
+                    .recreate_workspace(
+                        workspace_id,
+                        &workspace_path_string,
+                        profile,
+                        &image,
+                    )
+                    .await
+            } else if let Some(existing) = manager.get_state(workspace_id).cloned() {
+                if existing.workspace_path == workspace_path_string
+                    && existing.profile == profile
                 {
-                    return self.failure(workspace_id, RuntimeError::Io(error)).await;
-                }
-                None
-            }
-            SecurityProfile::Coding | SecurityProfile::Isolated => {
-                let mut manager = self.manager.lock().await;
-                let result = if force_recreate {
+                    Ok(existing)
+                } else {
                     manager
                         .recreate_workspace(
                             workspace_id,
@@ -413,30 +421,15 @@ impl WorkspaceEnsurer {
                             &image,
                         )
                         .await
-                } else if let Some(existing) = manager.get_state(workspace_id).cloned() {
-                    if existing.workspace_path == workspace_path_string
-                        && existing.profile == profile
-                    {
-                        Ok(existing)
-                    } else {
-                        manager
-                            .recreate_workspace(
-                                workspace_id,
-                                &workspace_path_string,
-                                profile,
-                                &image,
-                            )
-                            .await
-                    }
-                } else {
-                    manager
-                        .create_workspace(workspace_id, &workspace_path_string, profile, &image)
-                        .await
-                };
-                match result {
-                    Ok(state) => Some(state),
-                    Err(error) => return self.failure(workspace_id, error).await,
                 }
+            } else {
+                manager
+                    .create_workspace(workspace_id, &workspace_path_string, profile, &image)
+                    .await
+            };
+            match result {
+                Ok(state) => Some(state),
+                Err(error) => return self.failure(workspace_id, error).await,
             }
         };
 
@@ -461,7 +454,7 @@ impl WorkspaceEnsurer {
             container = container_state
                 .as_ref()
                 .map(|state: &WorkspaceState| state.container_name.as_str())
-                .unwrap_or("host-direct"),
+                .unwrap_or("none"),
             "workspace materialization cache miss completed"
         );
         Ok(instance)
