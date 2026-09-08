@@ -79,7 +79,12 @@ async def test_langgraph_runner_uses_custom_event_adapter():
     async for event in runner.stream(messages, config):
         events.append(event)
 
-    assert all(e.type == "token" and e.data.get("content") == "custom" for e in events)
+    assert all(
+        e.type == "token" and e.data.get("content") == "custom"
+        for e in events
+        if e.type != "usage"
+    )
+    assert any(e.type == "usage" for e in events)
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.event_store import EventStore
 from xihe_agent.interfaces.message import Message
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
+from xihe_agent.interfaces.usage import RunUsage
 
 
 def _build_args_schema(spec: ToolSpec) -> type[BaseModel]:
@@ -130,6 +131,7 @@ class LangGraphRunner(AgentRunner):
         context = config.context or AgentContext.empty(aggregate_id=str(uuid4()))
         await self._append_prompt_admitted(messages, context)
 
+        usage = RunUsage()
         approval_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
 
         async def publish_approval(payload: dict[str, Any]) -> None:
@@ -170,7 +172,7 @@ class LangGraphRunner(AgentRunner):
                             raw_event = raw_task.result()
                         except StopAsyncIteration:
                             break
-                        for event in self._translate_raw_event(raw_event, seen_tool_ids):
+                        for event in self._translate_raw_event(raw_event, seen_tool_ids, usage):
                             yield event
                         raw_task = asyncio.create_task(raw_stream.__anext__())
             finally:
@@ -192,6 +194,8 @@ class LangGraphRunner(AgentRunner):
             yield AgentEvent(type="error", data={"error": str(e)})
         finally:
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
+            usage.finish()
+            yield AgentEvent(type="usage", data=usage.to_event_payload())
 
     async def create_agent(
         self,
@@ -253,11 +257,22 @@ class LangGraphRunner(AgentRunner):
         self,
         raw_event: dict[str, Any],
         seen_tool_ids: set[str],
+        usage: RunUsage | None = None,
     ) -> list[AgentEvent]:
         translated = self._event_adapter.translate(raw_event)
         if translated is None:
             return []
         events = [translated] if isinstance(translated, AgentEvent) else translated
+
+        # Track usage from events
+        if usage:
+            for event in events:
+                if event.type == "tool_call":
+                    usage.record_tool_call()
+                elif event.type == "tool_result":
+                    usage.record_tool_result()
+                elif event.type == "token":
+                    usage.record_turn()
 
         # Dedup parallel tool calls (DESIGN-013)
         result: list[AgentEvent] = []
