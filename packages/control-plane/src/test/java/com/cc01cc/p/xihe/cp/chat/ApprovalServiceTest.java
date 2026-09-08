@@ -133,6 +133,6 @@ class ApprovalServiceTest {
 
     private ChatApproval pending(Instant expiresAt) {
         return new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "request_approval", "delete file", "README.md", "pending", expiresAt);
+                "request_approval", "delete file", "README.md", "pending", expiresAt, null, null);
     }
 }

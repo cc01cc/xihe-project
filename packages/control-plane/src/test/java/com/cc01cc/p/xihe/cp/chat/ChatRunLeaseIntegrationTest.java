@@ -170,7 +170,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
         ChatApproval approval = new ChatApproval(UUID.randomUUID().toString(), run.getId().toString(),
                 sessionId, userId, workspaceId, "request_approval", "delete file", "README.md",
-                "pending", Instant.now().plusSeconds(300));
+                "pending", Instant.now().plusSeconds(300), null, null);
         approvalRepository.save(approval);
 
         reconciliationService().reconcileOnStartup();
@@ -197,7 +197,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
         ChatApproval expired = new ChatApproval(UUID.randomUUID().toString(), run.getId().toString(),
                 sessionId, userId, workspaceId, "request_approval", "delete file", "README.md",
-                "pending", Instant.now().minusSeconds(1));
+                "pending", Instant.now().minusSeconds(1), null, null);
         approvalRepository.save(expired);
 
         reconciliationService().reconcileOnStartup();

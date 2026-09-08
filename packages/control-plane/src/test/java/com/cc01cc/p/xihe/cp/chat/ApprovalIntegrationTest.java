@@ -156,7 +156,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
 
     private ChatApproval pendingApproval(String reqId, Instant expiresAt) {
         ChatApproval approval = new ChatApproval(reqId, runId, sessionId, userId, workspaceId,
-                "request_approval", "delete file", "README.md", "pending", expiresAt);
+                "request_approval", "delete file", "README.md", "pending", expiresAt, null, null);
         return approvalRepository.save(approval);
     }
 
@@ -209,7 +209,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         String decidedId = UUID.randomUUID().toString();
         ChatApproval decided = new ChatApproval(
                 decidedId, runId, sessionId, userId, workspaceId,
-                "request_approval", "delete file", "README.md", "approved", Instant.now().plusSeconds(300));
+                "request_approval", "delete file", "README.md", "approved", Instant.now().plusSeconds(300), null, null);
         approvalRepository.save(decided);
 
         List<Map<String, Object>> replay = approvalService.replayPending(sessionId, userId, workspaceId);
