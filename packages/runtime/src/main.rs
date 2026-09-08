@@ -2011,6 +2011,9 @@ async fn idle_reaper_loop(
                 break;
             }
             _ = ticker.tick() => {
+                // Periodic cross-map consistency check
+                registry.check_consistency().await;
+
                 let instances = registry.all_instances().await;
                 for instance in &instances {
                     let elapsed = match instance.last_active.elapsed() {

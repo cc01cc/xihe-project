@@ -264,6 +264,63 @@ impl WorkspaceRegistry {
     pub async fn all_instances(&self) -> Vec<XiheRuntimeInstance> {
         self.instances.read().await.values().cloned().collect()
     }
+
+    /// Cross-map consistency check: detect and log cases where InstanceState
+    /// and MaterializationState are contradictory. Called at key transition
+    /// points to catch dual-map divergence early.
+    pub async fn check_consistency(&self) -> Vec<String> {
+        let instances = self.instances.read().await;
+        let statuses = self.statuses.read().await;
+        let mut issues = Vec::new();
+
+        for (ws_id, instance) in instances.iter() {
+            if let Some(status) = statuses.get(ws_id) {
+                // Active instance with Failed status is contradictory
+                if instance.state == InstanceState::Active
+                    && status.state == MaterializationState::Failed
+                {
+                    issues.push(format!(
+                        "{}: InstanceState::Active but MaterializationState::Failed",
+                        ws_id
+                    ));
+                }
+                // Suspended/Released instance with Ready status is contradictory
+                if matches!(
+                    instance.state,
+                    InstanceState::Suspended | InstanceState::Released
+                ) && status.state == MaterializationState::Ready
+                {
+                    issues.push(format!(
+                        "{}: InstanceState::{:?} but MaterializationState::Ready",
+                        ws_id, instance.state
+                    ));
+                }
+            }
+        }
+
+        // Check for statuses without corresponding instances (orphaned status entries)
+        for ws_id in statuses.keys() {
+            if !instances.contains_key(ws_id)
+                && statuses.get(ws_id).is_some_and(|s| {
+                    !matches!(s.state, MaterializationState::Released)
+                })
+            {
+                issues.push(format!(
+                    "{}: MaterializationState::{:?} but no instance entry",
+                    ws_id,
+                    statuses.get(ws_id).map(|s| s.state)
+                ));
+            }
+        }
+
+        if !issues.is_empty() {
+            tracing::warn!(
+                "cross-map consistency issues detected: {}",
+                issues.join("; ")
+            );
+        }
+        issues
+    }
 }
 
 /// Route an MCP request to the correct workspace instance.
