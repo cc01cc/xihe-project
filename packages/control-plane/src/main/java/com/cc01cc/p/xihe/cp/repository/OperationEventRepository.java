@@ -8,7 +8,7 @@ import java.util.UUID;
 
 public interface OperationEventRepository extends JpaRepository<OperationEvent, UUID> {
 
-    List<OperationEvent> findByOperationIdOrderBySequenceAsc(UUID operationId);
+    List<OperationEvent> findByOperationIdOrderBySequenceAsc(String operationId);
 
     List<OperationEvent> findByItemIdOrderBySequenceAsc(String itemId);
 

@@ -455,6 +455,35 @@ paths:
     post: { operationId: runtimeStat, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Metadata } } }
   /internal/v1/runtime/workspaces/{workspaceId}/files/write/{path}:
     post: { operationId: runtimeWriteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: path, required: true, schema: { type: string } }], responses: { '200': { description: Written } } }
+  /api/v1/operations:
+    get:
+      operationId: listOperations
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: sessionId, schema: { type: string } }
+        - { in: query, name: workspaceId, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string, enum: [accepted, running, waiting_for_approval, completed, failed, cancelled, interrupted, ambiguous] } }
+        - { in: query, name: page, schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: size, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses: { '200': { description: Paginated user operations (redacted), content: { application/json: { schema: { $ref: '#/components/schemas/UserOperationListResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } }
+  /api/v1/operations/{operationId}:
+    get:
+      operationId: getOperation
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: operationId, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Owner-only operation trace (redacted), content: { application/json: { schema: { $ref: '#/components/schemas/OperationTrace' } } } }, '404': { $ref: '#/components/responses/Problem' } }
+  /internal/v1/operations:
+    post:
+      operationId: startOperation
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartRequest' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartResponse' } } } }, '200': { description: Idempotent replay of an existing operation, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartResponse' } } } }, '409': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } }
+  /internal/v1/operations/{operationId}/trace:
+    get:
+      operationId: getInternalOperationTrace
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: operationId, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Full operation trace (references only; artifact contents are never returned), content: { application/json: { schema: { $ref: '#/components/schemas/InternalOperationTrace' } } } }, '404': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -673,3 +702,142 @@ components:
         model: { type: string }
         retryable: { type: boolean }
         outcome: { type: string, enum: [success, error, partial, ambiguous] }
+    UserOperationSummary:
+      type: object
+      required: [id, kind, source, actorType, status, createdAt]
+      description: Redacted user projection; never includes errorRef, resultRef or argumentsPreview.
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        sessionId: { type: [string, 'null'], readOnly: true }
+        workspaceId: { type: [string, 'null'], readOnly: true }
+        runId: { type: [string, 'null'], readOnly: true }
+        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other], readOnly: true }
+        source: { type: string, enum: [ui, agent, runtime, system, mcp], readOnly: true }
+        actorType: { type: string, enum: [user, agent, system, service], readOnly: true }
+        status: { type: string, enum: [accepted, running, waiting_for_approval, completed, failed, cancelled, interrupted, ambiguous], readOnly: true }
+        summary: { type: [string, 'null'], readOnly: true }
+        errorCode: { type: [string, 'null'], readOnly: true }
+        startedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+        finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+        createdAt: { type: string, format: date-time, readOnly: true }
+    UserOperationListResponse:
+      type: object
+      required: [operations, page, size, totalElements, totalPages]
+      properties:
+        operations: { type: array, items: { $ref: '#/components/schemas/UserOperationSummary' } }
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer }
+        totalPages: { type: integer }
+    OperationItemView:
+      type: object
+      required: [id, operationId, sequence, kind, source, status]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        operationId: { type: string, format: uuid, readOnly: true }
+        toolCallId: { type: [string, 'null'], readOnly: true }
+        parentItemId: { type: [string, 'null'], readOnly: true }
+        sequence: { type: integer, readOnly: true }
+        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other], readOnly: true }
+        toolName: { type: [string, 'null'], readOnly: true }
+        source: { type: string, enum: [ui, agent, runtime, system, mcp], readOnly: true }
+        policyDecision: { type: [string, 'null'], readOnly: true }
+        approvalRequestId: { type: [string, 'null'], readOnly: true }
+        status: { type: string, enum: [pending, running, waiting_for_approval, resolving, completed, failed, aborted, cancelled, ambiguous], readOnly: true }
+        errorCode: { type: [string, 'null'], readOnly: true }
+        resultRef: { type: [string, 'null'], readOnly: true, description: 'Internal trace projection only; omitted from user views.' }
+        argumentsPreview: { type: [string, 'null'], readOnly: true, description: 'Internal trace projection only; omitted from user views.' }
+        cwd: { type: [string, 'null'], readOnly: true, description: 'Internal trace projection only.' }
+        startedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+        finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+    OperationAttemptView:
+      type: object
+      required: [id, itemId, stage, retryNo, module, status]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        itemId: { type: string, format: uuid, readOnly: true }
+        stage: { type: string, readOnly: true }
+        retryNo: { type: integer, readOnly: true }
+        parentAttemptId: { type: [string, 'null'], readOnly: true }
+        module: { type: string, enum: [agent, cp, runtime, mcp], readOnly: true }
+        status: { type: string, enum: [started, succeeded, failed, timed_out, cancelled, unknown], readOnly: true }
+        httpStatus: { type: [integer, 'null'], readOnly: true }
+        errorCode: { type: [string, 'null'], readOnly: true }
+        resultRef: { type: [string, 'null'], readOnly: true, description: 'Internal trace projection only.' }
+        durationMs: { type: [integer, 'null'], readOnly: true }
+        startedAt: { type: string, format: date-time, readOnly: true }
+        finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+    OperationEventView:
+      type: object
+      required: [id, operationId, sequence, eventType, state, actor]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        operationId: { type: string, format: uuid, readOnly: true }
+        itemId: { type: [string, 'null'], readOnly: true }
+        attemptId: { type: [string, 'null'], readOnly: true }
+        sequence: { type: integer, readOnly: true }
+        eventType: { type: string, readOnly: true }
+        state: { type: string, readOnly: true }
+        actor: { type: string, readOnly: true }
+        schemaVersion: { type: integer, readOnly: true }
+        createdAt: { type: string, format: date-time, readOnly: true }
+    OperationTrace:
+      type: object
+      required: [operation, items, attempts, events]
+      description: Owner-scoped redacted trace; items/attempts omit resultRef, errorRef and argumentsPreview.
+      properties:
+        operation: { $ref: '#/components/schemas/UserOperationSummary' }
+        items: { type: array, items: { $ref: '#/components/schemas/OperationItemView' } }
+        attempts: { type: array, items: { $ref: '#/components/schemas/OperationAttemptView' } }
+        events: { type: array, items: { $ref: '#/components/schemas/OperationEventView' } }
+    InternalOperationTrace:
+      type: object
+      required: [operation, items, attempts, events]
+      description: Developer/Admin diagnostic trace; includes references but never artifact contents.
+      properties:
+        operation:
+          type: object
+          required: [id, kind, source, actorType, status, createdAt]
+          properties:
+            id: { type: string, format: uuid, readOnly: true }
+            sessionId: { type: [string, 'null'], readOnly: true }
+            workspaceId: { type: [string, 'null'], readOnly: true }
+            userId: { type: [string, 'null'], readOnly: true }
+            runId: { type: [string, 'null'], readOnly: true }
+            requestId: { type: [string, 'null'], readOnly: true }
+            kind: { type: string, readOnly: true }
+            source: { type: string, readOnly: true }
+            actorType: { type: string, readOnly: true }
+            actorId: { type: [string, 'null'], readOnly: true }
+            status: { type: string, readOnly: true }
+            idempotencyKey: { type: [string, 'null'], readOnly: true }
+            summary: { type: [string, 'null'], readOnly: true }
+            errorCode: { type: [string, 'null'], readOnly: true }
+            errorRef: { type: [string, 'null'], readOnly: true }
+            startedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+            finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+            createdAt: { type: string, format: date-time, readOnly: true }
+        items: { type: array, items: { $ref: '#/components/schemas/OperationItemView' } }
+        attempts: { type: array, items: { $ref: '#/components/schemas/OperationAttemptView' } }
+        events: { type: array, items: { $ref: '#/components/schemas/OperationEventView' } }
+    OperationStartRequest:
+      type: object
+      required: [kind, source, actorType]
+      properties:
+        userId: { type: [string, 'null'], format: uuid }
+        sessionId: { type: [string, 'null'], format: uuid }
+        workspaceId: { type: [string, 'null'], format: uuid }
+        runId: { type: [string, 'null'], format: uuid }
+        requestId: { type: [string, 'null'], format: uuid }
+        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other] }
+        source: { type: string, enum: [ui, agent, runtime, system, mcp] }
+        actorType: { type: string, enum: [user, agent, system, service] }
+        actorId: { type: [string, 'null'] }
+        idempotencyKey: { type: [string, 'null'], maxLength: 128 }
+        summary: { type: [string, 'null'] }
+    OperationStartResponse:
+      type: object
+      required: [operationId, alreadyRecorded]
+      properties:
+        operationId: { type: string, format: uuid }
+        alreadyRecorded: { type: boolean }

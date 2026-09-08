@@ -29,6 +29,10 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `GET /api/v1/events?sessionId=` | `GET /api/v1/events?sessionId=` — **session-scoped persistent SSE** | user Bearer + current workspace | UI — one active emitter per `sessionId`; `done` ends run, not SSE; `heartbeat` (15s) is transport-only, never enters `MessagePart` |
 | CP | `/api/v1/status`, `/api/v1/health`, `/api/v1/logs`, `/api/v1/telemetry/*` | unchanged `/api/v1/...` | public/user Bearer | UI/telemetry |
 | CP | `/api/v1/sessions/{sessionId}/messages[/{messageId}]` | unchanged `/api/v1/...` | user Bearer | UI |
+| CP | `GET /api/v1/operations` | unchanged (paginated, redacted user projection) | user Bearer | UI audit view (PLAN-281) |
+| CP | `GET /api/v1/operations/{operationId}` | unchanged (owner-only trace, non-owner 404) | user Bearer | UI audit detail (PLAN-281) |
+| CP | `POST /internal/v1/operations` | unchanged (service-to-service ledger entry; idempotent replay returns 200) | service Bearer | Agent, Runtime (PLAN-281) |
+| CP | `GET /internal/v1/operations/{operationId}/trace` | unchanged (full trace with refs; artifact contents excluded) | service Bearer | Agent, Runtime, admin diagnostics (PLAN-281) |
 | CP | `/api/v1/sessions/{sessionId}/attachments[/{fileId}]` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `/api/v1/files/{fileId}`, `/api/v1/files/upload` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `/api/v1/rag/stats`, `/api/v1/rag/ingest`, `/api/v1/rag/search`, `/api/v1/rag/documents/{docId}` | unchanged `/api/v1/...` | user Bearer | UI |
