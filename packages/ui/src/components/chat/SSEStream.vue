@@ -8,6 +8,7 @@ import { useConfigStore } from '../../stores/config'
 import { useWorkspaceAgentSync } from '../../composables/useWorkspaceAgentSync'
 import { toast } from 'vue-sonner'
 import { logger } from '../../lib/logger'
+import { api } from '../../composables/api'
 import type { ChatRunResponse } from '../../types'
 
 const props = withDefaults(defineProps<{
@@ -148,6 +149,11 @@ function waitForConnection(timeoutMs: number): Promise<boolean> {
 }
 
 function stopStreaming() {
+  if (activeRunId) {
+    api.cancelChatRun(activeRunId).catch((err) => {
+      logger.warn('Failed to cancel chat run:', err)
+    })
+  }
   disconnect()
   agentStore.setStatus('idle')
 }

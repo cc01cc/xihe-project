@@ -135,11 +135,13 @@ function currentWorkspaceId(): string {
 
 const builtInTools = [
   'read_file', 'write_file', 'list_directory', 'execute_command',
-  'glob', 'grep', 'edit_file', 'delete_file',
-    'read_file_range', 'mkdir', 'move_file',
-  'search_code', 'web_fetch', 'list_files',
-  'file_exists', 'get_file_info', 'zip_directory',
-  'unzip_file', 'download_file',
+  'glob', 'grep', 'edit_file', 'delete_file', 'delete_directory',
+  'read_file_range', 'mkdir', 'move_file', 'copy_file',
+  'get_file_info', 'watch_directory', 'extract_pdf_text',
+  'apply_patch', 'create_snapshot', 'revert_snapshot',
+  'start_background_process', 'list_background_processes',
+  'get_background_process', 'cancel_background_process',
+  'read_command_output',
 ]
 
 onMounted(async () => {

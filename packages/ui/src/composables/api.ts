@@ -450,4 +450,7 @@ export const api = {
     const params = new URLSearchParams({ state, code })
     return request<{ status: string }>(`/oauth/callback?${params.toString()}`)
   },
+  cancelChatRun(runId: string, reason = 'user_requested'): Promise<{ status: string; runId: string }> {
+    return apiPost(`/chat/runs/${encodeURIComponent(runId)}/cancel`, JSON.stringify({ reason }))
+  },
 }

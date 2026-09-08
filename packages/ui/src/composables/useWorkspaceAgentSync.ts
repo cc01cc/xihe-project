@@ -20,8 +20,12 @@ export function useWorkspaceAgentSync() {
         ws.openFile(filePath)
         break
       case 'write_file':
+      case 'edit_file':
         ws.refreshTree()
         ws.openFile(filePath)
+        break
+      case 'apply_patch':
+        ws.refreshTree()
         break
       case 'delete_file':
       case 'delete_directory':
@@ -30,6 +34,10 @@ export function useWorkspaceAgentSync() {
         break
       case 'move_file':
       case 'copy_file':
+        ws.refreshTree()
+        break
+      case 'create_snapshot':
+      case 'revert_snapshot':
         ws.refreshTree()
         break
     }
