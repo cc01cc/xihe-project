@@ -117,6 +117,68 @@ class AgentContext:
         elif event_type == "compaction.applied":
             self.messages.clear()
             self.messages.append(TextMessage(role="system", content=payload.get("summary", "")))
+        elif event_type == "taskplan.created":
+            self.metadata["task_plan"] = {
+                "run_id": payload.get("run_id"),
+                "goal": payload.get("goal", ""),
+                "items": [],
+                "current_item_id": None,
+                "state": "active",
+            }
+        elif event_type == "taskplan.updated":
+            tp = self.metadata.get("task_plan", {})
+            if "goal" in payload:
+                tp["goal"] = payload["goal"]
+            if "state" in payload:
+                tp["state"] = payload["state"]
+            if "current_item_id" in payload:
+                tp["current_item_id"] = payload["current_item_id"]
+            self.metadata["task_plan"] = tp
+        elif event_type == "taskplan.item_added":
+            tp = self.metadata.get("task_plan", {"items": []})
+            items = tp.get("items", [])
+            items.append({
+                "id": payload.get("item_id"),
+                "title": payload.get("title", ""),
+                "status": "pending",
+                "position": len(items),
+            })
+            tp["items"] = items
+            self.metadata["task_plan"] = tp
+        elif event_type == "taskplan.item_updated":
+            tp = self.metadata.get("task_plan", {"items": []})
+            item_id = payload.get("item_id")
+            for item in tp.get("items", []):
+                if item.get("id") == item_id:
+                    if "status" in payload:
+                        item["status"] = payload["status"]
+                    if "evidence" in payload:
+                        item["evidence"] = payload["evidence"]
+                    break
+            self.metadata["task_plan"] = tp
+        elif event_type == "taskplan.item_completed":
+            tp = self.metadata.get("task_plan", {"items": []})
+            item_id = payload.get("item_id")
+            for item in tp.get("items", []):
+                if item.get("id") == item_id:
+                    item["status"] = "completed"
+                    item["evidence"] = payload.get("evidence", "")
+                    break
+            self.metadata["task_plan"] = tp
+        elif event_type == "question.asked":
+            questions = self.metadata.setdefault("questions", [])
+            questions.append({
+                "id": payload.get("question_id"),
+                "text": payload.get("text", ""),
+                "status": "pending",
+            })
+        elif event_type == "question.answered":
+            question_id = payload.get("question_id")
+            for q in self.metadata.get("questions", []):
+                if q.get("id") == question_id:
+                    q["status"] = "answered"
+                    q["answer"] = payload.get("answer", "")
+                    break
         return self
 
     def _add_message_from_payload(self, payload: dict[str, Any], role: str) -> None:

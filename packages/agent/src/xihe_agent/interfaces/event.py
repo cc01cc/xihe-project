@@ -20,6 +20,13 @@ EventType = Literal[
     "runtime.state_cleared",
     "session.forked",
     "compaction.applied",
+    "taskplan.created",
+    "taskplan.updated",
+    "taskplan.item_added",
+    "taskplan.item_updated",
+    "taskplan.item_completed",
+    "question.asked",
+    "question.answered",
 ]
 
 
