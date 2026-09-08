@@ -72,6 +72,9 @@ pdf-extract = "0.10.0"
 # === NEW: Base64 encoding ===
 base64 = "0.22.1"
 
+# === NEW: SHA-256 content hashing (PLAN-275 snapshot/patch) ===
+sha2 = "0.10"
+
 # === NEW: URL percent-encoding support (REST API write path) ===
 percent-encoding = "2"
 url = "2"

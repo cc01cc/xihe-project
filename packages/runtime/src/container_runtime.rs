@@ -272,6 +272,26 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             let cleaned = cleanup_expired_jobs()?;
             Ok(serde_json::json!({"cleaned": cleaned}))
         }
+        "create_snapshot" => {
+            let snapshot_id = req.payload.get("snapshotId").and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing snapshotId".into()))?;
+            let files = req.payload.get("files").and_then(|v| v.as_array())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing files array".into()))?;
+            let result = create_snapshot(snapshot_id, files)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "revert_snapshot" => {
+            let snapshot_id = req.payload.get("snapshotId").and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing snapshotId".into()))?;
+            let result = revert_snapshot(snapshot_id)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "apply_patch" => {
+            let patches = req.payload.get("patches").and_then(|v| v.as_array())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing patches array".into()))?;
+            let result = apply_patch(patches)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         _ => Err(RuntimeError::InvalidPath(format!("unknown operation {}", req.operation))),
     }
 }
@@ -554,6 +574,267 @@ fn cleanup_expired_jobs() -> Result<usize, RuntimeError> {
         }
     }
     Ok(cleaned)
+}
+
+// ── Snapshot/Revert/Patch (PLAN-275 M2) ────────────────────────────────
+
+const SNAPSHOT_DIR: &str = "/workspace/.xihe-snapshots";
+const SNAPSHOT_MAX_FILES: usize = 200;
+const SNAPSHOT_MAX_SIZE: usize = 10 * 1024 * 1024; // 10MB per file
+
+fn is_safe_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.starts_with('\\')
+        && !path.contains("..")
+        && !path.contains('\0')
+}
+
+#[derive(Serialize)]
+struct SnapshotResult {
+    snapshot_id: String,
+    files_captured: usize,
+    files: Vec<SnapshotFileInfo>,
+}
+
+#[derive(Serialize)]
+struct SnapshotFileInfo {
+    relative_path: String,
+    existed_before: bool,
+    content_hash: String,
+    size_bytes: u64,
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+fn create_snapshot(snapshot_id: &str, files: &[serde_json::Value]) -> Result<SnapshotResult, RuntimeError> {
+    if !is_safe_job_id(snapshot_id) {
+        return Err(RuntimeError::InvalidPath(format!("invalid snapshot id: {snapshot_id}")));
+    }
+    if files.len() > SNAPSHOT_MAX_FILES {
+        return Err(RuntimeError::InvalidPath(format!("snapshot file limit exceeded: {} > {}", files.len(), SNAPSHOT_MAX_FILES)));
+    }
+
+    let snapshot_dir = PathBuf::from(SNAPSHOT_DIR).join(snapshot_id);
+    std::fs::create_dir_all(&snapshot_dir).map_err(RuntimeError::Io)?;
+
+    let workspace = Path::new(WORKSPACE);
+    let mut captured = Vec::new();
+
+    for file_entry in files {
+        let rel_path = file_entry.get("relativePath")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RuntimeError::InvalidPath("missing relativePath in snapshot file entry".to_string()))?;
+
+        if !is_safe_relative_path(rel_path) {
+            return Err(RuntimeError::PathTraversal { path: rel_path.to_string() });
+        }
+
+        let abs_path = workspace.join(rel_path);
+        let existed_before = abs_path.exists();
+
+        if existed_before {
+            let content = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
+            if content.len() > SNAPSHOT_MAX_SIZE {
+                return Err(RuntimeError::InvalidPath(format!("snapshot file too large: {} ({})", rel_path, content.len())));
+            }
+            let hash = sha256_hex(&content);
+            let content_ref = format!("{}/{}", snapshot_id, rel_path);
+            let dest = PathBuf::from(SNAPSHOT_DIR).join(&content_ref);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(RuntimeError::Io)?;
+            }
+            std::fs::write(&dest, &content).map_err(RuntimeError::Io)?;
+
+            captured.push(SnapshotFileInfo {
+                relative_path: rel_path.to_string(),
+                existed_before: true,
+                content_hash: hash,
+                size_bytes: content.len() as u64,
+            });
+        } else {
+            captured.push(SnapshotFileInfo {
+                relative_path: rel_path.to_string(),
+                existed_before: false,
+                content_hash: String::new(),
+                size_bytes: 0,
+            });
+        }
+    }
+
+    let files_captured = captured.len();
+    info!("snapshot_created id={} files={}", snapshot_id, files_captured);
+    Ok(SnapshotResult { snapshot_id: snapshot_id.to_string(), files_captured, files: captured })
+}
+
+#[derive(Serialize)]
+struct RevertResult {
+    snapshot_id: String,
+    files_reverted: usize,
+    conflicts: Vec<String>,
+}
+
+fn revert_snapshot(snapshot_id: &str) -> Result<RevertResult, RuntimeError> {
+    if !is_safe_job_id(snapshot_id) {
+        return Err(RuntimeError::InvalidPath(format!("invalid snapshot id: {snapshot_id}")));
+    }
+
+    let snapshot_dir = PathBuf::from(SNAPSHOT_DIR).join(snapshot_id);
+    if !snapshot_dir.exists() {
+        return Err(RuntimeError::FileNotFound(format!("snapshot not found: {snapshot_id}")));
+    }
+
+    let workspace = Path::new(WORKSPACE);
+    let mut reverted = 0;
+    let mut conflicts = Vec::new();
+
+    // Walk snapshot files to find pre-images
+    for entry in std::fs::read_dir(&snapshot_dir).map_err(RuntimeError::Io)? {
+        let entry = entry.map_err(RuntimeError::Io)?;
+        let rel_path = entry.file_name().to_string_lossy().to_string();
+
+        // Skip if this is a directory (nested files handled differently)
+        if entry.file_type().map_err(RuntimeError::Io)?.is_dir() {
+            continue;
+        }
+
+        if !is_safe_relative_path(&rel_path) {
+            continue;
+        }
+
+        let snapshot_file = snapshot_dir.join(&rel_path);
+        let pre_image = std::fs::read(&snapshot_file).map_err(RuntimeError::Io)?;
+        let pre_hash = sha256_hex(&pre_image);
+
+        let abs_path = workspace.join(&rel_path);
+
+        // Conflict detection: if file was modified since snapshot, return conflict
+        if abs_path.exists() {
+            let current = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
+            let current_hash = sha256_hex(&current);
+            if current_hash != pre_hash {
+                conflicts.push(rel_path);
+                continue;
+            }
+        }
+
+        // Revert: write pre-image
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent).map_err(RuntimeError::Io)?;
+        }
+        std::fs::write(&abs_path, &pre_image).map_err(RuntimeError::Io)?;
+        reverted += 1;
+    }
+
+    info!("snapshot_reverted id={} reverted={} conflicts={}", snapshot_id, reverted, conflicts.len());
+    Ok(RevertResult { snapshot_id: snapshot_id.to_string(), files_reverted: reverted, conflicts })
+}
+
+#[derive(Serialize)]
+struct PatchResult {
+    changed: Vec<String>,
+    diff: String,
+    new_hashes: std::collections::HashMap<String, String>,
+}
+
+fn apply_patch(patches: &[serde_json::Value]) -> Result<PatchResult, RuntimeError> {
+    if patches.is_empty() {
+        return Err(RuntimeError::InvalidPath("empty patches array".into()));
+    }
+
+    let workspace = Path::new(WORKSPACE);
+    let mut changed = Vec::new();
+    let mut new_hashes = std::collections::HashMap::new();
+    let mut diff_lines = Vec::new();
+
+    // Phase 1: Validate all patches before applying any (atomic check)
+    for patch in patches {
+        let rel_path = patch.get("path").and_then(|v| v.as_str())
+            .ok_or_else(|| RuntimeError::InvalidPath("missing path in patch".to_string()))?;
+        let expected_hash = patch.get("expectedHash").and_then(|v| v.as_str())
+            .ok_or_else(|| RuntimeError::InvalidPath("missing expectedHash in patch".to_string()))?;
+
+        if !is_safe_relative_path(rel_path) {
+            return Err(RuntimeError::PathTraversal { path: rel_path.to_string() });
+        }
+
+        let abs_path = workspace.join(rel_path);
+        if abs_path.exists() {
+            let current = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
+            let current_hash = sha256_hex(&current);
+            if current_hash != expected_hash {
+                return Err(RuntimeError::InvalidPath(format!(
+                    "hash mismatch for {}: expected {}, got {}", rel_path, expected_hash, current_hash
+                )));
+            }
+        } else if !expected_hash.is_empty() {
+            return Err(RuntimeError::FileNotFound(format!(
+                "file not found for patch: {}", rel_path
+            )));
+        }
+
+        let hunks = patch.get("hunks").and_then(|v| v.as_array())
+            .ok_or_else(|| RuntimeError::InvalidPath("missing hunks in patch".to_string()))?;
+        if hunks.is_empty() {
+            return Err(RuntimeError::InvalidPath(format!("empty hunks for {}", rel_path)));
+        }
+    }
+
+    // Phase 2: Apply all patches
+    for patch in patches {
+        let rel_path = patch.get("path").and_then(|v| v.as_str()).unwrap();
+        let hunks = patch.get("hunks").and_then(|v| v.as_array()).unwrap();
+        let abs_path = workspace.join(rel_path);
+
+        let original = if abs_path.exists() {
+            std::fs::read_to_string(&abs_path).map_err(RuntimeError::Io)?
+        } else {
+            String::new()
+        };
+
+        let mut content = original.clone();
+        for hunk in hunks {
+            let before = hunk.get("before").and_then(|v| v.as_str()).unwrap_or("");
+            let after = hunk.get("after").and_then(|v| v.as_str()).unwrap_or("");
+
+            if before.is_empty() && content.is_empty() {
+                // New file creation
+                content = after.to_string();
+            } else if let Some(pos) = content.find(before) {
+                content.replace_range(pos..pos + before.len(), after);
+            } else {
+                return Err(RuntimeError::InvalidPath(format!(
+                    "hunk not found in {}: {:?}", rel_path, before
+                )));
+            }
+        }
+
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent).map_err(RuntimeError::Io)?;
+        }
+        std::fs::write(&abs_path, &content).map_err(RuntimeError::Io)?;
+
+        let new_hash = sha256_hex(content.as_bytes());
+        new_hashes.insert(rel_path.to_string(), new_hash.clone());
+        changed.push(rel_path.to_string());
+
+        // Build bounded diff
+        diff_lines.push(format!("--- a/{}", rel_path));
+        diff_lines.push(format!("+++ b/{}", rel_path));
+        diff_lines.push(format!("@@ -0,0 +1,{} @@", content.lines().count()));
+        for line in content.lines() {
+            diff_lines.push(format!("+{}", line));
+        }
+    }
+
+    let diff = diff_lines.join("\n");
+    info!("patch_applied files={}", changed.len());
+    Ok(PatchResult { changed, diff, new_hashes })
 }
 
 
