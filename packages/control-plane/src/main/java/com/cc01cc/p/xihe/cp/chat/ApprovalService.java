@@ -97,14 +97,17 @@ public class ApprovalService {
                 .toList();
     }
 
-    @Transactional
     public Map<String, Object> decide(String requestId, String userId, String workspaceId, boolean approved) {
-        ChatApproval approval = approvalRepository.findOwnedForUpdate(UUID.fromString(requestId), userId, workspaceId)
+        ChatApproval approval = approvalRepository.findById(UUID.fromString(requestId))
+                .filter(row -> userId.equals(row.getUserId()) && workspaceId.equals(row.getWorkspaceId()))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "APPROVAL_NOT_FOUND", "Approval request not found"));
-        if (approval.getExpiresAt().isBefore(Instant.now()) && !isTerminal(approval.getState())) {
-            approval.setState("expired");
-            approval.setDecidedAt(Instant.now());
-            approvalRepository.save(approval);
+        Instant now = Instant.now();
+        if (approval.getExpiresAt().isBefore(now) && !isTerminal(approval.getState())) {
+            int marked = approvalRepository.markExpired(approval.getRequestId(), now);
+            if (marked == 0) {
+                throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
+                        "Approval decision is already being dispatched");
+            }
             throw new CpApiException(HttpStatus.GONE, "APPROVAL_EXPIRED", "Approval request expired");
         }
         if (isTerminal(approval.getState())) {
@@ -118,20 +121,24 @@ public class ApprovalService {
             throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
                     "Approval decision is already being dispatched");
         }
-        approval.setState("dispatching");
-        approval.setApproved(approved);
-        approvalRepository.saveAndFlush(approval);
+        int claimed = approvalRepository.markDispatching(approval.getRequestId(), approved, now);
+        if (claimed == 0) {
+            throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
+                    "Approval decision is already being dispatched");
+        }
         try {
             agentClient.respond(requestId, approved);
         } catch (CpApiException e) {
-            approval.setState("dispatch_unknown");
-            approval.setDispatchErrorCode(e.getCode());
-            approvalRepository.save(approval);
+            int marked = approvalRepository.markDispatchUnknown(approval.getRequestId(), e.getCode(), Instant.now());
+            if (marked == 0) {
+                logger.warn("[LIFECYCLE] service=cp event=chat_approval_dispatch_unknown_skipped requestId={} state was no longer dispatching", requestId);
+            }
             throw e;
         }
-        approval.setState(approved ? "approved" : "rejected");
-        approval.setDecidedAt(Instant.now());
-        approvalRepository.save(approval);
+        int decided = approvalRepository.markDecided(approval.getRequestId(), approved ? "approved" : "rejected", Instant.now());
+        if (decided == 0) {
+            logger.error("[LIFECYCLE] service=cp event=chat_approval_decide_transition_lost requestId={} expected dispatching state", requestId);
+        }
         return decisionResponse(requestId, "accepted", approved);
     }
 

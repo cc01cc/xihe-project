@@ -16,7 +16,10 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -85,30 +88,34 @@ class ApprovalServiceTest {
     @Test
     void decidePersistsApprovedOnlyAfterAgentAccepts() {
         ChatApproval approval = pending(Instant.now().plusSeconds(60));
-        when(approvals.findOwnedForUpdate(UUID.fromString(TEST_REQUEST_ID), TEST_USER, TEST_WORKSPACE))
-                .thenReturn(Optional.of(approval));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(Instant.class)))
+                .thenReturn(1);
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any(Instant.class)))
+                .thenReturn(1);
         when(agent.respond(TEST_REQUEST_ID, true))
                 .thenReturn(Map.of("status", "accepted", "requestId", TEST_REQUEST_ID, "approved", true));
 
         Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, true);
 
         assertEquals("accepted", response.get("status"));
-        assertEquals("approved", approval.getState());
-        assertTrue(approval.getApproved());
-        verify(approvals).saveAndFlush(approval);
+        verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any());
+        verify(approvals, never()).saveAndFlush(any());
     }
 
     @Test
     void decideRejectsExpiredApprovalBeforeCallingAgent() {
         ChatApproval approval = pending(Instant.now().minusSeconds(1));
-        when(approvals.findOwnedForUpdate(UUID.fromString(TEST_REQUEST_ID), TEST_USER, TEST_WORKSPACE))
-                .thenReturn(Optional.of(approval));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markExpired(eq(UUID.fromString(TEST_REQUEST_ID)), any(Instant.class))).thenReturn(1);
 
         CpApiException error = assertThrows(CpApiException.class,
                 () -> service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, false));
 
         assertEquals(410, error.getStatus().value());
         assertEquals("APPROVAL_EXPIRED", error.getCode());
+        verify(approvals).markExpired(eq(UUID.fromString(TEST_REQUEST_ID)), any());
+        verify(agent, never()).respond(any(), anyBoolean());
     }
 
     @Test

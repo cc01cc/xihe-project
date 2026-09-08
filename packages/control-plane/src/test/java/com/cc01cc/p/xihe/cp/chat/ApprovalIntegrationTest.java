@@ -273,6 +273,9 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(HttpStatus.GONE, response.getStatusCode());
         assertEquals("APPROVAL_EXPIRED", response.getBody().get("code"));
+        ChatApproval expired = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
+        assertEquals("expired", expired.getState());
+        assertNotNull(expired.getDecidedAt());
     }
 
     @Test
@@ -328,5 +331,8 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
                 HttpMethod.POST, authorizedBody(true), Map.class);
 
         assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+        ChatApproval unknown = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
+        assertEquals("dispatch_unknown", unknown.getState());
+        assertNotNull(unknown.getDispatchErrorCode());
     }
 }
