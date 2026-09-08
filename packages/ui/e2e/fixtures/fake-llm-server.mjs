@@ -43,6 +43,11 @@ async function sendCompletion(response, provider, requestBody) {
     Connection: 'keep-alive',
   })
 
+  if (mode === 'approval') {
+    sendApprovalCompletion(response, requestBody)
+    return
+  }
+
   const lastMessage = requestBody.messages?.at(-1)?.content ?? 'empty'
   const chunks = [`${provider} fake`, ` response to: ${String(lastMessage).slice(0, 40)}`]
   for (const content of chunks) {
@@ -52,6 +57,51 @@ async function sendCompletion(response, provider, requestBody) {
       return
     }
     await new Promise((resolve) => setTimeout(resolve, 30))
+  }
+  response.end('data: [DONE]\n\n')
+}
+
+// Deterministic approval flow: the first completion requests the
+// request_approval tool; any completion that already carries a tool result
+// streams a plain answer so the run can reach done(success). A brand-new user
+// turn (phase 2) must request the tool again — the fake server is stateless.
+function sendApprovalCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const last = messages.at(-1) ?? {}
+  const hasToolResult = messages.some((m) => m.role === 'tool')
+  const followUp = last.role === 'tool' || (hasToolResult && last.role === 'user')
+
+  if (!followUp) {
+    const toolCallDelta = {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call-approval-e2e-1',
+                type: 'function',
+                function: {
+                  name: 'request_approval',
+                  arguments: JSON.stringify({ action: 'delete file', details: 'README.md' }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    }
+    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
+    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  const chunks = ['Approval received. ', 'The requested action was approved by the user.']
+  for (const content of chunks) {
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
   }
   response.end('data: [DONE]\n\n')
 }

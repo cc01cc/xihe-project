@@ -885,9 +885,15 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         yield render_sse("token", correlated_data(event.data))
                     elif event.type == "error":
                         error_seen = True
-                        terminal_error_code, error_detail, retryable = _classify_llm_exception(
-                            RuntimeError(str(event.data.get("error", "Agent stream failed")))
-                        )
+                        structured_code = event.data.get("code")
+                        if structured_code:
+                            terminal_error_code = str(structured_code)
+                            error_detail = str(event.data.get("error", "Agent stream failed"))
+                            retryable = False
+                        else:
+                            terminal_error_code, error_detail, retryable = _classify_llm_exception(
+                                RuntimeError(str(event.data.get("error", "Agent stream failed")))
+                            )
                         terminal_outcome = (
                             "ambiguous"
                             if llm_request_started and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}

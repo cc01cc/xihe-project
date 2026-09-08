@@ -181,6 +181,12 @@ class LangGraphRunner(AgentRunner):
                 aclose = getattr(raw_stream, "aclose", None)
                 if aclose is not None:
                     await aclose()
+        except ApprovalTerminalError as e:
+            # Approval gate terminations (rejected/expired) are structured
+            # terminal outcomes, not stream failures: propagate the code so the
+            # SSE relay can emit error(APPROVAL_REJECTED|APPROVAL_EXPIRED).
+            logger.info("LangGraph stream terminated by approval gate: code={}", e.code)
+            yield AgentEvent(type="error", data={"error": str(e), "code": e.code})
         except Exception as e:
             logger.error("LangGraph stream failed", exc_info=e)
             yield AgentEvent(type="error", data={"error": str(e)})
