@@ -359,6 +359,62 @@ public class ChatController {
         }
     }
 
+    // ── PLAN-275 M1 Task 1.3: Cancel contract ──────────────────────────────
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PostMapping("/api/v1/chat/runs/{runId}/cancel")
+    public ResponseEntity<Map<String, Object>> cancelRun(
+            @PathVariable String runId,
+            @RequestBody(required = false) Map<String, Object> request) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
+        if (run == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        }
+        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Chat run does not belong to current user/workspace");
+        }
+
+        String status = run.getStatus();
+        if ("succeeded".equals(status) || "failed".equals(status)
+                || "cancelled".equals(status) || "ambiguous".equals(status)) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "RUN_NOT_CANCELLABLE",
+                    "Run is in terminal state: " + status);
+        }
+        if ("cancelling".equals(status)) {
+            return ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
+        }
+
+        // Transition to cancelling
+        run.setStatus("cancelling");
+        chatRunRepository.save(run);
+
+        // Forward cancel to Agent
+        String reason = request != null ? (String) request.getOrDefault("reason", "user_requested") : "user_requested";
+        try {
+            String cancelUrl = agentUrl.replace("/chat", "") + "/internal/v1/agent/runs/" + runId + "/cancel";
+            var agentRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(cancelUrl))
+                    .header("Authorization", "Bearer " + agentApiToken)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(
+                            objectMapper.writeValueAsString(Map.of("reason", reason, "workspaceId", workspaceId))))
+                    .timeout(Duration.ofSeconds(5))
+                    .build();
+            agentHttpClient.send(agentRequest, HttpResponse.BodyHandlers.ofString());
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=cancel_forward_failed runId={} error={}", runId, e.getMessage());
+        }
+
+        logger.info("[LIFECYCLE] service=cp event=run_cancel_requested runId={} reason={}", runId, reason);
+        return ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
+    }
+
     @GetMapping("/api/v1/health")
     public Map<String, Object> health() {
         return Map.of(
