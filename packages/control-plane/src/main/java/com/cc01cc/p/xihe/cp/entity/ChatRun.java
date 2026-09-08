@@ -3,17 +3,11 @@ package com.cc01cc.p.xihe.cp.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
-import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
-import jakarta.persistence.Convert;
 import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
-import jakarta.persistence.Convert;
 import jakarta.persistence.UniqueConstraint;
-import jakarta.persistence.Convert;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -88,6 +82,12 @@ public class ChatRun {
     @Column(name = "assistant_chars", nullable = false)
     private int assistantChars;
 
+    @Column(name = "lease_owner", length = 80)
+    private String leaseOwner;
+
+    @Column(name = "lease_expires_at")
+    private Instant leaseExpiresAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -161,6 +161,10 @@ public class ChatRun {
     public void setTokenCount(int tokenCount) { this.tokenCount = tokenCount; }
     public int getAssistantChars() { return assistantChars; }
     public void setAssistantChars(int assistantChars) { this.assistantChars = assistantChars; }
+    public String getLeaseOwner() { return leaseOwner; }
+    public void setLeaseOwner(String leaseOwner) { this.leaseOwner = leaseOwner; }
+    public Instant getLeaseExpiresAt() { return leaseExpiresAt; }
+    public void setLeaseExpiresAt(Instant leaseExpiresAt) { this.leaseExpiresAt = leaseExpiresAt; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

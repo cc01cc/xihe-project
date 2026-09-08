@@ -282,6 +282,7 @@ _llm_verified_at: str | None = None
 _runtime_config_revision: str = ""
 _model_catalog: dict[str, Any] = {"models": {}, "providers": {}, "configRevision": ""}
 _runtime_refresh_lock = asyncio.Lock()
+_instance_id: str = str(uuid4())
 
 
 def _log_token_usage(result: Any) -> None:
@@ -1155,6 +1156,7 @@ async def health():
     return {
         "status": _agent_status,
         "liveness": "up" if _agent_status != "starting" else "starting",
+        "instanceId": _instance_id,
         "llmReady": _llm_ready,
         "configRevision": _runtime_config_revision,
         "configSync": config_client.last_sync_report,

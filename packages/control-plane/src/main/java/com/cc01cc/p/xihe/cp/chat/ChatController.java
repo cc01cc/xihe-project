@@ -36,6 +36,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -62,6 +63,9 @@ public class ChatController {
     private final RequestQueue requestQueue;
     private final ProviderCredentialLeaseService credentialLeases;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
+
+    private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
+    private static final String INSTANCE_ID = UUID.randomUUID().toString();
 
     @Value("${cp.agent-url:http://localhost:12632/chat}")
     private String agentUrl;
@@ -100,7 +104,8 @@ public class ChatController {
                 requestQueue.drain(req -> {
                     String requestId = nonBlankOrGenerated(req.requestId());
                     String runId = nonBlankOrGenerated(req.runId());
-                    if (!acquireRun(req.sessionId(), runId)) {
+                    if (!acquireRun(req.sessionId(), runId)
+                            || !acquireLeaseForExistingRun(runId)) {
                         logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
                                 requestId, req.sessionId(), runId);
                         markQueuedRequestFailed(req, requestId, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
@@ -292,6 +297,8 @@ public class ChatController {
                     provider, model, toolMode, "accepted");
             chatRun.setProviderConnectionId(session.getProviderConnectionId());
             chatRun.setConnectionRevision(session.getConnectionRevision());
+            chatRun.setLeaseOwner(instanceId());
+            chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
             chatRunRepository.save(chatRun);
 
             Message userMessage = new Message(sessionId, MessageRole.USER, content);
@@ -633,17 +640,45 @@ public class ChatController {
     }
 
     private boolean acquireRun(String sessionId, String runId) {
-        return activeRuns.putIfAbsent(sessionId, runId) == null;
+        String current = activeRuns.get(sessionId);
+        if (current != null && !current.equals(runId)) {
+            return false;
+        }
+        activeRuns.put(sessionId, runId);
+        return true;
+    }
+
+    void restoreActiveRun(String sessionId, String runId) {
+        activeRuns.put(sessionId, runId);
+    }
+
+    String activeRunId(String sessionId) {
+        return activeRuns.get(sessionId);
+    }
+
+    private boolean acquireLeaseForExistingRun(String runId) {
+        return chatRunRepository.tryAcquireLease(
+                UUID.fromString(runId),
+                instanceId(),
+                Instant.now().plus(LEASE_TTL),
+                Instant.now(),
+                ChatRunRepository.ACTIVE_LEASE_STATUSES) > 0;
     }
 
     private void releaseRun(String sessionId, String runId, String reason) {
-        if (activeRuns.remove(sessionId, runId)) {
-            logger.info("[LIFECYCLE] service=cp event=chat_run_lease_released sessionId={} runId={} reason={}",
-                    sessionId, runId, reason);
+        boolean dbReleased = chatRunRepository.releaseLease(UUID.fromString(runId), instanceId()) > 0;
+        boolean memoryReleased = activeRuns.remove(sessionId, runId);
+        if (dbReleased || memoryReleased) {
+            logger.info("[LIFECYCLE] service=cp event=chat_run_lease_released sessionId={} runId={} reason={} dbReleased={} memoryReleased={}",
+                    sessionId, runId, reason, dbReleased, memoryReleased);
         } else {
             logger.debug("[LIFECYCLE] service=cp event=chat_run_lease_release_ignored sessionId={} runId={} reason={}",
                     sessionId, runId, reason);
         }
+    }
+
+    private String instanceId() {
+        return INSTANCE_ID;
     }
 
     private void markQueuedRequestFailed(RequestQueue.QueuedRequest request, String requestId,

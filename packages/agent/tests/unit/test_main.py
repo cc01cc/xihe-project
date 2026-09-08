@@ -100,3 +100,15 @@ async def test_workspace_mcp_initialization_failure_is_not_silenced(monkeypatch)
 
     with pytest.raises(RuntimeError, match="MCP workspace initialization failed"):
         await agent_main._get_tools_for_mode("workspace", "workspace-a")
+
+
+def test_health_reports_stable_process_instance_id():
+    from xihe_agent import main as agent_main
+
+    import uuid
+
+    first = uuid.UUID(agent_main._instance_id)
+    second = uuid.UUID(agent_main._instance_id)
+
+    assert first == second
+    assert agent_main._instance_id == str(first)
