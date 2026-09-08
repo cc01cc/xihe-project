@@ -1,7 +1,13 @@
+import asyncio
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
+
 import pytest
 
 from xihe_agent.adapters.approval_tool import (
+    APPROVAL_EVENT_SINK_KEY,
     ApprovalAgentTool,
+    ApprovalCoordinator,
     ApprovalExpiredError,
     ApprovalInput,
     ApprovalRejectedError,
@@ -183,3 +189,387 @@ async def test_agent_approval_rejection_is_terminal():
     tool.resolve_approval(published[0]["requestId"], False)
     with pytest.raises(ApprovalRejectedError):
         await request_task
+
+
+def _make_context(session_id: str, metadata: dict | None = None) -> AgentContext:
+    context = AgentContext.empty(session_id)
+    if metadata:
+        context.metadata.update(metadata)
+    return context
+
+
+def _publishing_sink(published: list[dict]):
+    async def publish(payload):
+        published.append(payload)
+
+    return publish
+
+
+def _wait_for_published(published: list[dict], expected: int = 1):
+    async def wait():
+        for _ in range(100):
+            if len(published) >= expected:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError(f"expected {expected} published events, got {len(published)}")
+
+    return wait()
+
+
+# ---------------------------------------------------------------------------
+# Coordinator state machine: pending -> approved/rejected/expired
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_coordinator_pending_payload_is_preserved_and_resolves_approved():
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    published: list[dict] = []
+    context = _make_context(
+        "session-state",
+        {"runId": "run-1", "sessionId": "session-state", "workspaceId": "ws-1"},
+    )
+
+    request_task = asyncio.create_task(
+        coordinator.request("delete file", "README.md", context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+
+    request_id = published[0]["requestId"]
+    status = coordinator.get_status(request_id)
+    assert status is not None
+    assert status["status"] == "pending"
+    assert status["tool"] == "request_approval"
+    assert status["action"] == "delete file"
+    assert status["details"] == "README.md"
+    assert status["runId"] == "run-1"
+    assert status["sessionId"] == "session-state"
+    assert status["workspaceId"] == "ws-1"
+    assert status["expiresAt"].endswith("Z")
+    assert len(coordinator.get_pending()) == 1
+    assert coordinator.get_pending()[0]["requestId"] == request_id
+
+    resolved_status, decision = coordinator.resolve_status(request_id, True)
+    assert (resolved_status, decision) == ("accepted", True)
+
+    result = await request_task
+    assert result == {
+        "content": "Approved: delete file",
+        "approval": "approved",
+        "requestId": request_id,
+    }
+
+    completed = coordinator.get_status(request_id)
+    assert completed is not None
+    assert completed["status"] == "approved"
+    assert completed["approved"] is True
+    assert completed["action"] == "delete file"
+    assert coordinator.get_pending() == []
+
+
+@pytest.mark.asyncio
+async def test_coordinator_reject_transition_preserves_payload_and_raises():
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    published: list[dict] = []
+    context = _make_context("session-reject-state")
+
+    request_task = asyncio.create_task(
+        coordinator.request("rm -rf", None, context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+
+    assert coordinator.resolve_status(request_id, False) == ("accepted", False)
+    with pytest.raises(ApprovalRejectedError):
+        await request_task
+
+    completed = coordinator.get_status(request_id)
+    assert completed is not None
+    assert completed["status"] == "rejected"
+    assert completed["approved"] is False
+    assert completed["requestId"] == request_id
+
+
+@pytest.mark.asyncio
+async def test_coordinator_expiry_transitions_to_expired_and_raises():
+    coordinator = ApprovalCoordinator(timeout_seconds=0.01)
+    published: list[dict] = []
+    context = _make_context("session-expiry-state")
+
+    with pytest.raises(ApprovalExpiredError):
+        await coordinator.request("rotate key", None, context, _publishing_sink(published))
+
+    request_id = published[0]["requestId"]
+    completed = coordinator.get_status(request_id)
+    assert completed is not None
+    assert completed["status"] == "expired"
+    assert completed["approved"] is None
+    assert completed["requestId"] == request_id
+    assert coordinator.resolve_status(request_id, True) == ("expired", None)
+
+
+# ---------------------------------------------------------------------------
+# Duplicate decision idempotency
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_duplicate_same_decision_returns_already_decided_and_consistent_result():
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    published: list[dict] = []
+    context = _make_context("session-dup-approve")
+
+    request_task = asyncio.create_task(
+        coordinator.request("deploy", None, context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+
+    assert coordinator.resolve_status(request_id, True) == ("accepted", True)
+    assert coordinator.resolve_status(request_id, True) == ("already_decided", True)
+    assert coordinator.resolve_status(request_id, True) == ("already_decided", True)
+
+    result = await request_task
+    assert result["approval"] == "approved"
+
+    # After completion the terminal outcome keeps reporting already_decided.
+    assert coordinator.resolve_status(request_id, True) == ("already_decided", True)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_same_rejection_is_idempotent_after_completion():
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    published: list[dict] = []
+    context = _make_context("session-dup-reject")
+
+    request_task = asyncio.create_task(
+        coordinator.request("drop table", None, context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+
+    assert coordinator.resolve_status(request_id, False) == ("accepted", False)
+    with pytest.raises(ApprovalRejectedError):
+        await request_task
+
+    assert coordinator.resolve_status(request_id, False) == ("already_decided", False)
+    assert coordinator.get_status(request_id)["status"] == "rejected"
+
+
+# ---------------------------------------------------------------------------
+# Conflicting decisions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_opposite_decisions_report_conflict():
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    published: list[dict] = []
+    context = _make_context("session-conflict")
+
+    request_task = asyncio.create_task(
+        coordinator.request("scale cluster", None, context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+
+    status, decision = coordinator.resolve_status(request_id, True)
+    assert (status, decision) == ("accepted", True)
+
+    status, decision = coordinator.resolve_status(request_id, False)
+    assert (status, decision) == ("conflict", True)
+
+    result = await request_task
+    assert result["approval"] == "approved"
+
+    # Post-completion conflict still reports the recorded decision.
+    assert coordinator.resolve_status(request_id, False) == ("conflict", True)
+
+
+# ---------------------------------------------------------------------------
+# Completed TTL: queryable within timeout, purged after timeout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_completed_outcome_survives_within_ttl(monkeypatch):
+    import xihe_agent.adapters.approval_tool as approval_module
+
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+    published: list[dict] = []
+    context = _make_context("session-ttl")
+
+    request_task = asyncio.create_task(
+        coordinator.request("cleanup cache", None, context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+
+    coordinator.resolve_status(request_id, True)
+    assert (await request_task)["approval"] == "approved"
+
+    # Freeze just under the TTL boundary; outcome must remain queryable.
+    just_before_expiry = coordinator.completed_at[request_id] + timedelta(seconds=59)
+    frozen = _FrozenDatetime(just_before_expiry)
+    monkeypatch.setattr(approval_module, "datetime", frozen)
+
+    assert coordinator.get_status(request_id) is not None
+    assert coordinator.get_pending() == []
+    assert coordinator.resolve_status(request_id, True) == ("already_decided", True)
+
+
+@pytest.mark.asyncio
+async def test_completed_outcome_is_purged_after_ttl(monkeypatch):
+    import xihe_agent.adapters.approval_tool as approval_module
+
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+    published: list[dict] = []
+    context = _make_context("session-ttl-purge")
+
+    request_task = asyncio.create_task(
+        coordinator.request("cleanup cache", None, context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+
+    coordinator.resolve_status(request_id, True)
+    await request_task
+
+    after_expiry = coordinator.completed_at[request_id] + timedelta(seconds=61)
+    monkeypatch.setattr(approval_module, "datetime", _FrozenDatetime(after_expiry))
+
+    assert coordinator.get_status(request_id) is None
+    assert coordinator.resolve_status(request_id, True) == ("not_found", None)
+
+
+class _FrozenDatetime:
+    """Instance that replaces ``datetime`` in approval_tool: now() is frozen, rest delegates."""
+
+    def __init__(self, fixed_now: datetime) -> None:
+        self._fixed_now = fixed_now
+
+    def now(self, tz=None):
+        if tz is not None:
+            return self._fixed_now.astimezone(tz)
+        return self._fixed_now
+
+    def __getattr__(self, name):
+        return getattr(datetime, name)
+
+
+# ---------------------------------------------------------------------------
+# Agent restart: fresh coordinator has no knowledge of prior requests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_new_coordinator_instance_cannot_see_old_requests():
+    first = ApprovalCoordinator(timeout_seconds=60)
+    published_first: list[dict] = []
+    context = _make_context("session-restart")
+
+    request_task = asyncio.create_task(
+        first.request("restart probe", None, context, _publishing_sink(published_first))
+    )
+    await _wait_for_published(published_first)
+    request_id = published_first[0]["requestId"]
+    first.resolve_status(request_id, True)
+    await request_task
+
+    restarted = ApprovalCoordinator(timeout_seconds=60)
+    assert restarted.get_status(request_id) is None
+    assert restarted.get_pending() == []
+    assert restarted.resolve_status(request_id, True) == ("not_found", None)
+
+
+# ---------------------------------------------------------------------------
+# Event sink isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_request_without_sink_raises_and_leaves_no_pending():
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    context = _make_context("session-no-sink")
+
+    with pytest.raises(RuntimeError, match="could not be delivered"):
+        await coordinator.request("delete file", None, context, None)
+
+    assert coordinator.get_pending() == []
+    assert coordinator.pending_requests == {}
+    assert coordinator.pending_payloads == {}
+
+
+@pytest.mark.asyncio
+async def test_non_callable_sink_is_treated_as_none():
+    tool = ApprovalAgentTool(timeout_seconds=1)
+    context = _make_context("session-bad-sink", {APPROVAL_EVENT_SINK_KEY: "not-callable"})
+
+    with pytest.raises(RuntimeError, match="could not be delivered"):
+        await tool.execute({"action": "delete file"}, context)
+
+    assert tool.get_pending() == []
+    assert tool.coordinator.pending_requests == {}
+
+
+# ---------------------------------------------------------------------------
+# Reject -> no downstream tool: coordinator gains no new pending after rejection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reject_raises_and_produces_no_new_pending():
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    published: list[dict] = []
+    context = _make_context("session-no-downstream")
+
+    request_task = asyncio.create_task(
+        coordinator.request("delete file", None, context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+
+    coordinator.resolve_status(request_id, False)
+    with pytest.raises(ApprovalRejectedError):
+        await request_task
+
+    assert coordinator.get_pending() == []
+    assert coordinator.pending_requests == {}
+    assert coordinator.pending_payloads == {}
+
+
+# ---------------------------------------------------------------------------
+# Publish-before-wait ordering
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_event_sink_is_called_before_entering_wait():
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    context = _make_context("session-order")
+
+    order: list[str] = []
+
+    async def recording_sink(payload):
+        order.append("publish")
+
+    waiting_sink = AsyncMock(side_effect=recording_sink)
+    request_task = asyncio.create_task(coordinator.request("delete file", None, context, waiting_sink))
+
+    for _ in range(100):
+        if waiting_sink.call_count:
+            break
+        await asyncio.sleep(0)
+
+    assert waiting_sink.call_count == 1
+    assert order == ["publish"]
+
+    # The request is registered as pending (waiting) only after the sink ran.
+    request_id = waiting_sink.call_args.args[0]["requestId"]
+    assert request_id in coordinator.pending_requests
+    assert coordinator.get_status(request_id)["status"] == "pending"
+
+    coordinator.resolve_status(request_id, True)
+    result = await request_task
+    assert result["approval"] == "approved"
+    assert waiting_sink.await_count == 1

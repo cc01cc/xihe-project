@@ -155,7 +155,7 @@ class TestMCPClientManager:
         mock_manager.initialize.assert_awaited_once_with(workspace_id="request-workspace")
 
     @pytest.mark.asyncio
-    async def test_chat_skips_mcp_for_a_different_bound_workspace(self, monkeypatch):
+    async def test_chat_fails_closed_for_a_different_bound_workspace(self, monkeypatch):
         mock_manager = MagicMock()
         mock_manager.initialized = True
         mock_manager.workspace_id = "bound-workspace"
@@ -163,5 +163,8 @@ class TestMCPClientManager:
         mock_manager.tools = []
         monkeypatch.setattr(main, "mcp_manager", mock_manager)
 
-        assert await main._get_mcp_tools("other-workspace") == []
+        # Fail-closed: tools discovered for one workspace must never be reused
+        # for another workspace; the request fails instead of silently returning [].
+        with pytest.raises(RuntimeError, match="cannot be reused"):
+            await main._get_mcp_tools("other-workspace")
         mock_manager.initialize.assert_not_awaited()
