@@ -406,26 +406,9 @@ public class McpProxyController {
             return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL", "Requested tool is unavailable");
         }
 
-        if ("__system__".equals(serverId)) {
-            return forwardToRuntime(wsId, null, body, headers, sessionId, access);
-        }
-
-        // PLAN-242 M2: remote servers keep policy evaluation on the issued
-        // name, then route by backend name (alias table, sticky).
-        Optional<McpServer> remote = remoteServer(wsId, serverId);
-        if (remote.isPresent()) {
-            String rewritten = rewriter.rewrite(toolName, body, sessionId);
-            PolicyEngine.PolicyDecision decision = policy.evaluate(toolName, rewritten, sessionId);
-            audit.record(sessionId, toolName, "request", rewritten);
-            if (decision.getResult() == PolicyEngine.PolicyDecision.PolicyResult.DENY) {
-                sse.send(sessionId, "tool_exec_denied",
-                    Map.of("tool", toolName, "reason", decision.getReason()));
-                audit.record(sessionId, toolName, "deny", decision.getReason());
-                return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
-            }
-            return forwardRemoteToRuntime(wsId, remote.get(), rewritten, headers, sessionId, access);
-        }
-
+        // PLAN-275 M1: All tools, including __system__, go through policy evaluation.
+        // __system__ tools are auto_allow (read-only) or require_approval (mutations).
+        // Unknown tools are deny (fail-closed).
         String rewritten = rewriter.rewrite(toolName, body, sessionId);
         PolicyEngine.PolicyDecision decision = policy.evaluate(toolName, rewritten, sessionId);
         audit.record(sessionId, toolName, "request", rewritten);
@@ -435,6 +418,26 @@ public class McpProxyController {
                 Map.of("tool", toolName, "reason", decision.getReason()));
             audit.record(sessionId, toolName, "deny", decision.getReason());
             return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+        }
+
+        if (decision.getResult() == PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL) {
+            sse.send(sessionId, "tool_exec_approval_required",
+                Map.of("tool", toolName, "reason", decision.getReason()));
+            audit.record(sessionId, toolName, "approval_required", decision.getReason());
+            // Approval flow: CP stores pending approval, sends approval_request via SSE,
+            // waits for user decision before forwarding to Runtime.
+            // For v1 M1, we log the requirement but still forward (approval gate in M1.2).
+        }
+
+        if ("__system__".equals(serverId)) {
+            return forwardToRuntime(wsId, null, body, headers, sessionId, access);
+        }
+
+        // Policy already evaluated above for all tool types (including __system__).
+        // Route by server type: remote or local (system).
+        Optional<McpServer> remote = remoteServer(wsId, serverId);
+        if (remote.isPresent()) {
+            return forwardRemoteToRuntime(wsId, remote.get(), rewritten, headers, sessionId, access);
         }
 
         body = rewritten;
