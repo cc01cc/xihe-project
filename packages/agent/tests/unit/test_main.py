@@ -103,9 +103,9 @@ async def test_workspace_mcp_initialization_failure_is_not_silenced(monkeypatch)
 
 
 def test_health_reports_stable_process_instance_id():
-    from xihe_agent import main as agent_main
-
     import uuid
+
+    from xihe_agent import main as agent_main
 
     first = uuid.UUID(agent_main._instance_id)
     second = uuid.UUID(agent_main._instance_id)
