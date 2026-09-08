@@ -381,14 +381,19 @@ impl WorkspaceEnsurer {
                     cached_state = ?instance.state,
                     "workspace cache skipped: container not active (reaper or external stop); reconciling"
                 );
-            } else {
+            } else if instance.generation != spec.generation {
                 info!(
                     workspace_id,
                     cached_generation = instance.generation,
                     live_generation = spec.generation,
+                    "workspace stale generation detected (fencing); reconciling"
+                );
+            } else {
+                info!(
+                    workspace_id,
                     cached_spec_hash = %instance.spec_hash,
                     live_spec_hash = %spec.sandbox_spec_hash,
-                    "workspace ExecutionSpec drift detected; reconciling"
+                    "workspace spec hash drift detected; reconciling"
                 );
             }
         }
