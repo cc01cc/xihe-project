@@ -74,11 +74,69 @@ public class ContextService {
         long effectiveUpTo = upToSequence != null ? upToSequence : eventStoreService.getLatestSequence(sessionId);
         ObjectNode context = projectionService.projectUpTo(sessionId, effectiveUpTo);
         String summary = summarizeMessages(context);
+
+        // Compute summary hash for integrity verification
+        String summaryHash = computeSha256(summary);
+
+        // Determine context epoch (new epoch after compaction)
+        String newEpochId = java.util.UUID.randomUUID().toString();
+
+        // Keep task plan items that are not completed (resume-friendly)
+        java.util.List<String> keptItemIds = new java.util.ArrayList<>();
+        com.fasterxml.jackson.databind.JsonNode taskPlan = context.get("metadata").get("task_plan");
+        if (taskPlan != null && taskPlan.has("items")) {
+            for (com.fasterxml.jackson.databind.JsonNode item : taskPlan.get("items")) {
+                String status = item.has("status") ? item.get("status").asText() : "pending";
+                if (!"completed".equals(status) && item.has("id")) {
+                    keptItemIds.add(item.get("id").asText());
+                }
+            }
+        }
+
         return eventStoreService.append(sessionId, workspaceId, userId, "compaction.applied", Map.of(
                 "up_to_sequence", effectiveUpTo,
                 "summary", summary,
+                "summaryHash", summaryHash,
+                "contextEpoch", newEpochId,
+                "keptItemIds", keptItemIds,
                 "compacted_message_count", context.get("messages").size()
         ));
+    }
+
+    public boolean shouldAutoCompact(String sessionId) {
+        long latestSeq = eventStoreService.getLatestSequence(sessionId);
+        ObjectNode context = projectionService.project(sessionId, latestSeq);
+        if (context == null) return false;
+
+        // Threshold 1: message count > 50
+        com.fasterxml.jackson.databind.JsonNode messages = context.get("messages");
+        if (messages != null && messages.size() > 50) return true;
+
+        // Threshold 2: metadata token_count > 100000 (estimated)
+        com.fasterxml.jackson.databind.JsonNode meta = context.get("metadata");
+        if (meta != null && meta.has("token_count") && meta.get("token_count").asInt(0) > 100000) return true;
+
+        // Threshold 3: tool_calls count > 20
+        if (meta != null && meta.has("tool_calls")) {
+            com.fasterxml.jackson.databind.JsonNode toolCalls = meta.get("tool_calls");
+            if (toolCalls.isArray() && toolCalls.size() > 20) return true;
+        }
+
+        return false;
+    }
+
+    private String computeSha256(String data) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(data.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "hash_error";
+        }
     }
 
     private String summarizeMessages(ObjectNode context) {
