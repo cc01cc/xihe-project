@@ -24,6 +24,7 @@ use url::Url;
 use crate::channel_proto::{
     Envelope, WorkspaceSummary, TYPE_ACK, TYPE_EVENT, TYPE_HELLO, TYPE_WELCOME,
 };
+use crate::gateway::WorkspaceRegistry;
 
 /// Formats the channel WS URL: ws(s)://host[:port]/internal/v1/channel.
 pub fn channel_url(cp_url: &str) -> Result<String, String> {
@@ -102,9 +103,11 @@ impl ChannelClient {
 
     /// Blocking task loop: connect → hello → read events; reconnects with
     /// capped exponential backoff. Runs until `cancellation` fires.
+    /// Workspace summaries are built from the registry on each connect,
+    /// ensuring the hello always carries the current state.
     pub async fn run(
         self: Arc<Self>,
-        workspaces: Arc<Mutex<Vec<WorkspaceSummary>>>,
+        registry: Arc<WorkspaceRegistry>,
         ct: tokio_util::sync::CancellationToken,
     ) {
         self.state.store(true, Ordering::Relaxed);
@@ -114,7 +117,7 @@ impl ChannelClient {
                 info!("channel loop cancelled");
                 return;
             }
-            match self.connect_once(&workspaces, &ct).await {
+            match self.connect_once(&registry, &ct).await {
                 Ok(()) => {
                     backoff = Duration::from_millis(250);
                 }
@@ -133,7 +136,7 @@ impl ChannelClient {
 
     async fn connect_once(
         &self,
-        workspaces: &Arc<Mutex<Vec<WorkspaceSummary>>>,
+        registry: &Arc<WorkspaceRegistry>,
         ct: &tokio_util::sync::CancellationToken,
     ) -> Result<(), String> {
         let mut request = self
@@ -153,13 +156,22 @@ impl ChannelClient {
                 .map_err(|e| format!("connect failed: {e}"))?;
         info!("channel_connected url={}", self.url);
 
-        // hello with the current workspace summary.
-        let summary = workspaces.lock().await.clone();
+        // hello with the current workspace summary built from registry.
+        let instances = registry.all_instances().await;
+        let summaries: Vec<WorkspaceSummary> = instances
+            .iter()
+            .map(|inst| WorkspaceSummary {
+                workspace_id: inst.ws_id.clone(),
+                generation: inst.generation,
+                sandbox_spec_hash: inst.spec_hash.clone(),
+                state: format!("{:?}", inst.state),
+            })
+            .collect();
         let mut hello = Envelope::new(TYPE_HELLO, "runtime", "control-plane", self.next_sequence());
         hello.device_id = Some(self.device_id.clone());
         hello.payload = serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
-            "workspaces": summary,
+            "workspaces": summaries,
         });
         ws.send(Message::Text(hello.encode()?))
             .await

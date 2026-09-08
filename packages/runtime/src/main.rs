@@ -1586,9 +1586,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(channel) = channel_client.clone() {
         tracing::info!("channel: enabled url={}", channel.url);
         let channel_ct = ct.child_token();
+        let channel_registry = registry.clone();
         tokio::spawn(async move {
-            let summaries = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-            channel.run(summaries, channel_ct).await;
+            channel.run(channel_registry, channel_ct).await;
         });
     } else {
         tracing::info!("channel: disabled (XIHE_CHANNEL_URL not set); using HTTP heartbeat");
