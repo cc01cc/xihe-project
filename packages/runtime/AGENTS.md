@@ -34,7 +34,7 @@ src/
 ├── executor.rs        # WorkspaceExecutionRouter（per-request Docker exec 封装）
 ├── gateway.rs         # Runtime Gateway（per-workspace 分发）
 ├── fs.rs              # 文件系统操作（rustix openat2 helper）
-├── sandbox.rs         # 沙盒实现（artifact store，伪 background 已移除）
+├── sandbox.rs         # 沙盒实现（artifact store，BackgroundProcess frozen v1 schema）
 ├── workspace.rs       # 容器 + bridge 生命周期（Strict network-none + per-request exec）
 ├── container_runtime.rs # 容器内 xihe-container-runtime（oneshot CLI + /tmp/xihe-jobs）
 ├── inventory.rs       # 启动时 negative fallback 扫描
