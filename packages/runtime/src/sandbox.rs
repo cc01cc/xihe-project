@@ -25,18 +25,24 @@ pub struct CommandResult {
     pub artifact_id: Option<String>,
 }
 
-// ── Background Process (schema only, no host in-memory map) ───────────────
-// Jobs are now container-local via /tmp/xihe-jobs state files (PLAN-235 M2).
-// This struct remains as the MCP schema for background jobs; runtime no longer
-// maintains a host-side pseudo map.
+// ── Background Process (frozen v1 schema) ────────────────────────────────
+// Jobs are container-local via /tmp/xihe-jobs state files (PLAN-235 M2).
+// This struct is the MCP schema for background jobs; the Runtime host-side
+// injects workspaceId before returning to the MCP caller.
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BackgroundProcess {
-    pub pid: String,
-    pub ws_id: String,
-    pub command: String,
-    pub started_at: String,
+    pub job_id: String,
+    pub workspace_id: String,
     pub status: String,
+    pub command: String,
+    pub pid: Option<String>,
+    pub exit_code: Option<i32>,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+    pub stdout_preview: Option<String>,
+    pub stderr_preview: Option<String>,
 }
 
 // ── Artifact Store (retained preview for bounded output) ─────────────────

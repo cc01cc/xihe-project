@@ -231,23 +231,23 @@ impl WorkspaceExecutionRouter {
     }
 
     pub async fn start_background_process(&self, workspace_id: &str, command: &str, args: Vec<String>) -> Result<String> {
-        let payload = serde_json::json!({"command": command, "args": args});
+        let payload = serde_json::json!({"workspaceId": workspace_id, "command": command, "args": args});
         let val = self.exec_oneshot(workspace_id, "start_background_process", payload).await?;
         Ok(val.get("jobId").and_then(|v| v.as_str()).unwrap_or("").to_string())
     }
 
     pub async fn list_background_processes(&self, workspace_id: &str) -> Result<Value> {
-        let payload = serde_json::json!({});
+        let payload = serde_json::json!({"workspaceId": workspace_id});
         self.exec_oneshot(workspace_id, "list_background_processes", payload).await
     }
 
     pub async fn get_background_process(&self, workspace_id: &str, job_id: &str) -> Result<Value> {
-        let payload = serde_json::json!({"jobId": job_id});
+        let payload = serde_json::json!({"workspaceId": workspace_id, "jobId": job_id});
         self.exec_oneshot(workspace_id, "get_background_process", payload).await
     }
 
     pub async fn cancel_background_process(&self, workspace_id: &str, job_id: &str) -> Result<Value> {
-        let payload = serde_json::json!({"jobId": job_id});
+        let payload = serde_json::json!({"workspaceId": workspace_id, "jobId": job_id});
         self.exec_oneshot(workspace_id, "cancel_background_process", payload).await
     }
 

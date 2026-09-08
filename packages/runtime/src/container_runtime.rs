@@ -241,9 +241,10 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             Ok(serde_json::to_value(res).unwrap())
         }
         "start_background_process" => {
+            let workspace_id = req.payload.get("workspaceId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
             let command = req.payload.get("command").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing command".into()))?.to_string();
             let args: Vec<String> = req.payload.get("args").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
-            let job_id = start_background_job(&command, args).await?;
+            let job_id = start_background_job(&workspace_id, &command, args).await?;
             Ok(serde_json::json!({"jobId": job_id}))
         }
         "list_background_processes" => {
@@ -364,25 +365,43 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
 #[allow(non_snake_case)]
 struct JobInfo {
     jobId: String,
+    workspace_id: String,
     command: String,
     status: String,
     pid: Option<String>,
     exit_code: Option<i32>,
-    started_at: String,
+    created_at: String,
+    updated_at: Option<String>,
+    stdout_preview: Option<String>,
+    stderr_preview: Option<String>,
+}
+
+const JOB_PREVIEW_BYTES: usize = 256;
+
+fn is_safe_job_id(job_id: &str) -> bool {
+    !job_id.is_empty()
+        && !job_id.contains('/')
+        && !job_id.contains('\\')
+        && !job_id.contains("..")
+        && !job_id.contains('\0')
+        && job_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 fn ensure_job_dir() -> std::io::Result<()> { std::fs::create_dir_all(JOB_DIR) }
 
-async fn start_background_job(command: &str, args: Vec<String>) -> Result<String, RuntimeError> {
+async fn start_background_job(workspace_id: &str, command: &str, args: Vec<String>) -> Result<String, RuntimeError> {
     ensure_job_dir().map_err(RuntimeError::Io)?;
     let jobs = list_jobs().unwrap_or_default();
     if jobs.len() >= 100 { return Err(RuntimeError::InvalidPath("job limit reached (100)".into())); }
     let job_id = uuid::Uuid::new_v4().to_string();
     let job_path = PathBuf::from(JOB_DIR).join(&job_id);
     std::fs::create_dir_all(&job_path).map_err(RuntimeError::Io)?;
+    let now = chrono::Utc::now().to_rfc3339();
     std::fs::write(job_path.join("meta"), "running").map_err(RuntimeError::Io)?;
     std::fs::write(job_path.join("command"), command).map_err(RuntimeError::Io)?;
-    std::fs::write(job_path.join("started_at"), chrono::Utc::now().to_rfc3339()).map_err(RuntimeError::Io)?;
+    std::fs::write(job_path.join("workspace_id"), workspace_id).map_err(RuntimeError::Io)?;
+    std::fs::write(job_path.join("started_at"), &now).map_err(RuntimeError::Io)?;
+    std::fs::write(job_path.join("updated_at"), &now).map_err(RuntimeError::Io)?;
     // Build shell-escaped args for outer sh -c
     let cmd_escaped = format!("'{}'", command.replace('\'', "'\\''"));
     let args_escaped: Vec<String> = args.iter().map(|a| format!("'{}'", a.replace('\'', "'\\''"))).collect();
@@ -414,13 +433,26 @@ fn list_jobs() -> Result<Vec<JobInfo>, RuntimeError> {
 }
 
 fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
+    if !is_safe_job_id(job_id) {
+        return Err(RuntimeError::InvalidPath(format!("invalid job id: {job_id}")));
+    }
     let job_path = PathBuf::from(JOB_DIR).join(job_id);
     if !job_path.exists() { return Err(RuntimeError::InvalidPath(format!("job not found: {job_id}"))); }
     let meta = std::fs::read_to_string(job_path.join("meta")).unwrap_or_else(|_| "unknown".to_string()).trim().to_string();
     let command = std::fs::read_to_string(job_path.join("command")).unwrap_or_default().trim().to_string();
+    let workspace_id = std::fs::read_to_string(job_path.join("workspace_id")).unwrap_or_default().trim().to_string();
     let pid = std::fs::read_to_string(job_path.join("pid")).ok().map(|s| s.trim().to_string());
     let started_at = std::fs::read_to_string(job_path.join("started_at")).unwrap_or_default().trim().to_string();
+    let updated_at = std::fs::read_to_string(job_path.join("updated_at")).ok().map(|s| s.trim().to_string());
     let exit_code = std::fs::read_to_string(job_path.join("exit")).ok().and_then(|s| s.trim().parse::<i32>().ok());
+    let stdout_preview = std::fs::read(job_path.join("stdout")).ok().map(|bytes| {
+        let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(JOB_PREVIEW_BYTES)]).to_string();
+        if bytes.len() > JOB_PREVIEW_BYTES { preview + "..." } else { preview }
+    });
+    let stderr_preview = std::fs::read(job_path.join("stderr")).ok().map(|bytes| {
+        let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(JOB_PREVIEW_BYTES)]).to_string();
+        if bytes.len() > JOB_PREVIEW_BYTES { preview + "..." } else { preview }
+    });
     let status = if meta == "running" {
         if let Some(pid_str) = &pid {
             if let Ok(pid_num) = pid_str.parse::<i32>() {
@@ -429,16 +461,20 @@ fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
             } else { meta }
         } else { meta }
     } else { meta };
-    Ok(JobInfo { jobId: job_id.to_string(), command, status, pid, exit_code, started_at })
+    Ok(JobInfo { jobId: job_id.to_string(), workspace_id, command, status, pid, exit_code, created_at: started_at, updated_at, stdout_preview, stderr_preview })
 }
 
 fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
+    if !is_safe_job_id(job_id) {
+        return Err(RuntimeError::InvalidPath(format!("invalid job id: {job_id}")));
+    }
     let job_path = PathBuf::from(JOB_DIR).join(job_id);
     if !job_path.exists() { return Err(RuntimeError::InvalidPath(format!("job not found: {job_id}"))); }
     let pid_str = std::fs::read_to_string(job_path.join("pid")).map_err(|_| RuntimeError::InvalidPath("pid not found".into()))?;
     let pid_str = pid_str.trim();
     let _ = std::process::Command::new("sh").arg("-c").arg(format!("kill -- -{} 2>/dev/null; kill -TERM -- -{} 2>/dev/null; kill -9 -- -{} 2>/dev/null; kill {} 2>/dev/null; kill -9 {} 2>/dev/null", pid_str, pid_str, pid_str, pid_str, pid_str)).status();
     std::fs::write(job_path.join("meta"), "cancelled").map_err(RuntimeError::Io)?;
+    std::fs::write(job_path.join("updated_at"), chrono::Utc::now().to_rfc3339()).map_err(RuntimeError::Io)?;
     Ok("cancelled".to_string())
 }
 
