@@ -165,17 +165,31 @@ class LangGraphRunner(AgentRunner):
 
         inputs = {"messages": langchain_messages}
         seen_tool_ids: set[str] = set()
+        cancel_event = config.cancel_event
+        cancelled = False
 
         try:
             raw_stream = agent.astream_events(inputs, version="v2").__aiter__()
             raw_task = asyncio.create_task(raw_stream.__anext__())
             approval_task = asyncio.create_task(approval_events.get())
+            cancel_wait_task: asyncio.Task[bool] | None = (
+                asyncio.create_task(cancel_event.wait()) if cancel_event is not None else None
+            )
             try:
                 while True:
+                    wait_set: set[asyncio.Task[Any]] = {raw_task, approval_task}
+                    if cancel_wait_task is not None:
+                        wait_set.add(cancel_wait_task)
                     completed, _ = await asyncio.wait(
-                        {raw_task, approval_task},
+                        wait_set,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
+                    # PLAN-290 M0.3: cancel wins over in-flight tokens/tools so a
+                    # hung MCP tool or stream cannot keep the run alive.
+                    if cancel_wait_task is not None and cancel_wait_task in completed:
+                        cancelled = True
+                        logger.info("LangGraph stream cancelled via cancel_event")
+                        break
                     if approval_task in completed:
                         yield approval_task.result()
                         approval_task = asyncio.create_task(approval_events.get())
@@ -188,10 +202,12 @@ class LangGraphRunner(AgentRunner):
                             yield event
                         raw_task = asyncio.create_task(raw_stream.__anext__())
             finally:
-                for task in (raw_task, approval_task):
-                    if not task.done():
+                for task in (raw_task, approval_task, cancel_wait_task):
+                    if task is not None and not task.done():
                         task.cancel()
                 await asyncio.gather(raw_task, approval_task, return_exceptions=True)
+                if cancel_wait_task is not None:
+                    await asyncio.gather(cancel_wait_task, return_exceptions=True)
                 aclose = getattr(raw_stream, "aclose", None)
                 if aclose is not None:
                     await aclose()
@@ -207,6 +223,11 @@ class LangGraphRunner(AgentRunner):
         finally:
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
             usage.finish()
+            if cancelled:
+                yield AgentEvent(
+                    type="error",
+                    data={"error": "Run cancelled", "code": "cancelled"},
+                )
             yield AgentEvent(type="usage", data=usage.to_event_payload())
 
     async def create_agent(

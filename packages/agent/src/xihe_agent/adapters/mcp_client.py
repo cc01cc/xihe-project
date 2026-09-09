@@ -1,7 +1,9 @@
 import asyncio
 import contextvars
 import json
+import os
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any
 
 from langchain_core.tools import BaseTool
@@ -9,6 +11,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from loguru import logger
+from mcp.client import streamable_http as _mcp_streamable_http
 
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTerminalError
 from xihe_agent.interfaces.context import AgentContext
@@ -16,6 +19,10 @@ from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 
 DEFAULT_RETRY_INTERVAL = 2.0
 DEFAULT_MAX_RETRIES = 0
+# Local MCP (CP→Runtime) must return in seconds; a stuck GET/POST is a bug.
+# Approval wait is user-bound and must NOT count against this budget — see
+# ApprovalMCPInterceptor: short timeout applies only to the post-grant HTTP call.
+DEFAULT_MCP_TOOL_TIMEOUT_S = float(os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S", "15"))
 APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id"
 _ACTIVE_CONTEXT: contextvars.ContextVar[AgentContext | None] = contextvars.ContextVar(
     "xihe_active_mcp_context", default=None
@@ -36,6 +43,24 @@ REQUIRE_APPROVAL_TOOLS = frozenset({
     "create_snapshot",
     "revert_snapshot",
 })
+
+
+async def _disable_mcp_get_server_stream(
+    self, client: Any, read_stream_writer: Any
+) -> None:
+    """CP logical MCP does not serve server-initiated GET SSE (returns 405).
+
+    Stock Streamable HTTP client starts GET after initialize and retries on
+    405, which races with POST tool responses and can stall call_tool for the
+    full tool timeout (Host 2026-09-09). Direct POST tools/call is ~75ms.
+    Disable the unused GET channel; tool results continue to arrive on POST.
+    """
+    logger.debug("Skipping MCP GET server stream (CP has no server-init SSE)")
+
+
+_mcp_streamable_http.StreamableHTTPTransport.handle_get_stream = (
+    _disable_mcp_get_server_stream
+)
 
 
 class ApprovalMCPInterceptor:
@@ -87,6 +112,11 @@ class ApprovalMCPInterceptor:
             if not isinstance(grant_id, str) or not grant_id:
                 raise ApprovalTerminalError("Approval did not return a grant requestId")
             headers[APPROVAL_GRANT_HEADER] = grant_id
+            # Post-approval Runtime call is local: fail fast if gateway stalls.
+            return await asyncio.wait_for(
+                handler(request.override(headers=headers or None)),
+                timeout=DEFAULT_MCP_TOOL_TIMEOUT_S,
+            )
 
         return await handler(request.override(headers=headers or None))
 
@@ -94,8 +124,15 @@ class ApprovalMCPInterceptor:
 class MCPAgentTool(BaseAgentTool):
     """Wraps a LangChain MCP `BaseTool` as a `BaseAgentTool`."""
 
-    def __init__(self, tool: BaseTool) -> None:
+    def __init__(
+        self,
+        tool: BaseTool,
+        call_timeout_s: float | None = None,
+    ) -> None:
         self._tool = tool
+        self._call_timeout_s = (
+            call_timeout_s if call_timeout_s is not None else DEFAULT_MCP_TOOL_TIMEOUT_S
+        )
 
     @property
     def base_tool(self) -> BaseTool:
@@ -104,11 +141,48 @@ class MCPAgentTool(BaseAgentTool):
 
     async def execute(self, input: dict[str, Any], context: AgentContext) -> dict[str, Any]:
         context_token = _ACTIVE_CONTEXT.set(context)
+        started = asyncio.get_running_loop().time()
         try:
-            result = await self._tool.ainvoke(input)
+            payload = dict(input)
+            # Workspace-relative paths only: models often send "/file.md".
+            for key in ("path", "file_path"):
+                val = payload.get(key)
+                if isinstance(val, str) and val.startswith("/") and not val.startswith("//"):
+                    if ".." not in val:
+                        payload[key] = val[1:]
+            # Approval tools block on the user for minutes; only the post-grant
+            # MCP HTTP hop is bounded by DEFAULT_MCP_TOOL_TIMEOUT_S (interceptor).
+            if self._tool.name in REQUIRE_APPROVAL_TOOLS:
+                result = await self._tool.ainvoke(payload)
+            else:
+                result = await asyncio.wait_for(
+                    self._tool.ainvoke(payload),
+                    timeout=self._call_timeout_s,
+                )
+            elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+            logger.info(
+                "[LIFECYCLE] service=agent event=mcp_tool_ok tool={} elapsedMs={}",
+                self._tool.name,
+                elapsed_ms,
+            )
             return {"content": str(result)}
         except ApprovalTerminalError:
             raise
+        except TimeoutError:
+            elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+            logger.error(
+                "[LIFECYCLE] service=agent event=mcp_tool_timeout tool={} timeoutS={} elapsedMs={}",
+                self._tool.name,
+                self._call_timeout_s,
+                elapsed_ms,
+            )
+            return {
+                "content": (
+                    f"Tool error: MCP tool '{self._tool.name}' timed out after "
+                    f"{self._call_timeout_s:.0f}s. The workspace gateway may be "
+                    "unreachable or the tool session stalled."
+                )
+            }
         except Exception as e:
             logger.warning("MCP tool {} failed: {}", self._tool.name, e)
             return {"content": f"Tool error: {e}"}
@@ -185,6 +259,9 @@ class MCPClientManager:
                         transport="streamable_http",
                         url=self.cp_url,
                         headers=headers,
+                        # Bound ClientSession reads so a stuck POST/SSE cannot
+                        # await a tool response forever (Host hang 2026-09-09).
+                        session_kwargs={"read_timeout_seconds": timedelta(seconds=DEFAULT_MCP_TOOL_TIMEOUT_S)},
                     ),
                 },
                 tool_interceptors=(

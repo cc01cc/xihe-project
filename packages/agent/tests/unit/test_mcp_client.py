@@ -1,4 +1,5 @@
 """Tests for adapters/mcp_client.py - MCP client manager."""
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -236,3 +237,70 @@ class TestApprovalMCPInterceptor:
         with pytest.raises(RuntimeError, match="cannot be reused"):
             await main._get_mcp_tools("other-workspace")
         mock_manager.initialize.assert_not_awaited()
+
+
+class TestMCPAgentToolTimeout:
+    @pytest.mark.asyncio
+    async def test_execute_returns_error_on_timeout(self):
+        from langchain_core.tools import BaseTool
+        from xihe_agent.adapters.mcp_client import MCPAgentTool
+
+        class HangingTool(BaseTool):
+            name: str = "hanging_tool"
+            description: str = "hangs"
+
+            async def _arun(self, **kwargs):
+                await asyncio.sleep(30)
+
+            def _run(self, **kwargs):
+                raise NotImplementedError
+
+        tool = MCPAgentTool(HangingTool(), call_timeout_s=0.05)
+        context = AgentContext.empty(aggregate_id="ctx-timeout")
+        result = await tool.execute({"path": "x"}, context)
+        assert "timed out" in result["content"]
+        assert "hanging_tool" in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_execute_wraps_success(self):
+        from langchain_core.tools import BaseTool
+        from xihe_agent.adapters.mcp_client import MCPAgentTool
+
+        class OkTool(BaseTool):
+            name: str = "ok_tool"
+            description: str = "ok"
+
+            async def _arun(self, **kwargs):
+                return "hello"
+
+            def _run(self, **kwargs):
+                raise NotImplementedError
+
+        tool = MCPAgentTool(OkTool(), call_timeout_s=5)
+        context = AgentContext.empty(aggregate_id="ctx-ok")
+        result = await tool.execute({}, context)
+        assert "hello" in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_approval_tool_skips_outer_short_timeout(self):
+        """write_file waits on the user; outer 10s must not kill the approval wait."""
+        from langchain_core.tools import BaseTool
+        from xihe_agent.adapters.mcp_client import MCPAgentTool
+
+        class SlowApprovalWrite(BaseTool):
+            name: str = "write_file"
+            description: str = "write"
+
+            async def _arun(self, **kwargs):
+                await asyncio.sleep(0.2)
+                return "ok"
+
+            def _run(self, **kwargs):
+                raise NotImplementedError
+
+        tool = MCPAgentTool(SlowApprovalWrite(), call_timeout_s=0.05)
+        context = AgentContext.empty(aggregate_id="ctx-approval-timeout")
+        result = await tool.execute({"path": "a.md", "content": "x"}, context)
+        # Not "timed out" — approval-class tools are not outer-wrapped with short timeout.
+        assert "ok" in result["content"]
+        assert "timed out" not in result["content"]

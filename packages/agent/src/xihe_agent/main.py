@@ -30,6 +30,7 @@ from xihe_agent.adapters.approval_tool import (
 from xihe_agent.adapters.mcp_client import MCPClientManager
 from xihe_agent.adapters.sse_adapter import render_sse
 from xihe_agent.agent_runner import LangGraphRunner
+from xihe_agent.cancel_registry import RunCancelRegistry
 from xihe_agent.config_client import ConfigClient
 from xihe_agent.context import (
     CPContextServiceClient,
@@ -208,6 +209,9 @@ cp_event_store_client = CPEventStoreClient(base_url=CP_URL, api_token=CP_API_TOK
 context_provider = EventSourcedContextProvider(cp_context_service_client)
 crash_recovery = CrashRecovery(cp_event_store_client)
 agent_runner = LangGraphRunner(model_factory=lambda model: create_llm(llm_config.with_model(model)), event_store=cp_event_store_client)
+# PLAN-290 M0.3: active-run cancel registry shared by /chat stream and
+# POST /internal/v1/agent/runs/{runId}/cancel (CP forwards from chat cancel).
+run_cancel_registry = RunCancelRegistry()
 
 # RAG
 PG_DSN = (
@@ -785,6 +789,8 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
 
     chat_history = _deserialize_messages(chat_history_raw)
     model = create_llm(request_config)
+    # Register before streaming so CP cancel can reach an in-flight run.
+    cancel_event = run_cancel_registry.register(run_id)
     request_runner = LangGraphRunner(
         model_factory=lambda _model: create_llm(request_config),
         event_store=cp_event_store_client,
@@ -869,6 +875,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                     system_prompt=instructions,
                     tools=all_tools,
                     context=context,
+                    cancel_event=cancel_event,
                 )
 
                 llm_request_started = True
@@ -971,6 +978,10 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                     "outcome": terminal_outcome,
                     "type": "error",
                 }))
+        finally:
+            # Always drop the cancel handle when the run body ends (terminal,
+            # abort, or client disconnect) so later cancels report unknown.
+            run_cancel_registry.unregister(run_id)
 
         if not terminal_sent:
             terminal_sent = True
@@ -997,6 +1008,65 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
         )
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/internal/v1/agent/runs/{run_id}/cancel")
+async def cancel_run(run_id: str, request: Request, _token: None = Depends(verify_api_token)):
+    """PLAN-290 M0.3 Agent-side cancel contract (CP forwards chat cancel here).
+
+    Returns one of:
+    - accepted: cancel attached to an active run (HTTP 202)
+    - unknown: runId not registered / already finished (HTTP 404)
+    - failed: cancel action itself failed (HTTP 500)
+    """
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    reason = str(data.get("reason") or "user_requested")
+    workspace_id = data.get("workspaceId")
+
+    try:
+        status = run_cancel_registry.cancel(run_id)
+    except Exception:
+        logger.error(
+            "[LIFECYCLE] service=agent event=run_cancel_endpoint runId={} status=failed reason={} workspaceId={}",
+            run_id,
+            reason,
+            workspace_id,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"status": "failed", "runId": run_id, "code": "CANCEL_FAILED"},
+        )
+    if status == "accepted":
+        logger.info(
+            "[LIFECYCLE] service=agent event=run_cancel_endpoint runId={} status=accepted reason={} workspaceId={}",
+            run_id,
+            reason,
+            workspace_id,
+        )
+        return JSONResponse(
+            status_code=202,
+            content={"status": "accepted", "runId": run_id},
+        )
+    if status == "unknown":
+        return JSONResponse(
+            status_code=404,
+            content={"status": "unknown", "runId": run_id},
+        )
+    logger.error(
+        "[LIFECYCLE] service=agent event=run_cancel_endpoint runId={} status=failed reason={}",
+        run_id,
+        reason,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"status": "failed", "runId": run_id, "code": "CANCEL_FAILED"},
+    )
 
 
 @app.post("/internal/v1/agent/rag/ingest")

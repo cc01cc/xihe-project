@@ -5,6 +5,7 @@ the agent orchestration layer. Implementations are free to use LangGraph, Mastra
 or any other engine behind this interface.
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -39,6 +40,9 @@ class RunnerConfig:
     max_turns: int = 25
     context: "AgentContext | None" = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # PLAN-290 M0.3: when set, stream() must observe it and terminate the
+    # LangGraph run, emitting error(code=cancelled) before usage.
+    cancel_event: asyncio.Event | None = None
 
 
 class AgentRunner(ABC):
