@@ -2012,7 +2012,15 @@ async fn idle_reaper_loop(
             }
             _ = ticker.tick() => {
                 // Periodic cross-map consistency check
-                registry.check_consistency().await;
+                let consistency_issues = registry.check_consistency().await;
+                if !consistency_issues.is_empty() {
+                    tracing::error!(
+                        error_code = "RUNTIME_CROSS_MAP_INCONSISTENCY",
+                        consistency_issue_count = consistency_issues.len(),
+                        consistency_issues = ?consistency_issues,
+                        "cross-map consistency check reported errors; continuing idle reaper"
+                    );
+                }
 
                 let instances = registry.all_instances().await;
                 for instance in &instances {

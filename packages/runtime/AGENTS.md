@@ -56,6 +56,7 @@ src/
 - 沙盒隔离依赖 Docker/bollard；新增 `rustix`（`fs` feature）用于 `openat2` 写路径 helper，需走 approval
 - Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`create_exec` → `start_exec(attach)` → 写 operation JSON → 读 stdout 到 EOF）；不再使用 `container_addr` HTTP loopback、`instance token`、长驻 worker 或 NDJSON 多路复用。`container_runtime` 提供 `--oneshot` CLI 模式（stdin 单帧 → stdout 单帧，EOF 即边界）。
 - 后台 job 通过 `start_exec(detach)` + `/tmp/xihe-jobs/<jobId>/` 状态文件（`meta/pid/stdout/stderr/exit`）实现；`cancel` 为 `kill -- -PGID`，TTL 清理为周期 oneshot exec；容器重建即 `/tmp` 消失，旧 jobId 不复用。
+- Coding Loop mutation core 通过 `create_snapshot`/`revert_snapshot`/`apply_patch` 执行；snapshot 的 `.manifest.json` 保存 Workspace-relative pre-image、`existedBefore`、`postContentHash` 和 hash，revert 对未知外部修改返回 conflict；多文件 patch 全量预计算并在写入或 manifest 更新失败时回滚，统一 diff 上限为 256KiB。
 - FS 写路径在容器内经 `rustix::fs::openat2`（`RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`）包住 create/open/rename/copy；内核不支持时 blocked。
 - STDIO MCP 传输按 newline-delimited JSON-RPC 分帧：bridge 转发 HTTP body 时必须补写 `\n` 完成帧，按单行读取响应（不能读到 EOF——STDIO server 调用间不退出），stdout 句柄持久持有供后续调用复用（`take()` 会让第二次调用永久失败）。MCP 2026-07-28（SEP-2567）为无会话协议，上游不返回 `Mcp-Session-Id`，网关侧不得强制要求 session。
 - 启动时只完成 Runtime 自身 liveness/readiness；通过 Bearer 按 `workspaceId` 定向获取 `WorkspaceExecutionSpec`，首次文件/命令/MCP 操作时再 materialize Workspace Sandbox。

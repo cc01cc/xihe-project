@@ -271,56 +271,65 @@ impl WorkspaceRegistry {
     pub async fn check_consistency(&self) -> Vec<String> {
         let instances = self.instances.read().await;
         let statuses = self.statuses.read().await;
-        let mut issues = Vec::new();
-
-        for (ws_id, instance) in instances.iter() {
-            if let Some(status) = statuses.get(ws_id) {
-                // Active instance with Failed status is contradictory
-                if instance.state == InstanceState::Active
-                    && status.state == MaterializationState::Failed
-                {
-                    issues.push(format!(
-                        "{}: InstanceState::Active but MaterializationState::Failed",
-                        ws_id
-                    ));
-                }
-                // Suspended/Released instance with Ready status is contradictory
-                if matches!(
-                    instance.state,
-                    InstanceState::Suspended | InstanceState::Released
-                ) && status.state == MaterializationState::Ready
-                {
-                    issues.push(format!(
-                        "{}: InstanceState::{:?} but MaterializationState::Ready",
-                        ws_id, instance.state
-                    ));
-                }
-            }
-        }
-
-        // Check for statuses without corresponding instances (orphaned status entries)
-        for ws_id in statuses.keys() {
-            if !instances.contains_key(ws_id)
-                && statuses.get(ws_id).is_some_and(|s| {
-                    !matches!(s.state, MaterializationState::Released)
-                })
-            {
-                issues.push(format!(
-                    "{}: MaterializationState::{:?} but no instance entry",
-                    ws_id,
-                    statuses.get(ws_id).map(|s| s.state)
-                ));
-            }
-        }
+        let issues = collect_consistency_issues(&instances, &statuses);
 
         if !issues.is_empty() {
             tracing::warn!(
-                "cross-map consistency issues detected: {}",
-                issues.join("; ")
+                consistency_issue_count = issues.len(),
+                consistency_issues = ?issues,
+                "cross-map consistency issues detected"
             );
         }
         issues
     }
+}
+
+fn collect_consistency_issues(
+    instances: &HashMap<String, XiheRuntimeInstance>,
+    statuses: &HashMap<String, WorkspaceStatus>,
+) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    for (ws_id, instance) in instances {
+        if let Some(status) = statuses.get(ws_id) {
+            // Active instance with Failed status is contradictory
+            if instance.state == InstanceState::Active
+                && status.state == MaterializationState::Failed
+            {
+                issues.push(format!(
+                    "{}: InstanceState::Active but MaterializationState::Failed",
+                    ws_id
+                ));
+            }
+            // Suspended/Released instance with Ready status is contradictory
+            if matches!(
+                instance.state,
+                InstanceState::Suspended | InstanceState::Released
+            ) && status.state == MaterializationState::Ready
+            {
+                issues.push(format!(
+                    "{}: InstanceState::{:?} but MaterializationState::Ready",
+                    ws_id, instance.state
+                ));
+            }
+        }
+    }
+
+    // Check for statuses without corresponding instances (orphaned status entries)
+    for ws_id in statuses.keys() {
+        if !instances.contains_key(ws_id)
+            && statuses
+                .get(ws_id)
+                .is_some_and(|s| !matches!(s.state, MaterializationState::Released))
+        {
+            issues.push(format!(
+                "{}: MaterializationState::{:?} but no instance entry",
+                ws_id,
+                statuses.get(ws_id).map(|s| s.state)
+            ));
+        }
+    }
+    issues
 }
 
 /// Route an MCP request to the correct workspace instance.
@@ -483,6 +492,29 @@ mod tests {
         let status = registry.status("ws-1").await.unwrap();
         assert_eq!(status.state, MaterializationState::Failed);
         assert_eq!(status.last_error.as_deref(), Some("execution spec not found"));
+    }
+
+    #[tokio::test]
+    async fn test_check_consistency_reports_active_failed_pair() {
+        let registry = WorkspaceRegistry::new();
+        registry.register("ws-1", "/tmp/ws-1").await;
+        registry.mark_failed("ws-1", "execution failed").await;
+
+        let issues = registry.check_consistency().await;
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0],
+            "ws-1: InstanceState::Active but MaterializationState::Failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_consistency_is_empty_for_ready_pair() {
+        let registry = WorkspaceRegistry::new();
+        registry.register("ws-1", "/tmp/ws-1").await;
+
+        assert!(registry.check_consistency().await.is_empty());
     }
 
     #[test]

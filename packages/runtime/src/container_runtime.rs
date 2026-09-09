@@ -1,3 +1,6 @@
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
 
 use axum::http::StatusCode;
@@ -5,13 +8,12 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 use xihe_runtime::error::RuntimeError;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use std::path::{Path, PathBuf};
 use xihe_runtime::fs;
 
 const WORKSPACE: &str = "/workspace";
@@ -289,7 +291,8 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
         "apply_patch" => {
             let patches = req.payload.get("patches").and_then(|v| v.as_array())
                 .ok_or_else(|| RuntimeError::InvalidPath("missing patches array".into()))?;
-            let result = apply_patch(patches)?;
+            let snapshot_id = req.payload.get("snapshotId").and_then(|v| v.as_str());
+            let result = apply_patch(snapshot_id, patches)?;
             Ok(serde_json::to_value(result).unwrap())
         }
         _ => Err(RuntimeError::InvalidPath(format!("unknown operation {}", req.operation))),
@@ -414,14 +417,72 @@ fn is_safe_job_id(job_id: &str) -> bool {
         && job_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-fn ensure_job_dir() -> std::io::Result<()> { std::fs::create_dir_all(JOB_DIR) }
+async fn start_background_job(
+    workspace_id: &str,
+    command: &str,
+    args: Vec<String>,
+) -> Result<String, RuntimeError> {
+    start_background_job_at(Path::new(JOB_DIR), workspace_id, command, args).await
+}
 
-async fn start_background_job(workspace_id: &str, command: &str, args: Vec<String>) -> Result<String, RuntimeError> {
-    ensure_job_dir().map_err(RuntimeError::Io)?;
-    let jobs = list_jobs().unwrap_or_default();
-    if jobs.len() >= 100 { return Err(RuntimeError::InvalidPath("job limit reached (100)".into())); }
+// Keep the wrapper script fixed and pass all user-controlled values as
+// positional arguments. This preserves the explicit shell-command contract
+// without interpolating command text, arguments, or paths into shell syntax.
+const BACKGROUND_JOB_WRAPPER: &str = r#"job_dir="$1"
+command="$2"
+shift 2
+printf '%s\n' "$$" > "$job_dir/pid"
+sh -c "$command" xihe-shell "$@"
+exit_code=$?
+printf '%s\n' "$exit_code" > "$job_dir/exit"
+printf '%s\n' succeeded > "$job_dir/meta"
+"#;
+
+fn background_wrapper_args(job_dir: &Path, command: &str, args: &[String]) -> Vec<OsString> {
+    let mut wrapper_args = vec![
+        OsString::from("sh"),
+        OsString::from("-c"),
+        OsString::from(BACKGROUND_JOB_WRAPPER),
+        OsString::from("xihe-job-wrapper"),
+        job_dir.as_os_str().to_owned(),
+        OsString::from(command),
+    ];
+    wrapper_args.extend(args.iter().map(OsString::from));
+    wrapper_args
+}
+
+fn build_background_command(
+    job_dir: &Path,
+    command: &str,
+    args: &[String],
+    stdout: std::fs::File,
+    stderr: std::fs::File,
+) -> Command {
+    let mut cmd = Command::new("setsid");
+    cmd.args(background_wrapper_args(job_dir, command, args))
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        // Dropping the Tokio child handle must not terminate the detached job.
+        .kill_on_drop(false);
+    cmd
+}
+
+async fn start_background_job_at(
+    job_dir: &Path,
+    workspace_id: &str,
+    command: &str,
+    args: Vec<String>,
+) -> Result<String, RuntimeError> {
+    std::fs::create_dir_all(job_dir).map_err(RuntimeError::Io)?;
+    let jobs = std::fs::read_dir(job_dir)
+        .map(|entries| entries.filter_map(Result::ok).count())
+        .unwrap_or_default();
+    if jobs >= 100 {
+        return Err(RuntimeError::InvalidPath("job limit reached (100)".into()));
+    }
     let job_id = uuid::Uuid::new_v4().to_string();
-    let job_path = PathBuf::from(JOB_DIR).join(&job_id);
+    let job_path = job_dir.join(&job_id);
     std::fs::create_dir_all(&job_path).map_err(RuntimeError::Io)?;
     let now = chrono::Utc::now().to_rfc3339();
     std::fs::write(job_path.join("meta"), "running").map_err(RuntimeError::Io)?;
@@ -429,21 +490,20 @@ async fn start_background_job(workspace_id: &str, command: &str, args: Vec<Strin
     std::fs::write(job_path.join("workspace_id"), workspace_id).map_err(RuntimeError::Io)?;
     std::fs::write(job_path.join("started_at"), &now).map_err(RuntimeError::Io)?;
     std::fs::write(job_path.join("updated_at"), &now).map_err(RuntimeError::Io)?;
-    // Build shell-escaped args for outer sh -c
-    let cmd_escaped = format!("'{}'", command.replace('\'', "'\\''"));
-    let args_escaped: Vec<String> = args.iter().map(|a| format!("'{}'", a.replace('\'', "'\\''"))).collect();
-    let all_args = std::iter::once(cmd_escaped).chain(args_escaped).collect::<Vec<_>>().join(" ");
-    let arg_refs: Vec<String> = (2..=args.len()+1).map(|i| format!("\"${}\"", i)).collect();
-    let arg_refs_str = arg_refs.join(" ");
-    let inner = if arg_refs_str.is_empty() {
-        "sh -c \"$1\" xihe-shell".to_string()
-    } else {
-        format!("sh -c \"$1\" xihe-shell {}", arg_refs_str)
-    };
-    let wrapper = format!("setsid sh -c 'echo $$ > {job_dir}/pid; {inner} > {job_dir}/stdout 2> {job_dir}/stderr; echo $? > {job_dir}/exit; echo succeeded > {job_dir}/meta' -- {all}", job_dir = job_path.display(), inner = inner, all = all_args);
-    let status = Command::new("sh").arg("-c").arg(&wrapper).status().await.map_err(|e| RuntimeError::Command(e.to_string()))?;
-    if !status.success() { warn!("failed to start background job wrapper"); }
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let stdout = std::fs::File::create(job_path.join("stdout")).map_err(RuntimeError::Io)?;
+    let stderr = std::fs::File::create(job_path.join("stderr")).map_err(RuntimeError::Io)?;
+    let mut cmd = build_background_command(&job_path, command, &args, stdout, stderr);
+    let child = cmd
+        .spawn()
+        .map_err(|e| RuntimeError::Command(format!("failed to detach background job: {e}")))?;
+    let pid = child
+        .id()
+        .ok_or_else(|| RuntimeError::Command("detached background job has no pid".into()))?;
+    // `setsid` makes this PID both the process-group leader and its PGID on
+    // Linux. Write it before dropping the handle so cancel/status can race
+    // safely with the wrapper's own metadata initialization.
+    std::fs::write(job_path.join("pid"), pid.to_string()).map_err(RuntimeError::Io)?;
+    drop(child);
     Ok(job_id)
 }
 
@@ -581,6 +641,7 @@ fn cleanup_expired_jobs() -> Result<usize, RuntimeError> {
 const SNAPSHOT_DIR: &str = "/workspace/.xihe-snapshots";
 const SNAPSHOT_MAX_FILES: usize = 200;
 const SNAPSHOT_MAX_SIZE: usize = 10 * 1024 * 1024; // 10MB per file
+const PATCH_DIFF_MAX_BYTES: usize = 256 * 1024;
 
 fn is_safe_relative_path(path: &str) -> bool {
     !path.is_empty()
@@ -591,18 +652,26 @@ fn is_safe_relative_path(path: &str) -> bool {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SnapshotResult {
     snapshot_id: String,
     files_captured: usize,
     files: Vec<SnapshotFileInfo>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SnapshotFileInfo {
     relative_path: String,
     existed_before: bool,
     content_hash: String,
+    post_content_hash: Option<String>,
     size_bytes: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SnapshotManifest {
+    files: Vec<SnapshotFileInfo>,
 }
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -613,6 +682,15 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn create_snapshot(snapshot_id: &str, files: &[serde_json::Value]) -> Result<SnapshotResult, RuntimeError> {
+    create_snapshot_at(Path::new(SNAPSHOT_DIR), Path::new(WORKSPACE), snapshot_id, files)
+}
+
+fn create_snapshot_at(
+    snapshot_root: &Path,
+    workspace: &Path,
+    snapshot_id: &str,
+    files: &[serde_json::Value],
+) -> Result<SnapshotResult, RuntimeError> {
     if !is_safe_job_id(snapshot_id) {
         return Err(RuntimeError::InvalidPath(format!("invalid snapshot id: {snapshot_id}")));
     }
@@ -620,10 +698,9 @@ fn create_snapshot(snapshot_id: &str, files: &[serde_json::Value]) -> Result<Sna
         return Err(RuntimeError::InvalidPath(format!("snapshot file limit exceeded: {} > {}", files.len(), SNAPSHOT_MAX_FILES)));
     }
 
-    let snapshot_dir = PathBuf::from(SNAPSHOT_DIR).join(snapshot_id);
+    let snapshot_dir = snapshot_root.join(snapshot_id);
     std::fs::create_dir_all(&snapshot_dir).map_err(RuntimeError::Io)?;
 
-    let workspace = Path::new(WORKSPACE);
     let mut captured = Vec::new();
 
     for file_entry in files {
@@ -644,8 +721,7 @@ fn create_snapshot(snapshot_id: &str, files: &[serde_json::Value]) -> Result<Sna
                 return Err(RuntimeError::InvalidPath(format!("snapshot file too large: {} ({})", rel_path, content.len())));
             }
             let hash = sha256_hex(&content);
-            let content_ref = format!("{}/{}", snapshot_id, rel_path);
-            let dest = PathBuf::from(SNAPSHOT_DIR).join(&content_ref);
+            let dest = snapshot_dir.join(rel_path);
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).map_err(RuntimeError::Io)?;
             }
@@ -655,6 +731,7 @@ fn create_snapshot(snapshot_id: &str, files: &[serde_json::Value]) -> Result<Sna
                 relative_path: rel_path.to_string(),
                 existed_before: true,
                 content_hash: hash,
+                post_content_hash: None,
                 size_bytes: content.len() as u64,
             });
         } else {
@@ -662,10 +739,19 @@ fn create_snapshot(snapshot_id: &str, files: &[serde_json::Value]) -> Result<Sna
                 relative_path: rel_path.to_string(),
                 existed_before: false,
                 content_hash: String::new(),
+                post_content_hash: None,
                 size_bytes: 0,
             });
         }
     }
+
+    let manifest = SnapshotManifest {
+        files: captured.clone(),
+    };
+    let manifest_payload = serde_json::to_vec(&manifest)
+        .map_err(|e| RuntimeError::Command(format!("failed to serialize snapshot manifest: {e}")))?;
+    std::fs::write(snapshot_dir.join(".manifest.json"), manifest_payload)
+        .map_err(RuntimeError::Io)?;
 
     let files_captured = captured.len();
     info!("snapshot_created id={} files={}", snapshot_id, files_captured);
@@ -673,6 +759,7 @@ fn create_snapshot(snapshot_id: &str, files: &[serde_json::Value]) -> Result<Sna
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct RevertResult {
     snapshot_id: String,
     files_reverted: usize,
@@ -680,50 +767,78 @@ struct RevertResult {
 }
 
 fn revert_snapshot(snapshot_id: &str) -> Result<RevertResult, RuntimeError> {
+    revert_snapshot_at(Path::new(SNAPSHOT_DIR), Path::new(WORKSPACE), snapshot_id)
+}
+
+fn revert_snapshot_at(
+    snapshot_root: &Path,
+    workspace: &Path,
+    snapshot_id: &str,
+) -> Result<RevertResult, RuntimeError> {
     if !is_safe_job_id(snapshot_id) {
         return Err(RuntimeError::InvalidPath(format!("invalid snapshot id: {snapshot_id}")));
     }
 
-    let snapshot_dir = PathBuf::from(SNAPSHOT_DIR).join(snapshot_id);
+    let snapshot_dir = snapshot_root.join(snapshot_id);
     if !snapshot_dir.exists() {
         return Err(RuntimeError::FileNotFound(format!("snapshot not found: {snapshot_id}")));
     }
 
-    let workspace = Path::new(WORKSPACE);
+    let manifest_path = snapshot_dir.join(".manifest.json");
+    let manifest_payload = std::fs::read(&manifest_path).map_err(RuntimeError::Io)?;
+    let manifest: SnapshotManifest = serde_json::from_slice(&manifest_payload)
+        .map_err(|e| RuntimeError::InvalidPath(format!("invalid snapshot manifest: {e}")))?;
+    if manifest.files.len() > SNAPSHOT_MAX_FILES {
+        return Err(RuntimeError::InvalidPath("snapshot manifest file limit exceeded".into()));
+    }
+
     let mut reverted = 0;
     let mut conflicts = Vec::new();
 
-    // Walk snapshot files to find pre-images
-    for entry in std::fs::read_dir(&snapshot_dir).map_err(RuntimeError::Io)? {
-        let entry = entry.map_err(RuntimeError::Io)?;
-        let rel_path = entry.file_name().to_string_lossy().to_string();
-
-        // Skip if this is a directory (nested files handled differently)
-        if entry.file_type().map_err(RuntimeError::Io)?.is_dir() {
-            continue;
+    for file in manifest.files {
+        let rel_path = file.relative_path;
+        if !is_safe_relative_path(&rel_path) {
+            return Err(RuntimeError::PathTraversal { path: rel_path });
         }
 
-        if !is_safe_relative_path(&rel_path) {
+        let abs_path = workspace.join(&rel_path);
+
+        if !file.existed_before {
+            if abs_path.exists() {
+                if abs_path.is_file() && file.post_content_hash.as_deref().is_some_and(|hash| {
+                    std::fs::read(&abs_path)
+                        .map(|content| sha256_hex(&content) == hash)
+                        .unwrap_or(false)
+                }) {
+                    std::fs::remove_file(&abs_path).map_err(RuntimeError::Io)?;
+                    reverted += 1;
+                } else {
+                    conflicts.push(rel_path);
+                }
+            }
             continue;
         }
 
         let snapshot_file = snapshot_dir.join(&rel_path);
         let pre_image = std::fs::read(&snapshot_file).map_err(RuntimeError::Io)?;
         let pre_hash = sha256_hex(&pre_image);
+        if pre_hash != file.content_hash {
+            return Err(RuntimeError::InvalidPath(format!(
+                "snapshot manifest hash mismatch for {rel_path}"
+            )));
+        }
 
-        let abs_path = workspace.join(&rel_path);
-
-        // Conflict detection: if file was modified since snapshot, return conflict
         if abs_path.exists() {
             let current = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
             let current_hash = sha256_hex(&current);
-            if current_hash != pre_hash {
+            let already_reverted = current_hash == file.content_hash;
+            let matches_post_image = file.post_content_hash.as_deref() == Some(current_hash.as_str());
+            if !already_reverted && !matches_post_image {
                 conflicts.push(rel_path);
                 continue;
             }
         }
 
-        // Revert: write pre-image
         if let Some(parent) = abs_path.parent() {
             std::fs::create_dir_all(parent).map_err(RuntimeError::Io)?;
         }
@@ -736,23 +851,39 @@ fn revert_snapshot(snapshot_id: &str) -> Result<RevertResult, RuntimeError> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PatchResult {
     changed: Vec<String>,
     diff: String,
     new_hashes: std::collections::HashMap<String, String>,
 }
 
-fn apply_patch(patches: &[serde_json::Value]) -> Result<PatchResult, RuntimeError> {
+struct PreparedPatch {
+    relative_path: String,
+    absolute_path: PathBuf,
+    original_exists: bool,
+    original_content: String,
+    content: String,
+}
+
+fn apply_patch(snapshot_id: Option<&str>, patches: &[serde_json::Value]) -> Result<PatchResult, RuntimeError> {
+    apply_patch_at(Path::new(WORKSPACE), Path::new(SNAPSHOT_DIR), snapshot_id, patches)
+}
+
+fn apply_patch_at(
+    workspace: &Path,
+    snapshot_root: &Path,
+    snapshot_id: Option<&str>,
+    patches: &[serde_json::Value],
+) -> Result<PatchResult, RuntimeError> {
     if patches.is_empty() {
         return Err(RuntimeError::InvalidPath("empty patches array".into()));
     }
 
-    let workspace = Path::new(WORKSPACE);
-    let mut changed = Vec::new();
-    let mut new_hashes = std::collections::HashMap::new();
-    let mut diff_lines = Vec::new();
+    let mut prepared = Vec::with_capacity(patches.len());
+    let mut seen_paths = std::collections::HashSet::new();
 
-    // Phase 1: Validate all patches before applying any (atomic check)
+    // Phase 1: validate and compute all new contents before applying any patch.
     for patch in patches {
         let rel_path = patch.get("path").and_then(|v| v.as_str())
             .ok_or_else(|| RuntimeError::InvalidPath("missing path in patch".to_string()))?;
@@ -762,11 +893,19 @@ fn apply_patch(patches: &[serde_json::Value]) -> Result<PatchResult, RuntimeErro
         if !is_safe_relative_path(rel_path) {
             return Err(RuntimeError::PathTraversal { path: rel_path.to_string() });
         }
+        if !seen_paths.insert(rel_path.to_string()) {
+            return Err(RuntimeError::InvalidPath(format!("duplicate patch path: {rel_path}")));
+        }
 
         let abs_path = workspace.join(rel_path);
-        if abs_path.exists() {
-            let current = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
-            let current_hash = sha256_hex(&current);
+        let original_exists = abs_path.exists();
+        let original_content = if original_exists {
+            std::fs::read_to_string(&abs_path).map_err(RuntimeError::Io)?
+        } else {
+            String::new()
+        };
+        if original_exists {
+            let current_hash = sha256_hex(original_content.as_bytes());
             if current_hash != expected_hash {
                 return Err(RuntimeError::InvalidPath(format!(
                     "hash mismatch for {}: expected {}, got {}", rel_path, expected_hash, current_hash
@@ -783,21 +922,8 @@ fn apply_patch(patches: &[serde_json::Value]) -> Result<PatchResult, RuntimeErro
         if hunks.is_empty() {
             return Err(RuntimeError::InvalidPath(format!("empty hunks for {}", rel_path)));
         }
-    }
 
-    // Phase 2: Apply all patches
-    for patch in patches {
-        let rel_path = patch.get("path").and_then(|v| v.as_str()).unwrap();
-        let hunks = patch.get("hunks").and_then(|v| v.as_array()).unwrap();
-        let abs_path = workspace.join(rel_path);
-
-        let original = if abs_path.exists() {
-            std::fs::read_to_string(&abs_path).map_err(RuntimeError::Io)?
-        } else {
-            String::new()
-        };
-
-        let mut content = original.clone();
+        let mut content = original_content.clone();
         for hunk in hunks {
             let before = hunk.get("before").and_then(|v| v.as_str()).unwrap_or("");
             let after = hunk.get("after").and_then(|v| v.as_str()).unwrap_or("");
@@ -814,27 +940,130 @@ fn apply_patch(patches: &[serde_json::Value]) -> Result<PatchResult, RuntimeErro
             }
         }
 
-        if let Some(parent) = abs_path.parent() {
-            std::fs::create_dir_all(parent).map_err(RuntimeError::Io)?;
-        }
-        std::fs::write(&abs_path, &content).map_err(RuntimeError::Io)?;
+        prepared.push(PreparedPatch {
+            relative_path: rel_path.to_string(),
+            absolute_path: abs_path,
+            original_exists,
+            original_content,
+            content,
+        });
+    }
 
-        let new_hash = sha256_hex(content.as_bytes());
-        new_hashes.insert(rel_path.to_string(), new_hash.clone());
-        changed.push(rel_path.to_string());
+    let prepared_manifest = snapshot_id
+        .map(|id| prepare_snapshot_post_hashes(snapshot_root, id, &prepared))
+        .transpose()?;
 
-        // Build bounded diff
-        diff_lines.push(format!("--- a/{}", rel_path));
-        diff_lines.push(format!("+++ b/{}", rel_path));
-        diff_lines.push(format!("@@ -0,0 +1,{} @@", content.lines().count()));
-        for line in content.lines() {
-            diff_lines.push(format!("+{}", line));
+    // Phase 2: apply all patches and restore already-written files on failure.
+    let mut applied = Vec::with_capacity(prepared.len());
+    for (index, patch) in prepared.iter().enumerate() {
+        applied.push(index);
+        let write_result = (|| {
+            if let Some(parent) = patch.absolute_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&patch.absolute_path, &patch.content)
+        })();
+        if let Err(error) = write_result {
+            if let Err(rollback_error) = rollback_patches(&prepared, &applied) {
+                tracing::error!(
+                    error = %error,
+                    rollback_error = %rollback_error,
+                    "patch application and rollback both failed"
+                );
+                return Err(RuntimeError::Command(format!(
+                    "patch failed and rollback failed: {error}; {rollback_error}"
+                )));
+            }
+            return Err(RuntimeError::Io(error));
         }
+    }
+
+    let mut changed = Vec::with_capacity(prepared.len());
+    let mut new_hashes = std::collections::HashMap::new();
+    let mut diff_lines = Vec::new();
+    for patch in &prepared {
+        let new_hash = sha256_hex(patch.content.as_bytes());
+        new_hashes.insert(patch.relative_path.clone(), new_hash);
+        changed.push(patch.relative_path.clone());
+
+        // Build a bounded diff so large file contents are never returned in full.
+        diff_lines.push(format!("--- a/{}", patch.relative_path));
+        diff_lines.push(format!("+++ b/{}", patch.relative_path));
+        diff_lines.push(format!("@@ -0,0 +1,{} @@", patch.content.lines().count()));
+        let mut diff_bytes = diff_lines.iter().map(|line| line.len() + 1).sum::<usize>();
+        let truncation_marker = format!("[diff truncated at {} bytes]", PATCH_DIFF_MAX_BYTES);
+        let content_limit = PATCH_DIFF_MAX_BYTES.saturating_sub(truncation_marker.len() + 1);
+        for line in patch.content.lines() {
+            let rendered = format!("+{}", line);
+            if diff_bytes + rendered.len() + 1 > content_limit {
+                diff_lines.push(truncation_marker.clone());
+                break;
+            }
+            diff_bytes += rendered.len() + 1;
+            diff_lines.push(rendered);
+        }
+    }
+
+    if let Some((manifest_path, manifest_payload)) = prepared_manifest
+        && let Err(error) = std::fs::write(&manifest_path, manifest_payload)
+    {
+        if let Err(rollback_error) = rollback_patches(&prepared, &applied) {
+            tracing::error!(
+                error = %error,
+                rollback_error = %rollback_error,
+                "snapshot manifest update and patch rollback both failed"
+            );
+            return Err(RuntimeError::Command(format!(
+                "snapshot manifest update failed and rollback failed: {error}; {rollback_error}"
+            )));
+        }
+        return Err(RuntimeError::Io(error));
     }
 
     let diff = diff_lines.join("\n");
     info!("patch_applied files={}", changed.len());
     Ok(PatchResult { changed, diff, new_hashes })
+}
+
+fn prepare_snapshot_post_hashes(
+    snapshot_root: &Path,
+    snapshot_id: &str,
+    changes: &[PreparedPatch],
+) -> Result<(PathBuf, Vec<u8>), RuntimeError> {
+    if !is_safe_job_id(snapshot_id) {
+        return Err(RuntimeError::InvalidPath(format!("invalid snapshot id: {snapshot_id}")));
+    }
+    let snapshot_dir = snapshot_root.join(snapshot_id);
+    let manifest_path = snapshot_dir.join(".manifest.json");
+    let manifest_payload = std::fs::read(&manifest_path).map_err(RuntimeError::Io)?;
+    let mut manifest: SnapshotManifest = serde_json::from_slice(&manifest_payload)
+        .map_err(|e| RuntimeError::InvalidPath(format!("invalid snapshot manifest: {e}")))?;
+    for change in changes {
+        let hash = sha256_hex(change.content.as_bytes());
+        let entry = manifest
+            .files
+            .iter_mut()
+            .find(|file| file.relative_path == change.relative_path)
+            .ok_or_else(|| RuntimeError::InvalidPath(format!(
+                "snapshot manifest missing patch path: {}", change.relative_path
+            )))?;
+        entry.post_content_hash = Some(hash);
+    }
+    let updated = serde_json::to_vec(&manifest)
+        .map_err(|e| RuntimeError::Command(format!("failed to serialize snapshot manifest: {e}")))?;
+    Ok((manifest_path, updated))
+}
+
+fn rollback_patches(changes: &[PreparedPatch], applied: &[usize]) -> Result<(), std::io::Error> {
+    for index in applied.iter().rev() {
+        let patch = &changes[*index];
+        if patch.original_exists {
+            std::fs::write(&patch.absolute_path, &patch.original_content)?;
+        } else if patch.absolute_path.exists() {
+            std::fs::remove_file(&patch.absolute_path)?;
+        }
+    }
+    Ok(())
 }
 
 
@@ -1236,4 +1465,242 @@ async fn exec_command(
         stderr: String::from_utf8_lossy(&result.stderr).to_string(),
         exit_code: result.status.code().unwrap_or(-1),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    #[cfg(unix)]
+    use std::time::Instant;
+
+    #[test]
+    fn background_wrapper_keeps_user_values_out_of_shell_script() {
+        let command = r#"printf '%s' "$1""#;
+        let argument = "value; touch injected-file".to_string();
+        let wrapper_args = background_wrapper_args(
+            Path::new("/tmp/job with spaces"),
+            command,
+            std::slice::from_ref(&argument),
+        );
+
+        assert_eq!(wrapper_args[2], OsString::from(BACKGROUND_JOB_WRAPPER));
+        assert_eq!(wrapper_args[5], OsString::from(command));
+        assert_eq!(wrapper_args[6], OsString::from(argument));
+        assert!(!wrapper_args[2].to_string_lossy().contains("injected-file"));
+    }
+
+    #[test]
+    fn snapshot_manifest_reverts_nested_and_new_files() {
+        let tmp = TempDir::new().expect("temporary snapshot directory");
+        let workspace = tmp.path().join("workspace");
+        let snapshot_root = tmp.path().join("snapshots");
+        std::fs::create_dir_all(workspace.join("src")).unwrap();
+        std::fs::write(workspace.join("src/main.rs"), "before").unwrap();
+
+        let files = vec![
+            serde_json::json!({"relativePath": "src/main.rs"}),
+            serde_json::json!({"relativePath": "created.txt"}),
+        ];
+        let snapshot = create_snapshot_at(&snapshot_root, &workspace, "snapshot-1", &files)
+            .expect("snapshot should be created");
+        assert_eq!(snapshot.files_captured, 2);
+        assert!(snapshot_root.join("snapshot-1/.manifest.json").exists());
+
+        let patches = vec![
+            serde_json::json!({
+                "path": "src/main.rs",
+                "expectedHash": sha256_hex(b"before"),
+                "hunks": [{"before": "before", "after": "after"}]
+            }),
+            serde_json::json!({
+                "path": "created.txt",
+                "expectedHash": "",
+                "hunks": [{"before": "", "after": "created"}]
+            }),
+        ];
+        apply_patch_at(&workspace, &snapshot_root, Some("snapshot-1"), &patches)
+            .expect("patch should update the snapshot post-images");
+
+        let reverted = revert_snapshot_at(&snapshot_root, &workspace, "snapshot-1")
+            .expect("snapshot should be reverted");
+        assert_eq!(reverted.files_reverted, 2);
+        assert!(reverted.conflicts.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("src/main.rs")).unwrap(),
+            "before"
+        );
+        assert!(!workspace.join("created.txt").exists());
+    }
+
+    #[test]
+    fn apply_patch_rolls_back_previous_files_when_later_write_fails() {
+        let tmp = TempDir::new().expect("temporary workspace");
+        let workspace = tmp.path().join("workspace");
+        let snapshot_root = tmp.path().join("snapshots");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("first.txt"), "before").unwrap();
+        std::fs::write(workspace.join("blocked"), "not a directory").unwrap();
+
+        let patches = vec![
+            serde_json::json!({
+                "path": "first.txt",
+                "expectedHash": sha256_hex(b"before"),
+                "hunks": [{"before": "before", "after": "after"}]
+            }),
+            serde_json::json!({
+                "path": "blocked/second.txt",
+                "expectedHash": "",
+                "hunks": [{"before": "", "after": "new file"}]
+            }),
+        ];
+
+        assert!(apply_patch_at(&workspace, &snapshot_root, None, &patches).is_err());
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("first.txt")).unwrap(),
+            "before"
+        );
+        assert!(!workspace.join("blocked/second.txt").exists());
+    }
+
+    #[test]
+    fn revert_snapshot_reports_external_modification_conflict() {
+        let tmp = TempDir::new().expect("temporary snapshot directory");
+        let workspace = tmp.path().join("workspace");
+        let snapshot_root = tmp.path().join("snapshots");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("file.txt"), "before").unwrap();
+
+        let files = vec![serde_json::json!({"relativePath": "file.txt"})];
+        create_snapshot_at(&snapshot_root, &workspace, "snapshot-2", &files)
+            .expect("snapshot should be created");
+        let patches = vec![serde_json::json!({
+            "path": "file.txt",
+            "expectedHash": sha256_hex(b"before"),
+            "hunks": [{"before": "before", "after": "after"}]
+        })];
+        apply_patch_at(&workspace, &snapshot_root, Some("snapshot-2"), &patches)
+            .expect("patch should apply");
+        std::fs::write(workspace.join("file.txt"), "external").unwrap();
+
+        let reverted = revert_snapshot_at(&snapshot_root, &workspace, "snapshot-2")
+            .expect("revert should return a conflict result");
+        assert_eq!(reverted.files_reverted, 0);
+        assert_eq!(reverted.conflicts, vec!["file.txt"]);
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("file.txt")).unwrap(),
+            "external"
+        );
+    }
+
+    #[test]
+    fn apply_patch_bounds_unified_diff_output() {
+        let tmp = TempDir::new().expect("temporary workspace");
+        let workspace = tmp.path().join("workspace");
+        let original = "before";
+        let replacement = "x\n".repeat(PATCH_DIFF_MAX_BYTES / 2);
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("large.txt"), original).unwrap();
+
+        let patches = vec![serde_json::json!({
+            "path": "large.txt",
+            "expectedHash": sha256_hex(original.as_bytes()),
+            "hunks": [{"before": original, "after": replacement}]
+        })];
+        let result = apply_patch_at(&workspace, tmp.path(), None, &patches)
+            .expect("large patch should apply");
+
+        assert!(result.diff.len() <= PATCH_DIFF_MAX_BYTES);
+        assert!(result.diff.contains("diff truncated"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn background_job_detaches_and_completes_metadata_asynchronously() {
+        let tmp = TempDir::new().expect("temporary job directory");
+        let started = Instant::now();
+        let job_id = start_background_job_at(tmp.path(), "sleep 2", Vec::new())
+            .await
+            .expect("background job should spawn");
+        let job_path = tmp.path().join(&job_id);
+
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "detached start waited for the child: {:?}",
+            started.elapsed()
+        );
+        assert_eq!(
+            std::fs::read_to_string(job_path.join("meta"))
+                .unwrap()
+                .trim(),
+            "running"
+        );
+        let pid = std::fs::read_to_string(job_path.join("pid")).unwrap();
+        assert!(!pid.trim().is_empty());
+        assert!(
+            std::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .status()
+                .unwrap()
+                .success(),
+            "detached process should still be alive"
+        );
+        assert!(!job_path.join("exit").exists());
+
+        for _ in 0..30 {
+            if job_path.join("exit").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(job_path.join("exit"))
+                .unwrap()
+                .trim(),
+            "0"
+        );
+        assert_eq!(
+            std::fs::read_to_string(job_path.join("meta"))
+                .unwrap()
+                .trim(),
+            "succeeded"
+        );
+        assert!(job_path.join("stdout").exists());
+        assert!(job_path.join("stderr").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn background_job_passes_arguments_without_shell_injection() {
+        let tmp = TempDir::new().expect("temporary job directory");
+        let marker = tmp.path().join("injected");
+        let argument = format!("safe; touch {}", marker.display());
+        let job_id = start_background_job_at(tmp.path(), r#"printf '%s' "$1""#, vec![argument.clone()])
+            .await
+            .expect("background job should spawn");
+        let job_path = tmp.path().join(&job_id);
+
+        for _ in 0..20 {
+            if job_path.join("exit").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(job_path.join("stdout")).unwrap(),
+            argument
+        );
+        assert!(
+            !marker.exists(),
+            "argument text was interpreted as shell syntax"
+        );
+        assert_eq!(
+            std::fs::read_to_string(job_path.join("exit"))
+                .unwrap()
+                .trim(),
+            "0"
+        );
+    }
 }
