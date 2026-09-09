@@ -99,6 +99,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return nodes
   }
 
+  // PLAN-292 T6: raster-image extensions routed to the binary-safe
+  // read_file_range path (aligned with FileEditor's isImage list);
+  // svg is text and takes the utf8 data-URL branch below.
+  const IMAGE_PREVIEW_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
+
   function detectMimeType(name: string): string {
     const ext = name.split('.').pop()?.toLowerCase() || ''
     const map: Record<string, string> = {
@@ -177,10 +182,50 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
     try {
       const size = findFileSize(path)
+      const name = path.split('/').pop() || path
+      const ext = name.split('.').pop()?.toLowerCase() || ''
+      // PLAN-292 T6: images land as data URLs so FileEditor's ImagePreview
+      // branch is reachable. svg is text — read via the guarded text path and
+      // wrap as a utf8 data URL; raster images use the binary-safe tool.
+      if (ext === 'svg') {
+        const res = await readFilePreview(path, size, requireWorkspaceId())
+        const svg: OpenFile = {
+          path,
+          name,
+          content: `data:image/svg+xml;utf8,${encodeURIComponent(res.content)}`,
+          originalContent: res.content,
+          language: detectLanguage(path),
+          modified: false,
+          loading: false,
+          truncated: res.truncated,
+        }
+        openFiles.value.set(path, svg)
+        activeFilePath.value = path
+        return
+      }
+      if (IMAGE_PREVIEW_EXTENSIONS.has(ext)) {
+        const binary = await api.readFileRange(path, requireWorkspaceId())
+        if (!binary.is_binary) {
+          throw new Error('not a binary file')
+        }
+        const image: OpenFile = {
+          path,
+          name,
+          content: `data:${detectMimeType(name)};base64,${binary.content}`,
+          originalContent: '',
+          language: detectLanguage(path),
+          modified: false,
+          loading: false,
+          truncated: false,
+        }
+        openFiles.value.set(path, image)
+        activeFilePath.value = path
+        return
+      }
       const res = await readFilePreview(path, size, requireWorkspaceId())
       const file: OpenFile = {
         path,
-        name: path.split('/').pop() || path,
+        name,
         content: res.content,
         originalContent: res.content,
         language: detectLanguage(path),

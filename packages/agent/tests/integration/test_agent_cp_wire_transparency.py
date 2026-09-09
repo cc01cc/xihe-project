@@ -110,10 +110,13 @@ async def test_agent_uses_only_the_cp_http_boundary() -> None:
             cp_url.removeprefix("http://").split("/", 1)[0]
         }
         methods = {request[0] for request in fixture.requests}
-        assert methods == {"POST", "GET", "DELETE"}
+        # PLAN-292 T7: the GET channel is intentionally disabled
+        # (mcp_client._disable_mcp_get_server_stream, PLAN-290 hop fix) — the
+        # Agent wire must be POST + DELETE sessions only, never GET SSE.
+        assert methods == {"POST", "DELETE"}
         assert any(request[0] == "POST" for request in fixture.requests)
-        assert any(request[0] == "GET" for request in fixture.requests)
         assert any(request[0] == "DELETE" for request in fixture.requests)
+        assert not any(request[0] == "GET" for request in fixture.requests)
         assert all(request[1] == "/api/v1/mcp" for request in fixture.requests)
         assert all("remote" not in request[1].lower() for request in fixture.requests)
         assert all(request[2]["authorization"] == "Bearer agent-token" for request in fixture.requests)

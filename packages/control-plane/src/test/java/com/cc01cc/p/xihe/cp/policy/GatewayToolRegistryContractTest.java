@@ -159,4 +159,47 @@ class GatewayToolRegistryContractTest {
                 tool + " must require approval");
         }
     }
+
+    /**
+     * PLAN-292 M2 (T1/T3): container_runtime tools that stay internal-only —
+     * implemented in packages/runtime/src/container_runtime.rs but NOT exposed
+     * via #[tool_router]. They remain classified in PolicyEngine (require_approval)
+     * so a hypothetical direct MCP call is classified, never silently allowed;
+     * the Agent name list must NOT contain them (no false completeness).
+     * Putting any of these on the Gateway is an explicit edit here + this set.
+     */
+    private static final Set<String> INTERNAL_ONLY_TOOLS = Set.of(
+        "apply_patch", "create_snapshot", "revert_snapshot"
+    );
+
+    @Test
+    void internalOnlyTools_areNeverGatewayPublic() {
+        Set<String> leaked = new TreeSet<>(INTERNAL_ONLY_TOOLS);
+        leaked.retainAll(GATEWAY_PUBLIC_TOOLS);
+        assertTrue(leaked.isEmpty(),
+            "internal-only tools must not appear on the Gateway: " + leaked);
+    }
+
+    @Test
+    void policyClassification_isFullyAccountedFor() {
+        // Every classified tool is either Gateway-public or explicitly
+        // internal-only — no floating entries, no undeclared superset drift.
+        Set<String> union = classifiedUnion();
+        Set<String> unaccounted = new TreeSet<>(union);
+        unaccounted.removeAll(GATEWAY_PUBLIC_TOOLS);
+        unaccounted.removeAll(INTERNAL_ONLY_TOOLS);
+        assertTrue(unaccounted.isEmpty(),
+            "Policy entries must be Gateway-public or INTERNAL_ONLY: " + unaccounted);
+    }
+
+    @Test
+    void internalOnlyTools_requireApproval() {
+        PolicyEngine engine = createEngine();
+        for (String tool : INTERNAL_ONLY_TOOLS) {
+            assertEquals(
+                PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL,
+                engine.evaluate(tool, "{}", "contract-s5").getResult(),
+                tool + " is internal-only but must still require approval if ever called");
+        }
+    }
 }

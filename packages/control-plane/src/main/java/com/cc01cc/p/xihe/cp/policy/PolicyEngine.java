@@ -60,13 +60,18 @@ public class PolicyEngine {
         "get_background_process", "web_fetch"
     );
 
-    // Gateway-public mutation tools + pre-Gateway debt entries
-    // (write_file_binary/apply_patch/snapshot/revert; §3.6-A/C, post-290).
+    // PLAN-292 M2 (T2/T4): names aligned with container_runtime implementations
+    // (create_snapshot/revert_snapshot, container_runtime.rs:277/285) and the
+    // dead write_file_binary entry removed — it is not a Gateway tool, not an
+    // Agent tool, and REST binary write does not travel through MCP policy.
+    // apply_patch/create_snapshot/revert_snapshot stay classified as
+    // require_approval although they are NOT Gateway-public (PLAN-292 T3
+    // decision: internal-only; pinned by GatewayToolRegistryContractTest).
     private static final Set<String> REQUIRE_APPROVAL_TOOLS = Set.of(
-        "write_file", "write_file_binary", "edit_file", "delete_file",
+        "write_file", "edit_file", "delete_file",
         "delete_directory", "move_file", "copy_file", "mkdir",
         "execute_command", "start_background_process", "cancel_background_process",
-        "apply_patch", "snapshot", "revert"
+        "apply_patch", "create_snapshot", "revert_snapshot"
     );
 
     /** Package-private for contract tests (PLAN-290 M0.2); not a public API. */

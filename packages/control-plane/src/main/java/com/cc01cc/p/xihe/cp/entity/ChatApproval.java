@@ -80,11 +80,22 @@ public class ChatApproval {
     @Column(name = "grant_consumed_at")
     private Instant grantConsumedAt;
 
+    @Column(name = "arguments_hash", length = 96)
+    private String argumentsHash;
+
     public ChatApproval() {}
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
                         String workspaceId, String tool, String action, String details,
                         String state, Instant expiresAt, String snapshotId, String policyClass) {
+        this(requestId, runId, sessionId, userId, workspaceId, tool, action, details,
+                state, expiresAt, snapshotId, policyClass, null);
+    }
+
+    public ChatApproval(String requestId, String runId, String sessionId, String userId,
+                        String workspaceId, String tool, String action, String details,
+                        String state, Instant expiresAt, String snapshotId, String policyClass,
+                        String argumentsHash) {
         this.requestId = UUID.fromString(requestId);
         this.runId = runId;
         this.sessionId = sessionId;
@@ -97,6 +108,7 @@ public class ChatApproval {
         this.expiresAt = expiresAt;
         this.snapshotId = snapshotId;
         this.policyClass = policyClass;
+        this.argumentsHash = argumentsHash;
     }
 
     @PrePersist
@@ -134,6 +146,7 @@ public class ChatApproval {
     public String getSnapshotId() { return snapshotId; }
     public String getPolicyClass() { return policyClass; }
     public Instant getGrantConsumedAt() { return grantConsumedAt; }
+    public String getArgumentsHash() { return argumentsHash; }
     public void setSnapshotId(String snapshotId) { this.snapshotId = snapshotId; }
     public void setPolicyClass(String policyClass) { this.policyClass = policyClass; }
     public void setGrantConsumedAt(Instant grantConsumedAt) { this.grantConsumedAt = grantConsumedAt; }

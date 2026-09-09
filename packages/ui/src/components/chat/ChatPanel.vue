@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
 import { ApiError, api } from '../../composables/api'
@@ -136,10 +136,57 @@ async function decideApproval(approved: boolean) {
 function stopStreaming() {
   streamComponent.value?.stopStreaming?.()
 }
+
+// ── PLAN-292 M3 (C3): run recovery banner ────────────────────────────────
+// A dead SSE or a page refresh hides what the run is doing. On mount, ask
+// the CP for the last run's status and surface one of three honest states.
+const runRecovery = computed(() => chatStore.runRecovery[props.sessionId] ?? null)
+
+function recoverableRunId(): string | null {
+  const msgs = chatStore.getMessages(props.sessionId)
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const msg = msgs[i]
+    if (msg.role === 'assistant' && msg.runId && msg.runStatus !== 'succeeded') {
+      return msg.runId
+    }
+  }
+  return null
+}
+
+onMounted(() => {
+  const runId = recoverableRunId()
+  if (runId) void chatStore.refreshRunRecovery(props.sessionId, runId)
+})
+
+const recoveryBannerClass = computed(() => {
+  switch (runRecovery.value?.state) {
+    case 'resumed':
+      return 'border-primary/40 bg-primary/10 text-foreground'
+    case 'cancelled':
+      return 'border-border bg-muted/40 text-muted-foreground'
+    default:
+      return 'border-destructive/40 bg-destructive/10 text-foreground'
+  }
+})
 </script>
 
 <template>
   <div class="flex flex-col h-full min-h-0 overflow-hidden">
+    <div
+      v-if="runRecovery"
+      data-testid="run-recovery-banner"
+      class="flex items-center justify-between gap-3 mx-4 mt-3 px-3 py-2 rounded-lg border text-sm"
+      :class="recoveryBannerClass"
+      role="status"
+    >
+      <span>{{ runRecovery.message }}</span>
+      <button
+        class="px-2 py-0.5 text-xs rounded border border-border hover:bg-accent shrink-0"
+        data-testid="run-recovery-dismiss"
+        @click="chatStore.dismissRunRecovery(props.sessionId)"
+      >知道了</button>
+    </div>
+
     <MessageList
       v-if="messages.length > 0"
       :messages="messages"

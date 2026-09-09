@@ -160,6 +160,19 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             let content = fs::read_file(path, WORKSPACE).await?;
             Ok(serde_json::json!({"content": content}))
         }
+        // PLAN-292 T6: binary-safe read for image previews — fs::read_file_range
+        // detects binary content and returns base64 with is_binary=true.
+        "read_file_range" => {
+            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let offset = req.payload.get("offset").and_then(|v| v.as_u64()).map(|v| v as usize);
+            let limit = req.payload.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize);
+            let result = fs::read_file_range(path, offset, limit, WORKSPACE).await?;
+            Ok(serde_json::json!({
+                "content": result.content,
+                "total_lines": result.total_lines,
+                "is_binary": result.is_binary,
+            }))
+        }
         "write_file" => {
             let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
             let content = req.payload.get("content").and_then(|v| v.as_str()).unwrap_or("");

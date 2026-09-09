@@ -358,6 +358,46 @@ public class ChatController {
         }
     }
 
+    // ── PLAN-292 M3 (C2): run status recovery ──────────────────────────────
+
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @GetMapping("/api/v1/chat/runs/{runId}")
+    public ResponseEntity<Map<String, Object>> getRunStatus(@PathVariable String runId) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        UUID runUuid;
+        try {
+            runUuid = UUID.fromString(runId);
+        } catch (IllegalArgumentException e) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        }
+        ChatRun run = chatRunRepository.findById(runUuid).orElse(null);
+        if (run == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        }
+        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Chat run does not belong to current user/workspace");
+        }
+        boolean leaseExpired = run.getLeaseExpiresAt() != null
+                && run.getLeaseExpiresAt().isBefore(java.time.Instant.now());
+        List<Map<String, Object>> pendingApprovals = approvalService.findActiveForRun(runId, userId, workspaceId);
+        String status = run.getStatus();
+        String effectiveStatus = !pendingApprovals.isEmpty() && ("running".equals(status) || "cancelling".equals(status))
+                ? "awaiting_approval"
+                : status;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("runId", runId);
+        body.put("sessionId", run.getSessionId());
+        body.put("status", effectiveStatus);
+        body.put("terminalOutcome", run.getTerminalOutcome());
+        body.put("leaseExpired", leaseExpired);
+        body.put("pendingApprovals", pendingApprovals);
+        return ResponseEntity.ok(body);
+    }
+
     // ── PLAN-275 M1 Task 1.3: Cancel contract ──────────────────────────────
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")

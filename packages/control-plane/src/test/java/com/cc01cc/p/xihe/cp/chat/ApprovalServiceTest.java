@@ -181,6 +181,92 @@ class ApprovalServiceTest {
                 "{\"params\":{\"arguments\":{\"path\":\"a\"}}}"));
     }
 
+    // PLAN-292 M1 shared cross-language fixture: the expected hash below was
+    // produced by the Agent's Python canonical serialization
+    // (json.dumps(wrapper, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    // over the same wrapper {"tool", "arguments"} — see
+    // packages/agent/tests/unit/test_approval_tool.py::test_canonical_hash_matches_cp_vector.
+    private static final String CANONICAL_VECTOR_ARGUMENTS =
+            "{\"path\":\"notes/大文件.md\",\"content\":\"中文内容 line1\\nline2 \\\"quoted\\\"\","
+                    + "\"mode\":\"overwrite\",\"size\":1234,\"flag\":true,"
+                    + "\"nested\":{\"b\":1,\"a\":[1,2,\"x\"],\"e\":\"\",\"d\":null}}";
+    private static final String CANONICAL_VECTOR_HASH =
+            "sha256:827e3965b8f623f5722f1ba4f8a29dd38fce8d661b92e386d27502a4fa2a7c27";
+
+    private String vectorMcpBody() {
+        return "{\"jsonrpc\":\"2.0\",\"id\":1,\"params\":{\"name\":\"write_file\",\"arguments\":"
+                + CANONICAL_VECTOR_ARGUMENTS + "}}";
+    }
+
+    private ChatApproval approvedRowWithHash(String argumentsHash) {
+        ChatApproval approval = new ChatApproval(
+                TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
+                "write_file", "Execute write_file",
+                "x".repeat(500) + "…[truncated]",
+                "approved", Instant.now().plusSeconds(60), null, "require_approval", argumentsHash);
+        approval.setApproved(true);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        return approval;
+    }
+
+    @Test
+    void consumeApprovedGrantMatchesByHashWhenPreviewTruncated() {
+        approvedRowWithHash(CANONICAL_VECTOR_HASH);
+        when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
+                eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(1);
+
+        assertTrue(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+    }
+
+    @Test
+    void consumeApprovedGrantRejectsHashMismatch() {
+        approvedRowWithHash(CANONICAL_VECTOR_HASH);
+        String otherArguments = CANONICAL_VECTOR_ARGUMENTS.replace("notes/大文件.md", "notes/其他.md");
+
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file",
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"params\":{\"name\":\"write_file\",\"arguments\":"
+                        + otherArguments + "}}"));
+    }
+
+    @Test
+    void consumeApprovedGrantCrossLanguageCanonicalVector() {
+        approvedRowWithHash(CANONICAL_VECTOR_HASH);
+        when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
+                eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(1);
+
+        // Key order inside mcpBody differs from the canonical form on purpose:
+        // the hash must be computed over the canonicalized structure, not raw bytes.
+        assertTrue(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+    }
+
+    @Test
+    void consumeApprovedGrantAcceptsHashWithoutAlgorithmPrefix() {
+        approvedRowWithHash(CANONICAL_VECTOR_HASH.substring("sha256:".length()));
+        when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
+                eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(1);
+
+        assertTrue(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+    }
+
+    @Test
+    void recordPendingStoresAgentArgumentsHash() {
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
+        HashMap<String, Object> payload = new HashMap<>(approvalPayload(TEST_SESSION));
+        payload.put("argumentsHash", CANONICAL_VECTOR_HASH);
+
+        service.recordPending(payload, TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
+
+        ArgumentCaptor<ChatApproval> captor = ArgumentCaptor.forClass(ChatApproval.class);
+        verify(approvals).save(captor.capture());
+        assertEquals(CANONICAL_VECTOR_HASH, captor.getValue().getArgumentsHash());
+    }
+
     @Test
     void decideReturns400ForMalformedRequestId() {
         CpApiException error = assertThrows(CpApiException.class,
@@ -275,5 +361,28 @@ class ApprovalServiceTest {
     private ChatApproval pending(Instant expiresAt) {
         return new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
                 "request_approval", "delete file", "README.md", "pending", expiresAt, null, null);
+    }
+
+    @Test
+    void findActiveForRunReturnsOnlyOwnedNonExpiredReplayables() {
+        ChatApproval active = pending(Instant.now().plusSeconds(60));
+        ChatApproval expired = pending(Instant.now().minusSeconds(1));
+        when(approvals.findByRunIdAndStateIn(TEST_RUN_ID, List.of("pending", "dispatching")))
+                .thenReturn(List.of(active, expired));
+
+        List<Map<String, Object>> activeForRun = service.findActiveForRun(TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
+
+        assertEquals(1, activeForRun.size());
+        assertEquals(TEST_REQUEST_ID, activeForRun.get(0).get("requestId").toString());
+        assertEquals(Boolean.TRUE, activeForRun.get(0).get("replayed"));
+    }
+
+    @Test
+    void findActiveForRunRejectsForeignUserOrWorkspace() {
+        when(approvals.findByRunIdAndStateIn(TEST_RUN_ID, List.of("pending", "dispatching")))
+                .thenReturn(List.of(pending(Instant.now().plusSeconds(60))));
+
+        assertTrue(service.findActiveForRun(TEST_RUN_ID, "99999999-9999-9999-9999-999999999999", TEST_WORKSPACE).isEmpty());
+        assertTrue(service.findActiveForRun(TEST_RUN_ID, TEST_USER, "99999999-9999-9999-9999-999999999999").isEmpty());
     }
 }

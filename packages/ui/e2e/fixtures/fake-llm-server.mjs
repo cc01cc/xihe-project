@@ -48,6 +48,11 @@ async function sendCompletion(response, provider, requestBody) {
     return
   }
 
+  if (mode === 'write_file') {
+    sendWriteFileCompletion(response, requestBody)
+    return
+  }
+
   const lastMessage = requestBody.messages?.at(-1)?.content ?? 'empty'
   const chunks = [`${provider} fake`, ` response to: ${String(lastMessage).slice(0, 40)}`]
   for (const content of chunks) {
@@ -100,6 +105,62 @@ function sendApprovalCompletion(response, requestBody) {
   }
 
   const chunks = ['Approval received. ', 'The requested action was approved by the user.']
+  for (const content of chunks) {
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+  }
+  response.end('data: [DONE]\n\n')
+}
+
+// PLAN-292 M1/M3 (mode: write_file): deterministic write_file tool call for
+// hermetic grant-hash + recovery specs. The spec embeds a marker in the user
+// message: XIHE-E2E-WRITE <path> <content...>. The content is emitted verbatim
+// so the approval preview exceeds the 500-char truncation bound and the
+// post-approve FS readback can assert the FULL payload survived grant matching.
+function sendWriteFileCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const last = messages.at(-1) ?? {}
+  const hasToolResult = messages.some((m) => m.role === 'tool')
+  const followUp = last.role === 'tool' || (hasToolResult && last.role === 'user')
+
+  if (!followUp) {
+    const text = typeof last.content === 'string' ? last.content : ''
+    const marker = text.indexOf('XIHE-E2E-WRITE ')
+    if (marker < 0) {
+      sendApprovalCompletion(response, requestBody)
+      return
+    }
+    const rest = text.slice(marker + 'XIHE-E2E-WRITE '.length)
+    const sep = rest.indexOf(' ')
+    const path = sep > 0 ? rest.slice(0, sep) : rest.trim()
+    const content = sep > 0 ? rest.slice(sep + 1) : ''
+    const toolCallDelta = {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call-write-file-e2e-1',
+                type: 'function',
+                function: {
+                  name: 'write_file',
+                  arguments: JSON.stringify({ path, content }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    }
+    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
+    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  const chunks = ['Write completed. ', 'The file was written after approval.']
   for (const content of chunks) {
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
   }

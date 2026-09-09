@@ -29,9 +29,12 @@ APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id"
 _ACTIVE_CONTEXT: contextvars.ContextVar[AgentContext | None] = contextvars.ContextVar(
     "xihe_active_mcp_context", default=None
 )
+# PLAN-292 T4: only Gateway-public mutation tools belong here. The Runtime's
+# apply_patch/create_snapshot/revert_snapshot/cleanup_jobs are internal-only
+# (never exposed via #[tool_router], PLAN-292 T3 decision) and write_file_binary
+# does not exist as an MCP tool — listing them created false completeness.
 REQUIRE_APPROVAL_TOOLS = frozenset({
     "write_file",
-    "write_file_binary",
     "edit_file",
     "delete_file",
     "delete_directory",
@@ -41,9 +44,6 @@ REQUIRE_APPROVAL_TOOLS = frozenset({
     "execute_command",
     "start_background_process",
     "cancel_background_process",
-    "apply_patch",
-    "create_snapshot",
-    "revert_snapshot",
 })
 
 

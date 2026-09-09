@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -12,6 +14,7 @@ from xihe_agent.adapters.approval_tool import (
     ApprovalInput,
     ApprovalRejectedError,
     ApprovalTool,
+    redact_approval_details,
 )
 from xihe_agent.interfaces.context import AgentContext
 
@@ -573,3 +576,60 @@ async def test_event_sink_is_called_before_entering_wait():
     result = await request_task
     assert result["approval"] == "approved"
     assert waiting_sink.await_count == 1
+
+
+# --- PLAN-292 M1: canonical arguments hash (CP grant matching) ---
+
+def test_canonical_hash_matches_cp_vector():
+    """Cross-language fixture: the hash below is asserted by the CP test
+    ApprovalServiceTest.consumeApprovedGrantCrossLanguageCanonicalVector,
+    which recomputes it with Jackson (ORDER_MAP_ENTRIES_BY_KEYS + compact).
+    If this hash changes, both suites must change in the same commit."""
+    wrapper = {
+        "tool": "write_file",
+        "arguments": {
+            "path": "notes/大文件.md",
+            "content": '中文内容 line1\nline2 "quoted"',
+            "mode": "overwrite",
+            "size": 1234,
+            "flag": True,
+            "nested": {"b": 1, "a": [1, 2, "x"], "e": "", "d": None},
+        },
+    }
+    details = json.dumps(wrapper, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    preview, arguments_hash = redact_approval_details(details)
+    assert arguments_hash == "827e3965b8f623f5722f1ba4f8a29dd38fce8d661b92e386d27502a4fa2a7c27"
+    assert preview == details
+
+
+def test_canonical_hash_is_input_format_independent():
+    """Same logical object, different key order / spacing -> same hash."""
+    compact = json.dumps(
+        {"tool": "write_file", "arguments": {"path": "a.md", "content": "hi"}},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
+    spaced = json.dumps(
+        {"arguments": {"content": "hi", "path": "a.md"}, "tool": "write_file"},
+        ensure_ascii=False, indent=2,
+    )
+    _, hash_compact = redact_approval_details(compact)
+    _, hash_spaced = redact_approval_details(spaced)
+    assert hash_compact == hash_spaced
+
+
+def test_hash_covers_full_arguments_beyond_preview_limit():
+    """PLAN-292 H1 regression: >500-char arguments must hash the FULL canonical
+    form so CP can match after preview truncation."""
+    big_content = "x" * 2000
+    details = json.dumps(
+        {"tool": "write_file", "arguments": {"path": "big.md", "content": big_content}},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
+    preview, arguments_hash = redact_approval_details(details)
+    assert preview.endswith("…[truncated]")
+    full_hash = hashlib.sha256(details.encode("utf-8")).hexdigest()
+    assert arguments_hash == full_hash
+    truncated_hash = hashlib.sha256(
+        (details[:500] + "…[truncated]").encode("utf-8")
+    ).hexdigest()
+    assert arguments_hash != truncated_hash

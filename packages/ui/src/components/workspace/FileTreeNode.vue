@@ -70,6 +70,7 @@ function handleContextmenu(e: MouseEvent) {
 <template>
   <div>
     <div
+      data-testid="file-tree-node"
       class="flex items-center gap-1 py-1 text-sm cursor-pointer rounded hover:bg-accent/50 transition-colors select-none"
       :class="{ 'bg-accent text-accent-foreground': isSelected }"
       :style="{ paddingLeft: indent }"

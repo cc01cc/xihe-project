@@ -302,7 +302,7 @@ impl XiheRuntime {
         self.router.read_file(&self.ws_id, &path).await.map_err(|e| e.to_string())
     }
 
-    #[tool(description = "Read file with line range support, binary detection, and line numbers")]
+    #[tool(description = "Read file with line range support, binary detection, and line numbers (binary files return base64 with is_binary=true, capped at 16 MiB)")]
     async fn read_file_range(
         &self,
         Parameters(ReadFileRangeRequest {
@@ -311,15 +311,16 @@ impl XiheRuntime {
             limit,
         }): Parameters<ReadFileRangeRequest>,
     ) -> Result<Json<ReadFileRangeResult>, String> {
-        let content = self.router.read_file(&self.ws_id, &path).await.map_err(|e| e.to_string())?;
-        let lines: Vec<&str> = content.lines().collect();
-        let total_lines = lines.len();
-        let off = offset.unwrap_or(1).max(1);
-        let lim = limit.unwrap_or(total_lines);
-        let start = (off - 1).min(total_lines);
-        let end = (start + lim).min(total_lines);
-        let ranged = lines[start..end].iter().enumerate().map(|(i, l)| format!("{} | {}", start+i+1, l)).collect::<Vec<_>>().join("\n");
-        Ok(Json(ReadFileRangeResult { content: ranged, total_lines, is_binary: false }))
+        // PLAN-292 T6: wire the tool to the sandbox's binary-safe
+        // fs::read_file_range instead of the text-only duplicate that
+        // hardcoded is_binary=false and failed on binary content.
+        let val = self
+            .router
+            .read_file_range(&self.ws_id, &path, offset, limit)
+            .await
+            .map_err(|e| e.to_string())?;
+        let result: ReadFileRangeResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
+        Ok(Json(result))
     }
 
     #[tool(description = "Write file (creates parent directories as needed)")]

@@ -12,6 +12,7 @@ vi.mock('../../composables/api', async (importOriginal) => {
       deleteFile: vi.fn(),
       writeFile: vi.fn(),
       readFile: vi.fn(),
+      readFileRange: vi.fn(),
       listDirectory: vi.fn(),
       moveFile: vi.fn(),
       copyFile: vi.fn(),
@@ -219,5 +220,58 @@ describe('workspace store rename/move/duplicate/mkdir (M3)', () => {
     expect(await store.createDirectory('src', 'a/b')).toBe(false)
     expect(await store.createDirectory('src', 'assets')).toBe(true)
     expect(mockedApi.createDirectory).toHaveBeenCalledWith('src/assets', 'ws-test')
+  })
+})
+
+describe('workspace store openFile preview routing (PLAN-292 T6)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('routes raster images through the binary-safe read and stores a data URL', async () => {
+    const store = useWorkspaceStore()
+    vi.mocked(api.readFileRange).mockResolvedValue({ content: 'aGk=', total_lines: 0, is_binary: true })
+
+    await store.openFile('pics/photo.png')
+
+    expect(api.readFileRange).toHaveBeenCalledWith('pics/photo.png', 'ws-test')
+    expect(store.openFiles.get('pics/photo.png')?.content).toBe('data:image/png;base64,aGk=')
+  })
+
+  it('rejects a non-binary result for raster extensions instead of rendering garbage', async () => {
+    const store = useWorkspaceStore()
+    vi.mocked(api.readFileRange).mockResolvedValue({ content: 'text?', total_lines: 3, is_binary: false })
+
+    await store.openFile('pics/photo.png')
+
+    expect(store.openFiles.has('pics/photo.png')).toBe(false)
+    expect(store.treeError).toContain('not a binary file')
+  })
+
+  it('wraps svg text content as a utf8 data URL without the binary path', async () => {
+    const store = useWorkspaceStore()
+    const { readFilePreview } = await import('../../composables/fileService')
+    vi.mocked(readFilePreview).mockResolvedValue({ content: '<svg xmlns="http://www.w3.org/2000/svg"/>', truncated: false })
+
+    await store.openFile('icons/logo.svg')
+
+    expect(api.readFileRange).not.toHaveBeenCalled()
+    const opened = store.openFiles.get('icons/logo.svg')
+    expect(opened?.content).toBe(
+      'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E',
+    )
+    expect(opened?.originalContent).toBe('<svg xmlns="http://www.w3.org/2000/svg"/>')
+  })
+
+  it('keeps text files on the size-guarded text preview path', async () => {
+    const store = useWorkspaceStore()
+    const { readFilePreview } = await import('../../composables/fileService')
+    vi.mocked(readFilePreview).mockResolvedValue({ content: 'hello', truncated: false })
+
+    await store.openFile('docs/note.md')
+
+    expect(api.readFileRange).not.toHaveBeenCalled()
+    expect(store.openFiles.get('docs/note.md')?.content).toBe('hello')
   })
 })

@@ -1,6 +1,17 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useChatStore } from '../chat'
+
+vi.mock('../../composables/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../composables/api')>()
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getChatRunStatus: vi.fn(),
+    },
+  }
+})
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -194,5 +205,67 @@ describe('useChatStore', () => {
     expect(localStorage.getItem('xihe-token')).toBeNull()
     expect(localStorage.getItem('xihe-workspace')).toBeNull()
     expect(store.getMessages('s1')).toEqual([])
+  })
+})
+
+describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  async function mockStatus(status: string, extra: Record<string, unknown> = {}) {
+    const { api } = await import('../../composables/api')
+    vi.mocked(api.getChatRunStatus).mockResolvedValue({
+      runId: 'r1', sessionId: 's1', status, leaseExpired: false, pendingApprovals: [], ...extra,
+    })
+  }
+
+  it('resumed when run awaits approval; replays approvals into agent store', async () => {
+    await mockStatus('awaiting_approval', {
+      pendingApprovals: [{ requestId: 'req-1', runId: 'r1', sessionId: 's1', tool: 'write_file', action: 'a', details: 'd' }],
+    })
+    const store = useChatStore()
+    await store.refreshRunRecovery('s1', 'r1')
+    expect(store.runRecovery['s1']?.state).toBe('resumed')
+    const { useAgentStore } = await import('../agent')
+    expect(useAgentStore().agentState.pendingApprovals.some((a) => a.requestId === 'req-1')).toBe(true)
+  })
+
+  it('cancelled for terminal run states', async () => {
+    await mockStatus('cancelled')
+    const store = useChatStore()
+    await store.refreshRunRecovery('s1', 'r1')
+    expect(store.runRecovery['s1']?.state).toBe('cancelled')
+  })
+
+  it('retry when the lease expired on a running run', async () => {
+    await mockStatus('running', { leaseExpired: true })
+    const store = useChatStore()
+    await store.refreshRunRecovery('s1', 'r1')
+    expect(store.runRecovery['s1']?.state).toBe('retry')
+  })
+
+  it('sets no banner for succeeded runs', async () => {
+    await mockStatus('succeeded')
+    const store = useChatStore()
+    await store.refreshRunRecovery('s1', 'r1')
+    expect(store.runRecovery['s1']).toBeUndefined()
+  })
+
+  it('retry when the status query fails', async () => {
+    const { api } = await import('../../composables/api')
+    vi.mocked(api.getChatRunStatus).mockRejectedValue(new Error('network down'))
+    const store = useChatStore()
+    await store.refreshRunRecovery('s1', 'r1')
+    expect(store.runRecovery['s1']?.state).toBe('retry')
+  })
+
+  it('dismissRunRecovery clears the banner', async () => {
+    await mockStatus('cancelled')
+    const store = useChatStore()
+    await store.refreshRunRecovery('s1', 'r1')
+    store.dismissRunRecovery('s1')
+    expect(store.runRecovery['s1']).toBeUndefined()
   })
 })

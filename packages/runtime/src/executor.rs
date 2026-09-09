@@ -153,6 +153,19 @@ impl WorkspaceExecutionRouter {
         Ok(val.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string())
     }
 
+    // PLAN-292 T6: binary-safe read — the sandbox op detects binary content
+    // and returns {content, total_lines, is_binary} (base64 when binary).
+    pub async fn read_file_range(
+        &self,
+        workspace_id: &str,
+        path: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) -> Result<serde_json::Value> {
+        let payload = serde_json::json!({"path": path, "offset": offset, "limit": limit});
+        self.exec_oneshot(workspace_id, "read_file_range", payload).await
+    }
+
     pub async fn write_file(&self, workspace_id: &str, path: &str, content: &str) -> Result<String> {
         let payload = serde_json::json!({"path": path, "content": content});
         let val = self.exec_oneshot(workspace_id, "write_file", payload).await?;

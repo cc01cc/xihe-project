@@ -364,6 +364,18 @@ export const api = {
     const content = await callRuntimeTool<string>('read_file', { path }, workspaceId)
     return { content: typeof content === 'string' ? content : String(content) }
   },
+  // PLAN-292 T6: binary-safe read — the tool returns {content, total_lines,
+  // is_binary} where content is base64 when is_binary is true.
+  async readFileRange(path: string, workspaceId: string, offset?: number, limit?: number) {
+    const args: Record<string, unknown> = { path }
+    if (offset !== undefined) args.offset = offset
+    if (limit !== undefined) args.limit = limit
+    return callRuntimeTool<{ content: string; total_lines: number; is_binary: boolean }>(
+      'read_file_range',
+      args,
+      workspaceId,
+    )
+  },
   async writeFile(path: string, content: string, workspaceId: string) {
     await callRuntimeTool<string>('write_file', { path, content }, workspaceId)
     return { success: true }
@@ -473,5 +485,16 @@ export const api = {
   },
   cancelChatRun(runId: string, reason = 'user_requested'): Promise<{ status: string; runId: string }> {
     return apiPost(`/chat/runs/${encodeURIComponent(runId)}/cancel`, JSON.stringify({ reason }))
+  },
+  // PLAN-292 M3 (C2): run status recovery for reconnected/refreshed clients.
+  getChatRunStatus(runId: string): Promise<{
+    runId: string
+    sessionId: string
+    status: string
+    terminalOutcome?: string | null
+    leaseExpired: boolean
+    pendingApprovals: Array<Record<string, unknown>>
+  }> {
+    return request(`/chat/runs/${encodeURIComponent(runId)}`, { method: 'GET' })
   },
 }

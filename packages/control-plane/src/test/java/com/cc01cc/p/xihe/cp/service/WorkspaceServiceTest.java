@@ -13,7 +13,10 @@ import org.springframework.test.context.ActiveProfiles;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@SpringBootTest
+// PLAN-292 fix-up: the default cp.mcp.runtime-url is localhost:12633, so when
+// a dev Runtime happens to run on this host the "runtime unavailable" test
+// silently hits a live server. Pin an unreachable port for hermeticity.
+@SpringBootTest(properties = "cp.mcp.runtime-url=http://localhost:1")
 @ActiveProfiles("h2")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class WorkspaceServiceTest {

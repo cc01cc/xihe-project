@@ -53,10 +53,17 @@ def redact_approval_details(details: str | None) -> tuple[str, str]:
 
     PLAN-271 P0: full MCP arguments must never enter the approval row, SSE
     replay, or ordinary logs. Returns (preview, arguments_hash).
+
+    PLAN-292 M1: the hash is always taken over the canonical form — parse
+    then json.dumps(ensure_ascii=False, sort_keys=True, separators=(",", ":")).
+    CP rebuilds the same canonical bytes with Jackson (ORDER_MAP_ENTRIES_BY_KEYS,
+    compact) to match the grant by hash, so a >500-char preview truncation can
+    no longer fail an approved call. String inputs must NOT be hashed raw.
     """
     raw = details or ""
     try:
-        canonical = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, sort_keys=True)
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        canonical = json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     except Exception:
         canonical = str(raw)
     arguments_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()

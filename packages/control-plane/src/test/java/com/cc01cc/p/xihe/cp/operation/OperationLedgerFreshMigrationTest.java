@@ -153,10 +153,19 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8")),
-                "fresh database must apply the current V1-V8 migration chain: " + versions);
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9")),
+                "fresh database must apply the current V1-V9 migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
+    }
+
+    @Test
+    void v9ApprovalArgumentsHashColumnApplied() throws SQLException {
+        assertNotNull(scalarString(
+                "SELECT column_name FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'approval_requests' "
+                        + "AND column_name = 'arguments_hash'"),
+                "PLAN-292 M1: approval_requests.arguments_hash must exist for grant hash matching");
     }
 
     @Test

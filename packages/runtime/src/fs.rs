@@ -346,6 +346,17 @@ pub async fn read_file_range(
     let is_binary = bytes[..check_len].contains(&0x00);
 
     if is_binary {
+        // PLAN-292 T6: base64 previews target images/docs opened in the UI;
+        // cap the payload so an accidental huge binary cannot inflate the
+        // MCP response (16 MiB raw ≈ 22 MiB base64).
+        const BINARY_PREVIEW_MAX_BYTES: usize = 16 * 1024 * 1024;
+        if bytes.len() > BINARY_PREVIEW_MAX_BYTES {
+            return Err(RuntimeError::InvalidPath(format!(
+                "file too large for binary preview: {} bytes (limit {} bytes)",
+                bytes.len(),
+                BINARY_PREVIEW_MAX_BYTES
+            )));
+        }
         let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
         return Ok(ReadFileRangeResult {
             content,
@@ -855,6 +866,36 @@ mod tests {
             result,
             fs::canonicalize(dir.path().join("bar.txt")).unwrap()
         );
+    }
+
+    // PLAN-292 T6: binary-safe read wired to the sandbox op and Gateway tool.
+    #[tokio::test]
+    async fn read_file_range_detects_binary_and_returns_base64() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_str().unwrap();
+        let payload: &[u8] = &[0x89, b'P', b'N', b'G', 0x00, 0xFF, b'd', b'a'];
+        fs::write(dir.path().join("tiny.png"), payload).unwrap();
+
+        let result = read_file_range("tiny.png", None, None, ws).await.unwrap();
+        assert!(result.is_binary);
+        assert_eq!(result.total_lines, 0);
+        use base64::Engine as _;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&result.content)
+            .unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[tokio::test]
+    async fn read_file_range_text_keeps_line_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_str().unwrap();
+        fs::write(dir.path().join("note.txt"), "alpha\nbeta\ngamma\n").unwrap();
+
+        let result = read_file_range("note.txt", Some(2), Some(1), ws).await.unwrap();
+        assert!(!result.is_binary);
+        assert_eq!(result.total_lines, 3);
+        assert_eq!(result.content, "2 | beta");
     }
 
     #[test]

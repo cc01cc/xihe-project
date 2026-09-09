@@ -584,8 +584,10 @@ public class McpProxyController {
     }
 
     private static boolean isWorkspaceUserMutationTool(String toolName) {
+        // PLAN-292 T4: write_file_binary removed — Gateway never exposes it,
+        // so a user-direct MCP call with that name cannot exist.
         return switch (toolName) {
-            case "write_file", "write_file_binary", "edit_file", "delete_file",
+            case "write_file", "edit_file", "delete_file",
                  "delete_directory", "move_file", "copy_file", "mkdir" -> true;
             default -> false;
         };

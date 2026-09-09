@@ -286,14 +286,49 @@ class McpProxyTest {
         timestamps.put(TEST_WS_UUID, Instant.now());
 
         Object access = accessContext(TEST_WS_UUID, "u-1");
+        // PLAN-292 fix-up: PLAN-290 B2 lets user-direct calls (no agent headers)
+        // bypass the approval gate, so an EMPTY header set no longer 409s. This
+        // test guards the Agent path — it must carry the run header like the
+        // real Agent does (mcp_client ApprovalMCPInterceptor).
+        HttpHeaders agentHeaders = new HttpHeaders();
+        agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body,
-                new HttpHeaders(), "sess-1", access);
+                agentHeaders, "sess-1", access);
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertTrue(response.getBody().contains("\"code\":\"APPROVAL_REQUIRED\""));
         verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
         verifyNoInteractions(mcpServerRepository);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_userDirectWorkspaceMutation_bypassesApprovalGate() throws Exception {
+        // PLAN-290 B2 / Decision 17: a workspace user mutation without any agent
+        // headers is UI-confirmed, not Agent-gated — the gate must let it pass
+        // (ledger records user_direct_allow); no APPROVAL_REQUIRED 409.
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":9}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluate(eq("write_file"), eq(body), eq("sess-1")))
+                .thenReturn(PolicyEngine.PolicyDecision.requireApproval("mutation requires approval"));
+
+        Map<String, Map<String, String>> cache =
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+        Map<String, Instant> timestamps =
+                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
+        timestamps.put(TEST_WS_UUID, Instant.now());
+
+        Object access = accessContext(TEST_WS_UUID, "u-1");
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                new HttpHeaders(), "sess-1", access);
+
+        assertNotEquals(HttpStatus.CONFLICT, response.getStatusCode(),
+                "user-direct workspace mutation must not be blocked by the approval gate");
+        verify(auditLogger).record(eq("sess-1"), eq("write_file"), eq("user_direct_allow"), any());
     }
 
     @Test

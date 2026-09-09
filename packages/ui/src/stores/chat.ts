@@ -1,8 +1,21 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Message, MessagePart } from '../types'
+import { api } from '../composables/api'
+import { useAgentStore } from './agent'
 
 export const XIHE_STORAGE_KEYS = ['xihe-token', 'xihe-user', 'xihe-workspace'] as const
+
+// PLAN-292 M3 (C3): recovery banner tri-state — resumed (run still alive
+// server-side, approvals replayable) / cancelled (terminal, nothing running)
+// / retry (lease expired or status unknown). 'succeeded' runs set no banner.
+export type RunRecoveryState = 'resumed' | 'cancelled' | 'retry'
+
+export interface RunRecovery {
+  state: RunRecoveryState
+  runId: string
+  message: string
+}
 
 export const useChatStore = defineStore('chat', () => {
   // Messages are not business data we should resurrect from localStorage.
@@ -163,6 +176,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!hasContent) {
         messages.value[sessionId] = messages.value[sessionId].filter((msg) => msg.id !== messageId)
         streamingMessageId.value[sessionId] = null
+        if (error.runId) void refreshRunRecovery(sessionId, error.runId)
         return
       }
       message.isStreaming = false
@@ -183,6 +197,53 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     streamingMessageId.value[sessionId] = null
+    if (error.runId) void refreshRunRecovery(sessionId, error.runId)
+  }
+
+  const runRecovery = ref<Record<string, RunRecovery | undefined>>({})
+
+  // PLAN-292 M3 (C2): ask the CP what actually happened to the run behind a
+  // dead SSE stream. Server truth decides the banner; never fabricate a state.
+  async function refreshRunRecovery(sessionId: string, runId: string): Promise<void> {
+    try {
+      const res = await api.getChatRunStatus(runId)
+      if (res.status === 'awaiting_approval' || (res.status === 'running' && !res.leaseExpired)) {
+        runRecovery.value[sessionId] = {
+          state: 'resumed',
+          runId,
+          message: '会话已恢复，任务仍在执行，待审批操作可继续处理',
+        }
+        const agentStore = useAgentStore()
+        for (const approval of res.pendingApprovals ?? []) {
+          agentStore.addApprovalRequest(approval as unknown as Parameters<typeof agentStore.addApprovalRequest>[0])
+        }
+      } else if (['cancelling', 'cancelled', 'failed', 'ambiguous'].includes(res.status)) {
+        runRecovery.value[sessionId] = {
+          state: 'cancelled',
+          runId,
+          message: '任务已取消或结束，未完成的执行不会继续',
+        }
+      } else if (res.status === 'running' && res.leaseExpired) {
+        runRecovery.value[sessionId] = {
+          state: 'retry',
+          runId,
+          message: '任务执行租约已过期，请重试',
+        }
+      } else {
+        // succeeded — history already shows the final message, no banner.
+        delete runRecovery.value[sessionId]
+      }
+    } catch {
+      runRecovery.value[sessionId] = {
+        state: 'retry',
+        runId,
+        message: '无法确认任务状态，请重试',
+      }
+    }
+  }
+
+  function dismissRunRecovery(sessionId: string) {
+    delete runRecovery.value[sessionId]
   }
 
   function clearSession(sessionId: string) {
@@ -214,6 +275,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages,
     streamingMessageId,
+    runRecovery,
     getMessages,
     getStreamingMessageId,
     isStreaming,
@@ -226,6 +288,8 @@ export const useChatStore = defineStore('chat', () => {
     replaceStreamingParts,
     finalizeStreaming,
     markStreamingError,
+    refreshRunRecovery,
+    dismissRunRecovery,
     clearSession,
     deleteSession,
     clearAllData,
