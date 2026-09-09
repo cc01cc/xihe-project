@@ -436,11 +436,13 @@ public class McpProxyController {
             if (grantId != null && approvalService.consumeApprovedGrant(
                     grantId, access.userId(), wsId, sessionId, toolName, body)) {
                 audit.record(sessionId, toolName, "approval_grant_consumed", grantId);
+            } else if (isUserDirectMutation(headers) && isWorkspaceUserMutationTool(toolName)) {
+                // PLAN-290 B2: user file-panel mutations are UI-confirmed, not Agent-gated.
+                audit.record(sessionId, toolName, "user_direct_allow", "no agent grant required");
             } else {
                 sse.send(sessionId, "tool_exec_approval_required",
                     Map.of("tool", toolName, "reason", decision.getReason()));
                 audit.record(sessionId, toolName, "approval_required", decision.getReason());
-                // Fail closed until a matching, unused durable approval grant exists.
                 return problem(HttpStatus.CONFLICT, "APPROVAL_REQUIRED",
                         "Tool execution requires approval before dispatch");
             }
@@ -574,10 +576,73 @@ public class McpProxyController {
         }
     }
 
+    private static boolean isUserDirectMutation(HttpHeaders headers) {
+        String runId = headers.getFirst("X-Chat-Run-Id");
+        String operationId = headers.getFirst("X-Operation-Id");
+        return (runId == null || runId.isBlank())
+                && (operationId == null || operationId.isBlank());
+    }
+
+    private static boolean isWorkspaceUserMutationTool(String toolName) {
+        return switch (toolName) {
+            case "write_file", "write_file_binary", "edit_file", "delete_file",
+                 "delete_directory", "move_file", "copy_file", "mkdir" -> true;
+            default -> false;
+        };
+    }
+
+    private LedgerAttempt startUserMutationLedger(String toolName, String body, HttpHeaders headers, String sessionId) {
+        try {
+            String userId = com.cc01cc.p.xihe.cp.config.TenantContext.getUserId();
+            String workspaceId = com.cc01cc.p.xihe.cp.config.TenantContext.getWorkspaceId();
+            if (userId == null || workspaceId == null) {
+                return null;
+            }
+            // auditSessionId may be "mcp-init" for UI calls; ledger needs a real session UUID.
+            String ledgerSessionId = sessionId;
+            try {
+                UUID.fromString(ledgerSessionId);
+            } catch (Exception notUuid) {
+                var sessions = sessionRepository.findByWorkspaceIdAndUserIdAndArchivedFalseOrderByCreatedAtDesc(
+                        workspaceId, userId);
+                if (sessions == null || sessions.isEmpty()) {
+                    com.cc01cc.p.xihe.cp.entity.Session created = new com.cc01cc.p.xihe.cp.entity.Session(
+                            workspaceId, userId, "Workspace files");
+                    created.setId(UUID.randomUUID());
+                    sessionRepository.save(created);
+                    ledgerSessionId = created.getId().toString();
+                } else {
+                    ledgerSessionId = sessions.get(0).getId().toString();
+                }
+            }
+            var started = operationService.startOperation(
+                    userId, ledgerSessionId, workspaceId, null, headers.getFirst("X-Request-Id"),
+                    "tool_call", "ui", "user", userId, null, "user " + toolName);
+            String toolCallId = UUID.nameUUIDFromBytes(body.getBytes(StandardCharsets.UTF_8)).toString();
+            var item = operationService.appendItem(
+                    started.operationId(), toolCallId, null, "tool_call", toolName, "mcp",
+                    safeLedgerPreview(body), null, null);
+            operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+            var attempt = operationService.startAttempt(
+                    item.getId(), "cp_forward", null, "cp", headers.getFirst("X-Request-Id"));
+            return new LedgerAttempt(item.getId(), attempt.getId());
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=operation_user_mutation_ledger_failed tool={} error={}",
+                    toolName, e.getMessage());
+            return null;
+        }
+    }
+
     private LedgerAttempt startLedgerAttempt(String body, HttpHeaders headers, String sessionId) {
         String operationHeader = headers.getFirst("X-Operation-Id");
-        if (operationHeader == null || operationHeader.isBlank()
-                || !"tools/call".equals(extractMethod(body))) {
+        if (operationHeader == null || operationHeader.isBlank()) {
+            if (!"tools/call".equals(extractMethod(body))) {
+                return null;
+            }
+            String toolName = extractToolName(body);
+            if (toolName != null && isUserDirectMutation(headers) && isWorkspaceUserMutationTool(toolName)) {
+                return startUserMutationLedger(toolName, body, headers, sessionId);
+            }
             return null;
         }
         try {

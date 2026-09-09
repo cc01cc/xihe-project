@@ -4,6 +4,7 @@ import { useSessionStore } from './session'
 import { useAuthStore } from './auth'
 import { api, apiPost, ApiError } from '../composables/api'
 import { readFilePreview } from '../composables/fileService'
+import { humanizeErrorCode } from '../lib/errorMessages'
 import { logger } from '../lib/logger'
 import type { FileNode, OpenFile, UploadItem } from '../types'
 
@@ -224,7 +225,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         modified: false,
       })
     } catch (e) {
-      treeError.value = `Failed to save ${path}: ${(e as Error).message}`
+      treeError.value = humanizeFileError(e, `保存 ${path} 失败`)
     }
   }
 
@@ -236,8 +237,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       await refreshAfterMutation(slash >= 0 ? path.substring(0, slash) : '')
       return true
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      treeError.value = `Failed to delete: ${message}`
+      const message = humanizeFileError(e, '删除失败')
+      treeError.value = message
       logger.warn('Delete failed: ' + message)
       return false
     }
@@ -250,11 +251,21 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       await refreshAfterMutation(parentDir)
       return true
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      treeError.value = `Failed to create file: ${message}`
+      const message = humanizeFileError(e, '创建文件失败')
+      treeError.value = message
       logger.warn('Create file failed: ' + message)
       return false
     }
+  }
+
+  function humanizeFileError(e: unknown, fallback: string): string {
+    if (e instanceof ApiError) {
+      const code = e.problem.code
+      const mapped = humanizeErrorCode(code, e.problem.detail)
+      if (mapped && mapped !== `${code}: ${e.problem.detail}`) return mapped
+      if (e.problem.detail) return `${fallback}: ${e.problem.detail}`
+    }
+    return `${fallback}: ${e instanceof Error ? e.message : String(e)}`
   }
 
   /** Reload the tree while keeping the current expansion state (M3 task 3.4). */

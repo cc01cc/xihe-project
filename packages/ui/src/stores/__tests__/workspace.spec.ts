@@ -110,7 +110,7 @@ describe('workspace store deleteNode (B-2 failure semantics)', () => {
     const store = useWorkspaceStore()
     const result = await store.deleteNode('missing.txt')
     expect(result).toBe(false)
-    expect(store.treeError).toContain('Failed to delete')
+    expect(store.treeError).toContain('删除失败')
   })
 
   it('returns false and records treeError on 500', async () => {
@@ -118,7 +118,7 @@ describe('workspace store deleteNode (B-2 failure semantics)', () => {
     const store = useWorkspaceStore()
     const result = await store.deleteNode('x.txt')
     expect(result).toBe(false)
-    expect(store.treeError).toContain('Failed to delete')
+    expect(store.treeError).toContain('沙盒未就绪')
   })
 })
 
@@ -142,7 +142,7 @@ describe('workspace store createFile (Q-3 same-mode fix)', () => {
     const store = useWorkspaceStore()
     const result = await store.createFile('', 'bad')
     expect(result).toBe(false)
-    expect(store.treeError).toContain('Failed to create file')
+    expect(store.treeError).toContain('创建文件失败')
   })
 })
 
