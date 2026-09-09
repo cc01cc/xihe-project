@@ -22,11 +22,11 @@ const portBaseRaw = 27000 + (Math.abs(hashString(e2eRunId)) % 1500)
 // `netsh int ipv4 show excludedportrange`). Service ports below are used
 // without probing, so shift the block when it would overlap the dead port.
 const portBase = portBaseRaw <= 27339 && 27339 < portBaseRaw + 13 ? portBaseRaw + 20 : portBaseRaw
-const uiPort = process.env.XIHE_UI_PORT ?? String(portBase)
-const cpPort = process.env.XIHE_CP_PORT ?? String(portBase + 1)
-const agentPort = process.env.XIHE_AGENT_PORT ?? String(portBase + 2)
-const runtimePort = process.env.XIHE_RUNTIME_PORT ?? String(portBase + 3)
-const pgPort = process.env.XIHE_PG_PORT ?? String(portBase + 4)
+let uiPort = process.env.XIHE_UI_PORT ?? String(portBase)
+let cpPort = process.env.XIHE_CP_PORT ?? String(portBase + 1)
+let agentPort = process.env.XIHE_AGENT_PORT ?? String(portBase + 2)
+let runtimePort = process.env.XIHE_RUNTIME_PORT ?? String(portBase + 3)
+let pgPort = process.env.XIHE_PG_PORT ?? String(portBase + 4)
 let fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? String(portBase + 10)
 let fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portBase + 11)
 let fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT ?? String(portBase + 12)
@@ -102,7 +102,12 @@ function reservePort(preferredPort) {
   })
 }
 
-async function reserveFixturePorts() {
+async function reserveHostPorts() {
+  if (!process.env.XIHE_UI_PORT) uiPort = await reservePort(uiPort)
+  if (!process.env.XIHE_CP_PORT) cpPort = await reservePort(cpPort)
+  if (!process.env.XIHE_AGENT_PORT) agentPort = await reservePort(agentPort)
+  if (!process.env.XIHE_RUNTIME_PORT) runtimePort = await reservePort(runtimePort)
+  if (!process.env.XIHE_PG_PORT) pgPort = await reservePort(pgPort)
   if (!process.env.XIHE_FAKE_OAUTH_PORT) fakeOAuthPort = await reservePort(fakeOAuthPort)
   if (!process.env.XIHE_FAKE_MCP_PORT) fakeMcpPort = await reservePort(fakeMcpPort)
   if (!process.env.XIHE_FAKE_LLM_PORT) fakeLlmPort = await reservePort(fakeLlmPort)
@@ -214,10 +219,13 @@ async function startIsolatedPostgres() {
     POSTGRES_USER: pgUser,
     POSTGRES_PASSWORD: pgPassword,
   }
-  await dockerCompose(['up', '-d', '--no-deps', '--wait', '--force-recreate', 'postgres'], {
+  const result = await dockerCompose(['up', '-d', '--no-deps', '--wait', '--force-recreate', 'postgres'], {
     env,
     stdio: 'inherit',
   })
+  if (result.code !== 0) {
+    throw new Error(`isolated PostgreSQL failed to start (exit=${result.code})`)
+  }
 }
 
 async function migrateIsolatedSchema() {
@@ -553,7 +561,7 @@ async function main() {
   console.log(`[e2e-host] runId=${e2eRunId} ports ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort} pg=${pgPort}`)
   console.log(`[e2e-host] isolated pg project=${pgProjectName} db=${pgDatabase} hostRoot=${hostRoot}`)
   if (skipRuntime) console.log('[e2e-host] --skip-runtime set; this run validates chat-only paths without Sandbox execution')
-  await reserveFixturePorts()
+  await reserveHostPorts()
   await startFixtures()
   if (externalServer) {
     console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')

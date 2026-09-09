@@ -1,7 +1,7 @@
 {
   "$schema": "./PLAN-269-evidence.schema.json",
   "plan": "PLAN-269",
-  "generatedAt": "2026-09-09T03:23:28.000Z",
+  "generatedAt": "2026-09-09T06:00:58.000Z",
   "browserConsumer": true,
   "browser": {
     "channel": "chrome-beta",
@@ -105,6 +105,20 @@
       "persistence": "user-preference value was visible after page reload; MCP OAuth state reached authorized",
       "cleanup": "isolated PostgreSQL container/volume/network, native services, ports and host root removed",
       "artifacts": ["e2e/real/settings-interactions.spec.ts-snapshots/", "test-results/.last-run.json"]
+    },
+    {
+      "id": "real-operation-audit",
+      "profile": "real-host",
+      "command": "node scripts/e2e-host.mjs --llm-mode=mock e2e/real/audit.spec.ts",
+      "status": "passed",
+      "testCount": 1,
+      "viewports": ["1920x1080"],
+      "pageStates": ["chat-sent", "audit-list", "audit-lifecycle-trace"],
+      "actions": ["register", "navigate", "fill", "send", "open-trace"],
+      "requestResponse": "Real browser Chat submission reached native UI, CP, Agent and SSE; Audit list and trace requests returned the durable operation and lifecycle-event projection",
+      "persistence": "Real CP/Agent/PostgreSQL operation root, ChatRun and message state was read through the User Audit UI; Agent used the built-in deterministic mock LLM provider",
+      "cleanup": "isolated PostgreSQL container/volume/network, native services, ports, browser context and host root removed; post-run process/container/network/port checks were clean",
+      "artifacts": ["test-results/e2e-real-audit--host-PLAN--c6f10-rsists-Chat-operation-trace/plan-281-real-audit-after-trace.png"]
     }
   ],
   "uncoveredFlows": [

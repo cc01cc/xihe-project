@@ -153,7 +153,7 @@ onMounted(() => {
             <div><dt class="text-xs text-muted-foreground">{{ t('settings.auditStatus') }}</dt><dd class="mt-1 font-medium" :class="statusClass(selectedTrace.operation.status)">{{ selectedTrace.operation.status }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">{{ t('settings.auditStarted') }}</dt><dd class="mt-1">{{ formatTime(selectedTrace.operation.startedAt) }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">{{ t('settings.auditKind') }}</dt><dd class="mt-1">{{ selectedTrace.operation.kind }}</dd></div>
-            <div><dt class="text-xs text-muted-foreground">{{ t('settings.auditRun') }}</dt><dd class="mt-1 truncate" :title="selectedTrace.operation.runId || ''">{{ selectedTrace.operation.runId || t('settings.auditNotAvailable') }}</dd></div>
+            <div class="col-span-2"><dt class="text-xs text-muted-foreground">{{ t('settings.auditRun') }}</dt><dd class="mt-1 break-all font-mono text-xs" :title="selectedTrace.operation.runId || ''">{{ selectedTrace.operation.runId || t('settings.auditNotAvailable') }}</dd></div>
           </div>
 
           <div>
@@ -180,6 +180,17 @@ onMounted(() => {
               <li v-for="attempt in selectedTrace.attempts" :key="attempt.id" class="flex items-center justify-between gap-3 border-l-2 border-border pl-3 text-sm">
                 <span><span class="font-medium">{{ attempt.stage }}</span> <span class="text-xs text-muted-foreground">{{ attempt.module }} #{{ attempt.retryNo }}</span></span>
                 <span class="shrink-0 text-xs" :class="statusClass(attempt.status)">{{ attempt.status }} · {{ formatDuration(attempt.durationMs) }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div data-testid="settings-audit-events">
+            <h3 class="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{{ t('settings.auditEvents') }}</h3>
+            <div v-if="selectedTrace.events.length === 0" class="text-sm text-muted-foreground">{{ t('settings.auditNoEvents') }}</div>
+            <ul v-else class="space-y-2">
+              <li v-for="event in selectedTrace.events" :key="event.id" class="flex items-center justify-between gap-3 border-l-2 border-border pl-3 text-sm">
+                <span class="font-mono text-xs">{{ event.eventType }}</span>
+                <span class="shrink-0 text-xs text-muted-foreground">{{ event.state }} · {{ event.actor }}</span>
               </li>
             </ul>
           </div>

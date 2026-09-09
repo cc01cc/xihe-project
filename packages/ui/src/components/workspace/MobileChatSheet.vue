@@ -38,7 +38,7 @@ defineExpose({ toggle })
           <SheetDescription>在当前 workspace 中与 Agent 对话。工具绑定当前 workspace。</SheetDescription>
         </SheetHeader>
         <div class="flex-1 min-h-0 flex flex-col">
-          <ChatPanel :session-id="sessionId" tool-mode="workspace" />
+          <ChatPanel v-if="open" :session-id="sessionId" tool-mode="workspace" />
         </div>
       </SheetContent>
     </Sheet>
