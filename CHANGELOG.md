@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- post-290 加固三线（PLAN-292 M1-M3）：① **Grant 哈希匹配**——`approval_requests.arguments_hash`（V9 migration）+ `consumeApprovedGrant` canonical SHA-256 匹配优先（Python↔Java 同向量 fixture，无 hash 存量行走 legacy JSON 比较，仍 fail-closed），大参数 `write_file` 批准后不再因 preview 截断 409；② **工具面收敛**——契约测试新增 `INTERNAL_ONLY` 集（`apply_patch/create_snapshot/revert_snapshot` 保持 require_approval 但不上 Gateway，分类全量记账），Policy 死名对齐 Runtime 实现（`snapshot/revert→create_snapshot/revert_snapshot`），`write_file_binary` 死配置从 Policy/Proxy/Agent 三处清理，`read_file_range` 接通沙盒二进制安全实现（16MiB 预览上限；修复 Gateway 侧文本重复实现且硬编码 `is_binary:false` 的漂移）；③ **旅程 C 最小可恢复**——`GET /api/v1/chat/runs/{runId}`（所有权校验、leaseExpired、活跃审批派生 `awaiting_approval`）+ UI 恢复三态横幅（会话已恢复/任务已取消/请重试，SSE 错误与页面挂载自动触发）+ 刷新后 pending approval 重放可继续 approve/reject。修复 PLAN-290 收尾遗留回归：`McpProxyTest` 过时断言（补 Agent run header 表征 Agent 路径 + 新增 B2 用户直连旁路用例）、`WorkspaceServiceTest` 与 dev 栈的环境耦合（钉死不可达 runtime URL）。`journey-c.spec.ts` Host 用例（T6 图片预览恒跑；H2/恢复链需 `XIHE_E2E_LLM_MODE=write_file` fake LLM 标记模式）。
 ### Changed
 
 - 数据库 Schema 一次性重新基线化（PLAN-280）：active Flyway 链收敛为单一 `V1__init_schema.sql`（21 表，原生 UUID 主键、`TIMESTAMPTZ`、显式命名 FK/CHECK/UNIQUE/索引与 `ON DELETE`）；`ddl-auto=validate`、`baseline-on-migrate=false`，Flyway 成为唯一 schema manager。**旧本地数据库必须 reset（`mise run dev:reset -- -Reset`），不再兼容**。修复 `spring-boot-flyway` 模块缺失导致的 Flyway 自动配置失效；Testcontainers 镜像切换 `pgvector/pgvector:pg17`。Java 层：@Id 主键统一 `UUID` 类型，FK 列保持 `String` + `UuidStringConverter`，Repository/Service/Controller 同步适配。
+
 ### Added
 
 - 用户旅程 v1 闭环（PLAN-290 Journey A/B）：Agent MCP 本地 hop 超时（审批等待不计入）+ 禁用 Streamable HTTP GET server stream（消除 CP 405 竞态）+ workspace 路径 leading `/` 归一化；Cancel 三态 `RunCancelRegistry` + `POST /internal/v1/agent/runs/{id}/cancel`；CP 审批加固（details≤512、非法 requestId 400、`dispatch_unknown` 可重试）+ Gateway 工具 registry contract（`web_fetch` auto-allow）；用户直连 MCP mutation 免 Agent 审批并记 Ledger `actorType=user`/`kind=tool_call`；UI `errorMessages` 人话错误（RUNTIME_ERROR→沙盒未就绪等）；`journey-a.spec.ts` Host 用例；连续截图走查 A2/A3/A5 PASS、A4 短 TTL 过期 PASS。Agent unit 231 / UI vitest 345 / CP 定向 Approval+Policy+Rewriter 全绿。

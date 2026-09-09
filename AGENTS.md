@@ -257,14 +257,14 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
 - **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU（PLAN-097）。OOM 时按需上调
-- **runtime 测试现状**: 全量 `cargo test` 可编译执行；当前库测试 137 通过，集成测试按 Docker 环境执行并有明确 ignored 的 CP 实时测试（PLAN-235 M3，2026-09-03）。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
+- **runtime 测试现状**: 全量 `cargo test` 可编译执行；当前库测试 142 通过（含 read_file_range 二进制安全读取，PLAN-292 T6），集成测试按 Docker 环境执行并有明确 ignored 的 CP 实时测试（PLAN-235 M3，2026-09-03）。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
 - **Runtime 执行边界（PLAN-235）**: Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`--oneshot` 单帧 EOF），无 HTTP 通道/instance token/长驻 worker；background job 为 `/tmp/xihe-jobs` 状态文件约定（opaque `jobId` + `cancel_background_process`）；FS 写路径经 rustix openat2 helper
-- **Safe Coding Loop（PLAN-275）**: Runtime mutation core 使用 snapshot manifest + pre/post content hash + 多文件 patch 失败回滚；Agent MCP interceptor 通过一次性 durable approval grant 恢复批准后的 tool dispatch，grant 缺失/不匹配/重复消费仍 fail-closed，真实 Host evidence 待补
+- **Safe Coding Loop（PLAN-275）**: Runtime mutation core 使用 snapshot manifest + pre/post content hash + 多文件 patch 失败回滚；Agent MCP interceptor 通过一次性 durable approval grant 恢复批准后的 tool dispatch，grant 缺失/不匹配/重复消费仍 fail-closed；PLAN-292 M1 起匹配键为 canonical arguments SHA-256（`arguments_hash`，V9），preview 截断不再影响批准后执行
 - **Vue i18n JSON placeholder**: `t()` 消息中不可含 `{...}`
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
 - **Agent MCP init 按需执行**: 纯 chat 即使带 current `workspaceId` 也不连接 CP MCP；只有明确需要 Workspace tool 的请求才触发工具发现和 Sandbox materialization。不得把一个 Workspace 的工具复用于其他 Workspace。
 - **dev:full/T3 拓扑边界**: 当前验证主线是 Windows `dev:host`。完整 Compose E2E 仍需要为 Runtime 提供 Docker Engine socket 和容器内 WorkspaceStorage 映射；未完成前不得将 `dev:full`/T3 的 workspace、MCP 和截图失败归因于 host v1。
-- **数据库必须 fresh baseline（PLAN-280）**：active Flyway 链以 `V1__init_schema.sql` 为 baseline，并包含后续正式的 V2-V7 migrations（Ledger、Job、Snapshot、Task Continuity、approval grant consumption）；`ddl-auto=validate`、`baseline-on-migrate=false`。旧本地数据库会被拒绝，恢复方式为 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内。
+- **数据库必须 fresh baseline（PLAN-280）**：active Flyway 链以 `V1__init_schema.sql` 为 baseline，并包含后续正式的 V2-V9 migrations（Ledger、Job、Snapshot、Task Continuity、approval grant consumption、arguments_hash）；`ddl-auto=validate`、`baseline-on-migrate=false`。旧本地数据库会被拒绝，恢复方式为 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内。
 - **dev seed 密码不可知**: `DataSeeder` 为 `admin@xihe.local` 生成的随机密码不打印、不落日志，`dev:reset` 重建库后无法用旧凭据登录；恢复方式为 `mise run reset-admin`（PLAN-229）。
 - **Runtime 生命周期技术债**: `WorkspaceRegistry` 与 `WorkspaceManager` 已部分收敛（idle reaper 路由到 WorkspaceManager、Strict 统一走 Docker 容器），但 REST 文件操作仍直接访问 host filesystem（未走 executor Docker exec），cross-map 一致性靠周期性检查兜底。后续应完全消除 WorkspaceManager 直接 Docker 操作并统一 REST/MCP 执行路径。
 - **`dev:host` 原生编排**: `mise run dev:host` 先以 Docker 启动并等待 PostgreSQL，再由 mise 并行管理原生 CP/Agent/Runtime/UI；`mise run dev:host:watch` 通过 Node watcher 检查四个健康端点并在任务组失败后重启。`scripts/dev-host.ps1` 仅保留兼容的检查/包装入口。`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根，默认 `A03-xihe\.xihe-workspaces`
@@ -272,6 +272,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Visual evidence boundary**: `toHaveScreenshot()` 只证明当前画面接近 baseline；人工 UI 审查还需读取 actual/diff、检查 DOM/computed style、overflow、console/pageerror 和交互状态。当前 A03 `*-snapshots/*.png` 按 `.gitignore` 规则作为本地生成工件处理，不能声称为 fresh checkout 可复现的 Git baseline。
 - **E2E evidence matrix**: 当前 profile、readiness、测试计数、失败分类和清理证据统一记录在 workspace 私有 internal 层（不在本仓库分发）；更新结果必须区分 Compose、host 和 manual，不得混合统计。
 - **PLAN-290 Journey A/B（2026-09-09 完成）**: Agent MCP 本地 hop 超时默认 ~30s（审批等待不计入）；禁用 Streamable HTTP GET server stream（CP 无 server-init SSE）；用户直连 MCP mutation 免 Agent 审批并记 `actorType=user`；Agent 单 workspace 绑定，换 workspace 须重启 Agent；Host 验收跑法：先 `restart-agent` 再 journey 探针/spec（retries=0）。详细挂起见 `plans/PLAN-290-XH-user-journeys-v1.md` §7。
+- **PLAN-292 post-290（2026-09-10）**: Grant 匹配键 = canonical arguments SHA-256（Agent `redact_approval_details` 与 CP `matchesArgumentsHash` 共享同向量）；`apply_patch/create_snapshot/revert_snapshot` 为 internal-only（契约测试钉死，Agent 名单不含）；`read_file_range` 为二进制安全读取（光栅图预览走 base64 data URL，svg 走 utf8，16MiB 上限）；断线恢复 `GET /api/v1/chat/runs/{runId}` + UI 恢复三态横幅；journey-c Host spec 需 `XIHE_E2E_LLM_MODE=write_file`。
 
 详见 `docs/i18n/zh-Hans/DEV-018-known-issues.md`。覆盖率缺口 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。
 
