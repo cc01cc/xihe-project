@@ -86,6 +86,26 @@ test.describe('@host Journey A — AI write_file approve/reject', () => {
       .toContain(approveContent)
     await page.screenshot({ path: 'journey-a-after-approve.png', fullPage: false })
 
+    // A5: user-facing ledger shows write_file tool item
+    const opsRes = await request.get(`${CP_URL}/api/v1/operations?size=20`, {
+      headers: authHeaders,
+    })
+    expect(opsRes.ok(), `operations list ${opsRes.status()}`).toBeTruthy()
+    const ops = (await opsRes.json()) as { operations: Array<{ id: string; actorType?: string }> }
+    expect(ops.operations.length).toBeGreaterThan(0)
+    const traceRes = await request.get(`${CP_URL}/api/v1/operations/${ops.operations[0].id}`, {
+      headers: authHeaders,
+    })
+    expect(traceRes.ok(), `trace ${traceRes.status()}`).toBeTruthy()
+    const trace = (await traceRes.json()) as {
+      items?: Array<{ toolName?: string; policyDecision?: string }>
+    }
+    const toolNames = (trace.items ?? []).map((i) => i.toolName)
+    expect(
+      toolNames,
+      `expected write_file in trace, got ${JSON.stringify(toolNames)}`,
+    ).toContain('write_file')
+
     // Settle: first write_file may still be finishing LangGraph after FS write
     // (grant response / tool_result). Avoid CHAT_IN_PROGRESS on next send.
     await page.waitForTimeout(5000)

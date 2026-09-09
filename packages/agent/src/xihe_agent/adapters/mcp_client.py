@@ -22,7 +22,9 @@ DEFAULT_MAX_RETRIES = 0
 # Local MCP (CP→Runtime) must return in seconds; a stuck GET/POST is a bug.
 # Approval wait is user-bound and must NOT count against this budget — see
 # ApprovalMCPInterceptor: short timeout applies only to the post-grant HTTP call.
-DEFAULT_MCP_TOOL_TIMEOUT_S = float(os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S", "15"))
+# Post-grant MCP hop: Runtime write can outlast a bare 10–15s under Docker
+# exec; keep a hard bound but allow grant→forward→result to complete.
+DEFAULT_MCP_TOOL_TIMEOUT_S = float(os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S", "30"))
 APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id"
 _ACTIVE_CONTEXT: contextvars.ContextVar[AgentContext | None] = contextvars.ContextVar(
     "xihe_active_mcp_context", default=None
