@@ -5,6 +5,8 @@ import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -28,7 +30,8 @@ class ApprovalServiceTest {
     private final ChatApprovalRepository approvals = mock(ChatApprovalRepository.class);
     private final ChatRunRepository runs = mock(ChatRunRepository.class);
     private final ApprovalAgentClient agent = mock(ApprovalAgentClient.class);
-    private final ApprovalService service = new ApprovalService(approvals, runs, agent);
+    private final OperationService operationService = mock(OperationService.class);
+    private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(), operationService);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
@@ -58,6 +61,8 @@ class ApprovalServiceTest {
         ChatRun run = runningRun();
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(run));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
+        UUID operationId = UUID.randomUUID();
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(operationId);
 
         service.recordPending(approvalPayload(TEST_SESSION),
                 TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
@@ -67,6 +72,8 @@ class ApprovalServiceTest {
         assertEquals(TEST_REQUEST_ID, captor.getValue().getRequestId().toString());
         assertEquals("pending", captor.getValue().getState());
         assertEquals(TEST_USER, captor.getValue().getUserId());
+        verify(operationService).appendApprovalItem(eq(operationId), eq(TEST_REQUEST_ID),
+                eq("request_approval"), any());
     }
 
     @Test
@@ -100,6 +107,7 @@ class ApprovalServiceTest {
 
         assertEquals("accepted", response.get("status"));
         verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any());
+        verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, true);
         verify(approvals, never()).saveAndFlush(any());
     }
 
@@ -129,6 +137,47 @@ class ApprovalServiceTest {
         assertEquals(1, replay.size());
         assertEquals(TEST_REQUEST_ID, replay.get(0).get("requestId").toString());
         assertEquals(true, replay.get(0).get("replayed"));
+    }
+
+    @Test
+    void consumeApprovedGrantRequiresExactToolAndArguments() {
+        ChatApproval approval = new ChatApproval(
+                TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
+                "write_file", "Execute write_file",
+                "{\"tool\":\"write_file\",\"arguments\":{}}",
+                "approved", Instant.now().plusSeconds(60), null, "require_approval");
+        approval.setApproved(true);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
+                eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(1);
+
+        boolean consumed = service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file",
+                "{\"jsonrpc\":\"2.0\",\"params\":{\"arguments\":{}},\"id\":1}");
+
+        assertTrue(consumed);
+        verify(approvals).consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
+                eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class));
+    }
+
+    @Test
+    void consumeApprovedGrantRejectsReplayAndMismatchedArguments() {
+        ChatApproval approval = new ChatApproval(
+                TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
+                "write_file", "Execute write_file",
+                "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"a\"}}",
+                "approved", Instant.now().plusSeconds(60), null, "require_approval");
+        approval.setApproved(true);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file",
+                "{\"params\":{\"arguments\":{\"path\":\"b\"}}}"));
+        when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
+                eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(0);
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file",
+                "{\"params\":{\"arguments\":{\"path\":\"a\"}}}"));
     }
 
     private ChatApproval pending(Instant expiresAt) {

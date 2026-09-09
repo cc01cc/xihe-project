@@ -60,9 +60,17 @@ class LCToolAdapter(BaseTool):
     async def _arun(self, **kwargs: Any) -> str:
         call_id = str(uuid4())
         await self._append_tool_called(call_id, kwargs)
-        result = await self._tool.execute(kwargs, self._context)
-        await self._append_tool_result(call_id, result)
-        return str(result.get("content", result))
+        previous_item_id = self._context.metadata.get("operationItemId")
+        self._context.metadata["operationItemId"] = call_id
+        try:
+            result = await self._tool.execute(kwargs, self._context)
+            await self._append_tool_result(call_id, result)
+            return str(result.get("content", result))
+        finally:
+            if previous_item_id is None:
+                self._context.metadata.pop("operationItemId", None)
+            else:
+                self._context.metadata["operationItemId"] = previous_item_id
 
     def _run(self, **kwargs: Any) -> str:
         raise NotImplementedError("Use async run")
@@ -80,6 +88,8 @@ class LCToolAdapter(BaseTool):
                         "call_id": call_id,
                         "tool_name": self._tool.spec.name,
                         "tool_input": input,
+                        "operation_id": self._context.metadata.get("operationId"),
+                        "operation_item_id": call_id,
                     },
                     created_at=datetime.now(UTC),
                 )
@@ -102,6 +112,8 @@ class LCToolAdapter(BaseTool):
                         "call_id": call_id,
                         "tool_name": self._tool.spec.name,
                         "result": result,
+                        "operation_id": self._context.metadata.get("operationId"),
+                        "operation_item_id": call_id,
                     },
                     created_at=datetime.now(UTC),
                 )

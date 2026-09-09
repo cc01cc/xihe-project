@@ -56,4 +56,17 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
     @Query("update ChatApproval a set a.state = :state, a.decidedAt = :at, a.updatedAt = :at "
             + "where a.requestId = :requestId and a.state = 'dispatching'")
     int markDecided(@Param("requestId") UUID requestId, @Param("state") String state, @Param("at") Instant at);
+
+    @Transactional
+    @Modifying
+    @Query("update ChatApproval a set a.grantConsumedAt = :at, a.updatedAt = :at "
+            + "where a.requestId = :requestId and a.userId = :userId and a.workspaceId = :workspaceId "
+            + "and a.sessionId = :sessionId and a.tool = :tool and a.state = 'approved' "
+            + "and a.grantConsumedAt is null")
+    int consumeApprovedGrant(@Param("requestId") UUID requestId,
+            @Param("userId") String userId,
+            @Param("workspaceId") String workspaceId,
+            @Param("sessionId") String sessionId,
+            @Param("tool") String tool,
+            @Param("at") Instant at);
 }

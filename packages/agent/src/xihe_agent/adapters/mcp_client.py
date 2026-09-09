@@ -1,16 +1,94 @@
 import asyncio
+import contextvars
+import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from loguru import logger
 
+from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTerminalError
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 
 DEFAULT_RETRY_INTERVAL = 2.0
 DEFAULT_MAX_RETRIES = 0
+APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id"
+_ACTIVE_CONTEXT: contextvars.ContextVar[AgentContext | None] = contextvars.ContextVar(
+    "xihe_active_mcp_context", default=None
+)
+REQUIRE_APPROVAL_TOOLS = frozenset({
+    "write_file",
+    "write_file_binary",
+    "edit_file",
+    "delete_file",
+    "delete_directory",
+    "move_file",
+    "copy_file",
+    "mkdir",
+    "execute_command",
+    "start_background_process",
+    "cancel_background_process",
+    "apply_patch",
+    "create_snapshot",
+    "revert_snapshot",
+})
+
+
+class ApprovalMCPInterceptor:
+    """Request approval before a sensitive MCP call and attach its one-shot grant."""
+
+    def __init__(self, approval_tool: ApprovalAgentTool) -> None:
+        self._approval_tool = approval_tool
+
+    async def __call__(
+        self,
+        request: MCPToolCallRequest,
+        handler: Callable[[MCPToolCallRequest], Awaitable[Any]],
+    ) -> Any:
+        context = _ACTIVE_CONTEXT.get()
+        headers: dict[str, str] = {}
+        if context is not None:
+            metadata = context.metadata
+            session_id = metadata.get("sessionId")
+            run_id = metadata.get("runId")
+            operation_id = metadata.get("operationId")
+            if session_id:
+                headers["X-Session-Id"] = str(session_id)
+            if run_id:
+                headers["X-Chat-Run-Id"] = str(run_id)
+            if operation_id:
+                headers["X-Operation-Id"] = str(operation_id)
+            operation_item_id = metadata.get("operationItemId")
+            if operation_item_id:
+                headers["X-Operation-Item-Id"] = str(operation_item_id)
+
+        if request.name in REQUIRE_APPROVAL_TOOLS:
+            if context is None:
+                return await handler(request.override(headers=headers or None))
+            details = json.dumps(
+                {"tool": request.name, "arguments": request.args},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            approval = await self._approval_tool.execute(
+                {
+                    "tool": request.name,
+                    "action": f"Execute {request.name}",
+                    "details": details,
+                },
+                context,
+            )
+            grant_id = approval.get("requestId")
+            if not isinstance(grant_id, str) or not grant_id:
+                raise ApprovalTerminalError("Approval did not return a grant requestId")
+            headers[APPROVAL_GRANT_HEADER] = grant_id
+
+        return await handler(request.override(headers=headers or None))
 
 
 class MCPAgentTool(BaseAgentTool):
@@ -25,12 +103,17 @@ class MCPAgentTool(BaseAgentTool):
         return self._tool
 
     async def execute(self, input: dict[str, Any], context: AgentContext) -> dict[str, Any]:
+        context_token = _ACTIVE_CONTEXT.set(context)
         try:
             result = await self._tool.ainvoke(input)
             return {"content": str(result)}
+        except ApprovalTerminalError:
+            raise
         except Exception as e:
             logger.warning("MCP tool {} failed: {}", self._tool.name, e)
             return {"content": f"Tool error: {e}"}
+        finally:
+            _ACTIVE_CONTEXT.reset(context_token)
 
     @property
     def spec(self) -> ToolSpec:
@@ -55,6 +138,7 @@ class MCPClientManager:
         server_name: str = "cp",
         workspace_id: str | None = None,
         api_token: str | None = None,
+        approval_tool: ApprovalAgentTool | None = None,
         retry_interval: float = DEFAULT_RETRY_INTERVAL,
         max_retries: int = DEFAULT_MAX_RETRIES,
     ):
@@ -62,6 +146,7 @@ class MCPClientManager:
         self.server_name = server_name
         self.workspace_id = workspace_id
         self.api_token = api_token
+        self.approval_tool = approval_tool
         self.retry_interval = retry_interval
         self.max_retries = max_retries
         self._client: MultiServerMCPClient | None = None
@@ -101,7 +186,12 @@ class MCPClientManager:
                         url=self.cp_url,
                         headers=headers,
                     ),
-                }
+                },
+                tool_interceptors=(
+                    [ApprovalMCPInterceptor(self.approval_tool)]
+                    if self.approval_tool is not None
+                    else []
+                ),
             )
             raw_tools = await self._client.get_tools(server_name=self.server_name)
             self._tools = [MCPAgentTool(t) for t in raw_tools]

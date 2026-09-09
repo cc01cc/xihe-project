@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
@@ -22,6 +23,10 @@ import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
+import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -53,6 +58,7 @@ public class McpProxyController {
     private final RequestRewriter rewriter;
     private final PolicyEngine policy;
     private final AuditLogger audit;
+    private final ApprovalService approvalService;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sse;
     private final ConfigJpaRepository configRepo;
@@ -72,24 +78,28 @@ public class McpProxyController {
     private final Map<String, McpSessionBinding> mcpSessionBindings = new ConcurrentHashMap<>();
     private final WorkspaceService workspaceService;
     private final SessionRepository sessionRepository;
+    private final OperationService operationService;
 
     public McpProxyController(
             RequestRewriter rewriter,
             PolicyEngine policy,
             AuditLogger audit,
+            ApprovalService approvalService,
             ObjectMapper objectMapper,
             SseEmitterManager sse,
             ConfigJpaRepository configRepo,
             McpServerRepository mcpServers,
             McpToolAliasRepository aliases,
             WorkspaceService workspaceService,
-            SessionRepository sessionRepository) {
+            SessionRepository sessionRepository,
+            OperationService operationService) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
         this.rewriter = rewriter;
         this.policy = policy;
         this.audit = audit;
+        this.approvalService = approvalService;
         this.objectMapper = objectMapper;
         this.sse = sse;
         this.configRepo = configRepo;
@@ -97,6 +107,7 @@ public class McpProxyController {
         this.aliases = aliases;
         this.workspaceService = workspaceService;
         this.sessionRepository = sessionRepository;
+        this.operationService = operationService;
     }
 
     @PostMapping("/api/v1/mcp")
@@ -421,12 +432,18 @@ public class McpProxyController {
         }
 
         if (decision.getResult() == PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL) {
-            sse.send(sessionId, "tool_exec_approval_required",
-                Map.of("tool", toolName, "reason", decision.getReason()));
-            audit.record(sessionId, toolName, "approval_required", decision.getReason());
-            // Approval flow: CP stores pending approval, sends approval_request via SSE,
-            // waits for user decision before forwarding to Runtime.
-            // For v1 M1, we log the requirement but still forward (approval gate in M1.2).
+            String grantId = headers.getFirst("X-Xihe-Approval-Request-Id");
+            if (grantId != null && approvalService.consumeApprovedGrant(
+                    grantId, access.userId(), wsId, sessionId, toolName, body)) {
+                audit.record(sessionId, toolName, "approval_grant_consumed", grantId);
+            } else {
+                sse.send(sessionId, "tool_exec_approval_required",
+                    Map.of("tool", toolName, "reason", decision.getReason()));
+                audit.record(sessionId, toolName, "approval_required", decision.getReason());
+                // Fail closed until a matching, unused durable approval grant exists.
+                return problem(HttpStatus.CONFLICT, "APPROVAL_REQUIRED",
+                        "Tool execution requires approval before dispatch");
+            }
         }
 
         if ("__system__".equals(serverId)) {
@@ -447,6 +464,7 @@ public class McpProxyController {
     private ResponseEntity<String> forwardToRuntime(
             String wsId, String serverId, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
+        LedgerAttempt ledgerAttempt = null;
         try {
             // PLAN-242 M2: McpServer rows win over stdio config keys. A serverId
             // present in the table is a remote MCP server, never a bridge.
@@ -456,6 +474,7 @@ public class McpProxyController {
                     return forwardRemoteToRuntime(wsId, remote.get(), body, headers, sessionId, access);
                 }
             }
+            ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
             String path;
             if (serverId == null) {
                 path = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
@@ -501,6 +520,7 @@ public class McpProxyController {
             }
 
             requestBuilder.header("X-Workspace-Id", wsId);
+            copyOperationHeaders(headers, requestBuilder);
 
             String requestMethod = extractMethod(body);
             if (requestMethod != null && !requestMethod.isEmpty()) {
@@ -519,6 +539,10 @@ public class McpProxyController {
                 .build();
 
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
+
+            finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);
+            appendMcpExtension(ledgerAttempt, serverId, body, response.statusCode(), response.body(), null,
+                    protocolVersion);
 
             audit.record(sessionId, extractMethod(body), "allow", response.body());
 
@@ -541,11 +565,131 @@ public class McpProxyController {
             return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
 
         } catch (Exception e) {
+            // A transport failure after dispatch cannot prove whether the tool ran.
+            finishLedgerAttempt(ledgerAttempt, 502, "MCP_FORWARD_UNKNOWN");
+            appendMcpExtension(ledgerAttempt, serverId, body, 502, null, "MCP_FORWARD_UNKNOWN", null);
             logger.error("MCP forward failed: wsId={} serverId={} method={}", wsId, serverId, extractMethod(body), e);
             audit.record(sessionId, extractMethod(body), "error", e.getMessage());
             return problem(HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime MCP request failed");
         }
     }
+
+    private LedgerAttempt startLedgerAttempt(String body, HttpHeaders headers, String sessionId) {
+        String operationHeader = headers.getFirst("X-Operation-Id");
+        if (operationHeader == null || operationHeader.isBlank()
+                || !"tools/call".equals(extractMethod(body))) {
+            return null;
+        }
+        try {
+            UUID operationId = UUID.fromString(operationHeader);
+            String toolName = extractToolName(body);
+            if (toolName == null || toolName.isBlank()) {
+                return null;
+            }
+            String toolCallId = headers.getFirst("X-Operation-Item-Id");
+            if (toolCallId == null || toolCallId.isBlank()) {
+                toolCallId = UUID.nameUUIDFromBytes(body.getBytes(StandardCharsets.UTF_8)).toString();
+            } else {
+                try {
+                    toolCallId = UUID.fromString(toolCallId).toString();
+                } catch (IllegalArgumentException e) {
+                    toolCallId = UUID.nameUUIDFromBytes(toolCallId.getBytes(StandardCharsets.UTF_8)).toString();
+                }
+            }
+            String approvalRequestId = headers.getFirst("X-Xihe-Approval-Request-Id");
+            OperationItem item = operationService.findItemByApprovalRequestId(approvalRequestId);
+            if (item == null) {
+                item = operationService.appendItem(
+                        operationId, toolCallId, null, "tool_call", toolName, "mcp",
+                        safeLedgerPreview(body), null, null);
+            }
+            if (List.of("completed", "failed", "aborted", "cancelled", "ambiguous")
+                    .contains(item.getStatus())) {
+                return null;
+            }
+            if ("pending".equals(item.getStatus())) {
+                operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+            }
+            String requestId = headers.getFirst("X-Request-Id");
+            OperationAttempt attempt = operationService.startAttempt(
+                    item.getId(), "cp_forward", null, "cp", requestId);
+            return new LedgerAttempt(item.getId(), attempt.getId());
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=operation_mcp_attempt_start_failed sessionId={}", sessionId, e);
+            throw e;
+        }
+    }
+
+    private void finishLedgerAttempt(LedgerAttempt ledgerAttempt, int httpStatus, String errorCode) {
+        if (ledgerAttempt == null) {
+            return;
+        }
+        try {
+            boolean succeeded = httpStatus >= 200 && httpStatus < 300 && errorCode == null;
+            boolean unknown = errorCode != null && errorCode.endsWith("_UNKNOWN");
+            operationService.finishAttempt(ledgerAttempt.attemptId(), unknown ? "unknown" : succeeded ? "succeeded" : "failed",
+                    httpStatus, errorCode, null, null);
+            if (!succeeded) {
+                operationService.transitionItem(ledgerAttempt.itemId(), unknown ? "ambiguous" : "failed",
+                        null, null, null, errorCode);
+            }
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=operation_mcp_attempt_finish_failed attemptId={}",
+                    ledgerAttempt.attemptId(), e);
+        }
+    }
+
+    private void appendMcpExtension(LedgerAttempt ledgerAttempt, String serverId, String requestBody,
+                                    int responseStatus, String responseBody, String mcpErrorCode,
+                                    String protocolVersion) {
+        if (ledgerAttempt == null) {
+            return;
+        }
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("protocolVersion", protocolVersion == null ? "2026-07-28" : protocolVersion);
+            payload.put("transport", "http");
+            payload.put("serverId", serverId);
+            payload.put("method", extractMethod(requestBody));
+            payload.put("backendToolName", extractToolName(requestBody));
+            payload.put("requestHash", sha256(requestBody));
+            payload.put("responseHash", responseBody == null ? null : sha256(responseBody));
+            payload.put("responseStatus", responseStatus);
+            payload.put("mcpErrorCode", mcpErrorCode);
+            payload.put("requestBytes", requestBody == null ? 0 : requestBody.getBytes(StandardCharsets.UTF_8).length);
+            payload.put("responseBytes", responseBody == null ? 0 : responseBody.getBytes(StandardCharsets.UTF_8).length);
+            operationService.appendExtension(null, ledgerAttempt.attemptId(), "mcp_call", 1,
+                    objectMapper.writeValueAsString(payload));
+        } catch (Exception e) {
+            logger.error("[LIFECYCLE] service=cp event=operation_mcp_extension_failed attemptId={}",
+                    ledgerAttempt.attemptId(), e);
+        }
+    }
+
+    private String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
+    }
+
+    private String safeLedgerPreview(String body) {
+        String redacted = LogRedactor.redact(body == null ? "" : body);
+        return redacted.length() <= 4096 ? redacted : redacted.substring(0, 4096);
+    }
+
+    private void copyOperationHeaders(HttpHeaders headers, HttpRequest.Builder builder) {
+        for (String headerName : List.of("X-Operation-Id", "X-Operation-Item-Id", "X-Operation-Attempt-Id")) {
+            String value = headers.getFirst(headerName);
+            if (value != null && !value.isBlank()) {
+                builder.header(headerName, value);
+            }
+        }
+    }
+
+    private record LedgerAttempt(UUID itemId, UUID attemptId) {}
 
     private long nextGeneration(String wsId) {
         return toolGenerations.computeIfAbsent(wsId, key -> new AtomicLong()).incrementAndGet();
@@ -589,6 +733,7 @@ public class McpProxyController {
             String wsId, McpServer server, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
         String method = extractMethod(body);
+        LedgerAttempt ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
         try {
             ObjectNode request = objectMapper.createObjectNode();
             request.put("endpoint", server.getEndpoint());
@@ -624,16 +769,21 @@ public class McpProxyController {
 
             String target = runtimeBaseUrl + "/internal/v1/runtime/remote-mcp/"
                     + wsId + "/" + server.getId() + "/call";
-            HttpRequest forwardRequest = HttpRequest.newBuilder()
+            HttpRequest.Builder forwardBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(target))
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json")
                     .header("Authorization", "Bearer " + runtimeServiceToken)
-                    .header("X-Workspace-Id", wsId)
+                    .header("X-Workspace-Id", wsId);
+            copyOperationHeaders(headers, forwardBuilder);
+            HttpRequest forwardRequest = forwardBuilder
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(request)))
                     .timeout(Duration.ofSeconds(30))
                     .build();
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
+            finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);
+            appendMcpExtension(ledgerAttempt, server.getId().toString(), body,
+                    response.statusCode(), response.body(), null, headers.getFirst("MCP-Protocol-Version"));
             HttpHeaders responseHeaders = new HttpHeaders();
             responseHeaders.set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
             audit.record(sessionId, method, "allow",
@@ -641,6 +791,10 @@ public class McpProxyController {
             return new ResponseEntity<>(response.body(), responseHeaders,
                     HttpStatus.valueOf(response.statusCode()));
         } catch (Exception e) {
+            // A transport failure after dispatch cannot prove whether the tool ran.
+            finishLedgerAttempt(ledgerAttempt, 502, "REMOTE_MCP_UNKNOWN");
+            appendMcpExtension(ledgerAttempt, server.getId().toString(), body,
+                    502, null, "REMOTE_MCP_UNKNOWN", headers.getFirst("MCP-Protocol-Version"));
             logger.error("Remote MCP forward failed: wsId={} server={} method={}",
                     wsId, server.getId(), method, e);
             audit.record(sessionId, method, "error", e.getMessage());

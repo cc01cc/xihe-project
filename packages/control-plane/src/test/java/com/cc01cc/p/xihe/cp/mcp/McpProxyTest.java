@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
@@ -12,6 +13,16 @@ import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
+import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+
+import java.time.Instant;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -24,6 +35,7 @@ class McpProxyTest {
     private RequestRewriter requestRewriter;
     private PolicyEngine policyEngine;
     private AuditLogger auditLogger;
+    private ApprovalService approvalService;
     private ObjectMapper objectMapper;
     private SseEmitterManager sseEmitterManager;
     private ConfigJpaRepository configRepo;
@@ -31,6 +43,7 @@ class McpProxyTest {
     private McpToolAliasRepository aliasRepository;
     private WorkspaceService workspaceService;
     private SessionRepository sessionRepository;
+    private OperationService operationService;
     private McpProxyController controller;
 
     @BeforeEach
@@ -38,6 +51,7 @@ class McpProxyTest {
         requestRewriter = mock(RequestRewriter.class);
         policyEngine = mock(PolicyEngine.class);
         auditLogger = mock(AuditLogger.class);
+        approvalService = mock(ApprovalService.class);
         objectMapper = new ObjectMapper();
         sseEmitterManager = mock(SseEmitterManager.class);
         configRepo = mock(ConfigJpaRepository.class);
@@ -45,12 +59,13 @@ class McpProxyTest {
         aliasRepository = mock(McpToolAliasRepository.class);
         workspaceService = mock(WorkspaceService.class);
         sessionRepository = mock(SessionRepository.class);
+        operationService = mock(OperationService.class);
 
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
-                auditLogger, objectMapper, sseEmitterManager, configRepo,
+                auditLogger, approvalService, objectMapper, sseEmitterManager, configRepo,
                 mcpServerRepository, aliasRepository,
-                workspaceService, sessionRepository
+                workspaceService, sessionRepository, operationService
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -252,6 +267,124 @@ class McpProxyTest {
         } finally {
             stub.stop(0);
         }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_requireApproval_failsClosedBeforeRuntimeForward() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":7}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluate(eq("write_file"), eq(body), eq("sess-1")))
+                .thenReturn(PolicyEngine.PolicyDecision.requireApproval("mutation requires approval"));
+
+        Map<String, Map<String, String>> cache =
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+        Map<String, Instant> timestamps =
+                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
+        timestamps.put(TEST_WS_UUID, Instant.now());
+
+        Object access = accessContext(TEST_WS_UUID, "u-1");
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                new HttpHeaders(), "sess-1", access);
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertTrue(response.getBody().contains("\"code\":\"APPROVAL_REQUIRED\""));
+        verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
+        verifyNoInteractions(mcpServerRepository);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_matchingApprovalGrant_forwardsToRuntimeOnce() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluate(eq("write_file"), eq(body), eq("sess-1")))
+                .thenReturn(PolicyEngine.PolicyDecision.requireApproval("mutation requires approval"));
+        when(approvalService.consumeApprovedGrant(
+                eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
+                .thenReturn(true);
+        OperationItem item = new OperationItem();
+        item.setId(java.util.UUID.randomUUID());
+        item.setStatus("pending");
+        OperationAttempt attempt = new OperationAttempt();
+        attempt.setId(java.util.UUID.randomUUID());
+        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
+                .thenReturn(item);
+        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(attempt);
+
+        Map<String, Map<String, String>> cache =
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+        Map<String, Instant> timestamps =
+                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
+        timestamps.put(TEST_WS_UUID, Instant.now());
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":8}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            Object access = accessContext(TEST_WS_UUID, "u-1");
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Xihe-Approval-Request-Id", "grant-1");
+            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+            headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1", access);
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(approvalService).consumeApprovedGrant(
+                    "grant-1", "u-1", TEST_WS_UUID, "sess-1", "write_file", body);
+            verify(operationService).finishAttempt(attempt.getId(), "succeeded", 200, null, null, null);
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void forwardToRuntime_transportFailureRecordsUnknownAttemptAndAmbiguousItem() throws Exception {
+        OperationItem item = new OperationItem();
+        item.setId(java.util.UUID.randomUUID());
+        item.setStatus("pending");
+        OperationAttempt attempt = new OperationAttempt();
+        attempt.setId(java.util.UUID.randomUUID());
+        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
+                .thenReturn(item);
+        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(attempt);
+        when(operationService.findItemByApprovalRequestId(null)).thenReturn(null);
+
+        ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://127.0.0.1:1");
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+        headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+        headers.set("X-Request-Id", java.util.UUID.randomUUID().toString());
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":9}";
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "forwardToRuntime", TEST_WS_UUID, null, body, headers, "sess-1",
+                accessContext(TEST_WS_UUID, "u-1"));
+
+        assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+        verify(operationService).finishAttempt(attempt.getId(), "unknown", 502,
+                "MCP_FORWARD_UNKNOWN", null, null);
+        verify(operationService).transitionItem(item.getId(), "ambiguous", null, null, null,
+                "MCP_FORWARD_UNKNOWN");
     }
 
     @Test

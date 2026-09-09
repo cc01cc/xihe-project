@@ -77,6 +77,9 @@ public class ChatApproval {
     @Column(name = "policy_class", length = 32)
     private String policyClass;
 
+    @Column(name = "grant_consumed_at")
+    private Instant grantConsumedAt;
+
     public ChatApproval() {}
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
@@ -130,6 +133,8 @@ public class ChatApproval {
     public void setDispatchErrorCode(String dispatchErrorCode) { this.dispatchErrorCode = dispatchErrorCode; }
     public String getSnapshotId() { return snapshotId; }
     public String getPolicyClass() { return policyClass; }
+    public Instant getGrantConsumedAt() { return grantConsumedAt; }
     public void setSnapshotId(String snapshotId) { this.snapshotId = snapshotId; }
     public void setPolicyClass(String policyClass) { this.policyClass = policyClass; }
+    public void setGrantConsumedAt(Instant grantConsumedAt) { this.grantConsumedAt = grantConsumedAt; }
 }

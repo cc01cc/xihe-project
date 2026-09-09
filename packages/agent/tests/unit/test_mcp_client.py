@@ -5,7 +5,12 @@ import pytest
 from loguru import logger
 
 from xihe_agent import main
-from xihe_agent.adapters.mcp_client import MCPClientManager
+from xihe_agent.adapters import mcp_client as mcp_client_module
+from langchain_mcp_adapters.interceptors import MCPToolCallRequest
+
+from xihe_agent.adapters.approval_tool import ApprovalAgentTool
+from xihe_agent.adapters.mcp_client import ApprovalMCPInterceptor, MCPClientManager
+from xihe_agent.interfaces.context import AgentContext
 
 
 class TestMCPClientManager:
@@ -141,6 +146,69 @@ class TestMCPClientManager:
 
         assert await main._get_mcp_tools(None) == []
         mock_manager.initialize.assert_not_awaited()
+
+
+class TestApprovalMCPInterceptor:
+    @pytest.fixture
+    def context(self):
+        context = AgentContext.empty("session-1")
+        context.metadata.update({
+            "sessionId": "session-1",
+            "workspaceId": "workspace-1",
+            "runId": "run-1",
+            "operationId": "operation-1",
+        })
+        return context
+
+    @pytest.mark.asyncio
+    async def test_sensitive_tool_waits_for_approval_and_injects_grant(self, context):
+        context.metadata["operationItemId"] = "item-1"
+        approval_tool = MagicMock(spec=ApprovalAgentTool)
+        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
+        handler = AsyncMock(return_value={"ok": True})
+        interceptor = ApprovalMCPInterceptor(approval_tool)
+        request = MCPToolCallRequest(
+            name="write_file", args={"path": "README.md"}, server_name="cp"
+        )
+
+        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
+        try:
+            result = await interceptor(request, handler)
+        finally:
+            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+
+        assert result == {"ok": True}
+        approval_tool.execute.assert_awaited_once()
+        forwarded = handler.await_args.args[0]
+        assert forwarded.headers == {
+            "X-Session-Id": "session-1",
+            "X-Chat-Run-Id": "run-1",
+            "X-Operation-Id": "operation-1",
+            "X-Operation-Item-Id": "item-1",
+            "X-Xihe-Approval-Request-Id": "grant-1",
+        }
+
+    @pytest.mark.asyncio
+    async def test_read_only_tool_propagates_run_context_without_approval(self, context):
+        approval_tool = MagicMock(spec=ApprovalAgentTool)
+        approval_tool.execute = AsyncMock()
+        handler = AsyncMock(return_value="read-result")
+        interceptor = ApprovalMCPInterceptor(approval_tool)
+        request = MCPToolCallRequest(name="read_file", args={"path": "README.md"}, server_name="cp")
+
+        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
+        try:
+            result = await interceptor(request, handler)
+        finally:
+            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+
+        assert result == "read-result"
+        approval_tool.execute.assert_not_awaited()
+        assert handler.await_args.args[0].headers == {
+            "X-Session-Id": "session-1",
+            "X-Chat-Run-Id": "run-1",
+            "X-Operation-Id": "operation-1",
+        }
 
     @pytest.mark.asyncio
     async def test_chat_with_workspace_initializes_mcp_on_demand(self, monkeypatch):

@@ -46,6 +46,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -334,5 +335,26 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         ChatApproval unknown = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
         assertEquals("dispatch_unknown", unknown.getState());
         assertNotNull(unknown.getDispatchErrorCode());
+    }
+
+    @Test
+    void consumeApprovedGrantIsBoundToInvocationAndOneShot() {
+        activeRun("running");
+        ChatApproval approval = new ChatApproval(
+                requestId, runId, sessionId, userId, workspaceId,
+                "write_file", "Execute write_file",
+                "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}}",
+                "approved", Instant.now().plusSeconds(300), null, "require_approval");
+        approval.setApproved(true);
+        approvalRepository.save(approval);
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}},\"id\":1}";
+
+        assertTrue(approvalService.consumeApprovedGrant(
+                requestId, userId, workspaceId, sessionId, "write_file", body));
+        ChatApproval consumed = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
+        assertNotNull(consumed.getGrantConsumedAt());
+        assertFalse(approvalService.consumeApprovedGrant(
+                requestId, userId, workspaceId, sessionId, "write_file", body));
     }
 }

@@ -67,6 +67,7 @@ class ApprovalCoordinator:
         details: str | None,
         context: AgentContext,
         event_sink: ApprovalEventSink | None,
+        tool: str = "request_approval",
     ) -> dict[str, Any]:
         request_id = str(uuid4())
         event = asyncio.Event()
@@ -75,9 +76,10 @@ class ApprovalCoordinator:
         payload = {
             "requestId": request_id,
             "runId": str(metadata.get("runId", "")),
+            "operationId": str(metadata.get("operationId") or ""),
             "sessionId": str(metadata.get("sessionId", context.aggregate_id)),
             "workspaceId": str(metadata.get("workspaceId", "")),
-            "tool": "request_approval",
+            "tool": tool,
             "action": action,
             "details": details or "",
             "expiresAt": (now + timedelta(seconds=self.timeout_seconds)).isoformat().replace("+00:00", "Z"),
@@ -191,10 +193,11 @@ class ApprovalAgentTool(BaseAgentTool):
     async def execute(self, input: dict[str, Any], context: AgentContext) -> dict[str, Any]:
         action = input.get("action", "")
         details = input.get("details")
+        tool = str(input.get("tool") or "request_approval")
         event_sink = context.metadata.get(APPROVAL_EVENT_SINK_KEY)
         if event_sink is not None and not callable(event_sink):
             event_sink = None
-        return await self.coordinator.request(action, details, context, event_sink)
+        return await self.coordinator.request(action, details, context, event_sink, tool)
 
     @property
     def spec(self) -> ToolSpec:

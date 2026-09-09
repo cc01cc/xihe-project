@@ -185,14 +185,15 @@ def verify_api_token(request: Request) -> None:
         logger.warning("Agent API token mismatch")
         raise HTTPException(status_code=403, detail="Forbidden: invalid API token")
 
+approval_tool = ApprovalAgentTool()
 mcp_manager = MCPClientManager(
     cp_url=MCP_URL,
     server_name="cp",
     workspace_id=get_env("XIHE_WORKSPACE_ID"),
     api_token=CP_API_TOKEN,
+    approval_tool=approval_tool,
     retry_interval=MCP_RETRY_INTERVAL,
 )
-approval_tool = ApprovalAgentTool()
 legacy_approval_tool = ApprovalTool()
 config_client = ConfigClient(cp_url=CP_URL, api_token=CP_API_TOKEN)
 _models_router.bind(config_client)
@@ -641,6 +642,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     workspace_id: str | None = data.get("workspaceId") or None
     request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
     run_id: str = request.headers.get("X-Chat-Run-Id") or data.get("runId") or str(uuid4())
+    operation_id: str | None = request.headers.get("X-Operation-Id") or data.get("operationId") or None
     user_name: str = data.get("userName", AGENT_USER_NAME)
     model_override: str | None = data.get("model")
     provider_override: str | None = data.get("provider")
@@ -803,6 +805,8 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             payload = dict(event_data)
             payload.setdefault("requestId", request_id)
             payload.setdefault("runId", run_id)
+            if operation_id:
+                payload.setdefault("operationId", operation_id)
             return payload
 
         try:
@@ -850,6 +854,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                     "runId": run_id,
                     "sessionId": session_id,
                     "workspaceId": workspace_id,
+                    "operationId": operation_id,
                 })
 
                 all_tools = [] if tool_mode == "none" else [approval_tool, generate_image_tool]

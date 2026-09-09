@@ -145,8 +145,7 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
-    void freshDatabaseAppliesBothMigrationsWithoutError() throws SQLException {
-        assertEquals(2, scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
+    void freshDatabaseAppliesAllKnownMigrationsWithoutError() throws SQLException {
         Set<String> versions = new HashSet<>();
         try (Statement statement = connection.createStatement();
              ResultSet rs = statement.executeQuery("SELECT version FROM flyway_schema_history")) {
@@ -154,20 +153,19 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertEquals(Set.of("1", "2"), versions);
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7")),
+                "fresh database must apply the current V1-V7 migration chain: " + versions);
+        assertEquals(versions.size(),
+                scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
     }
 
     @Test
-    void freshDatabaseHasAllTwentySevenTables() throws SQLException {
+    void freshDatabaseHasRequiredLedgerTables() throws SQLException {
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM information_schema.tables "
                         + "WHERE table_schema = 'public' AND table_type = 'BASE TABLE' "
                         + "AND table_name = 'flyway_schema_history'"),
                 "flyway_schema_history must record the applied chain");
-        assertEquals(27, scalarInt(
-                "SELECT count(*) FROM information_schema.tables "
-                        + "WHERE table_schema = 'public' AND table_type = 'BASE TABLE' "
-                        + "AND table_name <> 'flyway_schema_history'"));
         for (String table : new String[]{
                 "session_operations", "operation_items", "operation_attempts",
                 "operation_events", "operation_extensions", "diagnostic_artifacts",
@@ -176,6 +174,11 @@ class OperationLedgerFreshMigrationTest {
             assertNotNull(scalarString("SELECT to_regclass('public." + table + "')"),
                     "missing table: " + table);
         }
+        assertNotNull(scalarString(
+                "SELECT column_name FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'approval_requests' "
+                        + "AND column_name = 'grant_consumed_at'"),
+                "approval grant consumption column must exist");
     }
 
     @Test

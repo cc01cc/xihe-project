@@ -3,8 +3,12 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -30,13 +34,19 @@ public class ApprovalService {
     private final ChatApprovalRepository approvalRepository;
     private final ChatRunRepository chatRunRepository;
     private final ApprovalAgentClient agentClient;
+    private final ObjectMapper objectMapper;
+    private final OperationService operationService;
 
     public ApprovalService(ChatApprovalRepository approvalRepository,
                            ChatRunRepository chatRunRepository,
-                           ApprovalAgentClient agentClient) {
+                           ApprovalAgentClient agentClient,
+                           ObjectMapper objectMapper,
+                           OperationService operationService) {
         this.approvalRepository = approvalRepository;
         this.chatRunRepository = chatRunRepository;
         this.agentClient = agentClient;
+        this.objectMapper = objectMapper;
+        this.operationService = operationService;
     }
 
     @Transactional
@@ -72,6 +82,7 @@ public class ApprovalService {
                 throw new CpApiException(HttpStatus.BAD_GATEWAY, "AGENT_EVENT_ID_MISMATCH",
                         "Approval request identity changed for an existing requestId");
             }
+            recordLedgerApprovalItem(payload, runId, requestId);
             return;
         }
         approvalRepository.save(new ChatApproval(
@@ -87,6 +98,7 @@ public class ApprovalService {
                 expiresAt,
                 snapshotId,
                 policyClass));
+        recordLedgerApprovalItem(payload, runId, requestId);
         logger.info("[LIFECYCLE] service=cp event=chat_approval_pending requestId={} sessionId={} runId={}",
                 requestId, sessionId, runId);
     }
@@ -143,7 +155,80 @@ public class ApprovalService {
         if (decided == 0) {
             logger.error("[LIFECYCLE] service=cp event=chat_approval_decide_transition_lost requestId={} expected dispatching state", requestId);
         }
+        operationService.resolveApprovalItem(requestId, approved);
         return decisionResponse(requestId, "accepted", approved);
+    }
+
+    private void recordLedgerApprovalItem(Map<?, ?> payload, String runId, String requestId) {
+        UUID operationId = operationService.findOperationIdByRunId(runId);
+        if (operationId == null) {
+            return;
+        }
+        operationService.appendApprovalItem(
+                operationId,
+                requestId,
+                optional(payload, "tool", "request_approval"),
+                safeLedgerPreview(payload));
+    }
+
+    private String safeLedgerPreview(Map<?, ?> payload) {
+        try {
+            String redacted = LogRedactor.redact(objectMapper.writeValueAsString(payload));
+            return redacted.length() <= 4096 ? redacted : redacted.substring(0, 4096);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=approval_ledger_preview_failed");
+            return "{\"redacted\":true}";
+        }
+    }
+
+    /**
+     * Atomically consumes a policy approval for one exact MCP tool invocation.
+     * The approval row remains terminally approved; grant_consumed_at records
+     * whether this particular downstream dispatch already used it.
+     */
+    @Transactional
+    public boolean consumeApprovedGrant(String requestId, String userId, String workspaceId,
+                                        String sessionId, String tool, String mcpBody) {
+        UUID requestUuid;
+        try {
+            requestUuid = UUID.fromString(requestId);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        ChatApproval approval = approvalRepository.findById(requestUuid)
+                .filter(row -> userId.equals(row.getUserId())
+                        && workspaceId.equals(row.getWorkspaceId())
+                        && sessionId.equals(row.getSessionId())
+                        && tool.equals(row.getTool())
+                        && "approved".equals(row.getState())
+                        && row.getGrantConsumedAt() == null)
+                .orElse(null);
+        if (approval == null || !matchesMcpInvocation(approval.getDetails(), tool, mcpBody)) {
+            return false;
+        }
+        int consumed = approvalRepository.consumeApprovedGrant(
+                requestUuid, userId, workspaceId, sessionId, tool, Instant.now());
+        if (consumed == 1) {
+            logger.info("[LIFECYCLE] service=cp event=approval_grant_consumed requestId={} sessionId={} tool={}",
+                    requestId, sessionId, tool);
+            return true;
+        }
+        logger.info("[LIFECYCLE] service=cp event=approval_grant_replay_rejected requestId={} sessionId={} tool={}",
+                requestId, sessionId, tool);
+        return false;
+    }
+
+    private boolean matchesMcpInvocation(String details, String tool, String mcpBody) {
+        try {
+            JsonNode approved = objectMapper.readTree(details);
+            JsonNode current = objectMapper.readTree(mcpBody);
+            return tool.equals(approved.path("tool").asText())
+                    && approved.path("arguments").equals(current.path("params").path("arguments"));
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=approval_grant_payload_invalid tool={} reason={}",
+                    tool, e.getMessage());
+            return false;
+        }
     }
 
     private Map<String, Object> toPayload(ChatApproval approval, boolean replayed) {
