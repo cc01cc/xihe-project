@@ -75,3 +75,8 @@ data/
 
 # Isolated Host E2E runtime state (generated, not committed)
 .tmp/e2e-host/
+
+# Local Host investigation runtime (pids, probes, evidence screenshots)
+.local/
+# Playwright journey screenshot dumps at package root
+packages/ui/journey-a-*.png
