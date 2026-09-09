@@ -153,10 +153,33 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7")),
-                "fresh database must apply the current V1-V7 migration chain: " + versions);
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8")),
+                "fresh database must apply the current V1-V8 migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
+    }
+
+    @Test
+    void v8SchemaGateFixesApplied() throws SQLException {
+        for (String fk : new String[]{
+                "fk_workspaces_owner", "fk_sessions_user", "fk_chat_runs_user",
+                "fk_files_user", "fk_context_events_user", "fk_context_projections_user",
+                "fk_approval_requests_user"}) {
+            String deleteRule = scalarString(
+                    "SELECT confdeltype FROM pg_constraint WHERE conname = '" + fk + "'");
+            // 'a' = NO ACTION (explicit per PLAN-280 Decision 18 gate).
+            assertEquals("a", deleteRule, "FK must declare explicit ON DELETE: " + fk);
+        }
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE indexname IN ("
+                        + "'idx_workspace_execution_specs_workspace_generation',"
+                        + "'idx_context_events_session_sequence','idx_config_lookup')"),
+                "redundant indexes must be dropped by V8");
+        assertNotNull(scalarString(
+                "SELECT column_name FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'config' "
+                        + "AND column_name = 'created_at'"),
+                "config.created_at must exist");
     }
 
     @Test

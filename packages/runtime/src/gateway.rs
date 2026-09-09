@@ -265,6 +265,18 @@ impl WorkspaceRegistry {
         self.instances.read().await.values().cloned().collect()
     }
 
+    /// Per-workspace fail-closed consistency gate (PLAN-274 Decision 11).
+    /// Returns the subset of cross-map issues affecting `ws_id`. Mutation
+    /// handlers must reject when this is non-empty instead of only logging.
+    pub async fn check_workspace_consistency(&self, ws_id: &str) -> Vec<String> {
+        let instances = self.instances.read().await;
+        let statuses = self.statuses.read().await;
+        collect_consistency_issues(&instances, &statuses)
+            .into_iter()
+            .filter(|issue| issue.starts_with(&format!("{ws_id}:")))
+            .collect()
+    }
+
     /// Cross-map consistency check: detect and log cases where InstanceState
     /// and MaterializationState are contradictory. Called at key transition
     /// points to catch dual-map divergence early.
@@ -515,6 +527,19 @@ mod tests {
         registry.register("ws-1", "/tmp/ws-1").await;
 
         assert!(registry.check_consistency().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_check_workspace_consistency_is_fail_closed_per_workspace() {
+        let registry = WorkspaceRegistry::new();
+        registry.register("ws-1", "/tmp/ws-1").await;
+        registry.register("ws-2", "/tmp/ws-2").await;
+        registry.mark_failed("ws-1", "execution failed").await;
+
+        let ws1_issues = registry.check_workspace_consistency("ws-1").await;
+        assert_eq!(ws1_issues.len(), 1);
+        assert!(ws1_issues[0].starts_with("ws-1:"));
+        assert!(registry.check_workspace_consistency("ws-2").await.is_empty());
     }
 
     #[test]

@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
+import json
 import os
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -32,6 +35,40 @@ class ApprovalExpiredError(ApprovalTerminalError):
 
 class ApprovalExecutorUnsupportedError(ApprovalTerminalError):
     code = "APPROVAL_EXECUTOR_UNSUPPORTED"
+
+
+APPROVAL_DETAILS_PREVIEW_LIMIT = 500
+
+_SECRET_PATTERNS = (
+    re.compile(r'(?i)(bearer\s+[A-Za-z0-9\-._~+/=]+)'),
+    re.compile(r'(?i)(api[_-]?key\s*[:=]\s*[^\s",}]+)'),
+    re.compile(r'(?i)(secret\s*[:=]\s*[^\s",}]+)'),
+    re.compile(r'(?i)(password\s*[:=]\s*[^\s",}]+)'),
+    re.compile(r'(?i)(token\s*[:=]\s*[^\s",}]+)'),
+)
+
+
+def redact_approval_details(details: str | None) -> tuple[str, str]:
+    """Redact approval details to a bounded preview plus canonical hash.
+
+    PLAN-271 P0: full MCP arguments must never enter the approval row, SSE
+    replay, or ordinary logs. Returns (preview, arguments_hash).
+    """
+    raw = details or ""
+    try:
+        canonical = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        canonical = str(raw)
+    arguments_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    preview = canonical
+    for pattern in _SECRET_PATTERNS:
+        preview = pattern.sub("[REDACTED]", preview)
+    if len(preview) > APPROVAL_DETAILS_PREVIEW_LIMIT:
+        preview = preview[:APPROVAL_DETAILS_PREVIEW_LIMIT] + "…[truncated]"
+    if not preview:
+        # Fail-closed redaction: never fall back to raw full arguments.
+        preview = "[REDACTED]"
+    return preview, arguments_hash
 
 
 def _configured_timeout_seconds() -> float:
@@ -73,6 +110,7 @@ class ApprovalCoordinator:
         event = asyncio.Event()
         metadata = context.metadata
         now = datetime.now(UTC)
+        preview, arguments_hash = redact_approval_details(details)
         payload = {
             "requestId": request_id,
             "runId": str(metadata.get("runId", "")),
@@ -81,7 +119,8 @@ class ApprovalCoordinator:
             "workspaceId": str(metadata.get("workspaceId", "")),
             "tool": tool,
             "action": action,
-            "details": details or "",
+            "details": preview,
+            "argumentsHash": f"sha256:{arguments_hash}",
             "expiresAt": (now + timedelta(seconds=self.timeout_seconds)).isoformat().replace("+00:00", "Z"),
         }
         self.pending_requests[request_id] = event

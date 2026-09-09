@@ -1390,6 +1390,9 @@ async fn workspace_materialize_handler(
             })
         })?)));
     }
+    // PLAN-262 M4 P0 / PLAN-274: state is written before spawn so the 202
+    // response never races a missing status. Failures mark Failed instead of
+    // leaving Materializing forever.
     app.registry.mark_materializing(&ws_id).await;
     let app_clone = Arc::clone(&app);
     let ws_id_clone = ws_id.clone();
@@ -1400,6 +1403,7 @@ async fn workspace_materialize_handler(
             }
             Err(error) => {
                 tracing::warn!("Explicit materialization failed: ws_id={} error={}", ws_id_clone, error);
+                app_clone.registry.mark_failed(&ws_id_clone, &error.to_string()).await;
             }
         }
     });

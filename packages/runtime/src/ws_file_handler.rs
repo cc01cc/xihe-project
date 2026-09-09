@@ -11,6 +11,23 @@ use std::sync::Arc;
 use crate::{AppState, DeleteFileRequest, GetFileInfoRequest, ListDirectoryRequest, MkdirRequest};
 use xihe_runtime::{error::RuntimeError, fs};
 
+/// PLAN-274 Decision 11: per-workspace fail-closed gate. Mutations must not
+/// proceed when the Registry/Manager cross-map diverges for this workspace.
+async fn ensure_workspace_consistent(
+    app: &AppState,
+    ws_id: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let issues = app.registry.check_workspace_consistency(ws_id).await;
+    if issues.is_empty() {
+        return Ok(());
+    }
+    Err(problem(
+        StatusCode::CONFLICT,
+        "WORKSPACE_STATE_CONFLICT",
+        &format!("workspace cross-map inconsistency: {}", issues.join("; ")),
+    ))
+}
+
 // ---- Request / Response types ----
 
 #[derive(Serialize, Deserialize)]
@@ -120,6 +137,11 @@ pub async fn handle_write_binary(
         .ensure_workspace(&ws_id)
         .await
         .map_err(map_error)?;
+    ensure_workspace_consistent(&app, &ws_id).await?;
+    // PLAN-274 explicit exception: binary writes stay on the host direct path
+    // because the Docker-exec JSON frame only carries UTF-8 strings and would
+    // corrupt arbitrary bytes. Path safety still uses the shared fs helper
+    // (lexical + canonical symlink checks); consistency is fail-closed above.
     let msg = fs::write_file_binary(&path, &body, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -144,13 +166,10 @@ pub async fn handle_delete_file(
     Path(ws_id): Path<String>,
     Json(req): Json<DeleteFileRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = app
-        .ensure_workspace(&ws_id)
-        .await
-        .map_err(map_error)?;
-    let msg = fs::delete_file(&req.path, &ws.workspace_path)
-        .await
-        .map_err(map_error)?;
+    // PLAN-274 §3.2: mutations share the Sandbox executor with MCP tools.
+    app.ensure_workspace(&ws_id).await.map_err(map_error)?;
+    ensure_workspace_consistent(&app, &ws_id).await?;
+    let msg = app.router.delete_file(&ws_id, &req.path).await.map_err(map_error)?;
     Ok(Json(serde_json::json!({ "message": msg })))
 }
 
@@ -159,13 +178,10 @@ pub async fn handle_mkdir(
     Path(ws_id): Path<String>,
     Json(req): Json<MkdirRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ws = app
-        .ensure_workspace(&ws_id)
-        .await
-        .map_err(map_error)?;
-    let msg = fs::mkdir(&req.path, &ws.workspace_path)
-        .await
-        .map_err(map_error)?;
+    // PLAN-274 §3.2: mutations share the Sandbox executor with MCP tools.
+    app.ensure_workspace(&ws_id).await.map_err(map_error)?;
+    ensure_workspace_consistent(&app, &ws_id).await?;
+    let msg = app.router.mkdir(&ws_id, &req.path).await.map_err(map_error)?;
     Ok(Json(serde_json::json!({ "message": msg })))
 }
 
@@ -388,24 +404,30 @@ mod tests {
         assert!(names.contains(&"b.txt"));
     }
 
+    // PLAN-274 §3.2: mutations share the Sandbox executor. Without a Docker
+    // container these handlers fail closed (503); success is covered by
+    // Docker-backed Host E2E, not by host-direct unit tests.
     #[tokio::test]
     async fn test_delete_file_handler() {
         let (app, ws_id, _dir, _cp) = setup_ws().await;
 
-        // Write via fs
+        // Write via fs so the file exists on the host.
         let ws = app.registry.get(&ws_id).await.unwrap();
         fs::write_file_binary("del.txt", b"to delete", &ws.workspace_path)
             .await
             .unwrap();
 
-        // Delete via handler
+        // Delete via handler requires the Sandbox executor; without Docker it
+        // must fail closed instead of falling back to host direct.
         let state = State(app);
         let path = Path(ws_id);
         let json = Json(DeleteFileRequest {
             path: "del.txt".into(),
         });
-        let result = handle_delete_file(state, path, json).await.unwrap();
-        assert!(result.get("message").and_then(|v| v.as_str()).is_some());
+        match handle_delete_file(state, path, json).await {
+            Err((status, _)) => assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE),
+            Ok(_) => panic!("expected fail-closed 503 without Docker container"),
+        }
     }
 
     #[tokio::test]
@@ -417,8 +439,10 @@ mod tests {
         let json = Json(MkdirRequest {
             path: "sub/dir".into(),
         });
-        let result = handle_mkdir(state, path, json).await.unwrap();
-        assert!(result.get("message").and_then(|v| v.as_str()).is_some());
+        match handle_mkdir(state, path, json).await {
+            Err((status, _)) => assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE),
+            Ok(_) => panic!("expected fail-closed 503 without Docker container"),
+        }
     }
 
     #[tokio::test]
