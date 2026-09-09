@@ -93,7 +93,7 @@ flowchart LR
 | Agent Framework | FastAPI + LangChain + LangGraph + litellm | — |
 | Runtime Framework | rmcp + Axum + Tokio + bollard | 3.1.4 / 0.8.9 / 1.53.1 / 0.21.1 |
 | Database | PostgreSQL 17 + pgvector | — |
-| Toolchain | Node 22 / pnpm 10 / Maven 3.9 / uv / Docker | — |
+| Toolchain | Node 24 / pnpm 10 / Maven 3.9 / uv / Docker | — |
 
 ## Quick Start
 

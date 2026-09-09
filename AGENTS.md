@@ -22,7 +22,7 @@
 | Runtime 框架 | rmcp + Axum + Tokio + bollard | 3.1.4 / 0.8.9 / 1.53.1 / 0.21.1 |
 | Runtime binary | `xihe-runtime`（Gateway）、`xihe-container-runtime`（容器内文件服务）、`xihe-mcp-bridge`（容器内 STDIO bridge） | 统一 `xihe-` 前缀 |
 | 数据库 | PostgreSQL 17 + pgvector | — |
-| 工具链 | Node 22 / pnpm 10 / Maven 3.9 / uv / task 3 / Docker | — |
+| 工具链 | Node 24 / pnpm 10 / Maven 3.9 / uv / task 3 / Docker | — |
 
 ## Setup
 
@@ -186,6 +186,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
   - 真实流式：`XiheLiteLLM._astream()` 显式 `streaming=True` 使 `astream_events` 产生 `on_chat_model_stream` 多 token，`sse_adapter` 按 `run_id` 去重使 `on_chat_model_end` 仅作无流 fallback；多 `token` 事件驱动气泡在 `done` 前多次增长。
   - ChatRun（PLAN-247）：CP 在 LLM readiness gate 和 SSE subscription 通过后按 `(userId, sessionId, Idempotency-Key)` 持久化 run；`Message.runId` 关联 `success/error/partial/ambiguous` 终态，同 key 不重复启动 Agent，ambiguous 只能用新 key 手动重试。
   - Provider/model binding：UI、CP、Agent 全链路传递 `provider` + `model` + `toolMode`；`modelProvider + modelName` 是 session canonical pair，普通 Chat 固定 `toolMode=none`，Workspace/tool 操作显式使用 `workspace`。
+  - Operation Ledger（PLAN-281）：新 Chat 在 CP 持久化 ChatRun/Message 后创建 durable root `operationId` 并透传 Agent；CP relay 记录 tool item/Agent attempt，MCP proxy 记录 `cp_forward` attempt 与 hash/size-only `mcp_call` extension，Approval 复用同一 item。Runtime executor、Workspace lifecycle、Job/Snapshot、LLM usage extension 和 UI audit 仍按对应里程碑接入，不能把现有局部 trace 当作全链路完成。
 - **配置**: 3-tier (system > admin > user)，CP ConfigService 统一管理
 - **Service 纯函数**: Service 不依赖 ConfigClient，配置由调用方解析后传入
 - **提交**: Conventional Commits，pass `mise run validate` 后可提交
@@ -255,13 +256,14 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
 - **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU（PLAN-097）。OOM 时按需上调
-- **runtime 测试现状**: 全量 `cargo test` 可编译执行；当前库测试 128 通过、全量测试 210+ 通过并有 3 个明确 ignored 的 CP 实时测试（PLAN-235 M3，2026-09-03）。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
+- **runtime 测试现状**: 全量 `cargo test` 可编译执行；当前库测试 137 通过，集成测试按 Docker 环境执行并有明确 ignored 的 CP 实时测试（PLAN-235 M3，2026-09-03）。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
 - **Runtime 执行边界（PLAN-235）**: Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`--oneshot` 单帧 EOF），无 HTTP 通道/instance token/长驻 worker；background job 为 `/tmp/xihe-jobs` 状态文件约定（opaque `jobId` + `cancel_background_process`）；FS 写路径经 rustix openat2 helper
+- **Safe Coding Loop（PLAN-275）**: Runtime mutation core 使用 snapshot manifest + pre/post content hash + 多文件 patch 失败回滚；Agent MCP interceptor 通过一次性 durable approval grant 恢复批准后的 tool dispatch，grant 缺失/不匹配/重复消费仍 fail-closed，真实 Host evidence 待补
 - **Vue i18n JSON placeholder**: `t()` 消息中不可含 `{...}`
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
 - **Agent MCP init 按需执行**: 纯 chat 即使带 current `workspaceId` 也不连接 CP MCP；只有明确需要 Workspace tool 的请求才触发工具发现和 Sandbox materialization。不得把一个 Workspace 的工具复用于其他 Workspace。
 - **dev:full/T3 拓扑边界**: 当前验证主线是 Windows `dev:host`。完整 Compose E2E 仍需要为 Runtime 提供 Docker Engine socket 和容器内 WorkspaceStorage 映射；未完成前不得将 `dev:full`/T3 的 workspace、MCP 和截图失败归因于 host v1。
-- **数据库必须 fresh baseline（PLAN-280）**：active Flyway 链只有 `V1__init_schema.sql`；`ddl-auto=validate`、`baseline-on-migrate=false`。旧本地数据库会被拒绝，恢复方式为 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内。
+- **数据库必须 fresh baseline（PLAN-280）**：active Flyway 链以 `V1__init_schema.sql` 为 baseline，并包含后续正式的 V2-V7 migrations（Ledger、Job、Snapshot、Task Continuity、approval grant consumption）；`ddl-auto=validate`、`baseline-on-migrate=false`。旧本地数据库会被拒绝，恢复方式为 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内。
 - **dev seed 密码不可知**: `DataSeeder` 为 `admin@xihe.local` 生成的随机密码不打印、不落日志，`dev:reset` 重建库后无法用旧凭据登录；恢复方式为 `mise run reset-admin`（PLAN-229）。
 - **Runtime 生命周期技术债**: `WorkspaceRegistry` 与 `WorkspaceManager` 已部分收敛（idle reaper 路由到 WorkspaceManager、Strict 统一走 Docker 容器），但 REST 文件操作仍直接访问 host filesystem（未走 executor Docker exec），cross-map 一致性靠周期性检查兜底。后续应完全消除 WorkspaceManager 直接 Docker 操作并统一 REST/MCP 执行路径。
 - **`dev:host` 原生编排**: `mise run dev:host` 先以 Docker 启动并等待 PostgreSQL，再由 mise 并行管理原生 CP/Agent/Runtime/UI；`mise run dev:host:watch` 通过 Node watcher 检查四个健康端点并在任务组失败后重启。`scripts/dev-host.ps1` 仅保留兼容的检查/包装入口。`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根，默认 `A03-xihe\.xihe-workspaces`
