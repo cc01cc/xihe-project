@@ -189,6 +189,23 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void startAttempt_isIdempotentByRequestId() {
+        UUID operationId = start(null).operationId();
+        com.cc01cc.p.xihe.cp.entity.OperationItem item =
+                operationService.appendItem(operationId, null, null, "tool_call", "read_file",
+                        "agent", null, null, null);
+        String requestId = UUID.randomUUID().toString();
+
+        com.cc01cc.p.xihe.cp.entity.OperationAttempt first =
+                operationService.startAttempt(item.getId(), "agent_dispatch", null, "agent", requestId);
+        com.cc01cc.p.xihe.cp.entity.OperationAttempt duplicate =
+                operationService.startAttempt(item.getId(), "agent_dispatch", null, "agent", requestId);
+
+        assertEquals(first.getId(), duplicate.getId());
+        assertEquals(0, duplicate.getRetryNo());
+    }
+
+    @Test
     void finishAttempt_rejectsDoubleFinish() {
         UUID operationId = start(null).operationId();
         com.cc01cc.p.xihe.cp.entity.OperationItem item =
@@ -203,6 +220,26 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void finishAttempt_isIdempotentForSameTerminalResult_andSupportsUnknown() {
+        UUID operationId = start(null).operationId();
+        com.cc01cc.p.xihe.cp.entity.OperationItem item =
+                operationService.appendItem(operationId, null, null, "tool_call", "read_file",
+                        "agent", null, null, null);
+        com.cc01cc.p.xihe.cp.entity.OperationAttempt attempt =
+                operationService.startAttempt(item.getId(), "agent_dispatch", null, "agent", null);
+
+        operationService.finishAttempt(attempt.getId(), "unknown", null, "DISPATCH_RESULT_UNKNOWN", null, 10L);
+        operationService.finishAttempt(attempt.getId(), "unknown", null, "DISPATCH_RESULT_UNKNOWN", null, 10L);
+
+        Map<String, Object> trace = operationService.getOperationTrace(operationId);
+        @SuppressWarnings("unchecked")
+        List<com.cc01cc.p.xihe.cp.entity.OperationAttempt> attempts =
+                (List<com.cc01cc.p.xihe.cp.entity.OperationAttempt>) (Object) trace.get("attempts");
+        assertEquals(1, attempts.size());
+        assertEquals("unknown", attempts.get(0).getStatus());
+    }
+
+    @Test
     void appendExtension_conflictsOnDuplicateKindAndVersion() {
         UUID operationId = start(null).operationId();
         com.cc01cc.p.xihe.cp.entity.OperationItem item =
@@ -212,6 +249,16 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
                 () -> operationService.appendExtension(item.getId(), null, "llm_usage", 1,
                         "{\"totalTokens\":20}"));
         assertEquals("OPERATION_EXTENSION_CONFLICT", conflict.getCode());
+    }
+
+    @Test
+    void appendExtension_isIdempotentForSamePayload() {
+        UUID operationId = start(null).operationId();
+        com.cc01cc.p.xihe.cp.entity.OperationItem item =
+                operationService.appendItem(operationId, null, null, "chat", null, "agent", null, null, null);
+        operationService.appendExtension(item.getId(), null, "llm_usage", 1, "{\"totalTokens\":10}");
+        assertDoesNotThrow(() -> operationService.appendExtension(item.getId(), null, "llm_usage", 1,
+                "{\"totalTokens\":10}"));
     }
 
     @Test

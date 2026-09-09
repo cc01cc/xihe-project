@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.operation;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationEvent;
@@ -13,6 +15,7 @@ import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -40,6 +44,7 @@ import java.util.UUID;
 public class OperationService {
 
     private static final Logger logger = LoggerFactory.getLogger(OperationService.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int SCHEMA_VERSION = 1;
     private static final Map<String, List<String>> OPERATION_TRANSITIONS = Map.of(
             "accepted", List.of("running", "completed", "failed", "cancelled"),
@@ -72,6 +77,90 @@ public class OperationService {
     }
 
     public record OperationStartResult(UUID operationId, boolean alreadyRecorded) {}
+
+    /**
+     * Resolve the durable root operation for an existing ChatRun. Legacy runs
+     * may not have an operation yet, so callers must tolerate a null result.
+     */
+    @Transactional(readOnly = true)
+    public UUID findOperationIdByRunId(String runId) {
+        if (runId == null || runId.isBlank()) {
+            return null;
+        }
+        return operations.findByRunId(runId).map(SessionOperation::getId).orElse(null);
+    }
+
+    /**
+     * Keep ChatRun lifecycle updates best-effort for legacy rows while making
+     * all newly-created runs durable in the Operation Ledger.
+     */
+    @Transactional
+    public void transitionOperationForRun(String runId, String targetStatus,
+                                           String errorCode, String errorRef) {
+        UUID operationId = findOperationIdByRunId(runId);
+        if (operationId == null) {
+            logger.debug("[LIFECYCLE] service=cp event=operation_missing_for_run runId={} targetStatus={}",
+                    runId, targetStatus);
+            return;
+        }
+        try {
+            transitionOperation(operationId, targetStatus, errorCode, errorRef);
+        } catch (CpApiException e) {
+            if ("OPERATION_STATE_CONFLICT".equals(e.getCode())) {
+                logger.warn("[LIFECYCLE] service=cp event=operation_transition_ignored runId={} operationId={} targetStatus={} reason={}",
+                        runId, operationId, targetStatus, e.getMessage());
+                return;
+            }
+            throw e;
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public OperationItem findLatestOpenItem(UUID operationId, String toolName) {
+        if (operationId == null || toolName == null || toolName.isBlank()) {
+            return null;
+        }
+        return items.findFirstByOperationIdAndToolNameAndStatusInOrderByCreatedAtDesc(
+                operationId.toString(), toolName, List.of("pending", "running", "waiting_for_approval", "resolving"))
+                .orElse(null);
+    }
+
+    @Transactional(readOnly = true)
+    public OperationItem findItemByApprovalRequestId(String approvalRequestId) {
+        if (approvalRequestId == null || approvalRequestId.isBlank()) {
+            return null;
+        }
+        return items.findByApprovalRequestId(approvalRequestId).stream().findFirst().orElse(null);
+    }
+
+    @Transactional
+    public OperationItem appendApprovalItem(UUID operationId, String approvalRequestId,
+                                            String toolName, String argumentsPreview) {
+        OperationItem item = appendItem(operationId, approvalRequestId, null, "approval",
+                toolName, "agent", argumentsPreview, null, null);
+        if (item.getApprovalRequestId() == null) {
+            item.setApprovalRequestId(approvalRequestId);
+            items.saveAndFlush(item);
+        }
+        if ("pending".equals(item.getStatus())) {
+            transitionItem(item.getId(), "running", "pending", approvalRequestId, null, null);
+            transitionItem(item.getId(), "waiting_for_approval", "pending", approvalRequestId, null, null);
+        }
+        return item;
+    }
+
+    @Transactional
+    public void resolveApprovalItem(String approvalRequestId, boolean approved) {
+        OperationItem item = findItemByApprovalRequestId(approvalRequestId);
+        if (item == null || !"waiting_for_approval".equals(item.getStatus())) {
+            return;
+        }
+        transitionItem(item.getId(), "resolving", approved ? "approved" : "rejected",
+                approvalRequestId, null, approved ? null : "APPROVAL_REJECTED");
+        if (!approved) {
+            transitionItem(item.getId(), "failed", "rejected", approvalRequestId, null, "APPROVAL_REJECTED");
+        }
+    }
 
     @Transactional
     public OperationStartResult startOperation(String userId, String sessionId, String workspaceId,
@@ -247,6 +336,15 @@ public class OperationService {
         OperationItem item = items.findById(itemId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
                         "Operation item not found"));
+        if (requestId != null && !requestId.isBlank()) {
+            OperationAttempt existing = attempts.findByItemIdAndStageAndRequestId(
+                    itemId.toString(), stage, requestId).orElse(null);
+            if (existing != null) {
+                logger.info("[LIFECYCLE] service=cp event=operation_attempt_idempotent_hit itemId={} stage={} requestId={} attemptId={}",
+                        itemId, stage, requestId, existing.getId());
+                return existing;
+            }
+        }
         OperationAttempt attempt = new OperationAttempt();
         attempt.setId(UUID.randomUUID());
         attempt.setItemId(itemId.toString());
@@ -274,15 +372,40 @@ public class OperationService {
 
     @Transactional
     public void finishAttempt(UUID attemptId, String targetStatus, Integer httpStatus,
-                              String errorCode, String resultRef, Long durationMs) {
+                               String errorCode, String resultRef, Long durationMs) {
+        if (!List.of("succeeded", "failed", "timed_out", "cancelled", "unknown")
+                .contains(targetStatus)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "Unsupported operation attempt terminal status");
+        }
         OperationAttempt attempt = attempts.findById(attemptId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ATTEMPT_NOT_FOUND",
                         "Operation attempt not found"));
         long computed = durationMs != null ? durationMs
                 : java.time.Duration.between(attempt.getStartedAt(), Instant.now()).toMillis();
-        int affected = attempts.finishStarted(attemptId, targetStatus, httpStatus, errorCode,
-                resultRef, computed, Instant.now());
+        int affected;
+        try {
+            affected = attempts.finishStarted(attemptId, targetStatus, httpStatus, errorCode,
+                    resultRef, computed, Instant.now());
+        } catch (DataAccessException e) {
+            logger.error("[LIFECYCLE] service=cp event=operation_attempt_finish_unknown attemptId={} status={}",
+                    attemptId, targetStatus, e);
+            throw new CpApiException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "OPERATION_ATTEMPT_FINISH_UNKNOWN",
+                    "Attempt completion could not be durably recorded; execution state is unknown");
+        }
         if (affected == 0) {
+            OperationAttempt current = attempts.findById(attemptId)
+                    .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ATTEMPT_NOT_FOUND",
+                            "Operation attempt not found"));
+            if (targetStatus.equals(current.getStatus())
+                    && Objects.equals(httpStatus, current.getHttpStatus())
+                    && Objects.equals(errorCode, current.getErrorCode())
+                    && Objects.equals(resultRef, current.getResultRef())) {
+                logger.info("[LIFECYCLE] service=cp event=operation_attempt_finish_idempotent_hit attemptId={} status={}",
+                        attemptId, targetStatus);
+                return;
+            }
             throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
                     "Operation attempt is not in the started state");
         }
@@ -304,6 +427,20 @@ public class OperationService {
         if (schemaVersion == null) {
             schemaVersion = SCHEMA_VERSION;
         }
+        OperationExtension existing = itemId != null
+                ? extensions.findByItemIdAndExtensionKindAndSchemaVersion(
+                        itemId.toString(), extensionKind, schemaVersion).orElse(null)
+                : extensions.findByAttemptIdAndExtensionKindAndSchemaVersion(
+                        attemptId.toString(), extensionKind, schemaVersion).orElse(null);
+        if (existing != null) {
+            if (sameJsonPayload(existing.getPayload(), payloadJson)) {
+                logger.info("[LIFECYCLE] service=cp event=operation_extension_idempotent_hit itemId={} attemptId={} kind={} schemaVersion={}",
+                        itemId, attemptId, extensionKind, schemaVersion);
+                return;
+            }
+            throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_EXTENSION_CONFLICT",
+                    "An extension of this kind and schema version already exists with different payload");
+        }
         OperationExtension extension = new OperationExtension(
                 itemId == null ? null : itemId.toString(),
                 attemptId == null ? null : attemptId.toString(),
@@ -319,6 +456,17 @@ public class OperationService {
         }
         logger.info("[LIFECYCLE] service=cp event=operation_extension_appended itemId={} attemptId={} kind={}",
                 itemId, attemptId, extensionKind);
+    }
+
+    private static boolean sameJsonPayload(String left, String right) {
+        if (Objects.equals(left, right)) {
+            return true;
+        }
+        try {
+            return OBJECT_MAPPER.readTree(left).equals(OBJECT_MAPPER.readTree(right));
+        } catch (JsonProcessingException | RuntimeException e) {
+            return false;
+        }
     }
 
     @Transactional(readOnly = true)

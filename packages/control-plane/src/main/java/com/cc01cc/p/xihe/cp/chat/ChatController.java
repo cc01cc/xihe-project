@@ -16,6 +16,10 @@ import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
+import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
+import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +59,8 @@ public class ChatController {
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
     private final ApprovalService approvalService;
+    private final OperationService operationService;
+    private final ChatSubmissionService chatSubmissionService;
     private final SessionService sessionService;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
@@ -77,6 +83,8 @@ public class ChatController {
             ObjectMapper objectMapper,
             SseEmitterManager sseManager,
             ApprovalService approvalService,
+            OperationService operationService,
+            ChatSubmissionService chatSubmissionService,
             SessionService sessionService,
             MessageRepository messageRepository,
             FileRepository fileRepository,
@@ -90,6 +98,8 @@ public class ChatController {
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
         this.approvalService = approvalService;
+        this.operationService = operationService;
+        this.chatSubmissionService = chatSubmissionService;
         this.sessionService = sessionService;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -292,30 +302,17 @@ public class ChatController {
 
         boolean handedOff = false;
         try {
-            ChatRun chatRun = new ChatRun(
+            ChatSubmissionService.Submission submission = chatSubmissionService.create(
                     runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,
-                    provider, model, toolMode, "accepted");
-            chatRun.setProviderConnectionId(session.getProviderConnectionId());
-            chatRun.setConnectionRevision(session.getConnectionRevision());
-            chatRun.setLeaseOwner(instanceId());
-            chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
-            chatRunRepository.save(chatRun);
-
-            Message userMessage = new Message(sessionId, MessageRole.USER, content);
-            userMessage.setRunId(runId);
-            userMessage.setAttachments(attachmentsJson);
-            messageRepository.save(userMessage);
-            chatRun.setUserMessageId(userMessage.getId().toString());
-            chatRunRepository.save(chatRun);
+                    provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
+                    instanceId(), requestId, content, attachmentsJson, attachmentIds);
+            ChatRun chatRun = submission.run();
+            Message userMessage = submission.userMessage();
+            OperationService.OperationStartResult operation = submission.operation();
 
             if (!attachmentIds.isEmpty()) {
-                for (String fileId : attachmentIds) {
-                    File file = fileRepository.findById(UUID.fromString(fileId)).orElse(null);
-                    if (file != null) {
-                        file.setMessageId(userMessage.getId().toString());
-                        fileRepository.save(file);
-                    }
-                }
+                logger.debug("[LIFECYCLE] service=cp event=chat_attachments_linked runId={} count={}",
+                        runId, attachmentIds.size());
             }
 
             logger.info("[LIFECYCLE] service=cp event=chat_message_persisted requestId={} sessionId={} runId={} messageId={} attachments={}",
@@ -337,6 +334,7 @@ public class ChatController {
                         "sessionId", sessionId,
                         "messageId", userMessage.getId(),
                         "runId", runId,
+                        "operationId", operation.operationId(),
                         "reason", "agent_down"
                     ));
                 }
@@ -350,7 +348,8 @@ public class ChatController {
                 "status", "accepted",
                 "sessionId", sessionId,
                 "messageId", userMessage.getId(),
-                "runId", runId
+                "runId", runId,
+                "operationId", operation.operationId()
             ));
         } finally {
             if (!handedOff) {
@@ -458,6 +457,10 @@ public class ChatController {
                 agentRequest.put("workspaceId", workspaceId);
                 agentRequest.put("requestId", requestId);
                 agentRequest.put("runId", runId);
+                UUID operationId = operationService.findOperationIdByRunId(runId);
+                if (operationId != null) {
+                    agentRequest.put("operationId", operationId.toString());
+                }
                 agentRequest.put("stream", true);
                 if (effectiveProvider != null && !effectiveProvider.isBlank()) {
                     agentRequest.put("provider", effectiveProvider);
@@ -484,7 +487,7 @@ public class ChatController {
                     agentRequest.put("attachments", agentAttachments);
                 }
 
-                HttpRequest agentRequestMessage = HttpRequest.newBuilder(URI.create(agentUrl))
+                HttpRequest.Builder agentRequestBuilder = HttpRequest.newBuilder(URI.create(agentUrl))
                     .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                     .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
                     .header("Authorization", "Bearer " + agentApiToken)
@@ -492,7 +495,11 @@ public class ChatController {
                     .header("X-Chat-Run-Id", runId)
                     .header("X-User-Id", userId)
                     .header("X-Workspace-Id", workspaceId)
-                    .header("X-Session-Id", sessionId)
+                    .header("X-Session-Id", sessionId);
+                if (operationId != null) {
+                    agentRequestBuilder.header("X-Operation-Id", operationId.toString());
+                }
+                HttpRequest agentRequestMessage = agentRequestBuilder
                     .timeout(Duration.ofSeconds(30))
                     .POST(HttpRequest.BodyPublishers.ofString(
                         objectMapper.writeValueAsString(agentRequest), StandardCharsets.UTF_8))
@@ -622,6 +629,21 @@ public class ChatController {
         if (updated == 0) {
             logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={}",
                     runId, status);
+            return;
+        }
+        String operationStatus = switch (status) {
+            case "running" -> "running";
+            case "awaiting_approval" -> "waiting_for_approval";
+            case "succeeded" -> "completed";
+            case "failed", "partial" -> "failed";
+            case "cancelled" -> "cancelled";
+            case "ambiguous" -> "ambiguous";
+            default -> null;
+        };
+        if (operationStatus != null) {
+            operationService.transitionOperationForRun(runId, operationStatus,
+                    errorCode == null && "partial".equals(status) ? "PARTIAL_RESULT" : errorCode,
+                    errorDetail);
         }
     }
 
@@ -734,6 +756,10 @@ public class ChatController {
     }
 
     private String instanceId() {
+        return currentInstanceId();
+    }
+
+    static String currentInstanceId() {
         return INSTANCE_ID;
     }
 
@@ -802,6 +828,10 @@ public class ChatController {
         if (run.getErrorCode() != null) {
             response.put("errorCode", run.getErrorCode());
         }
+        UUID operationId = operationService.findOperationIdByRunId(run.getId().toString());
+        if (operationId != null) {
+            response.put("operationId", operationId);
+        }
         return response;
     }
 
@@ -816,6 +846,8 @@ public class ChatController {
         String outcome = "success";
         String errorCode = null;
         int eventIndex = 0;
+        Map<String, UUID> operationItems = new LinkedHashMap<>();
+        Map<UUID, UUID> operationAttempts = new LinkedHashMap<>();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
             String eventName = "message";
             StringBuilder data = new StringBuilder();
@@ -852,7 +884,8 @@ public class ChatController {
                         }
                     }
                     if (!isDone || terminalSent.compareAndSet(false, true)) {
-                        dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, userId, workspaceId);
+                        dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
+                                userId, workspaceId, operationItems, operationAttempts);
                     }
                     eventName = "message";
                     data.setLength(0);
@@ -903,7 +936,8 @@ public class ChatController {
                 }
             }
             if (!isDone || terminalSent.compareAndSet(false, true)) {
-                dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, userId, workspaceId);
+                dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
+                        userId, workspaceId, operationItems, operationAttempts);
             }
         }
         if (!doneSeen) {
@@ -994,13 +1028,114 @@ public class ChatController {
     }
 
     private void dispatchRelayedEvent(String sessionId, String eventName, String payload,
-                                      String runId, String userId, String workspaceId) {
+                                      String runId, String requestId, String userId, String workspaceId,
+                                      Map<String, UUID> operationItems,
+                                      Map<UUID, UUID> operationAttempts) {
         Object parsedPayload = parsePayload(eventName, payload);
+        recordLedgerToolEvent(eventName, asMap(parsedPayload), runId, requestId,
+                operationItems, operationAttempts);
         if ("approval_request".equals(eventName)) {
             approvalService.recordPending(asMap(parsedPayload), sessionId, runId, userId, workspaceId);
             transitionRun(runId, List.of("running", "streaming"), "awaiting_approval", null, null, null, 0, 0);
         }
         sseManager.send(sessionId, eventName, parsedPayload);
+    }
+
+    private void recordLedgerToolEvent(String eventName, Map<?, ?> payload, String runId,
+                                       String requestId, Map<String, UUID> operationItems,
+                                       Map<UUID, UUID> operationAttempts) {
+        if (!"tool_call".equals(eventName) && !"tool_result".equals(eventName)) {
+            return;
+        }
+        UUID operationId = operationService.findOperationIdByRunId(runId);
+        if (operationId == null) {
+            return;
+        }
+        String toolName = stringValue(payload, "tool");
+        if (toolName == null) {
+            toolName = "unknown";
+        }
+        String rawToolCallId = stringValue(payload, "run_id");
+        if (rawToolCallId == null) {
+            rawToolCallId = stringValue(payload, "toolCallId");
+        }
+        String toolCallId = canonicalToolCallId(rawToolCallId, runId, toolName, payload);
+        try {
+            if ("tool_call".equals(eventName)) {
+                OperationItem item = operationService.findLatestOpenItem(operationId, toolName);
+                if (item == null) {
+                    item = operationService.appendItem(
+                            operationId, toolCallId, null, "tool_call", toolName, "agent",
+                            safeJsonPreview(payload.get("arguments")), null, null);
+                }
+                operationItems.put(toolCallId, item.getId());
+                if ("pending".equals(item.getStatus())) {
+                    operationService.transitionItem(item.getId(), "running", null, null, null, null);
+                }
+                if (!operationAttempts.containsKey(item.getId())) {
+                    OperationAttempt attempt = operationService.startAttempt(
+                            item.getId(), "agent_tool", null, "agent", requestId);
+                    operationAttempts.put(item.getId(), attempt.getId());
+                }
+                return;
+            }
+
+            UUID itemId = operationItems.get(toolCallId);
+            if (itemId == null) {
+                OperationItem item = operationService.findLatestOpenItem(operationId, toolName);
+                if (item != null) {
+                    itemId = item.getId();
+                    operationItems.put(toolCallId, itemId);
+                }
+            }
+            if (itemId == null) {
+                logger.warn("[LIFECYCLE] service=cp event=operation_tool_result_unmatched runId={} toolCallId={} toolName={}",
+                        runId, toolCallId, toolName);
+                return;
+            }
+            UUID attemptId = operationAttempts.get(itemId);
+            Object rawResult = payload.get("result");
+            boolean failed = rawResult != null && String.valueOf(rawResult).startsWith("Tool error:");
+            if (attemptId != null) {
+                operationService.finishAttempt(attemptId, failed ? "failed" : "succeeded",
+                        failed ? 500 : 200, failed ? "TOOL_FAILED" : null, null, null);
+            }
+            operationService.transitionItem(itemId, failed ? "failed" : "completed",
+                    failed ? null : "allow", null, null, failed ? "TOOL_FAILED" : null);
+            operationAttempts.remove(itemId);
+            operationItems.remove(toolCallId);
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=operation_tool_record_failed runId={} toolCallId={} toolName={}",
+                    runId, toolCallId, toolName, e);
+            if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException apiException
+                    && "OPERATION_STATE_CONFLICT".equals(apiException.getCode())) {
+                return;
+            }
+            throw e;
+        }
+    }
+
+    private String safeJsonPreview(Object value) {
+        try {
+            String json = objectMapper.writeValueAsString(value == null ? Map.of() : value);
+            String redacted = LogRedactor.redact(json);
+            return redacted.length() <= 4096 ? redacted : redacted.substring(0, 4096);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=operation_arguments_redaction_failed");
+            return "{\"redacted\":true}";
+        }
+    }
+
+    private String canonicalToolCallId(String rawToolCallId, String runId, String toolName,
+                                       Map<?, ?> payload) {
+        if (rawToolCallId != null) {
+            try {
+                return UUID.fromString(rawToolCallId).toString();
+            } catch (IllegalArgumentException ignored) {
+                // LangGraph may use a non-UUID run identifier; normalize it for the UUID schema.
+            }
+        }
+        return UUID.nameUUIDFromBytes((runId + ":" + toolName + ":" + safeJsonPreview(payload)).getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private Object parsePayload(String eventName, String payload) {

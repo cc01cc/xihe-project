@@ -502,11 +502,11 @@ components:
     SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } } } }
-     ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
-     ChatApprovalDecisionRequest: { type: object, required: [approved], additionalProperties: false, properties: { approved: { type: boolean } } }
-     ChatApprovalDecisionResponse: { type: object, required: [status, requestId, approved], properties: { status: { type: string, enum: [accepted, already_decided] }, requestId: { type: string }, approved: { type: boolean } } }
-     AgentApprovalDecisionRequest: { type: object, required: [requestId, approved], additionalProperties: false, properties: { requestId: { type: string }, approved: { type: boolean } } }
-     AgentApprovalStatus: { type: object, required: [status, requestId], properties: { status: { type: string, enum: [pending, approved, rejected, expired] }, requestId: { type: string }, runId: { type: string }, sessionId: { type: string }, workspaceId: { type: string }, approved: { type: [boolean, 'null'] }, action: { type: string }, details: { type: string }, expiresAt: { type: string, format: date-time } } }
+    ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, operationId: { type: string, format: uuid, readOnly: true, description: Durable Operation Ledger root for this ChatRun }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+    ChatApprovalDecisionRequest: { type: object, required: [approved], additionalProperties: false, properties: { approved: { type: boolean } } }
+    ChatApprovalDecisionResponse: { type: object, required: [status, requestId, approved], properties: { status: { type: string, enum: [accepted, already_decided] }, requestId: { type: string }, approved: { type: boolean } } }
+    AgentApprovalDecisionRequest: { type: object, required: [requestId, approved], additionalProperties: false, properties: { requestId: { type: string }, approved: { type: boolean } } }
+    AgentApprovalStatus: { type: object, required: [status, requestId], properties: { status: { type: string, enum: [pending, approved, rejected, expired] }, requestId: { type: string }, runId: { type: string }, sessionId: { type: string }, workspaceId: { type: string }, approved: { type: [boolean, 'null'] }, action: { type: string }, details: { type: string }, expiresAt: { type: string, format: date-time } } }
     ProviderCatalogResponse:
        type: object
        required: [catalogRevision, providers]
@@ -665,19 +665,20 @@ components:
          displayName: { type: string }
          connectionRevision: { type: integer, minimum: 1 }
     AgentChatRequest:
-       type: object
-       required: [sessionId, content, stream]
-       properties:
-         sessionId: { type: string }
-         content: { type: string }
-         stream: { type: boolean, default: true }
-         provider: { type: string }
-         model: { type: string }
-         toolMode: { type: string, enum: [none, workspace], default: none }
-         credentialLease: { type: string, writeOnly: true }
-         providerConnectionId: { type: string, format: uuid }
-         connectionRevision: { type: integer, minimum: 1 }
-         attachments: { type: array, items: { type: object, additionalProperties: true } }
+      type: object
+      required: [sessionId, content, stream]
+      properties:
+        sessionId: { type: string }
+        content: { type: string }
+        operationId: { type: string, format: uuid, readOnly: true }
+        stream: { type: boolean, default: true }
+        provider: { type: string }
+        model: { type: string }
+        toolMode: { type: string, enum: [none, workspace], default: none }
+        credentialLease: { type: string, writeOnly: true }
+        providerConnectionId: { type: string, format: uuid }
+        connectionRevision: { type: integer, minimum: 1 }
+        attachments: { type: array, items: { type: object, additionalProperties: true } }
     OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
     StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }

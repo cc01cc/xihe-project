@@ -19,6 +19,9 @@ public interface OperationItemRepository extends JpaRepository<OperationItem, UU
 
     Optional<OperationItem> findByOperationIdAndToolCallId(String operationId, String toolCallId);
 
+    Optional<OperationItem> findFirstByOperationIdAndToolNameAndStatusInOrderByCreatedAtDesc(
+            String operationId, String toolName, Collection<String> statuses);
+
     List<OperationItem> findByParentItemId(String parentItemId);
 
     List<OperationItem> findByApprovalRequestId(String approvalRequestId);

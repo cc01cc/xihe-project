@@ -19,6 +19,9 @@ public interface OperationAttemptRepository extends JpaRepository<OperationAttem
 
     Optional<OperationAttempt> findByItemIdAndStageAndRetryNo(String itemId, String stage, Integer retryNo);
 
+    Optional<OperationAttempt> findByItemIdAndStageAndRequestId(
+            String itemId, String stage, String requestId);
+
     List<OperationAttempt> findByParentAttemptId(String parentAttemptId);
 
     @Query("select coalesce(max(a.retryNo), -1) from OperationAttempt a where a.itemId = :itemId and a.stage = :stage")

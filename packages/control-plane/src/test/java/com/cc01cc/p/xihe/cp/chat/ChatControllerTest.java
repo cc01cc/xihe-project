@@ -37,7 +37,9 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
+import com.cc01cc.p.xihe.cp.operation.OperationService;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -78,6 +80,12 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Autowired
     private ChatRunRepository chatRunRepository;
+
+    @Autowired
+    private SessionOperationRepository sessionOperationRepository;
+
+    @Autowired
+    private OperationService operationService;
 
     @Autowired
     private SseEmitterManager sseEmitterManager;
@@ -248,6 +256,10 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals("success", run.getTerminalOutcome());
         assertEquals(userMsg.getId().toString(), run.getUserMessageId());
         assertEquals(assistantMsg.getId().toString(), run.getAssistantMessageId());
+        String operationId = (String) response.getBody().get("operationId");
+        assertNotNull(operationId);
+        assertEquals(operationId, sessionOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getId().toString());
+        assertEquals("completed", sessionOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getStatus());
     }
 
     @Test
@@ -363,6 +375,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
         assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
         assertEquals(first.getBody().get("runId"), second.getBody().get("runId"));
+        assertEquals(first.getBody().get("operationId"), second.getBody().get("operationId"));
         Thread.sleep(500);
         assertEquals(1, agentCalls.get());
         assertEquals("succeeded", chatRunRepository.findById(UUID.fromString((String) first.getBody().get("runId"))).orElseThrow().getStatus());
@@ -378,6 +391,48 @@ class ChatControllerTest extends AbstractH2Test {
                 new HttpEntity<>(conflictingRequest, headers), Map.class);
         assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
         assertEquals("IDEMPOTENCY_KEY_CONFLICT", conflict.getBody().get("code"));
+    }
+
+    @Test
+    void chat_toolEventsCreateLedgerItemAndAgentAttempt() throws IOException, InterruptedException {
+        String toolCallId = UUID.randomUUID().toString();
+        String sseBody = "event: tool_call\ndata: {\"type\":\"tool_call\",\"tool\":\"read_file\",\"arguments\":{\"path\":\"README.md\"},\"run_id\":\""
+                + toolCallId + "\"}\n\n"
+                + "event: tool_result\ndata: {\"type\":\"tool_result\",\"tool\":\"read_file\",\"result\":\"content\",\"run_id\":\""
+                + toolCallId + "\"}\n\n"
+                + "event: token\ndata: {\"content\":\"done\"}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+            exchange.sendResponseHeaders(200, sseBody.getBytes(StandardCharsets.UTF_8).length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(sseBody.getBytes(StandardCharsets.UTF_8));
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Read a file",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        pollMessages(5000);
+        UUID operationId = UUID.fromString((String) response.getBody().get("operationId"));
+        Map<String, Object> trace = operationService.getOperationTrace(operationId);
+        List<?> items = (List<?>) trace.get("items");
+        List<?> attempts = (List<?>) trace.get("attempts");
+        assertEquals(1, items.size());
+        assertEquals("completed", ((com.cc01cc.p.xihe.cp.entity.OperationItem) items.get(0)).getStatus());
+        assertEquals(1, attempts.size());
+        assertEquals("succeeded", ((com.cc01cc.p.xihe.cp.entity.OperationAttempt) attempts.get(0)).getStatus());
     }
 
     @Test

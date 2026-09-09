@@ -13,6 +13,12 @@ public interface OperationExtensionRepository extends JpaRepository<OperationExt
 
     List<OperationExtension> findByAttemptId(String attemptId);
 
+    Optional<OperationExtension> findByItemIdAndExtensionKindAndSchemaVersion(
+            String itemId, String extensionKind, Integer schemaVersion);
+
+    Optional<OperationExtension> findByAttemptIdAndExtensionKindAndSchemaVersion(
+            String attemptId, String extensionKind, Integer schemaVersion);
+
     Optional<OperationExtension> findFirstByItemIdAndExtensionKindOrderBySchemaVersionDesc(
             String itemId, String extensionKind);
 

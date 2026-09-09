@@ -24,7 +24,7 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `/workspaces/current`, `/workspaces`, `/workspaces/{workspaceId}` | unchanged under `/api/v1/workspaces/...` | user Bearer | UI, Runtime lifecycle |
 | CP | `/sessions`, `/sessions/{sessionId}` | unchanged under `/api/v1/sessions/...` | user Bearer + current workspace | UI |
 | CP | `/files/**`, `/rag/**` | `/api/v1/...` equivalent | user Bearer | UI |
-| CP | `POST /api/v1/chat` | `POST /api/v1/chat` (requires active SSE, single in-flight, `202` + `runId`, `409 SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`) | user Bearer + current workspace | UI — enqueues async Agent relay; streams `token` → `done` on persistent SSE |
+| CP | `POST /api/v1/chat` | `POST /api/v1/chat` (requires active SSE, single in-flight, `202` + `runId` + durable `operationId`, `409 SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`) | user Bearer + current workspace | UI — enqueues async Agent relay; streams `token` → `done` on persistent SSE |
 | CP | `POST /api/v1/chat/approvals/{requestId}/decision` | unchanged under `/api/v1/chat/approvals/{requestId}/decision` | user Bearer + authoritative request/session/run/workspace ownership | UI approval modal — CP persists/locks decision then forwards Agent service Bearer; same decision is idempotent |
 | CP | `GET /api/v1/events?sessionId=` | `GET /api/v1/events?sessionId=` — **session-scoped persistent SSE** | user Bearer + current workspace | UI — one active emitter per `sessionId`; `done` ends run, not SSE; `heartbeat` (15s) is transport-only, never enters `MessagePart` |
 | CP | `/api/v1/status`, `/api/v1/health`, `/api/v1/logs`, `/api/v1/telemetry/*` | unchanged `/api/v1/...` | public/user Bearer | UI/telemetry |
@@ -55,6 +55,9 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 - Service authentication is `Authorization: Bearer <token>` only.
 - Xihe-owned JSON uses camelCase. MCP JSON-RPC fields and headers remain as
   defined by MCP `2026-07-28`.
+- Cross-module operation correlation uses `X-Operation-Id`,
+  `X-Operation-Item-Id`, and `X-Operation-Attempt-Id`; Chat responses expose the
+  durable root `operationId` without exposing prompt contents.
 - Errors use `application/problem+json` with `type`, `title`, `status`,
   `code`, `detail`, and `requestId`.
 - No query-string tokens, `X-Api-Token`, old path aliases, or field fallbacks.
