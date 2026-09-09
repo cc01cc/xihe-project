@@ -8,6 +8,7 @@ import { useConfigStore } from '../../stores/config'
 import { useWorkspaceAgentSync } from '../../composables/useWorkspaceAgentSync'
 import { toast } from 'vue-sonner'
 import { logger } from '../../lib/logger'
+import { chatErrorToastText } from '../../lib/errorMessages'
 import { api } from '../../composables/api'
 import type { ChatRunResponse } from '../../types'
 
@@ -93,7 +94,7 @@ function connectSession(id: string) {
       terminalError = payload
       chatStore.markStreamingError(id, payload)
       agentStore.setStatus('error')
-      toast.error(`${payload.code}: ${payload.detail}`)
+      toast.error(chatErrorToastText(payload.code, payload.detail))
     },
     onToolCall: (name: string, args: Record<string, unknown>) => {
       handleToolCall(name, args)
