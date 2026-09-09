@@ -50,7 +50,9 @@ public class OperationService {
             "accepted", List.of("running", "completed", "failed", "cancelled"),
             "running", List.of("waiting_for_approval", "completed", "failed", "cancelled",
                     "interrupted", "ambiguous"),
-            "waiting_for_approval", List.of("running", "cancelled"));
+            // Rejection terminates while waiting; forcing a synthetic
+            // waiting -> running hop would fabricate a lifecycle event.
+            "waiting_for_approval", List.of("running", "cancelled", "failed"));
     private static final Map<String, List<String>> ITEM_TRANSITIONS = Map.of(
             "pending", List.of("running", "cancelled", "aborted", "failed"),
             "running", List.of("waiting_for_approval", "completed", "failed", "aborted",
@@ -140,13 +142,20 @@ public class OperationService {
                 toolName, "agent", argumentsPreview, null, null);
         if (item.getApprovalRequestId() == null) {
             item.setApprovalRequestId(approvalRequestId);
-            items.saveAndFlush(item);
+            // Assigned IDs make save() a merge: keep the managed copy so
+            // later reads in this transaction observe the same instance.
+            item = items.saveAndFlush(item);
         }
         if ("pending".equals(item.getStatus())) {
             transitionItem(item.getId(), "running", "pending", approvalRequestId, null, null);
             transitionItem(item.getId(), "waiting_for_approval", "pending", approvalRequestId, null, null);
         }
-        return item;
+        // transitionItem syncs the managed instance, but the reference held
+        // here may be detached (merge copy semantics); re-read the durable
+        // state before returning.
+        return items.findById(item.getId())
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
+                        "Operation item not found"));
     }
 
     @Transactional
@@ -241,6 +250,15 @@ public class OperationService {
             throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
                     "Operation concurrently changed state; cannot transition to " + targetStatus);
         }
+        // Bulk conditional updates bypass the persistence context; sync the
+        // managed entity so later reads in the same transaction see the new
+        // state instead of the stale pre-update snapshot.
+        operation.setStatus(targetStatus);
+        operation.setErrorCode(errorCode);
+        operation.setErrorRef(errorRef);
+        if (isTerminal(targetStatus)) {
+            operation.setFinishedAt(Instant.now());
+        }
         appendEvent(operationId, null, null, "operation." + targetStatus, targetStatus,
                 operation.getActorType(), null);
         logger.info("[LIFECYCLE] service=cp event=operation_transitioned operationId={} status={}",
@@ -282,7 +300,8 @@ public class OperationService {
         item.setNormalizedArgv(normalizedArgv);
         item.setStartedAt(Instant.now());
         try {
-            items.saveAndFlush(item);
+            // Assigned IDs make save() a merge: keep the managed copy.
+            item = items.saveAndFlush(item);
         } catch (DataIntegrityViolationException e) {
             logger.warn("[LIFECYCLE] service=cp event=operation_item_conflict operationId={} toolCallId={} reason={}",
                     operationId, toolCallId, e.getMessage());
@@ -323,6 +342,18 @@ public class OperationService {
         if (affected == 0) {
             throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
                     "Operation item concurrently changed state; cannot transition to " + targetStatus);
+        }
+        // Bulk conditional updates bypass the persistence context; sync the
+        // managed entity so a second transition in the same transaction
+        // (e.g. pending -> running -> waiting_for_approval for approvals)
+        // reads the new state instead of the stale pre-update snapshot.
+        item.setStatus(targetStatus);
+        item.setPolicyDecision(policyDecision);
+        item.setApprovalRequestId(approvalRequestId);
+        item.setResultRef(resultRef);
+        item.setErrorCode(errorCode);
+        if (isItemTerminal(targetStatus)) {
+            item.setFinishedAt(Instant.now());
         }
         appendEvent(UUID.fromString(item.getOperationId()), itemId.toString(), null,
                 "item." + targetStatus, targetStatus, "system", null);
@@ -409,6 +440,15 @@ public class OperationService {
             throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
                     "Operation attempt is not in the started state");
         }
+        // Bulk finish bypasses the persistence context; sync the managed
+        // entity so later reads in the same transaction see the terminal
+        // state instead of the stale "started" snapshot.
+        attempt.setStatus(targetStatus);
+        attempt.setHttpStatus(httpStatus);
+        attempt.setErrorCode(errorCode);
+        attempt.setResultRef(resultRef);
+        attempt.setDurationMs(computed);
+        attempt.setFinishedAt(Instant.now());
         OperationItem item = items.findById(UUID.fromString(attempt.getItemId())).orElse(null);
         appendEvent(item == null ? null : UUID.fromString(item.getOperationId()),
                 attempt.getItemId(), attemptId.toString(), "attempt." + targetStatus, targetStatus,

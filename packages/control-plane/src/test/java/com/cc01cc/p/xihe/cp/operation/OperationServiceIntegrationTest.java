@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -45,6 +46,9 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private ChatApprovalRepository approvalRepository;
 
     private String authToken;
     private String userId;
@@ -168,6 +172,40 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, items.size());
         assertEquals("completed", items.get(0).getStatus());
         assertEquals("allow", items.get(0).getPolicyDecision());
+    }
+
+    @Test
+    void appendApprovalItem_reachesWaitingForApprovalInOneTransaction() {
+        UUID operationId = start(null).operationId();
+        String approvalRequestId = UUID.randomUUID().toString();
+        approvalRepository.save(new com.cc01cc.p.xihe.cp.entity.ChatApproval(
+                approvalRequestId, runId, sessionId, userId, workspaceId,
+                "request_approval", "delete file", "README.md",
+                "pending", java.time.Instant.now().plusSeconds(300), null, null));
+        com.cc01cc.p.xihe.cp.entity.OperationItem item =
+                operationService.appendApprovalItem(operationId, approvalRequestId, "request_approval", "{}");
+        assertEquals("waiting_for_approval", item.getStatus());
+        assertEquals(approvalRequestId, item.getApprovalRequestId());
+
+        operationService.resolveApprovalItem(approvalRequestId, false);
+        Map<String, Object> trace = operationService.getOperationTrace(operationId);
+        @SuppressWarnings("unchecked")
+        List<com.cc01cc.p.xihe.cp.entity.OperationItem> items =
+                (List<com.cc01cc.p.xihe.cp.entity.OperationItem>) (Object) trace.get("items");
+        assertEquals(1, items.size());
+        assertEquals("failed", items.get(0).getStatus());
+        assertEquals("APPROVAL_REJECTED", items.get(0).getErrorCode());
+
+        // Rejection terminates the aggregate while waiting; no synthetic
+        // running hop is required.
+        operationService.transitionOperation(operationId, "running", null, null);
+        operationService.transitionOperation(operationId, "waiting_for_approval", null, null);
+        operationService.transitionOperation(operationId, "failed", "APPROVAL_REJECTED", null);
+        com.cc01cc.p.xihe.cp.entity.SessionOperation aggregate =
+                (com.cc01cc.p.xihe.cp.entity.SessionOperation) operationService
+                        .getOperationTrace(operationId).get("operation");
+        assertEquals("failed", aggregate.getStatus());
+        assertNotNull(aggregate.getFinishedAt());
     }
 
     @Test
