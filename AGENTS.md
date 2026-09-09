@@ -271,6 +271,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Host E2E 数据边界**: `mise run test:e2e:host` 每轮使用独立数据库和 host root，不连接长期 dev DB。成功、失败和中断都必须 teardown，并反向确认用户、Workspace、Session、ExecutionSpec、Sandbox、host 文件和 fixture 无本轮残留；`--keep` 仅限本地调试。
 - **Visual evidence boundary**: `toHaveScreenshot()` 只证明当前画面接近 baseline；人工 UI 审查还需读取 actual/diff、检查 DOM/computed style、overflow、console/pageerror 和交互状态。当前 A03 `*-snapshots/*.png` 按 `.gitignore` 规则作为本地生成工件处理，不能声称为 fresh checkout 可复现的 Git baseline。
 - **E2E evidence matrix**: 当前 profile、readiness、测试计数、失败分类和清理证据统一记录在 workspace 私有 internal 层（不在本仓库分发）；更新结果必须区分 Compose、host 和 manual，不得混合统计。
+- **PLAN-290 Journey A/B（2026-09-09 完成）**: Agent MCP 本地 hop 超时默认 ~30s（审批等待不计入）；禁用 Streamable HTTP GET server stream（CP 无 server-init SSE）；用户直连 MCP mutation 免 Agent 审批并记 `actorType=user`；Agent 单 workspace 绑定，换 workspace 须重启 Agent；Host 验收跑法：先 `restart-agent` 再 journey 探针/spec（retries=0）。详细挂起见 `plans/PLAN-290-XH-user-journeys-v1.md` §7。
 
 详见 `docs/i18n/zh-Hans/DEV-018-known-issues.md`。覆盖率缺口 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。
 
