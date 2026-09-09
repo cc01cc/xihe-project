@@ -35,13 +35,14 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
     @Transactional
     @Modifying
     @Query("update ChatApproval a set a.state = 'expired', a.decidedAt = :at, a.updatedAt = :at "
-            + "where a.requestId = :requestId and a.state in ('pending', 'dispatching')")
+            + "where a.requestId = :requestId and a.state in ('pending', 'dispatching', 'dispatch_unknown')")
     int markExpired(@Param("requestId") UUID requestId, @Param("at") Instant at);
 
     @Transactional
     @Modifying
-    @Query("update ChatApproval a set a.state = 'dispatching', a.approved = :approved, a.updatedAt = :at "
-            + "where a.requestId = :requestId and a.state = 'pending'")
+    @Query("update ChatApproval a set a.state = 'dispatching', a.approved = :approved, "
+            + "a.dispatchErrorCode = null, a.updatedAt = :at "
+            + "where a.requestId = :requestId and a.state in ('pending', 'dispatch_unknown')")
     int markDispatching(@Param("requestId") UUID requestId, @Param("approved") boolean approved,
             @Param("at") Instant at);
 

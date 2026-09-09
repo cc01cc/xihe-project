@@ -65,16 +65,28 @@ public class RequestRewriter {
 
     private String rewriteFileTool(JsonNode root, JsonNode args, String sessionId) {
         String path = args.path("path").asText();
-        
+
         // Path traversal protection
         if (path.contains("..")) {
             throw new IllegalArgumentException("Path traversal not allowed: " + path);
         }
 
-        // Rewrite path: /home/user/project → /sandbox/{sessionId}/project
-        // For MVP, we keep paths as-is (no sandbox isolation yet)
-        // Future: implement path rewriting for namespace isolation
-        
+        // Models often emit workspace-root paths as "/foo.md". Runtime only
+        // accepts relative workspace paths; strip a single leading "/" so
+        // "/foo.md" means workspace-relative foo.md (journey A Host 2026-09-09).
+        if (path.startsWith("/") && path.length() > 1 && !path.startsWith("//")) {
+            String relative = path.substring(1);
+            if (!relative.contains("..") && args.isObject()) {
+                ((ObjectNode) args).put("path", relative);
+                logger.info(
+                        "Normalized workspace path {} -> {} for session={}",
+                        path,
+                        relative,
+                        sessionId
+                );
+            }
+        }
+
         return root.toString();
     }
 

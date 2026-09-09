@@ -185,6 +185,42 @@ class ApprovalAgentIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
     }
 
+    @Test
+    void retryAfterDispatchUnknownSucceedsWhenAgentRecovers() {
+        activeRun();
+        pendingApproval();
+        wireMock.resetAll();
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/approval/respond"))
+                .willReturn(aResponse().withStatus(500)));
+
+        ResponseEntity<Map> first = decide(true);
+        assertEquals(HttpStatus.BAD_GATEWAY, first.getStatusCode());
+        assertEquals("dispatch_unknown",
+                approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+
+        wireMock.resetAll();
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/approval/respond"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"status\":\"accepted\"}")));
+
+        ResponseEntity<Map> second = decide(true);
+        assertEquals(HttpStatus.OK, second.getStatusCode());
+        assertEquals("approved",
+                approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+    }
+
+    @Test
+    void malformedRequestIdReturns400ProblemDetails() {
+        ResponseEntity<Map> response = noErrorClient().exchange(
+                url("/api/v1/chat/approvals/not-a-uuid/decision"),
+                HttpMethod.POST, entityWithAuth(Map.of("approved", true), token), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("INVALID_REQUEST", response.getBody().get("code"));
+    }
+
     @TestConfiguration
     static class TestMockConfig {
 

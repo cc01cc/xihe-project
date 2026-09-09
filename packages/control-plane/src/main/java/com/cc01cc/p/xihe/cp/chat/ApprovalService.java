@@ -29,7 +29,7 @@ public class ApprovalService {
     private static final Logger logger = LoggerFactory.getLogger(ApprovalService.class);
     private static final List<String> REPLAYABLE_STATES = List.of("pending", "dispatching");
     private static final int MAX_ACTION_LENGTH = 512;
-    private static final int MAX_DETAILS_LENGTH = 8192;
+    private static final int MAX_DETAILS_LENGTH = 512;
 
     private final ChatApprovalRepository approvalRepository;
     private final ChatRunRepository chatRunRepository;
@@ -114,7 +114,7 @@ public class ApprovalService {
     }
 
     public Map<String, Object> decide(String requestId, String userId, String workspaceId, boolean approved) {
-        ChatApproval approval = approvalRepository.findById(UUID.fromString(requestId))
+        ChatApproval approval = approvalRepository.findById(parseRequestId(requestId))
                 .filter(row -> userId.equals(row.getUserId()) && workspaceId.equals(row.getWorkspaceId()))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "APPROVAL_NOT_FOUND", "Approval request not found"));
         Instant now = Instant.now();
@@ -133,7 +133,10 @@ public class ApprovalService {
             throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_CONFLICT",
                     "Approval request already has a different decision");
         }
-        if (!"pending".equals(approval.getState())) {
+        // PLAN-290 M0.4 dispatch_unknown reconciliation: a lost dispatch outcome is
+        // retryable by an explicit user decision (no automatic replay). Re-entering
+        // dispatching from dispatch_unknown is an atomic conditional update.
+        if (!"pending".equals(approval.getState()) && !"dispatch_unknown".equals(approval.getState())) {
             throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
                     "Approval decision is already being dispatched");
         }
@@ -257,6 +260,15 @@ public class ApprovalService {
 
     private boolean isTerminal(String state) {
         return "approved".equals(state) || "rejected".equals(state) || "expired".equals(state);
+    }
+
+    /** Malformed ids must surface as 400 INVALID_REQUEST, never a raw 500 (PLAN-290 M0.4). */
+    private UUID parseRequestId(String requestId) {
+        try {
+            return UUID.fromString(requestId);
+        } catch (Exception e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "requestId is invalid", e);
+        }
     }
 
     private String required(Map<?, ?> payload, String key) {

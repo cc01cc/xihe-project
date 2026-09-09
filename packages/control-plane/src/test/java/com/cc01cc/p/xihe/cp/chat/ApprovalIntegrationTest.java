@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -48,6 +49,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ApprovalIntegrationTest extends AbstractIntegrationTest {
@@ -356,5 +359,69 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         assertNotNull(consumed.getGrantConsumedAt());
         assertFalse(approvalService.consumeApprovedGrant(
                 requestId, userId, workspaceId, sessionId, "write_file", body));
+    }
+
+    @Test
+    void decideReturns400ForMalformedRequestId() {
+        ResponseEntity<Map> response = noErrorClient().exchange(
+                baseUrl + "/api/v1/chat/approvals/not-a-uuid/decision",
+                HttpMethod.POST, authorizedBody(true), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("INVALID_REQUEST", response.getBody().get("code"));
+    }
+
+    @Test
+    void decideRetriesDispatchUnknownWhenAgentRecovers() {
+        activeRun("running");
+        ChatApproval approval = new ChatApproval(
+                requestId, runId, sessionId, userId, workspaceId,
+                "request_approval", "delete file", "README.md", "dispatch_unknown",
+                Instant.now().plusSeconds(300), null, null);
+        approval.setDispatchErrorCode("AGENT_APPROVAL_FAILED");
+        approvalRepository.save(approval);
+
+        ResponseEntity<Map> response = decide(requestId, true);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("accepted", response.getBody().get("status"));
+        ChatApproval saved = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
+        assertEquals("approved", saved.getState());
+        assertNull(saved.getDispatchErrorCode());
+    }
+
+    @Test
+    void decideExpiresStaleDispatchUnknownApproval() {
+        activeRun("running");
+        ChatApproval approval = new ChatApproval(
+                requestId, runId, sessionId, userId, workspaceId,
+                "request_approval", "delete file", "README.md", "dispatch_unknown",
+                Instant.now().minusSeconds(1), null, null);
+        approvalRepository.save(approval);
+
+        ResponseEntity<Map> response = noErrorClient().exchange(
+                baseUrl + "/api/v1/chat/approvals/" + requestId + "/decision",
+                HttpMethod.POST, authorizedBody(true), Map.class);
+
+        assertEquals(HttpStatus.GONE, response.getStatusCode());
+        assertEquals("expired", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+    }
+
+    @Test
+    void recordPendingRejectsDetailsBeyondAgentPreviewBound() {
+        activeRun("running");
+        Map<String, Object> payload = Map.of(
+                "requestId", requestId,
+                "runId", runId,
+                "sessionId", sessionId,
+                "action", "delete file",
+                "details", "x".repeat(513),
+                "expiresAt", Instant.now().plusSeconds(300).toString());
+
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> approvalService.recordPending(payload, sessionId, runId, userId, workspaceId));
+
+        assertEquals("AGENT_EVENT_INVALID", error.getCode());
+        assertTrue(approvalRepository.findById(UUID.fromString(requestId)).isEmpty());
     }
 }
