@@ -89,7 +89,7 @@ curl -X POST http://localhost:12631/api/v1/config/import \
   -d @config.import.local.jsonc
 ```
 
-`mise run dev:full` 自动导入 `config.import.local.jsonc`（如存在）；日常 `dev:host` 通过 UI Settings 或 API 修改。
+`mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后自动导入 `config.import.local.jsonc`（如存在，需 `XIHE_DEV_ADMIN_PASSWORD`，否则跳过并提示）；也可通过 UI Settings 或 API 手动修改。
 
 各模块客户端（内部端点前缀 `/internal/v1/config/{layer}/{domain}`）：
 

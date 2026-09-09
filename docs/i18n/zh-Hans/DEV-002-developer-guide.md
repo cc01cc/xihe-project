@@ -82,6 +82,7 @@ sequenceDiagram
 要点（锚点：`mise.toml: dev:host` + `scripts/dev-host.ps1`）：
 
 - PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。
+- CP ready 后自动导入 `config.import.local.jsonc`（如存在，需 `XIHE_DEV_ADMIN_PASSWORD` 环境变量，否则跳过并提示；见 `scripts/dev-host-import-config.mjs`）。
 - Runtime 用 `XIHE_WORKSPACE_HOST_ROOT`（默认 `A03-xihe/.xihe-workspaces`）作宿主 WorkspaceStorage 根。
 - `/health` 为 liveness，`/ready` 不等待全部 Sandbox 物化；Workspace 按 `workspaceId` 首次操作时懒物化。
 

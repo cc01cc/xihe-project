@@ -36,17 +36,16 @@
   },
 
   // user-preference — Admin Layer（admin 默认值，user 可覆盖）
+  // 注意：只有 schema 允许的 key 才能导入（见 packages/control-plane/src/main/resources/config-schemas/）；
+  // 无消费方的 key（如 timeout）不要加，加了会导致整个 import 被 400 拒绝。
   "user-preference": {
     "defaultModel": "deepseek-v4-flash",
     "maxTokens": 4096,
-    "temperature": 0.7,
-    "timeout": 30
+    "temperature": 0.7
   },
 
-  // logging — Admin Layer
-  // 说明：logLevel/levelAgent/levelCp/levelRuntime 由 schema 校验；
-  // instructions/userName 不在 logging schema 内（Agent 读取，见 xihe_agent/main.py），
-  // 依赖 ConfigService.importJsonc 绕过 schema 校验才可经本文件导入——如收紧校验请改走 UI Settings。
+  // logging — Admin Layer（全部 key 均受 config-schemas/logging.json 校验；
+  // instructions/userName 由 Agent 启动与定时同步读取，level 大小写均可）
   "logging": {
     "logLevel": "debug",
     "levelAgent": "debug",

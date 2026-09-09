@@ -40,7 +40,7 @@ mise run dev:host
 
 `dev:host` 会先启动并等待 PostgreSQL，再并行启动原生 CP / Agent / Runtime / UI。浏览器打开 `http://localhost:12630`。
 
-> `mise run dev:full` 仅用于一次性全容器基线场景（自动导入 `config.import.local.jsonc`），不用于日常开发。
+> `mise run dev:full` 仅用于一次性全容器基线场景，不用于日常开发。`dev:host` 与 `dev:full` 均在 CP ready 后自动导入 `config.import.local.jsonc`（如存在，需设置 `XIHE_DEV_ADMIN_PASSWORD` 环境变量，否则跳过）。
 
 ### 1.4. 注册与登录
 

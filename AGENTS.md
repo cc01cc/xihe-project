@@ -50,8 +50,9 @@ mise run validate
 |------|------|------|
 | `mise run setup` | 安装所有模块依赖 | — |
 | `mise run dev` | 启动 UI dev server（需后端已运行） | 等价于 `mise run dev:ui` |
-| `mise run dev:host` | 日常 host 开发主入口：PostgreSQL Docker + CP/Agent/Runtime/UI 原生并行启动 | 推荐用于日常开发 |
+| `mise run dev:host` | 日常 host 开发主入口：PostgreSQL Docker + CP/Agent/Runtime/UI 原生并行启动 | 推荐用于日常开发；CP ready 后自动导入 `config.import.local.jsonc`（需 `XIHE_DEV_ADMIN_PASSWORD`，否则跳过） |
 | `mise run dev:full` | 一次性全容器场景（Docker + UI on host） | 自动导入 `config.import.local.jsonc`，不用于日常 host 开发 |
+| `mise run dev:host:import-config` | 单独执行自动导入（等 CP ready → admin 登录 → POST import） | 需 `XIHE_DEV_ADMIN_PASSWORD`；文件缺失或未设密码时跳过并提示 |
 | `mise run dev:backend` | 启动 Docker 后端服务（无 UI） | — |
 | `mise run dev:ui` | 启动 UI dev server | — |
 | `mise run dev:agent` | 启动 Agent 服务 | — |
@@ -201,7 +202,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 | **环境变量** | 运行前固定（端口/DB/JWT） | `.env.example` → `.env.dev`（gitignore） | ❌ |
 | **ConfigService** | 运行时可改（API key/模型/日志） | `config.import.example.jsonc` → `config.import.local.jsonc`（gitignore） | ✅ UI / API |
 
-日常 host 开发推荐 `mise run dev:host`；`mise run dev:full` 仅用于一次性全容器场景，CP ready 后按导入语义处理 `config.import.local.jsonc`（默认打印 reset-admin 指引，`XIHE_DEV_ADMIN_PASSWORD` 显式启用）。配置生效优先级推荐为：启动环境变量 → `.env.dev` → ConfigService / UI Settings；三类配置归属速查见 DEV-003 §2。
+日常 host 开发推荐 `mise run dev:host`；`mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后按导入语义处理 `config.import.local.jsonc`（默认打印 reset-admin 指引，`XIHE_DEV_ADMIN_PASSWORD` 显式启用；该密码仅经 OS 环境变量注入，禁止写入脚本/git/日志）。配置生效优先级推荐为：启动环境变量 → `.env.dev` → ConfigService / UI Settings；三类配置归属速查见 DEV-003 §2。
 
 ## Testing
 

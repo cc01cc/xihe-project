@@ -222,10 +222,16 @@ alias = "validate:full"
 [tasks."dev:host"]
 depends = ["dev:host:start:pg"]
 run = [
-  { tasks = ["dev:host:start:cp", "dev:host:start:agent", "dev:host:start:runtime", "dev:host:start:ui"] }
+  { tasks = ["dev:host:start:cp", "dev:host:start:agent", "dev:host:start:runtime", "dev:host:start:ui", "dev:host:import-config"] }
 ]
 description = "Start PostgreSQL in Docker and CP/Agent/Runtime/UI as mise-managed native tasks"
 alias = "dev:host"
+
+[tasks."dev:host:import-config"]
+run = "node scripts/dev-host-import-config.mjs"
+description = "Import config.import.local.jsonc after CP ready (needs XIHE_DEV_ADMIN_PASSWORD, skips otherwise)"
+dir = "."
+alias = "dev:host:import-config"
 
 [tasks."dev:host:watch"]
 run = "node scripts/dev-host-watch.mjs"

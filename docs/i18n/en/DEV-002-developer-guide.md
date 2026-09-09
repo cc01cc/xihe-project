@@ -246,7 +246,7 @@ curl -X POST http://localhost:12631/api/v1/config/import \
   -d @config.import.local.jsonc
 ```
 
-`mise run dev:full` does **not** auto-import by default: `DataSeeder` generates a random admin password that is never printed, so the script cannot log in. After CP is ready, run `mise run reset-admin` to obtain the password and import manually, or set `XIHE_DEV_ADMIN_PASSWORD` (OS env only; never commit to scripts/git/logs) to enable automatic import.
+`mise run dev:host` and `mise run dev:full` both auto-import `config.import.local.jsonc` after CP is ready when `XIHE_DEV_ADMIN_PASSWORD` is set (OS env only; never commit to scripts/git/logs). Without it, run `mise run reset-admin` to obtain the password and import manually, or configure via the UI settings page.
 
 JSONC supports comments and trailing commas; you can directly copy MCP configuration snippets from Claude Desktop / Cursor.
 

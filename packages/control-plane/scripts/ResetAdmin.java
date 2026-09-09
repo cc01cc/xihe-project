@@ -76,16 +76,17 @@ public class ResetAdmin {
                         "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")) {
                     ps.setString(1, hash);
                     ps.setTimestamp(2, now);
-                    ps.setString(3, id);
+                    // users.id 是原生 UUID 列（PLAN-280），字符串绑定会报 uuid = character varying。
+                    ps.setObject(3, UUID.fromString(id));
                     ps.executeUpdate();
                 }
                 System.out.println("[reset-admin] 已更新 " + email + " 密码（免重启，可直接登录）");
             } else {
-                String newId = UUID.randomUUID().toString();
+                UUID newId = UUID.randomUUID();
                 try (PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO users (id, email, password_hash, role, name, created_at, updated_at) "
                                 + "VALUES (?, ?, ?, 'ADMIN', ?, ?, ?)")) {
-                    ps.setString(1, newId);
+                    ps.setObject(1, newId);
                     ps.setString(2, email);
                     ps.setString(3, hash);
                     ps.setString(4, "Admin");
