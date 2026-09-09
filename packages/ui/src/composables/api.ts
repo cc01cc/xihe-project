@@ -1,3 +1,5 @@
+import type { OperationListResponse, OperationTrace, OperationStatus } from '../types'
+
 const API_BASE = '/api/v1'
 
 export interface ProblemDetails {
@@ -325,6 +327,25 @@ export const api = {
         details?: string
       }>
     }>('/status')
+  },
+  listOperations(filters: {
+    sessionId?: string
+    workspaceId?: string
+    status?: OperationStatus | string
+    page?: number
+    size?: number
+  } = {}): Promise<OperationListResponse> {
+    const params = new URLSearchParams()
+    if (filters.sessionId) params.set('sessionId', filters.sessionId)
+    if (filters.workspaceId) params.set('workspaceId', filters.workspaceId)
+    if (filters.status) params.set('status', filters.status)
+    if (filters.page !== undefined) params.set('page', String(filters.page))
+    if (filters.size !== undefined) params.set('size', String(filters.size))
+    const query = params.toString()
+    return request<OperationListResponse>(`/operations${query ? `?${query}` : ''}`)
+  },
+  getOperationTrace(operationId: string): Promise<OperationTrace> {
+    return request<OperationTrace>(`/operations/${encodeURIComponent(operationId)}`)
   },
   async listDirectory(path: string, workspaceId: string) {
     const raw = await callRuntimeTool<{ entries?: Array<{ name: string; path: string; is_dir?: boolean; type?: string; size?: number; modified?: string }> }>(

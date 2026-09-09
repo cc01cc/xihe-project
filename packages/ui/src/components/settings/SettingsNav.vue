@@ -10,6 +10,7 @@ const tabs = [
   { name: 'settings-knowledge', label: 'settings.knowledge', path: '/settings/knowledge' },
   { name: 'settings-data', label: 'settings.dataControls', path: '/settings/data' },
   { name: 'settings-monitoring', label: 'settings.monitoring', path: '/settings/monitoring' },
+  { name: 'settings-audit', label: 'settings.audit', path: '/settings/audit' },
 ]
 </script>
 

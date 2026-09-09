@@ -57,6 +57,11 @@ const router = createRouter({
           name: 'settings-monitoring',
           component: () => import('../views/settings/MonitoringView.vue'),
         },
+        {
+          path: 'audit',
+          name: 'settings-audit',
+          component: () => import('../views/settings/AuditView.vue'),
+        },
       ],
     },
     {

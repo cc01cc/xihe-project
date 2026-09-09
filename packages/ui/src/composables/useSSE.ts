@@ -185,6 +185,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             const store = useAgentStore()
             store.addApprovalRequest({
               requestId,
+              operationId: typeof data.operationId === 'string' ? data.operationId : undefined,
               runId: String(data.runId ?? ''),
               sessionId: String(data.sessionId ?? activeSessionId ?? ''),
               workspaceId: typeof data.workspaceId === 'string' ? data.workspaceId : undefined,

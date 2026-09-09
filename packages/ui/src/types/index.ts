@@ -48,6 +48,7 @@ export interface ToolCall {
 
 export interface ApprovalRequest {
   requestId: string
+  operationId?: string
   runId: string
   sessionId: string
   workspaceId?: string
@@ -89,6 +90,7 @@ export interface Message {
   marker?: 'status' | 'date' | 'tool'
   status?: string
   runId?: string
+  operationId?: string
   runStatus?: 'queued' | 'accepted' | 'running' | 'streaming' | 'succeeded' | 'failed' | 'partial' | 'ambiguous' | 'cancelled'
   terminalOutcome?: 'success' | 'error' | 'partial' | 'ambiguous'
   errorCode?: string
@@ -150,9 +152,85 @@ export interface ChatRunResponse {
   status: 'queued' | 'accepted' | 'running' | 'streaming' | 'succeeded' | 'failed' | 'partial' | 'ambiguous' | 'cancelled'
   sessionId: string
   runId: string
+  operationId?: string
   messageId?: string
   outcome?: 'success' | 'error' | 'partial' | 'ambiguous'
   errorCode?: string
+}
+
+export type OperationStatus = 'accepted' | 'running' | 'waiting_for_approval' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'ambiguous'
+
+export interface OperationSummary {
+  id: string
+  sessionId?: string | null
+  workspaceId?: string | null
+  runId?: string | null
+  kind: string
+  source: string
+  actorType: string
+  status: OperationStatus | string
+  summary?: string | null
+  errorCode?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt?: string | null
+}
+
+export interface OperationItemView {
+  id: string
+  operationId: string
+  toolCallId?: string | null
+  sequence: number
+  kind: string
+  toolName?: string | null
+  source: string
+  policyDecision?: string | null
+  approvalRequestId?: string | null
+  status: string
+  errorCode?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface OperationAttemptView {
+  id: string
+  itemId: string
+  stage: string
+  retryNo: number
+  parentAttemptId?: string | null
+  module: string
+  status: string
+  errorCode?: string | null
+  durationMs?: number | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface OperationEventView {
+  id: string
+  operationId: string
+  itemId?: string | null
+  attemptId?: string | null
+  sequence: number
+  eventType: string
+  state: string
+  actor: string
+  createdAt?: string | null
+}
+
+export interface OperationListResponse {
+  operations: OperationSummary[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+}
+
+export interface OperationTrace {
+  operation: OperationSummary
+  items: OperationItemView[]
+  attempts: OperationAttemptView[]
+  events: OperationEventView[]
 }
 
 export interface AgentState {

@@ -1,7 +1,7 @@
 {
   "$schema": "./PLAN-269-evidence.schema.json",
   "plan": "PLAN-269",
-  "generatedAt": "2026-09-07T07:10:30.413Z",
+  "generatedAt": "2026-09-09T03:23:28.000Z",
   "browserConsumer": true,
   "browser": {
     "channel": "chrome-beta",
@@ -35,6 +35,20 @@
       "persistence": "mock session/message state only",
       "cleanup": "Playwright context and local Vite webServer closed",
       "artifacts": ["e2e/mock/chat.spec.ts-snapshots/", "test-results/"]
+    },
+    {
+      "id": "mock-operation-audit",
+      "profile": "mock",
+      "command": "XIHE_E2E_BROWSER_CHANNEL=chrome-beta pnpm exec playwright test e2e/mock/audit.spec.ts --config=e2e/playwright.config.ts",
+      "status": "passed",
+      "testCount": 3,
+      "viewports": ["1920x1080"],
+      "pageStates": ["list", "trace", "filtered", "paginated", "empty", "error"],
+      "actions": ["navigate", "click", "selectOption", "next-page"],
+      "requestResponse": "Browser actions asserted operations list query, trace request, status filter and pagination parameters; mock API also returned explicit empty and problem responses",
+      "persistence": "mock API/store state only; no CP or database persistence",
+      "cleanup": "Playwright context and local Vite webServer closed",
+      "artifacts": ["test-results/e2e-mock-audit-Operation-a-2d295-d-captures-post-action-view/audit-after-trace.png"]
     },
     {
       "id": "mock-viewport-matrix",
