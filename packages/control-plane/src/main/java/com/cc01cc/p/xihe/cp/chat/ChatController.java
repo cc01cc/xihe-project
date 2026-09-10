@@ -470,6 +470,9 @@ public class ChatController {
             MDC.put("requestId", requestId);
             MDC.put("chatRunId", runId);
             AtomicBoolean terminalSent = new AtomicBoolean(false);
+            // Set inside relayAgentStream when an approval_request has been
+            // relayed; read by the IO-interrupt catch below (PLAN-292 C1).
+            AtomicBoolean approvalInFlight = new AtomicBoolean(false);
             try {
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
                 ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))
@@ -573,7 +576,7 @@ public class ChatController {
                 StreamRelayResult relayResult;
                 try (InputStream agentStream = response.body()) {
                     relayResult = relayAgentStream(
-                            sessionId, agentStream, requestId, runId, userId, workspaceId, terminalSent);
+                            sessionId, agentStream, requestId, runId, userId, workspaceId, terminalSent, approvalInFlight);
                 }
                 String assistantContent = relayResult.assistantContent();
                 logger.info("[LIFECYCLE] service=cp event=chat_run_finished requestId={} sessionId={} runId={} assistantChars={}",
@@ -610,6 +613,24 @@ public class ChatController {
                         requestId, sessionId, runId, e);
                 healthMonitor.getAgentBreaker().recordFailure();
                 sendRunErrorAndDone(sessionId, requestId, runId, "AGENT_TIMEOUT", "Agent request timed out after 30 seconds", "ambiguous", terminalSent);
+            } catch (java.io.IOException e) {
+                // PLAN-292 C1: a relay-stream break while the Agent is waiting
+                // for a user decision is recoverable, not a run failure — the
+                // approval row + GET run status keep the decision reachable
+                // after a reconnect. Fail the run only when no approval was
+                // in flight.
+                if (approvalInFlight.get()) {
+                    logger.warn("[LIFECYCLE] service=cp event=chat_relay_interrupted requestId={} sessionId={} runId={} reason=approval_in_flight outcome=ambiguous",
+                            requestId, sessionId, runId);
+                    sendRunErrorAndDone(sessionId, requestId, runId, "AGENT_STREAM_INTERRUPTED",
+                            "Connection interrupted while awaiting approval; the pending decision stays recoverable",
+                            "ambiguous", terminalSent);
+                } else {
+                    logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=CHAT_EXECUTION_FAILED",
+                            requestId, sessionId, runId, e);
+                    healthMonitor.getAgentBreaker().recordFailure();
+                    sendRunErrorAndDone(sessionId, requestId, runId, "CHAT_EXECUTION_FAILED", "Chat execution failed", "error", terminalSent);
+                }
             } catch (Exception e) {
                 logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=CHAT_EXECUTION_FAILED",
                         requestId, sessionId, runId, e);
@@ -878,11 +899,13 @@ public class ChatController {
     private StreamRelayResult relayAgentStream(String sessionId, InputStream agentStream,
                                                String requestId, String runId,
                                                String userId, String workspaceId,
-                                               AtomicBoolean terminalSent) throws Exception {
+                                               AtomicBoolean terminalSent,
+                                               AtomicBoolean approvalInFlight) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
         Map<String, Integer> eventCounts = new LinkedHashMap<>();
         boolean doneSeen = false;
         boolean streamingMarked = false;
+        boolean awaitingApprovalSeen = false;
         String outcome = "success";
         String errorCode = null;
         int eventIndex = 0;
@@ -899,6 +922,15 @@ public class ChatController {
                     recordStreamEvent(eventCounts, eventName, data.length(), requestId, sessionId, runId, eventIndex);
                     boolean isDone = "done".equals(eventName);
                     doneSeen = doneSeen || isDone;
+                    if ("approval_request".equals(eventName)) {
+                        // PLAN-292 C1: once the Agent is blocked on a user
+                        // decision, a broken relay stream (page refresh kills
+                        // the browser SSE and eventually the relay read) must
+                        // NOT fail the run — the durable approval + run status
+                        // endpoint keep the decision recoverable.
+                        awaitingApprovalSeen = true;
+                        approvalInFlight.set(true);
+                    }
                     if (!streamingMarked && ("token".equals(eventName) || "message".equals(eventName))) {
                         transitionRun(runId, List.of("running", "awaiting_approval"), "streaming", null, null, null, 0, 0);
                         streamingMarked = true;

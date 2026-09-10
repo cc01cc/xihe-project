@@ -52,7 +52,12 @@ public class OperationService {
                     "interrupted", "ambiguous"),
             // Rejection terminates while waiting; forcing a synthetic
             // waiting -> running hop would fabricate a lifecycle event.
-            "waiting_for_approval", List.of("running", "cancelled", "failed"));
+            // completed/failed: a run that was approved (grant consumed) and
+            // finished while the aggregate never hopped back to running —
+            // the run's own terminal event is the authoritative transition
+            // (PLAN-292 C1: otherwise the operation sticks at
+            // waiting_for_approval forever after a successful approval).
+            "waiting_for_approval", List.of("running", "completed", "failed", "cancelled"));
     private static final Map<String, List<String>> ITEM_TRANSITIONS = Map.of(
             "pending", List.of("running", "cancelled", "aborted", "failed"),
             "running", List.of("waiting_for_approval", "completed", "failed", "aborted",

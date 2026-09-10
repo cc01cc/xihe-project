@@ -217,6 +217,19 @@ export const useChatStore = defineStore('chat', () => {
         for (const approval of res.pendingApprovals ?? []) {
           agentStore.addApprovalRequest(approval as unknown as Parameters<typeof agentStore.addApprovalRequest>[0])
         }
+      } else if (res.status === 'failed' && res.terminalOutcome === 'ambiguous') {
+        // PLAN-292 C1: the relay stream broke while an approval was in
+        // flight — the run is failed/ambiguous but the pending decision is
+        // still replayable from the server.
+        runRecovery.value[sessionId] = {
+          state: 'resumed',
+          runId,
+          message: '连接中断，待审批操作仍可继续处理',
+        }
+        const agentStore = useAgentStore()
+        for (const approval of res.pendingApprovals ?? []) {
+          agentStore.addApprovalRequest(approval as unknown as Parameters<typeof agentStore.addApprovalRequest>[0])
+        }
       } else if (['cancelling', 'cancelled', 'failed', 'ambiguous'].includes(res.status)) {
         runRecovery.value[sessionId] = {
           state: 'cancelled',

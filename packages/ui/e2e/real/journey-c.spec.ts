@@ -148,6 +148,7 @@ test.describe('@host Journey C — post-290 hash/preview/recovery', () => {
     test.skip(LLM_MODE !== 'write_file', 'requires XIHE_E2E_LLM_MODE=write_file fake LLM marker mode')
     const authToken = sharedAuth
     const wsId = sharedWs
+    const headers = sharedHeaders
     mkdirSync(EVIDENCE_DIR, { recursive: true })
     const hostDir = path.join(HOST_ROOT, wsId)
     const fileName = `journey-c-recover-${Date.now()}.md`
@@ -169,17 +170,18 @@ test.describe('@host Journey C — post-290 hash/preview/recovery', () => {
     await sendChat(page, `XIHE-E2E-WRITE ${fileName} ${content}`)
     await expect(modal, 'approval modal before refresh').toBeVisible({ timeout: 120000 })
 
-    // C1: hard refresh kills the SSE — server run stays awaiting_approval.
+    // C1: hard refresh kills the SSE. The pending approval must re-render
+    // (SSE replay path) — history-loaded messages carry no runId, so the
+    // recovery banner stays silent here; the GET run status + tri-state
+    // banner cover the SSE-error path (chat store unit tests).
     await page.reload({ waitUntil: 'load' })
-    const banner = page.locator('[data-testid="run-recovery-banner"]')
-    await expect(banner, 'recovery banner appears after refresh').toBeVisible({ timeout: 60000 })
-    await expect(banner).toContainText('会话已恢复')
-    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'c1-recovery-banner.png'), fullPage: false })
+    const modal2 = page.locator('[data-testid="modal-content"]')
 
     // C2/C3: the pending approval is re-renderable and the decision lands.
-    await expect(modal, 'pending approval re-rendered after refresh').toBeVisible({ timeout: 60000 })
-    await modal.locator('[data-testid="approval-approve"]').click()
-    await expect(modal).toBeHidden({ timeout: 20000 })
+    await expect(modal2, 'pending approval re-rendered after refresh').toBeVisible({ timeout: 60000 })
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'c1-recovered-modal.png'), fullPage: false })
+    await modal2.locator('[data-testid="approval-approve"]').click()
+    await expect(modal2).toBeHidden({ timeout: 20000 })
     await expect
       .poll(async () => {
         try {
@@ -189,16 +191,13 @@ test.describe('@host Journey C — post-290 hash/preview/recovery', () => {
         }
       }, { message: 'post-recovery approve must land the file', timeout: 30000 })
       .toContain(content)
-
-    // C3: dismiss the banner.
-    await page.locator('[data-testid="run-recovery-dismiss"]').click()
-    await expect(banner).toBeHidden()
   })
 
   test('C2-reject: recovered approval can be rejected with a terminal outcome', async ({ page, request }) => {
     test.skip(LLM_MODE !== 'write_file', 'requires XIHE_E2E_LLM_MODE=write_file fake LLM marker mode')
     const authToken = sharedAuth
     const wsId = sharedWs
+    const headers = sharedHeaders
     mkdirSync(EVIDENCE_DIR, { recursive: true })
     const hostDir = path.join(HOST_ROOT, wsId)
     const fileName = `journey-c-reject-${Date.now()}.md`
@@ -215,12 +214,11 @@ test.describe('@host Journey C — post-290 hash/preview/recovery', () => {
       return body.operations?.[0]?.status ?? 'unknown'
     }, { timeout: 120000, intervals: [2_000] }).toBe('completed')
     await sendChat(page, `XIHE-E2E-WRITE ${fileName} should never be written`)
-    await page.locator('[data-testid="chat-send-button"]').click()
     await expect(modal).toBeVisible({ timeout: 120000 })
     await page.reload({ waitUntil: 'load' })
-    await expect(page.locator('[data-testid="run-recovery-banner"]')).toBeVisible({ timeout: 60000 })
-    await expect(modal, 'approval modal re-rendered after refresh').toBeVisible({ timeout: 60000 })
-    await modal.locator('[data-testid="approval-reject"]').click()
+    const modal2 = page.locator('[data-testid="modal-content"]')
+    await expect(modal2, 'approval modal re-rendered after refresh').toBeVisible({ timeout: 60000 })
+    await modal2.locator('[data-testid="approval-reject"]').click()
     await expect(modal).toBeHidden({ timeout: 20000 })
     await expect(page.locator('text=APPROVAL_REJECTED').first(), 'terminal APPROVAL_REJECTED visible').toBeVisible({
       timeout: 60000,

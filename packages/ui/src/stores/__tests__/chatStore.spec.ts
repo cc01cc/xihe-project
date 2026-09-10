@@ -232,6 +232,18 @@ describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
     expect(useAgentStore().agentState.pendingApprovals.some((a) => a.requestId === 'req-1')).toBe(true)
   })
 
+  it('resumed when a failed run carries an ambiguous outcome with a pending approval', async () => {
+    await mockStatus('failed', {
+      terminalOutcome: 'ambiguous',
+      pendingApprovals: [{ requestId: 'req-2', runId: 'r1', sessionId: 's1', tool: 'write_file', action: 'a', details: 'd' }],
+    })
+    const store = useChatStore()
+    await store.refreshRunRecovery('s1', 'r1')
+    expect(store.runRecovery['s1']?.state).toBe('resumed')
+    const { useAgentStore } = await import('../agent')
+    expect(useAgentStore().agentState.pendingApprovals.some((a) => a.requestId === 'req-2')).toBe(true)
+  })
+
   it('cancelled for terminal run states', async () => {
     await mockStatus('cancelled')
     const store = useChatStore()

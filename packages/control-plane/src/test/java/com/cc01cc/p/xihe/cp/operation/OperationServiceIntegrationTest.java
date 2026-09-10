@@ -209,6 +209,25 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void approvedRunCanFinishWithoutSyntheticRunningHop() {
+        // PLAN-292 C1: after the grant is consumed the run's own terminal
+        // event is the authoritative transition — waiting_for_approval ->
+        // completed must be legal or the operation sticks forever (host
+        // journey-c evidence 2026-09-10).
+        UUID operationId = start(null).operationId();
+        operationService.transitionOperation(operationId, "running", null, null);
+        operationService.transitionOperation(operationId, "waiting_for_approval", null, null);
+
+        operationService.transitionOperation(operationId, "completed", null, null);
+
+        com.cc01cc.p.xihe.cp.entity.SessionOperation aggregate =
+                (com.cc01cc.p.xihe.cp.entity.SessionOperation) operationService
+                        .getOperationTrace(operationId).get("operation");
+        assertEquals("completed", aggregate.getStatus());
+        assertNotNull(aggregate.getFinishedAt());
+    }
+
+    @Test
     void startAttempt_incrementsRetryNoPerStage() {
         UUID operationId = start(null).operationId();
         com.cc01cc.p.xihe.cp.entity.OperationItem item =
