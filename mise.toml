@@ -160,9 +160,13 @@ description = "Run T3 cross-module real integration tests (requires Docker)"
 alias = "test:integration:t3"
 
 [tasks.lint]
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime"]
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets"]
 description = "Run all linters"
 alias = "lint"
+
+[tasks."lint:log-secrets"]
+run = "node scripts/scan-log-secrets.mjs"
+description = "Scan logs/ for credential leakage (PLAN-196 gate)"
 
 [tasks."lint:ui"]
 run = "pnpm --ignore-workspace run lint"

@@ -85,6 +85,12 @@ class ChatControllerTest extends AbstractH2Test {
     private SessionOperationRepository sessionOperationRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.OperationItemRepository operationItemRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository operationExtensionRepository;
+
+    @Autowired
     private OperationService operationService;
 
     @Autowired
@@ -569,5 +575,60 @@ class ChatControllerTest extends AbstractH2Test {
             }
         }
         return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+    }
+
+    @Test
+    void chat_withUsageEvent_persistsExtensionAndWritesTokenCount() throws IOException {
+        // PLAN-294 M1 (decisions #13/#14): the relay must intercept the
+        // agent's usage event, persist it as an llm_usage extension, and
+        // write chat_runs.token_count from usage.totalTokens instead of the
+        // SSE chunk counter. This path was silently blocked by the
+        // operation_items.kind CHECK until V10 — guard it here.
+        String sseBody = "event: token\ndata: {\"content\":\"hi\"}\n\n"
+                + "event: usage\ndata: {\"usage\":{\"inputTokens\":120,\"outputTokens\":30,\"totalTokens\":150,"
+                + "\"estimatedInputTokens\":140,\"source\":\"real\"}}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, 0);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(sseBody.getBytes());
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "usage persistence probe",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+
+        String runId = (String) response.getBody().get("runId");
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+            assertEquals("succeeded", run.getStatus());
+            // Real totalTokens (150), not the SSE chunk count (1 token event).
+            assertEquals(150, run.getTokenCount());
+
+            UUID operationId = sessionOperationRepository.findByRunId(runId).orElseThrow().getId();
+            var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
+            var usageItem = items.stream()
+                    .filter(i -> "llm_usage".equals(i.getKind()))
+                    .findFirst().orElseThrow();
+            var extension = operationExtensionRepository
+                    .findByItemIdAndExtensionKindAndSchemaVersion(usageItem.getId().toString(), "llm_usage", 1)
+                    .orElseThrow();
+            assertTrue(extension.getPayload().contains("source"), "usage extension payload must carry source tag");
+        });
     }
 }

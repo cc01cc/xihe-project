@@ -1070,6 +1070,12 @@ public class ChatController {
                     operationId, null, null, "llm_usage", "chat", "agent", null, null, null);
             operationService.appendExtension(item.getId(), null, "llm_usage", 1,
                     objectMapper.writeValueAsString(parsedPayload));
+            // PLAN-294 ①2: success visibility — the estimated/real token
+            // counts reaching the ledger is the calibration baseline; without
+            // this line a silent CHECK-constraint rejection is undetectable.
+            Map<?, ?> usage = asMap(asMap(parsedPayload).get("usage"));
+            logger.info("[LIFECYCLE] service=cp event=usage_extension_persisted runId={} source={} inputTokens={} totalTokens={}",
+                    runId, usage.get("source"), usage.get("inputTokens"), usage.get("totalTokens"));
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=usage_extension_failed runId={} error={}", runId, e.getMessage());
         }

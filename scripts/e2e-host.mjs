@@ -2,6 +2,7 @@ import { join, dirname } from 'node:path'
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { stat as stat2, readdir, writeFile } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer } from 'node:net'
 
@@ -48,6 +49,33 @@ const pgPassword = randomPassword(18)
 const hostRoot = join(projectDir, '.tmp', 'e2e-host', e2eRunId)
 const hostRootParent = join(projectDir, '.tmp', 'e2e-host')
 const e2eLogDir = join(hostRoot, 'logs')
+
+// ③1 (PLAN-294 review): prune run dirs older than 3 days so failed-run
+// preservation (G-1) cannot grow .tmp/e2e-host unbounded.
+async function pruneStaleRunDirs() {
+  if (!existsSync(hostRootParent)) return
+  const cutoff = Date.now() - 3 * 24 * 3600 * 1000
+  for (const entry of await readdir(hostRootParent)) {
+    const dir = join(hostRootParent, entry)
+    try {
+      const stat = await stat2(dir)
+      if (!stat.isDirectory()) continue
+      if (stat.mtimeMs > cutoff) continue
+      // Recycle (recoverable) instead of rm on Windows.
+      if (process.platform === 'win32') {
+        await run('powershell.exe', [
+          '-NoProfile', '-NonInteractive', '-Command',
+          "$path = $env:XIHE_E2E_HOST_ROOT; Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($path, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+        ], { env: { XIHE_E2E_HOST_ROOT: dir }, stdio: 'ignore' })
+      } else {
+        await rm(dir, { recursive: true, force: true })
+      }
+      console.log(`[e2e-host] pruned stale run dir ${entry}`)
+    } catch (error) {
+      console.warn(`[e2e-host] prune ${entry} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
 const pgProjectName = `xihe-e2e-host-${e2eRunId.replace(/[^a-z0-9]/gi, '')}`
 const serviceToken = randomPassword(24)
 const nativeNoProxy = [
@@ -502,10 +530,28 @@ async function collectIsolatedResources(preserveRunDir = false) {
       failures.push(`compose down failed: ${error instanceof Error ? error.message : String(error)}`)
     }
 
-    // 4. Host storage is disposable test state; recycle it on Windows —
-    // unless the run failed and its logs were preserved for diagnosis.
+    // ①3 (PLAN-294 review): on failure dump the context/ledger rows a
+    // debugger needs (compaction cursor, usage extensions) next to the logs
+    // — reading them used to require a whole extra run with --keep.
     if (preserveRunDir) {
       console.log(`[e2e-host] host root preserved for failed run ${e2eRunId}`)
+      try {
+        const dump = await run('docker', [
+          'exec', `${pgProjectName}-postgres-1`,
+          'pg_dump', '-U', pgUser, '-d', pgDatabase,
+          '--table=context_events', '--table=operation_extensions', '--table=chat_runs',
+          '--data-only',
+        ], { stdio: ['ignore', 'pipe', 'ignore'] })
+        if (dump.code === 0 && dump.stdout) {
+          const snapshotPath = join(e2eLogDir, 'db-state-dump.sql')
+          await writeFile(snapshotPath, dump.stdout)
+          console.log(`[e2e-host] DB state dump written: ${snapshotPath}`)
+        } else {
+          console.warn('[e2e-host] DB state dump unavailable (container already down?)')
+        }
+      } catch (error) {
+        console.warn(`[e2e-host] DB state dump failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
     } else {
       try {
         await recycleHostRoot()
@@ -571,10 +617,35 @@ async function cleanup() {
   return teardownResult
 }
 
+// ③3 (PLAN-294 review): a running dev runtime holds xihe-runtime.exe, so
+// `cargo run --bin xihe-runtime` fails with os error 5. Detect and say so —
+// this cost a debugging round trip in PLAN-294 M0.
+async function precheckDevRuntimeConflict() {
+  if (skipRuntime || process.platform !== 'win32') return
+  const result = await run('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    "(Get-NetTCPConnection -LocalPort 12633 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess",
+  ], { stdio: ['ignore', 'pipe', 'ignore'] })
+  const pid = (result.stdout || '').trim()
+  if (!pid) return
+  const nameProbe = await run('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    `(Get-Process -Id ${pid}).Path`,
+  ], { stdio: ['ignore', 'pipe', 'ignore'] })
+  const exePath = (nameProbe.stdout || '').trim()
+  console.error(`[e2e-host] port 12633 is held by PID ${pid} (${exePath || 'unknown process'}).`)
+  console.error('[e2e-host] A dev runtime blocks `cargo run --bin xihe-runtime` (binary lock, os error 5).')
+  console.error('[e2e-host] Stop it first:  taskkill /PID <pid> /F   (or `mise run dev:host:stop` for the whole stack),')
+  console.error('[e2e-host] or skip the runtime here with --skip-runtime.')
+  throw new Error('dev runtime conflict on port 12633')
+}
+
 async function main() {
   console.log(`[e2e-host] runId=${e2eRunId} ports ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort} pg=${pgPort}`)
   console.log(`[e2e-host] isolated pg project=${pgProjectName} db=${pgDatabase} hostRoot=${hostRoot}`)
   if (skipRuntime) console.log('[e2e-host] --skip-runtime set; this run validates chat-only paths without Sandbox execution')
+  await precheckDevRuntimeConflict()
+  await pruneStaleRunDirs()
   await reserveHostPorts()
   await startFixtures()
   if (externalServer) {
@@ -644,6 +715,16 @@ async function main() {
     return
   }
   process.exitCode = result.code
+  // ③2 (PLAN-294 review): Host E2E requires the dev runtime stopped (binary
+  // lock); remind the operator instead of leaving the stack headless.
+  if (process.platform === 'win32') {
+    const probe = await run('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      'if (Get-NetTCPConnection -LocalPort 12633 -State Listen -ErrorAction SilentlyContinue) { echo down } else { echo down }',
+    ], { stdio: ['ignore', 'pipe', 'ignore'] })
+    void probe
+    console.log('[e2e-host] reminder: dev runtime was stopped for this run — restart with `mise run dev:runtime` (or dev:host) if you need the dev stack.')
+  }
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

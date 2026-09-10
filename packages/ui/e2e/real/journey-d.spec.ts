@@ -1,11 +1,18 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
-import { generateE2EPassword } from './helpers/password'
 import { test, expect } from '@playwright/test'
+import {
+  CP_URL,
+  awaitLastOperationCompleted,
+  ensureChatReady,
+  evidenceDir,
+  registerJourneyUser,
+  seedPage,
+  sendChat,
+} from './helpers/journey'
 
-const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? 'mock'
-const EVIDENCE_DIR = path.resolve(process.cwd(), '../../.local/evidence/journey-d')
+const EVIDENCE_DIR = evidenceDir('journey-d')
 
 // PLAN-294 Journey D spec: context pipeline + auto-compaction.
 //   D1 — multi-turn memory: turn-2 LLM response must reference turn-1's marker
@@ -27,60 +34,11 @@ test.describe('@host Journey D — context pipeline', () => {
   let sharedHeaders: Record<string, string>
 
   test.beforeAll(async ({ request }) => {
-    const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
-    const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
-      data: { email: `journey-d-${Date.now()}@test.com`, password, name: 'JourneyD' },
-    })
-    expect([200, 201], `register failed: ${reg.status()} ${await reg.text()}`).toContain(reg.status())
-    const auth = await reg.json()
-    sharedAuth = auth.accessToken
-    sharedWs = auth.workspaceId
-    sharedHeaders = { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' }
+    const ctx = await registerJourneyUser(request, 'journey-d')
+    sharedAuth = ctx.authToken
+    sharedWs = ctx.workspaceId
+    sharedHeaders = ctx.headers
   })
-
-  function seedPage(page: import('@playwright/test').Page, token: string, wsId: string) {
-    page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
-    page.addInitScript((raw) => localStorage.setItem('xihe-user', raw), JSON.stringify({ workspaceId: wsId }))
-    page.addInitScript((ws) => localStorage.setItem('xihe-workspace', JSON.stringify(ws)), { id: wsId, name: 'Default Workspace' })
-  }
-
-  // 新建对话 switches sessions asynchronously and clears the input — fill with
-  // a retry until the send button reflects the non-empty input.
-  async function sendChat(page: import('@playwright/test').Page, text: string) {
-    const input = page.locator('[data-testid="chat-input"]')
-    const send = page.locator('[data-testid="chat-send-button"]')
-    for (let i = 0; i < 6; i++) {
-      await input.fill(text)
-      if (await send.isEnabled().catch(() => false)) break
-      await page.waitForTimeout(1000)
-    }
-    await expect(send).toBeEnabled({ timeout: 15000 })
-    // The click can race the SSE component hydration: a click before
-    // streamComponent mounts returns null from sendMessage and never POSTs.
-    // Retry until the optimistic user bubble appears (send clears the input).
-    for (let i = 0; i < 10; i++) {
-      await send.click()
-      try {
-        await expect(
-          page.locator('[data-slot="message"][data-align="end"]').first(),
-        ).toBeVisible({ timeout: 3000 })
-        return
-      } catch {
-        await page.waitForTimeout(1000)
-      }
-    }
-    throw new Error('send never produced a user message bubble')
-  }
-
-  // Wait until the latest operation reaches a terminal state — the next send
-  // would otherwise race the previous run teardown with CHAT_IN_PROGRESS (409).
-  async function awaitLastOperationCompleted(request: import('@playwright/test').APIRequestContext) {
-    await expect.poll(async () => {
-      const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers: sharedHeaders })
-      const body = (await res.json()) as { operations?: Array<{ status?: string }> }
-      return body.operations?.[0]?.status ?? 'unknown'
-    }, { timeout: 120000, intervals: [2_000] }).toBe('completed')
-  }
 
   test('D1: turn-2 LLM sees turn-1 marker (multi-turn memory reaches the provider)', async ({ page }) => {
     test.skip(LLM_MODE !== 'history-marker', 'requires XIHE_E2E_LLM_MODE=history-marker fake LLM marker mode')
@@ -90,7 +48,7 @@ test.describe('@host Journey D — context pipeline', () => {
     const marker1 = `T1${Date.now().toString(36).toUpperCase()}`
     const marker2 = `T2${Date.now().toString(36).toUpperCase()}`
 
-    seedPage(page, authToken, wsId)
+    seedPage(page, { authToken, workspaceId: wsId, headers: sharedHeaders })
     // A brand-new user may land on the empty "no active session" state —
     // 新建对话 is the real user path out of it (auto-session creation can
     // race CP readiness on cold starts).
@@ -118,7 +76,7 @@ test.describe('@host Journey D — context pipeline', () => {
     ).toContainText('XIHE-HIST-SEEN: none', { timeout: 120000 })
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'd1-turn1.png'), fullPage: false })
 
-    await awaitLastOperationCompleted(page.request)
+    await awaitLastOperationCompleted(page.request, sharedHeaders)
 
     // Turn 2: plant a second marker. The provider receives the messages array
     // — if the pipeline is intact, turn-1's marker MUST be among them.
@@ -146,7 +104,7 @@ test.describe('@host Journey D — context pipeline', () => {
     const markerA = `A${Date.now().toString(36).toUpperCase()}`
     const markerB = `B${Date.now().toString(36).toUpperCase()}`
 
-    seedPage(page, authToken, wsId)
+    seedPage(page, { authToken, workspaceId: wsId, headers: sharedHeaders })
     await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
     const lastAssistant = page
       .locator('[data-slot="message"][data-align="start"]')
@@ -155,7 +113,7 @@ test.describe('@host Journey D — context pipeline', () => {
     // Turn 1: plant marker A, wait for the run to finish server-side.
     await sendChat(page, `Plant marker XIHE-E2E-HIST ${markerA} now.`)
     await expect(lastAssistant).toContainText(`XIHE-HIST-CURRENT: ${markerA}`, { timeout: 120000 })
-    await awaitLastOperationCompleted(page.request)
+    await awaitLastOperationCompleted(page.request, sharedHeaders)
 
     // Manual compaction (decision #15): user-reachable endpoint on
     // /api/v1/sessions (M3 UI entry will call the same route).
