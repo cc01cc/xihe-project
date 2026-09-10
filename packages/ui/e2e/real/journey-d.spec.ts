@@ -55,7 +55,21 @@ test.describe('@host Journey D — context pipeline', () => {
       await page.waitForTimeout(1000)
     }
     await expect(send).toBeEnabled({ timeout: 15000 })
-    await send.click()
+    // The click can race the SSE component hydration: a click before
+    // streamComponent mounts returns null from sendMessage and never POSTs.
+    // Retry until the optimistic user bubble appears (send clears the input).
+    for (let i = 0; i < 10; i++) {
+      await send.click()
+      try {
+        await expect(
+          page.locator('[data-slot="message"][data-align="end"]').first(),
+        ).toBeVisible({ timeout: 3000 })
+        return
+      } catch {
+        await page.waitForTimeout(1000)
+      }
+    }
+    throw new Error('send never produced a user message bubble')
   }
 
   // Wait until the latest operation reaches a terminal state — the next send
