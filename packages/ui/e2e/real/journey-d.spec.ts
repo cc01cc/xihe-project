@@ -114,7 +114,7 @@ test.describe('@host Journey D — context pipeline', () => {
 
     // Turn 1: teach a nonsense codeword.
     await sendChat(page, `请记住一个暗号：${codeWord}。只回复“已记住”。`)
-    await awaitLastOperationCompleted(page.request)
+    await awaitLastOperationCompleted(page.request, sharedHeaders)
 
     // Turn 2: ask for it back. With the M1 pipeline wired, the model must
     // recall the codeword from the projection snapshot history.
