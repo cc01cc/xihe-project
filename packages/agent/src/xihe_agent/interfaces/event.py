@@ -12,6 +12,7 @@ EventType = Literal[
     "session.created",
     "prompt.admitted",
     "llm.token",
+    "assistant.responded",
     "tool.called",
     "tool.result",
     "context.source_changed",

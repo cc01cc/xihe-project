@@ -206,6 +206,10 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
             "api_key": cfg.api_key or None,
             "api_base": cfg.api_base or None,
             "max_retries": 0,
+            # PLAN-294 decision #14: without this, most OpenAI-compatible
+            # providers omit the usage chunk in streaming mode and the real
+            # prompt/completion token counts never reach RunUsage.
+            "stream_options": {"include_usage": True},
         }
         llm_kwargs = {k: v for k, v in llm_kwargs.items() if v is not None}
         super().__init__(**llm_kwargs)

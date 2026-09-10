@@ -25,9 +25,16 @@ from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.event_store import EventStore
-from xihe_agent.interfaces.message import Message
+from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 from xihe_agent.interfaces.usage import RunUsage
+
+# PLAN-294 decision #8: assembly-layer backstop. The projection snapshot may
+# exceed the target window before auto-compaction has ever run; truncate to
+# the most recent N historical messages (plus the current turn) so a single
+# request cannot blow the window. Normal sessions never hit this — compaction
+# is the real governance; this is the fuse.
+HISTORY_TRUNCATION_LIMIT = 20
 
 
 def _build_args_schema(spec: ToolSpec) -> type[BaseModel]:
@@ -154,9 +161,18 @@ class LangGraphRunner(AgentRunner):
         model = self._model_factory(config.model)
         tools = [self._adapt_tool(t, context) for t in config.tools]
 
+        # PLAN-294 M1 (decision #1): the projection snapshot is the canonical
+        # conversation history (compaction already applied by CP). The caller's
+        # `messages` list carries only the current turn's prompt; historical
+        # turns come from the snapshot so multi-turn context reaches the LLM.
+        history = context.messages
+        if len(history) > HISTORY_TRUNCATION_LIMIT:
+            history = history[-HISTORY_TRUNCATION_LIMIT:]
+        assembled = [*history, *messages]
+
         system_messages = self._build_system_messages(config, context)
         langchain_messages = list(system_messages)
-        langchain_messages.extend(_to_langchain_messages(messages))
+        langchain_messages.extend(_to_langchain_messages(assembled))
 
         agent = create_react_agent(
             model,
@@ -167,6 +183,7 @@ class LangGraphRunner(AgentRunner):
         seen_tool_ids: set[str] = set()
         cancel_event = config.cancel_event
         cancelled = False
+        assistant_parts: list[str] = []
 
         try:
             raw_stream = agent.astream_events(inputs, version="v2").__aiter__()
@@ -199,6 +216,10 @@ class LangGraphRunner(AgentRunner):
                         except StopAsyncIteration:
                             break
                         for event in self._translate_raw_event(raw_event, seen_tool_ids, usage):
+                            if event.type == "token" and event.data.get("hint") != "reasoning":
+                                content = event.data.get("content")
+                                if isinstance(content, str):
+                                    assistant_parts.append(content)
                             yield event
                         raw_task = asyncio.create_task(raw_stream.__anext__())
             finally:
@@ -223,6 +244,26 @@ class LangGraphRunner(AgentRunner):
         finally:
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
             usage.finish()
+            # PLAN-294 M1 (decisions #2/#6): persist the assistant reply into
+            # the context event store — the UI-facing messages table (CP side)
+            # and the event-sourced projection must share the same history.
+            # Only successful, non-cancelled runs carry a durable reply.
+            if not cancelled and assistant_parts and self._event_store is not None:
+                try:
+                    await self._event_store.append(
+                        Event(
+                            aggregate_id=context.aggregate_id,
+                            sequence=0,
+                            type="assistant.responded",
+                            payload={
+                                "message": {"role": "ai", "content": "".join(assistant_parts)},
+                                "runId": context.metadata.get("runId"),
+                            },
+                            created_at=datetime.now(UTC),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning("Failed to append assistant.responded event: {}", e)
             if cancelled:
                 yield AgentEvent(
                     type="error",
@@ -306,6 +347,15 @@ class LangGraphRunner(AgentRunner):
                     usage.record_tool_result()
                 elif event.type == "token":
                     usage.record_turn()
+                elif event.type == "llm_usage":
+                    # PLAN-294 decisions #13/#14: provider-reported counts are
+                    # aggregated across model turns; the newest value wins for
+                    # source tagging (a run is single-model per request).
+                    usage.record_llm_usage(
+                        input_tokens=event.data.get("inputTokens", 0),
+                        output_tokens=event.data.get("outputTokens", 0),
+                    )
+                    usage.source = str(event.data.get("source", "real"))
 
         # Dedup parallel tool calls (DESIGN-013)
         result: list[AgentEvent] = []

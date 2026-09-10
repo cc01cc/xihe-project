@@ -21,6 +21,12 @@ class RunUsage:
     cost: float | None = None
     cost_currency: str = "USD"
     cost_note: str = ""
+    # PLAN-294 decisions #13/#14: local estimation of the input size (the
+    # compression signal) kept NEXT TO the provider-reported value so audits
+    # can diff estimator vs truth per run. `source` is real (provider usage
+    # chunk) / estimated (local tokenizer) / fallback (no counters at all).
+    estimated_input_tokens: int = 0
+    source: str = "fallback"
 
     def record_llm_usage(
         self,
@@ -58,6 +64,8 @@ class RunUsage:
             "cost": self.cost,
             "costCurrency": self.cost_currency,
             "costNote": self.cost_note,
+            "estimatedInputTokens": self.estimated_input_tokens,
+            "source": self.source,
         }
 
     def to_event_payload(self) -> dict[str, Any]:

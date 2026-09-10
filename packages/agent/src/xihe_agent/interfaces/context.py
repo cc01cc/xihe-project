@@ -82,6 +82,11 @@ class AgentContext:
             self._add_message_from_payload(payload, "human")
         elif event_type == "llm.token":
             self._add_message_from_payload(payload, "ai")
+        elif event_type == "assistant.responded":
+            # PLAN-294 M1: durable assistant reply (decision #2/#6). Applied
+            # identically to llm.token so snapshots reconstruct the same
+            # conversation either way.
+            self._add_message_from_payload(payload, "ai")
         elif event_type == "tool.result":
             self._add_message_from_payload(payload, "tool")
         elif event_type == "tool.called":

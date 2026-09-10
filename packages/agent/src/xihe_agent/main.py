@@ -928,6 +928,19 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         if terminal_error_code:
                             done_data["errorCode"] = terminal_error_code
                         yield render_sse("done", correlated_data(done_data))
+                    elif event.type == "usage":
+                        # PLAN-294 decision #14: when no provider usage chunk
+                        # arrived (source=fallback), estimate the input size
+                        # from the assembled request so the compression signal
+                        # and audit trail still carry a usable value.
+                        usage_data = dict(event.data.get("usage") or {})
+                        if usage_data.get("source") in (None, "fallback"):
+                            estimated = sum(len(m.content or "") for m in messages) // 4
+                            usage_data.setdefault("estimatedInputTokens", estimated)
+                            usage_data["source"] = "estimated" if estimated else "fallback"
+                        else:
+                            usage_data.setdefault("estimatedInputTokens", 0)
+                        yield render_sse("usage", correlated_data({"usage": usage_data}))
                     else:
                         yield render_sse(event.type, correlated_data(event.data))
         except ApprovalTerminalError as exc:

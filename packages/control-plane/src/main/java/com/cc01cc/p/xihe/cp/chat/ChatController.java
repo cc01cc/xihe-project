@@ -903,6 +903,9 @@ public class ChatController {
                                                AtomicBoolean approvalInFlight) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
         Map<String, Integer> eventCounts = new LinkedHashMap<>();
+        // PLAN-294 decision #13: real/estimated token totals from the agent's
+        // usage event; replaces the SSE chunk counter in chat_runs.token_count.
+        Map<?, ?> usageData = null;
         boolean doneSeen = false;
         boolean streamingMarked = false;
         boolean awaitingApprovalSeen = false;
@@ -936,6 +939,21 @@ public class ChatController {
                         streamingMarked = true;
                     }
                     collectEventContent(assistantContent, eventName, data.toString());
+                    if ("usage".equals(eventName)) {
+                        // PLAN-294 decisions #13/#14: persist the agent's usage
+                        // payload (estimated + real token counts with source
+                        // tagging) as an operation extension and stop relaying
+                        // it to the UI (no UI consumer; audit-only channel).
+                        Object usagePayload = parsePayload(eventName, data.toString());
+                        persistUsageExtension(runId, usagePayload);
+                        Map<?, ?> usage = asMap(usagePayload).get("usage") instanceof Map<?, ?> u ? u : null;
+                        if (usage != null) {
+                            usageData = usage;
+                        }
+                        eventName = "message";
+                        data.setLength(0);
+                        continue;
+                    }
                     if ("error".equals(eventName)) {
                         Map<?, ?> errorPayload = asMap(parsePayload(eventName, data.toString()));
                         errorCode = stringValue(errorPayload, "code");
@@ -1023,9 +1041,38 @@ public class ChatController {
         }
         logger.info("[LIFECYCLE] service=cp event=chat_stream_relay_finished requestId={} sessionId={} runId={} tokenCount={} assistantChars={}",
                 requestId, sessionId, runId, eventCounts.getOrDefault("token", 0), assistantContent.length());
+        // PLAN-294 decision #13: token_count column now carries the
+        // model-reported (or estimated) total token count, not the SSE chunk
+        // count it used to log.
+        int usageTotal = usageData != null
+                ? intValue(usageData.get("totalTokens"), eventCounts.getOrDefault("token", 0))
+                : eventCounts.getOrDefault("token", 0);
         return new StreamRelayResult(
                 assistantContent.toString(), outcome, errorCode,
-                eventCounts.getOrDefault("token", 0));
+                usageTotal);
+    }
+
+    private static int intValue(Object value, int fallback) {
+        return value instanceof Number n ? n.intValue() : fallback;
+    }
+
+    // PLAN-294 M1 (decision #13): the usage event carries estimated + real
+    // token counts and the source tag; store it verbatim on the run's
+    // operation as an llm_usage extension (audit + calibration baseline).
+    private void persistUsageExtension(String runId, Object parsedPayload) {
+        UUID operationId = operationService.findOperationIdByRunId(runId);
+        if (operationId == null) {
+            logger.debug("[LIFECYCLE] service=cp event=usage_extension_skipped runId={} reason=no_operation", runId);
+            return;
+        }
+        try {
+            OperationItem item = operationService.appendItem(
+                    operationId, null, null, "llm_usage", "chat", "agent", null, null, null);
+            operationService.appendExtension(item.getId(), null, "llm_usage", 1,
+                    objectMapper.writeValueAsString(parsedPayload));
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=usage_extension_failed runId={} error={}", runId, e.getMessage());
+        }
     }
 
     private Map<?, ?> asMap(Object value) {

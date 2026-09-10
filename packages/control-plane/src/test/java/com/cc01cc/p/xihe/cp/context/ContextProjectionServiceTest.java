@@ -82,4 +82,48 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         assertThat(messages).hasSize(1);
         assertThat(messages.get(0).get("content").asText()).isEqualTo("second");
     }
+
+    @Test
+    void projectAssistantRespondedCarriesAiMessage() {
+        // PLAN-294 M1 (decisions #2/#6): assistant.responded must land in the
+        // projection as an ai-role message — the durable history half that
+        // was missing before M1.
+        String sessionId = "aaaaaaa6-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+            "message", Map.of("role", "human", "content", "hi there")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "assistant.responded", Map.of(
+            "message", Map.of("role", "ai", "content", "hello human"),
+            "runId", "run-1"
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+
+        var messages = ctx.get("messages");
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(1).get("role").asText()).isEqualTo("ai");
+        assertThat(messages.get(1).get("content").asText()).isEqualTo("hello human");
+    }
+
+    @Test
+    void compactionThenNewMessagesKeepsSummaryAndNewTurns() {
+        // PLAN-294 appendix D.4-1: compaction replaces pre-cursor history;
+        // messages arriving after the compaction event must survive replay.
+        String sessionId = "aaaaaaa7-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+            "message", Map.of("role", "human", "content", "old turn")
+        ));
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+            "message", Map.of("role", "human", "content", "new turn after compaction")
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+
+        var messages = ctx.get("messages");
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).get("role").asText()).isEqualTo("system");
+        assertThat(messages.get(0).get("content").asText()).contains("old turn");
+        assertThat(messages.get(1).get("content").asText()).isEqualTo("new turn after compaction");
+    }
 }

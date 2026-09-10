@@ -48,16 +48,37 @@ class LangGraphEventAdapter(EventAdapter):
             streamed = bool(run_id and run_id in self._streamed_runs)
             if run_id:
                 self._streamed_runs.discard(run_id)
-            if streamed:
-                return None
             output = data.get("output")
+            events: list[AgentEvent] = []
+            if isinstance(output, BaseMessage) and getattr(output, "usage_metadata", None):
+                # PLAN-294 decisions #13/#14: provider-reported counts are the
+                # calibration ground truth ("real" source). Emitted on every
+                # model end so multi-turn tool loops aggregate; the runner's
+                # RunUsage sums the deltas.
+                meta = output.usage_metadata or {}
+                events.append(
+                    AgentEvent(
+                        type="llm_usage",
+                        data={
+                            "inputTokens": meta.get("input_tokens", 0),
+                            "outputTokens": meta.get("output_tokens", 0),
+                            "totalTokens": meta.get("total_tokens", 0),
+                            "source": "real",
+                        },
+                    )
+                )
+            if streamed:
+                return events or None
             if isinstance(output, BaseMessage):
                 content = output.content or ""
                 if content:
-                    return AgentEvent(
-                        type="token",
-                        data={"content": content, "type": "token", "run_id": run_id},
+                    events.append(
+                        AgentEvent(
+                            type="token",
+                            data={"content": content, "type": "token", "run_id": run_id},
+                        )
                     )
+            return events or None
 
         if event_type == "on_chain_end" and name == FINAL_CHAIN_NAME:
             return AgentEvent(type="done", data={"type": "done", "run_id": run_id})

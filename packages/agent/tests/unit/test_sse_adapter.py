@@ -171,8 +171,11 @@ def test_streamed_state_is_isolated_by_run_id():
     })
 
     assert streamed is not None
-    assert fallback is not None
-    assert fallback.data["content"] == "fallback"
+    # PLAN-294 M1: translate() returns a list for on_chat_model_end (usage
+    # event first when the output carries usage_metadata, then the token
+    # fallback); a streamed end without usage yields nothing (None, as before).
+    assert isinstance(fallback, list) and len(fallback) == 1
+    assert fallback[0].data["content"] == "fallback"
     assert streamed_end is None
 
 

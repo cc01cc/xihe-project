@@ -82,6 +82,10 @@ public class ContextProjectionService {
             }
             case "prompt.admitted" -> addMessage(context, payload, "human");
             case "llm.token" -> addMessage(context, payload, "ai");
+            // PLAN-294 M1: durable assistant reply (decision #2/#6) — same
+            // projection shape as llm.token so snapshots carry the AI side of
+            // the conversation for history assembly and compaction.
+            case "assistant.responded" -> addMessage(context, payload, "ai");
             case "tool.result" -> addMessage(context, payload, "tool");
             case "context.source_changed" -> addMessage(context, payload, "system");
             case "epoch.started", "epoch.replaced" -> setEpoch(context, payload);
