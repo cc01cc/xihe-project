@@ -53,7 +53,7 @@ sequenceDiagram
 
 镜像预置 `xihe-executor` / `xihe-job` 独立容器用户（切换与凭据隔离语义待实现确认，见 DEV-018）
 - `execute_command` 为显式 Shell 语义：`args` 作 positional parameters 传入（禁拼接）；timeout/cancel 终止并等待 child/process group；stdout/stderr 与 retained artifact 有界，超限只留 bounded preview。
-- MCP 工具集（rmcp `#[tool]`，`main.rs` 共 24 个）：read_file/read_file_range/write_file/list_directory/glob/grep/execute_command/read_command_output/get_file_info/watch_directory/edit_file/delete_file/delete_directory/move_file/copy_file/mkdir/extract_pdf_text/web_fetch/start/list/get/cancel_background_process。
+- MCP 工具集（rmcp `#[tool]`，`main.rs` 共 22 个）：read_file/read_file_range（二进制安全，base64+is_binary，16MiB 预览上限）/write_file/list_directory/glob/grep/execute_command/read_command_output/get_file_info/watch_directory/edit_file/delete_file/delete_directory/move_file/copy_file/mkdir/extract_pdf_text/web_fetch/start_background_process/list_background_processes/get_background_process/cancel_background_process。公开集由 `GatewayToolRegistryContractTest` 冻结（PLAN-290 M0.2 / PLAN-292 M2）；`apply_patch/create_snapshot/revert_snapshot` 为 internal-only 不在此列。
 
 ## 3. 后台 Job 与 FS 安全
 

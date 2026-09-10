@@ -7,7 +7,7 @@ sidebar_order: 19
 status: active
 created: 2026-09-07
 updated: 2026-09-07
-description: XH PostgreSQL 全量表结构速查：22 张业务表按 6 域分组、ER 关系、字段约束与索引、V1~V22 迁移对照与本地查看方法
+description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V9 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
   - flyway
@@ -16,7 +16,7 @@ tags:
 
 # DEV-019: 数据库设计
 
-> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Source of Truth 是 `packages/control-plane/src/main/resources/db/migration/V1~V22`，JPA Entity 只是镜像。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
+> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Source of Truth 是 `packages/control-plane/src/main/resources/db/migration/V1~V9`，JPA Entity 只是镜像。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
 
 ## 1. 结论与使用规则
 
@@ -281,7 +281,7 @@ erDiagram
 > - `idx_chat_runs_active_lease (session_id, status, lease_expires_at)` — 活跃租约判定（`V22`）
 > - 唯一约束 `(user_id, session_id, idempotency_key)` — 同 key 不重复起 run，同 key 不同 payload 报冲突
 
-**approval_requests**（`V21`，Entity `entity/ChatApproval.java` 对应 `approval_requests` 表）：工具高危操作人审。
+**approval_requests**（基线 `V1` 内建，`V7` 加 `grant_consumed_at`，`V9` 加 `arguments_hash`；Entity `entity/ChatApproval.java`）：工具高危操作人审。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -298,6 +298,8 @@ erDiagram
 | expires_at | TIMESTAMPTZ | NOT NULL | 超时自动过期 |
 | decided_at | TIMESTAMPTZ | nullable | 决策时间 |
 | dispatch_error_code | VARCHAR(64) | nullable | 下发失败码 |
+| grant_consumed_at | TIMESTAMPTZ | nullable | grant 单次消费时间（`V7`） |
+| arguments_hash | VARCHAR(96) | nullable | canonical arguments SHA-256（`V9`，PLAN-292 M1 grant 哈希匹配；存量行为 NULL 走 legacy 比对） |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
 | updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
 
@@ -603,32 +605,21 @@ erDiagram
 > - `idx_audit_logs_workspace_id (workspace_id)`
 > - `idx_audit_logs_action (action)`
 
-## 4. 迁移对照（V1~V22）
+## 4. 迁移对照（当前链 V1~V9）
+
+> 历史链 V1~V22 已被 PLAN-280 destructive rebaseline 取代（旧 V2~V22/U6 移出仓库，仅 Git 历史可追溯）；下表为当前 active 链。原文末尾的历史 V1~V22 对照表保留在 Git 历史中，本节按当前链重写。
 
 | 版本 | 文件 | 变更 | 影响表 |
 |------|------|------|--------|
-| V1 | `V1__init_schema.sql` | 8 基表 + 13 索引 | `users/workspaces/workspace_users/sessions/messages/files/mcp_servers/audit_logs` |
-| V2 | `V2__add_workspace_storage_path.sql` | `workspaces` 加字段 | `workspaces.storage_path` |
-| V3 | `V3__add_document_chunks.sql` | vector 扩展 + RAG 表 + ivfflat 索引 | `document_chunks` |
-| V4 | `V4__config_table.sql` | 配置 + 审计 | `config/config_audit` |
-| V5 | `V5__add_mcp_config.sql` | `config` 加字段 | `config.mcp_config` |
-| V6 | `V6__add_session_attachments.sql` | 会话附件 | `files.session_id/message_id`、`messages.attachments`（`U6__undo_session_attachments.sql` 为回滚对子，勿直接执行） |
-| V7 | `V7__context_event_store.sql` | Event Sourcing 双表 | `context_events/context_projections` |
-| V8 | `V8__context_source_hashes.sql` | 增量哈希 | `context_source_hashes` |
-| V9 | `V9__oauth_credentials.sql` | OAuth 凭证 | `oauth_credentials` |
-| V10 | `V10__expand_config_environment.sql` | `environment` 32→64 | `config.environment` |
-| V11 | `V11__add_assignment_and_storage_ref.sql` | 存储 5 字段 + 分配表 + 回填 | `workspaces.storage_backend/ref/generation/sandbox_spec*`、`workspace_assignments` |
-| V12 | `V12__unique_assignment_generation.sql` | 联合唯一 | `workspace_assignments(workspace_id, generation)` |
-| V13 | `V13__rename_workspace_assignments_to_execution_specs.sql` | 重命名 + 幂等建表 | `workspace_execution_specs`（旧名退役） |
-| V14 | `V14__workspace_lifecycle_constraints.sql` | 软删 + 级联重建 + 复合索引 | `workspaces.deleted_at`、`messages/context_*` FK CASCADE、`sessions/workspace_users` 复合索引 |
-| V15 | `V15__mcp_remote_wiring.sql` | remote 接线 | `mcp_servers.auth_mode`、`mcp_tool_aliases` |
-| V16 | `V16__chat_runs.sql` | 轮次持久化 | `chat_runs`、`messages.run_id` |
-| V17 | `V17__redact_config_audit_secrets.sql` | 历史脱敏（数据修复，非结构） | `config_audit.old/new_value` |
-| V18 | `V18__provider_connections.sql` | Provider 连接 + 租约 | `provider_connections/provider_credential_leases` |
-| V19 | `V19__session_provider_connection_binding.sql` | 逻辑绑定（无 FK） | `sessions/chat_runs.provider_connection_id+connection_revision` |
-| V20 | `V20__provider_connection_audit.sql` | 连接审计 | `provider_connection_audit` |
-| V21 | `V21__chat_approval_requests.sql` | 人审 | `approval_requests` |
-| V22 | `V22__chat_run_leases.sql` | 租约字段 | `chat_runs.lease_owner/lease_expires_at` |
+| V1 | `V1__init_schema.sql` | 全量基线：21 表（原生 UUID 主键、`TIMESTAMPTZ`、显式命名 FK/CHECK/UNIQUE/索引与 `ON DELETE`） | 全部表（含 `approval_requests/chat_runs/sessions/messages/files/mcp_servers/audit_logs` 等） |
+| V2 | `V2__session_operation_ledger.sql` | Session Operation Ledger 6 表 | `session_operations/operation_items/operation_attempts/operation_events/operation_extensions/operation_diagnostic_artifacts` |
+| V3 | `V3__runtime_jobs.sql` | Runtime 后台任务 durable registry | `runtime_jobs` |
+| V4 | `V4__workspace_snapshots.sql` | Workspace snapshot 双表 | `workspace_snapshots/workspace_snapshot_files` |
+| V5 | `V5__approval_snapshot_policy.sql` | 审批绑定 snapshot/policyClass | `approval_requests.snapshot_id/policy_class` |
+| V6 | `V6__task_continuity.sql` | 任务连续性 | `task_plans/task_items` |
+| V7 | `V7__approval_grant_consumption.sql` | grant 单次消费 | `approval_requests.grant_consumed_at` |
+| V8 | `V8__schema_gate_fixes.sql` | schema 门禁修正（FK `ON DELETE NO ACTION` 显式化、去冗余索引、`config.created_at`） | 多表 |
+| V9 | `V9__approval_arguments_hash.sql` | grant 哈希匹配列（PLAN-292 M1） | `approval_requests.arguments_hash` |
 
 ## 5. 本地查看与运维
 
