@@ -755,14 +755,14 @@ async function main() {
           await launchNativeService({
             name: 'control-plane',
             cmd: 'mvn.cmd',
-            args: ['-q', '-DskipTests', 'spring-boot:run'],
+            args: ['-q', '-DskipTests', '-Dspring-boot.run.profiles=e2e', 'spring-boot:run'],
             cwd: join(projectDir, 'packages', 'control-plane'),
             extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
             healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
           })
           if (llmMode !== 'mock') await configureFakeLlm()
         } else {
-          const child = spawnCommand('java', ['-jar', cpJar], {
+          const child = spawnCommand('java', ['-jar', cpJar, '--spring.profiles.active=e2e'], {
             cwd: join(projectDir, 'packages', 'control-plane'),
             env: {
               ...process.env,
