@@ -105,8 +105,12 @@ class ContextServiceTest extends AbstractH2Test {
         var snapshot = projectionService.project(sessionId, 0L);
         assertThat(snapshot.get("latest_sequence").asLong()).isEqualTo(4L);
         var messages = snapshot.get("messages");
-        assertThat(messages).hasSize(1);
+        // PLAN-294 decision #7: summary first, then the keep-recent tail.
+        // Both prior messages are inside the K=10 window, so they survive.
+        assertThat(messages).hasSize(3);
         assertThat(messages.get(0).get("role").asText()).isEqualTo("system");
-        assertThat(messages.get(0).get("content").asText()).contains("Compacted conversation summary");
+        assertThat(messages.get(0).get("content").asText()).contains("[Goal]");
+        assertThat(messages.get(1).get("content").asText()).isEqualTo("hello");
+        assertThat(messages.get(2).get("content").asText()).isEqualTo("world");
     }
 }

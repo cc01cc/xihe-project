@@ -91,9 +91,20 @@ test.describe('@host Journey D — context pipeline', () => {
     const marker2 = `T2${Date.now().toString(36).toUpperCase()}`
 
     seedPage(page, authToken, wsId)
+    // A brand-new user may land on the empty "no active session" state —
+    // 新建对话 is the real user path out of it (auto-session creation can
+    // race CP readiness on cold starts).
     await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
     const chatInput = page.locator('[data-testid="chat-input"]')
-    await expect(chatInput, 'chat input visible on workspace page').toBeVisible({ timeout: 20000 })
+    if (!(await chatInput.isVisible({ timeout: 10000 }).catch(() => false))) {
+      const newChat = page.getByRole('button', { name: '新建对话' }).first()
+      if (await newChat.isVisible().catch(() => false)) {
+        await newChat.click()
+      } else {
+        await page.reload({ waitUntil: 'load' })
+      }
+    }
+    await expect(chatInput, 'chat input visible on workspace page').toBeVisible({ timeout: 30000 })
     const lastAssistant = page
       .locator('[data-slot="message"][data-align="start"]')
       .last()
@@ -124,5 +135,51 @@ test.describe('@host Journey D — context pipeline', () => {
       'turn-2 request must carry turn-1 marker (conversation memory)',
     ).toContainText(`XIHE-HIST-SEEN: ${marker1}`, { timeout: 30000 })
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'd1-turn2-memory.png'), fullPage: false })
+  })
+
+  test('D2: manual compaction keeps summary visible to the LLM (epoch injection)', async ({ page }) => {
+    test.skip(LLM_MODE !== 'history-marker', 'requires XIHE_E2E_LLM_MODE=history-marker fake LLM marker mode')
+    const authToken = sharedAuth
+    const wsId = sharedWs
+    const headers = sharedHeaders
+    mkdirSync(EVIDENCE_DIR, { recursive: true })
+    const markerA = `A${Date.now().toString(36).toUpperCase()}`
+    const markerB = `B${Date.now().toString(36).toUpperCase()}`
+
+    seedPage(page, authToken, wsId)
+    await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
+    const lastAssistant = page
+      .locator('[data-slot="message"][data-align="start"]')
+      .last()
+
+    // Turn 1: plant marker A, wait for the run to finish server-side.
+    await sendChat(page, `Plant marker XIHE-E2E-HIST ${markerA} now.`)
+    await expect(lastAssistant).toContainText(`XIHE-HIST-CURRENT: ${markerA}`, { timeout: 120000 })
+    await awaitLastOperationCompleted(page.request)
+
+    // Manual compaction (decision #15): user-reachable endpoint on
+    // /api/v1/sessions (M3 UI entry will call the same route).
+    const sessRes = await page.request.get(`${CP_URL}/api/v1/sessions`, { headers })
+    expect(sessRes.ok(), `sessions list ${sessRes.status()}`).toBeTruthy()
+    const body = (await sessRes.json()) as { sessions?: Array<{ id: string }> }
+    const sessionId = body.sessions?.[0]?.id ?? ''
+    expect(sessionId, 'session id resolvable').not.toBe('')
+    const comp2 = await page.request.post(
+      `${CP_URL}/api/v1/sessions/${sessionId}/compact`,
+      { headers, data: {} },
+    )
+    expect(comp2.ok(), `compact must succeed: ${comp2.status()} ${await comp2.text()}`).toBeTruthy()
+
+    // Turn 2: the pre-compaction marker must STILL reach the provider —
+    // via the summary (epoch) and/or the kept-recent tail rather than raw
+    // full history.
+    await sendChat(page, `Now plant marker XIHE-E2E-HIST ${markerB}. What markers exist?`)
+    const reply = lastAssistant
+    await expect(reply).toContainText(`XIHE-HIST-CURRENT: ${markerB}`, { timeout: 120000 })
+    await expect(
+      reply,
+      'post-compaction turn must still see pre-compaction marker (summary + kept tail)',
+    ).toContainText(markerA, { timeout: 30000 })
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'd2-post-compaction-memory.png'), fullPage: false })
   })
 })

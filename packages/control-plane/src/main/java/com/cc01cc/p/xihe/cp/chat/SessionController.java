@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.springframework.http.HttpStatus;
@@ -19,9 +20,11 @@ import java.util.Map;
 public class SessionController {
 
     private final SessionService sessionService;
+    private final ContextService contextService;
 
-    public SessionController(SessionService sessionService) {
+    public SessionController(SessionService sessionService, ContextService contextService) {
         this.sessionService = sessionService;
+        this.contextService = contextService;
     }
 
     @GetMapping
@@ -37,6 +40,26 @@ public class SessionController {
                 .map(SessionController::toSummary)
                 .toList();
         return ResponseEntity.ok(Map.of("sessions", sessions));
+    }
+
+    // PLAN-294 decision #15: user-facing manual compaction. The context
+    // controller exposes the same operation on /internal/v1 (service-only);
+    // this is the browser-reachable entry with USER ownership checks.
+    @PostMapping("/{sessionId}/compact")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> compact(@PathVariable String sessionId,
+                                     @RequestBody(required = false) Map<String, Object> body) {
+        Session session = sessionService.requireCurrent(sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId());
+        Long upToSequence = body != null && body.get("upToSequence") != null
+                ? Long.valueOf(body.get("upToSequence").toString())
+                : null;
+        var event = contextService.compact(
+                sessionId, session.getWorkspaceId(), session.getUserId(), upToSequence);
+        return ResponseEntity.ok(Map.of(
+                "sequence", event.getSequence(),
+                "eventType", event.getEventType(),
+                "created_at", event.getCreatedAt().toString()
+        ));
     }
 
     @GetMapping("/{sessionId}")

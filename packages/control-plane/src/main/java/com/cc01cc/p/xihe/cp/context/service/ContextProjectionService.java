@@ -178,12 +178,35 @@ public class ContextProjectionService {
 
     private void applyCompaction(ObjectNode context, ObjectNode payload) {
         if (payload.has("summary")) {
+            String summary = payload.path("summary").asText();
             ArrayNode messages = (ArrayNode) context.get("messages");
-            messages.removeAll();
+            int size = messages.size();
+            // PLAN-294 decision #7: the most recent K messages stay verbatim;
+            // only the pre-window history is replaced by the summary.
+            int keepFrom = Math.max(0, size - ContextService.KEEP_RECENT_MESSAGES);
             ObjectNode summaryMessage = objectMapper.createObjectNode();
             summaryMessage.put("role", "system");
-            summaryMessage.put("content", payload.path("summary").asText());
-            messages.add(summaryMessage);
+            summaryMessage.put("content", summary);
+            ArrayNode kept = objectMapper.createArrayNode();
+            kept.add(summaryMessage);
+            for (int i = keepFrom; i < size; i++) {
+                kept.add(messages.get(i));
+            }
+            context.set("messages", kept);
+        }
+        // PLAN-294 M2 (the broken half): expose the new epoch to the runner —
+        // _build_system_messages reads epoch.system_messages, so the summary
+        // must land there too. instructions slot first, then the summary.
+        String epochId = payload.path("contextEpoch").asText("");
+        if (!epochId.isBlank()) {
+            ObjectNode epoch = objectMapper.createObjectNode();
+            epoch.put("epoch_id", epochId);
+            epoch.put("baseline_hash", payload.path("summaryHash").asText(""));
+            ArrayNode systemMessages = objectMapper.createArrayNode();
+            systemMessages.add("Conversation summary of compacted history:");
+            systemMessages.add(payload.path("summary").asText(""));
+            epoch.set("system_messages", systemMessages);
+            context.set("epoch", epoch);
         }
     }
 

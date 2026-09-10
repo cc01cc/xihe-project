@@ -36,6 +36,49 @@ from xihe_agent.interfaces.usage import RunUsage
 # is the real governance; this is the fuse.
 HISTORY_TRUNCATION_LIMIT = 20
 
+# PLAN-294 decision #17 (cheapest-first masking): historical tool results are
+# the token-dominant bulk of a coding-agent history. Masking (placeholder
+# swap) beats LLM summarization on cost and trajectory quality (JetBrains,
+# 500 SWE-bench instances). Rules:
+#   - only history OUTSIDE the keep-recent tail is eligible;
+#   - eligible tool messages are masked when byte-identical duplicates of an
+#     earlier tool result or longer than TOOL_RESULT_MASK_CHARS;
+#   - a tool message is NEVER masked when its call is inside the window and
+#     the result message carries no tool_call_id pairing info (v1 snapshot
+#     pairs by adjacency) — pairs are masked or kept together.
+MASK_PLACEHOLDER = "[old tool result cleared]"
+TOOL_RESULT_MASK_CHARS = 2000
+KEEP_RECENT_TAIL = 10
+
+
+def _mask_history_tool_results(history: list[Message]) -> list[Message]:
+    """Return history with stale oversized/duplicate tool results masked."""
+    size = len(history)
+    if size <= KEEP_RECENT_TAIL:
+        return list(history)
+    window_start = size - KEEP_RECENT_TAIL
+    seen_contents: set[str] = set()
+    masked_indexes: set[int] = set()
+    # First pass: decide eligibility (keep-recent tail is never masked).
+    for i, msg in enumerate(history):
+        if msg.role != "tool" or i >= window_start:
+            continue
+        duplicated = msg.content in seen_contents
+        oversized = len(msg.content) > TOOL_RESULT_MASK_CHARS
+        if duplicated or oversized:
+            masked_indexes.add(i)
+        seen_contents.add(msg.content)
+    if not masked_indexes:
+        return list(history)
+    # Second pass: emit, swapping masked results for the placeholder.
+    result: list[Message] = []
+    for i, msg in enumerate(history):
+        if i in masked_indexes:
+            result.append(TextMessage(role="tool", content=MASK_PLACEHOLDER))
+        else:
+            result.append(msg)
+    return result
+
 
 def _build_args_schema(spec: ToolSpec) -> type[BaseModel]:
     """Build a Pydantic model from a JSON Schema for LangGraph."""
@@ -168,6 +211,7 @@ class LangGraphRunner(AgentRunner):
         history = context.messages
         if len(history) > HISTORY_TRUNCATION_LIMIT:
             history = history[-HISTORY_TRUNCATION_LIMIT:]
+        history = _mask_history_tool_results(history)
         assembled = [*history, *messages]
 
         system_messages = self._build_system_messages(config, context)

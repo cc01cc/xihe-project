@@ -43,6 +43,7 @@ from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.llm.base import LLMConfig, ProviderName, create_llm
 from xihe_agent.llm.models import _models_router, fetch_model_catalog
+from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.llm.models import router as models_router
 from xihe_agent.rag import EmbeddingService, LiteLLMEmbeddings, VectorStore
 from xihe_agent.rag import chunk_document as rag_chunk
@@ -638,6 +639,23 @@ async def internal_problem_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
+_token_counter = TokenCounter()
+
+
+def _estimate_input_tokens(messages: list[Any]) -> int:
+    """PLAN-294 decision #12: local estimation of the assembled input.
+
+    Role: pre-call compaction signal. Provider usage remains the truth source
+    that calibrates these estimates via llm_usage events.
+    """
+    payload = []
+    for m in messages:
+        role = getattr(m, "role", "human")
+        content = getattr(m, "content", "")
+        payload.append({"role": role, "content": content})
+    return _token_counter.estimate_messages(payload)
+
+
 @app.post("/internal/v1/agent/chat")
 async def chat(request: Request, _token: None = Depends(verify_api_token)):
     data = await request.json()
@@ -935,7 +953,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         # and audit trail still carry a usable value.
                         usage_data = dict(event.data.get("usage") or {})
                         if usage_data.get("source") in (None, "fallback"):
-                            estimated = sum(len(m.content or "") for m in messages) // 4
+                            estimated = _estimate_input_tokens(messages)
                             usage_data.setdefault("estimatedInputTokens", estimated)
                             usage_data["source"] = "estimated" if estimated else "fallback"
                         else:

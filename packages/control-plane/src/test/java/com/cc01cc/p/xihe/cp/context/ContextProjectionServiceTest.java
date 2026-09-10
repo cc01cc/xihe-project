@@ -121,9 +121,15 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         ObjectNode ctx = projectionService.project(sessionId, 0L);
 
         var messages = ctx.get("messages");
-        assertThat(messages).hasSize(2);
+        // PLAN-294 decision #7: summary + keep-recent tail. "old turn" sits
+        // inside the K=10 window, so the projection is summary + old + new.
+        assertThat(messages).hasSize(3);
         assertThat(messages.get(0).get("role").asText()).isEqualTo("system");
-        assertThat(messages.get(0).get("content").asText()).contains("old turn");
-        assertThat(messages.get(1).get("content").asText()).isEqualTo("new turn after compaction");
+        assertThat(messages.get(0).get("content").asText()).contains("[Goal] old turn");
+        assertThat(messages.get(1).get("content").asText()).isEqualTo("old turn");
+        assertThat(messages.get(2).get("content").asText()).isEqualTo("new turn after compaction");
+        // PLAN-294 M2 fix: the epoch must surface for the runner.
+        assertThat(ctx.get("epoch").get("epoch_id").asText()).isNotBlank();
+        assertThat(ctx.get("epoch").get("system_messages").toString()).contains("[Goal] old turn");
     }
 }
