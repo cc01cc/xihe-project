@@ -60,6 +60,8 @@ public class ChatController {
     private final SseEmitterManager sseManager;
     private final ApprovalService approvalService;
     private final OperationService operationService;
+    private final com.cc01cc.p.xihe.cp.context.service.EventStoreService eventStoreService;
+    private final com.cc01cc.p.xihe.cp.context.service.ContextService contextService;
     private final ChatSubmissionService chatSubmissionService;
     private final SessionService sessionService;
     private final MessageRepository messageRepository;
@@ -84,6 +86,8 @@ public class ChatController {
             SseEmitterManager sseManager,
             ApprovalService approvalService,
             OperationService operationService,
+            com.cc01cc.p.xihe.cp.context.service.EventStoreService eventStoreService,
+            com.cc01cc.p.xihe.cp.context.service.ContextService contextService,
             ChatSubmissionService chatSubmissionService,
             SessionService sessionService,
             MessageRepository messageRepository,
@@ -99,6 +103,8 @@ public class ChatController {
         this.sseManager = sseManager;
         this.approvalService = approvalService;
         this.operationService = operationService;
+        this.eventStoreService = eventStoreService;
+        this.contextService = contextService;
         this.chatSubmissionService = chatSubmissionService;
         this.sessionService = sessionService;
         this.messageRepository = messageRepository;
@@ -474,6 +480,22 @@ public class ChatController {
             // relayed; read by the IO-interrupt catch below (PLAN-292 C1).
             AtomicBoolean approvalInFlight = new AtomicBoolean(false);
             try {
+                // PLAN-294 M3 (decisions #4/#18): pre-run compaction gate —
+                // inside the session serialization scope (activeRuns), the
+                // gate compresses history before the run consumes it. Context
+                // service owns the cooldown/anti-thrash rules.
+                try {
+                    if (contextService.shouldAutoCompact(sessionId)) {
+                        contextService.compact(sessionId, workspaceId, userId, null);
+                        logger.info("[LIFECYCLE] service=cp event=chat_pre_run_compaction sessionId={} runId={}", sessionId, runId);
+                    }
+                } catch (Exception gateError) {
+                    // The gate never blocks a run: failed compaction degrades
+                    // to no compaction and the overflow fallback (runner)
+                    // remains the safety net.
+                    logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_compaction_failed sessionId={} runId={} error={}",
+                            sessionId, runId, gateError.getMessage());
+                }
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
                 ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))
                         .orElseThrow(() -> new IllegalStateException("Chat run not found"));
@@ -945,7 +967,7 @@ public class ChatController {
                         // tagging) as an operation extension and stop relaying
                         // it to the UI (no UI consumer; audit-only channel).
                         Object usagePayload = parsePayload(eventName, data.toString());
-                        persistUsageExtension(runId, usagePayload);
+                        persistUsageExtension(sessionId, runId, usagePayload);
                         Map<?, ?> usage = asMap(usagePayload).get("usage") instanceof Map<?, ?> u ? u : null;
                         if (usage != null) {
                             usageData = usage;
@@ -1059,7 +1081,7 @@ public class ChatController {
     // PLAN-294 M1 (decision #13): the usage event carries estimated + real
     // token counts and the source tag; store it verbatim on the run's
     // operation as an llm_usage extension (audit + calibration baseline).
-    private void persistUsageExtension(String runId, Object parsedPayload) {
+    private void persistUsageExtension(String sessionId, String runId, Object parsedPayload) {
         UUID operationId = operationService.findOperationIdByRunId(runId);
         if (operationId == null) {
             logger.debug("[LIFECYCLE] service=cp event=usage_extension_skipped runId={} reason=no_operation", runId);
@@ -1070,6 +1092,17 @@ public class ChatController {
                     operationId, null, null, "llm_usage", "chat", "agent", null, null, null);
             operationService.appendExtension(item.getId(), null, "llm_usage", 1,
                     objectMapper.writeValueAsString(parsedPayload));
+            // PLAN-294 M3 (decision #5 signal bridge): mirror the usage into
+            // the context event store so the compaction gate reads a single
+            // source. workspace_id/user_id are NOT NULL in context_events —
+            // fill them from the run's ownership.
+            ChatRun usageRun = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
+            if (usageRun != null) {
+                Map<String, Object> usageEnvelope = new java.util.HashMap<>();
+                usageEnvelope.put("usage", asMap(parsedPayload).get("usage"));
+                eventStoreService.append(sessionId, usageRun.getWorkspaceId().toString(),
+                        usageRun.getUserId().toString(), "llm.usage", usageEnvelope);
+            }
             // PLAN-294 ①2: success visibility — the estimated/real token
             // counts reaching the ledger is the calibration baseline; without
             // this line a silent CHECK-constraint rejection is undetectable.

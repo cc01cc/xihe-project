@@ -113,4 +113,43 @@ class ContextServiceTest extends AbstractH2Test {
         assertThat(messages.get(1).get("content").asText()).isEqualTo("hello");
         assertThat(messages.get(2).get("content").asText()).isEqualTo("world");
     }
+
+    @Test
+    void autoCompactGate_respectsCooldownWindow() {
+        // PLAN-294 decision #18: a compaction must be followed by at least
+        // COMPACTION_COOLDOWN_EVENTS new events before the gate re-arms.
+        String sessionId = "aaaaaaad-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        for (int i = 0; i < 60; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "m" + i)));
+        }
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+
+        // Only 3 new events since the cursor — cooldown blocks the gate.
+        for (int i = 0; i < 3; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "n" + i)));
+        }
+        assertThat(contextService.shouldAutoCompact(sessionId)).isFalse();
+    }
+
+    @Test
+    void autoCompactGate_messageVolumeTriggers() {
+        // 60 messages, no prior compaction: the message-count fallback fires
+        // (deterministic trigger; the token signal needs usage events).
+        String sessionId = "aaaaaaae-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        for (int i = 0; i < 60; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "m" + i)));
+        }
+        assertThat(contextService.shouldAutoCompact(sessionId)).isTrue();
+    }
 }

@@ -21,10 +21,13 @@ public class SessionController {
 
     private final SessionService sessionService;
     private final ContextService contextService;
+    private final ChatController chatController;
 
-    public SessionController(SessionService sessionService, ContextService contextService) {
+    public SessionController(SessionService sessionService, ContextService contextService,
+                             ChatController chatController) {
         this.sessionService = sessionService;
         this.contextService = contextService;
+        this.chatController = chatController;
     }
 
     @GetMapping
@@ -50,6 +53,14 @@ public class SessionController {
     public ResponseEntity<?> compact(@PathVariable String sessionId,
                                      @RequestBody(required = false) Map<String, Object> body) {
         Session session = sessionService.requireCurrent(sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId());
+        // PLAN-294 D.4-8 (decision #15/#18): a manual compaction must not
+        // tear context out from under an active run (appendix E.4 "no tools
+        // in flight during compaction").
+        if (chatController.activeRunId(sessionId) != null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
+                    "A chat run is already active for this session; compaction is deferred until it finishes");
+        }
         Long upToSequence = body != null && body.get("upToSequence") != null
                 ? Long.valueOf(body.get("upToSequence").toString())
                 : null;

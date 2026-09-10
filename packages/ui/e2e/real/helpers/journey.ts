@@ -50,7 +50,11 @@ export function seedPage(page: import('@playwright/test').Page, ctx: JourneyCont
 export async function sendChat(page: import('@playwright/test').Page, text: string): Promise<void> {
   const input = page.locator('[data-testid="chat-input"]')
   const send = page.locator('[data-testid="chat-send-button"]')
+  // Each retry re-fills: a stale Vue mount (session switch / remount after
+  // ensureChatReady) can drop the earlier input event, leaving the button
+  // disabled with DOM value set but no v-model update.
   for (let i = 0; i < 6; i++) {
+    await input.click().catch(() => {})
     await input.fill(text)
     if (await send.isEnabled().catch(() => false)) break
     await page.waitForTimeout(1000)

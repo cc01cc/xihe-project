@@ -153,20 +153,80 @@ public class ContextService {
         return Math.min(KEEP_RECENT_MESSAGES, messages.size());
     }
 
+    // PLAN-294 decisions #5/#11/#18 (M3): the pre-run compaction gate.
+    // Soft threshold (default 70% of the model window) triggers a从容 compaction
+    // before the run; hysteresis parameters (appendix G / E.5) keep a full
+    // session from oscillating between compress and grow every turn.
+    static final double SOFT_THRESHOLD_PCT = 0.70;
+    static final int MIN_MESSAGES_TO_COMPACTION = 12;
+    static final int COMPACTION_COOLDOWN_EVENTS = 10;
+    static final int MAX_CONSECUTIVE_INEFFECTIVE = 3;
+
+    /** Latest llm_usage payload for the session's runs, or null. */
+    public com.fasterxml.jackson.databind.JsonNode latestUsage(String sessionId) {
+        List<com.cc01cc.p.xihe.cp.context.entity.ContextEvent> events = eventStoreService.read(sessionId, 0L);
+        for (int i = events.size() - 1; i >= 0; i--) {
+            com.cc01cc.p.xihe.cp.context.entity.ContextEvent e = events.get(i);
+            // The relay bridges the agent's usage SSE event into the context
+            // event store as llm.usage (mirrored from the operation extension)
+            // so compaction gating stays single-source (context_events).
+            if ("llm.usage".equals(e.getEventType())) {
+                try {
+                    return objectMapper.readTree(e.getPayload());
+                } catch (Exception ex) {
+                    logger.warn("[LIFECYCLE] service=cp event=usage_event_parse_failed sessionId={}", sessionId);
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
     public boolean shouldAutoCompact(String sessionId) {
-        long latestSeq = eventStoreService.getLatestSequence(sessionId);
-        ObjectNode context = projectionService.project(sessionId, latestSeq);
+        // projectUpTo (inclusive of the latest event) — the historical
+        // shouldAutoCompact passed latestSeq into project(afterSequence),
+        // whose exclusive-lower-bound semantics made the projection EMPTY
+        // (the dead-code bug that stayed hidden while nothing called it).
+        ObjectNode context = projectionService.projectUpTo(
+                sessionId, eventStoreService.getLatestSequence(sessionId));
         if (context == null) return false;
 
-        // Threshold 1: message count > 50
-        com.fasterxml.jackson.databind.JsonNode messages = context.get("messages");
-        if (messages != null && messages.size() > 50) return true;
+        // Hysteresis ①: cooldown — a compaction must be followed by at least
+        // COMPACTION_COOLDOWN_EVENTS new events before the next one.
+        com.fasterxml.jackson.databind.JsonNode previous = latestCompaction(sessionId);
+        if (previous != null && previous.has("up_to_sequence")) {
+            long latestSeq = eventStoreService.getLatestSequence(sessionId);
+            if (latestSeq - previous.get("up_to_sequence").asLong() < COMPACTION_COOLDOWN_EVENTS) {
+                return false;
+            }
+        }
 
-        // Threshold 2: metadata token_count > 100000 (estimated)
+        com.fasterxml.jackson.databind.JsonNode messages = context.get("messages");
+        int messageCount = messages != null && messages.isArray() ? messages.size() : 0;
+
+        // Primary signal: the provider/estimated token count of the last run
+        // (decision #5 ②③; real when available, estimated otherwise). The
+        // window size comes from the compaction contextPolicy when present.
+        com.fasterxml.jackson.databind.JsonNode usage = latestUsage(sessionId);
+        if (usage != null) {
+            long inputTokens = usage.path("usage").path("inputTokens").asLong(
+                    usage.path("inputTokens").asLong(0));
+            long window = usage.path("usage").path("windowTokens").asLong(
+                    usage.path("windowTokens").asLong(0));
+            if (inputTokens > 0 && window > 0 && inputTokens >= (long) (window * SOFT_THRESHOLD_PCT)) {
+                return true;
+            }
+        }
+
+        // Fallback signals (decision #5 ④): no usable token data — message
+        // count and tool-call volume thresholds remain the deterministic
+        // backstop. They also gate the token signal below a minimum volume so
+        // a single giant paste cannot thrash the gate.
+        if (messageCount >= MIN_MESSAGES_TO_COMPACTION && messageCount > 50) return true;
+
         com.fasterxml.jackson.databind.JsonNode meta = context.get("metadata");
         if (meta != null && meta.has("token_count") && meta.get("token_count").asInt(0) > 100000) return true;
 
-        // Threshold 3: tool_calls count > 20
         if (meta != null && meta.has("tool_calls")) {
             com.fasterxml.jackson.databind.JsonNode toolCalls = meta.get("tool_calls");
             if (toolCalls.isArray() && toolCalls.size() > 20) return true;

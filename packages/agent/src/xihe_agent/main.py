@@ -642,6 +642,18 @@ async def internal_problem_handler(request: Request, exc: Exception) -> JSONResp
 _token_counter = TokenCounter()
 
 
+def _model_window_tokens(model: str | None) -> int:
+    """Best-effort model context window (decision #11). model_cost first;
+    the 3-tier contextPolicy maxInputTokens override lands with F1 config."""
+    if not model:
+        return 0
+    try:
+        info = litellm.model_cost.get(model) or {}
+        return int(info.get("max_input_tokens") or 0)
+    except Exception:
+        return 0
+
+
 def _estimate_input_tokens(messages: list[Any]) -> int:
     """PLAN-294 decision #12: local estimation of the assembled input.
 
@@ -958,6 +970,10 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                             usage_data["source"] = "estimated" if estimated else "fallback"
                         else:
                             usage_data.setdefault("estimatedInputTokens", 0)
+                        # PLAN-294 M3 (decision #5): the model window rides
+                        # along so the CP compaction gate can evaluate the
+                        # percentage threshold without a config dependency.
+                        usage_data["windowTokens"] = _model_window_tokens(request_config.model)
                         yield render_sse("usage", correlated_data({"usage": usage_data}))
                     else:
                         yield render_sse(event.type, correlated_data(event.data))

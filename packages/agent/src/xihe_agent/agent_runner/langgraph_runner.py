@@ -15,6 +15,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import BaseTool
+import litellm
 from loguru import logger
 from pydantic import BaseModel, create_model
 
@@ -282,6 +283,16 @@ class LangGraphRunner(AgentRunner):
             # SSE relay can emit error(APPROVAL_REJECTED|APPROVAL_EXPIRED).
             logger.info("LangGraph stream terminated by approval gate: code={}", e.code)
             yield AgentEvent(type="error", data={"error": str(e), "code": e.code})
+        except litellm.exceptions.ContextWindowExceededError as e:
+            # PLAN-294 decision #10 (M3): provider-side overflow is a
+            # structured terminal outcome, not a crash — the CP compaction
+            # gate consumes CONTEXT_OVERFLOW as the reactive trigger and the
+            # retry passes the pre-run gate after compaction.
+            logger.info("LangGraph stream hit context window overflow: {}", e)
+            yield AgentEvent(
+                type="error",
+                data={"error": "Context window exceeded", "code": "CONTEXT_OVERFLOW", "retryable": True},
+            )
         except Exception as e:
             logger.error("LangGraph stream failed", exc_info=e)
             yield AgentEvent(type="error", data={"error": str(e)})
