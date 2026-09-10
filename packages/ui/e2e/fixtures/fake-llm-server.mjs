@@ -53,6 +53,11 @@ async function sendCompletion(response, provider, requestBody) {
     return
   }
 
+  if (mode === 'history-marker') {
+    sendHistoryMarkerCompletion(response, requestBody)
+    return
+  }
+
   const lastMessage = requestBody.messages?.at(-1)?.content ?? 'empty'
   const chunks = [`${provider} fake`, ` response to: ${String(lastMessage).slice(0, 40)}`]
   for (const content of chunks) {
@@ -161,6 +166,38 @@ function sendWriteFileCompletion(response, requestBody) {
   }
 
   const chunks = ['Write completed. ', 'The file was written after approval.']
+  for (const content of chunks) {
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+  }
+  response.end('data: [DONE]\n\n')
+}
+
+// PLAN-294 M0 (mode: history-marker): pins the "no conversation memory" gap.
+// The spec embeds a per-turn marker in the user message: XIHE-E2E-HIST <token>.
+// The fake LLM scans the ENTIRE messages array (system + full history, exactly
+// what the real provider would receive) for prior markers and echoes the
+// findings — so a passing turn-2 assertion requires turn-1's marker to have
+// reached the provider request. Under the current broken pipeline (no history
+// into the LLM input), only the current turn's marker is ever visible and the
+// spec's turn-2 expectation fails, which is precisely the M0 pin.
+function sendHistoryMarkerCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const seen = []
+  const current = []
+  for (const m of messages) {
+    const text = typeof m.content === 'string' ? m.content : ''
+    const matches = text.matchAll(/XIHE-E2E-HIST ([A-Za-z0-9]+)/g)
+    for (const match of matches) {
+      // The last message is the current turn; everything before it is history.
+      if (m === messages.at(-1)) current.push(match[1])
+      else seen.push(match[1])
+    }
+  }
+  const parts = []
+  if (seen.length === 0) parts.push('XIHE-HIST-SEEN: none')
+  else parts.push(`XIHE-HIST-SEEN: ${seen.join(',')}`)
+  if (current.length > 0) parts.push(`XIHE-HIST-CURRENT: ${current.join(',')}`)
+  const chunks = [parts.join(' | ')]
   for (const content of chunks) {
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
   }
