@@ -2,7 +2,7 @@ import { join, dirname } from 'node:path'
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { stat as stat2, readdir, writeFile } from 'node:fs/promises'
+import { stat as stat2, readdir, writeFile, readFile } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer } from 'node:net'
 
@@ -10,6 +10,11 @@ const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
 const e2eRunId = `host-${Date.now()}-${randomBytes(2).toString('hex')}`
 const isKeep = process.argv.includes('--keep')
+// PLAN-294 M4-a: persistent stack for regression matrices — boot the whole
+// isolated stack once, then run Playwright repeatedly against it.
+const isPersistent = process.argv.includes('--persistent')
+const isTeardown = process.argv.includes('--teardown')
+const stateFile = join(projectDir, '.tmp', 'e2e-host', 'persistent-stack.json')
 const externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === '1'
 
 const workerCount = process.env.XIHE_E2E_WORKERS ?? '1'
@@ -640,17 +645,63 @@ async function precheckDevRuntimeConflict() {
   throw new Error('dev runtime conflict on port 12633')
 }
 
+async function teardownPersistent() {
+  // Read the state file written by --persistent and stop that stack.
+  if (!existsSync(stateFile)) {
+    console.error('[e2e-host] no persistent stack state file found; nothing to tear down')
+    return
+  }
+  const state = JSON.parse(await readFile(stateFile, 'utf8'))
+  console.log(`[e2e-host] tearing down persistent stack ${state.runId}`)
+  await stopPersistentProcesses(state)
+  if (process.platform === 'win32') {
+    await run('docker', ['compose', '-p', state.pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), 'down', '--volumes', '--remove-orphans'], { stdio: 'inherit' })
+  }
+  await rm(stateFile, { force: true })
+  console.log('[e2e-host] persistent stack torn down')
+}
+
+async function stopPersistentProcesses(state) {
+  for (const name of Object.keys(state.pids || {})) {
+    const pid = state.pids[name]
+    if (!pid) continue
+    if (process.platform === 'win32') {
+      await run('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    } else {
+      await run('kill', ['-TERM', String(pid)], { stdio: 'ignore' })
+    }
+    console.log(`[e2e-host] stopped persistent ${name} (pid=${pid})`)
+  }
+}
+
 async function main() {
+  if (isTeardown) {
+    await teardownPersistent()
+    return
+  }
   console.log(`[e2e-host] runId=${e2eRunId} ports ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort} pg=${pgPort}`)
   console.log(`[e2e-host] isolated pg project=${pgProjectName} db=${pgDatabase} hostRoot=${hostRoot}`)
   if (skipRuntime) console.log('[e2e-host] --skip-runtime set; this run validates chat-only paths without Sandbox execution')
   await precheckDevRuntimeConflict()
   await pruneStaleRunDirs()
+
+  // Reuse mode: a persistent stack is already up — point this run's ports at
+  // it and skip every boot phase.
+  if (externalServer && existsSync(stateFile)) {
+    const state = JSON.parse(await readFile(stateFile, 'utf8'))
+    uiPort = state.ports.ui; cpPort = state.ports.cp; agentPort = state.ports.agent
+    runtimePort = state.ports.runtime; pgPort = state.ports.pg
+    console.log(`[e2e-host] persistent stack ${state.runId}: ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort}`)
+  } else if (externalServer) {
+    console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')
+  }
+
+  if (externalServer) {
+    // reuse path: the persistent stack is already up, skip all boot phases
+  } else {
   await reserveHostPorts()
   await startFixtures()
-  if (externalServer) {
-    console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')
-  } else {
+  {
     await startIsolatedPostgres()
     await migrateIsolatedSchema()
     const cpDatasource = `jdbc:postgresql://localhost:${pgPort}/${pgDatabase}`
@@ -704,6 +755,25 @@ async function main() {
     if (!skipRuntime) await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
     await launchUIVite()
   }
+  }
+  if (isPersistent) {
+    // Boot-only mode: record the stack and exit 0 without running tests or
+    // tearing anything down. Subsequent runs reuse it (externalServer path),
+    // and `--teardown` stops it.
+    const pids = {}
+    for (const entry of dockerProcesses) pids[entry.name] = entry.child.pid ?? null
+    await writeFile(stateFile, JSON.stringify({
+      runId: e2eRunId,
+      ports: { ui: uiPort, cp: cpPort, agent: agentPort, runtime: runtimePort, pg: pgPort },
+      pgProjectName,
+      pids,
+    }, null, 2))
+    console.log(`[e2e-host] persistent stack ready; state written to ${stateFile}`)
+    console.log('[e2e-host] run specs with: XIHE_E2E_EXTERNAL_SERVER=1 node scripts/e2e-host.mjs --llm-mode=<mode> <specs...>')
+    console.log('[e2e-host] stop it with: node scripts/e2e-host.mjs --teardown')
+    process.exitCode = 0
+    return
+  }
   result = await runPlaywright()
   const teardown = await cleanup()
   if (!teardown.ok) {
@@ -730,6 +800,12 @@ async function main() {
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, async () => {
     process.exitCode = 130
+    // Persistent mode hands stack ownership to --teardown; an interrupt
+    // (Ctrl+C or a supervisor kill) must not tear the stack down.
+    if (isPersistent) {
+      console.log('[e2e-host] persistent stack left running; tear down with: node scripts/e2e-host.mjs --teardown')
+      process.exit(130)
+    }
     await cleanup()
     process.exit(130)
   })

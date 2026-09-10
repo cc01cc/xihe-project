@@ -42,6 +42,9 @@ test.describe('@host Journey D — context pipeline', () => {
 
   test('D1: turn-2 LLM sees turn-1 marker (multi-turn memory reaches the provider)', async ({ page }) => {
     test.skip(LLM_MODE !== 'history-marker', 'requires XIHE_E2E_LLM_MODE=history-marker fake LLM marker mode')
+    // The fake-marker envelope assertions only hold against the fixture; a
+    // real-provider smoke run (D1-real) must not execute them.
+    test.skip(!!process.env.XIHE_E2E_REAL_XIAOMI_KEY, 'fixture marker envelope is fixture-only; real runs use D1-real')
     const authToken = sharedAuth
     const wsId = sharedWs
     mkdirSync(EVIDENCE_DIR, { recursive: true })
@@ -93,6 +96,34 @@ test.describe('@host Journey D — context pipeline', () => {
       'turn-2 request must carry turn-1 marker (conversation memory)',
     ).toContainText(`XIHE-HIST-SEEN: ${marker1}`, { timeout: 30000 })
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'd1-turn2-memory.png'), fullPage: false })
+  })
+
+  test('D1-real: multi-turn memory with the real model (smoke)', async ({ page }) => {
+    test.skip(!process.env.XIHE_E2E_REAL_XIAOMI_KEY, 'requires a real provider key (XIHE_E2E_REAL_XIAOMI_KEY)')
+    const authToken = sharedAuth
+    const wsId = sharedWs
+    mkdirSync(EVIDENCE_DIR, { recursive: true })
+    const codeWord = `XH${Date.now().toString(36).toUpperCase()}`
+
+    seedPage(page, { authToken, workspaceId: wsId, headers: sharedHeaders })
+    await page.goto('/workspace/' + wsId, { waitUntil: 'load' })
+    await ensureChatReady(page)
+    const lastAssistant = page
+      .locator('[data-slot="message"][data-align="start"]')
+      .last()
+
+    // Turn 1: teach a nonsense codeword.
+    await sendChat(page, `请记住一个暗号：${codeWord}。只回复“已记住”。`)
+    await awaitLastOperationCompleted(page.request)
+
+    // Turn 2: ask for it back. With the M1 pipeline wired, the model must
+    // recall the codeword from the projection snapshot history.
+    await sendChat(page, `我刚才告诉你的暗号是什么？只回复暗号本身。`)
+    await expect(
+      lastAssistant,
+      'real-model turn-2 must recall turn-1 codeword via snapshot history',
+    ).toContainText(codeWord, { timeout: 120000 })
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'd1-real-memory.png'), fullPage: false })
   })
 
   test('D2: manual compaction keeps summary visible to the LLM (epoch injection)', async ({ page }) => {

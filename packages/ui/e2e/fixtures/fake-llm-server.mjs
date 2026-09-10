@@ -124,8 +124,14 @@ function sendApprovalCompletion(response, requestBody) {
 function sendWriteFileCompletion(response, requestBody) {
   const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
   const last = messages.at(-1) ?? {}
-  const hasToolResult = messages.some((m) => m.role === 'tool')
-  const followUp = last.role === 'tool' || (hasToolResult && last.role === 'user')
+  // PLAN-294 M1 made conversation history (including old tool results) part
+  // of every request, so "any tool result present" no longer identifies the
+  // follow-up phase. The user's marker is the phase signal instead: a fresh
+  // write_file request carries a marker in the LAST user message.
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+  const lastUserHasMarker =
+    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-WRITE ')
+  const followUp = last.role === 'tool' || (last.role === 'user' && !lastUserHasMarker)
 
   if (!followUp) {
     const text = typeof last.content === 'string' ? last.content : ''

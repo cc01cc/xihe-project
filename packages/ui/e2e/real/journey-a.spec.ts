@@ -1,12 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
+import { awaitLastOperationCompleted, sendChat } from './helpers/journey'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 const HOST_ROOT =
   process.env.XIHE_WORKSPACE_HOST_ROOT ??
-  path.resolve(process.cwd(), '../../.xihe-workspaces')
+  (process.env.XIHE_E2E_RUN_ID
+    ? path.resolve(process.cwd(), '../../.tmp/e2e-host', process.env.XIHE_E2E_RUN_ID)
+    : path.resolve(process.cwd(), '../../.xihe-workspaces'))
 
 // Agent keeps one MCP workspace binding per process (PLAN-262). Approve → reject
 // must share one registered user/workspace; do not parallelize with another
@@ -56,10 +59,9 @@ test.describe('@host Journey A — AI write_file approve/reject', () => {
     const modal = page.locator('[data-testid="modal-content"]')
 
     // --- A1+A2: approve write_file → FS change ---
-    await chatInput.fill(
-      `请在工作区根目录创建文件 ${approveFile}，内容只写一行「${approveContent}」，然后简短确认。`,
-    )
-    await page.locator('[data-testid="chat-send-button"]').click()
+    // The deterministic write_file fixture triggers on the XIHE-E2E-WRITE
+    // marker (real-model runs keep the natural-language prompt shape).
+    await sendChat(page, `XIHE-E2E-WRITE ${approveFile} ${approveContent}`)
     await expect(modal, 'approval modal for write_file').toBeVisible({ timeout: 120000 })
     // Path preview should appear; avoid asserting secret material.
     await expect(modal).toContainText(approveFile, { timeout: 10000 })
@@ -108,14 +110,10 @@ test.describe('@host Journey A — AI write_file approve/reject', () => {
 
     // Settle: first write_file may still be finishing LangGraph after FS write
     // (grant response / tool_result). Avoid CHAT_IN_PROGRESS on next send.
-    await page.waitForTimeout(5000)
+    await awaitLastOperationCompleted(page.request, authHeaders)
 
     // --- A3: reject write_file → APPROVAL_REJECTED; no new file ---
-    await expect(chatInput).toBeVisible({ timeout: 20000 })
-    await chatInput.fill(
-      `请在工作区根目录创建文件 ${rejectFile}，内容写一行 # should not exist，然后简短确认。`,
-    )
-    await page.locator('[data-testid="chat-send-button"]').click()
+    await sendChat(page, `XIHE-E2E-WRITE ${rejectFile} # should not exist`)
     await expect(modal, 'approval modal for reject case').toBeVisible({ timeout: 120000 })
     await modal.locator('[data-testid="approval-reject"]').click()
     await expect(modal).toBeHidden({ timeout: 20000 })
