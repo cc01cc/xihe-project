@@ -101,6 +101,8 @@ flowchart TD
 | `runtime.state_cleared` | `AgentRunner.reset()` |
 | `session.forked` | 会话 fork |
 | `compaction.applied` | 上下文压缩 |
+| `assistant.responded` | assistant 回复持久化（PLAN-294 M1；runner 流成功终态 append，投影映射为 ai 消息） |
+| `llm.usage` | run 用量镜像（PLAN-294 M3；CP relay 写入，压缩门信号源） |
 
 两套事件命名空间不同，映射由 `LangGraphEventAdapter` 维护：
 
