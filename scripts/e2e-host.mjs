@@ -625,6 +625,22 @@ async function cleanup() {
 // ③3 (PLAN-294 review): a running dev runtime holds xihe-runtime.exe, so
 // `cargo run --bin xihe-runtime` fails with os error 5. Detect and say so —
 // this cost a debugging round trip in PLAN-294 M0.
+async function waitPostgresReady() {
+  const deadline = Date.now() + readinessTimeoutMs
+  while (Date.now() < deadline) {
+    const result = await run('docker', [
+      'exec', `${pgProjectName}-postgres-1`,
+      'pg_isready', '-U', pgUser, '-d', pgDatabase,
+    ], { stdio: 'ignore' })
+    if (result.code === 0) {
+      console.log('[e2e-host] PostgreSQL (for CP) ready (pg_isready)')
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+  }
+  throw new Error('PostgreSQL did not become ready in time (pg_isready)')
+}
+
 async function precheckDevRuntimeConflict() {
   if (skipRuntime || process.platform !== 'win32') return
   const result = await run('powershell.exe', [
@@ -699,11 +715,11 @@ async function main() {
   if (externalServer) {
     // reuse path: the persistent stack is already up, skip all boot phases
   } else {
-  await reserveHostPorts()
-  await startFixtures()
-  {
-    await startIsolatedPostgres()
-    await migrateIsolatedSchema()
+  // PLAN-294 F.5 L1+L2: parallel boot orchestration. Fixtures and PostgreSQL
+  // run concurrently; then all four services launch together (Agent's config
+  // sync self-heals via periodic re-poll when CP is not ready yet; the chat
+  // path's LLM readiness gate covers the remaining window). CP prefers the
+  // pre-built fat jar (skips ~20s of Maven lifecycle per boot).
     const cpDatasource = `jdbc:postgresql://localhost:${pgPort}/${pgDatabase}`
     const commonCpEnv = {
       XIHE_CP_PORT: cpPort,
@@ -716,45 +732,112 @@ async function main() {
        XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
        XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword,
      }
-    await launchNativeService({
-      name: 'control-plane',
-      cmd: 'mvn.cmd',
-      args: ['-q', '-DskipTests', 'spring-boot:run'],
-      cwd: join(projectDir, 'packages', 'control-plane'),
-      extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
-      healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
-    })
-    if (llmMode !== 'mock') await configureFakeLlm()
-    const nativeServices = [
-      launchNativeService({
-        name: 'agent',
-        cmd: uvCommand,
-        args: ['run', 'python', '-m', 'xihe_agent.main'],
-        cwd: join(projectDir, 'packages', 'agent'),
-        extraEnv: {
-          XIHE_AGENT_PORT: agentPort,
-          XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
-          XIHE_LLM_PROVIDER: realXiaomiKey ? 'xiaomi' : llmMode === 'mock' ? 'mock' : 'openai',
-        },
-        healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
-      }),
-      ...(skipRuntime ? [] : [launchNativeService({
-        name: 'runtime',
-        cmd: 'cargo',
-        args: ['run', '--bin', 'xihe-runtime'],
-        cwd: join(projectDir, 'packages', 'runtime'),
-        extraEnv: {
-          XIHE_RUNTIME_PORT: runtimePort,
-          XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
-          XIHE_WORKSPACE_IMAGE: 'xihe/workspace:latest',
-        },
-        healthUrl: `http://127.0.0.1:${runtimePort}/health`,
-      })]),
+    const cpJar = join(projectDir, 'packages', 'control-plane', 'target', 'control-plane-0.1.0.jar')
+    const useCpJar = existsSync(cpJar)
+    if (useCpJar) console.log('[e2e-host] CP boot via pre-built fat jar (java -jar); mvn package to refresh it')
+
+    const bootTasks = [
+      // PostgreSQL first (CP datasource needs it), but everything else in
+      // parallel with it.
+      (async () => {
+        await startIsolatedPostgres()
+        await migrateIsolatedSchema()
+      })(),
+      (async () => {
+        await startFixtures()
+      })(),
+      (async () => {
+        // CP waits for its datasource: gate the process start on PostgreSQL
+        // readiness via pg_isready (PG speaks the wire protocol, not HTTP —
+        // an HTTP probe here never succeeds).
+        await waitPostgresReady()
+        if (!useCpJar) {
+          await launchNativeService({
+            name: 'control-plane',
+            cmd: 'mvn.cmd',
+            args: ['-q', '-DskipTests', 'spring-boot:run'],
+            cwd: join(projectDir, 'packages', 'control-plane'),
+            extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
+            healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
+          })
+          if (llmMode !== 'mock') await configureFakeLlm()
+        } else {
+          const child = spawnCommand('java', ['-jar', cpJar], {
+            cwd: join(projectDir, 'packages', 'control-plane'),
+            env: {
+              ...process.env,
+              XIHE_CP_API_TOKEN: serviceToken,
+              XIHE_AGENT_API_TOKEN: serviceToken,
+              XIHE_E2E_RUN_ID: e2eRunId,
+              XIHE_WORKSPACE_HOST_ROOT: hostRoot,
+              XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL: 'true',
+              ...commonCpEnv,
+              XIHE_CP_PORT: cpPort,
+              XIHE_LOG_DIR: e2eLogDir,
+              XIHE_LOAD_DOTENV: '0',
+            },
+            stdio: 'inherit',
+            windowsHide: true,
+          })
+          dockerProcesses.push({ name: 'control-plane', child })
+          child.once('exit', (code, signal) => {
+            console.log(`[e2e-host] native control-plane exited code=${code ?? 'null'} signal=${signal ?? 'none'}`)
+          })
+          // PG readiness was already gated by waitPostgresReady in the CP
+          // task prologue; just wait for Spring to finish booting.
+          await waitForHttp('control-plane', `http://127.0.0.1:${cpPort}/actuator/health`, readinessTimeoutMs, {}, child)
+          if (llmMode !== 'mock') await configureFakeLlm()
+        }
+      })(),
+      (async () => {
+        // Agent waits for the fake fixtures only when it needs their LLM
+        // endpoints; config sync self-heals otherwise.
+        await launchNativeService({
+          name: 'agent',
+          cmd: uvCommand,
+          args: ['run', 'python', '-m', 'xihe_agent.main'],
+          cwd: join(projectDir, 'packages', 'agent'),
+          extraEnv: {
+            XIHE_AGENT_PORT: agentPort,
+            XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
+            XIHE_LLM_PROVIDER: realXiaomiKey ? 'xiaomi' : llmMode === 'mock' ? 'mock' : 'openai',
+          },
+          healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
+        })
+        // F.5: under parallel boot the Agent starts before CP/fake-config is
+        // ready; its config sync then 401s and the next re-poll is 30s away.
+        // Playwright must not start until the agent actually reports
+        // llmReady=ready, or the first chat 503s out of the send window.
+        const agentDeadline = Date.now() + readinessTimeoutMs
+        while (Date.now() < agentDeadline) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${agentPort}/internal/v1/agent/health`)
+            if (res.ok) {
+              const body = await res.json()
+              if (body.llmReady === 'ready') break
+            }
+          } catch {}
+          await new Promise((resolve) => setTimeout(resolve, 2_000))
+        }
+      })(),
+      ...(skipRuntime ? [] : [(async () => {
+        await launchNativeService({
+          name: 'runtime',
+          cmd: 'cargo',
+          args: ['run', '--bin', 'xihe-runtime'],
+          cwd: join(projectDir, 'packages', 'runtime'),
+          extraEnv: {
+            XIHE_RUNTIME_PORT: runtimePort,
+            XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
+            XIHE_WORKSPACE_IMAGE: 'xihe/workspace:latest',
+          },
+          healthUrl: `http://127.0.0.1:${runtimePort}/health`,
+        })
+        if (!skipRuntime) await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
+      })()]),
+      launchUIVite(),
     ]
-    await Promise.all(nativeServices)
-    if (!skipRuntime) await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
-    await launchUIVite()
-  }
+    await Promise.all(bootTasks)
   }
   if (isPersistent) {
     // Boot-only mode: record the stack and exit 0 without running tests or
