@@ -63,6 +63,7 @@ const dockerCommand = process.platform === 'win32' ? 'docker.exe' : 'docker'
 const dockerProcesses = []
 let cleaned = false
 let teardownResult = { ok: true, failures: [] }
+let result = { code: 0 }
 
 function hashString(input) {
   let h = 0
@@ -467,7 +468,7 @@ async function runPlaywright() {
   })
 }
 
-async function collectIsolatedResources() {
+async function collectIsolatedResources(preserveRunDir = false) {
   const failures = []
 
   if (isKeep) {
@@ -501,11 +502,16 @@ async function collectIsolatedResources() {
       failures.push(`compose down failed: ${error instanceof Error ? error.message : String(error)}`)
     }
 
-    // 4. Host storage is disposable test state; recycle it on Windows.
-    try {
-      await recycleHostRoot()
-    } catch (error) {
-      failures.push(`host root cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+    // 4. Host storage is disposable test state; recycle it on Windows —
+    // unless the run failed and its logs were preserved for diagnosis.
+    if (preserveRunDir) {
+      console.log(`[e2e-host] host root preserved for failed run ${e2eRunId}`)
+    } else {
+      try {
+        await recycleHostRoot()
+      } catch (error) {
+        failures.push(`host root cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
 
     const probeUrls = [
@@ -545,8 +551,16 @@ async function collectIsolatedResources() {
 async function cleanup() {
   if (cleaned) return teardownResult
   cleaned = true
+  // PLAN-294 appendix G-1: a failed run without --keep used to delete its
+  // own logs with teardown, forcing a full rerun just to read an exception.
+  // Preserve the run directory when the tests failed (recycled later by
+  // normal .tmp hygiene); --keep still preserves everything unconditionally.
+  const preserveRunDir = result && result.code !== 0
+  if (preserveRunDir && existsSync(e2eLogDir)) {
+    console.log(`[e2e-host] tests failed; preserving logs at ${e2eLogDir} (recycle with .tmp cleanup)`)
+  }
   try {
-    const failures = await collectIsolatedResources()
+    const failures = await collectIsolatedResources(preserveRunDir)
     teardownResult = { ok: failures.length === 0, failures }
   } catch (error) {
     teardownResult = {
@@ -619,7 +633,7 @@ async function main() {
     if (!skipRuntime) await waitForHttp('Runtime readiness', `http://127.0.0.1:${runtimePort}/ready`)
     await launchUIVite()
   }
-  const result = await runPlaywright()
+  result = await runPlaywright()
   const teardown = await cleanup()
   if (!teardown.ok) {
     console.error('[e2e-host] teardown reported residual resources:')
