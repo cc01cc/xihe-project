@@ -28,8 +28,13 @@ export class ModelPopoverPage {
   }
 
   async selectModel(provider: string, model: string): Promise<void> {
-    const item = this.itemLocator(provider, model)
-    await item.dispatchEvent('click')
+    // reka-ui ListboxItem commits the selection through keyboard navigation;
+    // a synthetic click on the item does not select it. Filter to the model
+    // and confirm with Enter — the exact match is the first filter result.
+    void provider
+    await this.searchInput.fill(model)
+    await this.page.waitForTimeout(200)
+    await this.searchInput.press('Enter')
   }
 
   async toggleFavorite(provider: string, model: string): Promise<void> {

@@ -268,6 +268,20 @@ class ConfigControllerTest extends AbstractH2Test {
     }
 
     @Test
+    void getConfig_layerViewIncludeMetaReportsEnvLockShape() {
+        // PLAN-0307 T2.17: the env layer is global, so layer tabs get the same
+        // lock metadata surface as the resolved view.
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/llm-provider?layer=instance&includeMeta=true"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals("llm-provider", resp.getBody().get("domain"));
+        assertNotNull(resp.getBody().get("entries"));
+        assertTrue(((Map<?, ?>) resp.getBody().get("envOverridden")).isEmpty());
+    }
+
+    @Test
     void stdioServers_putGetAndGenerationConflict() {
         String token = userToken();
         String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);

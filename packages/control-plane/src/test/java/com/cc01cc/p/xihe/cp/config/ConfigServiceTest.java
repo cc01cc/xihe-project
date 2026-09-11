@@ -237,6 +237,41 @@ class ConfigServiceTest {
     }
 
     @Test
+    void putLayer_contextPolicyAcceptsStructuredJsonText() {
+        // PLAN-0307 T2.17: nested domains travel as JSON text (decision #24);
+        // the CP parses container text for schema validation before storing.
+        String defaults = "{\"softThresholdPct\":0.8,\"hardThresholdPct\":0.95,\"keepRecentMessages\":30}";
+        configService.putLayer("instance", "context-policy",
+            Map.of("defaults", defaults), "admin", null, null);
+
+        assertEquals(defaults,
+            configService.layerEntries("instance", "context-policy", null, null).get("defaults"));
+    }
+
+    @Test
+    void putLayer_contextPolicyRejectsMalformedOrWrongShapeJsonText() {
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "context-policy",
+                Map.of("defaults", "{not json"), "admin", null, null));
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "context-policy",
+                Map.of("defaults", "{\"softThresholdPct\":\"high\"}"), "admin", null, null));
+    }
+
+    @Test
+    void importJsonc_preservesNestedStructuredValues() {
+        // PLAN-0307 T2.17: nested import values must not flatten to empty
+        // strings; they round-trip to config_value JSON text.
+        configService.importJsonc(
+            "{\"context-policy\":{\"defaults\":{\"softThresholdPct\":0.8}}}", "instance", null, null);
+
+        String stored = configService.layerEntries("instance", "context-policy", null, null).get("defaults");
+        assertNotNull(stored);
+        assertTrue(stored.contains("softThresholdPct"),
+            "nested value should round-trip as JSON text: " + stored);
+    }
+
+    @Test
     void exportJsonc_returnsInstanceKeys() {
         configService.putLayer("instance", "logging", Map.of("logLevel", "INFO"), "admin", null, null);
 

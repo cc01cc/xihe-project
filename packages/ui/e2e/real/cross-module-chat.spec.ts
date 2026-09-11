@@ -97,12 +97,16 @@ test.describe('Cross-Module — Full Chain Chat', () => {
   })
 
   test('mcp tools/list returns tools', async ({ page }) => {
-    const token = await registerAndGetToken('mcp-test')
-    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
+    const auth = await registerAuth('mcp-test')
+    await page.addInitScript(({ token, workspaceId }) => {
+      localStorage.setItem('xihe-token', token)
+      localStorage.setItem('xihe-workspace', JSON.stringify({ id: workspaceId, name: 'Default Workspace' }))
+    }, { token: auth.accessToken, workspaceId: auth.workspaceId })
 
     await page.goto('/settings/config')
+    await page.getByTestId('config-tab-workspace').click()
     await expect(page.locator('text=MCP 服务').first()).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('textarea')).toBeVisible()
+    await expect(page.locator('[data-testid="mcp-config-textarea"]')).toBeVisible()
 
     const builtInTool = page.locator('text=read_file').first()
     await expect(builtInTool).toBeVisible()
@@ -113,7 +117,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     const token = auth.accessToken
     await page.addInitScript(({ token, workspaceId }) => {
       localStorage.setItem('xihe-token', token)
-      localStorage.setItem('xihe-user', JSON.stringify({ workspaceId }))
+      localStorage.setItem('xihe-workspace', JSON.stringify({ id: workspaceId, name: 'Default Workspace' }))
     }, { token, workspaceId: auth.workspaceId })
 
     // Save MCP config through the canonical public API.
@@ -141,6 +145,7 @@ test.describe('Cross-Module — Full Chain Chat', () => {
 
     // Verify it appears in the UI
     await page.goto('/settings/config')
+    await page.getByTestId('config-tab-workspace').click()
     await expect(page.locator('text=MCP 服务').first()).toBeVisible({ timeout: 10000 })
     const textarea = page.locator('[data-testid="mcp-config-textarea"]')
     await expect(textarea).toBeVisible()

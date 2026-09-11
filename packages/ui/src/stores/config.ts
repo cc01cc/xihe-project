@@ -5,7 +5,28 @@ import { getProviderInfo, type ModelCache } from '../types/provider'
 import type { SessionModelBinding, ModelFavorite } from '../types'
 import { request } from '../composables/api'
 
-type Domain = 'logging' | 'llm-provider' | 'embedding' | 'user-preference' | 'workspace-config' | 'infrastructure' | 'mcp' | 'rag'
+export type ConfigLayer = 'instance' | 'workspace' | 'user'
+
+/** PLAN-0307 target domain set (decision #37): instance(8) ⊇ user(7) ⊇ workspace(5). */
+export const CONFIG_DOMAINS = [
+  'llm-provider', 'context-policy', 'embedding', 'rag',
+  'agent-runtime', 'agent-profile', 'user-preference', 'logging',
+] as const
+
+export type ConfigDomain = typeof CONFIG_DOMAINS[number]
+
+export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
+  instance: CONFIG_DOMAINS,
+  user: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'agent-profile', 'user-preference'],
+  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime'],
+}
+
+export interface ConfigImportReport {
+  status: string
+  imported: number
+  skipped: number
+  warnings: string[]
+}
 
 const MODEL_CACHE_KEY = 'xihe-model-cache'
 const SESSION_MODELS_KEY = 'xihe-session-models'
@@ -16,6 +37,16 @@ export const useConfigStore = defineStore('config', () => {
   const mergedConfig = useLocalStorage<Record<string, Record<string, string>>>(MERGED_CONFIG_KEY, {})
   const loading = ref(false)
   const error = ref<string | null>(null)
+
+  /** Per-layer raw entries for the three settings entries (T2.17). */
+  const layerConfig = ref<Record<ConfigLayer, Record<string, Record<string, string>>>>({
+    instance: {},
+    workspace: {},
+    user: {},
+  })
+  const layerLoading = ref(false)
+  /** domain -> key -> env-effective value when an env overlay wins (decision #22). */
+  const envOverridden = ref<Record<string, Record<string, string>>>({})
 
   const modelCache = useLocalStorage<ModelCache>(MODEL_CACHE_KEY, { models: {}, providers: {} })
   const sessionModels = useLocalStorage<Record<string, SessionModelBinding>>(SESSION_MODELS_KEY, {})
@@ -55,7 +86,7 @@ export const useConfigStore = defineStore('config', () => {
   async function loadAllDomains() {
     loading.value = true
     error.value = null
-    const domains: Domain[] = ['logging', 'llm-provider', 'embedding', 'user-preference', 'workspace-config', 'rag', 'infrastructure']
+    const domains: ConfigDomain[] = [...CONFIG_DOMAINS]
     try {
       const results = await Promise.all(domains.map(d => fetchDomain(d).then(data => ({ domain: d, data }))))
       const nextConfig: Record<string, Record<string, string>> = {}
@@ -70,26 +101,72 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
-  async function putAdminConfig(domain: string, body: Record<string, string>): Promise<void> {
-    await request(`/config/admin/${domain}`, {
+  /**
+   * PLAN-0307 T2.17: load one layer's entries for all writable domains of that
+   * layer, together with the env-lock metadata (`includeMeta=true`).
+   */
+  async function loadLayerDomains(layer: ConfigLayer, workspaceId?: string | null): Promise<void> {
+    layerLoading.value = true
+    error.value = null
+    const workspaceQuery = layer === 'workspace' && workspaceId
+      ? `&workspaceId=${encodeURIComponent(workspaceId)}`
+      : ''
+    try {
+      const domains = LAYER_DOMAINS[layer]
+      const results = await Promise.all(domains.map(async (domain) => {
+        const body = await request<{
+          domain: string
+          entries: Record<string, string>
+          envOverridden?: Record<string, string>
+        }>(`/config/${domain}?layer=${layer}&includeMeta=true${workspaceQuery}`)
+        return { domain, body }
+      }))
+      const nextLayer: Record<string, Record<string, string>> = { ...layerConfig.value[layer] }
+      const nextEnv: Record<string, Record<string, string>> = { ...envOverridden.value }
+      for (const { domain, body } of results) {
+        nextLayer[domain] = body.entries ?? {}
+        nextEnv[domain] = body.envOverridden ?? {}
+      }
+      layerConfig.value = { ...layerConfig.value, [layer]: nextLayer }
+      envOverridden.value = nextEnv
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load layer config'
+      throw e
+    } finally {
+      layerLoading.value = false
+    }
+  }
+
+  /** PLAN-0307 T2.17: write one layer/domain through the unified layer endpoint. */
+  async function putLayerConfig(
+    layer: ConfigLayer,
+    domain: string,
+    body: Record<string, string>,
+    workspaceId?: string | null,
+  ): Promise<void> {
+    const workspaceQuery = layer === 'workspace' && workspaceId
+      ? `?workspaceId=${encodeURIComponent(workspaceId)}`
+      : ''
+    await request(`/config/${layer}/${domain}${workspaceQuery}`, {
       method: 'PUT',
       body: JSON.stringify(body),
     })
   }
 
-  async function putUserConfig(domain: string, body: Record<string, string>): Promise<void> {
-    await request(`/config/user/${domain}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    })
+  /** Admin export (instance layer, T2.21/T2.25). */
+  async function exportConfig(includeSecrets: boolean): Promise<string> {
+    const data = await request<Record<string, unknown>>(
+      `/config/export?layer=instance&includeSecrets=${includeSecrets}`,
+    )
+    return JSON.stringify(data, null, 2)
   }
 
-  async function putUserPreference(theme?: string, language?: string, defaultModel?: string): Promise<void> {
-    const body: Record<string, string> = {}
-    if (theme !== undefined) body.theme = theme
-    if (language !== undefined) body.language = language
-    if (defaultModel !== undefined) body.defaultModel = defaultModel
-    await putUserConfig('user-preference', body)
+  /** Admin import (instance layer, per-domain merge; credentials are never restored). */
+  async function importConfig(content: string): Promise<ConfigImportReport> {
+    return request<ConfigImportReport>('/config/import?layer=instance', {
+      method: 'POST',
+      body: content,
+    })
   }
 
   function getActiveModel(sessionId: string): SessionModelBinding | undefined {
@@ -115,9 +192,9 @@ export const useConfigStore = defineStore('config', () => {
     }
 
     const llmProvider = mergedConfig.value['llm-provider'] ?? {}
-    const userPreference = mergedConfig.value['user-preference'] ?? {}
 
-    const defaultModel = userPreference.defaultModel
+    // PLAN-0307 decision #16/#37: model parameters moved to llm-provider.
+    const defaultModel = llmProvider.defaultModel
     const defaultProvider = llmProvider.defaultProvider
 
     if (defaultModel) {
@@ -170,6 +247,8 @@ export const useConfigStore = defineStore('config', () => {
     sessionModels.value = {}
     modelFavorites.value = []
     modelError.value = null
+    layerConfig.value = { instance: {}, workspace: {}, user: {} }
+    envOverridden.value = {}
   }
 
   async function fetchModels() {
@@ -195,14 +274,18 @@ export const useConfigStore = defineStore('config', () => {
     mergedConfig,
     loading,
     error,
+    layerConfig,
+    layerLoading,
+    envOverridden,
     modelError,
     modelCache,
     modelFavorites,
     fetchDomain,
     loadAllDomains,
-    putAdminConfig,
-    putUserConfig,
-    putUserPreference,
+    loadLayerDomains,
+    putLayerConfig,
+    exportConfig,
+    importConfig,
     getActiveModel,
     getEffectiveModel,
     findProviderForModel,

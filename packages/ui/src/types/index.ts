@@ -261,6 +261,8 @@ export interface User {
   email: string
   name?: string
   workspaceId?: string
+  /** CP role name (`ADMIN` / `USER`); drives the instance settings entry (PLAN-0307 T2.17). */
+  role?: string
 }
 
 export interface FileNode {

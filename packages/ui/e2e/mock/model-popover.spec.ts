@@ -1,15 +1,13 @@
 import { test, expect } from '@playwright/test'
 import { ModelPopoverPage } from '../page-objects/ModelPopoverPage'
-import { setupMockAuth } from './helpers/auth'
+import { setupMockAuth, setupMockSessions } from './helpers/auth'
 
 test.describe('Model Popover', () => {
   test.beforeEach(async ({ page }) => {
     await setupMockAuth(page)
-    await page.addInitScript(() => {
-      localStorage.setItem('xihe-sessions', JSON.stringify([
-        { id: 'sid-1', title: 'Test Chat', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      ]))
-    })
+    // Sessions are server-canonical (PLAN-029); the popover persists the
+    // per-session binding, so the mock must expose the session endpoint.
+    await setupMockSessions(page, { sessions: [{ id: 'sid-1', title: 'Test Chat' }] })
 
     await page.route('**/api/v1/models', async (route) => {
       await route.fulfill({
@@ -19,6 +17,23 @@ test.describe('Model Popover', () => {
           models: {
             deepseek: ['deepseek-chat', 'deepseek-reasoner'],
             openai: ['gpt-4o'],
+          },
+          // PLAN-0307: the popover groups come from the provider catalog
+          // (`providers`), which is grounded in provider connections.
+          providers: {
+            deepseek: {
+              status: 'ready',
+              models: [
+                { name: 'deepseek-chat', capabilities: { chat: true, vision: false, tools: true } },
+                { name: 'deepseek-reasoner', capabilities: { chat: true, vision: false, tools: true } },
+              ],
+            },
+            openai: {
+              status: 'ready',
+              models: [
+                { name: 'gpt-4o', capabilities: { chat: true, vision: true, tools: true } },
+              ],
+            },
           },
         }),
       })

@@ -38,15 +38,16 @@ describe('useConfigStore', () => {
     it('writes mergedConfig to localStorage via loadAllDomains', async () => {
       vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
         const url = typeof input === 'string' ? input : input.url
-        const domain = url.split('/').pop() ?? ''
+        const domain = url.split('/').pop()?.split('?')[0] ?? ''
         const payload: Record<string, Record<string, string>> = {
           logging: { logLevel: 'DEBUG' },
-          'llm-provider': { defaultProvider: 'openai' },
+          'llm-provider': { defaultProvider: 'openai', defaultModel: 'gpt-4o' },
+          'context-policy': {},
           embedding: {},
-          'user-preference': { defaultModel: 'gpt-4o' },
-          'workspace-config': {},
+          'agent-runtime': {},
+          'agent-profile': {},
+          'user-preference': {},
           rag: {},
-          infrastructure: {},
         }
         return Promise.resolve(new Response(JSON.stringify(payload[domain] ?? {}), { status: 200 }))
       })
@@ -58,21 +59,22 @@ describe('useConfigStore', () => {
       expect(raw).not.toBeNull()
       const parsed = JSON.parse(raw!)
       expect(parsed['llm-provider'].defaultProvider).toBe('openai')
-      expect(parsed['user-preference'].defaultModel).toBe('gpt-4o')
+      expect(parsed['llm-provider'].defaultModel).toBe('gpt-4o')
     })
 
     it('loadAllDomains fetches and updates mergedConfig', async () => {
       vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
         const url = typeof input === 'string' ? input : input.url
-        const domain = url.split('/').pop() ?? ''
+        const domain = url.split('/').pop()?.split('?')[0] ?? ''
         const payload: Record<string, Record<string, string>> = {
           logging: { logLevel: 'DEBUG' },
-          'llm-provider': { defaultProvider: 'deepseek' },
+          'llm-provider': { defaultProvider: 'deepseek', defaultModel: 'deepseek-chat' },
+          'context-policy': {},
           embedding: {},
-          'user-preference': { defaultModel: 'deepseek-chat' },
-          'workspace-config': {},
+          'agent-runtime': {},
+          'agent-profile': {},
+          'user-preference': {},
           rag: {},
-          infrastructure: {},
         }
         return Promise.resolve(new Response(JSON.stringify(payload[domain] ?? {}), { status: 200 }))
       })
@@ -82,7 +84,7 @@ describe('useConfigStore', () => {
 
       expect(store.mergedConfig['logging']?.logLevel).toBe('DEBUG')
       expect(store.mergedConfig['llm-provider']?.defaultProvider).toBe('deepseek')
-      expect(store.mergedConfig['user-preference']?.defaultModel).toBe('deepseek-chat')
+      expect(store.mergedConfig['llm-provider']?.defaultModel).toBe('deepseek-chat')
       expect(store.loading).toBe(false)
       expect(store.error).toBeNull()
     })
@@ -110,8 +112,7 @@ describe('useConfigStore', () => {
     it('falls back to defaultModel + defaultProvider', () => {
       const store = useConfigStore()
       store.mergedConfig = {
-        'llm-provider': { defaultProvider: 'openai' },
-        'user-preference': { defaultModel: 'gpt-4o' },
+        'llm-provider': { defaultProvider: 'openai', defaultModel: 'gpt-4o' },
       }
       seedReadyModel(store, 'openai', 'gpt-4o')
 
@@ -122,8 +123,7 @@ describe('useConfigStore', () => {
       const store = useConfigStore()
       seedReadyModel(store, 'deepseek', 'deepseek-chat')
       store.mergedConfig = {
-        'llm-provider': {},
-        'user-preference': { defaultModel: 'deepseek-chat' },
+        'llm-provider': { defaultModel: 'deepseek-chat' },
       }
 
       expect(store.getEffectiveModel('s1')).toEqual({ provider: 'deepseek', model: 'deepseek-chat' })
@@ -133,8 +133,7 @@ describe('useConfigStore', () => {
       const store = useConfigStore()
       seedReadyModel(store, 'xiaomi', 'mimo-v2.5')
       store.mergedConfig = {
-        'llm-provider': {},
-        'user-preference': { defaultModel: 'mimo-v2.5' },
+        'llm-provider': { defaultModel: 'mimo-v2.5' },
       }
 
       expect(store.getEffectiveModel('s1')).toEqual({ provider: 'xiaomi', model: 'mimo-v2.5' })
@@ -144,7 +143,6 @@ describe('useConfigStore', () => {
       const store = useConfigStore()
       store.mergedConfig = {
         'llm-provider': { defaultProvider: 'anthropic' },
-        'user-preference': {},
       }
       seedReadyModel(store, 'anthropic', 'claude-sonnet-4-20250514')
 
@@ -161,8 +159,7 @@ describe('useConfigStore', () => {
       seedReadyModel(store, 'deepseek', 'deepseek-reasoner')
       store.setSessionModel('s1', 'deepseek', 'deepseek-reasoner')
       store.mergedConfig = {
-        'llm-provider': { defaultProvider: 'openai' },
-        'user-preference': { defaultModel: 'gpt-4o' },
+        'llm-provider': { defaultProvider: 'openai', defaultModel: 'gpt-4o' },
       }
 
       expect(store.getEffectiveModel('s1')).toEqual({ provider: 'deepseek', model: 'deepseek-reasoner' })
@@ -229,6 +226,97 @@ describe('useConfigStore', () => {
       expect(store.modelCache).toEqual({ models: {}, providers: {} })
       expect(store.getActiveModel('session-a')).toBeUndefined()
       expect(store.modelFavorites).toEqual([])
+    })
+  })
+
+  describe('layer config (PLAN-0307 T2.17)', () => {
+    function mockLayerFetch() {
+      const calls: { url: string; init?: RequestInit }[] = []
+      vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const url = typeof input === 'string' ? input : input.url
+        calls.push({ url, init: init ?? undefined })
+        const parsed = new URL(url, 'http://localhost')
+        const domain = parsed.pathname.split('/').pop() ?? ''
+        const layer = parsed.searchParams.get('layer') ?? ''
+        return Promise.resolve(new Response(JSON.stringify({
+          domain,
+          entries: { [`${layer}-${domain}-key`]: 'value' },
+          envOverridden: domain === 'embedding' ? { model: 'env-model' } : {},
+        }), { status: 200 }))
+      })
+      return calls
+    }
+
+    it('loadLayerDomains fetches only the layer domain set with includeMeta', async () => {
+      const calls = mockLayerFetch()
+      const store = useConfigStore()
+
+      await store.loadLayerDomains('workspace', 'ws-1')
+
+      expect(calls).toHaveLength(5)
+      for (const call of calls) {
+        expect(call.url).toContain('layer=workspace')
+        expect(call.url).toContain('includeMeta=true')
+        expect(call.url).toContain('workspaceId=ws-1')
+      }
+      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(5)
+      expect(store.layerConfig.workspace['embedding']).toEqual({ 'workspace-embedding-key': 'value' })
+      expect(store.envOverridden['embedding']).toEqual({ model: 'env-model' })
+      expect(store.envOverridden['rag']).toEqual({})
+    })
+
+    it('loadLayerDomains loads the seven user domains without workspace query', async () => {
+      const calls = mockLayerFetch()
+      const store = useConfigStore()
+
+      await store.loadLayerDomains('user')
+
+      expect(calls).toHaveLength(7)
+      for (const call of calls) {
+        expect(call.url).toContain('layer=user')
+        expect(call.url).not.toContain('workspaceId=')
+      }
+      expect(store.layerConfig.user['logging']).toBeUndefined()
+    })
+
+    it('putLayerConfig targets the layer endpoint with workspace query', async () => {
+      const calls = mockLayerFetch()
+      const store = useConfigStore()
+
+      await store.putLayerConfig('workspace', 'rag', { topK: '5' }, 'ws-2')
+      await store.putLayerConfig('user', 'agent-profile', { userName: 'zero' })
+      await store.putLayerConfig('instance', 'logging', { logLevel: 'DEBUG' })
+
+      expect(calls[0].url).toContain('/config/workspace/rag?workspaceId=ws-2')
+      expect(calls[0].init?.method).toBe('PUT')
+      expect(calls[0].init?.body).toBe(JSON.stringify({ topK: '5' }))
+      expect(calls[1].url).toContain('/config/user/agent-profile')
+      expect(calls[2].url).toContain('/config/instance/logging')
+    })
+
+    it('exportConfig/importConfig use the instance management endpoints', async () => {
+      const calls = mockLayerFetch()
+      const store = useConfigStore()
+
+      const exported = await store.exportConfig(false)
+      await store.importConfig('{"logging":{"logLevel":"INFO"}}')
+
+      expect(calls[0].url).toContain('/config/export?layer=instance&includeSecrets=false')
+      expect(exported).toContain('"domain"')
+      expect(calls[1].url).toContain('/config/import?layer=instance')
+      expect(calls[1].init?.method).toBe('POST')
+    })
+
+    it('clearForUserSwitch clears layer state and env locks', async () => {
+      mockLayerFetch()
+      const store = useConfigStore()
+      await store.loadLayerDomains('instance')
+      expect(Object.keys(store.layerConfig.instance).length).toBeGreaterThan(0)
+
+      store.clearForUserSwitch()
+
+      expect(store.layerConfig).toEqual({ instance: {}, workspace: {}, user: {} })
+      expect(store.envOverridden).toEqual({})
     })
   })
 })

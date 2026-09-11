@@ -95,13 +95,19 @@ test.describe('Workspace file operations (PLAN-262 M3)', () => {
   })
 
   test('blocked environment shows recovery guidance and prepare card states', async ({ page }) => {
+    // First load reports blocked; after materialize starts the poll sees a
+    // materializing status (otherwise the poll stops on `blocked` and resets
+    // the button state before the assertion can observe `Preparing`).
+    let environmentCalls = 0
     await page.route('**/api/v1/workspaces/*/environment', async (route) => {
+      environmentCalls += 1
+      const status = environmentCalls === 1 ? 'blocked' : 'materializing'
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           workspaceId: 'workspace-1',
-          status: 'blocked',
+          status,
           storageBackend: 'host_directory',
           storageRef: 'workspace-1',
           executionSpec: { status: 'assigned', generation: 1, sandboxSpecHash: 'abc' },

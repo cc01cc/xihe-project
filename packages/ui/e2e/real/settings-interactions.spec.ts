@@ -25,13 +25,12 @@ test.describe('@host Settings — Tier Tabs & Interactions', () => {
     await page.goto('/settings/config', { waitUntil: 'load' })
     await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({ timeout: 10000 })
 
-    for (const tab of ['system', 'admin', 'user']) {
-      const tabBtn = page.locator(`[data-testid="settings-nav-${tab}"], button`).filter({ hasText: new RegExp(tab, 'i') }).first()
-      if (await tabBtn.count() > 0) {
-        await tabBtn.click()
-        await page.waitForTimeout(500)
-        await expect(page).toHaveScreenshot(`settings-tier-${tab}.png`)
-      }
+    // Non-admin users get the workspace + user entries (instance is ADMIN-only).
+    for (const layer of ['workspace', 'user']) {
+      const tabBtn = page.getByTestId(`config-tab-${layer}`)
+      await expect(tabBtn).toBeVisible({ timeout: 8000 })
+      await tabBtn.click()
+      await page.screenshot({ path: test.info().outputPath(`settings-tier-${layer}.png`), fullPage: true })
     }
   })
 
@@ -40,20 +39,16 @@ test.describe('@host Settings — Tier Tabs & Interactions', () => {
     await page.goto('/settings/config', { waitUntil: 'load' })
     await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({ timeout: 10000 })
 
-    const userTab = page.locator('button').filter({ hasText: /user|用户/i }).first()
-    if (await userTab.count() > 0) await userTab.click()
-    await page.waitForTimeout(500)
+    await page.getByTestId('config-tab-user').click()
+    const profilePanel = page.getByTestId('config-domain-agent-profile')
+    await expect(profilePanel).toBeVisible({ timeout: 8000 })
+    await profilePanel.locator(':scope > button').click()
 
-    const loggingPanel = page.getByTestId('config-domain-logging')
-    await expect(loggingPanel).toBeVisible({ timeout: 8000 })
-    await loggingPanel.locator(':scope > button').click()
-    await page.waitForTimeout(500)
-
-    const editInput = loggingPanel.locator('input[type="text"]').first()
+    const editInput = profilePanel.locator('input[type="text"]').first()
     await expect(editInput).toBeVisible({ timeout: 8000 })
     await editInput.fill(`e2e-${Date.now()}`)
 
-    const saveBtn = loggingPanel.getByRole('button', { name: '保存', exact: true })
+    const saveBtn = profilePanel.getByRole('button', { name: '保存', exact: true })
     await expect(saveBtn).toBeVisible()
     await saveBtn.click()
 
@@ -69,37 +64,38 @@ test.describe('@host Settings — Tier Tabs & Interactions', () => {
         toastBox.y > saveBox.y + saveBox.height)
       expect(overlap).toBe(false)
     }
-    await expect(page).toHaveScreenshot('settings-save-toast.png')
+    // Evidence screenshot (dynamic content — no pixel baseline).
+    await page.screenshot({ path: test.info().outputPath('settings-save-toast.png'), fullPage: true })
   })
 
   test('user config save survives a page reload', async ({ page, request }) => {
     await registerAndLogin(page, request, 'config-reload')
     await page.goto('/settings/config', { waitUntil: 'load' })
     await expect(page.getByTestId('settings-config-heading')).toBeVisible({ timeout: 10000 })
-    let userPreferenceSaveStatus: number | null = null
+    let profileSaveStatus: number | null = null
     page.on('response', (response) => {
-      if (response.url().includes('/api/v1/config/user/user-preference')) {
-        userPreferenceSaveStatus = response.status()
+      if (response.url().includes('/api/v1/config/user/agent-profile')) {
+        profileSaveStatus = response.status()
       }
     })
 
-    await page.getByRole('button', { name: '用户', exact: true }).click()
-    const preferencePanel = page.getByTestId('config-domain-user-preference')
-    await preferencePanel.locator(':scope > button').click()
-    const defaultModel = preferencePanel.locator('input[type="text"]').first()
+    await page.getByTestId('config-tab-user').click()
+    const profilePanel = page.getByTestId('config-domain-agent-profile')
+    await profilePanel.locator(':scope > button').click()
+    const userName = profilePanel.locator('input[type="text"]').first()
     const value = `e2e-reload-${Date.now()}`
-    await defaultModel.fill(value)
-    await preferencePanel.getByRole('button', { name: '保存', exact: true }).click()
-    await expect.poll(() => userPreferenceSaveStatus, { timeout: 10000 }).toBe(200)
-    await expect(page.getByText(/用户偏好.*已保存/)).toBeVisible({ timeout: 10000 })
+    await userName.fill(value)
+    await profilePanel.getByRole('button', { name: '保存', exact: true }).click()
+    await expect.poll(() => profileSaveStatus, { timeout: 10000 }).toBe(200)
+    await expect(page.getByText(/Agent 个人.*已保存/)).toBeVisible({ timeout: 10000 })
 
     await page.reload({ waitUntil: 'load' })
     await expect(page.getByTestId('settings-config-heading')).toBeVisible({ timeout: 10000 })
-    await page.getByRole('button', { name: '用户', exact: true }).click()
-    const reloadedPreferencePanel = page.getByTestId('config-domain-user-preference')
-    await reloadedPreferencePanel.locator(':scope > button').click()
-    await expect(reloadedPreferencePanel.locator('input[type="text"]').first()).toHaveValue(value)
-    await expect(page).toHaveScreenshot('settings-user-config-reloaded.png')
+    const reloadedPanel = page.getByTestId('config-domain-agent-profile')
+    await reloadedPanel.locator(':scope > button').click()
+    await expect(reloadedPanel.locator('input[type="text"]').first()).toHaveValue(value)
+    // Evidence screenshot (the saved value is dynamic — no pixel baseline).
+    await page.screenshot({ path: test.info().outputPath('settings-user-config-reloaded.png'), fullPage: true })
   })
 
   test('monitoring page table columns stay within viewport', async ({ page, request }) => {
@@ -113,7 +109,8 @@ test.describe('@host Settings — Tier Tabs & Interactions', () => {
       return doc ? doc.scrollWidth - doc.clientWidth : 0
     })
     expect(overflow).toBeLessThanOrEqual(2)
-    await expect(page).toHaveScreenshot('settings-monitoring-table.png')
+    // Evidence screenshot (live monitoring numbers — no pixel baseline).
+    await page.screenshot({ path: test.info().outputPath('settings-monitoring-table.png'), fullPage: true })
   })
 })
 
@@ -124,35 +121,53 @@ test.describe('@host Settings — Remote MCP OAuth button states', () => {
     const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT || '13640'
     const uiPort = process.env.XIHE_UI_PORT || '12630'
 
+    const remoteServer = {
+      name: 'State fixture',
+      url: 'https://example.com/mcp',
+      oauth: {
+        clientId: 'xihe-e2e-client',
+        authorizationEndpoint: `http://localhost:${fakeOAuthPort}/authorize`,
+        tokenEndpoint: `http://127.0.0.1:${fakeOAuthPort}/token`,
+        redirectUri: `http://localhost:${uiPort}/settings/config`,
+        scope: 'mcp:tools',
+      },
+    }
     const save = await request.put(`${CP_URL}/api/v1/workspaces/${auth.workspaceId}/mcp-config`, {
       headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' },
-      data: {
-        mcpServers: {
-          [serverId]: {
-            name: 'State fixture',
-            url: 'https://example.com/mcp',
-            oauth: {
-              clientId: 'xihe-e2e-client',
-              authorizationEndpoint: `http://localhost:${fakeOAuthPort}/authorize`,
-              tokenEndpoint: `http://127.0.0.1:${fakeOAuthPort}/token`,
-              redirectUri: `http://localhost:${uiPort}/settings/config`,
-              scope: 'mcp:tools',
-            },
-          },
-        },
-      },
+      data: { mcpServers: { [serverId]: remoteServer } },
     })
     expect(save.ok()).toBe(true)
 
     await page.goto('/settings/config', { waitUntil: 'load' })
+    const textarea = page.getByTestId('mcp-config-textarea')
+    const pasteConfig = JSON.stringify({ mcpServers: { [serverId]: remoteServer } }, null, 2)
     const serverRow = page.locator(`[data-testid="remote-mcp-${serverId}"]`)
+
+    async function enterWorkspaceMcpEditor() {
+      // Enter the workspace layer and wait for the mixed mcp-config load to
+      // settle before overwriting the editor (the load would clear the paste).
+      const mcpLoaded = page.waitForResponse(
+        response => response.url().includes('/mcp-config') && response.request().method() === 'GET',
+      ).catch(() => null)
+      await page.getByTestId('config-tab-workspace').click()
+      await expect(textarea).toBeVisible({ timeout: 10000 })
+      await mcpLoaded
+      // CP strips oauth metadata on read (secrets are never echoed back), so
+      // the authorize row renders from the editor content — paste experience.
+      await textarea.fill(pasteConfig)
+    }
+
+    await enterWorkspaceMcpEditor()
     await expect(serverRow).toBeVisible({ timeout: 10000 })
-    await expect(page).toHaveScreenshot('mcp-oauth-before.png')
+    await page.screenshot({ path: test.info().outputPath('mcp-oauth-before.png'), fullPage: true })
 
     await serverRow.locator('button').click()
-    await page.waitForURL(/\/settings\/config(?:\?|$)/, { timeout: 10000 })
-    await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: 10000 })
-    await expect(page).toHaveScreenshot('mcp-oauth-authorized.png')
+    await page.waitForURL(/[?&]state=/, { timeout: 15000 })
+    // The OAuth callback reloads the page; re-enter the workspace layer and
+    // re-prime the editor so the row renders with the persisted authorization.
+    await enterWorkspaceMcpEditor()
+    await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: 15000 })
+    await page.screenshot({ path: test.info().outputPath('mcp-oauth-authorized.png'), fullPage: true })
   })
 })
 

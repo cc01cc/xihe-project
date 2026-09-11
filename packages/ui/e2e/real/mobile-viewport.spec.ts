@@ -9,12 +9,15 @@ test.describe('Mobile Viewport (390x844)', () => {
   test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
 
   let authToken = ''
+  let authWorkspaceId = ''
 
   test.beforeAll(async ({ request }) => {
     const r = await request.post(`${CP_URL}/api/v1/auth/register`, {
       data: { email: `mobile-${Date.now()}@test.com`, password: SHARED_PASSWORD, name: 'Mobile' },
     })
-    authToken = (await r.json()).accessToken
+    const body = await r.json()
+    authToken = body.accessToken
+    authWorkspaceId = body.workspaceId
   })
 
   async function assertNoHorizontalOverflow(page: import('@playwright/test').Page) {
@@ -48,12 +51,16 @@ test.describe('Mobile Viewport (390x844)', () => {
   })
 
   test('settings config page renders within mobile viewport', async ({ page }) => {
-    await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
+    await page.addInitScript(({ token, workspaceId }) => {
+      localStorage.setItem('xihe-token', token)
+      localStorage.setItem('xihe-workspace', JSON.stringify({ id: workspaceId, name: 'Default Workspace' }))
+    }, { token: authToken, workspaceId: authWorkspaceId })
     await page.goto('/settings/config', { waitUntil: 'load' })
     await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({ timeout: 10000 })
+    await page.getByTestId('config-tab-workspace').click()
     await page.locator('[data-testid="mcp-config-textarea"]').waitFor({ state: 'visible', timeout: 10000 })
     await assertNoHorizontalOverflow(page)
-    await expect(page).toHaveScreenshot('mobile-settings-config.png')
+    await page.screenshot({ path: test.info().outputPath('mobile-settings-config.png'), fullPage: true })
   })
 
   test('mobile chat dialogs remain closable', async ({ page }) => {

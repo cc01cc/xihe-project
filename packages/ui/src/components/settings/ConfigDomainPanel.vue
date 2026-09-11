@@ -7,8 +7,10 @@ const { t } = useI18n()
 export interface DomainField {
   key: string
   label: string
-  type: 'text' | 'password' | 'select' | 'number'
+  type: 'text' | 'password' | 'select' | 'number' | 'json' | 'textarea'
   options?: { label: string; value: string }[]
+  /** Written by the instance layer only (e.g. agent-runtime.instructions, decision #17). */
+  instanceOnly?: boolean
 }
 
 const props = defineProps<{
@@ -19,6 +21,8 @@ const props = defineProps<{
   admin?: boolean
   summary?: string
   schema: DomainField[]
+  /** domain key -> env-effective value when an env overlay wins (decision #22). */
+  envLocked?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -40,9 +44,26 @@ function toggle() {
   }
 }
 
+function isLocked(key: string): boolean {
+  return !!props.envLocked && key in props.envLocked
+}
+
+function lockedValue(key: string): string {
+  const value = props.envLocked?.[key] ?? ''
+  if (value && isPasswordKey(key)) {
+    return value.length > 8 ? `${value.substring(0, 3)}****${value.slice(-4)}` : '****'
+  }
+  return value
+}
+
+function isPasswordKey(key: string): boolean {
+  const normalized = key.toLowerCase()
+  return normalized.includes('apikey') || normalized.includes('secret') || normalized.includes('password')
+}
+
 function handleSave() {
   const body = Object.fromEntries(
-    Object.entries(editing.value).filter(([, value]) => value !== ''),
+    Object.entries(editing.value).filter(([key, value]) => value !== '' && !isLocked(key)),
   )
   emit('save', body)
 }
@@ -65,11 +86,30 @@ function handleReset(key: string) {
       </span>
     </button>
     <div v-if="expanded" class="px-4 pb-3 space-y-2">
-      <div v-for="field in schema" :key="field.key" class="flex min-w-0 items-center gap-2">
+      <div
+        v-for="field in schema"
+        :key="field.key"
+        :data-testid="`config-field-${domain}-${field.key}`"
+        class="flex min-w-0 items-center gap-2"
+      >
         <span class="text-xs text-muted-foreground w-1/3 truncate">{{ field.label }}</span>
 
+        <template v-if="isLocked(field.key)">
+          <span
+            :data-testid="`config-env-lock-${domain}-${field.key}`"
+            class="min-w-0 flex-1 truncate px-2 py-1 text-sm border rounded bg-muted text-muted-foreground"
+            :title="t('settings.envLockedHint')"
+          >
+            {{ lockedValue(field.key) || t('settings.empty') }}
+          </span>
+          <span
+            class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
+            :title="t('settings.envLockedHint')"
+          >env</span>
+        </template>
+
         <select
-          v-if="!readonly && field.type === 'select'"
+          v-else-if="!readonly && field.type === 'select'"
           v-model="editing[field.key]"
           class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
         >
@@ -81,6 +121,15 @@ function handleReset(key: string) {
             {{ opt.label }}
           </option>
         </select>
+
+        <textarea
+          v-else-if="!readonly && (field.type === 'json' || field.type === 'textarea')"
+          v-model="editing[field.key]"
+          rows="3"
+          class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+          :class="field.type === 'json' ? 'font-mono' : ''"
+          :placeholder="field.type === 'json' ? 'JSON' : ''"
+        />
 
         <input
           v-else-if="!readonly"
@@ -96,7 +145,7 @@ function handleReset(key: string) {
         </span>
 
         <button
-          v-if="admin && !readonly"
+          v-if="admin && !readonly && !isLocked(field.key)"
           class="text-xs text-muted-foreground hover:text-foreground px-1"
           :title="t('settings.resetToDefault')"
           @click="handleReset(field.key)"

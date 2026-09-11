@@ -25,6 +25,7 @@ import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import { getProviderInfo, getModelTags, getModelContextWindow } from '../../types/provider'
+import { listProviderConnections } from '../../services/providerConnectionService'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -76,16 +77,11 @@ const hasProviders = computed(() => {
   return Object.keys(configStore.modelCache.providers ?? {}).length > 0
 })
 
-const hasConfiguredProvider = computed(() => {
-  const llmConfig = configStore.mergedConfig['llm-provider'] ?? {}
-  return !!(
-    llmConfig.defaultProvider
-    || llmConfig.deepseekApiKey
-    || llmConfig.openaiApiKey
-    || llmConfig.xiaomiApiKey
-    || llmConfig.anthropicApiKey
-  )
-})
+// PLAN-0307 T2.22/T2.17: readiness hint is grounded in provider_connections,
+// not the removed config-table `*ApiKey` keys (decision #21).
+const configuredConnectionCount = ref(0)
+
+const hasConfiguredProvider = computed(() => configuredConnectionCount.value > 0)
 
 const searchQuery = computed(() => searchTerm.value.toLowerCase().trim())
 
@@ -211,6 +207,13 @@ function formatContext(ctx?: number): string {
 
 onMounted(() => {
   configStore.fetchModels()
+  listProviderConnections()
+    .then((response) => {
+      configuredConnectionCount.value = response.connections.length
+    })
+    .catch((e) => {
+      logger.warn('Failed to load provider connections for readiness hint', e)
+    })
 })
 </script>
 

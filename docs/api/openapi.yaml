@@ -320,7 +320,7 @@ paths:
   /api/v1/telemetry/logs:
     post: { operationId: ingestTelemetry, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
   /api/v1/config/{domain}:
-    get: { operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: Resolved configuration (env > workspace > user > instance > defaults) } } }
+    get: { operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: layer, required: false, schema: { type: string, enum: [instance, user, workspace] } }, { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }, { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Resolved configuration (env > workspace > user > instance > defaults); layer selects one layer; includeMeta wraps {domain, entries, envOverridden} where envOverridden lists env-effective locked values (decision #22)' } } }
   /api/v1/config/instance/{domain}:
     put: { operationId: putInstanceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Problem' } } }
   /api/v1/config/workspace/{domain}:

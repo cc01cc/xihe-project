@@ -28,7 +28,10 @@ test.beforeEach(async ({ page }) => {
 
 test('settings config page renders', async ({ page }) => {
   await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({ timeout: 8000 })
-  await expect(page).toHaveScreenshot('settings-config.png')
+  // PLAN-0307 T2.17: the three-layer settings page is verified with
+  // action screenshots in the @host specs; mock `config-settings.spec.ts`
+  // keeps the pixel baseline for this route.
+  await page.screenshot({ path: test.info().outputPath('settings-config.png'), fullPage: true })
 })
 
 test('settings knowledge page with tab nav', async ({ page }) => {

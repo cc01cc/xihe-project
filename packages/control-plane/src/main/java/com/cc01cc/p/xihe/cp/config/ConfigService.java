@@ -525,7 +525,14 @@ public class ConfigService {
                 Iterator<Map.Entry<String, JsonNode>> domainFields = domainNode.fields();
                 while (domainFields.hasNext()) {
                     Map.Entry<String, JsonNode> df = domainFields.next();
-                    String value = df.getValue().isNull() ? "" : df.getValue().asText();
+                    // PLAN-0307 T2.17: nested structured values round-trip as
+                    // JSON text (decision #24 storage contract) instead of being
+                    // flattened to an empty scalar string.
+                    String value = df.getValue().isNull()
+                        ? ""
+                        : (df.getValue().isContainerNode()
+                            ? df.getValue().toString()
+                            : df.getValue().asText());
                     entries.put(df.getKey(), value);
                 }
                 putLayer(layer, domain, entries, "import", userId, workspaceId);
@@ -644,7 +651,24 @@ public class ConfigService {
         if (!schemaValidator.hasSchema(domain)) {
             return List.of();
         }
-        Map<String, Object> raw = new LinkedHashMap<>(entries);
+        // PLAN-0307 T2.17: structured values are stored as JSON text (decision
+        // #24 storage contract). Container text must be parsed before schema
+        // validation so nested domains (context-policy) validate as shapes
+        // rather than strings; scalar text stays a string.
+        Map<String, Object> raw = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : entries.entrySet()) {
+            String value = entry.getValue();
+            String trimmed = value == null ? "" : value.trim();
+            if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                try {
+                    raw.put(entry.getKey(), objectMapper.readTree(trimmed));
+                } catch (JsonProcessingException e) {
+                    return List.of(entry.getKey() + " is not valid JSON");
+                }
+            } else {
+                raw.put(entry.getKey(), value);
+            }
+        }
         JsonNode body = objectMapper.convertValue(raw, JsonNode.class);
         return schemaValidator.validate(domain, body);
     }

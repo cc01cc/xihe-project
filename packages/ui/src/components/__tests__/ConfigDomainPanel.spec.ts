@@ -137,4 +137,44 @@ describe('ConfigDomainPanel', () => {
     expect(emitted).toBeTruthy()
     expect(emitted![0][0]).toBe('model')
   })
+
+  it('TC8: env-locked field shows env value, hides input, and is excluded from save', async () => {
+    const wrapper = mountPanel({
+      entries: { model: 'db-model', apiKey: 'sk-old' },
+      envLocked: { model: 'env-model' },
+    })
+    await expandPanel(wrapper)
+
+    const lock = wrapper.find('[data-testid="config-env-lock-test-model"]')
+    expect(lock.exists()).toBe(true)
+    expect(lock.text()).toBe('env-model')
+    expect(wrapper.text()).toContain('env')
+
+    const inputs = wrapper.findAll('input')
+    expect(inputs).toHaveLength(2)
+
+    await inputs[1].setValue('8192')
+    await wrapper.findAll('button').filter(b => b.text() === 'Save')[0].trigger('click')
+
+    const emitted = wrapper.emitted('save')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toEqual({ apiKey: 'sk-old', maxTokens: 8192 })
+    expect(emitted![0][0]).not.toHaveProperty('model')
+  })
+
+  it('TC9: json fields render a textarea and are emitted verbatim', async () => {
+    const jsonSchema: DomainField[] = [
+      { key: 'defaults', label: 'Defaults', type: 'json' },
+    ]
+    const wrapper = mountPanel({ schema: jsonSchema, entries: { defaults: '{"softThresholdPct":0.8}' } })
+    await expandPanel(wrapper)
+
+    const textarea = wrapper.find('textarea')
+    expect(textarea.exists()).toBe(true)
+    expect(textarea.element.value).toBe('{"softThresholdPct":0.8}')
+
+    await textarea.setValue('{"softThresholdPct":0.9}')
+    await wrapper.findAll('button').filter(b => b.text() === 'Save')[0].trigger('click')
+    expect(wrapper.emitted('save')![0][0]).toEqual({ defaults: '{"softThresholdPct":0.9}' })
+  })
 })

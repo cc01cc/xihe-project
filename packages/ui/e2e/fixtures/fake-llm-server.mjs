@@ -59,7 +59,10 @@ async function sendCompletion(response, provider, requestBody) {
   }
 
   const lastMessage = requestBody.messages?.at(-1)?.content ?? 'empty'
-  const chunks = [`${provider} fake`, ` response to: ${String(lastMessage).slice(0, 40)}`]
+  // PLAN-0307 T2.17 (V17): echo the model so a spec can prove that the
+  // UI-saved config actually reached the LLM call.
+  const modelEcho = requestBody.model ? ` model=${requestBody.model}` : ''
+  const chunks = [`${provider} fake${modelEcho}`, ` response to: ${String(lastMessage).slice(0, 40)}`]
   for (const content of chunks) {
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
     if (mode === 'disconnect') {

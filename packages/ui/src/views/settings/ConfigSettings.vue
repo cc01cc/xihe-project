@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
-import { useConfigStore } from '../../stores/config'
+import { useConfigStore, LAYER_DOMAINS, type ConfigLayer } from '../../stores/config'
 import ConfigDomainPanel, { type DomainField } from '../../components/settings/ConfigDomainPanel.vue'
 import ProviderHub from '../../components/settings/ProviderHub.vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
-import { api, request } from '../../composables/api'
+import { api } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { getProviderInfo } from '../../types/provider'
 import { useAuthStore } from '../../stores/auth'
@@ -16,98 +16,112 @@ const { t } = useI18n()
 const configStore = useConfigStore()
 const authStore = useAuthStore()
 
-type LayerTab = 'system' | 'admin' | 'user'
-const activeTab = ref<LayerTab>('admin')
+type LayerTab = ConfigLayer
+const activeTab = ref<LayerTab>(authStore.isAdmin ? 'instance' : 'user')
 
-const tabs: { key: LayerTab; label: string }[] = [
-  { key: 'system', label: t('settings.tabSystem') },
-  { key: 'admin', label: t('settings.tabAdmin') },
-  { key: 'user', label: t('settings.tabUser') },
-]
+const tabs = computed<{ key: LayerTab; label: string }[]>(() => {
+  const list: { key: LayerTab; label: string }[] = []
+  if (authStore.isAdmin) list.push({ key: 'instance', label: t('settings.tabInstance') })
+  list.push({ key: 'workspace', label: t('settings.tabWorkspace') })
+  list.push({ key: 'user', label: t('settings.tabUser') })
+  return list
+})
 
 const domainLabels: Record<string, string> = {
-  'infrastructure': t('settings.domainInfrastructure'),
-  'logging': t('settings.domainLogging'),
   'llm-provider': t('settings.domainLlmProvider'),
+  'context-policy': t('settings.domainContextPolicy'),
   'embedding': t('settings.domainEmbedding'),
-  'user-preference': t('settings.domainUserPreference'),
-  'workspace-config': t('settings.domainWorkspaceConfig'),
-  'mcp': t('settings.domainMcp'),
   'rag': t('settings.domainRag'),
+  'agent-runtime': t('settings.domainAgentRuntime'),
+  'agent-profile': t('settings.domainAgentProfile'),
+  'user-preference': t('settings.domainUserPreference'),
+  'logging': t('settings.domainLogging'),
 }
+
+const providerOptions = [
+  { label: 'DeepSeek', value: 'deepseek' },
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'Anthropic', value: 'anthropic' },
+  { label: 'Xiaomi', value: 'xiaomi' },
+  { label: 'DashScope', value: 'dashscope' },
+]
+const levelOptions = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR'].map(level => ({ label: level, value: level }))
+const boolOptions = [
+  { label: 'true', value: 'true' },
+  { label: 'false', value: 'false' },
+]
 
 const domainSchemas: Record<string, DomainField[]> = {
   'llm-provider': [
-    { key: 'defaultProvider', label: t('settings.fieldDefaultProvider'), type: 'select', options: [
-      { label: 'DeepSeek', value: 'deepseek' },
-      { label: 'OpenAI', value: 'openai' },
-      { label: 'Anthropic', value: 'anthropic' },
-      { label: 'Xiaomi', value: 'xiaomi' },
-    ]},
-    { key: 'deepseekApiKey', label: t('settings.fieldDeepseekApiKey'), type: 'password' },
+    { key: 'defaultProvider', label: t('settings.fieldDefaultProvider'), type: 'select', options: providerOptions },
+    { key: 'defaultModel', label: t('settings.fieldDefaultModel'), type: 'text' },
     { key: 'deepseekModel', label: t('settings.fieldDeepseekModel'), type: 'text' },
     { key: 'deepseekApiBase', label: t('settings.fieldDeepseekApiBase'), type: 'text' },
-    { key: 'openaiApiKey', label: t('settings.fieldOpenaiApiKey'), type: 'password' },
-    { key: 'xiaomiApiKey', label: t('settings.fieldXiaomiApiKey'), type: 'password' },
+    { key: 'openaiModel', label: t('settings.fieldOpenaiModel'), type: 'text' },
+    { key: 'openaiApiBase', label: t('settings.fieldOpenaiApiBase'), type: 'text' },
+    { key: 'anthropicModel', label: t('settings.fieldAnthropicModel'), type: 'text' },
+    { key: 'anthropicApiBase', label: t('settings.fieldAnthropicApiBase'), type: 'text' },
     { key: 'xiaomiModel', label: t('settings.fieldXiaomiModel'), type: 'text' },
     { key: 'xiaomiApiBase', label: t('settings.fieldXiaomiApiBase'), type: 'text' },
-    { key: 'imageProvider', label: t('settings.fieldImageProvider'), type: 'select', options: [
-      { label: 'DeepSeek', value: 'deepseek' },
-      { label: 'OpenAI', value: 'openai' },
-      { label: '', value: '' },
-    ]},
-  ],
-  'logging': [
-    { key: 'logLevel', label: t('settings.fieldLogLevel'), type: 'text' },
-    { key: 'levelAgent', label: t('settings.fieldLevelAgent'), type: 'text' },
-    { key: 'levelCp', label: t('settings.fieldLevelCp'), type: 'text' },
-    { key: 'levelRuntime', label: t('settings.fieldLevelRuntime'), type: 'text' },
-    { key: 'levelUi', label: t('settings.fieldLevelUi'), type: 'text' },
-    { key: 'auditConsole', label: t('settings.fieldAuditConsole'), type: 'text' },
-    { key: 'instructions', label: t('settings.fieldInstructions'), type: 'text' },
-    { key: 'userName', label: t('settings.fieldUserName'), type: 'text' },
-    { key: 'useRegistry', label: t('settings.fieldUseRegistry'), type: 'text' },
-    { key: 'useSupervisor', label: t('settings.fieldUseSupervisor'), type: 'text' },
-  ],
-  'embedding': [
-    { key: 'model', label: t('settings.fieldModel'), type: 'select', options: [
-      { label: 'text-embedding-3-small', value: 'text-embedding-3-small' },
-      { label: 'text-embedding-3-large', value: 'text-embedding-3-large' },
-    ]},
-    { key: 'dimensions', label: t('settings.fieldDimensions'), type: 'number' },
-  ],
-  'user-preference': [
-    { key: 'defaultModel', label: t('settings.fieldDefaultModel'), type: 'text' },
+    { key: 'dashscopeModel', label: t('settings.fieldDashscopeModel'), type: 'text' },
+    { key: 'dashscopeApiBase', label: t('settings.fieldDashscopeApiBase'), type: 'text' },
+    { key: 'baseUrl', label: t('settings.fieldBaseUrl'), type: 'text' },
+    { key: 'imageProvider', label: t('settings.fieldImageProvider'), type: 'select', options: [...providerOptions, { label: t('settings.notSet'), value: '' }] },
     { key: 'maxTokens', label: t('settings.fieldMaxTokens'), type: 'number' },
     { key: 'temperature', label: t('settings.fieldTemperature'), type: 'number' },
+    { key: 'timeout', label: t('settings.fieldTimeout'), type: 'number' },
+  ],
+  'context-policy': [
+    { key: 'defaults', label: t('settings.fieldCompactionDefaults'), type: 'json' },
+    { key: 'models', label: t('settings.fieldCompactionModels'), type: 'json' },
+  ],
+  'embedding': [
+    { key: 'model', label: t('settings.fieldModel'), type: 'text' },
+    { key: 'dimensions', label: t('settings.fieldDimensions'), type: 'number' },
+  ],
+  'rag': [
+    { key: 'chunkSize', label: t('settings.fieldChunkSize'), type: 'number' },
+    { key: 'chunkOverlap', label: t('settings.fieldChunkOverlap'), type: 'number' },
+    { key: 'topK', label: t('settings.fieldTopK'), type: 'number' },
+    { key: 'minScore', label: t('settings.fieldMinScore'), type: 'number' },
+  ],
+  'agent-runtime': [
+    { key: 'useRegistry', label: t('settings.fieldUseRegistry'), type: 'select', options: boolOptions },
+    { key: 'useSupervisor', label: t('settings.fieldUseSupervisor'), type: 'select', options: boolOptions },
+    { key: 'workersDir', label: t('settings.fieldWorkersDir'), type: 'text' },
+    { key: 'instructions', label: t('settings.fieldInstructions'), type: 'textarea', instanceOnly: true },
+  ],
+  'agent-profile': [
+    { key: 'userName', label: t('settings.fieldUserName'), type: 'text' },
+  ],
+  'user-preference': [
     { key: 'theme', label: t('settings.fieldTheme'), type: 'select', options: [
       { label: t('settings.light'), value: 'light' },
       { label: t('settings.dark'), value: 'dark' },
       { label: t('settings.system'), value: 'system' },
-    ]},
+    ] },
+    { key: 'language', label: t('settings.language'), type: 'text' },
   ],
-  'workspace-config': [
-    { key: 'workspacePath', label: t('settings.fieldWorkspacePath'), type: 'text' },
-    { key: 'workspaceId', label: t('settings.fieldWorkspaceId'), type: 'text' },
-    { key: 'image', label: t('settings.fieldImage'), type: 'text' },
-    { key: 'dockerImage', label: t('settings.fieldDockerImage'), type: 'text' },
-    { key: 'profile', label: t('settings.fieldProfile'), type: 'text' },
-  ],
-  'rag': [
-    { key: 'chunkSize', label: t('settings.fieldChunkSize'), type: 'number' },
-    { key: 'topK', label: t('settings.fieldTopK'), type: 'number' },
-  ],
-  'infrastructure': [
-    { key: 'dbUrl', label: t('settings.fieldDbUrl'), type: 'password' },
-    { key: 'jwtSecret', label: t('settings.fieldJwtSecret'), type: 'password' },
+  'logging': [
+    { key: 'logLevel', label: t('settings.fieldLogLevel'), type: 'select', options: levelOptions },
+    { key: 'levelAgent', label: t('settings.fieldLevelAgent'), type: 'select', options: levelOptions },
+    { key: 'levelCp', label: t('settings.fieldLevelCp'), type: 'select', options: levelOptions },
+    { key: 'levelRuntime', label: t('settings.fieldLevelRuntime'), type: 'select', options: levelOptions },
+    { key: 'levelUi', label: t('settings.fieldLevelUi'), type: 'select', options: levelOptions },
   ],
 }
 
-const adminDomains = ['llm-provider', 'mcp', 'rag', 'logging', 'embedding', 'workspace-config', 'user-preference']
-const userDomains = adminDomains
-const systemDomains = ['infrastructure', ...adminDomains]
-
 const fetchError = ref(false)
+// Only the first load of a layer shows the full-page loading state. Reloads
+// after a save must keep the panels mounted (otherwise the expanded domain
+// panel and its save button unmount mid-interaction).
+const hasLayerData = computed(() => Object.keys(configStore.layerConfig[activeTab.value] ?? {}).length > 0)
+const showInitialLoading = computed(() => configStore.layerLoading && !hasLayerData.value)
+const exporting = ref(false)
+const importing = ref(false)
+const importWarnings = ref<string[]>([])
+const includeSecrets = ref(true)
+
 const mcpJson = ref('')
 const mcpError = ref('')
 const mcpSaving = ref(false)
@@ -127,10 +141,24 @@ type AuthorizationStatus = 'required' | 'authorizing' | 'authorized' | 'failed'
 const oauthStatus = ref<Record<string, AuthorizationStatus>>({})
 const oauthError = ref('')
 
-const mcpReadonly = computed(() => activeTab.value === 'system')
-
 function currentWorkspaceId(): string {
-  return String(configStore.mergedConfig['workspace-config']?.workspaceId || authStore.currentWorkspaceId || '')
+  return authStore.currentWorkspaceId ?? ''
+}
+
+const visibleDomains = computed(() => [...LAYER_DOMAINS[activeTab.value]])
+
+const showWorkspaceHint = computed(() => activeTab.value === 'workspace' && !currentWorkspaceId())
+const showMcp = computed(() => activeTab.value === 'workspace' && !!currentWorkspaceId())
+const showImportExport = computed(() => activeTab.value === 'instance')
+
+function schemaFor(domain: string): DomainField[] {
+  const fields = domainSchemas[domain] ?? []
+  if (activeTab.value === 'instance') return fields
+  return fields.filter(field => !field.instanceOnly)
+}
+
+function envLockedFor(domain: string): Record<string, string> {
+  return configStore.envOverridden[domain] ?? {}
 }
 
 const builtInTools = [
@@ -146,15 +174,40 @@ const builtInTools = [
 
 onMounted(async () => {
   await handleOAuthCallback()
+  fetchError.value = false
   try {
-    await configStore.loadAllDomains()
-    await loadMcpConfig()
+    if (activeTab.value !== 'workspace' || currentWorkspaceId()) {
+      await configStore.loadLayerDomains(activeTab.value, currentWorkspaceId())
+    }
+    if (showMcp.value) await loadMcpConfig()
   } catch (e) {
     logger.warn('Failed to load config domains', e)
     fetchError.value = true
     toast.error('Failed to load configuration')
   }
 })
+
+async function switchTab(tab: LayerTab) {
+  if (activeTab.value === tab) return
+  activeTab.value = tab
+  fetchError.value = false
+  try {
+    if (tab !== 'workspace' || currentWorkspaceId()) {
+      await configStore.loadLayerDomains(tab, currentWorkspaceId())
+    }
+    if (tab === 'workspace' && currentWorkspaceId() && !mcpJson.value) {
+      await loadMcpConfig()
+    }
+  } catch (e) {
+    logger.warn('Failed to load config domains for layer ' + tab, e)
+    fetchError.value = true
+    toast.error(t('settings.saveFailed'))
+  }
+}
+
+async function reloadActiveLayer() {
+  await configStore.loadLayerDomains(activeTab.value, currentWorkspaceId())
+}
 
 async function loadMcpConfig() {
   try {
@@ -277,16 +330,12 @@ async function saveMcpConfig() {
 }
 
 function generateSummary(domain: string): string {
-  const entries = configStore.mergedConfig[domain] || {}
+  const entries = configStore.layerConfig[activeTab.value][domain] || {}
   if (Object.keys(entries).length === 0) return ''
   if (domain === 'llm-provider') {
     const providerId = entries['defaultProvider']
     const provider = providerId ? getProviderInfo(providerId)?.name ?? providerId : ''
     return provider ? `${provider} (已配置)` : ''
-  }
-  if (domain === 'mcp') {
-    const serverCount = mcpJson.value.includes('mcpServers') ? (mcpJson.value.match(/"command"/g) || []).length : 0
-    return serverCount > 0 ? `${serverCount} 个服务器已配置` : ''
   }
   if (domain === 'rag') {
     const cs = entries['chunkSize']
@@ -302,52 +351,92 @@ function generateSummary(domain: string): string {
     const level = entries['logLevel'] || entries['levelAgent']
     return level ? `level: ${level}` : ''
   }
-  if (domain === 'workspace-config') {
-    const profile = entries['profile']
-    return profile ? `profile: ${profile}` : ''
+  if (domain === 'agent-profile') {
+    return entries['userName'] || ''
   }
   return ''
 }
 
-function visibleDomains(): string[] {
-  if (activeTab.value === 'system') return systemDomains
-  if (activeTab.value === 'admin') return adminDomains
-  return userDomains
-}
-
-async function handleAdminSave(domain: string, body: Record<string, string>) {
-  try {
-    await configStore.putAdminConfig(domain, body)
-    await configStore.loadAllDomains()
-    toast.success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
-  } catch (e) {
-    toast.error(e instanceof Error ? e.message : `Failed to save ${domain}`)
+function validateJsonFields(domain: string, body: Record<string, string>): string | null {
+  for (const field of domainSchemas[domain] ?? []) {
+    if (field.type !== 'json') continue
+    const value = body[field.key]
+    if (!value) continue
+    try {
+      JSON.parse(value)
+    } catch {
+      return `${field.label}: ${t('settings.invalidJson')}`
+    }
   }
+  return null
 }
 
-async function handleUserSave(domain: string, body: Record<string, string>) {
+async function handleSave(domain: string, body: Record<string, string>) {
+  const jsonError = validateJsonFields(domain, body)
+  if (jsonError) {
+    toast.error(jsonError)
+    return
+  }
   try {
-    await configStore.putUserConfig(domain, body)
-    await configStore.loadAllDomains()
+    await configStore.putLayerConfig(activeTab.value, domain, body, currentWorkspaceId())
+    await reloadActiveLayer()
     toast.success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : `Failed to save ${domain}`)
+    toast.error(e instanceof Error ? e.message : `${t('settings.saveFailed')} ${domain}`)
   }
 }
 
 async function handleReset(domain: string, key: string) {
   try {
-    await request(`/config/admin/${domain}`, {
-      method: 'PUT',
-      body: JSON.stringify({ [key]: '' }),
-    })
-    await configStore.loadAllDomains()
+    await configStore.putLayerConfig(activeTab.value, domain, { [key]: '' }, currentWorkspaceId())
+    await reloadActiveLayer()
     toast.success(`${key} ${t('common.reset')}`)
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : 'Reset failed')
+    toast.error(e instanceof Error ? e.message : t('settings.saveFailed'))
   }
 }
 
+async function handleExport() {
+  exporting.value = true
+  try {
+    const content = await configStore.exportConfig(includeSecrets.value)
+    const blob = new Blob([content], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'config.import.local.jsonc'
+    anchor.click()
+    URL.revokeObjectURL(url)
+    toast.success(t('settings.exportDone'))
+  } catch (e) {
+    logger.warn('Config export failed', e)
+    toast.error(t('settings.exportFailed'))
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function handleImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importing.value = true
+  importWarnings.value = []
+  try {
+    const content = await file.text()
+    const report = await configStore.importConfig(content)
+    importWarnings.value = report.warnings ?? []
+    toast.success(`${t('settings.importDone')}: +${report.imported} / skip ${report.skipped}`)
+    if (importWarnings.value.length) toast.warning(importWarnings.value[0])
+    await reloadActiveLayer()
+  } catch (e) {
+    logger.warn('Config import failed', e)
+    toast.error(t('settings.importFailed'))
+  } finally {
+    importing.value = false
+    input.value = ''
+  }
+}
 </script>
 
 <template>
@@ -361,52 +450,89 @@ async function handleReset(domain: string, key: string) {
         {{ t('common.error') }}: {{ t('settings.saveFailed') }}
       </div>
 
-      <div v-if="configStore.loading" class="text-sm text-muted-foreground">{{ t('common.loading') }}</div>
+      <div v-if="showInitialLoading" class="text-sm text-muted-foreground">{{ t('common.loading') }}</div>
 
       <template v-else>
         <div class="flex gap-1 border-b mb-4">
           <button
             v-for="tab in tabs"
             :key="tab.key"
+            :data-testid="`config-tab-${tab.key}`"
             class="px-4 py-2 text-sm border-b-2 transition-colors"
             :class="activeTab === tab.key
               ? 'border-primary text-foreground font-medium'
               : 'border-transparent text-muted-foreground hover:text-foreground'"
-            @click="activeTab = tab.key"
+            @click="switchTab(tab.key)"
           >
             {{ tab.label }}
           </button>
         </div>
 
-        <div class="space-y-1">
-          <template v-for="domain in visibleDomains()" :key="domain">
+        <div v-if="showWorkspaceHint" class="text-sm text-muted-foreground px-1 py-4">
+          {{ t('settings.workspaceRequired') }}
+        </div>
+
+        <div v-else class="space-y-1">
+          <div v-if="showImportExport" class="border rounded-lg mb-2 overflow-hidden" data-testid="config-import-export">
+            <div class="px-4 py-3 text-sm font-medium bg-muted/30">
+              {{ t('settings.importExport') }}
+            </div>
+            <div class="px-4 pb-3 space-y-2">
+              <div class="flex flex-wrap items-center gap-3">
+                <button
+                  data-testid="config-export-button"
+                  class="px-3 py-1 text-xs border rounded hover:bg-muted disabled:opacity-50"
+                  :disabled="exporting"
+                  @click="handleExport"
+                >
+                  {{ exporting ? t('common.loading') : t('settings.exportConfig') }}
+                </button>
+                <label class="flex items-center gap-1 text-xs text-muted-foreground">
+                  <input v-model="includeSecrets" data-testid="config-export-secrets" type="checkbox" />
+                  {{ t('settings.exportIncludeSecrets') }}
+                </label>
+                <label class="px-3 py-1 text-xs border rounded cursor-pointer hover:bg-muted" :class="{ 'opacity-50': importing }">
+                  {{ importing ? t('common.loading') : t('settings.importConfig') }}
+                  <input
+                    data-testid="config-import-input"
+                    type="file"
+                    accept=".jsonc,.json,application/json"
+                    class="hidden"
+                    :disabled="importing"
+                    @change="handleImportFile"
+                  />
+                </label>
+              </div>
+              <ul v-if="importWarnings.length" class="text-xs text-amber-600 list-disc pl-4" data-testid="config-import-warnings">
+                <li v-for="(warning, index) in importWarnings" :key="index">{{ warning }}</li>
+              </ul>
+            </div>
+          </div>
+
+          <template v-for="domain in visibleDomains" :key="domain">
             <ProviderHub
-              v-if="domain === 'llm-provider' && activeTab !== 'system'"
+              v-if="domain === 'llm-provider' && activeTab !== 'instance'"
               :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
             />
             <ConfigDomainPanel
-              v-else-if="domain !== 'mcp'"
               :domain="domain"
               :title="domainLabels[domain] || domain"
-              :entries="configStore.mergedConfig[domain] || {}"
-              :readonly="activeTab === 'system'"
-              :admin="activeTab === 'admin'"
+              :entries="configStore.layerConfig[activeTab][domain] || {}"
+              :admin="activeTab !== 'user'"
               :summary="generateSummary(domain)"
-              :schema="domainSchemas[domain] ?? []"
-              @save="activeTab === 'user' ? handleUserSave(domain, $event) : handleAdminSave(domain, $event)"
+              :schema="schemaFor(domain)"
+              :env-locked="envLockedFor(domain)"
+              @save="handleSave(domain, $event)"
               @reset="handleReset(domain, $event)"
             />
           </template>
 
-          <div v-if="visibleDomains().includes('mcp')" class="border rounded-lg mb-2 overflow-hidden">
+          <div v-if="showMcp" class="border rounded-lg mb-2 overflow-hidden">
             <div class="px-4 py-3 text-sm font-medium bg-muted/30">
-              {{ domainLabels['mcp'] }}
+              {{ t('settings.domainMcp') }}
             </div>
             <div class="px-4 pb-3 space-y-3">
-              <div v-if="activeTab === 'system'" class="text-sm text-muted-foreground">
-                {{ t('settings.builtInTools') }}
-              </div>
-              <div v-if="activeTab === 'admin' || activeTab === 'user'" class="space-y-2">
+              <div class="space-y-2">
                 <div class="flex flex-wrap gap-2 mb-3">
                   <span
                     v-for="tool in builtInTools"
@@ -420,10 +546,9 @@ async function handleReset(domain: string, key: string) {
                   v-model="mcpJson"
                   data-testid="mcp-config-textarea"
                   class="w-full h-48 px-4 py-3 rounded-lg border bg-background font-mono text-sm resize-y"
-                  :disabled="mcpReadonly"
                 />
                 <p v-if="mcpError" class="text-xs text-destructive">{{ mcpError }}</p>
-                <div v-if="!mcpReadonly" class="flex gap-2">
+                <div class="flex gap-2">
                   <button
                     class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
                     :disabled="mcpSaving"

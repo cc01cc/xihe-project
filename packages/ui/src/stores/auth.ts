@@ -38,6 +38,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => !!token.value)
   const userName = computed(() => user.value?.name ?? user.value?.email ?? 'User')
+  const isAdmin = computed(() => user.value?.role === 'ADMIN')
 
   function _saveToken(t: string, u: User, ws: ApiWorkspace | null) {
     token.value = t
@@ -122,7 +123,7 @@ export const useAuthStore = defineStore('auth', () => {
   const currentWorkspaceId = computed(() => workspace.value?.id ?? null)
 
   return {
-    token, user, workspace, loading, error, isAuthenticated, userName,
+    token, user, workspace, loading, error, isAuthenticated, userName, isAdmin,
     currentWorkspaceId,
     login, register, logout,
   }

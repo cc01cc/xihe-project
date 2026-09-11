@@ -370,10 +370,7 @@ async function configureFakeLlm() {
       body: JSON.stringify({
         'llm-provider': {
           defaultProvider: 'xiaomi',
-          xiaomiApiKey: realXiaomiKey,
           xiaomiModel: 'mimo-v2.5',
-        },
-        'user-preference': {
           defaultModel: 'mimo-v2.5',
         },
       }),
@@ -382,35 +379,32 @@ async function configureFakeLlm() {
       const problem = await imported.text()
       throw new Error(`real provider config import failed: HTTP ${imported.status} ${problem.slice(0, 500)}`)
     }
-    console.log('[e2e-host] real Xiaomi configuration imported (key redacted from all evidence)')
+    console.log('[e2e-host] real Xiaomi configuration imported (key stays in the Agent env only)')
     return
   }
   const fakeBase = `http://127.0.0.1:${fakeLlmPort}`
-  const config = llmMode === 'missing'
-    ? {
-        'llm-provider': {
-          defaultProvider: '',
-          openaiApiKey: '',
-          openaiApiBase: `${fakeBase}/openai/v1`,
-        },
-        'user-preference': {
-          defaultModel: 'gpt-fake',
-        },
-      }
+  // PLAN-0307 decision #21/#37 (BYOK): config layers never hold `*ApiKey` and
+  // `user-preference.defaultModel` moved to `llm-provider`. Instance entries
+  // carry non-secret provider/model/base only; fake credentials reach the Agent
+  // through the env fallback (dev/offline path). `mock`/`missing` intentionally
+  // leave the domain empty so the Agent resolves provider=mock via
+  // `XIHE_LLM_PROVIDER` or fails the per-run credential gate.
+  const config = llmMode === 'missing' || llmMode === 'mock'
+    ? {}
     : {
         'llm-provider': {
           defaultProvider: 'openai',
-          openaiApiKey: llmMode === 'invalid' ? 'sk-fake-invalid-key' : 'sk-fake-openai-key',
           openaiModel: 'fake-openai',
           openaiApiBase: `${fakeBase}/openai/v1`,
-          deepseekApiKey: 'fake-deepseek-key',
           deepseekModel: 'fake-deepseek',
           deepseekApiBase: `${fakeBase}/deepseek/v1`,
-        },
-        'user-preference': {
           defaultModel: 'fake-openai',
         },
       }
+  if (Object.keys(config).length === 0) {
+    console.log(`[e2e-host] llm-provider config skipped mode=${llmMode} (no DB keys; env fallback only)`)
+    return
+  }
   const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
     method: 'POST',
     headers: {
@@ -801,6 +795,16 @@ async function main() {
             XIHE_AGENT_PORT: agentPort,
             XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
             XIHE_LLM_PROVIDER: realXiaomiKey ? 'xiaomi' : llmMode === 'mock' ? 'mock' : 'openai',
+            // PLAN-0307 decision #21/#37 (BYOK): fake/real credentials travel
+            // through the Agent env fallback, never through config layers.
+            ...(realXiaomiKey
+              ? { XIHE_XIAOMI_API_KEY: realXiaomiKey }
+              : llmMode === 'missing' || llmMode === 'mock'
+                ? {}
+                : {
+                    XIHE_OPENAI_API_KEY: llmMode === 'invalid' ? 'sk-fake-invalid-key' : 'sk-fake-openai-key',
+                    XIHE_DEEPSEEK_API_KEY: 'fake-deepseek-key',
+                  }),
           },
           healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
         })

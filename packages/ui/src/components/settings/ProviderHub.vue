@@ -159,8 +159,10 @@ async function load() {
   loading.value = true
   try {
     const [catalog, connected] = await Promise.all([listProviderCatalog(), listProviderConnections()])
-    providers.value = catalog.providers
-    connections.value = connected.connections
+    // Defensive: a malformed/partial response must not leave undefined state
+    // (template and computed read `.length`/`.map`).
+    providers.value = catalog.providers ?? []
+    connections.value = connected.connections ?? []
   } catch (cause: unknown) {
     logger.warn('Provider Hub load failed', cause)
     toast.error(cause instanceof Error ? cause.message : 'Provider 配置加载失败')

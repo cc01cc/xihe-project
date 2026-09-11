@@ -255,6 +255,8 @@ test.describe('PLAN-269 full UI acceptance: settings and provider', () => {
     await mockSettingsApis(page)
 
     await page.goto('/settings/config')
+    // PLAN-0307 T2.17: MCP config lives in the workspace layer entry.
+    await page.getByTestId('config-tab-workspace').click()
     const mcp = page.getByTestId('mcp-config-textarea')
     await mcp.fill('{invalid')
     await page.getByRole('button', { name: '保存' }).last().click()
@@ -415,7 +417,11 @@ test.describe('PLAN-269 full UI acceptance: workspace and mobile', () => {
       const content = path === 'main.ts' ? 'const answer = 42' : path === 'image.png' ? tinyPng : 'opaque binary content'
       const result = body.params?.name === 'read_file'
         ? { content: [{ type: 'text', text: content }] }
-        : { content: [{ type: 'text', text: JSON.stringify({ entries: [] }) }] }
+        // PLAN-292 binary-safe read: raster previews go through read_file_range
+        // and receive base64 with is_binary=true.
+        : body.params?.name === 'read_file_range' && path === 'image.png'
+          ? { content: [{ type: 'text', text: JSON.stringify({ content: tinyPng.split(',')[1], total_lines: 1, is_binary: true }) }] }
+          : { content: [{ type: 'text', text: JSON.stringify({ entries: [] }) }] }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

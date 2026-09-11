@@ -159,12 +159,12 @@ public class ConfigController {
         if (includeMeta) {
             // PLAN-0307 T2.14 (#22): expose env-locked keys + their env-effective
             // values so the UI can lock/disable the fields (T2.17) instead of
-            // silently showing a value the env layer overrides.
+            // silently showing a value the env layer overrides. T2.17 widened this
+            // to layer views too: the env layer is global, so every layer tab must
+            // be able to render the lock state.
             Map<String, String> envOverridden = new LinkedHashMap<>();
-            if (layer == null) {
-                for (Map.Entry<String, String> e : configService.envOverridden(domain).entrySet()) {
-                    envOverridden.put(e.getKey(), hideAll ? "****" : maskIfNotAdmin(e.getKey(), e.getValue()));
-                }
+            for (Map.Entry<String, String> e : configService.envOverridden(domain).entrySet()) {
+                envOverridden.put(e.getKey(), hideAll ? "****" : maskIfNotAdmin(e.getKey(), e.getValue()));
             }
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("domain", domain);
