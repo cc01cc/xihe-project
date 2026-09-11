@@ -32,7 +32,7 @@ def client():
 class TestConfigClientInit:
     def test_initial_state_empty(self, client):
         assert client._effective_cache == {}
-        assert client._provider_cache == {}
+        assert client.get_domain("llm-provider") == {}
         assert client._last_fetch == 0.0
         assert client.config_revision == ""
         assert client.last_sync_report["ok"] is False
@@ -78,6 +78,29 @@ class TestConfigClientGet:
         assert client.get("llm-provider", "openaiApiKey") == ""
 
 
+class TestConfigClientGetDomain:
+    """PLAN-0307 T2.13: credentials left ConfigClient; domains are exposed raw."""
+
+    def test_get_domain_returns_entries(self, client):
+        client._effective_cache["llm-provider"] = {
+            "defaultProvider": "xiaomi",
+            "xiaomiModel": "mimo-v2.5",
+        }
+        assert client.get_domain("llm-provider") == {
+            "defaultProvider": "xiaomi",
+            "xiaomiModel": "mimo-v2.5",
+        }
+
+    def test_get_domain_missing_returns_empty(self, client):
+        assert client.get_domain("embedding") == {}
+
+    def test_get_domain_returns_copy(self, client):
+        client._effective_cache["rag"] = {"topK": "5"}
+        snapshot = client.get_domain("rag")
+        snapshot["topK"] = "99"
+        assert client.get("rag", "topK") == "5"
+
+
 class TestConfigClientGetBool:
     def test_get_bool_true_values(self, client):
         client._effective_cache["agent-runtime"] = {"useRegistry": "true"}
@@ -95,52 +118,18 @@ class TestConfigClientGetBool:
         assert client.get_bool("agent-runtime", "nonexistent") is False
 
 
-class TestConfigClientProviders:
-    def test_get_providers_returns_empty_initially(self, client):
-        assert client.get_providers() == {}
+class TestConfigClientProvidersRemoved:
+    """PLAN-0307 T2.13: no provider/key cache on ConfigClient (decision #21).
 
-    def test_get_providers_after_rebuild(self, client):
-        client._effective_cache["llm-provider"] = {
-            "openaiApiKey": "sk-effective",
-            "baseUrl": "https://api.openai.com/v1",
-        }
-        client._rebuild_provider_cache()
+    The offline provider registry lives in
+    `xihe_agent.llm.base.fallback_provider_configs` and is env-keyed.
+    """
 
-        providers = client.get_providers()
-        assert "openai" in providers
-        assert providers["openai"]["apiKey"] == "sk-effective"
-        assert providers["openai"]["baseUrl"] == "https://api.openai.com/v1"
-
-    def test_get_providers_empty_api_key_excluded(self, client):
-        client._effective_cache["llm-provider"] = {
-            "openaiApiKey": "",
-            "deepseekApiKey": "",
-        }
-        client._rebuild_provider_cache()
-        assert client.get_providers() == {}
-
-    def test_get_provider_specific(self, client):
-        client._effective_cache["llm-provider"] = {"openaiApiKey": "sk-test"}
-        client._rebuild_provider_cache()
-
-        provider = client.get_provider("openai")
-        assert provider is not None
-        assert provider["apiKey"] == "sk-test"
-        assert client.get_provider("nonexistent") is None
-
-    def test_xiaomi_provider_uses_its_default_base_url(self, client):
-        client._effective_cache["llm-provider"] = {
-            "xiaomiApiKey": "sk-mimo-test",
-            "xiaomiModel": "mimo-v2.5",
-        }
-        client._rebuild_provider_cache()
-
-        assert client.get_provider("xiaomi") == {
-            "provider": "xiaomi",
-            "apiKey": "sk-mimo-test",
-            "baseUrl": "https://api.xiaomimimo.com/v1",
-            "model": "mimo-v2.5",
-        }
+    def test_provider_cache_api_is_gone(self, client):
+        assert not hasattr(client, "get_providers")
+        assert not hasattr(client, "get_provider")
+        assert not hasattr(client, "_rebuild_provider_cache")
+        assert not hasattr(client, "_provider_cache")
 
 
 def _mock_response(status_code=200, json_data=None):
@@ -292,7 +281,7 @@ class TestConfigClientSync:
         report = await c.sync()
 
         assert report["ok"] is False
-        assert c.get_provider("openai")["apiKey"] == "sk-first"
+        assert c.get("llm-provider", "openaiApiKey") == "sk-first"
         assert c.config_revision == previous_revision
 
 

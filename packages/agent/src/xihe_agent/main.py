@@ -41,7 +41,14 @@ from xihe_agent.context import (
 from xihe_agent.dotenv_loader import load_project_env
 from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
-from xihe_agent.llm.base import LLMConfig, ProviderName, create_llm
+from xihe_agent.llm.base import (
+    LLMConfig,
+    ProviderName,
+    create_llm,
+    env_api_key,
+    fallback_provider_configs,
+    resolve_provider_base_url,
+)
 from xihe_agent.llm.models import _models_router, fetch_model_catalog
 from xihe_agent.llm.models import router as models_router
 from xihe_agent.llm.token_counter import TokenCounter
@@ -205,7 +212,9 @@ config_client = ConfigClient(
 _models_router.bind(config_client)
 
 llm_config = LLMConfig.from_config_client(config_client)
-image_provider_manager = ProviderManager.from_config_client(config_client)
+image_provider_manager = ProviderManager.from_env(
+    config_client.get("llm-provider", "imageProvider")
+)
 generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
 legacy_generate_image_tool = GenerateImageTool(provider_manager=image_provider_manager)
 
@@ -240,9 +249,14 @@ def _refresh_embedding_config() -> None:
     if embedding_model:
         try:
             _, provider, _, resolved_api_base = get_llm_provider(embedding_model)
-            provider_cfg = config_client.get_providers().get(provider, {})
-            _embedding_api_key = provider_cfg.get("apiKey") or None
-            _embedding_api_base = provider_cfg.get("baseUrl") or resolved_api_base
+            # PLAN-0307 decision #21: config holds no credentials; the env
+            # fallback is the only instance-level source for embedding keys.
+            _embedding_api_key = env_api_key(provider) or None
+            _embedding_api_base = resolve_provider_base_url(
+                config_client.get_domain("llm-provider"),
+                provider,
+                resolved_api_base,
+            )
         except Exception as e:
             logger.warning("Failed to resolve embedding provider: {}", e)
 
@@ -324,10 +338,19 @@ def _derive_llm_ready(
 
     provider_info = catalog.get("providers", {}).get(config.provider)
     if not isinstance(provider_info, dict):
-        return "missing_credentials", None
+        # PLAN-0307 T2.13: no instance-level fallback credential for this
+        # provider (BYOK, decision #37). Credential readiness is per-run via the
+        # provider connection lease and is enforced at /internal/v1/agent/chat;
+        # service readiness itself must not depend on instance keys.
+        return "ready", None
 
     provider_status = provider_info.get("status")
     if provider_status == "missing_credentials":
+        # Defensive contract mapping (review 2026-09-12): current catalog
+        # sources only emit keyed providers, so this status is not produced by
+        # the present call chain. It stays because `missing_credentials` is part
+        # of the documented llmReady contract (AGENTS.md) and keeps cross-version
+        # / remote catalog sources compatible.
         return "missing_credentials", None
     if provider_status == "invalid_credentials":
         return "invalid_credentials", None
@@ -358,12 +381,20 @@ def _derive_llm_ready(
 
 
 def _llm_readiness_error_code(readiness: str) -> str:
+    # `missing_credentials` is retained as a defensive/contract mapping (see
+    # `_derive_llm_ready`); the live per-run gap is reported by the
+    # LLM_NOT_CONFIGURED response inside `/chat`.
     return {
         "missing_credentials": "LLM_NOT_CONFIGURED",
         "invalid_credentials": "LLM_CREDENTIALS_INVALID",
         "unreachable": "LLM_PROVIDER_UNREACHABLE",
         "model_unavailable": "LLM_MODEL_UNAVAILABLE",
     }.get(readiness, "AGENT_UNAVAILABLE")
+
+
+def _has_instance_fallback_credentials(config: LLMConfig) -> bool:
+    """True when a keyless run can still call the provider (mock or env key)."""
+    return config.provider == "mock" or bool(config.api_key)
 
 
 def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
@@ -390,7 +421,9 @@ async def reload_runtime_config(reason: str) -> dict[str, Any]:
         report = await config_client.sync_with_retry()
         if report.get("refreshed"):
             staged_llm_config = LLMConfig.from_config_client(config_client)
-            staged_image_manager = ProviderManager.from_config_client(config_client)
+            staged_image_manager = ProviderManager.from_env(
+                config_client.get("llm-provider", "imageProvider")
+            )
             staged_catalog = await fetch_model_catalog(config_client)
         else:
             staged_llm_config = llm_config
@@ -485,7 +518,9 @@ def get_llm_initialization_status() -> dict[str, Any]:
     return {
         "provider": llm_config.provider,
         "model": llm_config.model,
-        "configured": bool(llm_config.api_key) or llm_config.provider == "mock",
+        # Readiness-derived (PLAN-0307 T2.13): credentials are per-run leases
+        # under BYOK, so status must not inspect the instance API key.
+        "configured": _llm_ready == "ready",
         "readiness": _llm_ready,
         "configRevision": _runtime_config_revision,
         "verifiedAt": _llm_verified_at,
@@ -775,7 +810,9 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
         request_config = llm_config
     if not credential_lease and provider_override and provider_override != llm_config.provider:
         provider_info = _model_catalog.get("providers", {}).get(provider_override)
-        provider_runtime = config_client.get_provider(provider_override)
+        provider_runtime = fallback_provider_configs(
+            config_client.get_domain("llm-provider")
+        ).get(provider_override)
         if not isinstance(provider_info, dict) or provider_info.get("status") != "ready" or not provider_runtime:
             return JSONResponse(
                 status_code=503,
@@ -805,6 +842,27 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
         )
     if model_override:
         request_config = request_config.with_model(model_override)
+
+    # PLAN-0307 T2.13 fail-closed: a run without a lease relies on the instance
+    # env fallback; stop before calling the provider with empty credentials.
+    if not credential_lease and not _has_instance_fallback_credentials(request_config):
+        return JSONResponse(
+            status_code=503,
+            media_type="application/problem+json",
+            headers={"X-Request-Id": request_id},
+            content={
+                "type": "https://xihe.dev/problems/llm-not-configured",
+                "title": "LLM credentials are not configured",
+                "status": 503,
+                "code": "LLM_NOT_CONFIGURED",
+                "detail": "No provider connection lease and no instance fallback credentials",
+                "retryable": True,
+                "provider": request_config.provider,
+                "model": request_config.model,
+                "requestId": request_id,
+                "runId": run_id,
+            },
+        )
 
     logger.info(
         "[LIFECYCLE] service=agent event=chat_stream_started requestId={} sessionId={} workspaceId={} runId={} provider={} model={} contentLength={}",

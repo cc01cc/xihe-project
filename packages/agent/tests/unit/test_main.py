@@ -3,7 +3,12 @@
 import pytest
 
 from xihe_agent.llm.base import LLMConfig
-from xihe_agent.main import _classify_llm_exception, _derive_llm_ready, _llm_readiness_error_code
+from xihe_agent.main import (
+    _classify_llm_exception,
+    _derive_llm_ready,
+    _has_instance_fallback_credentials,
+    _llm_readiness_error_code,
+)
 
 
 def _report(status: str) -> dict:
@@ -46,7 +51,33 @@ def test_derive_llm_ready_does_not_fail_open_on_sync_failure():
     assert readiness == "unknown"
 
 
+def test_derive_llm_ready_is_ready_without_instance_fallback_credentials():
+    """PLAN-0307 T2.13: readiness must not depend on instance keys (BYOK).
+
+    Credentials are enforced per run (lease or env fallback) at /chat.
+    """
+    config = LLMConfig(provider="xiaomi", api_key="", model="mimo-v2.5")
+    catalog = {"providers": {}}
+
+    readiness, verified_at = _derive_llm_ready(_report("ok"), catalog, config)
+
+    assert readiness == "ready"
+    assert verified_at is None
+
+
+def test_instance_fallback_credentials_requires_key_or_mock():
+    assert _has_instance_fallback_credentials(LLMConfig(provider="mock")) is True
+    assert _has_instance_fallback_credentials(
+        LLMConfig(provider="xiaomi", api_key="sk-env")
+    ) is True
+    assert _has_instance_fallback_credentials(
+        LLMConfig(provider="xiaomi", api_key="")
+    ) is False
+
+
 def test_readiness_error_codes_are_actionable():
+    # `missing_credentials` is a defensive contract mapping retained for
+    # cross-version/remote catalog sources (review 2026-09-12).
     assert _llm_readiness_error_code("missing_credentials") == "LLM_NOT_CONFIGURED"
     assert _llm_readiness_error_code("invalid_credentials") == "LLM_CREDENTIALS_INVALID"
     assert _llm_readiness_error_code("unknown") == "AGENT_UNAVAILABLE"

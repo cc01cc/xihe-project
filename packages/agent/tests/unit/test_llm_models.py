@@ -3,13 +3,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from xihe_agent.llm.base import ENV_PROVIDER_KEY_MAP
+
+
+def _clear_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for env_name in ENV_PROVIDER_KEY_MAP.values():
+        monkeypatch.delenv(env_name, raising=False)
+
 
 @pytest.fixture
 def patch_config_client():
     """Mock the _models_router.config_client to return test providers.
-    get_providers() is sync, so use MagicMock (not AsyncMock)."""
+    get_domain() is sync, so use MagicMock (not AsyncMock)."""
     with patch("xihe_agent.llm.models._models_router") as mock_router:
         mock_router.config_client = MagicMock()
+        mock_router.config_client.get_domain.return_value = {}
         yield mock_router
 
 
@@ -23,11 +31,13 @@ async def test_list_models_no_config_returns_empty(patch_config_client):
 
 
 @pytest.mark.asyncio
-async def test_list_models_httpx_failure_returns_empty(patch_config_client):
+async def test_list_models_httpx_failure_returns_empty(patch_config_client, monkeypatch):
     from xihe_agent.llm.models import list_models
 
-    patch_config_client.config_client.get_providers.return_value = {
-        "openai": {"apiKey": "sk-test", "baseUrl": "https://api.openai.com"},
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("XIHE_OPENAI_API_KEY", "sk-test")
+    patch_config_client.config_client.get_domain.return_value = {
+        "baseUrl": "https://api.openai.com",
     }
     with patch("xihe_agent.llm.models.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
@@ -39,22 +49,25 @@ async def test_list_models_httpx_failure_returns_empty(patch_config_client):
 
 
 @pytest.mark.asyncio
-async def test_list_models_empty_providers(patch_config_client):
+async def test_list_models_empty_providers(patch_config_client, monkeypatch):
     from xihe_agent.llm.models import list_models
 
-    patch_config_client.config_client.get_providers.return_value = {}
+    _clear_provider_env(monkeypatch)
+    patch_config_client.config_client.get_domain.return_value = {}
     patch_config_client.config_client.config_revision = ""
     result = await list_models()
     assert result == {"models": {}, "providers": {}, "configRevision": ""}
 
 
 @pytest.mark.asyncio
-async def test_list_models_success_includes_chat_capability(patch_config_client):
+async def test_list_models_success_includes_chat_capability(patch_config_client, monkeypatch):
     from xihe_agent.llm.models import list_models
 
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("XIHE_XIAOMI_API_KEY", "test-key")
     patch_config_client.config_client.config_revision = "rev-1"
-    patch_config_client.config_client.get_providers.return_value = {
-        "xiaomi": {"apiKey": "test-key", "baseUrl": "https://provider.test/v1"},
+    patch_config_client.config_client.get_domain.return_value = {
+        "xiaomiApiBase": "https://provider.test/v1",
     }
     response = MagicMock(status_code=200)
     response.json.return_value = {
@@ -75,12 +88,14 @@ async def test_list_models_success_includes_chat_capability(patch_config_client)
 
 
 @pytest.mark.asyncio
-async def test_list_models_auth_failure_has_actionable_status(patch_config_client):
+async def test_list_models_auth_failure_has_actionable_status(patch_config_client, monkeypatch):
     from xihe_agent.llm.models import list_models
 
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("XIHE_OPENAI_API_KEY", "invalid-key")
     patch_config_client.config_client.config_revision = "rev-2"
-    patch_config_client.config_client.get_providers.return_value = {
-        "openai": {"apiKey": "invalid-key", "baseUrl": "https://provider.test/v1"},
+    patch_config_client.config_client.get_domain.return_value = {
+        "openaiApiBase": "https://provider.test/v1",
     }
     response = MagicMock(status_code=401)
     with patch("xihe_agent.llm.models.httpx.AsyncClient") as mock_client_cls:

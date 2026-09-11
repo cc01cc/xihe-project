@@ -8,6 +8,8 @@ import litellm
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 
+from xihe_agent.llm.base import fallback_provider_configs
+
 router = APIRouter()
 
 
@@ -47,7 +49,7 @@ async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
     if config_client is None:
         return {"models": {}, "providers": {}, "configRevision": ""}
 
-    providers = config_client.get_providers()
+    providers = fallback_provider_configs(config_client.get_domain("llm-provider"))
     results: dict[str, list[str]] = {}
     provider_catalog: dict[str, dict[str, Any]] = {}
     async with httpx.AsyncClient() as client:
@@ -273,7 +275,7 @@ async def list_embedding_models(_token: None = Depends(verify_service_token)):
     cc = _models_router.config_client
     if cc is None:
         return {"models": []}
-    providers = cc.get_providers()
+    providers = fallback_provider_configs(cc.get_domain("llm-provider"))
     if not providers:
         return {"models": []}
     result: list[dict[str, Any]] = []

@@ -24,13 +24,13 @@ def _effective(entries: dict, revision: str = "rev-1", source: str = "instance")
 class TestConfigClientStubIntegration:
     """Tests ConfigClient.sync() with stubbed CP effective responses."""
 
-    async def test_sync_populates_providers(self, httpx_mock):
+    async def test_sync_populates_effective_domain(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
             if re.search(r"/effective/llm-provider", str(request.url)):
                 return httpx.Response(
                     200,
                     json=_effective({
-                        "openaiApiKey": "sk-effective-openai",
+                        "defaultProvider": "openai",
                         "baseUrl": "https://api.openai.com/v1",
                     }),
                 )
@@ -41,10 +41,8 @@ class TestConfigClientStubIntegration:
         client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
         await client.sync()
 
-        providers = client.get_providers()
-        assert "openai" in providers
-        assert providers["openai"]["apiKey"] == "sk-effective-openai"
-        assert providers["openai"]["baseUrl"] == "https://api.openai.com/v1"
+        assert client.get("llm-provider", "defaultProvider") == "openai"
+        assert client.get("llm-provider", "baseUrl") == "https://api.openai.com/v1"
 
     async def test_sync_uses_effective_entries_without_layers(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -52,7 +50,7 @@ class TestConfigClientStubIntegration:
                 return httpx.Response(
                     200,
                     json=_effective(
-                        {"openaiApiKey": "sk-merged", "baseUrl": ""},
+                        {"defaultProvider": "openai", "baseUrl": ""},
                         source="workspace",
                     ),
                 )
@@ -63,7 +61,7 @@ class TestConfigClientStubIntegration:
         client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
         report = await client.sync()
 
-        assert client.get_provider("openai")["apiKey"] == "sk-merged"
+        assert client.get("llm-provider", "defaultProvider") == "openai"
         assert report["domains"]["llm-provider"]["source"] == "workspace"
         assert report["domains"]["llm-provider"]["revision"] == "rev-1"
 
@@ -98,7 +96,7 @@ class TestConfigClientStubIntegration:
         await client.sync()
 
         assert client._effective_cache == {}
-        assert client.get_providers() == {}
+        assert client.get_domain("llm-provider") == {}
 
     async def test_sync_handles_connection_error(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:

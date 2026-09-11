@@ -7,14 +7,6 @@ from typing import Any, TypedDict
 import httpx
 from loguru import logger
 
-DEFAULT_PROVIDER_BASE_URLS = {
-    "openai": "https://api.openai.com/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "xiaomi": "https://api.xiaomimimo.com/v1",
-    "anthropic": "https://api.anthropic.com/v1",
-    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-}
-
 # PLAN-0307 s13/s37: eight-domain set; layer-less effective fetch (decision #19).
 CONFIG_DOMAINS = (
     "llm-provider",
@@ -53,13 +45,17 @@ class ConfigClient:
 
     Workspace scope is bound per process (`workspace_id`, Agent is single-workspace);
     user scope arrives per run via the `userOverrides` payload field (decision #3a).
+
+    Credentials are deliberately absent from this client (decision #21): config
+    `llm-provider` carries only non-secret parameters. Provider keys come from
+    the per-run lease (`redeem_provider_lease`) with an env offline fallback
+    (`xihe_agent.llm.base.fallback_provider_configs`).
     """
 
     def __init__(self, cp_url: str, api_token: str, workspace_id: str | None = None):
         self.cp_url = cp_url
         self.api_token = api_token
         self.workspace_id = workspace_id
-        self._provider_cache: dict[str, dict[str, Any]] = {}
         self._effective_cache: dict[str, dict[str, str]] = {}
         self._last_fetch = 0.0
         self._config_revision = ""
@@ -109,7 +105,6 @@ class ConfigClient:
 
         if report["refreshed"]:
             self._effective_cache = staged
-            self._rebuild_provider_cache()
             self._last_fetch = time.time()
             self._config_revision = revision
             logger.info(
@@ -221,31 +216,6 @@ class ConfigClient:
         ).encode()
         return hashlib.sha256(payload).hexdigest()[:16]
 
-    def _rebuild_provider_cache(self) -> None:
-        merged: dict[str, dict[str, Any]] = {}
-        llm = self._effective_cache.get("llm-provider", {})
-        api_keys = {
-            "openai": llm.get("openaiApiKey", ""),
-            "deepseek": llm.get("deepseekApiKey", ""),
-            "xiaomi": llm.get("xiaomiApiKey", ""),
-            "anthropic": llm.get("anthropicApiKey", ""),
-            "dashscope": llm.get("dashscopeApiKey", ""),
-        }
-        for provider, api_key in api_keys.items():
-            if api_key:
-                base_url = (
-                    llm.get(f"{provider}ApiBase")
-                    or llm.get("baseUrl")
-                    or DEFAULT_PROVIDER_BASE_URLS.get(provider, "")
-                )
-                merged[provider] = {
-                    "provider": provider,
-                    "apiKey": api_key,
-                    "baseUrl": base_url,
-                    "model": llm.get(f"{provider}Model", ""),
-                }
-        self._provider_cache = merged
-
     async def sync_with_retry(self, max_retries: int = 3) -> SyncReport:
         last_report = self._last_sync_report
         for attempt in range(max_retries):
@@ -267,6 +237,10 @@ class ConfigClient:
         )
         return last_report
 
+    def get_domain(self, domain: str) -> dict[str, str]:
+        """Snapshot of the effective entries for one domain (empty when absent)."""
+        return dict(self._effective_cache.get(domain, {}))
+
     def get(self, domain: str, key: str) -> str | None:
         entries = self._effective_cache.get(domain)
         if entries is None:
@@ -276,12 +250,6 @@ class ConfigClient:
     def get_bool(self, domain: str, key: str) -> bool:
         val = self.get(domain, key)
         return val is not None and val.lower() in ("true", "1", "yes")
-
-    def get_providers(self) -> dict[str, dict[str, Any]]:
-        return self._provider_cache
-
-    def get_provider(self, provider: str) -> dict[str, Any] | None:
-        return self._provider_cache.get(provider)
 
     async def redeem_provider_lease(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Redeem a short-lived CP credential lease without persisting the key."""

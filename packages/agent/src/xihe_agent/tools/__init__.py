@@ -112,7 +112,7 @@ class ProviderManager:
         return self.providers[key]
 
     @classmethod
-    def from_env(cls) -> "ProviderManager":
+    def from_env(cls, default_provider: str | None = None) -> "ProviderManager":
         mgr = cls()
         openai_key = os.getenv("XIHE_OPENAI_API_KEY")
         if openai_key:
@@ -123,27 +123,12 @@ class ProviderManager:
         if dashscope_key:
             mgr.register("qwen-image", QwenImageProvider(api_key=dashscope_key))
 
-        default = os.getenv("XIHE_IMAGE_PROVIDER")
-        if default and default in mgr.providers:
-            mgr.default_provider = default
-
-        return mgr
-
-    @classmethod
-    def from_config_client(cls, cc) -> "ProviderManager":
-        mgr = cls()
-        openai_key = cc.get("llm-provider", "openaiApiKey")
-        if openai_key:
-            base_url = cc.get("llm-provider", "baseUrl") or "https://api.openai.com/v1"
-            mgr.register("gpt-image", GPTImageProvider(api_key=openai_key, base_url=base_url))
-
-        dashscope_key = cc.get("llm-provider", "dashscopeApiKey")
-        if dashscope_key:
-            mgr.register("qwen-image", QwenImageProvider(api_key=dashscope_key))
-
-        default = cc.get("llm-provider", "imageProvider")
-        if default and default in mgr.providers:
-            mgr.default_provider = default
+        # PLAN-0307 decision #21: keys are env-only; the non-secret selection
+        # may come from `llm-provider.imageProvider` (instance config) with the
+        # env variable as the offline fallback.
+        preferred = default_provider or os.getenv("XIHE_IMAGE_PROVIDER")
+        if preferred and preferred in mgr.providers:
+            mgr.default_provider = preferred
 
         return mgr
 

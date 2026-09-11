@@ -1,5 +1,5 @@
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -16,6 +16,59 @@ if TYPE_CHECKING:
 from xihe_agent.interfaces.llm import LLMProvider, LLMRequest, LLMToken
 
 ProviderName = str
+
+# PLAN-0307 decisions #21/#39: the config table holds no provider credentials.
+# These env keys are the offline fallback (dev / CP unavailable); the normal
+# credential path is the per-run provider connection lease issued by CP.
+ENV_PROVIDER_KEY_MAP: dict[str, str] = {
+    "deepseek": "XIHE_DEEPSEEK_API_KEY",
+    "openai": "XIHE_OPENAI_API_KEY",
+    "anthropic": "XIHE_ANTHROPIC_API_KEY",
+    "xiaomi": "XIHE_XIAOMI_API_KEY",
+    "dashscope": "XIHE_DASHSCOPE_API_KEY",
+}
+
+
+def env_api_key(provider: str) -> str:
+    """Offline fallback credential lookup (PLAN-0307 decision #21)."""
+    return os.getenv(ENV_PROVIDER_KEY_MAP.get(provider, ""), "") or ""
+
+
+def resolve_provider_base_url(
+    llm_entries: Mapping[str, str],
+    provider: str,
+    fallback: str = "",
+) -> str:
+    """Shared precedence for a provider endpoint: `{provider}ApiBase` > `baseUrl` > caller fallback."""
+    return (
+        llm_entries.get(f"{provider}ApiBase")
+        or llm_entries.get("baseUrl")
+        or fallback
+    )
+
+
+def fallback_provider_configs(llm_entries: Mapping[str, str]) -> dict[str, dict[str, Any]]:
+    """Offline provider registry: env keys + non-secret `llm-provider` entries.
+
+    Providers without an env fallback key are absent — under BYOK (decision
+    #37) per-run credentials arrive through the provider connection lease.
+    """
+    registry: dict[str, dict[str, Any]] = {}
+    for provider, env_name in ENV_PROVIDER_KEY_MAP.items():
+        api_key = os.getenv(env_name, "")
+        if not api_key:
+            continue
+        base_url = resolve_provider_base_url(
+            llm_entries, provider, default_api_base(provider)
+        )
+        registry[provider] = {
+            "provider": provider,
+            "apiKey": api_key,
+            "baseUrl": base_url,
+            "model": llm_entries.get(f"{provider}Model", ""),
+        }
+    return registry
+
 
 PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "deepseek": {
@@ -34,12 +87,21 @@ PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
         "api_base": "https://api.xiaomimimo.com/v1",
         "model": "mimo-v2.5",
     },
+    "dashscope": {
+        "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "",
+    },
     "ollama": {
         "api_base": "http://localhost:11434/v1",
         "model": "llama3",
     },
     "mock": {},
 }
+
+
+def default_api_base(provider: str) -> str:
+    """Single source of truth for code-default provider endpoints."""
+    return str(PROVIDER_DEFAULTS.get(provider, {}).get("api_base", ""))
 
 
 def _provider_for_model(model_id: str) -> str:
@@ -97,13 +159,7 @@ class LLMConfig(BaseModel):
 
         provider = provider_str or "mock"
 
-        env_key_map: dict[str, str] = {
-            "deepseek": "XIHE_DEEPSEEK_API_KEY",
-            "openai": "XIHE_OPENAI_API_KEY",
-            "anthropic": "XIHE_ANTHROPIC_API_KEY",
-            "xiaomi": "XIHE_XIAOMI_API_KEY",
-        }
-        api_key = os.getenv(env_key_map.get(provider, ""), "")
+        api_key = env_api_key(provider)
 
         defaults = PROVIDER_DEFAULTS.get(provider, {})
         api_base = os.getenv("XIHE_API_BASE", "") or defaults.get("api_base", "")
@@ -129,13 +185,10 @@ class LLMConfig(BaseModel):
 
         provider = provider_str
 
-        env_key_map: dict[str, str] = {
-            "deepseek": "deepseekApiKey",
-            "openai": "openaiApiKey",
-            "anthropic": "anthropicApiKey",
-            "xiaomi": "xiaomiApiKey",
-        }
-        api_key = cc.get("llm-provider", env_key_map.get(provider, "")) or ""
+        # PLAN-0307 decision #21: config holds no `*ApiKey`; the env fallback
+        # (offline/dev) is the only instance-level credential source here. The
+        # normal per-run credential path is the provider connection lease.
+        api_key = env_api_key(provider)
 
         defaults = PROVIDER_DEFAULTS.get(provider, {})
         api_base = (

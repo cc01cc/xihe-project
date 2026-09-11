@@ -49,6 +49,23 @@ class TestProviderManager:
             mgr = ProviderManager.from_env()
             assert "qwen-image" in mgr.providers
 
+    def test_from_env_config_selection_beats_env_default(self):
+        """PLAN-0307 T2.13: `llm-provider.imageProvider` stays authoritative."""
+        env = {
+            "XIHE_OPENAI_API_KEY": "sk-openai",
+            "XIHE_DASHSCOPE_API_KEY": "sk-dashscope",
+            "XIHE_IMAGE_PROVIDER": "gpt-image",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            mgr = ProviderManager.from_env("qwen-image")
+            assert mgr.default_provider == "qwen-image"
+
+    def test_from_env_unknown_config_selection_falls_back(self):
+        env = {"XIHE_DASHSCOPE_API_KEY": "sk-dashscope"}
+        with patch.dict("os.environ", env, clear=True):
+            mgr = ProviderManager.from_env("nonexistent")
+            assert mgr.default_provider == "qwen-image"
+
 
 class TestGPTImageProvider:
     @pytest.mark.asyncio
