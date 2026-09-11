@@ -462,14 +462,16 @@ public class McpProxyController {
         // Runtime as a request header; Runtime takes min(own env, header) as
         // the exec collection bound. Non-system servers are table rows.
         if (serverId != null) {
-            remoteServer(wsId, serverId).ifPresent(remote -> {
+            Optional<McpServer> timeoutServer = remoteServer(wsId, serverId);
+            if (timeoutServer.isPresent()) {
+                McpServer remote = timeoutServer.get();
                 if (remote.getToolTimeoutS() != null && remote.getToolTimeoutS() > 0) {
                     HttpHeaders mutable = new HttpHeaders();
                     mutable.addAll(headers);
                     mutable.set("X-Xihe-Tool-Timeout-S", String.valueOf(remote.getToolTimeoutS()));
                     headers = mutable;
                 }
-            });
+            }
         }
 
         // Policy already evaluated above for all tool types (including __system__).

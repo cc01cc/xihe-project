@@ -208,23 +208,6 @@ class ConfigControllerTest extends AbstractH2Test {
     }
 
     @Test
-    void getProviders_masksKeysForUser() {
-        HttpHeaders adminHeaders = authHeaders(adminToken());
-        restTemplate.exchange(url("/api/v1/config/admin/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("openaiApiKey", "sk-abcdefghijklmnopqrst"), adminHeaders), Map.class);
-
-        ResponseEntity<List> resp = restTemplate.exchange(
-            url("/api/v1/providers"), HttpMethod.GET,
-            new HttpEntity<>(authHeaders(userToken())), List.class);
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-        Map<?, ?> provider = (Map<?, ?>) resp.getBody().get(0);
-        assertEquals("openai", provider.get("provider"));
-        assertTrue(provider.get("apiKey").toString().contains("****"));
-        assertEquals("", provider.get("baseUrl"));
-    }
-
-    @Test
     void exportConfig_adminOnly_succeeds() {
         HttpHeaders headers = authHeaders(adminToken());
 

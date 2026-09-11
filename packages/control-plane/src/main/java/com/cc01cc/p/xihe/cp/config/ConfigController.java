@@ -158,38 +158,6 @@ public class ConfigController {
         return ResponseEntity.ok(entries);
     }
 
-    @GetMapping("/api/v1/providers")
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    public ResponseEntity<List<ProviderConfig>> getProvidersCompat() {
-        Map<String, String> merged = configService.resolveDomain("default", "llm-provider");
-        List<ProviderConfig> result = new ArrayList<>();
-        String baseUrl = merged.getOrDefault("baseUrl", "");
-        String[] providerKeys = {"openai", "deepseek", "xiaomi", "anthropic", "dashscope"};
-        for (String p : providerKeys) {
-            String apiKey = merged.get(p + "ApiKey");
-            if (apiKey != null && !apiKey.isEmpty()) {
-                result.add(new ProviderConfig(
-                        p,
-                        isAdmin() ? apiKey : maskIfNotAdmin(p + "ApiKey", apiKey),
-                        isAdmin() ? baseUrl : ""));
-            }
-        }
-        return ResponseEntity.ok(result);
-    }
-
-    @PutMapping("/api/v1/providers")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Map<String, Object>> updateProvidersCompat(
-            @RequestBody List<ProviderConfig> configs) {
-        Map<String, String> entries = new LinkedHashMap<>();
-        for (ProviderConfig pc : configs) {
-            String key = pc.provider() + "ApiKey";
-            entries.put(key, pc.apiKey());
-        }
-        configService.putLayer("default", "admin", "llm-provider", entries, "admin");
-        return ResponseEntity.ok(Map.of("status", "ok", "count", configs.size()));
-    }
-
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @GetMapping("/api/v1/workspaces/{workspaceId}/mcp-config")
     public ResponseEntity<Map<String, Object>> getMcpConfig(@PathVariable("workspaceId") String wsId) {
