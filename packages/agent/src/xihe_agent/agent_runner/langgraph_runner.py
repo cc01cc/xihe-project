@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+import litellm
 from langchain.agents import create_agent as create_react_agent
 from langchain_core.messages import (
     AIMessage,
@@ -15,7 +16,6 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import BaseTool
-import litellm
 from loguru import logger
 from pydantic import BaseModel, create_model
 
@@ -371,12 +371,28 @@ class LangGraphRunner(AgentRunner):
         config: RunnerConfig,
         context: AgentContext,
     ) -> list[SystemMessage]:
+        """PLAN-0307 T2.19 (decision #28/G5): layered system messages.
+
+        The baseline prompt (instructions/identity/tool protocol) is never
+        compressed — it is injected on every turn; compaction summaries are
+        appended, not substituted. A missing baseline alongside an epoch summary
+        is a regression and is surfaced via WARN.
+        """
         messages: list[SystemMessage] = []
-        if context.epoch and context.epoch.system_messages:
-            for text in context.epoch.system_messages:
-                messages.append(SystemMessage(content=text))
-        elif config.system_prompt:
+        summaries = (
+            list(context.epoch.system_messages)
+            if context.epoch and context.epoch.system_messages
+            else []
+        )
+        if config.system_prompt:
             messages.append(SystemMessage(content=config.system_prompt))
+        elif summaries:
+            logger.warning(
+                "Baseline system prompt missing while compaction summary present; "
+                "injecting summary only (PLAN-0307 decision #28)"
+            )
+        for text in summaries:
+            messages.append(SystemMessage(content=text))
         return messages
 
     def _adapt_tool(self, tool: BaseAgentTool, context: AgentContext) -> BaseTool:

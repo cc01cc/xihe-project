@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import UTC
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,7 +11,7 @@ from xihe_agent.adapters.approval_tool import ApprovalAgentTool
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
-from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.interfaces.context import AgentContext, ContextEpoch
 from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
@@ -166,3 +166,48 @@ async def test_runner_fans_in_approval_event_before_blocked_tool_completes(monke
     types = [event.type for event in received]
     assert types.index("approval_request") < types.index("tool_result")
     assert received[types.index("approval_request")].data["runId"] == "run-1"
+
+
+def test_system_messages_inject_baseline_and_append_epoch_summary():
+    """PLAN-0307 T2.19 (decision #28): baseline is never compressed; summary appends."""
+    runner = LangGraphRunner(model_factory=lambda _model: create_llm())
+    config = RunnerConfig(model="mock", system_prompt="BASELINE-INSTRUCTIONS", tools=[])
+    context = AgentContext(
+        aggregate_id="session-1",
+        epoch=ContextEpoch(
+            epoch_id="epoch-1",
+            baseline_hash="hash-1",
+            system_messages=["Conversation summary of compacted history:", "SUMMARY"],
+        ),
+    )
+
+    messages = runner._build_system_messages(config, context)
+
+    assert [m.content for m in messages] == [
+        "BASELINE-INSTRUCTIONS",
+        "Conversation summary of compacted history:",
+        "SUMMARY",
+    ]
+
+
+def test_system_messages_without_epoch_only_baseline():
+    runner = LangGraphRunner(model_factory=lambda _model: create_llm())
+    config = RunnerConfig(model="mock", system_prompt="BASELINE", tools=[])
+
+    messages = runner._build_system_messages(config, AgentContext.empty("s"))
+
+    assert [m.content for m in messages] == ["BASELINE"]
+
+
+def test_system_messages_warn_when_baseline_missing_with_summary():
+    runner = LangGraphRunner(model_factory=lambda _model: create_llm())
+    config = RunnerConfig(model="mock", system_prompt="", tools=[])
+    context = AgentContext.empty("s").set_epoch(
+        ContextEpoch(epoch_id="e", baseline_hash="h", system_messages=["SUMMARY"])
+    )
+
+    with patch.object(langgraph_runner_module.logger, "warning") as warn:
+        messages = runner._build_system_messages(config, context)
+
+    assert [m.content for m in messages] == ["SUMMARY"]
+    assert warn.called
