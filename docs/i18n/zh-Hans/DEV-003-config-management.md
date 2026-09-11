@@ -82,7 +82,7 @@ curl -X PUT http://localhost:12631/api/v1/config/admin/llm-provider \
 **方式 B：JSONC 导入**（批量初始化）
 
 ```bash
-cp config.import.example.jsonc config.import.local.jsonc  # 填入 API key
+cp config.import.example.jsonc config.import.local.jsonc  # 按八域模型填写非密钥配置（凭证走 provider_connections）
 curl -X POST http://localhost:12631/api/v1/config/import \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -90,6 +90,8 @@ curl -X POST http://localhost:12631/api/v1/config/import \
 ```
 
 `mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后自动导入 `config.import.local.jsonc`（如存在，需 `XIHE_DEV_ADMIN_PASSWORD`，否则跳过并提示）；也可通过 UI Settings 或 API 手动修改。
+
+**导入导出契约（决策 #36/#37，T2.21/T2.25）**：导出 `GET /api/v1/config/export?layer=instance&includeSecrets=<bool>`（ADMIN）—— config KV + `provider-connections` 元数据（label/status/modelDiscovery/manualModels/enabled/ownerType/ownerId/baseUrl）；`includeSecrets=false` 仅排除明文 `apiKey`，**任何模式都不输出库内密文**；导出写 AUDIT sink（actor/时间/是否含密钥，不记响应体）且响应 `Cache-Control: no-store`。导入**不恢复任何凭证**——`provider-connections` 条目整体跳过并在响应 `{imported, skipped, warnings}` 中列出（owner id 跨实例不可映射），需人工经凭证 API/UI 重建。导出产物落盘使用 `config.export*.jsonc`（gitignored）。
 
 各模块客户端（层封闭，决策 #19）：instance/workspace 合并值经 `GET /internal/v1/config/effective/{domain}` 拉取（CP 按 workspace 上下文合并，含 env 覆盖）；user/workspace 覆盖随 run payload push（`userOverrides`/`workspaceOverrides`，决策 #3a，env 锁定键由 CP 剔除）：
 

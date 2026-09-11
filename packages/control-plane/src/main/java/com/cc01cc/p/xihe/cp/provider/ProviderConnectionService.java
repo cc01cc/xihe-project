@@ -336,6 +336,15 @@ public class ProviderConnectionService {
         return encryption.decrypt(connection.getCredentialCiphertext(), aad(connection));
     }
 
+    /**
+     * PLAN-0307 T2.21: management-plane export needs the plaintext credential so
+     * the snapshot can rebuild connections on another instance. Callers must be
+     * ADMIN-authorized and must audit the export (T2.25); never log the result.
+     */
+    public String exportPlaintextCredential(ProviderConnection connection) {
+        return decryptCredential(connection);
+    }
+
     private String aad(ProviderConnection connection) {
         return connection.getProviderId() + "|" + connection.getOwnerType() + "|"
                 + connection.getOwnerId() + "|" + connection.getId();

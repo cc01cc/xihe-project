@@ -3,6 +3,8 @@ package com.cc01cc.p.xihe.cp.config;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +17,7 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
+import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -83,6 +86,9 @@ public class ConfigService {
 
     @Autowired
     private ProviderConnectionRepository providerConnections;
+
+    @Autowired
+    private ProviderConnectionService providerConnectionService;
 
     @Autowired
     private org.springframework.context.ApplicationEventPublisher events;
@@ -490,30 +496,50 @@ public class ConfigService {
             try (InputStream is = resource.getInputStream()) {
                 String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
                 JsonNode root = objectMapper.readTree(stripJsoncComments(content));
-                importJsoncNode(root, layer, userId, workspaceId);
+                ImportReport report = importJsoncNode(root, layer, userId, workspaceId);
+                if (!report.warnings().isEmpty()) {
+                    log.warn("Config import warnings from {}: {}", classpath, report.warnings());
+                }
             }
         } catch (IOException e) {
             log.error("Failed to import JSONC from {}: {}", classpath, e.getMessage(), e);
         }
     }
 
+    /** PLAN-0307 T2.21: import outcome (credentials are never restored). */
+    public record ImportReport(int imported, int skipped, List<String> warnings) {}
+
     @Transactional
-    public void importJsonc(String jsoncContent, String layer, UUID userId, UUID workspaceId) {
+    public ImportReport importJsonc(String jsoncContent, String layer, UUID userId, UUID workspaceId) {
         String stripped = stripJsoncComments(jsoncContent);
         try {
             JsonNode root = objectMapper.readTree(stripped);
-            importJsoncNode(root, layer, userId, workspaceId);
+            return importJsoncNode(root, layer, userId, workspaceId);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Invalid JSONC content: " + e.getMessage(), e);
         }
     }
 
-    private void importJsoncNode(JsonNode root, String layer, UUID userId, UUID workspaceId) {
+    private ImportReport importJsoncNode(JsonNode root, String layer, UUID userId, UUID workspaceId) {
+        int imported = 0;
+        int skipped = 0;
+        List<String> warnings = new ArrayList<>();
         Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> entry = fields.next();
             String domain = entry.getKey();
             JsonNode domainNode = entry.getValue();
+            if ("provider-connections".equals(domain)) {
+                // PLAN-0307 T2.21 (decision #37): never restore credentials on
+                // import — owner/workspace ids are not portable across instances.
+                if (domainNode.isArray() && !domainNode.isEmpty()) {
+                    skipped += domainNode.size();
+                    warnings.add("provider-connections: " + domainNode.size()
+                        + " credential(s) skipped - imports never restore credentials; "
+                        + "rebuild them via the provider connections API/UI");
+                }
+                continue;
+            }
             if (domainNode.isObject()) {
                 Map<String, String> entries = new LinkedHashMap<>();
                 Iterator<Map.Entry<String, JsonNode>> domainFields = domainNode.fields();
@@ -523,12 +549,24 @@ public class ConfigService {
                     entries.put(df.getKey(), value);
                 }
                 putLayer(layer, domain, entries, "import", userId, workspaceId);
+                imported += entries.size();
             }
         }
+        return new ImportReport(imported, skipped, warnings);
     }
 
     @Transactional
     public String exportJsonc(String layer, UUID userId, UUID workspaceId) {
+        return exportJsonc(layer, userId, workspaceId, true);
+    }
+
+    /**
+     * PLAN-0307 T2.21/T2.25: export = config KV (never key columns) + provider
+     * connection metadata; `includeSecrets=false` additionally drops plaintext
+     * credentials (ciphertext and key version are never exported either way).
+     */
+    @Transactional
+    public String exportJsonc(String layer, UUID userId, UUID workspaceId, boolean includeSecrets) {
         List<ConfigEntity> configs = new ArrayList<>();
         if ("instance".equals(layer)) {
             for (String domain : DOMAINS) {
@@ -545,11 +583,48 @@ public class ConfigService {
                 .put(c.getConfigKey(), c.getConfigValue());
         }
         try {
-            return objectMapper.writerWithDefaultPrettyPrinter()
-                .writeValueAsString(byDomain);
+            ObjectNode root = objectMapper.createObjectNode();
+            for (Map.Entry<String, Map<String, String>> domainEntry : byDomain.entrySet()) {
+                ObjectNode domainNode = root.putObject(domainEntry.getKey());
+                domainEntry.getValue().forEach(domainNode::put);
+            }
+            List<ProviderConnection> connections = providerConnections.findAll();
+            if (!connections.isEmpty()) {
+                ArrayNode connectionNodes = objectMapper.createArrayNode();
+                for (ProviderConnection connection : connections) {
+                    ObjectNode node = objectMapper.createObjectNode();
+                    node.put("providerId", connection.getProviderId());
+                    node.put("label", connection.getLabel());
+                    node.put("ownerType", connection.getOwnerType());
+                    node.put("ownerId", connection.getOwnerId());
+                    if (connection.getBaseUrl() != null) {
+                        node.put("baseUrl", connection.getBaseUrl());
+                    }
+                    node.put("status", connection.getStatus());
+                    node.put("enabled", connection.isEnabled());
+                    node.put("modelDiscovery", connection.getModelDiscovery());
+                    if (connection.getManualModels() != null) {
+                        node.set("manualModels", objectMapper.readTree(connection.getManualModels()));
+                    }
+                    if (includeSecrets) {
+                        String apiKey = providerConnectionService.exportPlaintextCredential(connection);
+                        if (apiKey != null) {
+                            node.put("apiKey", apiKey);
+                        }
+                    }
+                    connectionNodes.add(node);
+                }
+                root.set("provider-connections", connectionNodes);
+            }
+            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Failed to serialize export", e);
         }
+    }
+
+    /** PLAN-0307 T2.25: connection count for the export audit record. */
+    public long countProviderConnections() {
+        return providerConnections.count();
     }
 
     private void createAudit(ConfigEntity entity, String oldValue,

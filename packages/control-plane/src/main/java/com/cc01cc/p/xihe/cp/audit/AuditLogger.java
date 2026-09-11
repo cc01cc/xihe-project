@@ -68,6 +68,30 @@ public class AuditLogger {
         return recentRecords;
     }
 
+    /**
+     * PLAN-0307 T2.25: management-plane config export audit. Records actor,
+     * time (logger timestamp), whether secrets were included and how many
+     * connections were carried — never the response body or key material.
+     */
+    public void recordConfigExport(String actor, String layer, boolean includeSecrets, long connectionCount) {
+        auditLog.info(
+            "action=config_export | actor={} | layer={} | includeSecrets={} | connections={}",
+            actor,
+            layer,
+            includeSecrets,
+            connectionCount
+        );
+        if (logToConsole) {
+            logger.info(
+                "[AUDIT] action=config_export | actor={} | layer={} | includeSecrets={} | connections={}",
+                actor,
+                layer,
+                includeSecrets,
+                connectionCount
+            );
+        }
+    }
+
     public record AuditRecord(
         String sessionId,
         String toolName,

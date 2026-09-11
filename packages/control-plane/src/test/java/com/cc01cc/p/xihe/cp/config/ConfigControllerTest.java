@@ -215,6 +215,8 @@ class ConfigControllerTest extends AbstractH2Test {
             url("/api/v1/config/import?layer=instance"), HttpMethod.POST,
             new HttpEntity<>("{\"logging\":{\"logLevel\":\"ERROR\"}}", adminHeaders), Map.class);
         assertEquals(HttpStatus.OK, ok.getStatusCode());
+        assertEquals("ok", ok.getBody().get("status"));
+        assertNotNull(ok.getBody().get("warnings"));
 
         HttpHeaders userHeaders = authHeaders(userToken());
         userHeaders.setContentType(MediaType.APPLICATION_JSON);
@@ -235,6 +237,20 @@ class ConfigControllerTest extends AbstractH2Test {
             url("/api/v1/config/export?layer=instance"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(userToken())), Map.class);
         assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
+    }
+
+    @Test
+    void exportConfig_includeSecretsBoundaryAndNoStoreHeader() {
+        // PLAN-0307 T2.25: the boundary is explicit and the response must not
+        // be cached; ciphertext/key columns are never part of the export.
+        ResponseEntity<String> resp = restTemplate.exchange(
+            url("/api/v1/config/export?layer=instance&includeSecrets=false"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(adminToken())), String.class);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals("no-store", resp.getHeaders().getCacheControl());
+        assertFalse(resp.getBody().contains("credential_ciphertext"));
+        assertFalse(resp.getBody().contains("apiKey"));
     }
 
     @Test

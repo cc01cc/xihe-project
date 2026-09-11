@@ -44,17 +44,20 @@ public class ConfigController {
     private final ObjectMapper objectMapper;
     private final McpStdioServerRepository stdioRepo;
     private final McpServerRepository remoteRepo;
+    private final com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger;
 
     public ConfigController(ConfigService configService,
                             WorkspaceService workspaceService,
                             ObjectMapper objectMapper,
                             McpStdioServerRepository stdioRepo,
-                            McpServerRepository remoteRepo) {
+                            McpServerRepository remoteRepo,
+                            com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger) {
         this.configService = configService;
         this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
         this.stdioRepo = stdioRepo;
         this.remoteRepo = remoteRepo;
+        this.auditLogger = auditLogger;
     }
 
     /** Decision #33: agent-runtime (instructions / workersDir) is not readable by non-admins. */
@@ -249,9 +252,13 @@ public class ConfigController {
                     HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", "Import content exceeds the size limit");
         }
         try {
-            configService.importJsonc(jsoncContent, "instance", null, null);
+            ConfigService.ImportReport report = configService.importJsonc(jsoncContent, "instance", null, null);
             log.info("Config imported via POST body ({} chars)", jsoncContent.length());
-            return ResponseEntity.ok(Map.of("status", "ok"));
+            return ResponseEntity.ok(Map.of(
+                "status", "ok",
+                "imported", report.imported(),
+                "skipped", report.skipped(),
+                "warnings", report.warnings()));
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Configuration import is invalid");
@@ -261,14 +268,21 @@ public class ConfigController {
     @PreAuthorize("hasRole('ADMIN')")
     @GetMapping("/api/v1/config/export")
     public ResponseEntity<?> exportConfig(
-            @RequestParam(value = "layer", defaultValue = "instance") String layer) {
+            @RequestParam(value = "layer", defaultValue = "instance") String layer,
+            @RequestParam(value = "includeSecrets", defaultValue = "true") boolean includeSecrets) {
         if (!"instance".equals(layer)) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Only the instance layer can be exported");
         }
-        String jsonc = configService.exportJsonc("instance", null, null);
+        String jsonc = configService.exportJsonc("instance", null, null, includeSecrets);
+        // PLAN-0307 T2.25: export is audited (actor/time/has-secrets); the body
+        // is never logged and must not be cached by intermediaries.
+        auditLogger.recordConfigExport(
+            TenantContext.getUserId(), "instance", includeSecrets,
+            configService.countProviderConnections());
         return ResponseEntity.ok()
             .header("Content-Type", "application/json")
+            .header("Cache-Control", "no-store")
             .body(jsonc);
     }
 

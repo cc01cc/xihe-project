@@ -36,6 +36,10 @@ class ConfigServiceTest {
     @Autowired
     private ProviderConnectionRepository providerConnections;
 
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("providerCredentialEncryption")
+    private com.cc01cc.p.xihe.cp.oauth.EnvelopeEncryptionService credentialEncryption;
+
     private final UUID userA = UUID.randomUUID();
     private final UUID userB = UUID.randomUUID();
     private final UUID wsA = UUID.randomUUID();
@@ -382,5 +386,65 @@ class ConfigServiceTest {
                 Map.of("levelCp", "INFO"), "admin", null, null);
         }
         assertFalse(LoggerFactory.getLogger("com.cc01cc.p.xihe.cp").isDebugEnabled());
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0307 T2.21/T2.25: credential-aware import/export
+    // ------------------------------------------------------------------
+
+    @Test
+    void exportJsonc_emptyConnectionsHasNoCredentialSection() {
+        configService.putLayer("instance", "logging", Map.of("logLevel", "INFO"), "admin", null, null);
+
+        String exported = configService.exportJsonc("instance", null, null, false);
+
+        assertTrue(exported.contains("logLevel"));
+        assertFalse(exported.contains("provider-connections"));
+    }
+
+    @Test
+    void exportJsonc_includesConnectionMetadataAndHonorsIncludeSecrets() {
+        UUID id = UUID.randomUUID();
+        String ownerId = userA.toString();
+        String aad = "deepseek|USER|" + ownerId + "|" + id;
+        ProviderConnection connection = new ProviderConnection();
+        connection.setId(id);
+        connection.setOwnerType("USER");
+        connection.setOwnerId(ownerId);
+        connection.setProviderId("deepseek");
+        connection.setLabel("Personal");
+        connection.setEnabled(true);
+        connection.setStatus("READY");
+        connection.setModelDiscovery("manual");
+        connection.setManualModels("[\"deepseek-chat\"]");
+        connection.setEncryptionKeyVersion("v1");
+        connection.setCredentialCiphertext(credentialEncryption.encrypt("sk-export-secret", aad));
+        providerConnections.save(connection);
+
+        String withSecrets = configService.exportJsonc("instance", null, null, true);
+        assertTrue(withSecrets.contains("provider-connections"));
+        assertTrue(withSecrets.contains("READY"));
+        assertTrue(withSecrets.contains("manual"));
+        assertTrue(withSecrets.contains("sk-export-secret"));
+        assertFalse(withSecrets.contains("credential_ciphertext"));
+
+        String withoutSecrets = configService.exportJsonc("instance", null, null, false);
+        assertTrue(withoutSecrets.contains("label"));
+        assertFalse(withoutSecrets.contains("sk-export-secret"));
+        assertFalse(withoutSecrets.contains("apiKey"));
+        assertFalse(withoutSecrets.contains("credential_ciphertext"));
+    }
+
+    @Test
+    void importJsonc_skipsProviderConnectionsWithWarnings() {
+        String content = "{\"logging\":{\"logLevel\":\"WARN\"},"
+            + "\"provider-connections\":[{\"providerId\":\"deepseek\",\"apiKey\":\"sk-x\"}]}";
+
+        ConfigService.ImportReport report = configService.importJsonc(content, "instance", null, null);
+
+        assertEquals(1, report.imported());
+        assertEquals(1, report.skipped());
+        assertTrue(report.warnings().get(0).contains("never restore credentials"));
+        assertEquals(0, providerConnections.count());
     }
 }

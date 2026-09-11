@@ -41,6 +41,8 @@ target/
 .env.*
 !.env.example
 config.import.local.jsonc
+# PLAN-0307 T2.25: exported config snapshots may contain plaintext credentials
+config.export*.jsonc
 *.log
 logs/
 
