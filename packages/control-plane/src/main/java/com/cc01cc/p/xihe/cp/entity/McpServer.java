@@ -31,6 +31,11 @@ public class McpServer {
     @Column(nullable = false)
     private boolean enabled;
 
+    // PLAN-301 M2: per-server tool execution timeout in seconds. NULL =
+    // inherit the Agent-side global default (XIHE_MCP_TOOL_TIMEOUT_S).
+    @Column(name = "tool_timeout_s")
+    private Integer toolTimeoutS;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -77,6 +82,9 @@ public class McpServer {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public Integer getToolTimeoutS() { return toolTimeoutS; }
+    public void setToolTimeoutS(Integer toolTimeoutS) { this.toolTimeoutS = toolTimeoutS; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

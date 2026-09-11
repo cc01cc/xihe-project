@@ -180,9 +180,25 @@ class MCPAgentTool(BaseAgentTool):
             if self._tool.name in REQUIRE_APPROVAL_TOOLS:
                 result = await self._tool.ainvoke(payload)
             else:
+                # PLAN-301 M2 (decision #2): per-call override from the run
+                # request (runtime_state.toolTimeoutOverrides) beats the
+                # server/global default — a caller-specified timeout is a
+                # stronger intent than any configured default.
+                effective = self._call_timeout_s
+                overrides = context.runtime_state.get("toolTimeoutOverrides") or {}
+                if isinstance(overrides, dict) and self._tool.name in overrides:
+                    try:
+                        override_val = float(overrides[self._tool.name])
+                        if override_val > 0:
+                            effective = override_val
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Invalid toolTimeoutOverrides value for {}: {!r}; using default",
+                            self._tool.name, overrides.get(self._tool.name),
+                        )
                 result = await asyncio.wait_for(
                     self._tool.ainvoke(payload),
-                    timeout=self._call_timeout_s,
+                    timeout=effective,
                 )
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
             logger.info(

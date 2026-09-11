@@ -458,6 +458,19 @@ public class McpProxyController {
         if ("__system__".equals(serverId)) {
             return forwardToRuntime(wsId, null, body, headers, sessionId, access);
         }
+        // PLAN-301 M2 (decision #1): per-server tool timeout travels to the
+        // Runtime as a request header; Runtime takes min(own env, header) as
+        // the exec collection bound. Non-system servers are table rows.
+        if (serverId != null) {
+            remoteServer(wsId, serverId).ifPresent(remote -> {
+                if (remote.getToolTimeoutS() != null && remote.getToolTimeoutS() > 0) {
+                    HttpHeaders mutable = new HttpHeaders();
+                    mutable.addAll(headers);
+                    mutable.set("X-Xihe-Tool-Timeout-S", String.valueOf(remote.getToolTimeoutS()));
+                    headers = mutable;
+                }
+            });
+        }
 
         // Policy already evaluated above for all tool types (including __system__).
         // Route by server type: remote or local (system).
