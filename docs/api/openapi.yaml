@@ -79,18 +79,21 @@ paths:
     post: { operationId: mcpPost, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP JSON-RPC response } } }
     get: { operationId: mcpStream, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP SSE stream, content: { text/event-stream: {} } } } }
     delete: { operationId: mcpDisconnect, security: [{ bearerAuth: [] }], responses: { '204': { description: Disconnected } } }
-  /internal/v1/config/{layer}/{domain}:
+  /internal/v1/config/effective/{domain}:
     get:
-      operationId: getInternalConfig
+      operationId: getEffectiveConfig
+      summary: Resolve effective config for a domain (env > user > instance > defaults); no layer exposure
       security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: layer, required: true, schema: { type: string } }, { in: path, name: domain, required: true, schema: { type: string } }]
-      responses: { '200': { description: Configuration map }, '401': { $ref: '#/components/responses/Problem' } }
-  /internal/v1/config/workspaces/{workspaceId}/mcp-config:
+      parameters:
+        - { in: path, name: domain, required: true, schema: { type: string } }
+        - { in: query, name: userId, required: false, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Effective configuration (entries/revision/source) }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } }
+  /internal/v1/workspaces/{workspaceId}/stdio-servers:
     get:
-      operationId: getInternalWorkspaceMcpConfig
+      operationId: getInternalWorkspaceStdioServers
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
-      responses: { '200': { description: MCP configuration }, '401': { $ref: '#/components/responses/Problem' } }
+      responses: { '200': { description: Stdio servers with generation/hash }, '401': { $ref: '#/components/responses/Problem' } }
   /api/v1/chat:
     post:
       operationId: chat
@@ -318,17 +321,15 @@ paths:
     post: { operationId: ingestTelemetry, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
   /api/v1/config/{domain}:
     get: { operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Configuration map } } }
-  /api/v1/config/admin/{domain}:
-    put: { operationId: putAdminConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  /api/v1/config/instance/{domain}:
+    put: { operationId: putInstanceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Problem' } } }
   /api/v1/config/user/{domain}:
     put: { operationId: putUserConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
   /api/v1/config/import:
-    post: { operationId: importConfig, security: [{ bearerAuth: [] }], responses: { '200': { description: Imported } } }
+    post: { operationId: importConfig, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }], responses: { '200': { description: Imported (merge semantics) } } }
   /api/v1/config/export:
-    get: { operationId: exportConfig, security: [{ bearerAuth: [] }], responses: { '200': { description: JSON configuration } } }
-  /api/v1/providers:
-    get: { operationId: listProviders, security: [{ bearerAuth: [] }], responses: { '200': { description: Providers } } }
-    put: { operationId: updateProviders, security: [{ bearerAuth: [] }], responses: { '200': { description: Updated } } }
+    get: { operationId: exportConfig, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }, { in: query, name: includeSecrets, required: false, schema: { type: boolean, default: true } }], responses: { '200': { description: JSON configuration (plaintext secrets unless includeSecrets=false) } } }
+  # /api/v1/providers removed (PLAN-0307 T2.22): use /api/v1/provider-connections + /api/v1/provider-catalog
   /api/v1/sessions/{sessionId}/messages:
     get: { operationId: listMessages, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Messages } } }
   /api/v1/sessions/{sessionId}/messages/{messageId}:
@@ -354,6 +355,10 @@ paths:
   /api/v1/workspaces/{workspaceId}/mcp-config:
      get: { operationId: getMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP configuration } } }
      put: { operationId: putMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+  # PLAN-0307 T0.3: structured stdio servers (Claude Desktop compatible values); mixed mcp-config above is split by field.
+  /api/v1/workspaces/{workspaceId}/stdio-servers:
+     get: { operationId: getWorkspaceStdioServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Stdio servers with generation/hash } } }
+     put: { operationId: putWorkspaceStdioServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated (optimistic lock) }, '400': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/environment:
      get: { operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/materialize:

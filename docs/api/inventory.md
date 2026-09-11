@@ -16,11 +16,11 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `POST /oauth/revoke` | `POST /api/v1/oauth/revoke` | user Bearer | UI |
 | CP | `POST /oauth/token` | `POST /internal/v1/oauth/token` | service Bearer | Runtime |
 | CP | `/mcp` | `/api/v1/mcp` | user Bearer | Agent, UI |
-| CP | `/config/**`, `/providers` | `/api/v1/config/**`, `/api/v1/providers` | user/admin Bearer | UI |
+| CP | `/config/**` | `/api/v1/config/**`（`instance`/`user` 层；`/api/v1/providers` 已删除 → `provider-connections` + `provider-catalog`） | user/admin Bearer | UI |
 | CP | `/models` | `/api/v1/models` | user/admin Bearer | UI model selector; proxies provider status/capability without secrets |
-| CP | `/internal/config/**` | `/internal/v1/config/**` | service Bearer | Agent, Runtime |
-| CP | `/workspaces/{id}/mcp-config` | `/api/v1/workspaces/{workspaceId}/mcp-config` | user Bearer | UI |
-| CP | `/workspaces/{id}/mcp-config` | `/internal/v1/config/workspaces/{workspaceId}/mcp-config` | service Bearer | Runtime config read |
+| CP | `/internal/config/**` | `/internal/v1/config/effective/{domain}`（层端点已废弃，决策 #19） | service Bearer | Agent（effective）+ Runtime 按需 |
+| CP | `/workspaces/{id}/mcp-config` | `/api/v1/workspaces/{workspaceId}/mcp-config`（混合 JSON，字段拆分）与 `/api/v1/workspaces/{workspaceId}/stdio-servers`（结构化） | user Bearer | UI |
+| CP | `/workspaces/{id}/mcp-config` | `/internal/v1/workspaces/{workspaceId}/stdio-servers`（原 `/internal/v1/config/workspaces/{id}/mcp-config` 改名） | service Bearer | Runtime stdio 声明同步 |
 | CP | `/workspaces/current`, `/workspaces`, `/workspaces/{workspaceId}` | unchanged under `/api/v1/workspaces/...` | user Bearer | UI, Runtime lifecycle |
 | CP | `/sessions`, `/sessions/{sessionId}` | unchanged under `/api/v1/sessions/...` | user Bearer + current workspace | UI |
 | CP | `/files/**`, `/rag/**` | `/api/v1/...` equivalent | user Bearer | UI |
