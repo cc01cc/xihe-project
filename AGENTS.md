@@ -256,6 +256,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 - **API migration**: Vite no longer rewrites API paths; callers must use the canonical `/api/v1` and `/internal/v1` contracts.
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
+- **Spring Boot 4 HTTP 层 ≠ Hibernate Jackson2（PLAN-0307 M2-B 实证）**: CP 响应不得直接放 Jackson2 `JsonNode` / 第三方 mapper 类型——Boot 4 HTTP 消息转换器与 Hibernate 的 JSON 映射不同源，`JsonNode` 会被当 POJO 序列化（全 getter 展开成 `{array=false,…}`）；统一 `objectMapper.convertValue(node, Object.class)` 转普通 Map/List 再返回。另：`isProviderSecretKey` 类嗅探器注意 `maxTokens` 含 "token" 的误伤（用 `contains("token") && !contains("maxtoken")`）
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
 - **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU（PLAN-097）。OOM 时按需上调
 - **runtime 测试现状**: 全量 `cargo test` 可编译执行；当前库测试 142 通过（含 read_file_range 二进制安全读取，PLAN-292 T6），集成测试按 Docker 环境执行并有明确 ignored 的 CP 实时测试（PLAN-235 M3，2026-09-03）。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
