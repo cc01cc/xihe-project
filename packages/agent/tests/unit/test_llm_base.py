@@ -100,13 +100,11 @@ class TestLLMConfig:
 
     def test_from_config_client_uses_xiaomi_specific_values(self):
         client = ConfigClient("http://test-cp", "test-token")
-        client._admin_cache["llm-provider"] = {
+        client._effective_cache["llm-provider"] = {
             "defaultProvider": "xiaomi",
             "xiaomiApiKey": "sk-mimo-test",
             "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
             "xiaomiModel": "mimo-v2.5",
-        }
-        client._admin_cache["user-preference"] = {
             "defaultModel": "deepseek-chat",
         }
         cfg = LLMConfig.from_config_client(client)
@@ -118,13 +116,13 @@ class TestLLMConfig:
 
     def test_from_config_client_keeps_explicit_provider_with_different_user_model(self):
         client = ConfigClient("http://test-cp", "test-token")
-        client._admin_cache["llm-provider"] = {
+        client._effective_cache["llm-provider"] = {
             "defaultProvider": "deepseek",
             "xiaomiApiKey": "sk-mimo-test",
             "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
             "xiaomiModel": "mimo-v2.5",
+            "defaultModel": "mimo-v2.5",
         }
-        client._admin_cache["user-preference"] = {"defaultModel": "mimo-v2.5"}
         client._rebuild_provider_cache()
 
         cfg = LLMConfig.from_config_client(client)

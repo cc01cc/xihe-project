@@ -15,19 +15,26 @@ DEFAULT_PROVIDER_BASE_URLS = {
     "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
 }
 
+# PLAN-0307 s13/s37: eight-domain set; layer-less effective fetch (decision #19).
 CONFIG_DOMAINS = (
     "llm-provider",
-    "logging",
+    "context-policy",
     "embedding",
-    "workspace-config",
+    "logging",
+    "agent-runtime",
+    "agent-profile",
     "user-preference",
+    "rag",
 )
+
+# Domains required for the Agent to become llm-ready (fail-closed otherwise).
+REQUIRED_DOMAINS = ("llm-provider",)
 
 
 class DomainSyncResult(TypedDict):
-    admin: str
-    system: str
-    effective: str
+    status: str
+    revision: str
+    source: str
 
 
 class SyncReport(TypedDict):
@@ -38,17 +45,22 @@ class SyncReport(TypedDict):
 
 
 class ConfigClient:
-    """Fetches and caches config from CP ConfigService (admin + system layers).
+    """Fetches and caches the **effective** config from CP ConfigService.
 
-    Resolution: user > admin > system (handled server-side).
+    PLAN-0307 decision #19 (layer encapsulation): the Agent never selects layers.
+    CP resolves `env > workspace > user > instance > code default` server-side and
+    returns a single merged value set per domain (plus `revision` and `source`).
+
+    Workspace scope is bound per process (`workspace_id`, Agent is single-workspace);
+    user scope arrives per run via the `userOverrides` payload field (decision #3a).
     """
 
-    def __init__(self, cp_url: str, api_token: str):
+    def __init__(self, cp_url: str, api_token: str, workspace_id: str | None = None):
         self.cp_url = cp_url
         self.api_token = api_token
+        self.workspace_id = workspace_id
         self._provider_cache: dict[str, dict[str, Any]] = {}
-        self._system_cache: dict[str, dict[str, str]] = {}
-        self._admin_cache: dict[str, dict[str, str]] = {}
+        self._effective_cache: dict[str, dict[str, str]] = {}
         self._last_fetch = 0.0
         self._config_revision = ""
         self._last_sync_report: SyncReport = {
@@ -59,150 +71,150 @@ class ConfigClient:
         }
 
     async def sync(self) -> SyncReport:
-        staged_admin: dict[str, dict[str, str]] = {}
-        staged_system: dict[str, dict[str, str]] = {}
-        domain_results: dict[str, DomainSyncResult] = {
-            domain: {"admin": "missing", "system": "missing", "effective": "missing"}
-            for domain in (*CONFIG_DOMAINS, "infrastructure")
-        }
+        staged: dict[str, dict[str, str]] = {}
+        domain_results: dict[str, DomainSyncResult] = {}
+        revisions: list[str] = []
 
         async with httpx.AsyncClient() as client:
             headers = {"Authorization": f"Bearer {self.api_token}"}
             for domain in CONFIG_DOMAINS:
-                result, data = await self._fetch_domain(
-                    client, "admin", domain, headers,
+                status, data, revision, source = await self._fetch_effective(
+                    client, domain, headers,
                 )
-                domain_results[domain]["admin"] = result
+                domain_results[domain] = {
+                    "status": status,
+                    "revision": revision,
+                    "source": source,
+                }
                 if data is not None:
-                    staged_admin[domain] = data
+                    staged[domain] = data
+                if revision:
+                    revisions.append(revision)
 
-            for domain in (*CONFIG_DOMAINS, "infrastructure"):
-                result, data = await self._fetch_domain(
-                    client, "system", domain, headers,
-                )
-                domain_results[domain]["system"] = result
-                if data is not None:
-                    staged_system[domain] = data
-
-        for domain, result in domain_results.items():
-            result["effective"] = self._effective_status(result["admin"], result["system"])
-
-        required = domain_results["llm-provider"]["effective"]
-        transport_failure = required in {"unreachable", "unauthorized", "invalid_response"}
+        required_statuses = [
+            domain_results.get(domain, {}).get("status", "missing")
+            for domain in REQUIRED_DOMAINS
+        ]
+        transport_failure = any(
+            status in {"unreachable", "unauthorized", "invalid_response"}
+            for status in required_statuses
+        )
+        revision = self._calculate_revision(staged, revisions)
         report: SyncReport = {
             "ok": not transport_failure,
             "domains": domain_results,
-            "revision": self._calculate_revision(staged_admin, staged_system),
+            "revision": revision,
             "refreshed": not transport_failure,
         }
 
         if report["refreshed"]:
-            self._admin_cache = staged_admin
-            self._system_cache = staged_system
+            self._effective_cache = staged
             self._rebuild_provider_cache()
             self._last_fetch = time.time()
-            self._config_revision = report["revision"]
+            self._config_revision = revision
             logger.info(
-                "ConfigClient: synced adminDomains={} systemDomains={} revision={} llmStatus={} adminLlmKeys={} xiaomiPresent={}",
-                len(self._admin_cache),
-                len(self._system_cache),
+                "ConfigClient: synced effective domains={} revision={} workspaceBound={} llmStatus={}",
+                len(self._effective_cache),
                 self._config_revision,
-                required,
-                list(self._admin_cache.get("llm-provider", {}).keys()),
-                bool(self._admin_cache.get("llm-provider", {}).get("xiaomiApiKey")),
+                bool(self.workspace_id),
+                required_statuses,
             )
         else:
             logger.error(
-                "ConfigClient: required llm-provider refresh failed status={} revision={} keeping previous snapshot",
-                required,
+                "ConfigClient: required effective refresh failed statuses={} revision={} keeping previous snapshot",
+                required_statuses,
                 self._config_revision,
             )
 
         self._last_sync_report = report
         return report
 
-    async def _fetch_domain(
+    async def _fetch_effective(
         self,
         client: httpx.AsyncClient,
-        layer: str,
         domain: str,
         headers: dict[str, str],
-    ) -> tuple[str, dict[str, str] | None]:
+    ) -> tuple[str, dict[str, str] | None, str, str]:
+        params: dict[str, str] = {}
+        if self.workspace_id:
+            params["workspaceId"] = self.workspace_id
         try:
             resp = await client.get(
-                f"{self.cp_url}/internal/v1/config/{layer}/{domain}",
+                f"{self.cp_url}/internal/v1/config/effective/{domain}",
                 headers=headers,
+                params=params,
                 timeout=3,
             )
         except Exception as exc:
             logger.warning(
-                "ConfigClient: failed to fetch layer={} domain={} status=unreachable error={}",
-                layer,
+                "ConfigClient: failed to fetch effective domain={} status=unreachable error={}",
                 domain,
                 exc,
             )
-            return "unreachable", None
+            return "unreachable", None, "", ""
 
+        if resp.status_code == 400:
+            logger.warning(
+                "ConfigClient: effective domain={} status=invalid_domain httpStatus=400",
+                domain,
+            )
+            return "invalid_response", None, "", ""
         if resp.status_code == 404:
-            return "missing", None
+            return "missing", None, "", ""
         if resp.status_code in (401, 403):
             logger.warning(
-                "ConfigClient: layer={} domain={} status=unauthorized httpStatus={}",
-                layer,
+                "ConfigClient: effective domain={} status=unauthorized httpStatus={}",
                 domain,
                 resp.status_code,
             )
-            return "unauthorized", None
+            return "unauthorized", None, "", ""
         if resp.status_code != 200:
             logger.warning(
-                "ConfigClient: layer={} domain={} status=unreachable httpStatus={}",
-                layer,
+                "ConfigClient: effective domain={} status=unreachable httpStatus={}",
                 domain,
                 resp.status_code,
             )
-            return "unreachable", None
+            return "unreachable", None, "", ""
 
         try:
-            data = resp.json()
+            payload = resp.json()
         except Exception as exc:
             logger.warning(
-                "ConfigClient: layer={} domain={} status=invalid_response error={}",
-                layer,
+                "ConfigClient: effective domain={} status=invalid_response error={}",
                 domain,
                 exc,
             )
-            return "invalid_response", None
-        if not isinstance(data, dict) or not all(
+            return "invalid_response", None, "", ""
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not isinstance(entries, dict) or not all(
             isinstance(key, str) and isinstance(value, str)
-            for key, value in data.items()
+            for key, value in entries.items()
         ):
             logger.warning(
-                "ConfigClient: layer={} domain={} status=invalid_response reason=object_of_strings_required",
-                layer,
+                "ConfigClient: effective domain={} status=invalid_response reason=entries_object_of_strings_required",
                 domain,
             )
-            return "invalid_response", None
-        return "ok", data
-
-    @staticmethod
-    def _effective_status(admin_status: str, system_status: str) -> str:
-        if "ok" in (admin_status, system_status):
-            return "ok"
-        if admin_status == "missing" and system_status == "missing":
-            return "missing"
-        if "unauthorized" in (admin_status, system_status):
-            return "unauthorized"
-        if "invalid_response" in (admin_status, system_status):
-            return "invalid_response"
-        return "unreachable"
+            return "invalid_response", None, "", ""
+        revision = payload.get("revision")
+        source = payload.get("source")
+        return (
+            "ok",
+            entries,
+            revision if isinstance(revision, str) else "",
+            source if isinstance(source, str) else "",
+        )
 
     @staticmethod
     def _calculate_revision(
-        admin_cache: dict[str, dict[str, str]],
-        system_cache: dict[str, dict[str, str]],
+        staged: dict[str, dict[str, str]],
+        revisions: list[str],
     ) -> str:
+        # Prefer CP-supplied revisions when present; fall back to a content hash.
+        if revisions:
+            payload = json.dumps(sorted(revisions), ensure_ascii=True).encode()
+            return hashlib.sha256(payload).hexdigest()[:16]
         payload = json.dumps(
-            {"admin": admin_cache, "system": system_cache},
+            staged,
             ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
@@ -211,32 +223,26 @@ class ConfigClient:
 
     def _rebuild_provider_cache(self) -> None:
         merged: dict[str, dict[str, Any]] = {}
-        admin_llm = self._admin_cache.get("llm-provider", {})
-        system_llm = self._system_cache.get("llm-provider", {})
+        llm = self._effective_cache.get("llm-provider", {})
         api_keys = {
-            "openai": admin_llm.get("openaiApiKey") or system_llm.get("openaiApiKey", ""),
-            "deepseek": admin_llm.get("deepseekApiKey") or system_llm.get("deepseekApiKey", ""),
-            "xiaomi": admin_llm.get("xiaomiApiKey") or system_llm.get("xiaomiApiKey", ""),
-            "anthropic": admin_llm.get("anthropicApiKey") or system_llm.get("anthropicApiKey", ""),
-            "dashscope": admin_llm.get("dashscopeApiKey") or system_llm.get("dashscopeApiKey", ""),
+            "openai": llm.get("openaiApiKey", ""),
+            "deepseek": llm.get("deepseekApiKey", ""),
+            "xiaomi": llm.get("xiaomiApiKey", ""),
+            "anthropic": llm.get("anthropicApiKey", ""),
+            "dashscope": llm.get("dashscopeApiKey", ""),
         }
         for provider, api_key in api_keys.items():
             if api_key:
                 base_url = (
-                    admin_llm.get(f"{provider}ApiBase")
-                    or system_llm.get(f"{provider}ApiBase")
-                    or admin_llm.get("baseUrl")
-                    or system_llm.get("baseUrl", "")
+                    llm.get(f"{provider}ApiBase")
+                    or llm.get("baseUrl")
                     or DEFAULT_PROVIDER_BASE_URLS.get(provider, "")
                 )
                 merged[provider] = {
                     "provider": provider,
                     "apiKey": api_key,
                     "baseUrl": base_url,
-                    "model": (
-                        admin_llm.get(f"{provider}Model")
-                        or system_llm.get(f"{provider}Model", "")
-                    ),
+                    "model": llm.get(f"{provider}Model", ""),
                 }
         self._provider_cache = merged
 
@@ -257,16 +263,15 @@ class ConfigClient:
         logger.error(
             "ConfigClient: failed to sync after {} retries status={}",
             max_retries,
-            last_report["domains"].get("llm-provider", {}).get("effective", "unknown"),
+            last_report["domains"].get("llm-provider", {}).get("status", "unknown"),
         )
         return last_report
 
     def get(self, domain: str, key: str) -> str | None:
-        if domain in self._admin_cache and key in self._admin_cache[domain]:
-            return self._admin_cache[domain][key]
-        if domain in self._system_cache and key in self._system_cache[domain]:
-            return self._system_cache[domain][key]
-        return None
+        entries = self._effective_cache.get(domain)
+        if entries is None:
+            return None
+        return entries.get(key)
 
     def get_bool(self, domain: str, key: str) -> bool:
         val = self.get(domain, key)

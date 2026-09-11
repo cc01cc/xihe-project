@@ -1,7 +1,11 @@
 """
-T2 stub integration test for Agent ↔ CP ConfigClient.
-Uses pytest-httpx to intercept outbound httpx requests.
-No Docker required — CP responses are stubbed.
+T2 stub integration test for Agent ↔ CP ConfigClient (effective contract).
+
+PLAN-0307 decision #19: the Agent fetches layer-less effective values from
+`GET /internal/v1/config/effective/{domain}`; CP performs the
+`env > workspace > user > instance > default` merge server-side.
+
+Uses pytest-httpx to intercept outbound httpx requests. No Docker required.
 """
 
 import re
@@ -12,19 +16,23 @@ import pytest
 from xihe_agent.config_client import ConfigClient
 
 
+def _effective(entries: dict, revision: str = "rev-1", source: str = "instance") -> dict:
+    return {"revision": revision, "source": source, "entries": entries}
+
+
 @pytest.mark.integration
 class TestConfigClientStubIntegration:
-    """Tests ConfigClient.sync() with stubbed CP responses via pytest-httpx."""
+    """Tests ConfigClient.sync() with stubbed CP effective responses."""
 
     async def test_sync_populates_providers(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
-            if re.search(r"/admin/llm-provider", str(request.url)):
+            if re.search(r"/effective/llm-provider", str(request.url)):
                 return httpx.Response(
                     200,
-                    json={
-                        "openaiApiKey": "sk-admin-openai",
+                    json=_effective({
+                        "openaiApiKey": "sk-effective-openai",
                         "baseUrl": "https://api.openai.com/v1",
-                    },
+                    }),
                 )
             return httpx.Response(404)
 
@@ -35,37 +43,50 @@ class TestConfigClientStubIntegration:
 
         providers = client.get_providers()
         assert "openai" in providers
-        assert providers["openai"]["apiKey"] == "sk-admin-openai"
+        assert providers["openai"]["apiKey"] == "sk-effective-openai"
         assert providers["openai"]["baseUrl"] == "https://api.openai.com/v1"
 
-    async def test_sync_admin_overrides_system(self, httpx_mock):
+    async def test_sync_uses_effective_entries_without_layers(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
-            if re.search(r"/admin/llm-provider", str(request.url)):
-                return httpx.Response(200, json={"openaiApiKey": "sk-admin", "baseUrl": ""})
-            if re.search(r"/system/llm-provider", str(request.url)):
-                return httpx.Response(200, json={"openaiApiKey": "sk-system"})
+            if re.search(r"/effective/llm-provider", str(request.url)):
+                return httpx.Response(
+                    200,
+                    json=_effective(
+                        {"openaiApiKey": "sk-merged", "baseUrl": ""},
+                        source="workspace",
+                    ),
+                )
             return httpx.Response(404)
 
         httpx_mock.add_callback(handler, is_reusable=True)
 
         client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
-        await client.sync()
+        report = await client.sync()
 
-        assert client.get_provider("openai")["apiKey"] == "sk-admin"
+        assert client.get_provider("openai")["apiKey"] == "sk-merged"
+        assert report["domains"]["llm-provider"]["source"] == "workspace"
+        assert report["domains"]["llm-provider"]["revision"] == "rev-1"
 
-    async def test_sync_system_fallback_when_admin_missing(self, httpx_mock):
+    async def test_workspace_id_param_forwarded(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
-            if re.search(r"/system/llm-provider", str(request.url)):
-                return httpx.Response(200, json={"openaiApiKey": "sk-system-only", "baseUrl": ""})
+            if re.search(r"/effective/llm-provider", str(request.url)):
+                return httpx.Response(200, json=_effective({"openaiApiKey": "sk-ws"}))
             return httpx.Response(404)
 
         httpx_mock.add_callback(handler, is_reusable=True)
 
-        client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
+        client = ConfigClient(
+            cp_url="http://cp:12631",
+            api_token="test-token",
+            workspace_id="ws-77",
+        )
         await client.sync()
 
-        assert client.get_provider("openai") is not None
-        assert client.get_provider("openai")["apiKey"] == "sk-system-only"
+        reqs = [
+            r for r in httpx_mock.get_requests()
+            if re.search(r"/effective/llm-provider", str(r.url))
+        ]
+        assert reqs and reqs[0].url.params.get("workspaceId") == "ws-77"
 
     async def test_sync_handles_500_gracefully(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -76,8 +97,7 @@ class TestConfigClientStubIntegration:
         client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
         await client.sync()
 
-        assert client._admin_cache == {}
-        assert client._system_cache == {}
+        assert client._effective_cache == {}
         assert client.get_providers() == {}
 
     async def test_sync_handles_connection_error(self, httpx_mock):
@@ -89,13 +109,12 @@ class TestConfigClientStubIntegration:
         client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
         await client.sync()
 
-        assert client._admin_cache == {}
-        assert client._system_cache == {}
+        assert client._effective_cache == {}
 
     async def test_auth_header_forwarded(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
-            if re.search(r"/admin/llm-provider", str(request.url)):
-                return httpx.Response(200, json={"openaiApiKey": "sk-test"})
+            if re.search(r"/effective/llm-provider", str(request.url)):
+                return httpx.Response(200, json=_effective({"openaiApiKey": "sk-test"}))
             return httpx.Response(404)
 
         httpx_mock.add_callback(handler, is_reusable=True)
@@ -104,18 +123,18 @@ class TestConfigClientStubIntegration:
         await client.sync()
 
         requests = httpx_mock.get_requests()
-        admin_reqs = [r for r in requests if re.search(r"/admin/llm-provider", str(r.url))]
-        assert len(admin_reqs) >= 1
-        assert admin_reqs[0].headers.get("Authorization") == "Bearer my-secret-token"
+        llm_reqs = [
+            r for r in requests if re.search(r"/effective/llm-provider", str(r.url))
+        ]
+        assert len(llm_reqs) >= 1
+        assert llm_reqs[0].headers.get("Authorization") == "Bearer my-secret-token"
 
     async def test_sync_populates_multiple_domains(self, httpx_mock):
         async def handler(request: httpx.Request) -> httpx.Response:
-            if re.search(r"/admin/logging", str(request.url)):
-                return httpx.Response(200, json={"logLevel": "debug"})
-            if re.search(r"/admin/llm-provider", str(request.url)):
-                return httpx.Response(200, json={"openaiApiKey": "sk-test"})
-            if re.search(r"/system/infrastructure", str(request.url)):
-                return httpx.Response(200, json={"dbUrl": "jdbc:test"})
+            if re.search(r"/effective/logging", str(request.url)):
+                return httpx.Response(200, json=_effective({"logLevel": "debug"}))
+            if re.search(r"/effective/llm-provider", str(request.url)):
+                return httpx.Response(200, json=_effective({"openaiApiKey": "sk-test"}))
             return httpx.Response(404)
 
         httpx_mock.add_callback(handler, is_reusable=True)
@@ -123,7 +142,6 @@ class TestConfigClientStubIntegration:
         client = ConfigClient(cp_url="http://cp:12631", api_token="test-token")
         await client.sync()
 
-        assert client._admin_cache.get("logging") == {"logLevel": "debug"}
-        assert client._admin_cache.get("llm-provider") == {"openaiApiKey": "sk-test"}
-        assert client._system_cache.get("infrastructure") == {"dbUrl": "jdbc:test"}
+        assert client._effective_cache.get("logging") == {"logLevel": "debug"}
+        assert client._effective_cache.get("llm-provider") == {"openaiApiKey": "sk-test"}
         assert client._last_fetch > 0

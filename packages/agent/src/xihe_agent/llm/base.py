@@ -81,6 +81,15 @@ class LLMConfig(BaseModel):
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
+        """Offline fallback only (PLAN-0307 T1.3).
+
+        The primary path is :meth:`from_config_client` (CP effective config).
+        This constructor is used **only** when CP config is unavailable/not
+        provided (`config or LLMConfig.from_env()`), and its env keys are
+        deliberately *not* part of the SSOT config registry — see the
+        env↔config key mapping table in
+        `internal/A03-xihe/docs/config-architecture-2026-09.md` §2.5.
+        """
         provider_str = os.getenv("XIHE_LLM_PROVIDER", "")
         model = os.getenv("XIHE_MODEL", "")
         if not provider_str and model:
@@ -114,7 +123,7 @@ class LLMConfig(BaseModel):
     @classmethod
     def from_config_client(cls, cc: "ConfigClient") -> "LLMConfig":
         provider_str = cc.get("llm-provider", "defaultProvider")
-        model = cc.get("user-preference", "defaultModel")
+        model = cc.get("llm-provider", "defaultModel")
         if not provider_str:
             provider_str = _provider_for_model(model) if model else "mock"
 

@@ -197,7 +197,11 @@ mcp_manager = MCPClientManager(
     retry_interval=MCP_RETRY_INTERVAL,
 )
 legacy_approval_tool = ApprovalTool()
-config_client = ConfigClient(cp_url=CP_URL, api_token=CP_API_TOKEN)
+config_client = ConfigClient(
+    cp_url=CP_URL,
+    api_token=CP_API_TOKEN,
+    workspace_id=get_env("XIHE_WORKSPACE_ID"),
+)
 _models_router.bind(config_client)
 
 llm_config = LLMConfig.from_config_client(config_client)
