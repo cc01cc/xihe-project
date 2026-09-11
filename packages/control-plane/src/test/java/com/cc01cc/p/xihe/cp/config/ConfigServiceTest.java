@@ -7,8 +7,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import com.cc01cc.p.xihe.cp.entity.ConfigAuditEntity;
+import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
+import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 
 import java.util.List;
 import java.util.Map;
@@ -30,6 +32,9 @@ class ConfigServiceTest {
     @Autowired
     private ConfigAuditRepository auditRepo;
 
+    @Autowired
+    private ProviderConnectionRepository providerConnections;
+
     private final UUID userA = UUID.randomUUID();
     private final UUID userB = UUID.randomUUID();
     private final UUID wsA = UUID.randomUUID();
@@ -39,6 +44,7 @@ class ConfigServiceTest {
     void cleanDb() {
         auditRepo.deleteAll();
         repo.deleteAll();
+        providerConnections.deleteAll();
     }
 
     @Test
@@ -285,5 +291,78 @@ class ConfigServiceTest {
         // must stay overlay-free or the filter would have to strip them.
         assertTrue(configService.envOverriddenKeys("llm-provider").isEmpty());
         assertTrue(configService.envOverriddenKeys("agent-profile").isEmpty());
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0307 T2.24 (review P1-5): provider readiness via provider_connections
+    // ------------------------------------------------------------------
+
+    private void saveConnection(String ownerType, String ownerId, String providerId,
+                                boolean enabled, String status) {
+        ProviderConnection connection = new ProviderConnection();
+        connection.setId(UUID.randomUUID());
+        connection.setOwnerType(ownerType);
+        connection.setOwnerId(ownerId);
+        connection.setProviderId(providerId);
+        connection.setLabel("test-connection");
+        connection.setEnabled(enabled);
+        connection.setStatus(status);
+        connection.setEncryptionKeyVersion("v1");
+        providerConnections.save(connection);
+    }
+
+    @Test
+    void putLayer_userDefaultProviderRejectedWithoutReadyConnection() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("defaultProvider", "deepseek"), "user", userA, null));
+
+        assertTrue(error.getMessage().contains("No ready provider connection for: deepseek"));
+    }
+
+    @Test
+    void putLayer_userDefaultProviderRejectedWhenConnectionNotReady() {
+        saveConnection("USER", userA.toString(), "deepseek", true, "VERIFYING");
+        saveConnection("USER", userA.toString(), "openai", false, "READY");
+
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("defaultProvider", "deepseek"), "user", userA, null));
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("defaultProvider", "openai"), "user", userA, null));
+    }
+
+    @Test
+    void putLayer_userDefaultProviderAcceptedWithReadyUserConnection() {
+        saveConnection("USER", userA.toString(), "deepseek", true, "READY");
+
+        configService.putLayer("user", "llm-provider",
+            Map.of("defaultProvider", "deepseek"), "user", userA, null);
+
+        assertEquals("deepseek",
+            configService.layerEntries("user", "llm-provider", userA, null).get("defaultProvider"));
+    }
+
+    @Test
+    void putLayer_workspaceDefaultProviderAcceptedWithReadyWorkspaceConnection() {
+        saveConnection("WORKSPACE", wsA.toString(), "xiaomi", true, "READY");
+
+        configService.putLayer("workspace", "llm-provider",
+            Map.of("defaultProvider", "xiaomi"), "user", userA, wsA);
+
+        assertEquals("xiaomi",
+            configService.layerEntries("workspace", "llm-provider", null, wsA).get("defaultProvider"));
+    }
+
+    @Test
+    void putLayer_instanceDefaultProviderStaysContextFree() {
+        // No user/workspace context exists at the instance layer; credentials are
+        // per user/workspace under decision #37, so no readiness gate applies.
+        configService.putLayer("instance", "llm-provider",
+            Map.of("defaultProvider", "deepseek"), "admin", null, null);
+
+        assertEquals("deepseek",
+            configService.layerEntries("instance", "llm-provider", null, null).get("defaultProvider"));
     }
 }

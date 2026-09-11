@@ -115,4 +115,30 @@ class ProviderConnectionServiceTest {
         assertEquals("WORKSPACE", connection.getOwnerType());
         assertEquals("workspace-1", connection.getOwnerId());
     }
+
+    @Test
+    void updateRefreshesEncryptionKeyVersionWhenCredentialChanges() {
+        // PLAN-0307 T2.24 (review P1-7): re-encryption must stamp the active key
+        // version instead of keeping the stale one.
+        TenantContext.setUserId("user-1");
+        ProviderConnection connection = new ProviderConnection();
+        connection.setId(java.util.UUID.randomUUID());
+        connection.setOwnerType("USER");
+        connection.setOwnerId("user-1");
+        connection.setProviderId("deepseek");
+        connection.setLabel("Personal");
+        connection.setEnabled(true);
+        connection.setStatus(ProviderConnection.STATUS_READY);
+        connection.setEncryptionKeyVersion("v0-stale");
+        when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
+        when(repository.save(any(ProviderConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProviderConnection updated = service.update(connection.getId().toString(),
+                new ProviderConnectionService.ConnectionInput(
+                        "deepseek", null, null, "sk-new-key", null, null, null, null));
+
+        assertNotEquals("v0-stale", updated.getEncryptionKeyVersion());
+        assertEquals(encryption.currentVersion(), updated.getEncryptionKeyVersion());
+    }
 }

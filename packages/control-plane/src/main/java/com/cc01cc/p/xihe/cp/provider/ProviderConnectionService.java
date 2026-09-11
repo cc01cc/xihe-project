@@ -131,7 +131,12 @@ public class ProviderConnectionService {
         }
         if (input.manualModels() != null) connection.setManualModels(serializeModels(input.manualModels()));
         String apiKey = blankToNull(input.apiKey());
-        if (apiKey != null) connection.setCredentialCiphertext(encryptCredential(connection, apiKey));
+        if (apiKey != null) {
+            connection.setCredentialCiphertext(encryptCredential(connection, apiKey));
+            // PLAN-0307 T2.24 (review P1-7): keep the stored key version in sync
+            // with the ciphertext produced by the active key.
+            connection.setEncryptionKeyVersion(encryption.currentVersion());
+        }
         if (input.hasChanges()) {
             connection.setRevision(connection.getRevision() + 1);
             if (Boolean.FALSE.equals(input.enabled())) {

@@ -11,8 +11,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.cc01cc.p.xihe.cp.entity.ConfigAuditEntity;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
+import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
+import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -78,6 +80,9 @@ public class ConfigService {
 
     @Autowired
     private ConfigAuditRepository auditRepo;
+
+    @Autowired
+    private ProviderConnectionRepository providerConnections;
 
     @Autowired
     private ConfigDomainSchema schemaValidator;
@@ -267,7 +272,8 @@ public class ConfigService {
                 "Schema validation failed: " + String.join("; ", errors));
         }
         if ("llm-provider".equals(domain)) {
-            List<String> providerErrors = validateProviderBinding(entries);
+            List<String> providerErrors = validateProviderBinding(
+                layer, entries, userId, workspaceId);
             if (!providerErrors.isEmpty()) {
                 throw new IllegalArgumentException(
                     "Provider validation failed: " + String.join("; ", providerErrors));
@@ -334,13 +340,19 @@ public class ConfigService {
         return normalized.contains("token") && !normalized.contains("maxtoken");
     }
 
-    private List<String> validateProviderBinding(Map<String, String> entries) {
+    private List<String> validateProviderBinding(String layer, Map<String, String> entries,
+                                                 UUID userId, UUID workspaceId) {
         List<String> errors = new ArrayList<>();
         String defaultProvider = entries.getOrDefault("defaultProvider", "").trim();
         if (!defaultProvider.isEmpty()) {
             Set<String> supported = Set.of("openai", "deepseek", "xiaomi", "anthropic", "dashscope");
             if (!supported.contains(defaultProvider)) {
                 errors.add("defaultProvider is unsupported: " + defaultProvider);
+            } else if (requiresReadyConnection(layer)
+                    && !hasReadyProviderConnection(defaultProvider, userId, workspaceId)) {
+                // PLAN-0307 T2.24 (review P1-5): provider readiness is grounded
+                // in provider_connections, not config keys (decision #21/#37).
+                errors.add("No ready provider connection for: " + defaultProvider);
             }
         }
         for (String key : List.of("baseUrl", "openaiApiBase", "deepseekApiBase", "xiaomiApiBase", "anthropicApiBase", "dashscopeApiBase")) {
@@ -361,6 +373,27 @@ public class ConfigService {
             }
         }
         return errors;
+    }
+
+    private static boolean requiresReadyConnection(String layer) {
+        return "user".equals(layer) || "workspace".equals(layer);
+    }
+
+    private boolean hasReadyProviderConnection(String provider, UUID userId, UUID workspaceId) {
+        if (workspaceId != null && isReadyProviderConnection(
+                ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(), provider)) {
+            return true;
+        }
+        return userId != null && isReadyProviderConnection(
+                ProviderConnection.OWNER_USER, userId.toString(), provider);
+    }
+
+    private boolean isReadyProviderConnection(String ownerType, String ownerId, String provider) {
+        return providerConnections
+                .findByOwnerTypeAndOwnerIdAndProviderId(ownerType, ownerId, provider)
+                .filter(connection -> connection.isEnabled()
+                        && ProviderConnection.STATUS_READY.equals(connection.getStatus()))
+                .isPresent();
     }
 
     public static class ConfigOwnershipException extends IllegalArgumentException {
