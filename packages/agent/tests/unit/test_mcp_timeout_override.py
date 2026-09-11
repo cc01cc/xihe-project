@@ -82,3 +82,44 @@ async def test_override_only_applies_to_named_tool():
     tool = _make_tool(name="grep")
     ctx = _context({"list_directory": 0.1})  # bound for another tool
     assert await tool.execute({}, ctx) == {"content": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_cold_start_grace_triples_first_call():
+    """PLAN-301 M3: first tool call after materialization gets 3x the bound."""
+    from xihe_agent.adapters.mcp_client import DEFAULT_MCP_TOOL_TIMEOUT_S
+
+    tool = _make_tool(sleep_s=DEFAULT_MCP_TOOL_TIMEOUT_S + 0.5)  # >30s, <90s
+    ctx = _context(None)
+    ctx.runtime_state["firstToolCallDone"] = False
+    # Without grace this times out at 30s; with 3x grace (90s) it completes.
+    result = await tool.execute({}, ctx)
+    assert result == {"content": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_grace_is_one_shot():
+    from xihe_agent.adapters.mcp_client import DEFAULT_MCP_TOOL_TIMEOUT_S
+
+    tool = _make_tool(sleep_s=DEFAULT_MCP_TOOL_TIMEOUT_S + 0.5)
+    ctx = _context(None)
+    ctx.runtime_state["firstToolCallDone"] = False
+    # First call uses the grace window and flips the marker...
+    assert await tool.execute({}, ctx) == {"content": "ok"}
+    assert ctx.runtime_state["firstToolCallDone"] is True
+    # ...second call exceeding the steady-state bound now times out.
+    result = await tool.execute({}, ctx)
+    assert "timed out" in result["content"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_override_skips_grace_multiplier():
+    from xihe_agent.adapters.mcp_client import DEFAULT_MCP_TOOL_TIMEOUT_S
+
+    tool = _make_tool(sleep_s=DEFAULT_MCP_TOOL_TIMEOUT_S + 0.5)
+    ctx = _context(None)
+    ctx.runtime_state["firstToolCallDone"] = False
+    # Explicit per-call override: stronger intent, no grace multiplier.
+    ctx.runtime_state["toolTimeoutOverrides"] = {"list_directory": 1.0}
+    result = await tool.execute({}, ctx)
+    assert "timed out" in result["content"]

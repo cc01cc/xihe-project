@@ -106,6 +106,8 @@ flowchart TD
 
 两套事件命名空间不同，映射由 `LangGraphEventAdapter` 维护：
 
+**MCP 工具超时（PLAN-301）**：四级解析链（首个命中生效）——调用方传参 `toolTimeoutOverrides`（per-call，最强意图）→ server 级 `mcp_servers.tool_timeout_s`（V11）→ 全局 `XIHE_MCP_TOOL_TIMEOUT_S`（默认 30）→ 兜底 30。非法值/≤0 回退下一层并 WARN（fail-closed = 禁止无限等待）。冷启动宽限：workspace 物化后首次工具调用 ×3（`runtime_state.firstToolCallDone` 一次性标记，显式传参不受倍率影响）。相关 env：`XIHE_EXEC_COLLECT_TIMEOUT_S`（Runtime exec 收集界，默认 30）与 `xihe.mcp.forward-timeout-s`（CP 转发界，默认 30）——两者与 Agent 层解耦，调整时需协同。已知限制：Runtime 层的 per-server 头接收（min 语义）待 rmcp 穿透改造（见 PLAN-301 G 记录）。
+
 | 层 | 事件 |
 |----|------|
 | SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done` |

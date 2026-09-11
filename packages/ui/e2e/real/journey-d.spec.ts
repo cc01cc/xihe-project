@@ -128,6 +128,9 @@ test.describe('@host Journey D — context pipeline', () => {
 
   test('D2: manual compaction keeps summary visible to the LLM (epoch injection)', async ({ page }) => {
     test.skip(LLM_MODE !== 'history-marker', 'requires XIHE_E2E_LLM_MODE=history-marker fake LLM marker mode')
+    // The marker envelope is a fixture contract; a real model treats it as
+    // prompt injection and refuses (observed with mimo, PLAN-301 M3).
+    test.skip(!!process.env.XIHE_E2E_REAL_XIAOMI_KEY, 'fixture marker envelope is fixture-only; real runs use D1-real')
     const authToken = sharedAuth
     const wsId = sharedWs
     const headers = sharedHeaders

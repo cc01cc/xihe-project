@@ -196,10 +196,23 @@ class MCPAgentTool(BaseAgentTool):
                             "Invalid toolTimeoutOverrides value for {}: {!r}; using default",
                             self._tool.name, overrides.get(self._tool.name),
                         )
-                result = await asyncio.wait_for(
-                    self._tool.ainvoke(payload),
-                    timeout=effective,
-                )
+                    result = await asyncio.wait_for(
+                        self._tool.ainvoke(payload),
+                        timeout=effective,
+                    )
+                else:
+                    # PLAN-301 M3 (decision #3): cold-start grace — the first
+                    # tool call after workspace materialization gets 3x, one
+                    # shot, because the oneshot exec path pays container/image
+                    # warm-up that can exceed the steady-state bound. Explicit
+                    # per-call overrides skip the multiplier (stronger intent).
+                    if not context.runtime_state.get("firstToolCallDone"):
+                        effective = effective * 3
+                    result = await asyncio.wait_for(
+                        self._tool.ainvoke(payload),
+                        timeout=effective,
+                    )
+                    context.runtime_state["firstToolCallDone"] = True
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
             logger.info(
                 "[LIFECYCLE] service=agent event=mcp_tool_ok tool={} elapsedMs={}",
