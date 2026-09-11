@@ -219,4 +219,57 @@ class ConfigServiceTest {
         assertTrue(exported.contains("logLevel"));
         assertTrue(exported.contains("INFO"));
     }
+
+    // ------------------------------------------------------------------
+    // PLAN-0307 T2.7: run-payload overrides (decision #3)
+    // ------------------------------------------------------------------
+
+    @Test
+    void overrides_returnsExplicitLayerRowsPerDomain() {
+        configService.putLayer("instance", "llm-provider",
+            Map.of("defaultModel", "instance-model"), "admin", null, null);
+        configService.putLayer("user", "llm-provider",
+            Map.of("defaultModel", "mimo-v2.5"), "user", userA, null);
+        configService.putLayer("user", "agent-profile",
+            Map.of("userName", "Alice"), "user", userA, null);
+        configService.putLayer("workspace", "llm-provider",
+            Map.of("temperature", "0.2"), "user", userA, wsA);
+
+        Map<String, Map<String, String>> userOverrides = configService.overrides(
+            "user", List.of("llm-provider", "agent-profile"), userA, wsA);
+        assertEquals(Map.of("defaultModel", "mimo-v2.5"), userOverrides.get("llm-provider"));
+        assertEquals(Map.of("userName", "Alice"), userOverrides.get("agent-profile"));
+
+        Map<String, Map<String, String>> workspaceOverrides = configService.overrides(
+            "workspace", List.of("llm-provider", "agent-profile"), userA, wsA);
+        assertEquals(Map.of("temperature", "0.2"), workspaceOverrides.get("llm-provider"));
+        assertFalse(workspaceOverrides.containsKey("agent-profile"));
+    }
+
+    @Test
+    void overrides_areScopedByUserAndWorkspace() {
+        configService.putLayer("user", "llm-provider",
+            Map.of("defaultModel", "user-a-model"), "user", userA, null);
+        configService.putLayer("workspace", "llm-provider",
+            Map.of("defaultModel", "ws-a-model"), "user", userA, wsA);
+
+        assertTrue(configService.overrides(
+            "user", List.of("llm-provider"), userB, wsA).isEmpty());
+        assertTrue(configService.overrides(
+            "workspace", List.of("llm-provider"), userA, wsB).isEmpty());
+    }
+
+    @Test
+    void overrides_omitDomainsWithoutRows() {
+        assertTrue(configService.overrides(
+            "user", List.of("llm-provider", "agent-profile"), userA, wsA).isEmpty());
+    }
+
+    @Test
+    void envOverriddenKeys_hasNoOverlayForRunOverrideDomains() {
+        // ENV_OVERLAY currently covers only embedding.model; run override domains
+        // must stay overlay-free or the filter would have to strip them.
+        assertTrue(configService.envOverriddenKeys("llm-provider").isEmpty());
+        assertTrue(configService.envOverriddenKeys("agent-profile").isEmpty());
+    }
 }

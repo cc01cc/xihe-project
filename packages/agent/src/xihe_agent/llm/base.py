@@ -178,8 +178,18 @@ class LLMConfig(BaseModel):
 
     @classmethod
     def from_config_client(cls, cc: "ConfigClient") -> "LLMConfig":
-        provider_str = cc.get("llm-provider", "defaultProvider")
-        model = cc.get("llm-provider", "defaultModel")
+        """Build from the process-level pulled `llm-provider` effective entries."""
+        return cls.from_entries(cc.get_domain("llm-provider"))
+
+    @classmethod
+    def from_entries(cls, entries: Mapping[str, str]) -> "LLMConfig":
+        """Build from `llm-provider` entries (pulled effective or run-merged).
+
+        PLAN-0307 T2.7: per-run overrides are merged into a run-local entry map
+        by the caller; this method stays pure and never writes back.
+        """
+        provider_str = entries.get("defaultProvider")
+        model = entries.get("defaultModel")
         if not provider_str:
             provider_str = _provider_for_model(model) if model else "mock"
 
@@ -192,16 +202,16 @@ class LLMConfig(BaseModel):
 
         defaults = PROVIDER_DEFAULTS.get(provider, {})
         api_base = (
-            cc.get("llm-provider", f"{provider}ApiBase")
-            or cc.get("llm-provider", "baseUrl")
+            entries.get(f"{provider}ApiBase")
+            or entries.get("baseUrl")
             or defaults.get("api_base", "")
         )
-        provider_model = cc.get("llm-provider", f"{provider}Model")
+        provider_model = entries.get(f"{provider}Model")
         model = provider_model or model or defaults.get("model", "")
 
-        timeout_str = cc.get("llm-provider", "timeout") or "60"
-        max_tokens_str = cc.get("llm-provider", "maxTokens") or "4096"
-        temp_str = cc.get("llm-provider", "temperature") or "0.7"
+        timeout_str = entries.get("timeout") or "60"
+        max_tokens_str = entries.get("maxTokens") or "4096"
+        temp_str = entries.get("temperature") or "0.7"
 
         return cls(
             provider=provider,

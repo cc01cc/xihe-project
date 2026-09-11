@@ -135,6 +135,50 @@ public class ConfigService {
         return result;
     }
 
+    /**
+     * PLAN-0307 T2.7 (decisions #3/#22/#37): run-payload delivery of explicit
+     * single-layer rows for the given domains. Env-locked keys are omitted so
+     * the receiver's env-derived base keeps winning (executor transparency);
+     * domains without explicit rows are omitted entirely.
+     */
+    public Map<String, Map<String, String>> overrides(String layer, Collection<String> domains,
+                                                       UUID userId, UUID workspaceId) {
+        Map<String, Map<String, String>> result = new LinkedHashMap<>();
+        for (String domain : domains) {
+            Map<String, String> entries = layerEntries(layer, domain, userId, workspaceId);
+            if (entries.isEmpty()) {
+                continue;
+            }
+            Set<String> envLocked = envOverriddenKeys(domain);
+            if (!envLocked.isEmpty()) {
+                entries.keySet().removeIf(envLocked::contains);
+            }
+            if (!entries.isEmpty()) {
+                result.put(domain, entries);
+            }
+        }
+        return result;
+    }
+
+    /** Keys whose env overlay is currently active for the domain (decision #22). */
+    public Set<String> envOverriddenKeys(String domain) {
+        Set<String> keys = new LinkedHashSet<>();
+        for (Map.Entry<String, List<String>> entry : ENV_OVERLAY.entrySet()) {
+            String[] parts = entry.getKey().split("\\.", 2);
+            if (parts.length != 2 || !parts[0].equals(domain)) {
+                continue;
+            }
+            for (String envName : entry.getValue()) {
+                String value = System.getenv(envName);
+                if (value != null && !value.isBlank()) {
+                    keys.add(parts[1]);
+                    break;
+                }
+            }
+        }
+        return keys;
+    }
+
     public EffectiveConfig effective(String domain, UUID userId, UUID workspaceId) {
         Map<String, String> merged = new LinkedHashMap<>();
         List<ConfigEntity> rows = new ArrayList<>();

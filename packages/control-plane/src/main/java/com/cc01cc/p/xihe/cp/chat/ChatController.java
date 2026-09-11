@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.File;
@@ -70,10 +71,19 @@ public class ChatController {
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
     private final ProviderCredentialLeaseService credentialLeases;
+    private final ConfigService configService;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
     private static final String INSTANCE_ID = UUID.randomUUID().toString();
+
+    /**
+     * PLAN-0307 T2.7 (decision #3): domains with per-run Agent consumers, delivered
+     * as payload overrides. rag/embedding are process-level consumers covered by the
+     * workspace-bound effective pull; instance-only domains stay pull-only.
+     */
+    private static final List<String> AGENT_RUN_OVERRIDE_DOMAINS =
+        List.of("llm-provider", "agent-profile");
 
     @Value("${cp.agent-url:http://localhost:12632/chat}")
     private String agentUrl;
@@ -95,7 +105,8 @@ public class ChatController {
             ChatRunRepository chatRunRepository,
             HealthMonitor healthMonitor,
             RequestQueue requestQueue,
-            ProviderCredentialLeaseService credentialLeases) {
+            ProviderCredentialLeaseService credentialLeases,
+            ConfigService configService) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -113,6 +124,7 @@ public class ChatController {
         this.healthMonitor = healthMonitor;
         this.requestQueue = requestQueue;
         this.credentialLeases = credentialLeases;
+        this.configService = configService;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -539,6 +551,21 @@ public class ChatController {
                     agentRequest.put("providerConnectionId", persistedRun.getProviderConnectionId());
                     agentRequest.put("connectionRevision", persistedRun.getConnectionRevision());
                 }
+                // PLAN-0307 T2.7 (decision #3=#3a): run-scoped layer overrides are
+                // resolved per run from this request's workspace/user context and
+                // pushed with the payload; Agent merges without side effects.
+                Map<String, Map<String, String>> userOverrides = configService.overrides(
+                        "user", AGENT_RUN_OVERRIDE_DOMAINS,
+                        uuidOrNull(userId), uuidOrNull(workspaceId));
+                Map<String, Map<String, String>> workspaceOverrides = configService.overrides(
+                        "workspace", AGENT_RUN_OVERRIDE_DOMAINS,
+                        uuidOrNull(userId), uuidOrNull(workspaceId));
+                if (!userOverrides.isEmpty()) {
+                    agentRequest.put("userOverrides", userOverrides);
+                }
+                if (!workspaceOverrides.isEmpty()) {
+                    agentRequest.put("workspaceOverrides", workspaceOverrides);
+                }
                 if (!attachments.isEmpty()) {
                     List<Map<String, Object>> agentAttachments = new ArrayList<>();
                     for (com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo info : attachments) {
@@ -863,6 +890,19 @@ public class ChatController {
 
     private String nonBlankOrGenerated(String value) {
         return value == null || value.isBlank() ? UUID.randomUUID().toString() : value;
+    }
+
+    /** T2.7: tolerate non-UUID tenant ids by degrading to an empty override set. */
+    private static UUID uuidOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            logger.warn("[LIFECYCLE] service=cp event=config_override_context_invalid value={}", value);
+            return null;
+        }
     }
 
     private List<String> extractAttachmentIds(Map<String, Object> request) {

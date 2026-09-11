@@ -397,6 +397,46 @@ def _has_instance_fallback_credentials(config: LLMConfig) -> bool:
     return config.provider == "mock" or bool(config.api_key)
 
 
+def _validate_run_overrides(raw: Any, field: str) -> str | None:
+    """PLAN-0307 T2.7: payload override shape is {domain: {key: string}}."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        return f"{field} must be an object"
+    for domain, entries in raw.items():
+        if not isinstance(entries, dict):
+            return f"{field}.{domain} must be an object"
+        for key, value in entries.items():
+            if not isinstance(value, str):
+                return f"{field}.{domain}.{key} must be a string"
+    return None
+
+
+def _normalize_run_overrides(raw: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(domain): {str(key): str(value) for key, value in entries.items()}
+        for domain, entries in raw.items()
+        if isinstance(entries, dict)
+    }
+
+
+def _merge_run_domain(
+    domain: str,
+    user_overrides: dict[str, dict[str, str]],
+    workspace_overrides: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    """Run-local merge: pulled effective -> user -> workspace (PLAN-0307 T2.7).
+
+    Pure function (decision #24/G6): never writes back to the process snapshot.
+    """
+    merged = dict(config_client.get_domain(domain))
+    merged.update(user_overrides.get(domain, {}))
+    merged.update(workspace_overrides.get(domain, {}))
+    return merged
+
+
 def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
     """Map provider failures to safe, stable client-facing error semantics."""
     text = str(error).lower()
@@ -715,7 +755,6 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
     run_id: str = request.headers.get("X-Chat-Run-Id") or data.get("runId") or str(uuid4())
     operation_id: str | None = request.headers.get("X-Operation-Id") or data.get("operationId") or None
-    user_name: str = data.get("userName", AGENT_USER_NAME)
     model_override: str | None = data.get("model")
     provider_override: str | None = data.get("provider")
     tool_mode: str = data.get("toolMode", "none")
@@ -724,6 +763,35 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     credential_lease: str | None = data.get("credentialLease") or None
     provider_connection_id: str | None = data.get("providerConnectionId") or None
     connection_revision = data.get("connectionRevision")
+
+    # PLAN-0307 T2.7 (decision #3=#3a): CP-resolved per-run layer overrides.
+    raw_user_overrides = data.get("userOverrides")
+    raw_workspace_overrides = data.get("workspaceOverrides")
+    for field, raw in (
+        ("userOverrides", raw_user_overrides),
+        ("workspaceOverrides", raw_workspace_overrides),
+    ):
+        validation_error = _validate_run_overrides(raw, field)
+        if validation_error:
+            return JSONResponse(
+                status_code=400,
+                media_type="application/problem+json",
+                headers={"X-Request-Id": request_id},
+                content={
+                    "type": "https://xihe.dev/problems/invalid-request",
+                    "title": "Invalid run overrides",
+                    "status": 400,
+                    "code": "INVALID_REQUEST",
+                    "detail": validation_error,
+                    "requestId": request_id,
+                    "runId": run_id,
+                },
+            )
+    user_overrides = _normalize_run_overrides(raw_user_overrides)
+    workspace_overrides = _normalize_run_overrides(raw_workspace_overrides)
+
+    profile_entries = _merge_run_domain("agent-profile", user_overrides, workspace_overrides)
+    user_name: str = data.get("userName") or profile_entries.get("userName") or AGENT_USER_NAME
 
     if _llm_ready != "ready" and not credential_lease:
         error_code = _llm_readiness_error_code(_llm_ready)
@@ -760,6 +828,9 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 "runId": run_id,
             },
         )
+
+    run_llm_entries = _merge_run_domain("llm-provider", user_overrides, workspace_overrides)
+    run_llm_config = LLMConfig.from_entries(run_llm_entries)
 
     request_config: LLMConfig
     if credential_lease:
@@ -802,17 +873,17 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             api_key=str(grant.get("apiKey") or ""),
             api_base=str(grant.get("baseUrl") or ""),
             model=str(grant.get("model") or model_override or ""),
-            timeout=llm_config.timeout,
-            max_tokens=llm_config.max_tokens,
-            temperature=llm_config.temperature,
+            # T2.7: user/workspace model params apply even when the lease owns
+            # the credential (grant carries key/base/model only).
+            timeout=run_llm_config.timeout,
+            max_tokens=run_llm_config.max_tokens,
+            temperature=run_llm_config.temperature,
         )
     else:
-        request_config = llm_config
-    if not credential_lease and provider_override and provider_override != llm_config.provider:
+        request_config = run_llm_config
+    if not credential_lease and provider_override and provider_override != run_llm_config.provider:
         provider_info = _model_catalog.get("providers", {}).get(provider_override)
-        provider_runtime = fallback_provider_configs(
-            config_client.get_domain("llm-provider")
-        ).get(provider_override)
+        provider_runtime = fallback_provider_configs(run_llm_entries).get(provider_override)
         if not isinstance(provider_info, dict) or provider_info.get("status") != "ready" or not provider_runtime:
             return JSONResponse(
                 status_code=503,
@@ -836,9 +907,9 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             api_key=str(provider_runtime.get("apiKey", "")),
             api_base=str(provider_runtime.get("baseUrl", "")),
             model=str(provider_runtime.get("model", "")),
-            timeout=llm_config.timeout,
-            max_tokens=llm_config.max_tokens,
-            temperature=llm_config.temperature,
+            timeout=run_llm_config.timeout,
+            max_tokens=run_llm_config.max_tokens,
+            temperature=run_llm_config.temperature,
         )
     if model_override:
         request_config = request_config.with_model(model_override)

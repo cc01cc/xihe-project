@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
+import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -54,6 +55,9 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
     private HealthMonitor healthMonitor;
+
+    @Autowired
+    private ConfigService configService;
 
     private String token;
     private String userId;
@@ -153,6 +157,53 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure"))
                 .withRequestBody(matchingJsonPath("$.stream", equalTo("true")))
                 .withRequestBody(matchingJsonPath("$.runId")));
+    }
+
+    @Test
+    void chatForwardsRunOverridesResolvedFromUserAndWorkspaceLayers() {
+        String sessionId = UUID.randomUUID().toString();
+        UUID uid = UUID.fromString(userId);
+        UUID wid = UUID.fromString(workspaceId);
+        configService.putLayer("user", "llm-provider",
+                Map.of("defaultModel", "mimo-v2.5"), "test", uid, null);
+        configService.putLayer("user", "agent-profile",
+                Map.of("userName", "Alice"), "test", uid, null);
+        configService.putLayer("workspace", "llm-provider",
+                Map.of("temperature", "0.2"), "test", uid, wid);
+
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "text/event-stream")
+                        .withBody("event: done\ndata: {\"type\":\"done\"}\n\n")));
+
+        Map<String, Object> body = Map.of(
+                "sessionId", sessionId,
+                "content", "Hello overrides",
+                "userId", userId,
+                "workspaceId", workspaceId
+        );
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                url("/api/v1/chat"),
+                HttpMethod.POST,
+                entityWithAuth(body, token),
+                Map.class);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
+                .withRequestBody(matchingJsonPath(
+                        "$.userOverrides['llm-provider'].defaultModel", equalTo("mimo-v2.5")))
+                .withRequestBody(matchingJsonPath(
+                        "$.userOverrides['agent-profile'].userName", equalTo("Alice")))
+                .withRequestBody(matchingJsonPath(
+                        "$.workspaceOverrides['llm-provider'].temperature", equalTo("0.2"))));
+
+        configService.deleteKey("user", "llm-provider", "defaultModel", "test", uid, null);
+        configService.deleteKey("user", "agent-profile", "userName", "test", uid, null);
+        configService.deleteKey("workspace", "llm-provider", "temperature", "test", uid, wid);
     }
 
     @Test

@@ -685,6 +685,14 @@ components:
         credentialLease: { type: string, writeOnly: true }
         providerConnectionId: { type: string, format: uuid }
         connectionRevision: { type: integer, minimum: 1 }
+        userOverrides:
+          type: object
+          additionalProperties: { type: object, additionalProperties: { type: string } }
+          description: "PLAN-0307 T2.7: run-scoped user-layer entries resolved by CP for Agent-consumed domains (llm-provider, agent-profile). Env-locked keys are omitted; Agent merges pulled effective -> user -> workspace without side effects. Layer concepts never cross this boundary."
+        workspaceOverrides:
+          type: object
+          additionalProperties: { type: object, additionalProperties: { type: string } }
+          description: "PLAN-0307 T2.7: run-scoped workspace-layer entries resolved by CP (same contract as userOverrides; workspace wins over user)."
         attachments: { type: array, items: { type: object, additionalProperties: true } }
     OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }

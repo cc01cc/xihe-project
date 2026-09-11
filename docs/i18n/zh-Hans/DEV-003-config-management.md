@@ -91,13 +91,13 @@ curl -X POST http://localhost:12631/api/v1/config/import \
 
 `mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后自动导入 `config.import.local.jsonc`（如存在，需 `XIHE_DEV_ADMIN_PASSWORD`，否则跳过并提示）；也可通过 UI Settings 或 API 手动修改。
 
-各模块客户端（内部端点前缀 `/internal/v1/config/{layer}/{domain}`）：
+各模块客户端（层封闭，决策 #19）：instance/workspace 合并值经 `GET /internal/v1/config/effective/{domain}` 拉取（CP 按 workspace 上下文合并，含 env 覆盖）；user/workspace 覆盖随 run payload push（`userOverrides`/`workspaceOverrides`，决策 #3a，env 锁定键由 CP 剔除）：
 
 | 模块 | 客户端 | 行为 |
 |------|--------|------|
 | CP | 内建 `ConfigService` | 直接读库 |
-| Agent | `config_client.py` | 启动拉取缓存 |
-| Runtime | `config_client.rs` | 启动拉取 + 定期刷新 |
+| Agent | `config_client.py` | 启动/周期拉取 workspace-bound effective；chat run 按 payload overrides 合成（instance → user → workspace，无副作用） |
+| Runtime | 无 config client（决策 #4） | 物理配置走 env/CLI（决策 #29） |
 
 ## 4. Agent readiness 与模型目录
 
