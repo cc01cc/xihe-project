@@ -281,10 +281,13 @@ public class ConfigService {
 
     private static boolean isProviderSecretKey(String key) {
         String normalized = key.toLowerCase(Locale.ROOT);
-        return normalized.contains("apikey")
-            || normalized.contains("secret")
-            || normalized.contains("password")
-            || normalized.contains("token");
+        if (normalized.contains("apikey")
+                || normalized.contains("secret")
+                || normalized.contains("password")) {
+            return true;
+        }
+        // maxTokens is a generation parameter, not a credential.
+        return normalized.contains("token") && !normalized.contains("maxtoken");
     }
 
     private List<String> validateProviderBinding(Map<String, String> entries) {

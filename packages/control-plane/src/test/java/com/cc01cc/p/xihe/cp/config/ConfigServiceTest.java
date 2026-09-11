@@ -196,6 +196,16 @@ class ConfigServiceTest {
     }
 
     @Test
+    void importJsonc_acceptsNumericValues() {
+        String jsonc = "{\"llm-provider\":{\"maxTokens\":8192,\"temperature\":0.5}}";
+        configService.importJsonc(jsonc, "instance", null, null);
+
+        Map<String, String> entries = configService.layerEntries("instance", "llm-provider", null, null);
+        assertEquals("8192", entries.get("maxTokens"));
+        assertEquals("0.5", entries.get("temperature"));
+    }
+
+    @Test
     void importJsonc_invalidContent_throws() {
         assertThrows(IllegalArgumentException.class, () ->
             configService.importJsonc("not json", "instance", null, null));

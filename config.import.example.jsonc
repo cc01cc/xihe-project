@@ -1,71 +1,74 @@
 {
   // =========================================================================
-  // xihe 配置导入模板 — Admin Layer
+  // xihe 配置导入模板 — instance 层（PLAN-0307 八域模型）
   // =========================================================================
   // 用法:
   //   PowerShell: Copy-Item config.import.example.jsonc config.import.local.jsonc
   //   Git Bash:   cp config.import.example.jsonc config.import.local.jsonc
-  //   # 填入真实 API key
-  //   curl -X POST /api/v1/config/import \
+  //   curl -X POST "/api/v1/config/import?layer=instance" \
   //     -H "Authorization: Bearer $ADMIN_TOKEN" \
   //     -H "Content-Type: application/json" \
-  //     -d @config.import.local.jsonc
+  //     --data-binary @config.import.local.jsonc
   //
-  // 此文件含占位符值，供参考。真实配置请复制为 config.import.local.jsonc 后填写。
+  // 凭证（apiKey）不在此文件：provider 凭证存于 provider_connections（UI/API 管理），
+  // Agent 运行期经短时租约获取；离线开发可用 env（XIHE_<PROVIDER>_API_KEY）兜底。
+  // 仅 config-schemas/ 中声明的键可导入，未知键会导致整个 import 400。
   // config.import.local.jsonc 被 gitignore，不会提交。
 
-  // llm-provider — Admin Layer
+  // llm-provider — 模型/端点/默认选择（凭证见 provider_connections）
   "llm-provider": {
-    "deepseekApiKey": "sk-your-deepseek-api-key",
+    "defaultProvider": "deepseek",
+    "defaultModel": "deepseek-v4-flash",
     "deepseekModel": "deepseek-v4-flash",
     "deepseekApiBase": "https://api.deepseek.com/v1",
-    "openaiApiKey": "",
     "openaiModel": "gpt-4o",
     "openaiApiBase": "https://api.openai.com/v1",
-    "xiaomiApiKey": "",
     "xiaomiModel": "mimo-v2.5",
     "xiaomiApiBase": "https://api.xiaomimimo.com/v1",
-    "defaultProvider": "deepseek",
     "imageProvider": ""
   },
 
-  // embedding — Admin Layer (apiKey/apiBase 复用 llm-provider 配置)
+  // context-policy — 上下文压缩策略（defaults/models 结构见 schema）
+  "context-policy": {},
+
+  // embedding — 检索嵌入
   "embedding": {
     "model": "text-embedding-3-small",
     "dimensions": 1536
   },
 
-  // user-preference — Admin Layer（admin 默认值，user 可覆盖）
-  // 注意：只有 schema 允许的 key 才能导入（见 packages/control-plane/src/main/resources/config-schemas/）；
-  // 无消费方的 key（如 timeout）不要加，加了会导致整个 import 被 400 拒绝。
-  "user-preference": {
-    "defaultModel": "deepseek-v4-flash",
-    "maxTokens": 4096,
-    "temperature": 0.7
+  // rag — 检索增强
+  "rag": {
+    "chunkSize": 1000,
+    "chunkOverlap": 200,
+    "topK": 5,
+    "minScore": 0.0
   },
 
-  // logging — Admin Layer（全部 key 均受 config-schemas/logging.json 校验；
-  // instructions/userName 由 Agent 启动与定时同步读取，level 大小写均可）
+  // agent-runtime — Agent 实例级行为（instructions 仅 instance 层可写）
+  "agent-runtime": {
+    "instructions": "你是 xihe Agent，一个通用的 AI 助手。请用中文回答。你可以使用各种工具来帮助用户完成任务。",
+    "useRegistry": "false",
+    "useSupervisor": "false"
+  },
+
+  // agent-profile — 用户展示名（instance 默认，user 可覆盖）
+  "agent-profile": {
+    "userName": "开发者"
+  },
+
+  // user-preference — 界面偏好
+  "user-preference": {
+    "theme": "system",
+    "language": "zh-CN"
+  },
+
+  // logging — 五级日志（运行期以 DB 为权威，env 仅启动引导）
   "logging": {
     "logLevel": "debug",
     "levelAgent": "debug",
     "levelCp": "debug",
     "levelRuntime": "debug",
-    "levelUi": "debug",
-    "auditConsole": "true",
-    "instructions": "你是 xihe Agent，一个通用的 AI 助手。请用中文回答。你可以使用各种工具来帮助用户完成任务。",
-    "userName": "开发者",
-    "useRegistry": "false",
-    "useSupervisor": "false"
-  },
-
-  // workspace-config — Admin Layer
-  // 说明：workspacePath 字段已废弃（Runtime 明确 storageRef 判死，无 fallback）；
-  // profile 为 Sandbox 执行 profile（strict/coding/isolated）。
-  "workspace-config": {
-    "workspaceId": "ws_default",
-    "image": "xihe/workspace:latest",
-    "dockerImage": "xihe/workspace:latest",
-    "profile": "strict"
+    "levelUi": "debug"
   }
 }
