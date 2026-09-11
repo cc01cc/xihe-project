@@ -127,8 +127,14 @@ logger.add(
 
 
 # Override log level from CP ConfigService
+_APPLIED_LOG_LEVEL = AGENT_LOG_LEVEL
+
+
 def _configure_log_level(level_name: str) -> None:
+    global _APPLIED_LOG_LEVEL
     level = normalize_agent_log_level(level_name)
+    if level == _APPLIED_LOG_LEVEL:
+        return  # PLAN-0307 T2.15: idempotent so the periodic reload is cheap
     log_dir = get_env("XIHE_LOG_DIR") or "logs"
     logger.remove()
     logger.add(sys.stderr, level=level.upper())
@@ -139,6 +145,7 @@ def _configure_log_level(level_name: str) -> None:
         level=level.upper(),
         serialize=True,
     )
+    _APPLIED_LOG_LEVEL = level
 
 
 async def _apply_cp_log_level() -> None:
@@ -465,6 +472,9 @@ async def reload_runtime_config(reason: str) -> dict[str, Any]:
                 config_client.get("llm-provider", "imageProvider")
             )
             staged_catalog = await fetch_model_catalog(config_client)
+            # PLAN-0307 T2.15 (decision #23): `logging.levelAgent` is hot-applied
+            # on every refreshed snapshot; env stays the startup bootstrap only.
+            await _apply_cp_log_level()
         else:
             staged_llm_config = llm_config
             staged_image_manager = image_provider_manager

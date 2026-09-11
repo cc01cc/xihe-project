@@ -85,6 +85,9 @@ public class ConfigService {
     private ProviderConnectionRepository providerConnections;
 
     @Autowired
+    private org.springframework.context.ApplicationEventPublisher events;
+
+    @Autowired
     private ConfigDomainSchema schemaValidator;
 
     @Autowired
@@ -280,6 +283,14 @@ public class ConfigService {
             }
         }
         putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId);
+        publishLoggingChanged(domain, layer);
+    }
+
+    /** PLAN-0307 T2.15: notify listeners after a logging instance-layer write. */
+    private void publishLoggingChanged(String domain, String layer) {
+        if ("logging".equals(domain) && "instance".equals(layer)) {
+            events.publishEvent(new LoggingConfigChangedEvent("config-write"));
+        }
     }
 
     private void validateLayerScope(String layer, String domain, Map<String, String> entries,
@@ -456,6 +467,7 @@ public class ConfigService {
             ConfigEntity entity = existing.get();
             createAudit(entity, entity.getConfigValue(), null, changedBy);
             repo.delete(entity);
+            publishLoggingChanged(domain, layer);
         }
     }
 

@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.config;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
@@ -364,5 +365,22 @@ class ConfigServiceTest {
 
         assertEquals("deepseek",
             configService.layerEntries("instance", "llm-provider", null, null).get("defaultProvider"));
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0307 T2.15 (decision #23): logging hot reload
+    // ------------------------------------------------------------------
+
+    @Test
+    void putLayer_loggingInstanceAppliesLevelDynamically() {
+        try {
+            configService.putLayer("instance", "logging",
+                Map.of("levelCp", "DEBUG"), "admin", null, null);
+            assertTrue(LoggerFactory.getLogger("com.cc01cc.p.xihe.cp").isDebugEnabled());
+        } finally {
+            configService.putLayer("instance", "logging",
+                Map.of("levelCp", "INFO"), "admin", null, null);
+        }
+        assertFalse(LoggerFactory.getLogger("com.cc01cc.p.xihe.cp").isDebugEnabled());
     }
 }

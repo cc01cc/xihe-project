@@ -21,23 +21,40 @@ public class LoggingConfigInitializer {
 
     @EventListener(ApplicationReadyEvent.class)
     public void onReady() {
-        String levelCp = configService.resolve("logging", "levelCp", null, null);
-        if (levelCp != null && !levelCp.isEmpty()) {
-            LogLevel logLevel = parseLogLevel(levelCp);
-            if (logLevel != null) {
-                LoggingSystem loggingSystem = LoggingSystem.get(getClass().getClassLoader());
-                loggingSystem.setLogLevel("com.cc01cc.p.xihe.cp", logLevel);
-                log.info("Log level set from ConfigService: levelCp={}", logLevel);
-            }
-        }
+        applyConfiguredLevels();
+    }
 
+    /** PLAN-0307 T2.15: re-apply levels after a logging config write (hot reload). */
+    @EventListener(LoggingConfigChangedEvent.class)
+    public void onConfigChanged(LoggingConfigChangedEvent event) {
+        try {
+            applyConfiguredLevels();
+            log.info("Log level re-applied after config change source={}", event.source());
+        } catch (RuntimeException e) {
+            // A log-level apply failure must never roll back the config write.
+            log.warn("Failed to re-apply log levels after config change: {}", e.getMessage(), e);
+        }
+    }
+
+    private void applyConfiguredLevels() {
+        LoggingSystem loggingSystem = LoggingSystem.get(getClass().getClassLoader());
+
+        // Legacy generic key first; the specific `levelCp` wins when both exist.
         String logLevel = configService.resolve("logging", "logLevel", null, null);
         if (logLevel != null && !logLevel.isEmpty()) {
             LogLevel parsed = parseLogLevel(logLevel);
             if (parsed != null) {
-                LoggingSystem loggingSystem = LoggingSystem.get(getClass().getClassLoader());
                 loggingSystem.setLogLevel("com.cc01cc.p.xihe.cp", parsed);
                 log.info("Log level set from ConfigService: logLevel={}", parsed);
+            }
+        }
+
+        String levelCp = configService.resolve("logging", "levelCp", null, null);
+        if (levelCp != null && !levelCp.isEmpty()) {
+            LogLevel parsedCp = parseLogLevel(levelCp);
+            if (parsedCp != null) {
+                loggingSystem.setLogLevel("com.cc01cc.p.xihe.cp", parsedCp);
+                log.info("Log level set from ConfigService: levelCp={}", parsedCp);
             }
         }
     }

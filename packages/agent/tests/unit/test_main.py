@@ -2,6 +2,7 @@
 
 import pytest
 
+import xihe_agent.main as main_module
 from xihe_agent.llm.base import LLMConfig
 from xihe_agent.main import (
     _classify_llm_exception,
@@ -73,6 +74,45 @@ def test_instance_fallback_credentials_requires_key_or_mock():
     assert _has_instance_fallback_credentials(
         LLMConfig(provider="xiaomi", api_key="")
     ) is False
+
+
+# ---------------------------------------------------------------------------
+# PLAN-0307 T2.15 (decision #23): logging.levelAgent hot reload
+# ---------------------------------------------------------------------------
+
+
+def test_configure_log_level_is_idempotent(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        main_module.logger, "remove", lambda *args, **kwargs: calls.append("remove")
+    )
+    monkeypatch.setattr(
+        main_module.logger, "add", lambda *args, **kwargs: calls.append("add")
+    )
+    monkeypatch.setattr(main_module, "_APPLIED_LOG_LEVEL", "info")
+
+    main_module._configure_log_level("info")
+    assert calls == []
+
+    main_module._configure_log_level("debug")
+    assert calls == ["remove", "add", "add"]
+
+
+@pytest.mark.asyncio
+async def test_apply_cp_log_level_reads_logging_domain(monkeypatch):
+    applied: list[str] = []
+    monkeypatch.setattr(
+        main_module, "_configure_log_level", lambda level: applied.append(level)
+    )
+    monkeypatch.setattr(
+        main_module.config_client,
+        "get",
+        lambda domain, key: "debug" if (domain, key) == ("logging", "levelAgent") else None,
+    )
+
+    await main_module._apply_cp_log_level()
+
+    assert applied == ["debug"]
 
 
 def test_readiness_error_codes_are_actionable():
