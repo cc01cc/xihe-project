@@ -212,6 +212,20 @@ class ConfigServiceTest {
     }
 
     @Test
+    void importJsonc_mergesByDomainWithoutDroppingOtherKeys() {
+        // PLAN-0307 T2.12 (decision #20): import semantics = per-domain merge;
+        // a second import updates only the keys it carries.
+        configService.importJsonc(
+            "{\"llm-provider\":{\"defaultModel\":\"model-one\",\"maxTokens\":3000}}", "instance", null, null);
+        configService.importJsonc(
+            "{\"llm-provider\":{\"defaultModel\":\"model-two\"}}", "instance", null, null);
+
+        Map<String, String> entries = configService.layerEntries("instance", "llm-provider", null, null);
+        assertEquals("model-two", entries.get("defaultModel"));
+        assertEquals("3000", entries.get("maxTokens"));
+    }
+
+    @Test
     void exportJsonc_returnsInstanceKeys() {
         configService.putLayer("instance", "logging", Map.of("logLevel", "INFO"), "admin", null, null);
 

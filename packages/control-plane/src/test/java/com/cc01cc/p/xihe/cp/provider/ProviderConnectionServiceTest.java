@@ -16,6 +16,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -62,5 +63,56 @@ class ProviderConnectionServiceTest {
         assertNotEquals("sk-test-key", connection.getCredentialCiphertext());
         assertEquals("sk-test-key", encryption.decrypt(
                 connection.getCredentialCiphertext(), "deepseek|USER|user-1|" + connection.getId()));
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0307 T2.20 (decisions #34/#35/#37): scope permission matrix
+    // ------------------------------------------------------------------
+
+    @Test
+    void createRejectsSystemScope() {
+        TenantContext.setUserId("user-1");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                service.create(new ProviderConnectionService.ConnectionInput(
+                        "deepseek", "System DeepSeek", "SYSTEM", "sk-test-key", null, null, List.of(), null)));
+
+        assertEquals("Unsupported provider connection scope", error.getMessage());
+    }
+
+    @Test
+    void createRejectsWorkspaceScopeWithoutWorkspaceAdminRole() {
+        TenantContext.setUserId("user-1");
+        TenantContext.setWorkspaceId("workspace-1");
+        TenantContext.setWorkspaceRole("MEMBER");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                service.create(new ProviderConnectionService.ConnectionInput(
+                        "deepseek", "Workspace DeepSeek", "WORKSPACE", "sk-test-key", null, null, List.of(), null)));
+
+        assertEquals("Workspace administrator permission is required", error.getMessage());
+    }
+
+    @Test
+    void createAllowsWorkspaceScopeForOwnerAndBindsWorkspace() {
+        TenantContext.setUserId("user-1");
+        TenantContext.setWorkspaceId("workspace-1");
+        TenantContext.setWorkspaceRole("OWNER");
+        ObjectNode definition = new ObjectMapper().createObjectNode();
+        definition.put("id", "deepseek");
+        definition.put("defaultBaseUrl", "https://api.deepseek.com/v1");
+        definition.putObject("credential").put("required", true);
+        when(catalog.require("deepseek")).thenReturn(definition);
+        when(catalog.requiresCredential("deepseek")).thenReturn(true);
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderId("WORKSPACE", "workspace-1", "deepseek"))
+                .thenReturn(Optional.empty());
+        when(repository.save(any(ProviderConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProviderConnection connection = service.create(new ProviderConnectionService.ConnectionInput(
+                "deepseek", "Workspace DeepSeek", "WORKSPACE", "sk-test-key", null, null, List.of(), null));
+
+        assertEquals("WORKSPACE", connection.getOwnerType());
+        assertEquals("workspace-1", connection.getOwnerId());
     }
 }
