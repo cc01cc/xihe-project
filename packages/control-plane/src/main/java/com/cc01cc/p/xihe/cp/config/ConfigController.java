@@ -114,6 +114,7 @@ public class ConfigController {
     public ResponseEntity<Map<String, Object>> getConfig(
             @PathVariable String domain,
             @RequestParam(value = "layer", required = false) String layer,
+            @RequestParam(value = "includeMeta", defaultValue = "false") boolean includeMeta,
             @RequestParam(value = "workspaceId", required = false) String queryWorkspaceId,
             @RequestHeader(value = "X-Workspace-Id", required = false) String headerWorkspaceId) {
         if (!ConfigService.DOMAINS.contains(domain)) {
@@ -154,6 +155,22 @@ public class ConfigController {
             } else {
                 shaped.put(e.getKey(), maskIfNotAdmin(e.getKey(), e.getValue()));
             }
+        }
+        if (includeMeta) {
+            // PLAN-0307 T2.14 (#22): expose env-locked keys + their env-effective
+            // values so the UI can lock/disable the fields (T2.17) instead of
+            // silently showing a value the env layer overrides.
+            Map<String, String> envOverridden = new LinkedHashMap<>();
+            if (layer == null) {
+                for (Map.Entry<String, String> e : configService.envOverridden(domain).entrySet()) {
+                    envOverridden.put(e.getKey(), hideAll ? "****" : maskIfNotAdmin(e.getKey(), e.getValue()));
+                }
+            }
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("domain", domain);
+            body.put("entries", shaped);
+            body.put("envOverridden", envOverridden);
+            return ResponseEntity.ok(body);
         }
         return ResponseEntity.ok(shaped);
     }

@@ -254,6 +254,20 @@ class ConfigControllerTest extends AbstractH2Test {
     }
 
     @Test
+    void getConfig_includeMetaExposesEnvLockMetadata() {
+        // PLAN-0307 T2.14: the UI lock contract rides on the resolved endpoint;
+        // no env overlay is active in tests, so the map is present but empty.
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/llm-provider?includeMeta=true"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals("llm-provider", resp.getBody().get("domain"));
+        assertNotNull(resp.getBody().get("entries"));
+        assertTrue(((Map<?, ?>) resp.getBody().get("envOverridden")).isEmpty());
+    }
+
+    @Test
     void stdioServers_putGetAndGenerationConflict() {
         String token = userToken();
         String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);

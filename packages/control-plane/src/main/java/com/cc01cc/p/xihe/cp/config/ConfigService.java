@@ -53,13 +53,6 @@ public class ConfigService {
         "agent-runtime", Set.of("instructions"));
 
     /**
-     * Decision #22: env overlay for keys that still have a deployment env source.
-     * logging is intentionally absent (decision #23: DB is runtime authority, env bootstraps only).
-     */
-    private static final Map<String, List<String>> ENV_OVERLAY = Map.of(
-        "embedding.model", List.of("XIHE_EMBEDDING_MODEL"));
-
-    /**
      * Decision #24: resolved/effective include code defaults so the UI and the
      * execution modules agree on fallback values.
      */
@@ -97,6 +90,9 @@ public class ConfigService {
     private ConfigDomainSchema schemaValidator;
 
     @Autowired
+    private EnvOverlayRegistry envOverlay;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     public record EffectiveConfig(String domain, String revision, String source,
@@ -128,6 +124,10 @@ public class ConfigService {
     }
 
     public String resolve(String domain, String key, UUID userId, UUID workspaceId) {
+        // PLAN-0307 T2.14 (P1-1): the single-key channel merges env first, so
+        // env-locked keys cannot silently fall back to a DB value.
+        String envValue = envOverlay.activeOverrides(domain).get(key);
+        if (envValue != null) return envValue;
         String workspaceValue = workspaceId == null ? null
             : keyOf(repo.findByWorkspaceIdAndDomainAndConfigKey(workspaceId, domain, key));
         if (workspaceValue != null) return workspaceValue;
@@ -176,21 +176,12 @@ public class ConfigService {
 
     /** Keys whose env overlay is currently active for the domain (decision #22). */
     public Set<String> envOverriddenKeys(String domain) {
-        Set<String> keys = new LinkedHashSet<>();
-        for (Map.Entry<String, List<String>> entry : ENV_OVERLAY.entrySet()) {
-            String[] parts = entry.getKey().split("\\.", 2);
-            if (parts.length != 2 || !parts[0].equals(domain)) {
-                continue;
-            }
-            for (String envName : entry.getValue()) {
-                String value = System.getenv(envName);
-                if (value != null && !value.isBlank()) {
-                    keys.add(parts[1]);
-                    break;
-                }
-            }
-        }
-        return keys;
+        return envOverlay.activeOverrides(domain).keySet();
+    }
+
+    /** PLAN-0307 T2.14: env-effective values for the UI lock metadata (T2.17). */
+    public Map<String, String> envOverridden(String domain) {
+        return envOverlay.activeOverrides(domain);
     }
 
     public EffectiveConfig effective(String domain, UUID userId, UUID workspaceId) {
@@ -222,22 +213,11 @@ public class ConfigService {
     }
 
     private boolean applyEnvOverlay(String domain, Map<String, String> merged) {
-        boolean applied = false;
-        for (Map.Entry<String, List<String>> entry : ENV_OVERLAY.entrySet()) {
-            String[] parts = entry.getKey().split("\\.", 2);
-            if (parts.length != 2 || !parts[0].equals(domain)) {
-                continue;
-            }
-            for (String envName : entry.getValue()) {
-                String value = System.getenv(envName);
-                if (value != null && !value.isBlank()) {
-                    merged.put(parts[1], value);
-                    applied = true;
-                    break;
-                }
-            }
-        }
-        return applied;
+        // PLAN-0307 T2.14: overlay source is the registry (decision #22); the
+        // merge chain stays env > workspace > user > instance > code default.
+        Map<String, String> overrides = envOverlay.activeOverrides(domain);
+        overrides.forEach(merged::put);
+        return !overrides.isEmpty();
     }
 
     private static String revisionOf(List<ConfigEntity> rows) {
