@@ -37,258 +37,305 @@ class ConfigControllerTest extends AbstractH2Test {
     }
 
     @Test
-    void putAdminConfig_rejectsUserRole() {
-        HttpHeaders headers = authHeaders(userToken());
-
+    void getConfig_unknownDomain_returns400() {
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/admin/logging"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("logLevel", "INFO"), headers), Map.class);
+            url("/api/v1/config/nonexistent"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(userToken())), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("INVALID_DOMAIN", resp.getBody().get("code"));
+    }
+
+    @Test
+    void putInstanceConfig_rejectsUserRole() {
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/instance/logging"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("logLevel", "INFO"), authHeaders(userToken())), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
     }
 
     @Test
-    void putAdminConfig_adminRole_succeeds() {
-        HttpHeaders headers = authHeaders(adminToken());
-
+    void putInstanceConfig_adminRole_succeeds() {
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/admin/logging"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("logLevel", "WARN"), headers), Map.class);
+            url("/api/v1/config/instance/logging"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("logLevel", "WARN"), authHeaders(adminToken())), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
     }
 
     @Test
-    void putAdminConfig_validatesSchema() {
-        HttpHeaders headers = authHeaders(adminToken());
-
+    void putInstanceConfig_validatesSchema() {
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/admin/logging"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("logLevel", "INVALID"), headers), Map.class);
+            url("/api/v1/config/instance/logging"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("logLevel", "INVALID"), authHeaders(adminToken())), Map.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
     }
 
     @Test
     void putUserConfig_llmProvider_succeeds() {
-        HttpHeaders headers = authHeaders(userToken());
-
         ResponseEntity<Map> resp = restTemplate.exchange(
             url("/api/v1/config/user/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("imageProvider", "deepseek"), headers), Map.class);
+            new HttpEntity<>(Map.of("defaultModel", "user-model"), authHeaders(userToken())), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
     }
 
     @Test
-    void putUserConfig_llmProviderApiKey_rejectsOwnershipViolation() {
-        HttpHeaders headers = authHeaders(userToken());
-
+    void putUserConfig_providerSecret_rejected() {
         ResponseEntity<Map> resp = restTemplate.exchange(
             url("/api/v1/config/user/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("openaiApiKey", "sk-user-secret"), headers), Map.class);
+            new HttpEntity<>(Map.of("openaiApiKey", "sk-user-secret"), authHeaders(userToken())), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
         assertEquals("CONFIG_OWNERSHIP_VIOLATION", resp.getBody().get("code"));
     }
 
     @Test
-    void putUserConfig_embedding_succeeds() {
-        HttpHeaders headers = authHeaders(userToken());
-
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/user/embedding"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("model", "text-embedding-3-small", "dimensions", "1536"), headers), Map.class);
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-    }
-
-    @Test
-    void putUserConfig_rag_succeeds() {
-        HttpHeaders headers = authHeaders(userToken());
-
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/user/rag"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("chunkSize", "512"), headers), Map.class);
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-    }
-
-    @Test
-    void putUserConfig_logging_succeeds() {
-        HttpHeaders headers = authHeaders(userToken());
-
+    void putUserConfig_loggingDomain_rejected() {
         ResponseEntity<Map> resp = restTemplate.exchange(
             url("/api/v1/config/user/logging"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("logLevel", "DEBUG"), headers), Map.class);
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-    }
-
-    @Test
-    void putUserConfig_workspaceConfig_succeeds() {
-        HttpHeaders headers = authHeaders(userToken());
-
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/user/workspace-config"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("profile", "default"), headers), Map.class);
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-    }
-
-    @Test
-    void putUserConfig_infrastructure_rejected() {
-        HttpHeaders headers = authHeaders(userToken());
-
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/user/infrastructure"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("dbUrl", "jdbc:h2:mem:test"), headers), Map.class);
+            new HttpEntity<>(Map.of("logLevel", "DEBUG"), authHeaders(userToken())), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
     }
 
     @Test
-    void importConfig_adminOnly_succeeds() {
-        HttpHeaders headers = authHeaders(adminToken());
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/import"), HttpMethod.POST,
-            new HttpEntity<>("{\"logging\":{\"logLevel\":\"ERROR\"}}", headers), Map.class);
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-    }
-
-    @Test
-    void importConfig_rejectsUserRole() {
-        HttpHeaders headers = authHeaders(userToken());
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/import"), HttpMethod.POST,
-            new HttpEntity<>("{\"logging\":{\"logLevel\":\"ERROR\"}}", headers), Map.class);
-
-        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
-    }
-
-    @Test
-    void getConfig_masksApiKeysForUser() {
+    void agentRuntime_isMaskedForNonAdmin() {
         HttpHeaders adminHeaders = authHeaders(adminToken());
-        restTemplate.exchange(url("/api/v1/config/admin/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("openaiApiKey", "sk-abcdefghijklmnopqrst"), adminHeaders), Map.class);
+        ResponseEntity<Map> put = restTemplate.exchange(
+            url("/api/v1/config/instance/agent-runtime"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("instructions", "baseline prompt"), adminHeaders), Map.class);
+        assertEquals(HttpStatus.OK, put.getStatusCode());
 
-        HttpHeaders userHeaders = authHeaders(userToken());
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/llm-provider"), HttpMethod.GET,
-            new HttpEntity<>(userHeaders), Map.class);
+        ResponseEntity<Map> userRead = restTemplate.exchange(
+            url("/api/v1/config/agent-runtime"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(userToken())), Map.class);
+        assertEquals(HttpStatus.OK, userRead.getStatusCode());
+        assertEquals("****", userRead.getBody().get("instructions"));
 
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-        Map body = resp.getBody();
-        assertNotNull(body);
-        String masked = (String) body.get("openaiApiKey");
-        assertNotNull(masked);
-        assertFalse(masked.contains("abcdefghijklmnopqrst"), "API key should be masked for non-admin");
-        assertTrue(masked.contains("****"), "masked value should contain ****");
-    }
-
-    @Test
-    void getConfig_returnsFullKeysForAdmin() {
-        HttpHeaders adminHeaders = authHeaders(adminToken());
-        restTemplate.exchange(url("/api/v1/config/admin/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("openaiApiKey", "sk-abcdefghijklmnopqrst"), adminHeaders), Map.class);
-
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/api/v1/config/llm-provider"), HttpMethod.GET,
+        ResponseEntity<Map> adminRead = restTemplate.exchange(
+            url("/api/v1/config/agent-runtime"), HttpMethod.GET,
             new HttpEntity<>(adminHeaders), Map.class);
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-        Map body = resp.getBody();
-        assertNotNull(body);
-        assertEquals("sk-abcdefghijklmnopqrst", body.get("openaiApiKey"));
+        assertEquals(HttpStatus.OK, adminRead.getStatusCode());
+        assertEquals("baseline prompt", adminRead.getBody().get("instructions"));
     }
 
     @Test
-    void exportConfig_adminOnly_succeeds() {
-        HttpHeaders headers = authHeaders(adminToken());
+    void workspaceLayer_resolvesOverUserAndInstance() {
+        String token = userToken();
+        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        assertNotNull(workspaceId);
 
-        ResponseEntity<String> resp = restTemplate.exchange(
-            url("/api/v1/config/export?layer=admin"), HttpMethod.GET,
-            new HttpEntity<>(headers), String.class);
+        HttpHeaders headers = authHeaders(token);
+        headers.set("X-Workspace-Id", workspaceId);
+        ResponseEntity<Map> putInstance = restTemplate.exchange(
+            url("/api/v1/config/instance/llm-provider"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("defaultModel", "instance-model"), authHeaders(adminToken())), Map.class);
+        assertEquals(HttpStatus.OK, putInstance.getStatusCode());
 
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        ResponseEntity<Map> putWorkspace = restTemplate.exchange(
+            url("/api/v1/config/workspace/llm-provider"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("defaultModel", "workspace-model"), headers), Map.class);
+        assertEquals(HttpStatus.OK, putWorkspace.getStatusCode());
+
+        ResponseEntity<Map> resolved = restTemplate.exchange(
+            url("/api/v1/config/llm-provider?workspaceId=" + workspaceId), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(token)), Map.class);
+        assertEquals(HttpStatus.OK, resolved.getStatusCode());
+        assertEquals("workspace-model", resolved.getBody().get("defaultModel"));
+
+        ResponseEntity<Map> layerView = restTemplate.exchange(
+            url("/api/v1/config/llm-provider?layer=workspace&workspaceId=" + workspaceId), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(token)), Map.class);
+        assertEquals(HttpStatus.OK, layerView.getStatusCode());
+        assertEquals("workspace-model", layerView.getBody().get("defaultModel"));
+
+        ResponseEntity<Map> instanceView = restTemplate.exchange(
+            url("/api/v1/config/llm-provider?layer=instance"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(token)), Map.class);
+        assertEquals(HttpStatus.OK, instanceView.getStatusCode());
+        assertEquals("instance-model", instanceView.getBody().get("defaultModel"));
     }
 
     @Test
-    void internalConfig_withApiToken_succeeds() {
-        HttpHeaders headers = internalApiHeaders();
+    void internalEffective_returnsMergedEntries() {
+        restTemplate.exchange(
+            url("/api/v1/config/instance/logging"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("logLevel", "ERROR"), authHeaders(adminToken())), Map.class);
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/internal/v1/config/system/infrastructure"), HttpMethod.GET,
-            new HttpEntity<>(headers), Map.class);
+            url("/internal/v1/config/effective/logging"), HttpMethod.GET,
+            new HttpEntity<>(internalApiHeaders()), Map.class);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals("logging", resp.getBody().get("domain"));
+        assertNotNull(resp.getBody().get("revision"));
+        assertNotNull(resp.getBody().get("source"));
+        assertTrue(resp.getBody().get("entries") instanceof Map);
     }
 
     @Test
-    void internalConfig_wrongToken_rejected() {
+    void internalEffective_invalidDomain_returns400() {
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/internal/v1/config/effective/not-a-domain"), HttpMethod.GET,
+            new HttpEntity<>(internalApiHeaders()), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("INVALID_DOMAIN", resp.getBody().get("code"));
+    }
+
+    @Test
+    void internalEffective_rejectsWrongToken() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("wrong-token");
 
         ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/internal/v1/config/system/infrastructure"), HttpMethod.GET,
+            url("/internal/v1/config/effective/logging"), HttpMethod.GET,
             new HttpEntity<>(headers), Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, resp.getStatusCode());
     }
 
     @Test
-    void internalConfig_noToken_rejected() {
+    void deprecatedInternalLayerEndpoint_isGone() {
         ResponseEntity<Map> resp = restTemplate.exchange(
             url("/internal/v1/config/system/infrastructure"), HttpMethod.GET,
-            HttpEntity.EMPTY, Map.class);
+            new HttpEntity<>(internalApiHeaders()), Map.class);
 
-        assertEquals(HttpStatus.UNAUTHORIZED, resp.getStatusCode());
+        assertEquals(HttpStatus.NOT_FOUND, resp.getStatusCode());
     }
 
     @Test
-    void internalConfig_invalidLayer_returns400() {
-        HttpHeaders headers = internalApiHeaders();
+    void importConfig_instanceOnly() {
+        HttpHeaders adminHeaders = authHeaders(adminToken());
+        adminHeaders.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> ok = restTemplate.exchange(
+            url("/api/v1/config/import?layer=instance"), HttpMethod.POST,
+            new HttpEntity<>("{\"logging\":{\"logLevel\":\"ERROR\"}}", adminHeaders), Map.class);
+        assertEquals(HttpStatus.OK, ok.getStatusCode());
 
-        ResponseEntity<Map> resp = restTemplate.exchange(
-            url("/internal/v1/config/badlayer/logging"), HttpMethod.GET,
-            new HttpEntity<>(headers), Map.class);
-
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        HttpHeaders userHeaders = authHeaders(userToken());
+        userHeaders.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> forbidden = restTemplate.exchange(
+            url("/api/v1/config/import?layer=instance"), HttpMethod.POST,
+            new HttpEntity<>("{\"logging\":{\"logLevel\":\"ERROR\"}}", userHeaders), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
     }
 
     @Test
-    void mcpConfig_usesObjectEnvelopeForUserAndInternalRuntime() {
+    void exportConfig_adminOnly() {
+        ResponseEntity<String> ok = restTemplate.exchange(
+            url("/api/v1/config/export?layer=instance"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(adminToken())), String.class);
+        assertEquals(HttpStatus.OK, ok.getStatusCode());
+
+        ResponseEntity<Map> forbidden = restTemplate.exchange(
+            url("/api/v1/config/export?layer=instance"), HttpMethod.GET,
+            new HttpEntity<>(authHeaders(userToken())), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
+    }
+
+    @Test
+    void stdioServers_putGetAndGenerationConflict() {
         String token = userToken();
         String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
-        Map<String, Object> servers = Map.of(
-                "docs", Map.of("command", "npx", "args", List.of("docs-server")));
-        HttpHeaders userHeaders = authHeaders(token);
-        userHeaders.setContentType(MediaType.APPLICATION_JSON);
+        HttpHeaders headers = authHeaders(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
 
+        ResponseEntity<Map> initial = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/stdio-servers"), HttpMethod.GET,
+            new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, initial.getStatusCode());
+        assertEquals(((Number) initial.getBody().get("generation")).longValue(), 0L);
+        assertNotNull(initial.getBody().get("hash"));
+
+        Map<String, Object> putBody = Map.of(
+            "generation", 0,
+            "servers", Map.of("docs", Map.of("command", "npx", "args", List.of("docs-server"))));
         ResponseEntity<Map> put = restTemplate.exchange(
-                url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.PUT,
-                new HttpEntity<>(Map.of("mcpServers", servers), userHeaders), Map.class);
+            url("/api/v1/workspaces/" + workspaceId + "/stdio-servers"), HttpMethod.PUT,
+            new HttpEntity<>(putBody, headers), Map.class);
+        assertEquals(HttpStatus.OK, put.getStatusCode());
+        assertTrue(((Number) put.getBody().get("generation")).longValue() > 0L);
 
+        ResponseEntity<Map> after = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/stdio-servers"), HttpMethod.GET,
+            new HttpEntity<>(headers), Map.class);
+        Map<?, ?> servers = (Map<?, ?>) after.getBody().get("servers");
+        assertEquals("npx", ((Map<?, ?>) servers.get("docs")).get("command"));
+
+        ResponseEntity<Map> conflict = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/stdio-servers"), HttpMethod.PUT,
+            new HttpEntity<>(putBody, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
+        assertEquals("GENERATION_CONFLICT", conflict.getBody().get("code"));
+    }
+
+    @Test
+    void stdioServers_internalEndpointReturnsArray() {
+        String token = userToken();
+        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        HttpHeaders headers = authHeaders(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        Map<String, Object> putBody = Map.of(
+            "generation", 0,
+            "servers", Map.of("docs", Map.of("command", "npx", "args", List.of("docs-server"))));
+        restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/stdio-servers"), HttpMethod.PUT,
+            new HttpEntity<>(putBody, headers), Map.class);
+
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/internal/v1/workspaces/" + workspaceId + "/stdio-servers"), HttpMethod.GET,
+            new HttpEntity<>(internalApiHeaders()), Map.class);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        List<?> servers = (List<?>) resp.getBody().get("servers");
+        assertEquals(1, servers.size());
+        Map<?, ?> first = (Map<?, ?>) servers.get(0);
+        assertEquals("docs", first.get("name"));
+        assertEquals("npx", ((Map<?, ?>) first.get("config")).get("command"));
+        assertNotNull(resp.getBody().get("hash"));
+    }
+
+    @Test
+    void mcpConfig_splitsAndMergesStdioAndRemote() {
+        String token = userToken();
+        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        HttpHeaders headers = authHeaders(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Map<String, Object> putBody = Map.of("mcpServers", Map.of(
+            "docs", Map.of("command", "npx", "args", List.of("docs-server")),
+            "remote1", Map.of("url", "https://example.com/mcp")));
+        ResponseEntity<Map> put = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.PUT,
+            new HttpEntity<>(putBody, headers), Map.class);
         assertEquals(HttpStatus.OK, put.getStatusCode());
 
-        ResponseEntity<Map> userGet = restTemplate.exchange(
-                url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.GET,
-                new HttpEntity<>(authHeaders(token)), Map.class);
-        assertEquals(HttpStatus.OK, userGet.getStatusCode());
-        assertTrue(userGet.getBody().get("mcpServers") instanceof Map);
+        ResponseEntity<Map> get = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.GET,
+            new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, get.getStatusCode());
+        Map<?, ?> servers = (Map<?, ?>) get.getBody().get("mcpServers");
+        assertEquals("npx", ((Map<?, ?>) servers.get("docs")).get("command"));
+        assertEquals("https://example.com/mcp", ((Map<?, ?>) servers.get("remote1")).get("url"));
+    }
 
-        ResponseEntity<Map> internalGet = restTemplate.exchange(
-                url("/internal/v1/config/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.GET,
-                new HttpEntity<>(internalApiHeaders()), Map.class);
-        assertEquals(HttpStatus.OK, internalGet.getStatusCode());
-        Object internalServers = internalGet.getBody().get("mcpServers");
-        assertTrue(internalServers instanceof Map);
-        assertEquals("npx", ((Map<?, ?>) ((Map<?, ?>) internalServers).get("docs")).get("command"));
+    @Test
+    void mcpConfig_ambiguousEntry_returns400() {
+        String token = userToken();
+        String workspaceId = jwtTokenProvider.getWorkspaceIdFromToken(token);
+        HttpHeaders headers = authHeaders(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Map<String, Object> putBody = Map.of("mcpServers", Map.of(
+            "broken", Map.of("command", "npx", "url", "https://example.com/mcp")));
+        ResponseEntity<Map> put = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.PUT,
+            new HttpEntity<>(putBody, headers), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, put.getStatusCode());
     }
 
     private HttpHeaders authHeaders(String token) {

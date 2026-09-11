@@ -5,15 +5,7 @@
     "levelAgent": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] },
     "levelCp": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] },
     "levelRuntime": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] },
-    "levelUi": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] },
-    "logDir": { "type": "string" },
-    "auditConsole": { "type": "string", "enum": ["true", "false"] },
-    "useRegistry": { "type": "string", "enum": ["true", "false"] },
-    "useSupervisor": { "type": "string", "enum": ["true", "false"] },
-    "workersDir": { "type": "string" },
-    "runtimeFilter": { "type": "string" },
-    "instructions": { "type": "string" },
-    "userName": { "type": "string" }
+    "levelUi": { "type": "string", "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"] }
   },
   "additionalProperties": false
 }

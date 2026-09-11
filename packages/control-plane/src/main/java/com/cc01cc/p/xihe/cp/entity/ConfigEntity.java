@@ -1,26 +1,30 @@
 package com.cc01cc.p.xihe.cp.entity;
 
 import jakarta.persistence.*;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * PLAN-0307 decision #37: three-tier config rows bound by scope columns.
+ * layer=instance -> user_id/workspace_id NULL; layer=user -> user_id set;
+ * layer=workspace -> workspace_id set. Partial unique indexes live in V12.
+ */
 @Entity
-@Table(name = "config", uniqueConstraints = {
-    @UniqueConstraint(columnNames = {"environment", "layer", "domain", "config_key"})
-})
+@Table(name = "config")
 public class ConfigEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false, length = 64)
-    private String environment = "default";
-
     @Column(nullable = false, length = 16)
     private String layer;
+
+    @Column(name = "user_id")
+    private UUID userId;
+
+    @Column(name = "workspace_id")
+    private UUID workspaceId;
 
     @Column(nullable = false, length = 32)
     private String domain;
@@ -30,13 +34,6 @@ public class ConfigEntity {
 
     @Column(name = "config_value", columnDefinition = "TEXT")
     private String configValue;
-
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "mcp_config", columnDefinition = "jsonb")
-    private String mcpConfig;
-
-    @Column(name = "is_set", nullable = false)
-    private Boolean isSet = true;
 
     @Column(name = "updated_by", length = 64)
     private String updatedBy;
@@ -66,11 +63,14 @@ public class ConfigEntity {
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
 
-    public String getEnvironment() { return environment; }
-    public void setEnvironment(String environment) { this.environment = environment; }
-
     public String getLayer() { return layer; }
     public void setLayer(String layer) { this.layer = layer; }
+
+    public UUID getUserId() { return userId; }
+    public void setUserId(UUID userId) { this.userId = userId; }
+
+    public UUID getWorkspaceId() { return workspaceId; }
+    public void setWorkspaceId(UUID workspaceId) { this.workspaceId = workspaceId; }
 
     public String getDomain() { return domain; }
     public void setDomain(String domain) { this.domain = domain; }
@@ -80,12 +80,6 @@ public class ConfigEntity {
 
     public String getConfigValue() { return configValue; }
     public void setConfigValue(String configValue) { this.configValue = configValue; }
-
-    public String getMcpConfig() { return mcpConfig; }
-    public void setMcpConfig(String mcpConfig) { this.mcpConfig = mcpConfig; }
-
-    public Boolean getIsSet() { return isSet; }
-    public void setIsSet(Boolean isSet) { this.isSet = isSet; }
 
     public String getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }

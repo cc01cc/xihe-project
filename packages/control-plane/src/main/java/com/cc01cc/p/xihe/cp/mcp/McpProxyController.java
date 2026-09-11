@@ -12,14 +12,14 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.McpServer;
+import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
 import com.cc01cc.p.xihe.cp.entity.McpToolAlias;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
-import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
+import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -68,7 +68,7 @@ public class McpProxyController {
     private final ApprovalService approvalService;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sse;
-    private final ConfigJpaRepository configRepo;
+    private final McpStdioServerRepository stdioServers;
     private final McpServerRepository mcpServers;
     private final McpToolAliasRepository aliases;
     private final Map<String, AtomicLong> toolGenerations = new ConcurrentHashMap<>();
@@ -94,7 +94,7 @@ public class McpProxyController {
             ApprovalService approvalService,
             ObjectMapper objectMapper,
             SseEmitterManager sse,
-            ConfigJpaRepository configRepo,
+            McpStdioServerRepository stdioServers,
             McpServerRepository mcpServers,
             McpToolAliasRepository aliases,
             WorkspaceService workspaceService,
@@ -109,7 +109,7 @@ public class McpProxyController {
         this.approvalService = approvalService;
         this.objectMapper = objectMapper;
         this.sse = sse;
-        this.configRepo = configRepo;
+        this.stdioServers = stdioServers;
         this.mcpServers = mcpServers;
         this.aliases = aliases;
         this.workspaceService = workspaceService;
@@ -166,7 +166,7 @@ public class McpProxyController {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(runtimeBaseUrl + "/internal/v1/runtime/workspaces/" + wsId + "/mcp"))
-                    .timeout(Duration.ofSeconds(forwardTimeoutS))
+                    .timeout(Duration.ofSeconds(forwardTimeoutS > 0 ? forwardTimeoutS : 30))
                     .header("MCP-Protocol-Version", "2026-07-28")
                     .header("Authorization", "Bearer " + runtimeServiceToken)
                     .header("Accept", "application/json")
@@ -212,7 +212,7 @@ public class McpProxyController {
                     ? requestedAccept : MediaType.TEXT_EVENT_STREAM_VALUE;
             var builder = HttpRequest.newBuilder()
                     .uri(URI.create(runtimeBaseUrl + "/internal/v1/runtime/workspaces/" + wsId + "/mcp"))
-                    .timeout(Duration.ofSeconds(forwardTimeoutS))
+                    .timeout(Duration.ofSeconds(forwardTimeoutS > 0 ? forwardTimeoutS : 30))
                     .header("Accept", accept)
                     .header("MCP-Protocol-Version", "2026-07-28")
                     .header("Authorization", "Bearer " + runtimeServiceToken)
@@ -263,36 +263,34 @@ public class McpProxyController {
                 }
             }
 
-            String mcpConfig = readMcpConfig(wsId);
-            if (mcpConfig != null) {
-                try {
-                    JsonNode configNode = objectMapper.readTree(mcpConfig);
-                    JsonNode servers = configNode.get("mcpServers");
-                    if (servers != null && servers.isObject()) {
-                        java.util.Iterator<String> serverIds = servers.fieldNames();
-                        while (serverIds.hasNext()) {
-                            String serverId = serverIds.next();
-                            ResponseEntity<String> stdioResp = forwardToRuntime(
-                                    wsId, serverId, body, headers, sessionId, access);
-                            if (stdioResp.getStatusCode().is2xxSuccessful()) {
-                                List<Map<String, Object>> stdioTools = extractToolsFromResponse(stdioResp.getBody());
-                                if (stdioTools != null) {
-                                    for (Map<String, Object> tool : stdioTools) {
-                                        String name = (String) tool.get("name");
-                                        if (name != null && !seenNames.contains(name)) {
-                                            mapping.put(name, serverId);
-                                            allTools.add(tool);
-                                            seenNames.add(name);
-                                        } else if (name != null && seenNames.contains(name)) {
-                                            logger.warn("Tool '{}' from server '{}' conflicts with built-in, skipped", name, serverId);
-                                        }
-                                    }
-                                }
+            // PLAN-0307 decision #27: stdio carriers come from mcp_stdio_servers.
+            List<McpStdioServer> stdio = new ArrayList<>();
+            try {
+                stdio.addAll(stdioServers.findByWorkspaceIdOrderByNameAsc(wsId));
+            } catch (Exception e) {
+                logger.warn("Stdio server list failed, skipping stdio merge: {}", e.getMessage());
+            }
+            for (McpStdioServer server : stdio) {
+                if (!server.isEnabled()) {
+                    continue;
+                }
+                String serverId = server.getName();
+                ResponseEntity<String> stdioResp = forwardToRuntime(
+                        wsId, serverId, body, headers, sessionId, access);
+                if (stdioResp.getStatusCode().is2xxSuccessful()) {
+                    List<Map<String, Object>> stdioTools = extractToolsFromResponse(stdioResp.getBody());
+                    if (stdioTools != null) {
+                        for (Map<String, Object> tool : stdioTools) {
+                            String name = (String) tool.get("name");
+                            if (name != null && !seenNames.contains(name)) {
+                                mapping.put(name, serverId);
+                                allTools.add(tool);
+                                seenNames.add(name);
+                            } else if (name != null && seenNames.contains(name)) {
+                                logger.warn("Tool '{}' from server '{}' conflicts with built-in, skipped", name, serverId);
                             }
                         }
                     }
-                } catch (Exception e) {
-                    logger.error("Failed to parse MCP config for tools/list: {}", e.getMessage(), e);
                 }
             }
 
@@ -559,7 +557,7 @@ public class McpProxyController {
 
             HttpRequest forwardRequest = requestBuilder
                 .POST(HttpRequest.BodyPublishers.ofString(normalizeRuntimeBody(body, protocolVersion)))
-                .timeout(Duration.ofSeconds(forwardTimeoutS))
+                .timeout(Duration.ofSeconds(forwardTimeoutS > 0 ? forwardTimeoutS : 30))
                 .build();
 
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
@@ -867,7 +865,7 @@ public class McpProxyController {
             copyOperationHeaders(headers, forwardBuilder);
             HttpRequest forwardRequest = forwardBuilder
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(request)))
-                    .timeout(Duration.ofSeconds(forwardTimeoutS))
+                    .timeout(Duration.ofSeconds(forwardTimeoutS > 0 ? forwardTimeoutS : 30))
                     .build();
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
             finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);
@@ -1120,12 +1118,6 @@ public class McpProxyController {
 
     private boolean conflicts(String first, String second) {
         return first != null && second != null && !first.equals(second);
-    }
-
-    private String readMcpConfig(String wsId) {
-        Optional<ConfigEntity> opt = configRepo
-            .findByEnvironmentAndLayerAndDomainAndConfigKey(wsId, "workspace", "mcp", "mcpServers");
-        return opt.map(ConfigEntity::getMcpConfig).orElse(null);
     }
 
     private String signSessionId(String wsId, String rawSessionId) {

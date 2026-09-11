@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "softThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
+        "hardThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
+        "keepRecentMessages": { "type": "integer", "minimum": 0, "maximum": 200 }
+      }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxInputTokens": { "type": "integer", "minimum": 1024 },
+          "tokenizerRef": { "type": "string" },
+          "softThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
+          "hardThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
+          "keepRecentMessages": { "type": "integer", "minimum": 0, "maximum": 200 }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

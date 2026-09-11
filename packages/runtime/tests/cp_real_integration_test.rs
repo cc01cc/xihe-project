@@ -9,11 +9,6 @@ fn cp_port() -> u16 {
         .unwrap_or(12631)
 }
 
-fn cp_api_token() -> String {
-    std::env::var("XIHE_CP_API_TOKEN")
-        .expect("XIHE_CP_API_TOKEN must be set for real CP integration tests")
-}
-
 fn test_password() -> String {
     format!("runtime-test-{}", uuid::Uuid::new_v4())
 }
@@ -32,20 +27,6 @@ async fn test_cp_health_endpoint() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "UP");
-}
-
-#[tokio::test]
-#[ignore = "requires running Control Plane — set XIHE_CP_PORT and start CP first"]
-async fn test_config_client_sync_with_real_cp() {
-    let mut client = xihe_runtime::config_client::ConfigClient::new(&cp_url(), &cp_api_token());
-    let result = client.sync().await;
-
-    assert!(result.is_ok());
-
-    let provider_api_key = client.get("llm-provider", "openaiApiKey");
-    let log_level = client.get("logging", "logLevel");
-
-    assert!(provider_api_key.is_some() || log_level.is_some());
 }
 
 #[tokio::test]

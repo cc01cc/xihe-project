@@ -10,6 +10,7 @@ import org.springframework.web.context.request.async.AsyncRequestNotUsableExcept
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -45,8 +46,14 @@ public class ProblemDetailsHandler {
 
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> forbidden(AccessDeniedException exception, HttpServletRequest request) {
-        logger.warn("Forbidden request at {}", request.getRequestURI(), exception);
+        logger.warn("Forbidden request at {}: {}", request.getRequestURI(), exception);
         return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Access denied", request);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> notFound(NoResourceFoundException exception, HttpServletRequest request) {
+        logger.debug("Unmapped path at {}", request.getRequestURI());
+        return problem(HttpStatus.NOT_FOUND, "NOT_FOUND", "Resource not found", request);
     }
 
     @ExceptionHandler(Exception.class)

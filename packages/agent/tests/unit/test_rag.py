@@ -41,3 +41,33 @@ async def test_rag_enrichment_skips_unconfigured_embedding(monkeypatch):
 
     assert result == "instructions"
     embedding_service.embed.assert_not_awaited()
+
+
+class TestRagConfigDefaults:
+    def test_defaults_come_from_rag_domain(self, monkeypatch):
+        values = {
+            ("rag", "chunkSize"): "2048",
+            ("rag", "chunkOverlap"): "256",
+            ("rag", "topK"): "9",
+            ("rag", "minScore"): "0.42",
+        }
+        monkeypatch.setattr(
+            main.config_client, "get", lambda domain, key: values.get((domain, key))
+        )
+
+        assert main._rag_config_defaults() == {
+            "chunkSize": 2048,
+            "chunkOverlap": 256,
+            "topK": 9,
+            "minScore": 0.42,
+        }
+
+    def test_defaults_fall_back_when_unset(self, monkeypatch):
+        monkeypatch.setattr(main.config_client, "get", lambda domain, key: None)
+
+        assert main._rag_config_defaults() == {
+            "chunkSize": 1000,
+            "chunkOverlap": 200,
+            "topK": 5,
+            "minScore": 0.0,
+        }

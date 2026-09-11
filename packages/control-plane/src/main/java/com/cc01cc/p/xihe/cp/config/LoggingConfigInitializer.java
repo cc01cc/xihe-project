@@ -21,7 +21,7 @@ public class LoggingConfigInitializer {
 
     @EventListener(ApplicationReadyEvent.class)
     public void onReady() {
-        String levelCp = configService.resolve("default", "logging", "levelCp");
+        String levelCp = configService.resolve("logging", "levelCp", null, null);
         if (levelCp != null && !levelCp.isEmpty()) {
             LogLevel logLevel = parseLogLevel(levelCp);
             if (logLevel != null) {
@@ -31,7 +31,7 @@ public class LoggingConfigInitializer {
             }
         }
 
-        String logLevel = configService.resolve("default", "logging", "logLevel");
+        String logLevel = configService.resolve("logging", "logLevel", null, null);
         if (logLevel != null && !logLevel.isEmpty()) {
             LogLevel parsed = parseLogLevel(logLevel);
             if (parsed != null) {

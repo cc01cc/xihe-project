@@ -2,10 +2,7 @@
   "type": "object",
   "properties": {
     "theme": { "type": "string", "enum": ["dark", "light", "system"] },
-    "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z][a-z]+)?$" },
-    "defaultModel": { "type": "string" },
-    "maxTokens": { "type": ["integer", "string"], "minimum": 1 },
-    "temperature": { "type": ["number", "string"], "minimum": 0, "maximum": 2 }
+    "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z][a-z]+)?$" }
   },
   "additionalProperties": false
 }

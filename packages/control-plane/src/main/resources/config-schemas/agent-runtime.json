@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "useRegistry": { "type": "string", "enum": ["true", "false"] },
+    "useSupervisor": { "type": "string", "enum": ["true", "false"] },
+    "workersDir": { "type": "string" },
+    "instructions": { "type": "string" }
+  },
+  "additionalProperties": false
+}

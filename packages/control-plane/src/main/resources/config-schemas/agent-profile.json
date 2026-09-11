@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "userName": { "type": "string" }
+  },
+  "additionalProperties": false
+}

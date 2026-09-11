@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.config;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -11,6 +12,7 @@ import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,259 +30,183 @@ class ConfigServiceTest {
     @Autowired
     private ConfigAuditRepository auditRepo;
 
-    @Test
-    void init_seedsInfrastructureDomain() {
-        // init() is @PostConstruct, but other tests may have cleaned the DB
-        // through cleanDb(). Re-invoke to guarantee seed state.
-        repo.deleteAll();
+    private final UUID userA = UUID.randomUUID();
+    private final UUID userB = UUID.randomUUID();
+    private final UUID wsA = UUID.randomUUID();
+    private final UUID wsB = UUID.randomUUID();
+
+    @BeforeEach
+    void cleanDb() {
         auditRepo.deleteAll();
-        configService.init();
-        assertTrue(repo.countByEnvironmentAndLayer("default", "system") > 0,
-            "init() should seed infrastructure domain");
-        assertTrue(repo.findByEnvironmentAndLayerAndDomain("default", "system", "infrastructure")
-            .stream().anyMatch(e -> "dbUrl".equals(e.getConfigKey())));
+        repo.deleteAll();
     }
 
     @Test
-    void resolveDomain_returnsUserPrecedence() {
-        cleanDb();
-        configService.putLayer("default", "system", "logging",
-            Map.of("logLevel", "INFO"), "system");
-        configService.putLayer("default", "admin", "logging",
-            Map.of("logLevel", "DEBUG"), "admin");
+    void putLayer_instance_isScopedWithoutIdentifiers() {
+        configService.putLayer("instance", "logging", Map.of("logLevel", "WARN"), "admin", null, null);
 
-        Map<String, String> result = configService.resolveDomain("default", "logging");
-        assertEquals("DEBUG", result.get("logLevel"), "admin should override system");
+        Map<String, String> entries = configService.layerEntries("instance", "logging", null, null);
+        assertEquals("WARN", entries.get("logLevel"));
     }
 
     @Test
-    void resolveDomain_userOverridesAdmin() {
-        cleanDb();
-        configService.putLayer("default", "system", "user-preference",
-            Map.of("theme", "light"), "system");
-        configService.putLayer("default", "admin", "user-preference",
-            Map.of("theme", "dark"), "admin");
-        configService.putLayer("default", "user", "user-preference",
-            Map.of("theme", "system"), "user");
+    void resolve_workspaceOverridesUserOverridesInstance() {
+        configService.putLayer("instance", "llm-provider",
+            Map.of("defaultModel", "instance-model"), "admin", null, null);
+        configService.putLayer("user", "llm-provider",
+            Map.of("defaultModel", "user-model"), "user", userA, null);
+        configService.putLayer("workspace", "llm-provider",
+            Map.of("defaultModel", "workspace-model"), "user", null, wsA);
 
-        Map<String, String> result = configService.resolveDomain("default", "user-preference");
-        assertEquals("system", result.get("theme"), "user should override admin");
+        assertEquals("workspace-model",
+            configService.resolveDomain("llm-provider", userA, wsA).get("defaultModel"));
+        assertEquals("user-model",
+            configService.resolveDomain("llm-provider", userA, null).get("defaultModel"));
+        assertEquals("instance-model",
+            configService.resolveDomain("llm-provider", null, null).get("defaultModel"));
     }
 
     @Test
-    void resolveDomain_mergesAcrossLayers() {
-        cleanDb();
-        configService.putLayer("default", "system", "llm-provider",
-            Map.of("baseUrl", "https://api.openai.com/v1", "openaiApiKey", ""), "system");
-        configService.putLayer("default", "admin", "llm-provider",
-            Map.of("openaiApiKey", "sk-test"), "admin");
+    void resolve_userLayerIsIsolatedByUserId() {
+        configService.putLayer("user", "llm-provider",
+            Map.of("defaultModel", "model-a"), "user", userA, null);
+        configService.putLayer("user", "llm-provider",
+            Map.of("defaultModel", "model-b"), "user", userB, null);
 
-        Map<String, String> result = configService.resolveDomain("default", "llm-provider");
-        assertEquals("sk-test", result.get("openaiApiKey"), "admin value should appear");
-        assertEquals("https://api.openai.com/v1", result.get("baseUrl"), "system fallback should appear");
+        assertEquals("model-a", configService.resolveDomain("llm-provider", userA, null).get("defaultModel"));
+        assertEquals("model-b", configService.resolveDomain("llm-provider", userB, null).get("defaultModel"));
     }
 
     @Test
-    void resolveDomain_emptyLayer_returnsFallback() {
-        cleanDb();
-        configService.putLayer("default", "system", "logging",
-            Map.of("logLevel", "WARN"), "system");
+    void resolve_workspaceLayerIsIsolatedByWorkspaceId() {
+        configService.putLayer("workspace", "rag",
+            Map.of("chunkSize", "256"), "user", null, wsA);
+        configService.putLayer("workspace", "rag",
+            Map.of("chunkSize", "2048"), "user", null, wsB);
 
-        Map<String, String> result = configService.resolveDomain("default", "logging");
-        assertEquals("WARN", result.get("logLevel"));
+        assertEquals("256", configService.resolveDomain("rag", null, wsA).get("chunkSize"));
+        assertEquals("2048", configService.resolveDomain("rag", null, wsB).get("chunkSize"));
     }
 
     @Test
-    void resolveDomain_unknownDomain_returnsEmpty() {
-        cleanDb();
-        Map<String, String> result = configService.resolveDomain("default", "nonexistent-domain");
-        assertTrue(result.isEmpty());
+    void effective_includesCodeDefaultsWhenUnset() {
+        ConfigService.EffectiveConfig effective = configService.effective("rag", null, null);
+
+        assertEquals("default", effective.source());
+        assertEquals("1000", effective.entries().get("chunkSize"));
+        assertEquals("5", effective.entries().get("topK"));
+        assertNotNull(effective.revision());
     }
 
     @Test
-    void resolve_returnsCorrectSingleValue() {
-        cleanDb();
-        configService.putLayer("default", "system", "logging",
-            Map.of("logLevel", "ERROR"), "system");
+    void effective_revisionChangesWhenRowsChange() {
+        ConfigService.EffectiveConfig before = configService.effective("logging", null, null);
+        configService.putLayer("instance", "logging", Map.of("logLevel", "DEBUG"), "admin", null, null);
+        ConfigService.EffectiveConfig after = configService.effective("logging", null, null);
 
-        String val = configService.resolve("default", "logging", "logLevel");
-        assertEquals("ERROR", val);
+        assertNotEquals(before.revision(), after.revision());
+        assertEquals("instance", after.source());
     }
 
     @Test
-    void resolve_unknownKey_returnsNull() {
-        cleanDb();
-        assertNull(configService.resolve("default", "logging", "nonexistentKey"));
+    void putLayer_userLoggingDomain_isRejected() {
+        assertThrows(ConfigService.ConfigAccessException.class, () ->
+            configService.putLayer("user", "logging", Map.of("logLevel", "DEBUG"), "user", userA, null));
+    }
+
+    @Test
+    void putLayer_userPreferenceAtWorkspaceLayer_isRejected() {
+        assertThrows(ConfigService.ConfigAccessException.class, () ->
+            configService.putLayer("workspace", "user-preference", Map.of("theme", "dark"), "user", null, wsA));
+    }
+
+    @Test
+    void putLayer_instructionsAtUserLayer_isRejected() {
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("instructions", "baseline prompt"), "admin", null, null);
+        assertThrows(ConfigService.ConfigAccessException.class, () ->
+            configService.putLayer("user", "agent-runtime",
+                Map.of("instructions", "override"), "user", userA, null));
+        configService.putLayer("user", "agent-runtime",
+            Map.of("useRegistry", "true"), "user", userA, null);
+    }
+
+    @Test
+    void putLayer_providerSecrets_areRejectedAtEveryLayer() {
+        assertThrows(ConfigService.ConfigOwnershipException.class, () ->
+            configService.putLayer("instance", "llm-provider",
+                Map.of("openaiApiKey", "sk-test"), "admin", null, null));
+        assertThrows(ConfigService.ConfigOwnershipException.class, () ->
+            configService.putLayer("user", "llm-provider",
+                Map.of("deepseekApiKey", "sk-test"), "user", userA, null));
+    }
+
+    @Test
+    void putLayer_unknownDomain_isRejected() {
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "nonexistent-domain",
+                Map.of("key", "value"), "admin", null, null));
     }
 
     @Test
     void putLayer_withValidation_rejectsInvalidData() {
-        cleanDb();
         assertThrows(IllegalArgumentException.class, () ->
-            configService.putLayer("default", "admin", "logging",
-                Map.of("logLevel", "INVALID_LEVEL"), "admin"),
-            "logging schema should reject invalid enum value");
-    }
-
-    @Test
-    void putLayer_withValidation_acceptsValidData() {
-        cleanDb();
-        configService.putLayer("default", "admin", "logging",
-            Map.of("logLevel", "DEBUG"), "admin");
-        Map<String, String> result = configService.resolveDomain("default", "logging");
-        assertEquals("DEBUG", result.get("logLevel"));
+            configService.putLayer("instance", "logging",
+                Map.of("logLevel", "INVALID_LEVEL"), "admin", null, null));
     }
 
     @Test
     void putLayer_extraProperty_rejectedByAdditionalProperties() {
-        cleanDb();
         Map<String, String> entries = new java.util.LinkedHashMap<>();
         entries.put("logLevel", "INFO");
         entries.put("unknownField", "value");
         assertThrows(IllegalArgumentException.class, () ->
-            configService.putLayer("default", "admin", "logging", entries, "admin"));
+            configService.putLayer("instance", "logging", entries, "admin", null, null));
     }
 
     @Test
     void deleteKey_removesEntryAndCreatesAudit() {
-        cleanDb();
-        configService.putLayer("default", "admin", "logging",
-            Map.of("logLevel", "DEBUG"), "admin");
-        configService.deleteKey("default", "admin", "logging", "logLevel", "tester");
+        configService.putLayer("instance", "logging", Map.of("logLevel", "DEBUG"), "admin", null, null);
+        configService.deleteKey("instance", "logging", "logLevel", "tester", null, null);
 
-        assertNull(configService.resolve("default", "logging", "logLevel"),
-            "deleted key should resolve to null (no system fallback)");
-
+        assertNull(configService.layerEntries("instance", "logging", null, null).get("logLevel"));
         List<ConfigAuditEntity> audits = auditRepo.findAll();
         assertFalse(audits.isEmpty(), "delete should create an audit entry");
     }
 
     @Test
-    void putLayer_createsAuditEntry() {
-        cleanDb();
-        configService.putLayer("default", "admin", "logging",
-            Map.of("logLevel", "INFO"), "admin");
+    void putLayer_createsAuditEntryWithNewLayerValue() {
+        configService.putLayer("user", "llm-provider",
+            Map.of("defaultModel", "m"), "tester", userA, null);
 
         List<ConfigAuditEntity> audits = auditRepo.findAll();
         assertFalse(audits.isEmpty());
-        assertEquals("INFO", audits.get(audits.size() - 1).getNewValue());
-    }
-
-    @Test
-    void putLayer_masksProviderSecretInAudit() {
-        cleanDb();
-        String secret = "sk-provider-secret-for-test";
-        configService.putLayer("default", "admin", "llm-provider",
-            Map.of("openaiApiKey", secret), "admin");
-
-        List<ConfigAuditEntity> audits = auditRepo.findAll();
         ConfigAuditEntity audit = audits.get(audits.size() - 1);
-        assertTrue(audit.getNewValue().startsWith("present:"));
-        assertFalse(audit.getNewValue().contains(secret));
-        assertFalse(audit.getNewValue().contains("sk-provider"));
+        assertEquals("user", audit.getLayer());
+        assertEquals("m", audit.getNewValue());
+        assertEquals("tester", audit.getChangedBy());
     }
 
     @Test
-    void putLayer_tracksChangedBy() {
-        cleanDb();
-        configService.putLayer("default", "admin", "logging",
-            Map.of("logLevel", "WARN"), "operator-1");
-
-        List<ConfigAuditEntity> audits = auditRepo.findAll();
-        String lastChangedBy = audits.get(audits.size() - 1).getChangedBy();
-        assertEquals("operator-1", lastChangedBy);
-    }
-
-    @Test
-    void importJsonc_parsesAndWrites() {
-        cleanDb();
+    void importJsonc_writesInstanceLayer() {
         String jsonc = "{\n  // comment\n  \"logging\": { \"logLevel\": \"TRACE\" }\n}";
-        configService.importJsonc(jsonc, "admin");
+        configService.importJsonc(jsonc, "instance", null, null);
 
-        Map<String, String> result = configService.resolveDomain("default", "logging");
-        assertEquals("TRACE", result.get("logLevel"));
+        assertEquals("TRACE", configService.layerEntries("instance", "logging", null, null).get("logLevel"));
     }
 
     @Test
     void importJsonc_invalidContent_throws() {
         assertThrows(IllegalArgumentException.class, () ->
-            configService.importJsonc("not json", "admin"));
+            configService.importJsonc("not json", "instance", null, null));
     }
 
     @Test
-    void importJsonc_acceptsOpenAiProviderBinding() {
-        cleanDb();
-        configService.importJsonc("""
-            {
-              "llm-provider": {
-                "defaultProvider": "openai",
-                "openaiApiKey": "sk-fake-openai-key",
-                "openaiModel": "fake-openai",
-                "openaiApiBase": "http://127.0.0.1:13642/openai/v1"
-              },
-              "user-preference": { "defaultModel": "fake-openai" }
-            }
-            """, "admin");
+    void exportJsonc_returnsInstanceKeys() {
+        configService.putLayer("instance", "logging", Map.of("logLevel", "INFO"), "admin", null, null);
 
-        assertEquals("openai", configService.resolve("default", "llm-provider", "defaultProvider"));
-        assertEquals("fake-openai", configService.resolve("default", "user-preference", "defaultModel"));
-    }
-
-    @Test
-    void importJsonc_acceptsFakeProviderMatrix() {
-        cleanDb();
-        configService.importJsonc("""
-            {
-              "llm-provider": {
-                "defaultProvider": "openai",
-                "openaiApiKey": "sk-fake-openai-key",
-                "openaiModel": "fake-openai",
-                "openaiApiBase": "http://127.0.0.1:28131/openai/v1",
-                "deepseekApiKey": "fake-deepseek-key",
-                "deepseekModel": "fake-deepseek",
-                "deepseekApiBase": "http://127.0.0.1:28131/deepseek/v1"
-              },
-              "user-preference": { "defaultModel": "fake-openai" }
-            }
-            """, "admin");
-
-        assertEquals("fake-deepseek", configService.resolve("default", "llm-provider", "deepseekModel"));
-    }
-
-    @Test
-    void exportJsonc_returnsAllKeys() {
-        cleanDb();
-        configService.putLayer("default", "admin", "logging",
-            Map.of("logLevel", "INFO", "auditConsole", "true"), "admin");
-
-        String exported = configService.exportJsonc("admin");
+        String exported = configService.exportJsonc("instance", null, null);
         assertTrue(exported.contains("logLevel"));
         assertTrue(exported.contains("INFO"));
-    }
-
-    @Test
-    void environmentIsolation_keepsLayersSeparate() {
-        cleanDb();
-        configService.putLayer("default", "system", "logging",
-            Map.of("logLevel", "INFO"), "system");
-        configService.putLayer("default", "admin", "logging",
-            Map.of("logLevel", "DEBUG"), "admin");
-
-        Map<String, String> result = configService.resolveDomain("default", "logging");
-        assertEquals("DEBUG", result.get("logLevel"));
-    }
-
-    @Test
-    void isSystemLayerEmpty_returnsCorrectState() {
-        cleanDb();
-        assertTrue(configService.isSystemLayerEmpty());
-        configService.putLayer("default", "system", "infrastructure",
-            Map.of("dbUrl", "test"), "system");
-        assertFalse(configService.isSystemLayerEmpty());
-    }
-
-    private void cleanDb() {
-        auditRepo.deleteAll();
-        repo.deleteAll();
     }
 }

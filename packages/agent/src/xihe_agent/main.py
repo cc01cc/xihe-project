@@ -43,8 +43,8 @@ from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.llm.base import LLMConfig, ProviderName, create_llm
 from xihe_agent.llm.models import _models_router, fetch_model_catalog
-from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.llm.models import router as models_router
+from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.rag import EmbeddingService, LiteLLMEmbeddings, VectorStore
 from xihe_agent.rag import chunk_document as rag_chunk
 from xihe_agent.registry.registry import WorkerRegistry
@@ -220,9 +220,8 @@ run_cancel_registry = RunCancelRegistry()
 
 # RAG
 PG_DSN = (
-    config_client.get("infrastructure", "pgDsn")
-    or config_client.get("workspace-config", "pgDsn")
-    or "postgresql+psycopg://xihe:@postgres:5432/xihe"
+    get_env("XIHE_PG_DSN")
+    or "postgresql+psycopg://xihe:@localhost:12634/xihe"
 )
 embedding_model: str | None = None
 _embedding_api_key: str | None = None
@@ -271,17 +270,17 @@ def _refresh_embedding_config() -> None:
 _refresh_embedding_config()
 
 AGENT_INSTRUCTIONS = (
-    config_client.get("logging", "instructions")
+    config_client.get("agent-runtime", "instructions")
     or "You are xihe Agent. Answer in Chinese by default. "
     "Use the provided tools whenever the user asks about workspace files, directories, "
     "or commands, then answer with the tool results."
 )
 AGENT_USER_NAME = (
-    config_client.get("logging", "userName")
+    config_client.get("agent-profile", "userName")
     or "User"
 )
-USE_SUPERVISOR = config_client.get_bool("logging", "useSupervisor")
-USE_REGISTRY = config_client.get_bool("logging", "useRegistry")
+USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
+USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
 
 worker_registry: WorkerRegistry | None = None
 _watcher_observer: Any = None
@@ -413,12 +412,12 @@ async def reload_runtime_config(reason: str) -> dict[str, Any]:
         _runtime_config_revision = config_client.config_revision
         _refresh_embedding_config()
 
-        if cc_instructions := config_client.get("logging", "instructions"):
+        if cc_instructions := config_client.get("agent-runtime", "instructions"):
             AGENT_INSTRUCTIONS = cc_instructions
-        if cc_user_name := config_client.get("logging", "userName"):
+        if cc_user_name := config_client.get("agent-profile", "userName"):
             AGENT_USER_NAME = cc_user_name
-        USE_SUPERVISOR = config_client.get_bool("logging", "useSupervisor")
-        USE_REGISTRY = config_client.get_bool("logging", "useRegistry")
+        USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
+        USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
         _agent_status = "ok" if staged_ready == "ready" else "degraded"
 
         logger.info(
@@ -553,7 +552,7 @@ async def lifespan(app: FastAPI):
         # Registry startup must not initialize MCP. Workspace/tool requests
         # discover tools lazily in the request-scoped workspace path.
         mcp_tools: list[Any] = []
-        _workers_dir = config_client.get("logging", "workersDir")
+        _workers_dir = config_client.get("agent-runtime", "workersDir")
         worker_registry = WorkerRegistry(workers_dir=_workers_dir)
         worker_registry.load_all(model, mcp_tools, custom_tools)
         _watcher_observer, _watcher_event_handler = start_watcher(
@@ -1120,10 +1119,25 @@ async def cancel_run(run_id: str, request: Request, _token: None = Depends(verif
     )
 
 
+def _rag_config_defaults() -> dict[str, float | int]:
+    """PLAN-0307 T2.4: RAG defaults come from the DB `rag` domain; request params win."""
+    return {
+        "chunkSize": int(config_client.get("rag", "chunkSize") or 1000),
+        "chunkOverlap": int(config_client.get("rag", "chunkOverlap") or 200),
+        "topK": int(config_client.get("rag", "topK") or 5),
+        "minScore": float(config_client.get("rag", "minScore") or 0.0),
+    }
+
+
 @app.post("/internal/v1/agent/rag/ingest")
-async def rag_ingest(file: UploadFile = File(...), chunk_size: int = Form(1000, alias="chunkSize"), chunk_overlap: int = Form(200, alias="chunkOverlap"), _token: None = Depends(verify_api_token)):
+async def rag_ingest(file: UploadFile = File(...), chunk_size: int | None = Form(None, alias="chunkSize"), chunk_overlap: int | None = Form(None, alias="chunkOverlap"), _token: None = Depends(verify_api_token)):
     if not embedding_enabled:
         raise HTTPException(status_code=503, detail="RAG embedding provider is not configured")
+    defaults = _rag_config_defaults()
+    if chunk_size is None:
+        chunk_size = defaults["chunkSize"]
+    if chunk_overlap is None:
+        chunk_overlap = defaults["chunkOverlap"]
     content = (await file.read()).decode("utf-8", errors="replace")
     chunks = rag_chunk(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap, metadata={"filename": file.filename})
     doc_ids = []
@@ -1134,9 +1148,14 @@ async def rag_ingest(file: UploadFile = File(...), chunk_size: int = Form(1000, 
 
 
 @app.post("/internal/v1/agent/rag/search")
-async def rag_search(query: str = Form(...), top_k: int = Form(5, alias="topK"), min_score: float = Form(0.0, alias="minScore"), _token: None = Depends(verify_api_token)):
+async def rag_search(query: str = Form(...), top_k: int | None = Form(None, alias="topK"), min_score: float | None = Form(None, alias="minScore"), _token: None = Depends(verify_api_token)):
     if not embedding_enabled:
         raise HTTPException(status_code=503, detail="RAG embedding provider is not configured")
+    defaults = _rag_config_defaults()
+    if top_k is None:
+        top_k = defaults["topK"]
+    if min_score is None:
+        min_score = defaults["minScore"]
     query_emb = await embedding_service.embed(query)
     results = await vector_store.search(query_emb, top_k=top_k, min_score=min_score)
     return {"results": results}

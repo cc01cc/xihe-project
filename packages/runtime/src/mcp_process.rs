@@ -259,7 +259,7 @@ impl McpProcessManager {
         cp_url: &str,
         api_token: &str,
     ) -> (u64, String, Vec<(String, String, Vec<String>)>) {
-        let url = format!("{cp_url}/internal/v1/config/workspaces/{ws_id}/mcp-config");
+        let url = format!("{cp_url}/internal/v1/workspaces/{ws_id}/stdio-servers");
         match reqwest::Client::new()
             .get(&url)
             .bearer_auth(api_token)
@@ -279,13 +279,24 @@ impl McpProcessManager {
                             .unwrap_or("")
                             .to_string();
                         let mut servers = Vec::new();
-                        if let Some(servers_obj) =
-                            config.get("mcpServers").and_then(|v| v.as_object())
+                        if let Some(servers_arr) =
+                            config.get("servers").and_then(|v| v.as_array())
                         {
-                            for (sid, srv) in servers_obj {
-                                let cmd = srv.get("command").and_then(|v| v.as_str()).unwrap_or("");
-                                let args: Vec<String> = srv
-                                    .get("args")
+                            for srv in servers_arr {
+                                let sid = srv
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                if sid.is_empty() {
+                                    continue;
+                                }
+                                let config_obj = srv.get("config");
+                                let cmd = config_obj
+                                    .and_then(|c| c.get("command"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let args: Vec<String> = config_obj
+                                    .and_then(|c| c.get("args"))
                                     .and_then(|v| v.as_array())
                                     .map(|a| {
                                         a.iter()
@@ -293,19 +304,19 @@ impl McpProcessManager {
                                             .collect()
                                     })
                                     .unwrap_or_default();
-                                servers.push((sid.clone(), cmd.to_string(), args));
+                                servers.push((sid.to_string(), cmd.to_string(), args));
                             }
                         }
                         (generation, hash, servers)
                     }
                     Err(e) => {
-                        error!("failed to parse mcp-config: {e}");
+                        error!("failed to parse stdio-servers: {e}");
                         (0, String::new(), Vec::new())
                     }
                 }
             }
             Ok(resp) => {
-                warn!("mcp-config poll returned {}", resp.status());
+                warn!("stdio-servers poll returned {}", resp.status());
                 (0, String::new(), Vec::new())
             }
             Err(e) => {

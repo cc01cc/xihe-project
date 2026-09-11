@@ -8,8 +8,8 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
-import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
+import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -38,7 +38,7 @@ class McpProxyTest {
     private ApprovalService approvalService;
     private ObjectMapper objectMapper;
     private SseEmitterManager sseEmitterManager;
-    private ConfigJpaRepository configRepo;
+    private McpStdioServerRepository stdioServerRepository;
     private McpServerRepository mcpServerRepository;
     private McpToolAliasRepository aliasRepository;
     private WorkspaceService workspaceService;
@@ -54,7 +54,7 @@ class McpProxyTest {
         approvalService = mock(ApprovalService.class);
         objectMapper = new ObjectMapper();
         sseEmitterManager = mock(SseEmitterManager.class);
-        configRepo = mock(ConfigJpaRepository.class);
+        stdioServerRepository = mock(McpStdioServerRepository.class);
         mcpServerRepository = mock(McpServerRepository.class);
         aliasRepository = mock(McpToolAliasRepository.class);
         workspaceService = mock(WorkspaceService.class);
@@ -63,7 +63,7 @@ class McpProxyTest {
 
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
-                auditLogger, approvalService, objectMapper, sseEmitterManager, configRepo,
+                auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
                 mcpServerRepository, aliasRepository,
                 workspaceService, sessionRepository, operationService
         );
@@ -235,9 +235,8 @@ class McpProxyTest {
                     .thenReturn(java.util.List.of(server));
             when(mcpServerRepository.findById(server.getId()))
                     .thenReturn(java.util.Optional.of(server));
-            when(configRepo.findByEnvironmentAndLayerAndDomainAndConfigKey(
-                    TEST_WS_UUID, "workspace", "mcp", "mcpServers"))
-                    .thenReturn(java.util.Optional.empty());
+            when(stdioServerRepository.findByWorkspaceIdOrderByNameAsc(TEST_WS_UUID))
+                    .thenReturn(java.util.List.of());
             when(aliasRepository.findByWorkspaceId(java.util.UUID.fromString(TEST_WS_UUID))).thenReturn(java.util.List.of());
             when(aliasRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
