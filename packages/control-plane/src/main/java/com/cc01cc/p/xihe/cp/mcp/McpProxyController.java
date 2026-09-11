@@ -55,6 +55,13 @@ public class McpProxyController {
     private static final String REMOTE_SCOPE = "mcp:tools";
 
     private final HttpClient httpClient;
+
+    // PLAN-301 M1: forward-hop timeout, decoupled from the agent-side tool
+    // execution timeout (semantically different layers: CP waiting on the
+    // upstream vs the tool actually running). Env-configurable so cold
+    // proxies can be given room without a recompile.
+    @org.springframework.beans.factory.annotation.Value("${xihe.mcp.forward-timeout-s:30}")
+    private long forwardTimeoutS;
     private final RequestRewriter rewriter;
     private final PolicyEngine policy;
     private final AuditLogger audit;
@@ -159,7 +166,7 @@ public class McpProxyController {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(runtimeBaseUrl + "/internal/v1/runtime/workspaces/" + wsId + "/mcp"))
-                    .timeout(Duration.ofSeconds(30))
+                    .timeout(Duration.ofSeconds(forwardTimeoutS))
                     .header("MCP-Protocol-Version", "2026-07-28")
                     .header("Authorization", "Bearer " + runtimeServiceToken)
                     .header("Accept", "application/json")
@@ -205,7 +212,7 @@ public class McpProxyController {
                     ? requestedAccept : MediaType.TEXT_EVENT_STREAM_VALUE;
             var builder = HttpRequest.newBuilder()
                     .uri(URI.create(runtimeBaseUrl + "/internal/v1/runtime/workspaces/" + wsId + "/mcp"))
-                    .timeout(Duration.ofSeconds(30))
+                    .timeout(Duration.ofSeconds(forwardTimeoutS))
                     .header("Accept", accept)
                     .header("MCP-Protocol-Version", "2026-07-28")
                     .header("Authorization", "Bearer " + runtimeServiceToken)
@@ -537,7 +544,7 @@ public class McpProxyController {
 
             HttpRequest forwardRequest = requestBuilder
                 .POST(HttpRequest.BodyPublishers.ofString(normalizeRuntimeBody(body, protocolVersion)))
-                .timeout(Duration.ofSeconds(30))
+                .timeout(Duration.ofSeconds(forwardTimeoutS))
                 .build();
 
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
@@ -845,7 +852,7 @@ public class McpProxyController {
             copyOperationHeaders(headers, forwardBuilder);
             HttpRequest forwardRequest = forwardBuilder
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(request)))
-                    .timeout(Duration.ofSeconds(30))
+                    .timeout(Duration.ofSeconds(forwardTimeoutS))
                     .build();
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
             finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);

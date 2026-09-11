@@ -24,7 +24,28 @@ DEFAULT_MAX_RETRIES = 0
 # ApprovalMCPInterceptor: short timeout applies only to the post-grant HTTP call.
 # Post-grant MCP hop: Runtime write can outlast a bare 10–15s under Docker
 # exec; keep a hard bound but allow grant→forward→result to complete.
-DEFAULT_MCP_TOOL_TIMEOUT_S = float(os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S", "30"))
+def _parse_timeout_s(raw: str | None, default: float) -> float:
+    """PLAN-301 M1 (decision #4): fail-closed timeout parsing.
+
+    Invalid or non-positive values degrade to the default with a warning —
+    a misconfigured timeout must never produce an unbounded wait.
+    """
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid timeout value {!r}; falling back to {}", raw, default)
+        return default
+    if value <= 0:
+        logger.warning("Non-positive timeout value {!r}; falling back to {}", raw, default)
+        return default
+    return value
+
+
+DEFAULT_MCP_TOOL_TIMEOUT_S = _parse_timeout_s(
+    os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S"), default=30.0
+)
 APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id"
 _ACTIVE_CONTEXT: contextvars.ContextVar[AgentContext | None] = contextvars.ContextVar(
     "xihe_active_mcp_context", default=None
@@ -115,6 +136,8 @@ class ApprovalMCPInterceptor:
                 raise ApprovalTerminalError("Approval did not return a grant requestId")
             headers[APPROVAL_GRANT_HEADER] = grant_id
             # Post-approval Runtime call is local: fail fast if gateway stalls.
+            # PLAN-301 M1: same parsed constant as the read-only path — the
+            # approval hop does not change the execution time class.
             return await asyncio.wait_for(
                 handler(request.override(headers=headers or None)),
                 timeout=DEFAULT_MCP_TOOL_TIMEOUT_S,

@@ -1,6 +1,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+// PLAN-301 M1: exec output collection upper bound, configurable so the
+// cold-start first exec (container/image warm-up) can be given room without
+// recompiling. Agent-side wait_for is a separate layer (loose coupling across
+// the language boundary) — tune both together when scaling timeouts.
+fn exec_collect_timeout_secs() -> u64 {
+    std::env::var("XIHE_EXEC_COLLECT_TIMEOUT_S")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(30)
+}
+
 use bollard::Docker;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use tokio_stream::StreamExt;
@@ -117,7 +129,7 @@ impl WorkspaceExecutionRouter {
                 }
             }
         };
-        match tokio::time::timeout(Duration::from_secs(30), collect).await {
+        match tokio::time::timeout(Duration::from_secs(exec_collect_timeout_secs()), collect).await {
             Ok(_) => {},
             Err(_) => return Err(RuntimeError::Timeout),
         }
