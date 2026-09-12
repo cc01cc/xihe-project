@@ -4,7 +4,7 @@ import json
 import os
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -46,6 +46,73 @@ def _parse_timeout_s(raw: str | None, default: float) -> float:
 DEFAULT_MCP_TOOL_TIMEOUT_S = _parse_timeout_s(
     os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S"), default=30.0
 )
+
+# PLAN-0308 M1（spec S1/S2）：本模块只做三条判断，不做任何计算——
+# 下发值性质为 per-call → 用下发值（压过本模块 ENV）；
+# 否则本模块 ENV 显式 → 用 ENV；
+# 否则用下发值；都没有 → 代码默认。
+# 会话读超时是"挂死兜底"（非权威），必须明显大于单次等待，避免抢先触发丢失署名。
+SESSION_READ_HANG_BACKSTOP_S = 3600.0
+
+
+def _env_override() -> float | None:
+    """本模块 ENV 覆盖（`XIHE_MCP_TOOL_TIMEOUT_S`，调用时读取；非法值忽略）。"""
+    raw = os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S")
+    if raw is None or raw == "":
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid XIHE_MCP_TOOL_TIMEOUT_S {!r}; ignoring", raw)
+        return None
+    if value <= 0:
+        logger.warning("Non-positive XIHE_MCP_TOOL_TIMEOUT_S {!r}; ignoring", raw)
+        return None
+    return value
+
+
+class ToolWait(NamedTuple):
+    """一次工具调用的生效等待值 + 署名（字段口径 = PLAN-0308 spec S5）。"""
+
+    seconds: float
+    source: str  # env | cp | default
+    value_origin: str | None  # per-call | config | None
+    overridden_seconds: float | None
+
+    def signature(self) -> str:
+        parts = [f"layer=agent_wait effectiveSeconds={self.seconds:.0f}", f"source={self.source}"]
+        if self.value_origin:
+            parts.append(f"valueOrigin={self.value_origin}")
+        if self.overridden_seconds is not None:
+            parts.append(f"overriddenSeconds={self.overridden_seconds:.0f}")
+        return " ".join(parts)
+
+
+def _resolve_tool_wait(tool_name: str, context: "AgentContext | None") -> ToolWait:
+    delivered: float | None = None
+    origin: str | None = None
+    if context is not None:
+        waits = context.runtime_state.get("toolWaits") or {}
+        origins = context.runtime_state.get("toolWaitOrigins") or {}
+        raw = waits.get(tool_name) if isinstance(waits, dict) else None
+        if raw is None:
+            # 系统工具统一值（CP 的 systemToolWait）：不依赖 per-tool 映射，
+            # 冷缓存下仍可下发（spec S2.1；覆盖范围由 CP 的 budgetCoverage 标记）。
+            raw = context.runtime_state.get("systemToolWait")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
+            delivered = float(raw)
+            if isinstance(origins, dict) and origins.get(tool_name) == "per-call":
+                origin = "per-call"
+            else:
+                origin = "config"
+    env = _env_override()
+    if delivered is not None and origin == "per-call":
+        return ToolWait(delivered, "cp", "per-call", env)
+    if env is not None:
+        return ToolWait(env, "env", origin, delivered)
+    if delivered is not None:
+        return ToolWait(delivered, "cp", origin, None)
+    return ToolWait(DEFAULT_MCP_TOOL_TIMEOUT_S, "default", None, None)
 APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id"
 _ACTIVE_CONTEXT: contextvars.ContextVar[AgentContext | None] = contextvars.ContextVar(
     "xihe_active_mcp_context", default=None
@@ -136,11 +203,11 @@ class ApprovalMCPInterceptor:
                 raise ApprovalTerminalError("Approval did not return a grant requestId")
             headers[APPROVAL_GRANT_HEADER] = grant_id
             # Post-approval Runtime call is local: fail fast if gateway stalls.
-            # PLAN-301 M1: same parsed constant as the read-only path — the
-            # approval hop does not change the execution time class.
+            # PLAN-0308 M1: 与只读路径共用同一条判断链（下发值 / ENV / 默认）。
+            post_wait = _resolve_tool_wait(request.name, context)
             return await asyncio.wait_for(
                 handler(request.override(headers=headers or None)),
-                timeout=DEFAULT_MCP_TOOL_TIMEOUT_S,
+                timeout=post_wait.seconds,
             )
 
         return await handler(request.override(headers=headers or None))
@@ -172,47 +239,32 @@ class MCPAgentTool(BaseAgentTool):
             # Workspace-relative paths only: models often send "/file.md".
             for key in ("path", "file_path"):
                 val = payload.get(key)
-                if isinstance(val, str) and val.startswith("/") and not val.startswith("//"):
-                    if ".." not in val:
-                        payload[key] = val[1:]
+                if (
+                    isinstance(val, str)
+                    and val.startswith("/")
+                    and not val.startswith("//")
+                    and ".." not in val
+                ):
+                    payload[key] = val[1:]
             # Approval tools block on the user for minutes; only the post-grant
             # MCP HTTP hop is bounded by DEFAULT_MCP_TOOL_TIMEOUT_S (interceptor).
+            wait = _resolve_tool_wait(self._tool.name, context)
             if self._tool.name in REQUIRE_APPROVAL_TOOLS:
                 result = await self._tool.ainvoke(payload)
             else:
-                # PLAN-301 M2 (decision #2): per-call override from the run
-                # request (runtime_state.toolTimeoutOverrides) beats the
-                # server/global default — a caller-specified timeout is a
-                # stronger intent than any configured default.
-                effective = self._call_timeout_s
-                overrides = context.runtime_state.get("toolTimeoutOverrides") or {}
-                if isinstance(overrides, dict) and self._tool.name in overrides:
-                    try:
-                        override_val = float(overrides[self._tool.name])
-                        if override_val > 0:
-                            effective = override_val
-                    except (TypeError, ValueError):
-                        logger.warning(
-                            "Invalid toolTimeoutOverrides value for {}: {!r}; using default",
-                            self._tool.name, overrides.get(self._tool.name),
-                        )
-                    result = await asyncio.wait_for(
-                        self._tool.ainvoke(payload),
-                        timeout=effective,
-                    )
-                else:
-                    # PLAN-301 M3 (decision #3): cold-start grace — the first
-                    # tool call after workspace materialization gets 3x, one
-                    # shot, because the oneshot exec path pays container/image
-                    # warm-up that can exceed the steady-state bound. Explicit
-                    # per-call overrides skip the multiplier (stronger intent).
-                    if not context.runtime_state.get("firstToolCallDone"):
-                        effective = effective * 3
-                    result = await asyncio.wait_for(
-                        self._tool.ainvoke(payload),
-                        timeout=effective,
-                    )
-                    context.runtime_state["firstToolCallDone"] = True
+                # PLAN-0308 M1：等待值由 CP 计算（含余量与冷启动增量），本模块只执行；
+                # 冷启动宽限不再本地乘 3（已由 CP 计入下发值）。
+                logger.info(
+                    "[LIFECYCLE] service=agent event=mcp_tool_wait tool={} waitS={} source={} valueOrigin={}",
+                    self._tool.name,
+                    wait.seconds,
+                    wait.source,
+                    wait.value_origin or "",
+                )
+                result = await asyncio.wait_for(
+                    self._tool.ainvoke(payload),
+                    timeout=wait.seconds,
+                )
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
             logger.info(
                 "[LIFECYCLE] service=agent event=mcp_tool_ok tool={} elapsedMs={}",
@@ -224,17 +276,17 @@ class MCPAgentTool(BaseAgentTool):
             raise
         except TimeoutError:
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+            timed_out = _resolve_tool_wait(self._tool.name, context)
             logger.error(
-                "[LIFECYCLE] service=agent event=mcp_tool_timeout tool={} timeoutS={} elapsedMs={}",
+                "[LIFECYCLE] service=agent event=mcp_tool_timeout tool={} {} elapsedMs={}",
                 self._tool.name,
-                self._call_timeout_s,
+                timed_out.signature(),
                 elapsed_ms,
             )
             return {
                 "content": (
                     f"Tool error: MCP tool '{self._tool.name}' timed out after "
-                    f"{self._call_timeout_s:.0f}s. The workspace gateway may be "
-                    "unreachable or the tool session stalled."
+                    f"{timed_out.seconds:.0f}s ({timed_out.signature()})."
                 )
             }
         except Exception as e:
@@ -313,9 +365,11 @@ class MCPClientManager:
                         transport="streamable_http",
                         url=self.cp_url,
                         headers=headers,
-                        # Bound ClientSession reads so a stuck POST/SSE cannot
-                        # await a tool response forever (Host hang 2026-09-09).
-                        session_kwargs={"read_timeout_seconds": timedelta(seconds=DEFAULT_MCP_TOOL_TIMEOUT_S)},
+                        # 挂死兜底：单次等待的权威值由 CP 下发（可达 600+ 秒），
+                        # 此处的会话读超时必须明显大于它，否则会抢先触发并丢失署名。
+                        session_kwargs={
+                            "read_timeout_seconds": timedelta(seconds=SESSION_READ_HANG_BACKSTOP_S)
+                        },
                     ),
                 },
                 tool_interceptors=(

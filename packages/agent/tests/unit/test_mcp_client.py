@@ -3,12 +3,11 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 from loguru import logger
 
 from xihe_agent import main
 from xihe_agent.adapters import mcp_client as mcp_client_module
-from langchain_mcp_adapters.interceptors import MCPToolCallRequest
-
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool
 from xihe_agent.adapters.mcp_client import ApprovalMCPInterceptor, MCPClientManager
 from xihe_agent.interfaces.context import AgentContext
@@ -243,6 +242,7 @@ class TestMCPAgentToolTimeout:
     @pytest.mark.asyncio
     async def test_execute_returns_error_on_timeout(self):
         from langchain_core.tools import BaseTool
+
         from xihe_agent.adapters.mcp_client import MCPAgentTool
 
         class HangingTool(BaseTool):
@@ -264,6 +264,7 @@ class TestMCPAgentToolTimeout:
     @pytest.mark.asyncio
     async def test_execute_wraps_success(self):
         from langchain_core.tools import BaseTool
+
         from xihe_agent.adapters.mcp_client import MCPAgentTool
 
         class OkTool(BaseTool):
@@ -285,6 +286,7 @@ class TestMCPAgentToolTimeout:
     async def test_approval_tool_skips_outer_short_timeout(self):
         """write_file waits on the user; outer 10s must not kill the approval wait."""
         from langchain_core.tools import BaseTool
+
         from xihe_agent.adapters.mcp_client import MCPAgentTool
 
         class SlowApprovalWrite(BaseTool):

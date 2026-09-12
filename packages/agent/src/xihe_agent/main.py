@@ -775,6 +775,32 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     provider_connection_id: str | None = data.get("providerConnectionId") or None
     connection_revision = data.get("connectionRevision")
 
+    # PLAN-0308 M1（spec S1/S2）：CP 计算好的 per-tool 等待值（Agent 侧最终值）
+    # 与性质标记（per-call | config）。本模块只消费，不计算。
+    tool_waits_raw = data.get("toolWaits")
+    tool_waits: dict[str, float] = {}
+    if isinstance(tool_waits_raw, dict):
+        for tool_name, seconds in tool_waits_raw.items():
+            if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds > 0:
+                tool_waits[str(tool_name)] = float(seconds)
+            else:
+                logger.warning("Ignoring invalid toolWaits entry {}={!r}", tool_name, seconds)
+    system_tool_wait_raw = data.get("systemToolWait")
+    system_tool_wait: float | None = None
+    if (
+        isinstance(system_tool_wait_raw, (int, float))
+        and not isinstance(system_tool_wait_raw, bool)
+        and system_tool_wait_raw > 0
+    ):
+        system_tool_wait = float(system_tool_wait_raw)
+
+    tool_wait_origins: dict[str, str] = {}
+    tool_wait_origins_raw = data.get("toolWaitOrigins")
+    if isinstance(tool_wait_origins_raw, dict):
+        for tool_name, origin in tool_wait_origins_raw.items():
+            if origin in ("per-call", "config"):
+                tool_wait_origins[str(tool_name)] = str(origin)
+
     # PLAN-0307 T2.7 (decision #3=#3a): CP-resolved per-run layer overrides.
     raw_user_overrides = data.get("userOverrides")
     raw_workspace_overrides = data.get("workspaceOverrides")
@@ -1028,6 +1054,9 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 context = await context_provider.load(session_id, after_sequence=0)
                 context.runtime_state["user_name"] = user_name
                 context.runtime_state["instructions"] = instructions
+                context.runtime_state["toolWaits"] = tool_waits
+                context.runtime_state["toolWaitOrigins"] = tool_wait_origins
+                context.runtime_state["systemToolWait"] = system_tool_wait
                 context.metadata.update({
                     "requestId": request_id,
                     "runId": run_id,
