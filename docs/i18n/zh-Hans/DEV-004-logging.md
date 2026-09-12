@@ -69,7 +69,7 @@ XIHE_LOG_LEVEL (全局默认)
 运行期日志级别的权威是 DB `logging` 域（**instance 层唯一**，仅 ADMIN 可写，决策 #23；域键：`logLevel`/`levelAgent`/`levelCp`/`levelRuntime`/`levelUi`）。env 仅承担启动早期引导（DB 未就绪时）：
 
 - **CP**: `LoggingConfigInitializer` 启动时从 ConfigService `logging` 域读取 `levelCp`/`logLevel`，调用 `LoggingSystem.setLogLevel()`；写入/删除该域时发布 `LoggingConfigChangedEvent` 热更 logback
-- **Agent**: 启动时拉取 `logging.levelAgent`；运行中每 30s 后台轮询（`_poll_log_level`），通过 `logger.remove()` + `logger.add()` 实时切换
+- **Agent**: 启动时拉取 `logging.levelAgent`（`_apply_cp_log_level`）；运行中由 `_poll_runtime_config` 后台轮询任务周期调用 `_apply_cp_log_level()`，通过 `logger.remove()` + `logger.add()` 实时切换
 - **Runtime**: `levelRuntime` 由 env 承担（`XIHE_LOG_LEVEL_RUNTIME → XIHE_LOG_LEVEL → RUST_LOG`，决策 #29）——Runtime 无 config 拉取通道；DB 键位保留供未来 channel push 接线
 - **UI**: `levelUi` 为前端过滤等级
 
