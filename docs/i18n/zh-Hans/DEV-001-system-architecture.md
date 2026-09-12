@@ -114,7 +114,7 @@ MCP 工具（rmcp `#[tool]`，24 个）：
 | 语言 / 构建 | Java + Spring Boot、Maven |
 | 能力 | 聊天中转 + MCP 反向代理 + 权限裁决 + 审计 |
 | 协议 | HTTP/SSE + MCP Streamable HTTP 三通道 |
-| 配置 | ConfigService 三层所有权（详见 DEV-003） |
+| 配置 | ConfigService 三层作用域 instance / workspace / user（详见 DEV-003） |
 | 约束 | **不做模块专属业务逻辑** |
 
 CP 三通道：

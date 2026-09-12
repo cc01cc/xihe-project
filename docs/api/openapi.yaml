@@ -82,7 +82,7 @@ paths:
   /internal/v1/config/effective/{domain}:
     get:
       operationId: getEffectiveConfig
-      summary: Resolve effective config for a domain (env > user > instance > defaults); no layer exposure
+      summary: Resolve effective config for a domain (env > workspace > user > instance > defaults); no layer exposure
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }

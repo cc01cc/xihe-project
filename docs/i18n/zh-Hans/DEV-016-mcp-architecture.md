@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 16
 status: active
 created: 2026-06-03
-updated: 2026-09-04
+updated: 2026-09-12
 ---
 
 # DEV-016: MCP 三层路由架构
@@ -40,7 +40,7 @@ flowchart TD
         G1["/mcp (any): 系统工具调用"]
         G2["/remote-mcp/{ws}/{server}/call (POST): 远程 MCP (身份校验, 不建容器)"]
         G3["/mcp/spawn (HTTP 预留 deprecated, 实际由轮询驱动)<br/>/mcp/stdio/{id} (POST 调用)"]
-        G4["配置轮询 30s: 读 CP mcpServers JSON, diff 后管理"]
+        G4["配置轮询 30s: GET /internal/v1/workspaces/{wsId}/stdio-servers, diff 后管理"]
     end
     subgraph SB["容器 xihe-workspace-ws_{id}"]
         S1["container-runtime --oneshot<br/>stdin 单 operation JSON → stdout 单 result JSON<br/>EOF 即边界 · 文件操作 + 显式 Shell + /tmp/xihe-jobs<br/>无 HTTP server / 无端口发布 / 无 instance token"]
@@ -94,12 +94,12 @@ sequenceDiagram
 | Bridge 部署 | 多阶段构建进 workspace 镜像（builder 编译双 binary + COPY） | 无 bind mount |
 | 路由策略 | tool-name based（三路：系统 / stdio / remote，`McpServer` 表命中即 remote） | Agent 无需感知 server_id |
 | 工具冲突 | sticky：system 裸名优先，冲突仅新者加 `serverId__` 前缀，映射落盘永不晋升 | 无冲突零改名；历史按 `(serverId, backendName, generation)` 回放 |
-| serverId 来源 | 双源：STDIO 为用户配置键透传，remote 为 `mcp_servers` 表行 | 无 id 生成器；表命中优先于 JSON key |
+| serverId 来源 | 双源：STDIO 为用户配置键透传，remote 为 `mcp_remote_servers` 表行 | 无 id 生成器；表命中优先于 JSON key |
 | remote 执行 | 身份校验（Spec 存在性 + 授权），不建容器；unknown 显式失败 | 防越权/计费逃逸；SSRF 靠 allowlist + DNS |
 | remote 认证 | `authMode: oauth/no-auth`；no-auth 跳过 broker（多余 Bearer 经实测被忽略） | 公开 server 免 OAuth |
 | spawn 状态 | HTTP 三端点 deprecated 预留，实际由 30s 轮询自同步驱动 | 删逻辑前需确认 admin/排障依赖 |
-| 配置格式 | Claude Desktop JSON textarea | 业界标准，用户直接复制粘贴 |
-| 配置存储 | PostgreSQL JSONB | 类型校验 + 索引支持 |
+| 配置格式 | Claude Desktop JSON textarea（混合入口 `mcp-config` 按字段拆分：stdio / remote） | 业界标准，用户直接复制粘贴 |
+| 配置存储 | `mcp_stdio_servers`（workspace_id + name + config JSONB，决策 #27） | 类型校验 + 索引支持；与 config 三层解耦 |
 | workspace 隔离 | task-local（非 env var） | 支持多 workspace 单进程 |
 | 向后兼容 | 无 | 所有组件同步升级 |
 | LLM 可见性 | workspace_id 透明 | 基础设施关注点不泄漏到 LLM 层 |
@@ -118,13 +118,13 @@ sequenceDiagram
 ## 6. 配置同步
 
 ```
-用户 → UI textarea → PUT /api/v1/workspaces/{wsId}/mcp-config
-  → CP: 校验 JSON → 写入 config 表 (JSONB)
-  → Runtime 每 30s: GET /internal/v1/config/workspaces/{workspaceId}/mcp-config（Bearer service token）
+用户 → UI workspace 层 MCP 编辑器 → PUT /api/v1/workspaces/{wsId}/mcp-config（混合入口）
+  → CP: 校验 JSON → 按字段拆分：stdio 写入 mcp_stdio_servers；remote 走 mcp_remote_servers
+  → Runtime 每 30s: GET /internal/v1/workspaces/{wsId}/stdio-servers（generation/hash/servers，Bearer service token）
   → Runtime: diff 当前 bridge 列表 → spawn/stop
 ```
 
-remote server 不走上式，走 `mcp_servers` 表（OAuth 授权或 `authMode=no-auth` 直写）：`workspaceId/name/endpoint/authConfig/enabled/authMode`，CP 按表判定分流，Runtime 经 CP broker 取短期 token（no-auth 跳过）。
+stdio 配置的公开/内部契约（`generation` 乐观锁 + `hash`）见 `docs/api/openapi.yaml` 与 `docs/api/inventory.md`；remote server 走 `mcp_remote_servers` 表（类名 `McpServer.java` 保留，决策 #38②）：`workspaceId/name/endpoint/authConfig/enabled/authMode`，CP 按表判定分流，Runtime 经 CP broker 取短期 token（no-auth 跳过）。混合入口读侧只回传非敏感字段（remote 仅 `url`/`type`，OAuth 元数据不回传）。
 
 ## 7. 测试策略
 
@@ -141,7 +141,7 @@ remote server 不走上式，走 `mcp_servers` 表（OAuth 授权或 `authMode=n
 
 面向 Agent 操作者，验证 remote 工具端到端可达（以 no-auth 公开 server 为例）：
 
-1. 注册：`mcp_servers` 插一行（`workspaceId`、`name=deepwiki`、`endpoint=https://mcp.deepwiki.com/mcp`、`authMode=no-auth`、`enabled=true`）。
+1. 注册：`mcp_remote_servers` 插一行（`workspaceId`、`name=deepwiki`、`endpoint=https://mcp.deepwiki.com/mcp`、`authMode=no-auth`、`enabled=true`）。
 2. 发现：`POST /api/v1/mcp` 发 `tools/list`，确认返回含远端工具名（无冲突为裸名）。
 3. 调用：`tools/call` 带上一步的工具名，确认结果透传。
 4. 审计：查审计日志，`detail` 含 `serverId/deepwiki backendName/<原名> generation=<代数>` 四元组。
@@ -160,10 +160,11 @@ remote server 不走上式，走 `mcp_servers` 表（OAuth 授权或 `authMode=n
 | `packages/runtime/src/workspace.rs` | 容器 + bridge 生命周期 |
 | `packages/runtime/src/main.rs` | 路由注册 + 配置轮询 |
 | `packages/control-plane/.../McpProxyController.java` | CP 层路由代理（三路分流 + sticky 合并） |
-| `packages/control-plane/.../entity/McpServer.java`（`authMode`） | remote server 行（含 no-auth 标记） |
+| `packages/control-plane/.../entity/McpServer.java`（表 `mcp_remote_servers`，`authMode`） | remote server 行（含 no-auth 标记；类名保留，决策 #38②） |
+| `packages/control-plane/.../entity/McpStdioServer.java`（表 `mcp_stdio_servers`） | stdio server 行（workspace 作用域，决策 #27） |
 | `packages/control-plane/.../entity/McpToolAlias.java` | sticky 别名落盘（`workspace_id + issued_name` 主键） |
-| `packages/control-plane/.../ConfigController.java` | MCP 配置 API |
-| `packages/ui/src/views/settings/ConfigSettings.vue`（mcpJson textarea + saveMcpConfig，未设独立 MCP 设置页） | MCP 配置 UI |
+| `packages/control-plane/.../ConfigController.java` | MCP 配置 API（stdio-servers 公开/内部端点 + 混合 mcp-config 拆分） |
+| `packages/ui/src/views/settings/ConfigSettings.vue`（workspace 层 MCP 编辑器 + saveMcpConfig） | MCP 配置 UI（PLAN-0307 T2.17 起归工作区设置条目） |
 
 ## 9. 附录：会话签名规则（旧签名规则短文全文并入，M2 正文化）
 

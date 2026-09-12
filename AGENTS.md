@@ -130,25 +130,31 @@ packages/
 
 ## Architecture
 
-### 3-Tier 配置管理 (ConfigService)
+### 配置管理 (ConfigService)
 
-CP ConfigService 按 **三层所有权（System ⊃ Admin ⊃ User）+ 领域（Domain）** 组织配置。UI 入口 `/settings/config` 分 3 tab。
+**现行模型（PLAN-0307 M2-B 已落地，2026-09-12）**：三层作用域 `instance / workspace / user`，域集合 `instance(8) ⊇ user(7) ⊇ workspace(5)`；解析链 `workspace > user > instance > 代码默认`（env 为部署权威，命中即锁定并显式暴露）。凭证 BYOK 两级 `WORKSPACE > USER`（`provider_connections` 加密表，**SYSTEM 层已废除**）；config 层任何 `*ApiKey` 写入都会被 `rejectProviderSecrets` 403。
 
-| Domain | S | A | U | Domain | S | A | U |
-|--------|---|---|---|--------|---|---|---|
-| `infrastructure` | ✅ | ❌ | ❌ | `user-preference` | ✅ | ✅ | ✅ |
-| `logging` | ✅ | ✅ | ✅ | `mcp` | ✅ | ✅ | ✅ |
-| `llm-provider` | ✅ | ✅ | ✅ | `rag` | ✅ | ✅ | ✅ |
-| `embedding` | ✅ | ✅ | ✅ | `workspace-config` | ✅ | ✅ | ✅ |
+| Domain | instance | user | workspace | 备注 |
+|--------|----------|------|-----------|------|
+| `llm-provider` | ✅ | ✅ | ✅ | 无密钥键；模型/provider/base/采样参数 |
+| `context-policy` | ✅ | ✅ | ✅ | 结构化值 = JSON 文本 |
+| `embedding` / `rag` | ✅ | ✅ | ✅ | — |
+| `agent-runtime` | ✅ | ✅ | ✅ | `instructions` 仅 instance（决策 #17） |
+| `agent-profile` | ✅（默认） | ✅（个人） | ❌ | `userName` |
+| `user-preference` | ✅（默认） | ✅（个人） | ❌ | `theme` / `language` |
+| `logging` | ✅ | ❌ | ❌ | 运行期唯一权威（决策 #23） |
 
-详见 `plans/archive/20260629/A03-xihe/PLAN-042-unified-config-management.md`、`plans/archive/20260629/A03-xihe/PLAN-051-settings-ui-restructure.md`。
+裁撤：`infrastructure` / `workspace-config` / `mcp` 域；`mcp` 拆 `mcp_stdio_servers` / `mcp_remote_servers`（决策 #27）。详见 `plans/PLAN-0307-XH-config-governance-and-cleanup/spec/config-db-target.md`、决策 #37 与 `internal/A03-xihe/docs/config-architecture-2026-09.md`。
+
 ### Provider 配置共享
 
 | 功能 | 配置来源 | 入口 |
 |------|---------|------|
-| Chat | `LLMConfig.from_config_client()` | `llm/base.py` |
-| Image | `ProviderManager.from_config_client()` | `tools/__init__.py` |
-| Embedding | 初始化时从 `config_client.get_providers()` 解析 | `main.py:134-150` |
+| Chat | per-run 合成（CP effective pull + run overrides；无租约时 env 兜底） | `packages/agent/src/xihe_agent/config_client.py` / `llm/base.py` |
+| Image | `ProviderManager`（provider_connections 租约/目录） | `tools/__init__.py` |
+| Embedding | 启动/周期拉取 `GET /internal/v1/config/effective/embedding` | `main.py` |
+
+> PLAN-0307 起 Agent 不再逐层 `from_config_client()` / `get_providers()` 拼装实例密钥：CP `GET /internal/v1/config/effective/{domain}` 提供单份 effective（含 env 覆盖），user/workspace 覆盖随 run payload push（决策 #3a）；凭证由 `provider_connections` 租约下发，env 兜底仅用于离线/无租约路径（决策 #40）。
 
 ### Agent 模块接口抽象
 
@@ -189,7 +195,9 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
   - 上下文管道（PLAN-294）：LLM 输入 = CP 投影快照（`context.messages`，组装层截断最近 20 条）+ 当前轮；assistant 回复经 `assistant.responded` 事件落 context event store（与 messages 表同源）；压缩摘要经 `epoch.system_messages` 注入 system prompt；`compaction.applied.up_to_sequence` 为增量游标。自动压缩门在 run 启动前执行（llm.usage 信号 + 窗口 70% 软阈值 + 消息/工具数兜底 + 10 事件冷却），`CONTEXT_OVERFLOW` 为超窗兜底错误码；手动压缩走 `POST /api/v1/sessions/{id}/compact`（活跃 run 时 409）。已知 P1：非 fixture 触发的 MCP executor 请求可能挂 30s 超时（见 DEV-018）。
   - Provider/model binding：UI、CP、Agent 全链路传递 `provider` + `model` + `toolMode`；`modelProvider + modelName` 是 session canonical pair，普通 Chat 固定 `toolMode=none`，Workspace/tool 操作显式使用 `workspace`。
   - Operation Ledger（PLAN-281）：新 Chat 在 CP 持久化 ChatRun/Message 后创建 durable root `operationId` 并透传 Agent；CP relay 记录 tool item/Agent attempt，MCP proxy 记录 `cp_forward` attempt 与 hash/size-only `mcp_call` extension，Approval 复用同一 item。Runtime executor、Workspace lifecycle、Job/Snapshot、LLM usage extension 和 UI audit 仍按对应里程碑接入，不能把现有局部 trace 当作全链路完成。
-- **配置**: 3-tier (system > admin > user)，CP ConfigService 统一管理
+- **配置**: 三层 `instance / user / workspace`（解析链 `workspace > user > instance`，env 覆盖锁定显式化），CP ConfigService 统一管理（PLAN-0307 已落地）
+- **配置 key 三方同步（硬约束）**: 新增/修改 config domain key 必须同步三处——（a）CP `config-schemas/*.json`（JSON Schema，同时约束 import 与 UI Settings 保存）、（b）`config.import.example.jsonc` 模板、（c）UI `/settings/config` 表单；任一漏改会导致 import 与保存**同时 400**（2026-09-09 logging/user-preference 双 400 实证）。
+- **配置解析透明性（硬约束）**: env 与 DB 用户配置冲突时**必须显式暴露**——UI 显示被覆盖的 env 值并冻结/禁用该项、Agent 侧可见、日志记录冲突与最终生效来源；**禁止在底层静默合并/自动计算**（2026-09-11 用户明确「最核心是透明度」）。
 - **Service 纯函数**: Service 不依赖 ConfigClient，配置由调用方解析后传入
 - **提交**: Conventional Commits，pass `mise run validate` 后可提交
 - **跨协议/跨服务变更走 XH 跨包 checklist（2026-09 会话回溯沉淀）**：任何同时涉及 UI/CP/Agent 三层，或新增/修改 SSE 事件、public/internal route、AgentEvent、CP durable record、UI store 类型、OpenAPI、Flyway、env 的改动，必须先按 `one/.agents/skills/xc-cross-cutting-checklist/SKILL.md` 跑契约定稿 → UI/CP/Agent/Runtime 四层落地 → 契约/测试/证据 → 提交与收尾，禁止以 mock 绿代替真实链路，禁止路由/字段跨层漂移；项目级 `AGENTS.md` / DEV-001 / DEV-013 / DEV-014 文档同步按根 AGENTS 状态回写规则执行。
@@ -201,7 +209,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 | 层 | 用途 | 文件 | 可运行时修改 |
 |----|------|------|------------|
 | **环境变量** | 运行前固定（端口/DB/JWT） | `.env.example` → `.env.dev`（gitignore） | ❌ |
-| **ConfigService** | 运行时可改（API key/模型/日志） | `config.import.example.jsonc` → `config.import.local.jsonc`（gitignore） | ✅ UI / API |
+| **ConfigService** | 运行时可改（模型/域参数/日志；凭证走 `provider_connections`） | `config.import.example.jsonc` → `config.import.local.jsonc`（gitignore） | ✅ UI / API |
 
 日常 host 开发推荐 `mise run dev:host`；`mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后按导入语义处理 `config.import.local.jsonc`（默认打印 reset-admin 指引，`XIHE_DEV_ADMIN_PASSWORD` 显式启用；该密码仅经 OS 环境变量注入，禁止写入脚本/git/日志）。配置生效优先级推荐为：启动环境变量 → `.env.dev` → ConfigService / UI Settings；三类配置归属速查见 DEV-003 §2。
 
@@ -266,7 +274,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
 - **Agent MCP init 按需执行**: 纯 chat 即使带 current `workspaceId` 也不连接 CP MCP；只有明确需要 Workspace tool 的请求才触发工具发现和 Sandbox materialization。不得把一个 Workspace 的工具复用于其他 Workspace。
 - **dev:full/T3 拓扑边界**: 当前验证主线是 Windows `dev:host`。完整 Compose E2E 仍需要为 Runtime 提供 Docker Engine socket 和容器内 WorkspaceStorage 映射；未完成前不得将 `dev:full`/T3 的 workspace、MCP 和截图失败归因于 host v1。
-- **数据库必须 fresh baseline（PLAN-280）**：active Flyway 链以 `V1__init_schema.sql` 为 baseline，并包含后续正式的 V2-V9 migrations（Ledger、Job、Snapshot、Task Continuity、approval grant consumption、arguments_hash）；`ddl-auto=validate`、`baseline-on-migrate=false`。旧本地数据库会被拒绝，恢复方式为 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内。
+- **数据库必须 fresh baseline（PLAN-280）**：active Flyway 链以 `V1__init_schema.sql` 为 baseline，并包含后续正式的 V2-V13 migrations（Ledger、Job、Snapshot、Task Continuity、approval grant consumption、arguments_hash、llm usage item kind、remote MCP tool timeout、config 三层化 + MCP 分载体、旧域键清理）；`ddl-auto=validate`、`baseline-on-migrate=false`。旧本地数据库会被拒绝，恢复方式为 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内。
 - **dev seed 密码不可知**: `DataSeeder` 为 `admin@xihe.local` 生成的随机密码不打印、不落日志，`dev:reset` 重建库后无法用旧凭据登录；恢复方式为 `mise run reset-admin`（PLAN-229）。
 - **Runtime 生命周期技术债**: `WorkspaceRegistry` 与 `WorkspaceManager` 已部分收敛（idle reaper 路由到 WorkspaceManager、Strict 统一走 Docker 容器），但 REST 文件操作仍直接访问 host filesystem（未走 executor Docker exec），cross-map 一致性靠周期性检查兜底。后续应完全消除 WorkspaceManager 直接 Docker 操作并统一 REST/MCP 执行路径。
 - **`dev:host` 原生编排**: `mise run dev:host` 先以 Docker 启动并等待 PostgreSQL，再由 mise 并行管理原生 CP/Agent/Runtime/UI；`mise run dev:host:watch` 通过 Node watcher 检查四个健康端点并在任务组失败后重启。`scripts/dev-host.ps1` 仅保留兼容的检查/包装入口。`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根，默认 `A03-xihe\.xihe-workspaces`

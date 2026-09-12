@@ -6,8 +6,8 @@ sidebar_group: "开发指南"
 sidebar_order: 19
 status: active
 created: 2026-09-07
-updated: 2026-09-07
-description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V9 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
+updated: 2026-09-12
+description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V13 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
   - flyway
@@ -16,14 +16,14 @@ tags:
 
 # DEV-019: 数据库设计
 
-> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Source of Truth 是 `packages/control-plane/src/main/resources/db/migration/V1~V9`，JPA Entity 只是镜像。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
+> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Source of Truth 是 `packages/control-plane/src/main/resources/db/migration/V1~V13`，JPA Entity 只是镜像。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
 
 ## 1. 结论与使用规则
 
 | 结论 | 内容 |
 |------|------|
 | 数据库 | PostgreSQL 17 + pgvector，Docker 镜像 `pgvector/pgvector:pg17`，dev 端口 `12634`，库名/用户名 `xihe` |
-| 表数量 | 22 张业务表 + `flyway_schema_history`（Flyway 自维护，不在本文列字段） |
+| 表数量 | 33 张业务表 + `flyway_schema_history`（Flyway 自维护，不在本文列字段） |
 | 权威顺序 | Flyway SQL > JPA Entity > 本文档；`ddl-auto=validate`（PLAN-280），Flyway 是唯一 schema manager |
 | 主键风格 | 全部 PostgreSQL 原生 `UUID`（PLAN-280）；Java 侧 @Id 为 `UUID` 类型，FK 列为 `String` + `UuidStringConverter` |
 | 时间风格 | 全部 `TIMESTAMPTZ DEFAULT NOW()`（PLAN-280 消除裸 `TIMESTAMP`） |
@@ -39,10 +39,12 @@ tags:
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
 | 全量迁移 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql`（PLAN-280 destructive rebaseline，旧 V2~V22/U6 已移出，仅 Git 历史可追溯） |
-| Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（22 个）+ `context/entity/`（3 个） |
+| Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（30 个）+ `context/entity/`（3 个） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
-> **PLAN-280 rebaseline（2026-09-07）**：本地数据库一次性重建为单一 `V1__init_schema.sql`（21 张表）。统一原生 UUID、TIMESTAMPTZ、显式命名约束与 ON DELETE、`ddl-auto=validate`。旧 V1~V22+U6 迁移链已从 active classpath 移出（仅 Git 历史可追溯）。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复——本文 §2 之后的逐表历史版本标注（`V14`/`V21` 等）仅作演进溯源，不再代表 active migration。
+> **PLAN-280 rebaseline（2026-09-07）**：本地数据库一次性重建为单一 `V1__init_schema.sql`（21 张表）。统一原生 UUID、TIMESTAMPTZ、显式命名约束与 ON DELETE、`ddl-auto=validate`。旧 V1~V22+U6 迁移链已从 active classpath 移出（仅 Git 历史可追溯）。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
+>
+> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V13）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
 
 ## 2. ER 关系（分域 erDiagram）
 
@@ -106,7 +108,7 @@ erDiagram
     sessions ||--|| context_projections : materializes
 ```
 
-- `config_audit.config_id` FK config；四元唯一 `(environment, layer, domain, config_key)` 定位配置行
+- `config_audit.config_id` FK config **ON DELETE SET NULL**（V12 起审计行不随配置删除丢失，决策 #30）；按 `(layer, domain, config_key [+ user_id/workspace_id])` 定位历史配置行（`environment` 为历史快照列）
 - `context_events`：UNIQUE `(session_id, sequence)`，Event Sourcing 只追加
 - `context_projections`：UNIQUE `session_id`，单会话单投影，可由事件重放重建
 - `context_source_hashes` / `document_chunks`：无边实体（前者按 `(workspace_id, source_key)` 去重，后者无 FK 独立生命周期），见 §3.5
@@ -309,7 +311,7 @@ erDiagram
 
 ### 3.3 Workspace 执行（workspace_execution_specs）
 
-**workspace_execution_specs**（`V11` 建 `workspace_assignments`，`V12` 加唯一，`V13` 重命名，Entity `entity/WorkspaceExecutionSpec.java`）：期望执行规格（非调度绑定，`V13` 注释原名误导已纠正）。
+**workspace_execution_specs**（`V1` 内建；旧链溯源：旧 V11 建 `workspace_assignments`、旧 V12 加唯一、旧 V13 重命名；Entity `entity/WorkspaceExecutionSpec.java`）：期望执行规格（非调度绑定，旧 V13 注释原名误导已纠正）。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -328,9 +330,9 @@ erDiagram
 > - `idx_workspace_execution_specs_workspace_generation (workspace_id, generation)`
 > - 唯一约束 `uq_workspace_execution_specs_workspace_generation (workspace_id, generation)` — 同代唯一
 
-### 3.4 MCP 与 Provider（mcp_servers / mcp_tool_aliases / oauth_credentials / provider_connections / provider_credential_leases / provider_connection_audit）
+### 3.4 MCP 与 Provider（mcp_remote_servers / mcp_stdio_servers / mcp_tool_aliases / oauth_credentials / provider_connections / provider_credential_leases / provider_connection_audit）
 
-**mcp_servers**（`V1` + `V15`，Entity `entity/McpServer.java`）：workspace 下 remote/stdio server 注册。
+**mcp_remote_servers**（`V1` 以 `mcp_servers` 建表，`V12` 改名并同步约束/索引名；Entity `entity/McpServer.java` 类名保留，决策 #38②）：workspace 下 **remote** server 注册（HTTP + OAuth/no-auth）。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -340,13 +342,26 @@ erDiagram
 | endpoint | VARCHAR(512) | NOT NULL | 服务端点 |
 | auth_config | TEXT | nullable | 遗留，OAuth 密文已迁 `oauth_credentials` |
 | enabled | BOOLEAN | NOT NULL DEFAULT TRUE | 禁用即摘流 |
-| auth_mode | VARCHAR(16) | NOT NULL DEFAULT 'oauth'（`V15`） | `oauth` / `no-auth`（公开免 broker） |
+| auth_mode | VARCHAR(16) | NOT NULL DEFAULT 'oauth'（旧链 V15） | `oauth` / `no-auth`（公开免 broker） |
 | created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 | updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
-> 索引：`idx_mcp_servers_workspace_id (workspace_id)`
+> 索引：`idx_mcp_remote_servers_workspace_id (workspace_id)`（V12 改名）
 
-**mcp_tool_aliases**（`V15`，Entity `entity/McpToolAlias.java`）：sticky 工具别名，冲突仅新者加前缀、永不晋升。
+**mcp_stdio_servers**（`V12` 新建，Entity `entity/McpStdioServer.java`）：workspace 下 **stdio** server（Claude Desktop 形态配置），自 config 域 `mcp` 迁出（决策 #27）。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK DEFAULT `gen_random_uuid()` | — |
+| workspace_id | UUID | NOT NULL FK `workspaces(id) ON DELETE CASCADE` | 归属 |
+| name | VARCHAR(255) | NOT NULL，`uq_mcp_stdio_servers_workspace_name (workspace_id, name)` | 配置键/serverId |
+| config | JSONB | NOT NULL，`ck_mcp_stdio_servers_config` 要求 object | 单 server 配置（command/args/env 等） |
+| enabled | BOOLEAN | NOT NULL DEFAULT TRUE | 禁用即摘流 |
+| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
+
+> 索引：`idx_mcp_stdio_servers_workspace (workspace_id)`；Runtime 经 `GET /internal/v1/workspaces/{wsId}/stdio-servers` 每 30s diff 同步
+
+**mcp_tool_aliases**（`V1`；旧链 V15 溯源，Entity `entity/McpToolAlias.java`）：sticky 工具别名，冲突仅新者加前缀、永不晋升。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -456,36 +471,42 @@ erDiagram
 
 ### 3.5 配置与 RAG（config / config_audit / document_chunks / context_events / context_projections / context_source_hashes）
 
-**config**（`V4` + `V5/V10`，Entity `entity/ConfigEntity.java`）：3-tier 配置 canonical 存储，语义见 [DEV-003](DEV-003-config-management.md)。
+**config**（`V1` 建表，`V12` 三层化 + 删列，`V13` 旧键清理；Entity `entity/ConfigEntity.java`）：三层配置 canonical 存储（`instance / workspace / user`，解析链 `workspace > user > instance > 代码默认`），语义与域集见 [DEV-003](DEV-003-config-management.md) §1。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | 自增主键 |
-| environment | VARCHAR(64) | NOT NULL DEFAULT 'default' | `V10` 由 VARCHAR(32) 拓宽 |
-| layer | VARCHAR(16) | NOT NULL | `SYSTEM/ADMIN/USER` |
-| domain | VARCHAR(32) | NOT NULL | 8 枚举见 AGENTS.md |
+| layer | VARCHAR(16) | NOT NULL，`ck_config_layer` | `instance` / `workspace` / `user`（V12 前为 SYSTEM/ADMIN/USER，`admin` 已规范化为 `instance`） |
+| user_id | UUID | nullable FK `users(id) ON DELETE CASCADE`，`ck_config_scope_binding` | `layer=user` 必填（V12 加） |
+| workspace_id | UUID | nullable FK `workspaces(id) ON DELETE CASCADE`，`ck_config_scope_binding` | `layer=workspace` 必填（V12 加） |
+| domain | VARCHAR(32) | NOT NULL | 八域：`llm-provider`/`context-policy`/`embedding`/`rag`/`agent-runtime`/`agent-profile`/`user-preference`/`logging` |
 | config_key | VARCHAR(64) | NOT NULL | 配置键 |
-| config_value | TEXT | nullable | 值，敏感项脱敏 |
-| is_set | BOOLEAN | NOT NULL DEFAULT TRUE | 是否已设置 |
-| mcp_config | JSONB | nullable（`V5`） | 遗留 MCP 配置位 |
+| config_value | TEXT | nullable | 值（结构化值为 JSON 文本）；**一切凭证键禁写**——`rejectProviderSecrets` 对 `*ApiKey`/secret/password/token 返回 403，凭证只归 `provider_connections`/env 兜底（决策 #21/#37） |
 | updated_by | VARCHAR(64) | nullable | 修改人 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW()（V8 补齐） | — |
 | updated_at | TIMESTAMPTZ | DEFAULT NOW() | 修改时间 |
 
-> 索引：
-> - `idx_config_lookup (environment, layer, domain)`
-> - 唯一约束 `(environment, layer, domain, config_key)` — 四元定位一行
+> 已删列（V12）：`environment`（层内去环境维）、`mcp_config`（迁 `mcp_stdio_servers`）、`is_set`；`idx_config_lookup` 已由 V8 删除。
+>
+> 索引与约束：
+> - `uq_config_instance_scope (domain, config_key) WHERE layer = 'instance'` — 部分唯一
+> - `uq_config_workspace_scope (workspace_id, domain, config_key) WHERE layer = 'workspace'` — 部分唯一
+> - `uq_config_user_scope (user_id, domain, config_key) WHERE layer = 'user'` — 部分唯一
+> - `ck_config_scope_binding`：instance 无标识列 / user 仅 user_id / workspace 仅 workspace_id
+>
+> V13 清理：非八域行（`infrastructure`/`workspace-config`/`mcp` 等）、各域已迁移/废弃键（全部 `*ApiKey`、`contextPolicy`、`user-preference.{defaultModel,maxTokens,temperature}`、logging 非五级键）直接删除，不做搬移（决策 #39）。
 
-**config_audit**（`V4` + `V17`，Entity `entity/ConfigAuditEntity.java`）：配置变更审计。
+**config_audit**（`V1` 建表；密钥脱敏为旧链 V17 溯源；Entity `entity/ConfigAuditEntity.java`）：配置变更审计。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | — |
-| config_id | BIGINT | NOT NULL FK `config(id)` | 关联配置行 |
-| environment | VARCHAR(32) | nullable | 当时值 |
+| config_id | BIGINT | nullable FK `config(id) ON DELETE SET NULL`（V12 起，审计不随配置删除丢失，决策 #30） | 关联配置行 |
+| environment | VARCHAR(32) | nullable | 历史快照列（V12 后不再写入） |
 | layer | VARCHAR(16) | nullable | 当时值 |
 | domain | VARCHAR(32) | nullable | 当时值 |
 | config_key | VARCHAR(64) | nullable | 当时值 |
-| old_value | TEXT | nullable | `V17` 把 `llm-provider` 域含 `apikey/secret/password/token` 的历史值改写为 `missing` 或 `present:legacy:<md5>` |
+| old_value | TEXT | nullable | 旧链 V17 起 `llm-provider` 域含 `apikey/secret/password/token` 的历史值改写为 `missing` 或 `present:legacy:<md5>` |
 | new_value | TEXT | nullable | 同上，禁明文留痕 |
 | changed_by | VARCHAR(64) | nullable | 修改人 |
 | changed_at | TIMESTAMPTZ | DEFAULT NOW() | 修改时间 |
@@ -605,14 +626,14 @@ erDiagram
 > - `idx_audit_logs_workspace_id (workspace_id)`
 > - `idx_audit_logs_action (action)`
 
-## 4. 迁移对照（当前链 V1~V9）
+## 4. 迁移对照（当前链 V1~V13）
 
 > 历史链 V1~V22 已被 PLAN-280 destructive rebaseline 取代（旧 V2~V22/U6 移出仓库，仅 Git 历史可追溯）；下表为当前 active 链。原文末尾的历史 V1~V22 对照表保留在 Git 历史中，本节按当前链重写。
 
 | 版本 | 文件 | 变更 | 影响表 |
 |------|------|------|--------|
 | V1 | `V1__init_schema.sql` | 全量基线：21 表（原生 UUID 主键、`TIMESTAMPTZ`、显式命名 FK/CHECK/UNIQUE/索引与 `ON DELETE`） | 全部表（含 `approval_requests/chat_runs/sessions/messages/files/mcp_servers/audit_logs` 等） |
-| V2 | `V2__session_operation_ledger.sql` | Session Operation Ledger 6 表 | `session_operations/operation_items/operation_attempts/operation_events/operation_extensions/operation_diagnostic_artifacts` |
+| V2 | `V2__session_operation_ledger.sql` | Session Operation Ledger 6 表 | `session_operations/operation_items/operation_attempts/operation_events/operation_extensions/diagnostic_artifacts` |
 | V3 | `V3__runtime_jobs.sql` | Runtime 后台任务 durable registry | `runtime_jobs` |
 | V4 | `V4__workspace_snapshots.sql` | Workspace snapshot 双表 | `workspace_snapshots/workspace_snapshot_files` |
 | V5 | `V5__approval_snapshot_policy.sql` | 审批绑定 snapshot/policyClass | `approval_requests.snapshot_id/policy_class` |
@@ -620,6 +641,10 @@ erDiagram
 | V7 | `V7__approval_grant_consumption.sql` | grant 单次消费 | `approval_requests.grant_consumed_at` |
 | V8 | `V8__schema_gate_fixes.sql` | schema 门禁修正（FK `ON DELETE NO ACTION` 显式化、去冗余索引、`config.created_at`） | 多表 |
 | V9 | `V9__approval_arguments_hash.sql` | grant 哈希匹配列（PLAN-292 M1） | `approval_requests.arguments_hash` |
+| V10 | `V10__llm_usage_item_kind.sql` | LLM usage item kind | `operation_items.kind`/相关约束 |
+| V11 | `V11__mcp_server_tool_timeout.sql` | remote MCP 工具超时列 | `mcp_servers.tool_timeout_seconds` |
+| V12 | `V12__config_tiers_and_mcp_split.sql` | config 三层化（instance/workspace/user + scope 约束/部分唯一索引、删 `environment`/`mcp_config`/`is_set`）+ MCP 分载体（新建 `mcp_stdio_servers`、`mcp_servers` → `mcp_remote_servers`）+ `config_audit.config_id` SET NULL（PLAN-0307 决策 #27/#30/#37） | `config/config_audit/mcp_stdio_servers/mcp_remote_servers` |
+| V13 | `V13__config_legacy_key_cleanup.sql` | 旧域键清理：裁撤域整体删除 + 各域废弃键删除（不搬移，决策 #39） | `config` |
 
 ## 5. 本地查看与运维
 
@@ -637,30 +662,44 @@ erDiagram
 
 ## 附录 A：表—Entity—迁移三向对照
 
-| 表 | Entity | 首次迁移 |
-|----|--------|----------|
+> 「active 首次迁移」指当前 V1~V13 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
+
+| 表 | Entity | active 首次迁移 |
+|----|--------|-----------------|
 | users | `entity/User.java` + `UserRole.java` | V1 |
 | workspaces | `entity/Workspace.java` | V1 |
 | workspace_users | `entity/WorkspaceUser.java` + `WorkspaceUserId.java` | V1 |
 | sessions | `entity/Session.java` | V1 |
 | messages | `entity/Message.java` + `MessageRole.java` | V1 |
 | files | `entity/File.java` | V1 |
-| mcp_servers | `entity/McpServer.java` | V1 |
+| chat_runs | `entity/ChatRun.java` | V1 |
+| approval_requests | `entity/ChatApproval.java` | V1 |
+| provider_connections | `entity/ProviderConnection.java` | V1 |
+| provider_credential_leases | `entity/ProviderCredentialLease.java` | V1 |
+| provider_connection_audit | `entity/ProviderConnectionAudit.java` | V1 |
+| mcp_remote_servers | `entity/McpServer.java`（类名保留，决策 #38②） | V1（V12 由 `mcp_servers` 改名） |
+| mcp_tool_aliases | `entity/McpToolAlias.java` | V1 |
+| oauth_credentials | `entity/OAuthCredential.java` | V1 |
+| workspace_execution_specs | `entity/WorkspaceExecutionSpec.java` | V1（旧链 V11 建 / 旧 V13 更名） |
+| context_events | `context/entity/ContextEvent.java` | V1 |
+| context_projections | `context/entity/ContextProjection.java` | V1 |
+| context_source_hashes | `context/entity/ContextSourceHash.java` | V1 |
+| config | `entity/ConfigEntity.java` | V1（V12 三层化 / V13 键清理） |
+| config_audit | `entity/ConfigAuditEntity.java` | V1（V12 审计解耦） |
 | audit_logs | `entity/AuditLog.java` | V1 |
-| document_chunks | 无独立 Entity（Agent RAG 直读） | V3 |
-| config | `entity/ConfigEntity.java` | V4 |
-| config_audit | `entity/ConfigAuditEntity.java` | V4 |
-| context_events | `context/entity/ContextEvent.java` | V7 |
-| context_projections | `context/entity/ContextProjection.java` | V7 |
-| context_source_hashes | `context/entity/ContextSourceHash.java` | V8 |
-| oauth_credentials | `entity/OAuthCredential.java` | V9 |
-| workspace_execution_specs | `entity/WorkspaceExecutionSpec.java` | V11（V13 更名） |
-| mcp_tool_aliases | `entity/McpToolAlias.java` | V15 |
-| chat_runs | `entity/ChatRun.java` | V16 |
-| provider_connections | `entity/ProviderConnection.java` | V18 |
-| provider_credential_leases | `entity/ProviderCredentialLease.java` | V18 |
-| provider_connection_audit | `entity/ProviderConnectionAudit.java` | V20 |
-| approval_requests | `entity/ChatApproval.java` | V21 |
+| session_operations | `entity/SessionOperation.java` | V2 |
+| operation_items | `entity/OperationItem.java` | V2 |
+| operation_attempts | `entity/OperationAttempt.java` | V2 |
+| operation_events | `entity/OperationEvent.java` | V2 |
+| operation_extensions | `entity/OperationExtension.java` | V2 |
+| diagnostic_artifacts | `entity/DiagnosticArtifact.java` | V2 |
+| runtime_jobs | `entity/RuntimeJob.java` | V3 |
+| workspace_snapshots | `entity/WorkspaceSnapshot.java` | V4 |
+| workspace_snapshot_files | `entity/WorkspaceSnapshotFile.java` | V4 |
+| task_plans | `entity/TaskPlan.java` | V6 |
+| task_items | `entity/TaskItem.java` | V6 |
+| mcp_stdio_servers | `entity/McpStdioServer.java` | V12（自 config 域 `mcp` 迁出） |
+| document_chunks | 无独立 Entity（Agent RAG 直读） | 不在 Flyway 链（langchain 自建自管） |
 
 ## 附录 B：删除与脱敏约定
 

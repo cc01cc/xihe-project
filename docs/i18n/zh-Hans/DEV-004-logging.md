@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 4
 created: 2026-06-03
 status: active
-updated: 2026-08-28
+updated: 2026-09-12
 ---
 
 # DEV-004: 日志系统设计
@@ -66,12 +66,14 @@ XIHE_LOG_LEVEL (全局默认)
 
 ### 2.2. ConfigService 动态级别
 
-CP 和 Agent 支持通过 ConfigService 动态调整日志级别：
+运行期日志级别的权威是 DB `logging` 域（**instance 层唯一**，仅 ADMIN 可写，决策 #23；域键：`logLevel`/`levelAgent`/`levelCp`/`levelRuntime`/`levelUi`）。env 仅承担启动早期引导（DB 未就绪时）：
 
-- **CP**: `LoggingConfigInitializer` 启动时从 ConfigService `logging` 域读取 `levelCp`/`logLevel`，调用 `LoggingSystem.setLogLevel()`
+- **CP**: `LoggingConfigInitializer` 启动时从 ConfigService `logging` 域读取 `levelCp`/`logLevel`，调用 `LoggingSystem.setLogLevel()`；写入/删除该域时发布 `LoggingConfigChangedEvent` 热更 logback
 - **Agent**: 启动时拉取 `logging.levelAgent`；运行中每 30s 后台轮询（`_poll_log_level`），通过 `logger.remove()` + `logger.add()` 实时切换
+- **Runtime**: `levelRuntime` 由 env 承担（`XIHE_LOG_LEVEL_RUNTIME → XIHE_LOG_LEVEL → RUST_LOG`，决策 #29）——Runtime 无 config 拉取通道；DB 键位保留供未来 channel push 接线
+- **UI**: `levelUi` 为前端过滤等级
 
-ConfigService `logging` 域字段见 `config-schemas/logging.json`。
+ConfigService `logging` 域字段见 `config-schemas/logging.json`；三层/域集与写权限见 DEV-003 §1。
 
 ## 3. 模块实现
 
@@ -270,7 +272,7 @@ node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
 
 - Chat 生命周期日志必须同时携带 `requestId`、`runId`、`sessionId`、`outcome` 和必要的 `errorCode`；异步 CP worker 使用显式参数传递关联 ID。
 - provider 仅记录 provider/model/status/duration/errorCode 和 token/字符计数，不记录 prompt、token 内容、raw response 或凭据。
-- ConfigAudit 对 provider secret 只记录 `present`/`missing` 与不可逆 fingerprint；Admin 配置 GET 的开发 raw-read 例外不得进入日志、trace、截图或 evidence。
+- ConfigAudit 对 provider secret 只记录 `present`/`missing` 与不可逆 fingerprint；ADMIN 配置 GET 的 raw-read 例外仅限配置 API 响应本身，不得进入日志、trace、截图或 evidence。
 
 ## 7. 错误日志规范
 

@@ -106,37 +106,38 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 ```python
 @pytest.mark.integration
 class TestConfigClientWithStub:
-    def test_fetch_providers(self, httpx_mock):
-        httpx_mock.add_response(
-            url="http://localhost:8080/internal/v1/config/admin/llm-provider",
-            json={"domain": "llm-provider", "config": {"openai": {"apiKey": "sk-mock"}}}
-        )
-        client = ConfigClient(cp_url="http://localhost:8080")
-        providers = client.get_providers()
-        assert "openai" in providers
+    async def test_sync_effective_domains(self, httpx_mock):
+        # PLAN-0307：Agent 只消费单份 effective（无 layer 概念）
+        httpx_mock.add_callback(lambda request: httpx.Response(200, json={
+            "entries": {"defaultProvider": "openai"}
+            if request.url.path.endswith("llm-provider") else {}
+        }))
+        client = ConfigClient(cp_url="http://localhost:8080", api_token="test")
+        await client.sync()
+        assert client.get_domain("llm-provider")["defaultProvider"] == "openai"
 ```
 
 **Runtime 侧模式**（mockito / wiremock-rs）：
 
 ```rust
 #[tokio::test]
-async fn test_config_client_fetch() {
+async fn test_mcp_poll_config_parses_stdio_servers() {
     let mut mock_server = MockServer::new().await;
 
-    // Arrange: stub CP response
+    // Arrange: stub CP stdio-servers 契约（generation + entries，PLAN-0307 决策 #27）
     Mock::given(method("GET"))
-        .and(path("/internal/v1/config/admin/llm-provider"))
+        .and(path("/internal/v1/workspaces/ws-1/stdio-servers"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({"domain": "llm-provider", ...}))
+                .set_body_json(serde_json::json!({"generation": 1, "servers": []}))
         )
         .expect(1)
         .mount(&mock_server)
         .await;
 
     // Act
-    let client = ConfigClient::new(mock_server.uri(), "token".into());
-    let result = client.fetch_config("admin", "llm-provider").await;
+    let url = format!("{}/internal/v1/workspaces/ws-1/stdio-servers", mock_server.uri());
+    let result = poll_config_with_generation("ws-1", &url, TEST_TOKEN).await;
 
     // Assert
     assert!(result.is_ok());

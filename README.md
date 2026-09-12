@@ -49,7 +49,7 @@ This is not a metaphor — it's the **first principle** of the product architect
 | **Access control** | RBAC permission matrix for agent resource access |
 | **Workspace management** | Isolated workspaces per agent with resource constraints |
 | **Audit logging** | Track agent actions and decisions for trust and supervision |
-| **Config management** | 3-tier config (system > admin > user) with dynamic updates |
+| **Config management** | 3-tier config (instance / user / workspace; resolution `workspace > user > instance`) with dynamic updates |
 
 ## Architecture
 
