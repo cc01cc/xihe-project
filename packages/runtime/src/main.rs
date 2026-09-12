@@ -1482,9 +1482,20 @@ async fn delete_workspace_handler(
     }))
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    dotenv_loader::load();
+fn main() -> anyhow::Result<()> {
+    // PLAN-0307 T3.1/T3.5: config loading (env chain + CLI --set) runs before the
+    // Tokio runtime starts so process-env writes stay on the main thread.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cli_overrides = dotenv_loader::parse_cli_overrides(&args).map_err(anyhow::Error::msg)?;
+    dotenv_loader::load(&cli_overrides);
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> anyhow::Result<()> {
 
     // CP configuration is optional at startup. Keep readiness independent from CP and
     // refresh the optional config client after the HTTP listener is available.

@@ -18,7 +18,8 @@ public class CpApplication {
     private static final Logger logger = LoggerFactory.getLogger(CpApplication.class);
 
     public static void main(String[] args) {
-        DotenvLoader.load();
+        // PLAN-0307 T3.1/T3.5: env chain + CLI --set load before Spring starts.
+        DotenvLoader.load(args);
         SpringApplication.run(CpApplication.class, args);
     }
 

@@ -38,7 +38,7 @@ from xihe_agent.context import (
     CrashRecovery,
     EventSourcedContextProvider,
 )
-from xihe_agent.dotenv_loader import load_project_env
+from xihe_agent.dotenv_loader import load_project_env, parse_cli_overrides
 from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.llm.base import (
@@ -1474,7 +1474,8 @@ async def list_tools(_token: None = Depends(verify_api_token)):
 
 
 if __name__ == "__main__":
-    load_project_env()
+    # PLAN-0307 T3.5: CLI --set is the highest-priority config layer.
+    load_project_env(parse_cli_overrides(sys.argv[1:]))
 
     import uvicorn
 
