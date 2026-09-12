@@ -72,6 +72,7 @@ public class ChatController {
     private final RequestQueue requestQueue;
     private final ProviderCredentialLeaseService credentialLeases;
     private final ConfigService configService;
+    private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
@@ -106,7 +107,8 @@ public class ChatController {
             HealthMonitor healthMonitor,
             RequestQueue requestQueue,
             ProviderCredentialLeaseService credentialLeases,
-            ConfigService configService) {
+            ConfigService configService,
+            com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -125,6 +127,7 @@ public class ChatController {
         this.requestQueue = requestQueue;
         this.credentialLeases = credentialLeases;
         this.configService = configService;
+        this.mcpProxyController = mcpProxyController;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -566,6 +569,8 @@ public class ChatController {
                 if (!workspaceOverrides.isEmpty()) {
                     agentRequest.put("workspaceOverrides", workspaceOverrides);
                 }
+                // PLAN-0308 M1（spec S2.1）：CP 计算好的等待值随 run 下发（Agent 只消费）。
+                agentRequest.putAll(mcpProxyController.toolTimeoutPayload(workspaceId, userId));
                 if (!attachments.isEmpty()) {
                     List<Map<String, Object>> agentAttachments = new ArrayList<>();
                     for (com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo info : attachments) {

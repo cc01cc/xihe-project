@@ -65,7 +65,9 @@ class McpProxyTest {
                 requestRewriter, policyEngine,
                 auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
                 mcpServerRepository, aliasRepository,
-                workspaceService, sessionRepository, operationService
+                workspaceService, sessionRepository, operationService,
+                mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
+                new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy()
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 

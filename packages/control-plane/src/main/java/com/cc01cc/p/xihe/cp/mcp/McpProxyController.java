@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.config.ConfigService;
+import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -71,6 +73,8 @@ public class McpProxyController {
     private final McpStdioServerRepository stdioServers;
     private final McpServerRepository mcpServers;
     private final McpToolAliasRepository aliases;
+    private final ConfigService configService;
+    private final ToolTimeoutPolicy toolTimeoutPolicy;
     private final Map<String, AtomicLong> toolGenerations = new ConcurrentHashMap<>();
 
     @Value("${cp.mcp.runtime-url:http://localhost:12633}")
@@ -99,7 +103,9 @@ public class McpProxyController {
             McpToolAliasRepository aliases,
             WorkspaceService workspaceService,
             SessionRepository sessionRepository,
-            OperationService operationService) {
+            OperationService operationService,
+            ConfigService configService,
+            ToolTimeoutPolicy toolTimeoutPolicy) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -115,6 +121,8 @@ public class McpProxyController {
         this.workspaceService = workspaceService;
         this.sessionRepository = sessionRepository;
         this.operationService = operationService;
+        this.configService = configService;
+        this.toolTimeoutPolicy = toolTimeoutPolicy;
     }
 
     @PostMapping("/api/v1/mcp")
@@ -453,39 +461,130 @@ public class McpProxyController {
             }
         }
 
-        if ("__system__".equals(serverId)) {
-            return forwardToRuntime(wsId, null, body, headers, sessionId, access);
-        }
-        // PLAN-301 M2 (decision #1): per-server tool timeout travels to the
-        // Runtime as a request header; Runtime takes min(own env, header) as
-        // the exec collection bound. Non-system servers are table rows.
-        if (serverId != null) {
-            Optional<McpServer> timeoutServer = remoteServer(wsId, serverId);
-            if (timeoutServer.isPresent()) {
-                McpServer remote = timeoutServer.get();
-                if (remote.getToolTimeoutS() != null && remote.getToolTimeoutS() > 0) {
-                    HttpHeaders mutable = new HttpHeaders();
-                    mutable.addAll(headers);
-                    mutable.set("X-Xihe-Tool-Timeout-S", String.valueOf(remote.getToolTimeoutS()));
-                    headers = mutable;
-                }
+        // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
+        // 且先剥离上游同名头（信任边界）。此块位于 __system__ 分支之前——系统工具同样受管。
+        String perCallRaw = headers.getFirst("X-Xihe-Tool-Timeout-Per-Call");
+        Long perCallSeconds = null;
+        if (perCallRaw != null && !perCallRaw.isBlank()) {
+            perCallSeconds = toolTimeoutPolicy.parsePerCall(perCallRaw);
+            if (perCallSeconds == null) {
+                return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "per-call timeout must be a positive integer <= "
+                                + ToolTimeoutPolicy.PER_CALL_MAX_SECONDS);
             }
+        }
+        Integer configSeconds = resolveConfigTimeoutSeconds(wsId, serverId, access.userId());
+        ToolTimeoutPolicy.ToolWaits waits = toolTimeoutPolicy.resolve(
+                perCallSeconds == null ? null : perCallSeconds.intValue(), configSeconds);
+        HttpHeaders mutable = new HttpHeaders();
+        mutable.addAll(headers);
+        mutable.remove("X-Xihe-Tool-Timeout-S");
+        mutable.remove("X-Xihe-Tool-Timeout-Origin");
+        mutable.remove("X-Xihe-Tool-Timeout-Per-Call");
+        mutable.set("X-Xihe-Tool-Timeout-S", String.valueOf(waits.runtimeSeconds()));
+        mutable.set("X-Xihe-Tool-Timeout-Origin", waits.origin());
+        headers = mutable;
+        logger.info(
+                "[LIFECYCLE] service=cp event=tool_timeout_budget tool={} budget={}s origin={} cpWait={}s agentWait={}s sessionId={}",
+                toolName, waits.runtimeSeconds(), waits.origin(), waits.cpSeconds(),
+                waits.agentSeconds(), sessionId);
+
+        if ("__system__".equals(serverId)) {
+            return forwardToRuntime(wsId, null, body, headers, sessionId, access, waits.cpSeconds());
         }
 
         // Policy already evaluated above for all tool types (including __system__).
         // Route by server type: remote or local (system).
         Optional<McpServer> remote = remoteServer(wsId, serverId);
         if (remote.isPresent()) {
-            return forwardRemoteToRuntime(wsId, remote.get(), rewritten, headers, sessionId, access);
+            return forwardRemoteToRuntime(
+                    wsId, remote.get(), rewritten, headers, sessionId, access, waits.cpSeconds());
         }
 
         body = rewritten;
         return forwardToRuntime(wsId, serverId, body, headers, sessionId, access);
     }
 
+    /**
+     * 配置侧预算输入（spec S1）：remote 行 → {@code tool_timeout_s}；
+     * 系统工具 → {@code agent-runtime.systemToolTimeoutS}（决策 #22a/#24）。
+     */
+    private Integer resolveConfigTimeoutSeconds(String wsId, String serverId, String userId) {
+        if (serverId != null && !"__system__".equals(serverId)) {
+            Optional<McpServer> server = remoteServer(wsId, serverId);
+            if (server.isPresent()) {
+                Integer configured = server.get().getToolTimeoutS();
+                return configured != null && configured > 0 ? configured : null;
+            }
+            return null;
+        }
+        try {
+            String raw = configService.resolve(
+                    ToolTimeoutPolicy.SYSTEM_TOOL_DOMAIN,
+                    ToolTimeoutPolicy.SYSTEM_TOOL_KEY,
+                    uuidOrNull(userId),
+                    uuidOrNull(wsId));
+            return toolTimeoutPolicy.parseConfigSeconds(raw);
+        } catch (Exception e) {
+            logger.warn("system tool timeout config unavailable: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * PLAN-0308 M1（spec S2.1）：为 run payload 组装下发片段——
+     * {@code toolWaits}（remote 工具的 Agent 最终值）、{@code toolWaitOrigins}、
+     * {@code systemToolWait}（系统工具统一值）、{@code budgetCoverage}（冷缓存可见化，决策 #23）。
+     * 计算只在 CP；Agent/Runtime 只消费。
+     */
+    public Map<String, Object> toolTimeoutPayload(String wsId, String userId) {
+        refreshCacheIfNeeded(wsId);
+        Map<String, String> mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
+        Map<String, Long> waits = new LinkedHashMap<>();
+        Map<String, String> origins = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : mapping.entrySet()) {
+            Integer seconds = resolveConfigTimeoutSeconds(wsId, entry.getValue(), userId);
+            if (seconds == null) {
+                continue;
+            }
+            ToolTimeoutPolicy.ToolWaits resolved = toolTimeoutPolicy.resolve(null, seconds);
+            waits.put(entry.getKey(), resolved.agentSeconds());
+            origins.put(entry.getKey(), resolved.origin());
+        }
+        Integer systemSeconds = resolveConfigTimeoutSeconds(wsId, "__system__", userId);
+        long systemWait = toolTimeoutPolicy.resolve(null, systemSeconds).agentSeconds();
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("toolWaits", waits);
+        payload.put("toolWaitOrigins", origins);
+        payload.put("systemToolWait", systemWait);
+        payload.put("budgetCoverage", mapping.isEmpty() ? "partial" : "full");
+        logger.info(
+                "[LIFECYCLE] service=cp event=tool_timeout_payload wsId={} tools={} systemWait={}s coverage={}",
+                wsId, waits.size(), systemWait, payload.get("budgetCoverage"));
+        return payload;
+    }
+
+    private static UUID uuidOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private ResponseEntity<String> forwardToRuntime(
             String wsId, String serverId, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
+        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardTimeoutS);
+    }
+
+    private ResponseEntity<String> forwardToRuntime(
+            String wsId, String serverId, String body, HttpHeaders headers,
+            String sessionId, AccessContext access, long waitSeconds) {
         LedgerAttempt ledgerAttempt = null;
         try {
             // PLAN-242 M2: McpServer rows win over stdio config keys. A serverId
@@ -557,7 +656,7 @@ public class McpProxyController {
 
             HttpRequest forwardRequest = requestBuilder
                 .POST(HttpRequest.BodyPublishers.ofString(normalizeRuntimeBody(body, protocolVersion)))
-                .timeout(Duration.ofSeconds(forwardTimeoutS > 0 ? forwardTimeoutS : 30))
+                .timeout(Duration.ofSeconds(waitSeconds > 0 ? waitSeconds : 30))
                 .build();
 
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
@@ -819,6 +918,12 @@ public class McpProxyController {
     private ResponseEntity<String> forwardRemoteToRuntime(
             String wsId, McpServer server, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
+        return forwardRemoteToRuntime(wsId, server, body, headers, sessionId, access, forwardTimeoutS);
+    }
+
+    private ResponseEntity<String> forwardRemoteToRuntime(
+            String wsId, McpServer server, String body, HttpHeaders headers,
+            String sessionId, AccessContext access, long waitSeconds) {
         String method = extractMethod(body);
         LedgerAttempt ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
         try {
@@ -865,7 +970,7 @@ public class McpProxyController {
             copyOperationHeaders(headers, forwardBuilder);
             HttpRequest forwardRequest = forwardBuilder
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(request)))
-                    .timeout(Duration.ofSeconds(forwardTimeoutS > 0 ? forwardTimeoutS : 30))
+                    .timeout(Duration.ofSeconds(waitSeconds > 0 ? waitSeconds : 30))
                     .build();
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
             finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);
