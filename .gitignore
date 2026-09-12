@@ -36,10 +36,10 @@ target/
 *~
 
 # Env
-.env
+# PLAN-0307 T3.3: committed baselines .env / .env.dev / .env.test / .env.prod
+# (non-sensitive placeholders only, A03 is open source); personal overrides stay local.
 .env.local
-.env.*
-!.env.example
+.env.*.local
 config.import.local.jsonc
 # PLAN-0307 T2.25: exported config snapshots may contain plaintext credentials
 config.export*.jsonc

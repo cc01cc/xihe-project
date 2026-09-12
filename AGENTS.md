@@ -208,10 +208,10 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 | 层 | 用途 | 文件 | 可运行时修改 |
 |----|------|------|------------|
-| **环境变量** | 运行前固定（端口/DB/JWT） | `.env.example` → `.env.dev`（gitignore） | ❌ |
+| **环境变量** | 运行前固定（端口/DB/JWT/开关） | `.env` → `.env.$XIHE_ENV` → `.env.local`（模块内 dotenv loader 统一加载，后加载覆盖先加载、不覆盖系统 env；`.env`/`.env.dev`/`.env.test`/`.env.prod` 入库且仅非敏感占位值；`.env.local` gitignore 放真实本机值） | ❌（重启；`--set KEY=VALUE` 为 CLI 最高优先级） |
 | **ConfigService** | 运行时可改（模型/域参数/日志；凭证走 `provider_connections`） | `config.import.example.jsonc` → `config.import.local.jsonc`（gitignore） | ✅ UI / API |
 
-日常 host 开发推荐 `mise run dev:host`；`mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后按导入语义处理 `config.import.local.jsonc`（默认打印 reset-admin 指引，`XIHE_DEV_ADMIN_PASSWORD` 显式启用；该密码仅经 OS 环境变量注入，禁止写入脚本/git/日志）。配置生效优先级推荐为：启动环境变量 → `.env.dev` → ConfigService / UI Settings；三类配置归属速查见 DEV-003 §2。
+日常 host 开发推荐 `mise run dev:host`；`mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后按导入语义处理 `config.import.local.jsonc`（默认打印 reset-admin 指引，`XIHE_DEV_ADMIN_PASSWORD` 显式启用；该密码仅经 OS 环境变量注入，禁止写入脚本/git/日志）。配置优先级：per-call > CLI `--set` > env 文件链 > ConfigService 用户配置 > 代码默认；env 与 DB 冲突时显式暴露（UI 锁定显示 env 生效值，禁止静默合并）。三类配置归属速查见 DEV-003 §2；危险默认 fail-fast 见 DEV-003 §2 与 `spec/config-env-target.md` §6。
 
 ## Testing
 

@@ -4,14 +4,24 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const envDevPath = path.join(projectRoot, ".env.dev");
+// PLAN-0307 T3.3: read the full committed chain (.env → .env.dev → .env.local);
+// real keys now live in the gitignored .env.local instead of .env.dev.
+const envChainPaths = [".env", ".env.dev", ".env.local"].map((name) => path.join(projectRoot, name));
 const configImportPath = path.join(projectRoot, "config.import.local.jsonc");
 
-function readEnvDev() {
-  if (!fs.existsSync(envDevPath)) {
-    return {};
+function readEnvChain() {
+  const merged = {};
+  for (const envPath of envChainPaths) {
+    if (!fs.existsSync(envPath)) {
+      continue;
+    }
+    Object.assign(merged, parseEnvFile(envPath));
   }
-  const content = fs.readFileSync(envDevPath, "utf8");
+  return merged;
+}
+
+function parseEnvFile(envPath) {
+  const content = fs.readFileSync(envPath, "utf8");
   const result = {};
   for (const line of content.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -64,15 +74,15 @@ function resolveMasked(value) {
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
 }
 
-const envDev = readEnvDev();
+const env = readEnvChain();
 const configImport = readConfigImport();
-const defaultProvider = configImport?.defaultProvider ?? envDev.XIHE_LLM_PROVIDER ?? "unknown";
-const deepseekKey = configImport?.deepseekApiKey ?? envDev.XIHE_DEEPSEEK_API_KEY ?? "";
-const xiaomiKey = configImport?.xiaomiApiKey ?? envDev.XIHE_MIMO_API_KEY ?? envDev.XIAOMI_API_KEY ?? "";
+const defaultProvider = configImport?.defaultProvider ?? env.XIHE_LLM_PROVIDER ?? "unknown";
+const deepseekKey = env.XIHE_DEEPSEEK_API_KEY ?? configImport?.deepseekApiKey ?? "";
+const xiaomiKey = env.XIHE_XIAOMI_API_KEY ?? configImport?.xiaomiApiKey ?? "";
 
 console.log("Config source resolution");
 console.log(`  defaultProvider : ${defaultProvider}`);
 console.log(`  deepseekKey     : ${resolveMasked(deepseekKey) || "(empty)"}`);
 console.log(`  xiaomiKey       : ${resolveMasked(xiaomiKey) || "(empty)"}`);
-console.log(`  envDevExists    : ${fs.existsSync(envDevPath)}`);
+console.log(`  envChain        : ${envChainPaths.filter((p) => fs.existsSync(p)).map((p) => path.basename(p)).join(" + ") || "(none)"}`);
 console.log(`  configImportExists : ${fs.existsSync(configImportPath)}`);

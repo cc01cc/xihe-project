@@ -58,28 +58,28 @@ alias = "dev:backend"
 run = "node ../../scripts/dev-ui-host.mjs --mode dev --host 127.0.0.1 --port 12630 --strictPort"
 description = "Start the UI development server (Windows native)"
 dir = "packages/ui"
-env = { XIHE_ENV = "dev", XIHE_UI_PORT = "12630", XIHE_CP_BASE_URL = "http://127.0.0.1:12631", XIHE_LOG_DIR = "../../logs" }
+env = { XIHE_ENV = "dev" }
 alias = "dev:ui"
 
 [tasks."dev:agent"]
 run = "uv run python -m xihe_agent.main"
 description = "Start the agent service (Windows native)"
 dir = "packages/agent"
-env = { XIHE_ENV = "dev", XIHE_AGENT_PORT = "12632", XIHE_CP_URL = "http://127.0.0.1:12631", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_LOG_DIR = "../../logs" }
+env = { XIHE_ENV = "dev" }
 alias = "dev:agent"
 
 [tasks."dev:cp"]
 run = "mvn spring-boot:run"
 description = "Start the control plane (Windows native)"
 dir = "packages/control-plane"
-env = { XIHE_ENV = "dev", XIHE_CP_PORT = "12631", XIHE_CP_DATASOURCE_URL = "jdbc:postgresql://127.0.0.1:12634/xihe", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_AGENT_URL = "http://127.0.0.1:12632/internal/v1/agent/chat", XIHE_RUNTIME_URL = "http://127.0.0.1:12633", XIHE_LOG_DIR = "../../logs" }
+env = { XIHE_ENV = "dev" }
 alias = "dev:cp"
 
 [tasks."dev:runtime"]
 run = "cargo run --bin xihe-runtime"
 description = "Start the runtime service (Windows native)"
 dir = "packages/runtime"
-env = { XIHE_ENV = "dev", XIHE_RUNTIME_PORT = "12633", XIHE_CP_URL = "http://127.0.0.1:12631", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_WORKSPACE_HOST_ROOT = "../../.xihe-workspaces", XIHE_WORKSPACE_IMAGE = "xihe/workspace:latest", XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL = "true", XIHE_LOG_DIR = "../../logs", XIHE_LOAD_DOTENV = "0" }
+env = { XIHE_ENV = "dev" }
 alias = "dev:runtime"
 
 [tasks.build]
@@ -272,28 +272,28 @@ alias = "dev:host:start:pg"
 run = "mvn spring-boot:run"
 description = "Start Control Plane (port 12631)"
 dir = "packages/control-plane"
-env = { XIHE_ENV = "dev", XIHE_CP_PORT = "12631", XIHE_CP_DATASOURCE_URL = "jdbc:postgresql://127.0.0.1:12634/xihe", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_AGENT_URL = "http://127.0.0.1:12632/internal/v1/agent/chat", XIHE_RUNTIME_URL = "http://127.0.0.1:12633", XIHE_LOG_DIR = "../../logs" }
+env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:cp"
 
 [tasks."dev:host:start:agent"]
 run = "uv run python -m xihe_agent.main"
 description = "Start Agent (port 12632)"
 dir = "packages/agent"
-env = { XIHE_ENV = "dev", XIHE_AGENT_PORT = "12632", XIHE_CP_URL = "http://127.0.0.1:12631", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_LOG_DIR = "../../logs" }
+env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:agent"
 
 [tasks."dev:host:start:runtime"]
 run = "cargo run --bin xihe-runtime"
 description = "Start Runtime (port 12633)"
 dir = "packages/runtime"
-env = { XIHE_ENV = "dev", XIHE_RUNTIME_PORT = "12633", XIHE_CP_URL = "http://127.0.0.1:12631", XIHE_CP_API_TOKEN = "dev-token-not-secure", XIHE_WORKSPACE_HOST_ROOT = "../../.xihe-workspaces", XIHE_WORKSPACE_IMAGE = "xihe/workspace:latest", XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL = "true", XIHE_LOG_DIR = "../../logs", XIHE_LOAD_DOTENV = "0" }
+env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:runtime"
 
 [tasks."dev:host:start:ui"]
 run = "node ../../scripts/dev-ui-host.mjs --mode dev --host 127.0.0.1 --port 12630 --strictPort"
 description = "Start UI dev server (port 12630)"
 dir = "packages/ui"
-env = { XIHE_ENV = "dev", XIHE_UI_PORT = "12630", XIHE_CP_BASE_URL = "http://127.0.0.1:12631", XIHE_LOG_DIR = "../../logs" }
+env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:ui"
 
 [tasks."image:workspace:build"]

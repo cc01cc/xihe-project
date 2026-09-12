@@ -39,6 +39,8 @@ services:
     ports:
       - "${XIHE_CP_PORT:-12631}:8080"
     env_file:
+      - path: .env
+        required: false
       - path: .env.dev
         required: false
     environment:
@@ -73,6 +75,8 @@ services:
     ports:
       - "${XIHE_AGENT_PORT:-12632}:8000"
     env_file:
+      - path: .env
+        required: false
       - path: .env.dev
         required: false
     environment:
@@ -81,6 +85,12 @@ services:
       XIHE_CP_PORT: "8080"
       XIHE_CP_URL: "http://control-plane:8080"
       XIHE_CP_API_TOKEN: "${XIHE_CP_API_TOKEN:-dev-token-not-secure}"
+      # PLAN-0307 T3.3/T3.7: provider keys are offline fallback only and never live in
+      # committed files; export them in the shell or use `docker compose --env-file .env.local up`.
+      XIHE_XIAOMI_API_KEY: "${XIHE_XIAOMI_API_KEY:-}"
+      XIHE_DEEPSEEK_API_KEY: "${XIHE_DEEPSEEK_API_KEY:-}"
+      XIHE_OPENAI_API_KEY: "${XIHE_OPENAI_API_KEY:-}"
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
     volumes:
       - ./logs/agent:/logs
     mem_limit: 640m
@@ -104,6 +114,8 @@ services:
     ports:
       - "${XIHE_RUNTIME_PORT:-12633}:8001"
     env_file:
+      - path: .env
+        required: false
       - path: .env.dev
         required: false
     environment:
