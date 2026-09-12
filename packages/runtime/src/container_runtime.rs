@@ -389,7 +389,7 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
                     let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
                 }
             }
-            return Err(RuntimeError::Timeout);
+            return Err(RuntimeError::timeout_now());
         }
     };
     let stdout_bytes = stdout_handle.await.map_err(|e| RuntimeError::Command(e.to_string()))?;

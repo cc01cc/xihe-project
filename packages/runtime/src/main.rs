@@ -47,6 +47,7 @@ use xihe_runtime::remote_mcp::{
 };
 use xihe_runtime::sandbox;
 use xihe_runtime::storage;
+use xihe_runtime::tool_timeout;
 use xihe_runtime::workspace::WorkspaceManager;
 use xihe_runtime::executor::WorkspaceExecutionRouter;
 use xihe_runtime::error::RuntimeError;
@@ -547,6 +548,26 @@ impl ServerHandler for XiheRuntime {
             ProtocolVersion::V_2025_06_18,
             ProtocolVersion::V_2025_03_26,
         ])
+    }
+
+    // PLAN-0308 M1（spec S1/S2）：读取 CP 随请求下发的等待值（含性质标记），
+    // 按三条判断得出生效值并以 task_local 传给 executor；无头时退回本模块 ENV / 默认。
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
+        let effective = tool_timeout::resolve_from_extensions(&context.extensions)
+            .unwrap_or_else(tool_timeout::current_or_resolve);
+        tracing::info!(
+            target: "timeout",
+            tool = %request.name,
+            "tool call wait: {}",
+            effective.signature()
+        );
+        let tool_call_context =
+            rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        tool_timeout::scope(effective, Self::tool_router().call(tool_call_context)).await
     }
 }
 
@@ -2346,5 +2367,26 @@ mod remote_handler_tests {
 
         assert_eq!(error.0, StatusCode::NOT_FOUND);
         assert!(app.manager.lock().await.list_workspaces().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tool_router_regression_tests {
+    use super::*;
+
+    /// PLAN-0308 T1.2：自定义 `call_tool` 不得影响宏生成的其余方法
+    /// （宏按方法名逐个判断，见 rmcp-macros tool_handler.rs:44/64/88/98）。
+    #[test]
+    fn tool_router_lists_builtin_tools() {
+        let tools = XiheRuntime::tool_router().list_all();
+        assert!(
+            tools.iter().any(|tool| tool.name == "read_file"),
+            "read_file missing from tool surface"
+        );
+        assert!(
+            tools.len() >= 20,
+            "expected the built-in tool surface, got {}",
+            tools.len()
+        );
     }
 }

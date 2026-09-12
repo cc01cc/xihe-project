@@ -1,17 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-// PLAN-301 M1: exec output collection upper bound, configurable so the
-// cold-start first exec (container/image warm-up) can be given room without
-// recompiling. Agent-side wait_for is a separate layer (loose coupling across
-// the language boundary) — tune both together when scaling timeouts.
-fn exec_collect_timeout_secs() -> u64 {
-    std::env::var("XIHE_EXEC_COLLECT_TIMEOUT_S")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(30)
-}
+// PLAN-0308 M1: 工具超时的取值与传递统一在 `tool_timeout`（spec S1 三条判断）：
+// 生效值由 CP 下发 + 本模块 ENV 覆盖，经 task_local 传入本模块；此处只消费，不做计算。
+use crate::tool_timeout;
 
 use bollard::Docker;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
@@ -129,9 +121,28 @@ impl WorkspaceExecutionRouter {
                 }
             }
         };
-        match tokio::time::timeout(Duration::from_secs(exec_collect_timeout_secs()), collect).await {
+        let effective = tool_timeout::current_or_resolve();
+        tracing::info!(
+            target: "timeout",
+            operation = %operation,
+            workspace_id = %workspace_id,
+            "tool exec wait: {}",
+            effective.signature()
+        );
+        match tokio::time::timeout(Duration::from_secs(effective.seconds), collect).await {
             Ok(_) => {},
-            Err(_) => return Err(RuntimeError::Timeout),
+            Err(_) => {
+                tracing::warn!(
+                    target: "timeout",
+                    operation = %operation,
+                    workspace_id = %workspace_id,
+                    "tool exec timeout: {}",
+                    effective.timeout_signature()
+                );
+                return Err(RuntimeError::Timeout {
+                    detail: effective.timeout_signature(),
+                });
+            }
         }
         if let Some(e) = stream_err {
             return Err(RuntimeError::Docker(e));

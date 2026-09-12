@@ -35,8 +35,8 @@ pub enum RuntimeError {
     #[error("Docker error: {0}")]
     Docker(String),
 
-    #[error("Operation timed out")]
-    Timeout,
+    #[error("Operation timed out ({detail})")]
+    Timeout { detail: String },
 
     #[error("Watch error: {0}")]
     Watch(String),
@@ -73,6 +73,15 @@ pub enum RuntimeError {
     },
 }
 
+impl RuntimeError {
+    /// 构造带署名的超时错误（PLAN-0308 spec S5）：detail 取当前 task_local 生效值。
+    pub fn timeout_now() -> Self {
+        Self::Timeout {
+            detail: crate::tool_timeout::current_signature(),
+        }
+    }
+}
+
 impl From<RuntimeError> for rmcp::ErrorData {
     fn from(err: RuntimeError) -> Self {
         rmcp::ErrorData::internal_error(err.to_string(), None)
@@ -104,7 +113,7 @@ mod tests {
     fn runtime_error_display_formats_all_variants() {
         let cases = vec![
             (RuntimeError::InvalidPath("x".into()), "Invalid path"),
-            (RuntimeError::Timeout, "Operation timed out"),
+            (RuntimeError::timeout_now(), "Operation timed out"),
             (
                 RuntimeError::Command("fail".into()),
                 "Command execution error",

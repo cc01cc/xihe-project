@@ -19,12 +19,15 @@ pub mod storage;
 pub mod workspace;
 pub mod executor;
 pub mod inventory;
+pub mod tool_timeout;
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn smoke_test_error_module() {
-        let _ = crate::error::RuntimeError::Timeout;
+        let _ = crate::error::RuntimeError::Timeout {
+            detail: "smoke".to_string(),
+        };
     }
 
     #[test]
