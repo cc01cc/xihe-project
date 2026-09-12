@@ -60,9 +60,26 @@ flowchart TD
 
 UI 入口 `/settings/config` 为**三个设置条目**：实例（仅 ADMIN，8 域）、工作区（当前 workspace，5 域）、个人（user 层 7 域）。读取统一 `GET /api/v1/config/{domain}?layer=<instance|workspace|user>&includeMeta=true`——`envOverridden` 列出被 env 覆盖的键及其 env 生效值，UI 对这些键禁用编辑并展示 env 值；保存体自动剔除锁定键。`includeMeta=true` 在 resolved（不带 layer）与单层视图下都返回该元数据。
 
-## 2. 启动环境变量（.env.dev）
+## 2. 启动环境变量（.env 文件链 + CLI --set）
 
-仅基础设施启动变量走进程启动环境变量（指服务启动前由 Shell、mise、`.env.dev` 或脚本注入进程的变量，修改后通常需重启；`.env.example` → `.env.dev`，gitignore，不可运行时修改）：
+仅基础设施启动变量走进程启动环境变量（指服务启动前由 Shell、mise、`.env` 文件链或 `--set` 注入进程的变量，修改后通常需重启）。**模块内 dotenv loader 是唯一加载器**（`DotenvLoader.java` / `dotenv_loader.rs` / `dotenv_loader.py` 同一时序）：
+
+```text
+CLI --set KEY=VALUE（最高，启动日志掩码标注）
+  > 进程已有 env（OS env / mise / 容器注入，快照后永不被文件覆盖）
+  > .env → .env.$XIHE_ENV → .env.local（后加载覆盖先加载；支持 ${VAR} / ${VAR:-default}，未定义 WARN）
+  > 代码默认
+```
+
+| 文件 | 内容 | 入库 |
+|------|------|------|
+| `.env` | base：跨环境共享（日志、JWT 有效期、附件策略、通道） | ✅ 仅非敏感占位值 |
+| `.env.dev` / `.env.test` / `.env.prod` | 环境基线（`XIHE_ENV` 选择；test 端口 +10000 偏移、mock LLM；prod 严格安全开关） | ✅ 仅非敏感占位值 |
+| `.env.local` | 个人覆盖（本机密钥/路径，environment-agnostic） | ❌ gitignore |
+
+引导变量（不写文件）：`XIHE_ENV`（dev/test/prod）、`XIHE_LOAD_DOTENV=0`（逃逸开关）、`XIHE_ENV_FILE`（指定单文件）。**禁止 `.env.prod.local`**：生产配置只来自 `.env.prod` 入库基线或部署注入（IaC/CI secret）。
+
+**业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表唯一重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL`（`.env` base 提供默认值）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效），日志记录冲突与胜者。
 
 | 变量 | 说明 |
 |------|------|

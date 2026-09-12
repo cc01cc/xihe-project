@@ -39,7 +39,6 @@ from xihe_agent.context import (
     EventSourcedContextProvider,
 )
 from xihe_agent.dotenv_loader import load_project_env, parse_cli_overrides
-from xihe_agent.security_defaults import enforce_security_defaults
 from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.llm.base import (
@@ -56,6 +55,7 @@ from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.rag import EmbeddingService, LiteLLMEmbeddings, VectorStore
 from xihe_agent.rag import chunk_document as rag_chunk
 from xihe_agent.registry.registry import WorkerRegistry
+from xihe_agent.security_defaults import enforce_security_defaults
 from xihe_agent.tools import GenerateImageAgentTool, GenerateImageTool, ProviderManager
 
 # Suppress litellm verbose debugging that prints Authorization headers and
