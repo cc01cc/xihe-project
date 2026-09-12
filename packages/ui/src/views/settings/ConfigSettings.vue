@@ -90,6 +90,7 @@ const domainSchemas: Record<string, DomainField[]> = {
     { key: 'useSupervisor', label: t('settings.fieldUseSupervisor'), type: 'select', options: boolOptions },
     { key: 'workersDir', label: t('settings.fieldWorkersDir'), type: 'text' },
     { key: 'instructions', label: t('settings.fieldInstructions'), type: 'textarea', instanceOnly: true },
+    { key: 'systemToolTimeoutS', label: t('settings.fieldSystemToolTimeout'), type: 'number' },
   ],
   'agent-profile': [
     { key: 'userName', label: t('settings.fieldUserName'), type: 'text' },

@@ -49,7 +49,10 @@
   "agent-runtime": {
     "instructions": "你是 xihe Agent，一个通用的 AI 助手。请用中文回答。你可以使用各种工具来帮助用户完成任务。",
     "useRegistry": "false",
-    "useSupervisor": "false"
+    "useSupervisor": "false",
+    // PLAN-0308：系统工具（文件/命令等）的执行预算（秒）。CP 据此计算并进行下发；
+    // 需要更长的合法超时请改这里，per-call 只用于"这一次多给点"（上限 600 秒）。
+    "systemToolTimeoutS": "30"
   },
 
   // agent-profile — 用户展示名（instance 默认，user 可覆盖）
