@@ -308,7 +308,10 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 
 ## Skills
 
-本项目特有的 Agent Skills 位于 `.agents/skills/`（开放标准位置，兼容工具在本项目根下自动发现）。具体清单见 `.agents/skills/AGENTS.md`（目录级索引：名称/用途/路径）；one 根会话按 one/AGENTS.md「Skills 体系」节导航协议使用。
+项目特有 skill（按需 Read `.agents/skills/<name>/SKILL.md`）：
+
+- `ai-chat-ui-design`：AI 聊天界面设计（MessageScroller 流式/自动滚动）
+- `dev-host-verification`：host readiness / M1 / E2E profile 与可恢复清理
 
 ## Permissions
 

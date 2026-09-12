@@ -1,0 +1,7 @@
+{
+    "$schema": "https://app.kilo.ai/config.json",
+    // 项目池 skill 能力层注册（见 docs/DOC-009）：注入项目池 SKILL.md 的 description
+    "skills": {
+        "paths": [".agents/skills"],
+    },
+}
