@@ -20,6 +20,8 @@ public class CpApplication {
     public static void main(String[] args) {
         // PLAN-0307 T3.1/T3.5: env chain + CLI --set load before Spring starts.
         DotenvLoader.load(args);
+        // PLAN-0307 T3.4: reject dangerous factory defaults in prod (WARN in dev/test).
+        SecurityDefaultsValidator.enforce();
         SpringApplication.run(CpApplication.class, args);
     }
 

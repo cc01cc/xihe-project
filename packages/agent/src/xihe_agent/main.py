@@ -39,6 +39,7 @@ from xihe_agent.context import (
     EventSourcedContextProvider,
 )
 from xihe_agent.dotenv_loader import load_project_env, parse_cli_overrides
+from xihe_agent.security_defaults import enforce_security_defaults
 from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.llm.base import (
@@ -1476,6 +1477,8 @@ async def list_tools(_token: None = Depends(verify_api_token)):
 if __name__ == "__main__":
     # PLAN-0307 T3.5: CLI --set is the highest-priority config layer.
     load_project_env(parse_cli_overrides(sys.argv[1:]))
+    # PLAN-0307 T3.4: reject dangerous factory defaults in prod (WARN in dev/test).
+    enforce_security_defaults()
 
     import uvicorn
 

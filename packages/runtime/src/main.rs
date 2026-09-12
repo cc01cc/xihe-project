@@ -1488,6 +1488,8 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli_overrides = dotenv_loader::parse_cli_overrides(&args).map_err(anyhow::Error::msg)?;
     dotenv_loader::load(&cli_overrides);
+    // PLAN-0307 T3.4: reject dangerous factory defaults in prod (WARN in dev/test).
+    xihe_runtime::security_defaults::enforce()?;
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

@@ -78,6 +78,10 @@ UI 入口 `/settings/config` 为**三个设置条目**：实例（仅 ADMIN，8 
 
 **Agent env 兜底（离线/无租约路径，决策 #40）**：`XIHE_{PROVIDER}_API_KEY`（`openai`/`deepseek`/`xiaomi`/`anthropic`/`dashscope`）与 `llm-provider` 的非密钥 base/model 共同构成无 CP 租约时的兜底；**常规路径是 `provider_connections` 租约**（见 §3）。无租约且无兜底 key 的 run 在 `/chat` fail-closed 返回 503 `LLM_NOT_CONFIGURED`。
 
+**secret 通道归位（决策 #37/T3.7）**：`XIHE_*_API_KEY` 一律标注**离线兜底**语义，常规路径为 CP 加密租约（DB 侧仅存信封密文）；secret 禁止写入入库的 `.env*` 文件（`.env`/`.env.$XIHE_ENV` 仅非敏感占位值），个人本地调试只允许 `.env.local`（gitignore）；**禁止 `.env.prod.local`**——生产配置只来自入库基线或部署注入（IaC/CI secret），本机文件覆盖生产不可复现、不可审计（反模式，加载器不设该层级）。
+
+**危险默认 fail-fast（决策 #7/#25/#32/T3.4）**：各模块启动时校验最终生效值——显式 `XIHE_ENV=prod` 命中出厂态危险默认（JWT secret/服务 token/allow-dev-key/加密 key）即**拒绝启动**并列键与修复指引；未设或 dev 仅 WARN；发布门禁强制显式 `prod`。清单见 `spec/config-env-target.md` §6。
+
 **配置归属速查**：
 
 | 配置类别 | 归属 | 生效方式 |

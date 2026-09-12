@@ -14,6 +14,7 @@ pub mod log_redact;
 pub mod mcp_process;
 pub mod remote_mcp;
 pub mod sandbox;
+pub mod security_defaults;
 pub mod storage;
 pub mod workspace;
 pub mod executor;
