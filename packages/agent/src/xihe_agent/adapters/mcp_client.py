@@ -78,6 +78,7 @@ class ToolWait(NamedTuple):
     source: str  # env | cp | default
     value_origin: str | None  # per-call | config | None
     overridden_seconds: float | None
+    tool_call_id: str | None = None
 
     def signature(self) -> str:
         parts = [f"layer=agent_wait effectiveSeconds={self.seconds:.0f}", f"source={self.source}"]
@@ -85,10 +86,22 @@ class ToolWait(NamedTuple):
             parts.append(f"valueOrigin={self.value_origin}")
         if self.overridden_seconds is not None:
             parts.append(f"overriddenSeconds={self.overridden_seconds:.0f}")
+        if self.tool_call_id:
+            parts.append(f"toolCallId={self.tool_call_id}")
         return " ".join(parts)
+
+    def timeout_signature(self) -> str:
+        """自身到界时的署名：附 `origin=self`（spec S5.1 规则 2/3）。"""
+        return f"{self.signature()} origin=self"
 
 
 def _resolve_tool_wait(tool_name: str, context: "AgentContext | None") -> ToolWait:
+    # 关联键（spec S5.1）：与 CP/Runtime 共用的 toolCallId（= 随请求透传的 operationItemId）。
+    tool_call_id: str | None = None
+    if context is not None:
+        raw_id = context.metadata.get("operationItemId")
+        if raw_id:
+            tool_call_id = str(raw_id)
     delivered: float | None = None
     origin: str | None = None
     if context is not None:
@@ -107,13 +120,31 @@ def _resolve_tool_wait(tool_name: str, context: "AgentContext | None") -> ToolWa
                 origin = "config"
     env = _env_override()
     if delivered is not None and origin == "per-call":
-        return ToolWait(delivered, "cp", "per-call", env)
+        return ToolWait(delivered, "cp", "per-call", env, tool_call_id)
     if env is not None:
-        return ToolWait(env, "env", origin, delivered)
+        return ToolWait(env, "env", origin, delivered, tool_call_id)
     if delivered is not None:
-        return ToolWait(delivered, "cp", origin, None)
-    return ToolWait(DEFAULT_MCP_TOOL_TIMEOUT_S, "default", None, None)
+        return ToolWait(delivered, "cp", origin, None, tool_call_id)
+    return ToolWait(DEFAULT_MCP_TOOL_TIMEOUT_S, "default", None, None, tool_call_id)
 APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id"
+# PLAN-0308 M1 T1.9（决策 #27/#28）：调用方 → CP 的 per-call 入站头。
+# CP 下发原始 per-call 值（run payload 的 `toolTimeouts`），Agent 随对应工具调用携带；
+# 值只由 CP 计算/校验，本模块不改写。CP 校验后以出站头 X-Xihe-Tool-Timeout-S/-Origin 转发 Runtime。
+PER_CALL_TIMEOUT_HEADER = "X-Xihe-Tool-Timeout-Per-Call"
+
+
+def _per_call_timeout_header(context: AgentContext | None, tool_name: str) -> dict[str, str]:
+    """per-call 原始值 → 入站头（无 per-call 条目或值非法时不附带）。"""
+    if context is None:
+        return {}
+    raw_map = context.runtime_state.get("toolTimeouts")
+    raw = raw_map.get(tool_name) if isinstance(raw_map, dict) else None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        seconds = float(raw)
+        if seconds > 0 and seconds.is_integer():
+            return {PER_CALL_TIMEOUT_HEADER: str(int(seconds))}
+    return {}
+
 _ACTIVE_CONTEXT: contextvars.ContextVar[AgentContext | None] = contextvars.ContextVar(
     "xihe_active_mcp_context", default=None
 )
@@ -180,6 +211,8 @@ class ApprovalMCPInterceptor:
             operation_item_id = metadata.get("operationItemId")
             if operation_item_id:
                 headers["X-Operation-Item-Id"] = str(operation_item_id)
+        # T1.9：per-call 值随工具调用单独携带（CP 校验后采纳为最高优先输入）。
+        headers.update(_per_call_timeout_header(context, request.name))
 
         if request.name in REQUIRE_APPROVAL_TOOLS:
             if context is None:
@@ -205,6 +238,16 @@ class ApprovalMCPInterceptor:
             # Post-approval Runtime call is local: fail fast if gateway stalls.
             # PLAN-0308 M1: 与只读路径共用同一条判断链（下发值 / ENV / 默认）。
             post_wait = _resolve_tool_wait(request.name, context)
+            # T1.8（spec S5.1）：审批工具的等待值同样打点（审批等待本身不设限，此界只作用于授权后的转发）。
+            logger.info(
+                "[LIFECYCLE] service=agent event=mcp_tool_post_grant tool={} toolCallId={}"
+                + " waitS={} source={} valueOrigin={}",
+                request.name,
+                post_wait.tool_call_id or "-",
+                post_wait.seconds,
+                post_wait.source,
+                post_wait.value_origin or "",
+            )
             return await asyncio.wait_for(
                 handler(request.override(headers=headers or None)),
                 timeout=post_wait.seconds,
@@ -254,9 +297,12 @@ class MCPAgentTool(BaseAgentTool):
             else:
                 # PLAN-0308 M1：等待值由 CP 计算（含余量与冷启动增量），本模块只执行；
                 # 冷启动宽限不再本地乘 3（已由 CP 计入下发值）。
+                # T1.8：toolCallId 与 CP/Runtime 共用，超时可跨三层串时间线（spec S5.1）。
                 logger.info(
-                    "[LIFECYCLE] service=agent event=mcp_tool_wait tool={} waitS={} source={} valueOrigin={}",
+                    "[LIFECYCLE] service=agent event=mcp_tool_wait tool={} toolCallId={}"
+                    + " waitS={} source={} valueOrigin={}",
                     self._tool.name,
+                    wait.tool_call_id or "-",
                     wait.seconds,
                     wait.source,
                     wait.value_origin or "",
@@ -266,10 +312,16 @@ class MCPAgentTool(BaseAgentTool):
                     timeout=wait.seconds,
                 )
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+            # 下游（CP/Runtime）返回的错误以 "Tool error:" 前缀透传（与 CP 台账同一约定）：
+            # 该跳未到界，只转发下游结论 → origin=downstream（spec S5.1 规则 2）。
+            downstream_error = str(result).startswith("Tool error:")
             logger.info(
-                "[LIFECYCLE] service=agent event=mcp_tool_ok tool={} elapsedMs={}",
+                "[LIFECYCLE] service=agent event=mcp_tool_ok tool={} toolCallId={} elapsedMs={} outcome={} origin={}",
                 self._tool.name,
+                wait.tool_call_id or "-",
                 elapsed_ms,
+                "error" if downstream_error else "ok",
+                "downstream" if downstream_error else "-",
             )
             return {"content": str(result)}
         except ApprovalTerminalError:
@@ -280,13 +332,13 @@ class MCPAgentTool(BaseAgentTool):
             logger.error(
                 "[LIFECYCLE] service=agent event=mcp_tool_timeout tool={} {} elapsedMs={}",
                 self._tool.name,
-                timed_out.signature(),
+                timed_out.timeout_signature(),
                 elapsed_ms,
             )
             return {
                 "content": (
                     f"Tool error: MCP tool '{self._tool.name}' timed out after "
-                    f"{timed_out.seconds:.0f}s ({timed_out.signature()})."
+                    f"{timed_out.seconds:.0f}s ({timed_out.timeout_signature()})."
                 )
             }
         except Exception as e:

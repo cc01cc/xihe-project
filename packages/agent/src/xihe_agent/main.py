@@ -430,6 +430,26 @@ def _normalize_run_overrides(raw: Any) -> dict[str, dict[str, str]]:
     }
 
 
+def _normalize_tool_timeouts(raw: Any) -> dict[str, int]:
+    """PLAN-0308 T1.9（决策 #27/#28）：per-call 原始值（CP 已校验并回传）。
+
+    本模块不改写、不计算；非正整数（CP 不会产生）的条目忽略并告警。
+    """
+    values: dict[str, int] = {}
+    if isinstance(raw, dict):
+        for tool_name, seconds in raw.items():
+            if (
+                isinstance(seconds, (int, float))
+                and not isinstance(seconds, bool)
+                and float(seconds) > 0
+                and float(seconds).is_integer()
+            ):
+                values[str(tool_name)] = int(seconds)
+            else:
+                logger.warning("Ignoring invalid toolTimeouts entry {}={!r}", tool_name, seconds)
+    return values
+
+
 def _merge_run_domain(
     domain: str,
     user_overrides: dict[str, dict[str, str]],
@@ -801,6 +821,10 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             if origin in ("per-call", "config"):
                 tool_wait_origins[str(tool_name)] = str(origin)
 
+    # PLAN-0308 M1 T1.9（决策 #27/#28）：per-call 原始值（CP 已校验、随 run 回传）；
+    # 本模块不改值、不计算，仅在工具调用时附带入站头 X-Xihe-Tool-Timeout-Per-Call。
+    tool_timeouts = _normalize_tool_timeouts(data.get("toolTimeouts"))
+
     # PLAN-0307 T2.7 (decision #3=#3a): CP-resolved per-run layer overrides.
     raw_user_overrides = data.get("userOverrides")
     raw_workspace_overrides = data.get("workspaceOverrides")
@@ -1057,6 +1081,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 context.runtime_state["toolWaits"] = tool_waits
                 context.runtime_state["toolWaitOrigins"] = tool_wait_origins
                 context.runtime_state["systemToolWait"] = system_tool_wait
+                context.runtime_state["toolTimeouts"] = tool_timeouts
                 context.metadata.update({
                     "requestId": request_id,
                     "runId": run_id,

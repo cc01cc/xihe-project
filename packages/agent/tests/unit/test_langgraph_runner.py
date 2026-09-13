@@ -211,3 +211,70 @@ def test_system_messages_warn_when_baseline_missing_with_summary():
 
     assert [m.content for m in messages] == ["SUMMARY"]
     assert warn.called
+
+
+# ── PLAN-0308 M1 收尾：MCP 工具参数类型映射（冒烟抓出的缺陷） ──────────────────
+
+
+def test_args_schema_maps_json_types_and_validates_numeric_args():
+    """非字符串参数（integer/array/union）不得被校验层拒绝。
+
+    缺陷复现（修复前）：所有字段一律 `str`，pydantic v2 不再隐式把数字转字符串，
+    `execute_command {command, timeout: 90}` 校验失败 → LangGraph 吞成 ToolMessage，
+    工具从未执行而 run 仍报 success。
+    """
+    spec = ToolSpec(
+        name="execute_command",
+        description="Execute a shell command",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "args": {"type": "array", "items": {"type": "string"}, "default": []},
+                "timeout": {"type": ["integer", "null"], "minimum": 0},
+                "truncate_limit": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                "flag": {"type": "boolean"},
+            },
+            "required": ["command"],
+        },
+    )
+
+    schema = langgraph_runner_module._build_args_schema(spec)
+    model = schema(command="sleep 45", timeout=90, args=["x"], flag=True)
+
+    assert model.command == "sleep 45"
+    assert model.timeout == 90
+    assert model.args == ["x"]
+    assert model.flag is True
+    assert model.truncate_limit is None
+
+
+def test_args_schema_keeps_string_fields_strict_for_numbers():
+    """字符串字段仍不接受数字（保持原有的失败可见性，不回归成静默强转）。"""
+    spec = ToolSpec(
+        name="write_file",
+        description="write",
+        input_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    )
+
+    with pytest.raises(Exception):
+        langgraph_runner_module._build_args_schema(spec)(path=123)
+
+
+def test_args_schema_accepts_numeric_strings_for_integer_fields():
+    """宽松模式：LLM 常把数字发成字符串，integer 字段应接受 "90"。"""
+    spec = ToolSpec(
+        name="read_file_range",
+        description="read",
+        input_schema={
+            "type": "object",
+            "properties": {"offset": {"type": "integer"}},
+            "required": ["offset"],
+        },
+    )
+
+    assert langgraph_runner_module._build_args_schema(spec)(offset="90").offset == 90

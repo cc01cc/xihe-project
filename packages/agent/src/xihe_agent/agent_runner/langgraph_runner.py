@@ -81,6 +81,37 @@ def _mask_history_tool_results(history: list[Message]) -> list[Message]:
     return result
 
 
+_JSON_SCHEMA_TYPES: dict[str, Any] = {
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+    "string": str,
+}
+
+
+def _python_type(prop: Any) -> Any:
+    """JSON Schema 属性 → Python 类型（联合类型取非 null 分支；未知回退 str）。
+
+    PLAN-0308 M1 收尾（冒烟抓出的缺陷）：此前所有字段一律标 `str`，pydantic v2 不再
+    把数字隐式转字符串，导致 `execute_command {timeout: 90}` 这类非字符串参数在校验层
+    被拒 —— LangGraph 把报错吞成 ToolMessage，工具从未执行、run 仍“成功”。
+    """
+    if not isinstance(prop, dict):
+        return str
+    raw = prop.get("type")
+    if raw is None:
+        for candidate in prop.get("anyOf") or prop.get("oneOf") or []:
+            if isinstance(candidate, dict) and candidate.get("type") != "null":
+                return _python_type(candidate)
+        return str
+    for name in raw if isinstance(raw, list) else [raw]:
+        if name != "null":
+            return _JSON_SCHEMA_TYPES.get(name, str)
+    return str
+
+
 def _build_args_schema(spec: ToolSpec) -> type[BaseModel]:
     """Build a Pydantic model from a JSON Schema for LangGraph."""
     schema = spec.input_schema
@@ -91,7 +122,7 @@ def _build_args_schema(spec: ToolSpec) -> type[BaseModel]:
     fields: dict[str, Any] = {}
     for name, prop in properties.items():
         default = ... if name in required else None
-        fields[name] = (str, default)
+        fields[name] = (_python_type(prop), default)
     return create_model(f"{spec.name}Input", **fields)
 
 

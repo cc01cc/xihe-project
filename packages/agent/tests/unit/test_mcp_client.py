@@ -160,6 +160,13 @@ class TestApprovalMCPInterceptor:
         })
         return context
 
+    @pytest.fixture
+    def log_sink(self):
+        messages = []
+        sink_id = logger.add(messages.append, level="INFO")
+        yield messages
+        logger.remove(sink_id)
+
     @pytest.mark.asyncio
     async def test_sensitive_tool_waits_for_approval_and_injects_grant(self, context):
         context.metadata["operationItemId"] = "item-1"
@@ -209,6 +216,91 @@ class TestApprovalMCPInterceptor:
             "X-Chat-Run-Id": "run-1",
             "X-Operation-Id": "operation-1",
         }
+
+    @pytest.mark.asyncio
+    async def test_per_call_timeout_header_attached_only_for_named_tool(self, context):
+        """PLAN-0308 T1.9：per-call 原始值随对应工具调用携带（CP 校验后采纳）。"""
+        context.runtime_state["toolTimeouts"] = {"read_file": 120}
+        approval_tool = MagicMock(spec=ApprovalAgentTool)
+        approval_tool.execute = AsyncMock()
+        interceptor = ApprovalMCPInterceptor(approval_tool)
+
+        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
+        try:
+            named = MCPToolCallRequest(name="read_file", args={}, server_name="cp")
+            handler_named = AsyncMock(return_value="ok")
+            await interceptor(named, handler_named)
+            named_headers = handler_named.await_args.args[0].headers
+            assert named_headers["X-Xihe-Tool-Timeout-Per-Call"] == "120"
+
+            other = MCPToolCallRequest(name="list_directory", args={}, server_name="cp")
+            handler_other = AsyncMock(return_value="ok")
+            await interceptor(other, handler_other)
+            assert "X-Xihe-Tool-Timeout-Per-Call" not in handler_other.await_args.args[0].headers
+        finally:
+            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+
+    @pytest.mark.asyncio
+    async def test_per_call_timeout_header_present_on_approved_call(self, context):
+        """审批工具的授权后调用同样携带 per-call 头（与只读路径同一规则）。"""
+        context.runtime_state["toolTimeouts"] = {"execute_command": 120}
+        approval_tool = MagicMock(spec=ApprovalAgentTool)
+        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
+        interceptor = ApprovalMCPInterceptor(approval_tool)
+        handler = AsyncMock(return_value="ok")
+
+        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
+        try:
+            await interceptor(
+                MCPToolCallRequest(name="execute_command", args={}, server_name="cp"), handler)
+        finally:
+            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+
+        forwarded = handler.await_args.args[0]
+        assert forwarded.headers["X-Xihe-Tool-Timeout-Per-Call"] == "120"
+        assert forwarded.headers["X-Xihe-Approval-Request-Id"] == "grant-1"
+
+    @pytest.mark.asyncio
+    async def test_post_grant_wait_is_logged_with_tool_call_id(self, context, log_sink):
+        """T1.8（spec S5.1）：授权后转发的等待值打点，随 toolCallId 串三层时间线。"""
+        context.metadata["operationItemId"] = "call-9"
+        context.runtime_state["toolWaits"] = {"execute_command": 124}
+        context.runtime_state["toolWaitOrigins"] = {"execute_command": "per-call"}
+        approval_tool = MagicMock(spec=ApprovalAgentTool)
+        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
+        interceptor = ApprovalMCPInterceptor(approval_tool)
+        handler = AsyncMock(return_value="ok")
+
+        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
+        try:
+            await interceptor(
+                MCPToolCallRequest(name="execute_command", args={}, server_name="cp"), handler)
+        finally:
+            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+
+        text = "\n".join(log_sink)
+        assert "event=mcp_tool_post_grant" in text
+        assert "toolCallId=call-9" in text
+        assert "waitS=124" in text
+        assert "valueOrigin=per-call" in text
+
+    @pytest.mark.asyncio
+    async def test_per_call_timeout_header_skips_invalid_values(self, context):
+        """非法 per-call 值（CP 不会产生）不携带头，避免把坏值送给 CP。"""
+        context.runtime_state["toolTimeouts"] = {"execute_command": 0, "write_file": "abc"}
+        approval_tool = MagicMock(spec=ApprovalAgentTool)
+        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
+        interceptor = ApprovalMCPInterceptor(approval_tool)
+
+        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
+        try:
+            for name in ("execute_command", "write_file"):
+                handler = AsyncMock(return_value="ok")
+                await interceptor(
+                    MCPToolCallRequest(name=name, args={}, server_name="cp"), handler)
+                assert "X-Xihe-Tool-Timeout-Per-Call" not in handler.await_args.args[0].headers
+        finally:
+            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
 
     @pytest.mark.asyncio
     async def test_chat_with_workspace_initializes_mcp_on_demand(self, monkeypatch):
