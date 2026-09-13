@@ -1340,9 +1340,11 @@ public class ChatController {
         if (toolName == null) {
             toolName = "unknown";
         }
-        String rawToolCallId = stringValue(payload, "run_id");
+        // PLAN-0317 T2.8④：优先用 Agent 显式携带的 toolCallId（call/result 同一值），
+        // 回退到 run_id（本地工具的历史路径）。
+        String rawToolCallId = stringValue(payload, "toolCallId");
         if (rawToolCallId == null) {
-            rawToolCallId = stringValue(payload, "toolCallId");
+            rawToolCallId = stringValue(payload, "run_id");
         }
         String toolCallId = canonicalToolCallId(rawToolCallId, runId, toolName, payload);
         try {
@@ -1424,7 +1426,10 @@ public class ChatController {
             try {
                 return UUID.fromString(rawToolCallId).toString();
             } catch (IllegalArgumentException ignored) {
-                // LangGraph may use a non-UUID run identifier; normalize it for the UUID schema.
+                // PLAN-0317 T2.8④（决策 #12）：与网关侧派生规则统一为
+                // nameUUIDFromBytes，使中继与网关对同一原始 id 得到同一个键。
+                return UUID.nameUUIDFromBytes(rawToolCallId.getBytes(StandardCharsets.UTF_8))
+                        .toString();
             }
         }
         return UUID.nameUUIDFromBytes((runId + ":" + toolName + ":" + safeJsonPreview(payload)).getBytes(StandardCharsets.UTF_8)).toString();

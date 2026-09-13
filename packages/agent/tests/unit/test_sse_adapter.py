@@ -76,6 +76,8 @@ async def test_translate_tool_start():
     assert payload["arguments"] == {"path": "test.txt"}
     assert payload["type"] == "tool_call"
     assert payload["run_id"] == "run-2"
+    # PLAN-0317 T2.8④：显式携带 toolCallId（回退工具级 run_id）。
+    assert payload["toolCallId"] == "run-2"
 
 
 @pytest.mark.asyncio
@@ -98,6 +100,8 @@ async def test_translate_tool_end_with_tool_message():
     assert payload["result"] == "file content"
     assert payload["type"] == "tool_result"
     assert payload["run_id"] == "run-3"
+    # PLAN-0317 T2.8④：结果事件用 ToolMessage 的真实 tool_call_id。
+    assert payload["toolCallId"] == "call-1"
 
 
 @pytest.mark.asyncio

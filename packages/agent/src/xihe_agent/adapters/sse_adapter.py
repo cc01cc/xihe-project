@@ -89,6 +89,9 @@ class LangGraphEventAdapter(EventAdapter):
                 # blocks; do not emit a second legacy tool_call event here.
                 return None
             tool_input = data.get("input", "")
+            # PLAN-0317 T2.8④：显式携带 toolCallId（优先真实 tool_call_id，回退工具级
+            # run_id），让 CP 账本对 call/result 用同一个稳定键。
+            tool_call_id = data.get("tool_call_id") or run_id
             return AgentEvent(
                 type="tool_call",
                 data={
@@ -96,6 +99,7 @@ class LangGraphEventAdapter(EventAdapter):
                     "arguments": tool_input if isinstance(tool_input, dict) else {},
                     "type": "tool_call",
                     "run_id": run_id,
+                    "toolCallId": tool_call_id,
                 },
             )
 
@@ -103,11 +107,19 @@ class LangGraphEventAdapter(EventAdapter):
             tool_output = data.get("output")
             if isinstance(tool_output, ToolMessage):
                 formatted = tool_output.content
+                tool_call_id = tool_output.tool_call_id or run_id
             else:
                 formatted = str(tool_output or "")
+                tool_call_id = run_id
             return AgentEvent(
                 type="tool_result",
-                data={"tool": name, "result": formatted, "type": "tool_result", "run_id": run_id},
+                data={
+                    "tool": name,
+                    "result": formatted,
+                    "type": "tool_result",
+                    "run_id": run_id,
+                    "toolCallId": tool_call_id,
+                },
             )
 
         if event_type == "on_llm_error":
