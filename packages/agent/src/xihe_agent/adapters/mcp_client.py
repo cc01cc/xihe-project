@@ -1,41 +1,37 @@
 import asyncio
-import contextvars
 import json
 import os
-from collections.abc import Awaitable, Callable
-from datetime import timedelta
+import warnings
 from typing import Any, NamedTuple
 
-import mcp.shared.version as _mcp_version
 import mcp.types as _mcp_types
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+from langchain_core._api import LangChainBetaWarning
 from langchain_core.tools import BaseTool
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_mcp_adapters.interceptors import MCPToolCallRequest
-from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from loguru import logger
-from mcp.client import streamable_http as _mcp_streamable_http
 
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTerminalError
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 
-# PLAN-0308 M2（决策 #34③）：协议版本对齐 shim。
-# 本 SDK 版本（mcp 1.x）在 initialize 里**硬编码**声明 2025-11-25（会话世代），
-# 而 CP 现在固定按 2026-07-28（去会话）世代服务；客户端继续声明旧版本会拿到
-# 「服务端版本不受支持」的校验失败，也会保留会话/可恢复通道的期待。
-# 待 langchain-mcp-adapters 支持 mcp 2.x（其 0.3.2 仍 pin mcp<2.0.0）后删除本 shim。
+# PLAN-0308 M2（决策 #34）：客户端栈迁移到 `langchain[mcp]`（fastmcp 4.x + mcp 2.x）。
+# `langchain.mcp` 处于 beta（导入时发一次 LangChainBetaWarning），本模块按路线 C
+# 有意采用该命名空间，导入期抑制该警告。
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", LangChainBetaWarning)
+    from langchain.mcp import as_langchain_tool
+
+# 目标协议世代：2026-07-28（无会话/每请求独立信封）。CP 出站已固定声明该版本
+# （决策 #34），Runtime rmcp 全版本支持；客户端以版本串直接采纳、免 server/discover 探测。
 STATELESS_PROTOCOL_VERSION = "2026-07-28"
-if STATELESS_PROTOCOL_VERSION not in _mcp_version.SUPPORTED_PROTOCOL_VERSIONS:
-    _mcp_version.SUPPORTED_PROTOCOL_VERSIONS.append(STATELESS_PROTOCOL_VERSION)
-_mcp_types.LATEST_PROTOCOL_VERSION = STATELESS_PROTOCOL_VERSION
 
 DEFAULT_RETRY_INTERVAL = 2.0
 DEFAULT_MAX_RETRIES = 0
-# Local MCP (CP→Runtime) must return in seconds; a stuck GET/POST is a bug.
-# Approval wait is user-bound and must NOT count against this budget — see
-# ApprovalMCPInterceptor: short timeout applies only to the post-grant HTTP call.
-# Post-grant MCP hop: Runtime write can outlast a bare 10–15s under Docker
-# exec; keep a hard bound but allow grant→forward→result to complete.
+
+
+# Local MCP (CP→Runtime) must return in seconds; a stuck POST is a bug, and the
+# authoritative per-call bound is `asyncio.wait_for` in MCPAgentTool (see spec S2).
 def _parse_timeout_s(raw: str | None, default: float) -> float:
     """PLAN-301 M1 (decision #4): fail-closed timeout parsing.
 
@@ -63,8 +59,8 @@ DEFAULT_MCP_TOOL_TIMEOUT_S = _parse_timeout_s(
 # 下发值性质为 per-call → 用下发值（压过本模块 ENV）；
 # 否则本模块 ENV 显式 → 用 ENV；
 # 否则用下发值；都没有 → 代码默认。
-# 会话读超时是"挂死兜底"（非权威），必须明显大于单次等待，避免抢先触发丢失署名。
-SESSION_READ_HANG_BACKSTOP_S = 3600.0
+# 权威等待界由 `asyncio.wait_for` 承担；fastmcp 客户端请求读超时保持不设
+# （None = 无限），避免机制默认抢先于授权值（守卫/授权分离，决策 #31）。
 
 
 def _env_override() -> float | None:
@@ -138,6 +134,8 @@ def _resolve_tool_wait(tool_name: str, context: "AgentContext | None") -> ToolWa
     if delivered is not None:
         return ToolWait(delivered, "cp", origin, None, tool_call_id)
     return ToolWait(DEFAULT_MCP_TOOL_TIMEOUT_S, "default", None, None, tool_call_id)
+
+
 APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id"
 # PLAN-0308 M1 T1.9（决策 #27/#28）：调用方 → CP 的 per-call 入站头。
 # CP 下发原始 per-call 值（run payload 的 `toolTimeouts`），Agent 随对应工具调用携带；
@@ -157,9 +155,29 @@ def _per_call_timeout_header(context: AgentContext | None, tool_name: str) -> di
             return {PER_CALL_TIMEOUT_HEADER: str(int(seconds))}
     return {}
 
-_ACTIVE_CONTEXT: contextvars.ContextVar[AgentContext | None] = contextvars.ContextVar(
-    "xihe_active_mcp_context", default=None
-)
+
+def _context_headers(context: AgentContext | None, tool_name: str) -> dict[str, str]:
+    """上下文动态头（原 ApprovalMCPInterceptor 职责，决策 #34 迁移后由本模块直接构造）。"""
+    headers: dict[str, str] = {}
+    if context is not None:
+        metadata = context.metadata
+        session_id = metadata.get("sessionId")
+        run_id = metadata.get("runId")
+        operation_id = metadata.get("operationId")
+        if session_id:
+            headers["X-Session-Id"] = str(session_id)
+        if run_id:
+            headers["X-Chat-Run-Id"] = str(run_id)
+        if operation_id:
+            headers["X-Operation-Id"] = str(operation_id)
+        operation_item_id = metadata.get("operationItemId")
+        if operation_item_id:
+            headers["X-Operation-Item-Id"] = str(operation_item_id)
+    # T1.9：per-call 值随工具调用单独携带（CP 校验后采纳为最高优先输入）。
+    headers.update(_per_call_timeout_header(context, tool_name))
+    return headers
+
+
 # PLAN-292 T4: only Gateway-public mutation tools belong here. The Runtime's
 # apply_patch/create_snapshot/revert_snapshot/cleanup_jobs are internal-only
 # (never exposed via #[tool_router], PLAN-292 T3 decision) and write_file_binary
@@ -178,116 +196,46 @@ REQUIRE_APPROVAL_TOOLS = frozenset({
 })
 
 
-async def _disable_mcp_get_server_stream(
-    self, client: Any, read_stream_writer: Any
-) -> None:
-    """CP logical MCP does not serve server-initiated GET SSE (returns 405).
+def _result_text(result: Any) -> str:
+    """fastmcp CallToolResult → LLM 可见文本（文本块拼接；无文本时退结构化内容/原始内容）。
 
-    Stock Streamable HTTP client starts GET after initialize and retries on
-    405, which races with POST tool responses and can stall call_tool for the
-    full tool timeout (Host 2026-09-09). Direct POST tools/call is ~75ms.
-    Disable the unused GET channel; tool results continue to arrive on POST.
+    `is_error=True` 且文本未带 `Tool error:` 前缀时补前缀，保持与 CP/Runtime
+    台账同一约定（spec S5.1：下游结论透传，本跳未到界）。
     """
-    logger.debug("Skipping MCP GET server stream (CP has no server-init SSE)")
-
-
-_mcp_streamable_http.StreamableHTTPTransport.handle_get_stream = (
-    _disable_mcp_get_server_stream
-)
-
-
-class ApprovalMCPInterceptor:
-    """Request approval before a sensitive MCP call and attach its one-shot grant."""
-
-    def __init__(self, approval_tool: ApprovalAgentTool) -> None:
-        self._approval_tool = approval_tool
-
-    async def __call__(
-        self,
-        request: MCPToolCallRequest,
-        handler: Callable[[MCPToolCallRequest], Awaitable[Any]],
-    ) -> Any:
-        context = _ACTIVE_CONTEXT.get()
-        headers: dict[str, str] = {}
-        if context is not None:
-            metadata = context.metadata
-            session_id = metadata.get("sessionId")
-            run_id = metadata.get("runId")
-            operation_id = metadata.get("operationId")
-            if session_id:
-                headers["X-Session-Id"] = str(session_id)
-            if run_id:
-                headers["X-Chat-Run-Id"] = str(run_id)
-            if operation_id:
-                headers["X-Operation-Id"] = str(operation_id)
-            operation_item_id = metadata.get("operationItemId")
-            if operation_item_id:
-                headers["X-Operation-Item-Id"] = str(operation_item_id)
-        # T1.9：per-call 值随工具调用单独携带（CP 校验后采纳为最高优先输入）。
-        headers.update(_per_call_timeout_header(context, request.name))
-
-        if request.name in REQUIRE_APPROVAL_TOOLS:
-            if context is None:
-                return await handler(request.override(headers=headers or None))
-            details = json.dumps(
-                {"tool": request.name, "arguments": request.args},
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            approval = await self._approval_tool.execute(
-                {
-                    "tool": request.name,
-                    "action": f"Execute {request.name}",
-                    "details": details,
-                },
-                context,
-            )
-            grant_id = approval.get("requestId")
-            if not isinstance(grant_id, str) or not grant_id:
-                raise ApprovalTerminalError("Approval did not return a grant requestId")
-            headers[APPROVAL_GRANT_HEADER] = grant_id
-            # Post-approval Runtime call is local: fail fast if gateway stalls.
-            # PLAN-0308 M1: 与只读路径共用同一条判断链（下发值 / ENV / 默认）。
-            post_wait = _resolve_tool_wait(request.name, context)
-            # T1.8（spec S5.1）：审批工具的等待值同样打点（审批等待本身不设限，此界只作用于授权后的转发）。
-            logger.info(
-                "[LIFECYCLE] service=agent event=mcp_tool_post_grant tool={} toolCallId={}"
-                + " waitS={} source={} valueOrigin={}",
-                request.name,
-                post_wait.tool_call_id or "-",
-                post_wait.seconds,
-                post_wait.source,
-                post_wait.value_origin or "",
-            )
-            return await asyncio.wait_for(
-                handler(request.override(headers=headers or None)),
-                timeout=post_wait.seconds,
-            )
-
-        return await handler(request.override(headers=headers or None))
+    blocks = getattr(result, "content", None) or []
+    parts = [block.text for block in blocks if isinstance(block, _mcp_types.TextContent)]
+    if parts:
+        text = "\n".join(parts)
+    else:
+        structured = getattr(result, "structured_content", None)
+        if structured is not None:
+            text = json.dumps(structured, ensure_ascii=False)
+        else:
+            text = str(blocks)
+    if getattr(result, "is_error", False) and not text.startswith("Tool error:"):
+        text = f"Tool error: {text}"
+    return text
 
 
 class MCPAgentTool(BaseAgentTool):
-    """Wraps a LangChain MCP `BaseTool` as a `BaseAgentTool`."""
+    """A discovered MCP tool; executes through a per-call fastmcp `Client`.
 
-    def __init__(
-        self,
-        tool: BaseTool,
-        call_timeout_s: float | None = None,
-    ) -> None:
+    PLAN-0308 决策 #34：`langchain.mcp` 不提供逐调用头通道（transport 头仅在
+    构造期静态注入），而审批 grant / per-call 超时 / 运行上下文头必须随调用变化，
+    因此执行路径改用「逐调用构造短生命周期 Client（携带当期头集合）」；发现期
+    的 LangChain 工具仅保留给 registry/supervisor 直连路径（`base_tool`）。
+    """
+
+    def __init__(self, tool: BaseTool, manager: "MCPClientManager") -> None:
         self._tool = tool
-        self._call_timeout_s = (
-            call_timeout_s if call_timeout_s is not None else DEFAULT_MCP_TOOL_TIMEOUT_S
-        )
+        self._manager = manager
 
     @property
     def base_tool(self) -> BaseTool:
-        """Return the underlying LangChain tool for LangGraph adapters."""
+        """Return the LangChain tool for LangGraph adapters (registry/supervisor path)."""
         return self._tool
 
     async def execute(self, input: dict[str, Any], context: AgentContext) -> dict[str, Any]:
-        context_token = _ACTIVE_CONTEXT.set(context)
         started = asyncio.get_running_loop().time()
         try:
             payload = dict(input)
@@ -301,15 +249,32 @@ class MCPAgentTool(BaseAgentTool):
                     and ".." not in val
                 ):
                     payload[key] = val[1:]
-            # Approval tools block on the user for minutes; only the post-grant
-            # MCP HTTP hop is bounded by DEFAULT_MCP_TOOL_TIMEOUT_S (interceptor).
-            wait = _resolve_tool_wait(self._tool.name, context)
+            headers = _context_headers(context, self._tool.name)
             if self._tool.name in REQUIRE_APPROVAL_TOOLS:
-                result = await self._tool.ainvoke(payload)
+                grant_id = await self._request_approval(payload, context)
+                if grant_id:
+                    headers[APPROVAL_GRANT_HEADER] = grant_id
+                # Post-approval Runtime call is local: fail fast if gateway stalls.
+                # The approval wait itself is user-bound and must NOT count here.
+                post_wait = _resolve_tool_wait(self._tool.name, context)
+                # T1.8（spec S5.1）：审批工具的等待值同样打点。
+                logger.info(
+                    "[LIFECYCLE] service=agent event=mcp_tool_post_grant tool={} toolCallId={}"
+                    + " waitS={} source={} valueOrigin={}",
+                    self._tool.name,
+                    post_wait.tool_call_id or "-",
+                    post_wait.seconds,
+                    post_wait.source,
+                    post_wait.value_origin or "",
+                )
+                result = await asyncio.wait_for(
+                    self._manager.call_tool(self._tool.name, payload, headers),
+                    timeout=post_wait.seconds,
+                )
             else:
                 # PLAN-0308 M1：等待值由 CP 计算（含余量与冷启动增量），本模块只执行；
-                # 冷启动宽限不再本地乘 3（已由 CP 计入下发值）。
                 # T1.8：toolCallId 与 CP/Runtime 共用，超时可跨三层串时间线（spec S5.1）。
+                wait = _resolve_tool_wait(self._tool.name, context)
                 logger.info(
                     "[LIFECYCLE] service=agent event=mcp_tool_wait tool={} toolCallId={}"
                     + " waitS={} source={} valueOrigin={}",
@@ -320,13 +285,15 @@ class MCPAgentTool(BaseAgentTool):
                     wait.value_origin or "",
                 )
                 result = await asyncio.wait_for(
-                    self._tool.ainvoke(payload),
+                    self._manager.call_tool(self._tool.name, payload, headers),
                     timeout=wait.seconds,
                 )
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+            content = _result_text(result)
+            wait = _resolve_tool_wait(self._tool.name, context)
             # 下游（CP/Runtime）返回的错误以 "Tool error:" 前缀透传（与 CP 台账同一约定）：
             # 该跳未到界，只转发下游结论 → origin=downstream（spec S5.1 规则 2）。
-            downstream_error = str(result).startswith("Tool error:")
+            downstream_error = content.startswith("Tool error:")
             logger.info(
                 "[LIFECYCLE] service=agent event=mcp_tool_ok tool={} toolCallId={} elapsedMs={} outcome={} origin={}",
                 self._tool.name,
@@ -335,7 +302,7 @@ class MCPAgentTool(BaseAgentTool):
                 "error" if downstream_error else "ok",
                 "downstream" if downstream_error else "-",
             )
-            return {"content": str(result)}
+            return {"content": content}
         except ApprovalTerminalError:
             raise
         except TimeoutError:
@@ -356,8 +323,30 @@ class MCPAgentTool(BaseAgentTool):
         except Exception as e:
             logger.warning("MCP tool {} failed: {}", self._tool.name, e)
             return {"content": f"Tool error: {e}"}
-        finally:
-            _ACTIVE_CONTEXT.reset(context_token)
+
+    async def _request_approval(self, payload: dict[str, Any], context: AgentContext) -> str | None:
+        """审批门控工具：请求一次性 grant 并返回 requestId（无审批工具/上下文时跳过）。"""
+        approval_tool = self._manager.approval_tool
+        if approval_tool is None or context is None:
+            return None
+        details = json.dumps(
+            {"tool": self._tool.name, "arguments": payload},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        approval = await approval_tool.execute(
+            {
+                "tool": self._tool.name,
+                "action": f"Execute {self._tool.name}",
+                "details": details,
+            },
+            context,
+        )
+        grant_id = approval.get("requestId")
+        if not isinstance(grant_id, str) or not grant_id:
+            raise ApprovalTerminalError("Approval did not return a grant requestId")
+        return grant_id
 
     @property
     def spec(self) -> ToolSpec:
@@ -384,7 +373,7 @@ class MCPClientManager:
         api_token: str | None = None,
         approval_tool: ApprovalAgentTool | None = None,
         retry_interval: float = DEFAULT_RETRY_INTERVAL,
-        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_retries: float = DEFAULT_MAX_RETRIES,
     ):
         self.cp_url = cp_url
         self.server_name = server_name
@@ -393,7 +382,7 @@ class MCPClientManager:
         self.approval_tool = approval_tool
         self.retry_interval = retry_interval
         self.max_retries = max_retries
-        self._client: MultiServerMCPClient | None = None
+        self._discovery_client: Client | None = None
         self._tools: list[BaseAgentTool] = []
         self._initialized = False
         self._lock = asyncio.Lock()
@@ -406,6 +395,33 @@ class MCPClientManager:
     def initialized(self) -> bool:
         return self._initialized
 
+    def _static_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.workspace_id:
+            headers["X-Workspace-Id"] = self.workspace_id
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
+        return headers
+
+    def request_headers(self, dynamic: dict[str, str]) -> dict[str, str]:
+        """静态头（workspace/服务鉴权）+ 逐调用动态头的合并结果。"""
+        return {**self._static_headers(), **dynamic}
+
+    def new_client(self, headers: dict[str, str]) -> Client:
+        """构造一个携带指定头集合的 fastmcp 客户端（跨调用不复用，见决策 #34）。"""
+        transport = StreamableHttpTransport(self.cp_url, headers=headers)
+        return Client(transport, name=self.server_name, mode=STATELESS_PROTOCOL_VERSION)
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], headers: dict[str, str]) -> Any:
+        """逐调用执行 tools/call：短生命周期 Client + 当期头集合（静态头在此合并）。
+
+        `raise_on_error=False` 保留 `isError` 结果供上层归因（downstream 分类），
+        与迁移前 langchain-mcp-adapters 的处置口径一致（spec S5.1）。
+        """
+        merged = self.request_headers(headers)
+        async with self.new_client(merged) as client:
+            return await client.call_tool(name, arguments, raise_on_error=False)
+
     async def initialize(self, workspace_id: str | None = None) -> None:
         async with self._lock:
             if self._initialized:
@@ -416,34 +432,13 @@ class MCPClientManager:
                 self.workspace_id = workspace_id
             if not self.workspace_id:
                 raise ValueError("XIHE_WORKSPACE_ID is required for MCP initialization")
-            headers: dict[str, Any] | None = None
-            if self.workspace_id or self.api_token:
-                headers = {}
-                if self.workspace_id:
-                    headers["X-Workspace-Id"] = self.workspace_id
-                if self.api_token:
-                    headers["Authorization"] = f"Bearer {self.api_token}"
-            self._client = MultiServerMCPClient(
-                {
-                    self.server_name: StreamableHttpConnection(
-                        transport="streamable_http",
-                        url=self.cp_url,
-                        headers=headers,
-                        # 挂死兜底：单次等待的权威值由 CP 下发（可达 600+ 秒），
-                        # 此处的会话读超时必须明显大于它，否则会抢先触发并丢失署名。
-                        session_kwargs={
-                            "read_timeout_seconds": timedelta(seconds=SESSION_READ_HANG_BACKSTOP_S)
-                        },
-                    ),
-                },
-                tool_interceptors=(
-                    [ApprovalMCPInterceptor(self.approval_tool)]
-                    if self.approval_tool is not None
-                    else []
-                ),
-            )
-            raw_tools = await self._client.get_tools(server_name=self.server_name)
-            self._tools = [MCPAgentTool(t) for t in raw_tools]
+            headers = self._static_headers()
+            discovery = self.new_client(headers)
+            async with discovery:
+                raw_tools = await discovery.list_tools()
+                lc_tools = [await as_langchain_tool(tool, discovery) for tool in raw_tools]
+            self._discovery_client = discovery
+            self._tools = [MCPAgentTool(tool, self) for tool in lc_tools]
             self._initialized = True
             logger.info(
                 "MCP initialized: {} tools from {}",
@@ -454,7 +449,7 @@ class MCPClientManager:
     async def reinitialize(self) -> None:
         async with self._lock:
             self._initialized = False
-            self._client = None
+            self._discovery_client = None
             self._tools = []
         await self.initialize()
 

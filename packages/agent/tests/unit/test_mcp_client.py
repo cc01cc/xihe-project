@@ -1,27 +1,93 @@
 """Tests for adapters/mcp_client.py - MCP client manager."""
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 from loguru import logger
+from mcp.types import TextContent
 
 from xihe_agent import main
 from xihe_agent.adapters import mcp_client as mcp_client_module
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool
-from xihe_agent.adapters.mcp_client import ApprovalMCPInterceptor, MCPClientManager
+from xihe_agent.adapters.mcp_client import MCPAgentTool, MCPClientManager
 from xihe_agent.interfaces.context import AgentContext
 
 
-def test_protocol_version_shim_aligns_sdk_to_stateless_generation():
-    """PLAN-0308 决策 #34③：SDK 1.x 硬编码声明 2025-11-25；本模块把声明版本
-    与支持列表对齐到 CP 实际服务的 2026-07-28（无会话世代）。"""
-    import mcp.shared.version as mcp_version
-    import mcp.types as mcp_types
+def _stub_tool(name: str, description: str = "", args_schema=None):
+    return SimpleNamespace(name=name, description=description, args_schema=args_schema)
 
+
+def _tool_result(text: str = "ok", is_error: bool = False):
+    return SimpleNamespace(
+        content=[TextContent(type="text", text=text)],
+        structured_content=None,
+        is_error=is_error,
+    )
+
+
+def _fake_manager(approval_tool=None, result=None, side_effect=None):
+    manager = MagicMock()
+    manager.approval_tool = approval_tool
+    if side_effect is not None:
+        manager.call_tool = AsyncMock(side_effect=side_effect)
+    else:
+        manager.call_tool = AsyncMock(return_value=result if result is not None else _tool_result())
+    return manager
+
+
+class _FakeDiscoveryClient:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        self.list_tools = AsyncMock(return_value=[])
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _SingleToolDiscoveryClient(_FakeDiscoveryClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.list_tools = AsyncMock(return_value=[SimpleNamespace(name="test_tool")])
+
+
+class _FailingDiscoveryClient:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        raise ConnectionError("refused")
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def test_client_pins_stateless_protocol_generation():
+    """PLAN-0308 决策 #34：客户端直接采纳 2026-07-28（无会话世代），免 server/discover 探测。"""
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    manager = MCPClientManager(cp_url="http://localhost:12631", workspace_id="ws-1")
+    client = manager.new_client({})
     assert mcp_client_module.STATELESS_PROTOCOL_VERSION == "2026-07-28"
-    assert mcp_types.LATEST_PROTOCOL_VERSION == "2026-07-28"
-    assert "2026-07-28" in mcp_version.SUPPORTED_PROTOCOL_VERSIONS
+    assert client.mode == "2026-07-28"
+    assert isinstance(client.transport, StreamableHttpTransport)
+    assert client.transport.url == "http://localhost:12631"
+
+
+def test_request_headers_merges_static_and_dynamic():
+    manager = MCPClientManager(
+        cp_url="http://localhost:12631", workspace_id="ws-1", api_token="tok"
+    )
+    headers = manager.request_headers({"X-Session-Id": "s1"})
+    assert headers == {
+        "X-Workspace-Id": "ws-1",
+        "Authorization": "Bearer tok",
+        "X-Session-Id": "s1",
+    }
 
 
 class TestMCPClientManager:
@@ -49,10 +115,8 @@ class TestMCPClientManager:
     @pytest.mark.asyncio
     async def test_initialize_sets_initialized(self, manager):
         with patch(
-            "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
-        ) as mock_client_cls:
-            mock_client_cls.return_value.get_tools = AsyncMock(return_value=[])
-
+            "xihe_agent.adapters.mcp_client.Client", _FakeDiscoveryClient
+        ):
             await manager.initialize()
 
         assert manager.initialized is True
@@ -63,14 +127,13 @@ class TestMCPClientManager:
 
     @pytest.mark.asyncio
     async def test_initialize_populates_tools(self, manager):
-        mock_tool = MagicMock()
-        mock_tool.name = "test_tool"
-
-        with patch(
-            "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
-        ) as mock_client_cls:
-            mock_client_cls.return_value.get_tools = AsyncMock(return_value=[mock_tool])
-
+        with (
+            patch("xihe_agent.adapters.mcp_client.Client", _SingleToolDiscoveryClient),
+            patch(
+                "xihe_agent.adapters.mcp_client.as_langchain_tool",
+                AsyncMock(return_value=_stub_tool("test_tool")),
+            ),
+        ):
             await manager.initialize()
 
         assert len(manager.tools) == 1
@@ -82,43 +145,32 @@ class TestMCPClientManager:
             cp_url="http://localhost:12631",
             server_name="cp",
         )
-        with patch(
-            "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
-        ) as mock_client_cls:
-            mock_client_cls.return_value.get_tools = AsyncMock(return_value=[])
-
+        with patch("xihe_agent.adapters.mcp_client.Client", _FakeDiscoveryClient):
             await manager.initialize(workspace_id="request-workspace")
 
-        connection = mock_client_cls.call_args.args[0]["cp"]
         assert manager.workspace_id == "request-workspace"
-        assert connection["headers"]["X-Workspace-Id"] == "request-workspace"
+        transport = manager._discovery_client.args[0]
+        assert transport.headers["X-Workspace-Id"] == "request-workspace"
 
     @pytest.mark.asyncio
     async def test_initialize_configures_only_the_cp_logical_endpoint(self, manager):
-        with patch(
-            "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
-        ) as mock_client_cls:
-            mock_client_cls.return_value.get_tools = AsyncMock(return_value=[])
-
+        with patch("xihe_agent.adapters.mcp_client.Client", _FakeDiscoveryClient):
             await manager.initialize()
 
-        config = mock_client_cls.call_args.args[0]
-        connection = config["cp"]
-        assert connection["url"] == "http://localhost:12631"
-        assert connection["url"].endswith("12631")
-        assert "remote" not in connection["url"]
-        assert connection["headers"]["X-Workspace-Id"] == "ws-1"
+        transport = manager._discovery_client.args[0]
+        assert transport.url == "http://localhost:12631"
+        assert "remote" not in transport.url
+        assert transport.headers["X-Workspace-Id"] == "ws-1"
 
     @pytest.mark.asyncio
     async def test_initialize_logs_formatted_tool_count(self, manager, log_sink):
-        mock_tool = MagicMock()
-        mock_tool.name = "test_tool"
-
-        with patch(
-            "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
-        ) as mock_client_cls:
-            mock_client_cls.return_value.get_tools = AsyncMock(return_value=[mock_tool])
-
+        with (
+            patch("xihe_agent.adapters.mcp_client.Client", _SingleToolDiscoveryClient),
+            patch(
+                "xihe_agent.adapters.mcp_client.as_langchain_tool",
+                AsyncMock(return_value=_stub_tool("test_tool")),
+            ),
+        ):
             await manager.initialize()
 
         text = "\n".join(log_sink)
@@ -131,12 +183,8 @@ class TestMCPClientManager:
         manager.max_retries = 1
 
         with patch(
-            "xihe_agent.adapters.mcp_client.MultiServerMCPClient"
-        ) as mock_client_cls:
-            mock_client_cls.return_value.get_tools = AsyncMock(
-                side_effect=ConnectionError("refused")
-            )
-
+            "xihe_agent.adapters.mcp_client.Client", _FailingDiscoveryClient
+        ):
             # ensure_ready now returns (gives up) instead of raising
             await manager.ensure_ready()
 
@@ -159,7 +207,7 @@ class TestMCPClientManager:
         mock_manager.initialize.assert_not_awaited()
 
 
-class TestApprovalMCPInterceptor:
+class TestMCPAgentToolApproval:
     @pytest.fixture
     def context(self):
         context = AgentContext.empty("session-1")
@@ -183,22 +231,15 @@ class TestApprovalMCPInterceptor:
         context.metadata["operationItemId"] = "item-1"
         approval_tool = MagicMock(spec=ApprovalAgentTool)
         approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
-        handler = AsyncMock(return_value={"ok": True})
-        interceptor = ApprovalMCPInterceptor(approval_tool)
-        request = MCPToolCallRequest(
-            name="write_file", args={"path": "README.md"}, server_name="cp"
-        )
+        manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
+        tool = MCPAgentTool(_stub_tool("write_file"), manager)
 
-        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
-        try:
-            result = await interceptor(request, handler)
-        finally:
-            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+        result = await tool.execute({"path": "README.md"}, context)
 
-        assert result == {"ok": True}
+        assert "ok" in result["content"]
         approval_tool.execute.assert_awaited_once()
-        forwarded = handler.await_args.args[0]
-        assert forwarded.headers == {
+        headers = manager.call_tool.await_args.args[2]
+        assert headers == {
             "X-Session-Id": "session-1",
             "X-Chat-Run-Id": "run-1",
             "X-Operation-Id": "operation-1",
@@ -210,19 +251,15 @@ class TestApprovalMCPInterceptor:
     async def test_read_only_tool_propagates_run_context_without_approval(self, context):
         approval_tool = MagicMock(spec=ApprovalAgentTool)
         approval_tool.execute = AsyncMock()
-        handler = AsyncMock(return_value="read-result")
-        interceptor = ApprovalMCPInterceptor(approval_tool)
-        request = MCPToolCallRequest(name="read_file", args={"path": "README.md"}, server_name="cp")
+        manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("read-result"))
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
 
-        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
-        try:
-            result = await interceptor(request, handler)
-        finally:
-            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+        result = await tool.execute({"path": "README.md"}, context)
 
-        assert result == "read-result"
+        assert "read-result" in result["content"]
         approval_tool.execute.assert_not_awaited()
-        assert handler.await_args.args[0].headers == {
+        headers = manager.call_tool.await_args.args[2]
+        assert headers == {
             "X-Session-Id": "session-1",
             "X-Chat-Run-Id": "run-1",
             "X-Operation-Id": "operation-1",
@@ -232,24 +269,15 @@ class TestApprovalMCPInterceptor:
     async def test_per_call_timeout_header_attached_only_for_named_tool(self, context):
         """PLAN-0308 T1.9：per-call 原始值随对应工具调用携带（CP 校验后采纳）。"""
         context.runtime_state["toolTimeouts"] = {"read_file": 120}
-        approval_tool = MagicMock(spec=ApprovalAgentTool)
-        approval_tool.execute = AsyncMock()
-        interceptor = ApprovalMCPInterceptor(approval_tool)
+        manager = _fake_manager(result=_tool_result("ok"))
 
-        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
-        try:
-            named = MCPToolCallRequest(name="read_file", args={}, server_name="cp")
-            handler_named = AsyncMock(return_value="ok")
-            await interceptor(named, handler_named)
-            named_headers = handler_named.await_args.args[0].headers
-            assert named_headers["X-Xihe-Tool-Timeout-Per-Call"] == "120"
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+        await tool.execute({}, context)
+        assert manager.call_tool.await_args.args[2]["X-Xihe-Tool-Timeout-Per-Call"] == "120"
 
-            other = MCPToolCallRequest(name="list_directory", args={}, server_name="cp")
-            handler_other = AsyncMock(return_value="ok")
-            await interceptor(other, handler_other)
-            assert "X-Xihe-Tool-Timeout-Per-Call" not in handler_other.await_args.args[0].headers
-        finally:
-            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+        other = MCPAgentTool(_stub_tool("list_directory"), manager)
+        await other.execute({}, context)
+        assert "X-Xihe-Tool-Timeout-Per-Call" not in manager.call_tool.await_args.args[2]
 
     @pytest.mark.asyncio
     async def test_per_call_timeout_header_present_on_approved_call(self, context):
@@ -257,19 +285,14 @@ class TestApprovalMCPInterceptor:
         context.runtime_state["toolTimeouts"] = {"execute_command": 120}
         approval_tool = MagicMock(spec=ApprovalAgentTool)
         approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
-        interceptor = ApprovalMCPInterceptor(approval_tool)
-        handler = AsyncMock(return_value="ok")
+        manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
+        tool = MCPAgentTool(_stub_tool("execute_command"), manager)
 
-        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
-        try:
-            await interceptor(
-                MCPToolCallRequest(name="execute_command", args={}, server_name="cp"), handler)
-        finally:
-            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+        await tool.execute({}, context)
 
-        forwarded = handler.await_args.args[0]
-        assert forwarded.headers["X-Xihe-Tool-Timeout-Per-Call"] == "120"
-        assert forwarded.headers["X-Xihe-Approval-Request-Id"] == "grant-1"
+        headers = manager.call_tool.await_args.args[2]
+        assert headers["X-Xihe-Tool-Timeout-Per-Call"] == "120"
+        assert headers["X-Xihe-Approval-Request-Id"] == "grant-1"
 
     @pytest.mark.asyncio
     async def test_post_grant_wait_is_logged_with_tool_call_id(self, context, log_sink):
@@ -279,15 +302,10 @@ class TestApprovalMCPInterceptor:
         context.runtime_state["toolWaitOrigins"] = {"execute_command": "per-call"}
         approval_tool = MagicMock(spec=ApprovalAgentTool)
         approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
-        interceptor = ApprovalMCPInterceptor(approval_tool)
-        handler = AsyncMock(return_value="ok")
+        manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
+        tool = MCPAgentTool(_stub_tool("execute_command"), manager)
 
-        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
-        try:
-            await interceptor(
-                MCPToolCallRequest(name="execute_command", args={}, server_name="cp"), handler)
-        finally:
-            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+        await tool.execute({}, context)
 
         text = "\n".join(log_sink)
         assert "event=mcp_tool_post_grant" in text
@@ -301,17 +319,12 @@ class TestApprovalMCPInterceptor:
         context.runtime_state["toolTimeouts"] = {"execute_command": 0, "write_file": "abc"}
         approval_tool = MagicMock(spec=ApprovalAgentTool)
         approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
-        interceptor = ApprovalMCPInterceptor(approval_tool)
+        manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
 
-        context_token = mcp_client_module._ACTIVE_CONTEXT.set(context)
-        try:
-            for name in ("execute_command", "write_file"):
-                handler = AsyncMock(return_value="ok")
-                await interceptor(
-                    MCPToolCallRequest(name=name, args={}, server_name="cp"), handler)
-                assert "X-Xihe-Tool-Timeout-Per-Call" not in handler.await_args.args[0].headers
-        finally:
-            mcp_client_module._ACTIVE_CONTEXT.reset(context_token)
+        for name in ("execute_command", "write_file"):
+            tool = MCPAgentTool(_stub_tool(name), manager)
+            await tool.execute({}, context)
+            assert "X-Xihe-Tool-Timeout-Per-Call" not in manager.call_tool.await_args.args[2]
 
     @pytest.mark.asyncio
     async def test_chat_with_workspace_initializes_mcp_on_demand(self, monkeypatch):
@@ -344,68 +357,45 @@ class TestApprovalMCPInterceptor:
 class TestMCPAgentToolTimeout:
     @pytest.mark.asyncio
     async def test_execute_returns_error_on_timeout(self):
-        from langchain_core.tools import BaseTool
+        async def _hang(*args, **kwargs):
+            await asyncio.sleep(30)
 
-        from xihe_agent.adapters.mcp_client import MCPAgentTool
-
-        class HangingTool(BaseTool):
-            name: str = "hanging_tool"
-            description: str = "hangs"
-
-            async def _arun(self, **kwargs):
-                await asyncio.sleep(30)
-
-            def _run(self, **kwargs):
-                raise NotImplementedError
-
-        tool = MCPAgentTool(HangingTool(), call_timeout_s=0.05)
+        manager = _fake_manager(side_effect=_hang)
+        tool = MCPAgentTool(_stub_tool("hanging_tool"), manager)
         context = AgentContext.empty(aggregate_id="ctx-timeout")
+        context.runtime_state["toolWaits"] = {"hanging_tool": 0.05}
+
         result = await tool.execute({"path": "x"}, context)
+
         assert "timed out" in result["content"]
         assert "hanging_tool" in result["content"]
 
     @pytest.mark.asyncio
     async def test_execute_wraps_success(self):
-        from langchain_core.tools import BaseTool
-
-        from xihe_agent.adapters.mcp_client import MCPAgentTool
-
-        class OkTool(BaseTool):
-            name: str = "ok_tool"
-            description: str = "ok"
-
-            async def _arun(self, **kwargs):
-                return "hello"
-
-            def _run(self, **kwargs):
-                raise NotImplementedError
-
-        tool = MCPAgentTool(OkTool(), call_timeout_s=5)
+        manager = _fake_manager(result=_tool_result("hello"))
+        tool = MCPAgentTool(_stub_tool("ok_tool"), manager)
         context = AgentContext.empty(aggregate_id="ctx-ok")
+
         result = await tool.execute({}, context)
+
         assert "hello" in result["content"]
 
     @pytest.mark.asyncio
     async def test_approval_tool_skips_outer_short_timeout(self):
-        """write_file waits on the user; outer 10s must not kill the approval wait."""
-        from langchain_core.tools import BaseTool
+        """write_file waits on the user; outer short bound must not kill the approval wait."""
+        approval_tool = MagicMock(spec=ApprovalAgentTool)
+        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
 
-        from xihe_agent.adapters.mcp_client import MCPAgentTool
+        async def _slow(*args, **kwargs):
+            await asyncio.sleep(0.2)
+            return _tool_result("ok")
 
-        class SlowApprovalWrite(BaseTool):
-            name: str = "write_file"
-            description: str = "write"
-
-            async def _arun(self, **kwargs):
-                await asyncio.sleep(0.2)
-                return "ok"
-
-            def _run(self, **kwargs):
-                raise NotImplementedError
-
-        tool = MCPAgentTool(SlowApprovalWrite(), call_timeout_s=0.05)
+        manager = _fake_manager(approval_tool=approval_tool, side_effect=_slow)
+        tool = MCPAgentTool(_stub_tool("write_file"), manager)
         context = AgentContext.empty(aggregate_id="ctx-approval-timeout")
+
         result = await tool.execute({"path": "a.md", "content": "x"}, context)
-        # Not "timed out" — approval-class tools are not outer-wrapped with short timeout.
+
+        # Not "timed out" — approval-class tools are bounded post-grant only.
         assert "ok" in result["content"]
         assert "timed out" not in result["content"]

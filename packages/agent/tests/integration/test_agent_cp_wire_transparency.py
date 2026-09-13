@@ -9,7 +9,6 @@ import asyncio
 import json
 
 import pytest
-from mcp.types import LATEST_PROTOCOL_VERSION
 
 from xihe_agent.adapters.mcp_client import MCPClientManager
 
@@ -43,35 +42,25 @@ class LocalCPFixture:
             body = json.loads(raw_body)
             self.requests.append((method, path, headers, body))
             rpc_method = body.get("method")
-            if method == "POST" and rpc_method == "initialize":
+            if method == "POST" and rpc_method == "tools/list":
+                # 2026-07-28 (modern) result shape: resultType/cacheScope/ttlMs are required.
                 response_body = {
                     "jsonrpc": "2.0",
                     "id": body["id"],
                     "result": {
-                        "protocolVersion": LATEST_PROTOCOL_VERSION,
-                        "capabilities": {"tools": {}},
-                        "serverInfo": {"name": "local-cp", "version": "test"},
-                    },
-                }
-                status = "200 OK"
-            elif method == "POST" and rpc_method == "tools/list":
-                response_body = {
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {
+                        "resultType": "complete",
+                        "cacheScope": "private",
+                        "ttlMs": 0,
                         "tools": [
                             {
                                 "name": "cp_echo",
                                 "description": "Echo from CP",
                                 "inputSchema": {"type": "object", "properties": {}},
                             }
-                        ]
+                        ],
                     },
                 }
                 status = "200 OK"
-            elif method == "POST" and rpc_method == "notifications/initialized":
-                response_body = {}
-                status = "202 Accepted"
             else:
                 response_body = {"jsonrpc": "2.0", "id": body.get("id"), "result": {}}
                 status = "200 OK"
@@ -79,7 +68,6 @@ class LocalCPFixture:
             response = (
                 f"HTTP/1.1 {status}\r\n"
                 "Content-Type: application/json\r\n"
-                "MCP-Session-Id: local-session\r\n"
                 f"Content-Length: {len(payload)}\r\n\r\n"
             ).encode() + payload
             writer.write(response)
@@ -110,16 +98,16 @@ async def test_agent_uses_only_the_cp_http_boundary() -> None:
             cp_url.removeprefix("http://").split("/", 1)[0]
         }
         methods = {request[0] for request in fixture.requests}
-        # PLAN-292 T7: the GET channel is intentionally disabled
-        # (mcp_client._disable_mcp_get_server_stream, PLAN-290 hop fix) — the
-        # Agent wire must be POST + DELETE sessions only, never GET SSE.
-        assert methods == {"POST", "DELETE"}
-        assert any(request[0] == "POST" for request in fixture.requests)
-        assert any(request[0] == "DELETE" for request in fixture.requests)
+        # 决策 #34（2026-07-28 无会话世代）：客户端不建会话，SDK 不再发 GET
+        # 服务器流，也不发 DELETE 终止会话——Agent 线上只应有 POST。
+        assert methods == {"POST"}
         assert not any(request[0] == "GET" for request in fixture.requests)
         assert all(request[1] == "/api/v1/mcp" for request in fixture.requests)
         assert all("remote" not in request[1].lower() for request in fixture.requests)
         assert all(request[2]["authorization"] == "Bearer agent-token" for request in fixture.requests)
         assert all(request[2]["x-workspace-id"] == "ws-wire" for request in fixture.requests)
+        # 无会话世代：每个请求自带协议版本与方法头（SDK v2 modern 信封）。
+        assert all(request[2]["mcp-protocol-version"] == "2026-07-28" for request in fixture.requests)
+        assert all(request[2]["mcp-method"] == "tools/list" for request in fixture.requests)
     finally:
         await fixture.close()

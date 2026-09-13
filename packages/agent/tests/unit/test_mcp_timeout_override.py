@@ -7,9 +7,12 @@ per-call（压过本模块 ENV）→ 本模块 ENV → 下发值 → 代码默�
 """
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from loguru import logger
+from mcp.types import TextContent
 
 from xihe_agent import main
 from xihe_agent.adapters.mcp_client import MCPAgentTool, _resolve_tool_wait
@@ -24,22 +27,30 @@ def log_sink():
     logger.remove(sink_id)
 
 
-class FakeTool:
-    """Minimal BaseTool stand-in that records the awaiting time."""
+def _stub_tool(name: str):
+    return SimpleNamespace(name=name, description="", args_schema=None)
 
-    def __init__(self, name: str, sleep_s: float = 0.0, result: str = "ok"):
-        self.name = name
-        self._sleep_s = sleep_s
-        self._result = result
 
-    async def ainvoke(self, payload: dict) -> str:
-        if self._sleep_s > 0:
-            await asyncio.sleep(self._sleep_s)
-        return self._result
+def _tool_result(text: str = "ok", is_error: bool = False):
+    return SimpleNamespace(
+        content=[TextContent(type="text", text=text)],
+        structured_content=None,
+        is_error=is_error,
+    )
 
 
 def _make_tool(name: str = "list_directory", sleep_s: float = 0.0) -> MCPAgentTool:
-    return MCPAgentTool(FakeTool(name, sleep_s), call_timeout_s=30)
+    """MCPAgentTool backed by a fake manager whose call_tool sleeps then returns "ok"."""
+
+    async def _call(*args, **kwargs):
+        if sleep_s > 0:
+            await asyncio.sleep(sleep_s)
+        return _tool_result("ok")
+
+    manager = MagicMock()
+    manager.approval_tool = None
+    manager.call_tool = AsyncMock(side_effect=_call)
+    return MCPAgentTool(_stub_tool(name), manager)
 
 
 def _context(
@@ -224,10 +235,13 @@ async def test_tool_logs_carry_tool_call_id_and_outcome(monkeypatch, log_sink):
 async def test_downstream_error_result_is_labeled(monkeypatch, log_sink):
     """下游（CP/Runtime）返回的错误：本跳未到界，只转发下游结论（origin=downstream）。"""
     monkeypatch.delenv("XIHE_MCP_TOOL_TIMEOUT_S", raising=False)
-    tool = MCPAgentTool(
-        FakeTool("list_directory", result="Tool error: layer=runtime_exec origin=self"),
-        call_timeout_s=30,
+
+    manager = MagicMock()
+    manager.approval_tool = None
+    manager.call_tool = AsyncMock(
+        return_value=_tool_result("Tool error: layer=runtime_exec origin=self", is_error=True)
     )
+    tool = MCPAgentTool(_stub_tool("list_directory"), manager)
     ctx = _context({"list_directory": 94})
     ctx.metadata["operationItemId"] = "call-ds-1"
 
