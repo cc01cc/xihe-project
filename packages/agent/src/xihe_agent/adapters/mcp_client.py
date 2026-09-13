@@ -263,11 +263,15 @@ class MCPAgentTool(BaseAgentTool):
                 # The approval wait itself is user-bound and must NOT count here.
                 post_wait = _resolve_tool_wait(self._tool.name, context)
                 # T1.8（spec S5.1）：审批工具的等待值同样打点。
+                # 2026-09-13 E2E（V3）：补 grantId —— grant 即 CP 审批请求 id，而
+                # CP 账本条目键 = 审批请求 id、Runtime 注册表键 = 该条目键，
+                # 三跳时间线可据此串起（Agent grantId ↔ CP item ↔ Runtime exec）。
                 logger.info(
                     "[LIFECYCLE] service=agent event=mcp_tool_post_grant tool={} toolCallId={}"
-                    + " waitS={} source={} valueOrigin={}",
+                    + " grantId={} waitS={} source={} valueOrigin={}",
                     self._tool.name,
                     post_wait.tool_call_id or "-",
+                    grant_id or "-",
                     post_wait.seconds,
                     post_wait.source,
                     post_wait.value_origin or "",
