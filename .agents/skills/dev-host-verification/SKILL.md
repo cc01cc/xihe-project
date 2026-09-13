@@ -51,3 +51,12 @@ mise run test:e2e:host
 - 停止 host 栈使用 `pwsh -File scripts/dev-host.ps1 -Stop`；它可以移除 Sandbox 容器，但必须保留 `XIHE_WORKSPACE_HOST_ROOT` 下的文件。
 - 不要清空日常数据库或删除 host workspace 作为隐式测试前置。若需要重置，先创建隔离 DB/volume 或获得明确的数据处置确认。
 - 截图 baseline、actual/diff、trace 和日志分别记录来源；baseline 通过不等于人工 UI 审查通过。
+
+## Persistent 栈窄用例跑法（2026-09-13 实证）
+
+1. `node scripts/e2e-host.mjs --persistent --llm-mode=<mode>` 起栈；状态在 `.tmp/e2e-host/persistent-stack.json`（ui/cp/agent/runtime 端口与 pid）。
+2. 窄跑 Playwright：**必须带 `--config`**（只传 spec 路径会因无 baseURL 报 `Cannot navigate to invalid URL`）：
+   `npx playwright test --config e2e/playwright.config.ts e2e/real/<spec>.ts`
+   env：`XIHE_E2E_PROFILE=host`、`XIHE_E2E_EXTERNAL_SERVER=1`、`XIHE_UI_PORT`、`XIHE_CP_PORT`、`XIHE_E2E_LLM_MODE`、`XIHE_E2E_BROWSER_CHANNEL=chrome-beta`。
+3. 冒烟脚本复用账号：首跑 `SMOKE_REGISTER_EMAIL=<email>`，后续用 `SMOKE_EMAIL=<email>`（Agent 单 workspace 绑定，换 workspace 会被拒）；fake LLM 模式对内容标记有要求（如 `XIHE-E2E-WRITE <path> <content>`）。
+4. 收尾 `node scripts/e2e-host.mjs --teardown`；三跳结果在 `logs/{agent,cp}.log`（JSONL，按 `toolCallId` 过滤）。
