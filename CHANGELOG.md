@@ -10,6 +10,7 @@
 - post-290 加固三线（PLAN-292 M1-M3）：① **Grant 哈希匹配**——`approval_requests.arguments_hash`（V9 migration）+ `consumeApprovedGrant` canonical SHA-256 匹配优先（Python↔Java 同向量 fixture，无 hash 存量行走 legacy JSON 比较，仍 fail-closed），大参数 `write_file` 批准后不再因 preview 截断 409；② **工具面收敛**——契约测试新增 `INTERNAL_ONLY` 集（`apply_patch/create_snapshot/revert_snapshot` 保持 require_approval 但不上 Gateway，分类全量记账），Policy 死名对齐 Runtime 实现（`snapshot/revert→create_snapshot/revert_snapshot`），`write_file_binary` 死配置从 Policy/Proxy/Agent 三处清理，`read_file_range` 接通沙盒二进制安全实现（16MiB 预览上限；修复 Gateway 侧文本重复实现且硬编码 `is_binary:false` 的漂移）；③ **旅程 C 最小可恢复**——`GET /api/v1/chat/runs/{runId}`（所有权校验、leaseExpired、活跃审批派生 `awaiting_approval`）+ UI 恢复三态横幅（会话已恢复/任务已取消/请重试，SSE 错误与页面挂载自动触发）+ 刷新后 pending approval 重放可继续 approve/reject。修复 PLAN-290 收尾遗留回归：`McpProxyTest` 过时断言（补 Agent run header 表征 Agent 路径 + 新增 B2 用户直连旁路用例）、`WorkspaceServiceTest` 与 dev 栈的环境耦合（钉死不可达 runtime URL）。`journey-c.spec.ts` Host 用例 **4/4 PASS**（T6/H2/C1-C3/C2-reject，`XIHE_E2E_LLM_MODE=write_file` 标记模式）；实施中另修：operation 状态机 `waiting_for_approval→completed/failed` 缺口（批准后 run 收尾被拒永久卡住）、中继流中断误判 run 失败（approval_in_flight 时改为 ambiguous 收尾保持可恢复）、Gateway `read_file_range` 未接沙盒二进制实现的漂移。
 ### Changed
 
+- Runtime 门禁与工具链（PLAN-0323）：`mise run lint:runtime` 升级为 `cargo fmt --check && cargo clippy --all-targets -- -D warnings`；`scripts/mise/format.sh` 三段 fail-fast（UI 段 `--if-present`）；Rust 工具链统一 pin 1.97.1（`packages/runtime/rust-toolchain.toml` + mise `[tools].rust`，AGENTS/DEV 文档同步）。
 - 数据库 Schema 一次性重新基线化（PLAN-280）：active Flyway 链收敛为单一 `V1__init_schema.sql`（21 表，原生 UUID 主键、`TIMESTAMPTZ`、显式命名 FK/CHECK/UNIQUE/索引与 `ON DELETE`）；`ddl-auto=validate`、`baseline-on-migrate=false`，Flyway 成为唯一 schema manager。**旧本地数据库必须 reset（`mise run dev:reset -- -Reset`），不再兼容**。修复 `spring-boot-flyway` 模块缺失导致的 Flyway 自动配置失效；Testcontainers 镜像切换 `pgvector/pgvector:pg17`。Java 层：@Id 主键统一 `UUID` 类型，FK 列保持 `String` + `UuidStringConverter`，Repository/Service/Controller 同步适配。
 
 ### Added
@@ -78,6 +79,9 @@
 
 ### Fixed
 
+- 流活性语义（PLAN-0323 S-1）：UI 活性计时器改为心跳/工具/审批/状态事件均参与判活（`useSSE.ts`），长工具调用不再误报 `AGENT_TIMEOUT(ambiguous)`；"静默"口径 = 连续 ≥30s 无任何事件（含心跳），run 级停滞由 CP 终态/恢复接口承担（静默期已登记于 DEV-018 风险）。
+- 审批取消清理（PLAN-0323 A-1）：任务取消（`asyncio.CancelledError`，BaseException）不再绕过待决审批清理，已取消 run 的审批不再残留于 `get_pending()`。
+- 物化总时限（PLAN-0323 M-1）：`ensure_workspace_materialized` 增加总时限（env `XIHE_WORKSPACE_MATERIALIZE_TIMEOUT_SECS`，默认 600s，锁后计时）；超时 `mark_failed` 并署名，不再无限停留 `materializing`。
 - Workspace 正确性修复（PLAN-262 M1）：目录判定改用 API `type` 字段（`v1.2` 目录/`Makefile` 不再误判）；删除/创建等待真实结果后分支 toast（消除假成功）；二进制上传走 `POST /api/v1/files/upload` FormData 保真通道（PNG/字体不再经 UTF-8 损坏）；`splitPdf` 在 CP 无 split-pdf 路由时 fail-closed 显式报错（openapi 删除漂移声明）。
 - Chat SSE 生命周期与连续消息（PLAN-230）：修复 CP 每轮 `finally complete(sessionId)` 导致会话 SSE 一次性化及旧 `onCompletion` 按 `sessionId` 误删新连接的竞态（`SseEmitterManager` 增加 `generation`/`compareAndRemove` + `stale_cleanup_ignored`），移除 per-run 关闭、仅在客户端断开/session 删除/不可写时清理；修复 UI 长回复单 text part 卡首字符（`SSEStream` 每 `token` `replaceStreamingParts` 整量替换）；修复假流式 `stream=False` 单 `token`（`XiheLiteLLM` 真实 `streaming=True`）。
 - 修复 Runtime Windows 本地构建与测试兼容性：隔离 Unix socket/symlink 代码，并统一 Windows canonical path 的 workspace 相对路径处理

@@ -58,5 +58,5 @@ updated: 2026-09-06
 
 - **账本权威纯度**：`operation_items` 仍有两类写者——MCP 网关（`source=mcp`，唯一翻转方）与 SSE 中继（`source=agent`，兜底 Agent 本地工具）；这是"单写者"的近似（PLAN-0317 决策 #17）。彻底方案（中继零写入 + 本地工具统一登记入口 + Agent→CP 上报契约）另立 `XH-ledger-single-writer`。
 - **`runtime_jobs` durable registry**：schema 与服务已建但**无 writer/caller**，与容器内 `jobId` 未打通（PLAN-274 债务 #11）。
-- **Rust lint/format 预存问题**：`cargo clippy --all-targets` 在 `remote_mcp.rs` 测试代码报 `type_complexity`（项目门禁不含 `--all-targets`）；仓库整体存在 rustfmt 漂移（`cargo fmt --check` 约 190 处 / 20 文件），CI 无 fmt 门禁，`scripts/mise/format.sh` 对失败静默吞错。
+- **Rust lint/format 预存问题**（**2026-09-13 已修复，PLAN-0323**）：原状：`cargo clippy --all-targets` 报 `type_complexity`、rustfmt 漂移 ~190 处 / 20 文件、门禁无 fmt 无 `--all-targets`、`format.sh` 吞错。现状：fmt 全量清零（208 处 / 22 文件，style-only `cbb6bbe`）；2 告警清零；门禁 `lint:runtime` = `cargo fmt --check && cargo clippy --all-targets -- -D warnings`；`format.sh` 三段 fail-fast；Rust 工具链 pin 1.97.1（`packages/runtime/rust-toolchain.toml` + mise `[tools].rust`）。**新登记**：`packages/agent` ruff format 漂移（42/85 文件待重排；`format.sh` 长期未执行），同类问题待独立批次。
 - **容器侧改动生效条件**：修改 `container_runtime.rs` 后必须重建 `xihe/workspace` 镜像，否则沙盒内仍是旧二进制（PLAN-0317 实测曾据此误判）。
