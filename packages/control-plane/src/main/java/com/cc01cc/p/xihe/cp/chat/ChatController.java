@@ -74,6 +74,7 @@ public class ChatController {
     private final ConfigService configService;
     private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
+    private final com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
@@ -110,7 +111,8 @@ public class ChatController {
             ProviderCredentialLeaseService credentialLeases,
             ConfigService configService,
             com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
-            com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy) {
+            com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
+            com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -131,6 +133,7 @@ public class ChatController {
         this.configService = configService;
         this.mcpProxyController = mcpProxyController;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
+        this.runtimeExecutionClient = runtimeExecutionClient;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -486,7 +489,60 @@ public class ChatController {
         }
 
         logger.info("[LIFECYCLE] service=cp event=run_cancel_requested runId={} reason={}", runId, reason);
+
+        // PLAN-0317 T2.4/T2.5/T2.6：CP 自主收敛——终止 Runtime 在途执行、落账本
+        // 终态并把 run/operation 推到 cancelled，不再等待 Agent 回音。
+        try {
+            settleRunCancellation(runId, workspaceId);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_cancel_settle_failed runId={} error={}",
+                    runId, e.getMessage(), e);
+        }
+
         return ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
+    }
+
+    /**
+     * PLAN-0317 T2.4/T2.5/T2.6：取消的 CP 侧收口。
+     *
+     * <p>对每个仍在途的 CP→Runtime 转发：按规范化 operationItemId 调 Runtime
+     * 取消端点；确认终止 → item {@code cancelled}，未确认/不可达 → {@code aborted}
+     * （对齐 spec S4 三分映射）；执行已自然结束（未命中）→ 不改 item。
+     * 最后把 run 与 operation 收敛为 {@code cancelled}——成功/失败路径的转换
+     * 期望集不含 {@code cancelling}，因此不会被回音路径覆盖。
+     */
+    private void settleRunCancellation(String runId, String workspaceId) {
+        UUID operationId = operationService.findOperationIdByRunId(runId);
+        if (operationId != null) {
+            for (com.cc01cc.p.xihe.cp.entity.OperationAttempt attempt
+                    : operationService.findStartedForwards(operationId)) {
+                com.cc01cc.p.xihe.cp.entity.OperationItem item =
+                        operationService.findItem(attempt.getItemId());
+                if (item == null || item.getToolCallId() == null || item.getToolCallId().isBlank()) {
+                    continue;
+                }
+                com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient.CancelOutcome outcome =
+                        runtimeExecutionClient.cancel(workspaceId, item.getToolCallId());
+                if (outcome.found() && "already_finished".equals(outcome.status())) {
+                    logger.info("[LIFECYCLE] service=cp event=runtime_cancel_already_finished runId={} itemId={}",
+                            runId, item.getId());
+                    continue;
+                }
+                boolean cancelled = outcome.found() && "cancelled".equals(outcome.status());
+                String itemStatus = cancelled ? "cancelled" : "aborted";
+                String errorCode = cancelled ? null : "CANCEL_UNCONFIRMED";
+                operationService.settleCancellation(item.getId(), attempt.getId(), itemStatus, errorCode);
+                logger.info("[LIFECYCLE] service=cp event=runtime_cancel_settled runId={} itemId={} status={} confirmed={} unreachable={}",
+                        runId, item.getId(), itemStatus, outcome.confirmed(), outcome.unreachable());
+            }
+        }
+        int runUpdated = chatRunRepository.transition(UUID.fromString(runId), List.of("cancelling"),
+                "cancelled", "cancelled", null, null, 0, 0);
+        if (runUpdated == 0) {
+            logger.warn("[LIFECYCLE] service=cp event=run_cancel_transition_ignored runId={}", runId);
+        }
+        operationService.transitionOperationForRun(runId, "cancelled", null, null);
+        logger.info("[LIFECYCLE] service=cp event=run_cancelled runId={}", runId);
     }
 
     @GetMapping("/api/v1/health")

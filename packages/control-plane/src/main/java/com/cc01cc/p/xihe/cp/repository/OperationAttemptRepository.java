@@ -27,6 +27,11 @@ public interface OperationAttemptRepository extends JpaRepository<OperationAttem
     @Query("select coalesce(max(a.retryNo), -1) from OperationAttempt a where a.itemId = :itemId and a.stage = :stage")
     int findMaxRetryNo(@Param("itemId") String itemId, @Param("stage") String stage);
 
+    /** PLAN-0317 T2.4：该 operation 下仍在途的 CP→Runtime 转发（取消要终止的目标）。 */
+    @Query("select a from OperationAttempt a where a.stage = 'cp_forward' and a.status = 'started' "
+            + "and a.itemId in (select i.id from OperationItem i where i.operationId = :operationId)")
+    List<OperationAttempt> findStartedForwards(@Param("operationId") String operationId);
+
     @Modifying
     @Transactional
     @Query("update OperationAttempt a set a.status = :status, a.httpStatus = :httpStatus, "

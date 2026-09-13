@@ -176,6 +176,49 @@ public class OperationService {
         }
     }
 
+    /** PLAN-0317 T2.4：该 operation 下仍在途的 CP→Runtime 转发（取消目标）。 */
+    @Transactional(readOnly = true)
+    public List<OperationAttempt> findStartedForwards(UUID operationId) {
+        if (operationId == null) {
+            return List.of();
+        }
+        return attempts.findStartedForwards(operationId.toString());
+    }
+
+    @Transactional(readOnly = true)
+    public OperationItem findItem(String itemId) {
+        if (itemId == null || itemId.isBlank()) {
+            return null;
+        }
+        return items.findById(UUID.fromString(itemId)).orElse(null);
+    }
+
+    /**
+     * PLAN-0317 T2.5：取消链路的账本落地——在途 attempt 落 {@code cancelled}，
+     * item 按终止确认结果落 {@code cancelled}/{@code aborted}。幂等：item 已是
+     * 终态（取消与自然完成竞态）时保留既有事实，不覆盖。
+     */
+    @Transactional
+    public void settleCancellation(UUID itemId, UUID attemptId, String itemStatus, String errorCode) {
+        if (attemptId != null) {
+            int affected = attempts.finishStarted(attemptId, "cancelled", 499, errorCode, null, null,
+                    Instant.now());
+            if (affected == 0) {
+                logger.debug("[LIFECYCLE] service=cp event=cancel_attempt_already_finished attemptId={}",
+                        attemptId);
+            }
+        }
+        try {
+            transitionItem(itemId, itemStatus, null, null, null, errorCode);
+        } catch (CpApiException e) {
+            if (!"OPERATION_STATE_CONFLICT".equals(e.getCode())) {
+                throw e;
+            }
+            logger.info("[LIFECYCLE] service=cp event=cancel_item_kept_terminal itemId={} reason={}",
+                    itemId, e.getMessage());
+        }
+    }
+
     @Transactional
     public OperationStartResult startOperation(String userId, String sessionId, String workspaceId,
                                                String runId, String requestId, String kind,

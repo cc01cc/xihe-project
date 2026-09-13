@@ -748,6 +748,12 @@ public class McpProxyController {
             requestBuilder.header("X-Workspace-Id", wsId);
             copyOperationHeaders(headers, requestBuilder);
             copyOutboundPolicyHeaders(headers, requestBuilder);
+            // PLAN-0317 T2.8①（决策 #12）：出站关联键以 CP 规范化后的
+            // operationItemId 为准——入站原始值可能非 UUID，两者派生结果不同，
+            // 而 Runtime 侧注册表与 CP 账本必须用同一个键（否则取消无法定位）。
+            if (ledgerAttempt != null && ledgerAttempt.toolCallId() != null) {
+                requestBuilder.setHeader("X-Operation-Item-Id", ledgerAttempt.toolCallId());
+            }
 
             String requestMethod = extractMethod(body);
             if (requestMethod != null && !requestMethod.isEmpty()) {
@@ -870,7 +876,7 @@ public class McpProxyController {
             operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
             var attempt = operationService.startAttempt(
                     item.getId(), "cp_forward", null, "cp", headers.getFirst("X-Request-Id"));
-            return new LedgerAttempt(item.getId(), attempt.getId());
+            return new LedgerAttempt(item.getId(), attempt.getId(), toolCallId);
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=operation_user_mutation_ledger_failed tool={} error={}",
                     toolName, e.getMessage());
@@ -923,7 +929,7 @@ public class McpProxyController {
             String requestId = headers.getFirst("X-Request-Id");
             OperationAttempt attempt = operationService.startAttempt(
                     item.getId(), "cp_forward", null, "cp", requestId);
-            return new LedgerAttempt(item.getId(), attempt.getId());
+            return new LedgerAttempt(item.getId(), attempt.getId(), toolCallId);
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=operation_mcp_attempt_start_failed sessionId={}", sessionId, e);
             throw e;
@@ -1002,7 +1008,7 @@ public class McpProxyController {
         }
     }
 
-    private record LedgerAttempt(UUID itemId, UUID attemptId) {}
+    private record LedgerAttempt(UUID itemId, UUID attemptId, String toolCallId) {}
 
     private long nextGeneration(String wsId) {
         return toolGenerations.computeIfAbsent(wsId, key -> new AtomicLong()).incrementAndGet();
