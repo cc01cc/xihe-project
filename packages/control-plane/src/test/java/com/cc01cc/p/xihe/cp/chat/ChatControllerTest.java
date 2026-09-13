@@ -550,6 +550,86 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(sessionId, capturedSessionId[0]);
     }
 
+    // ── PLAN-0308 M1 T1.9：run 请求 per-call 超时（`toolTimeouts`） ─────────────
+
+    @Test
+    void chat_rejectsInvalidToolTimeoutsBeforeAnyRunSideEffect() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        for (Object bad : List.of(86400, 601, 0, -5, "abc", 12.5)) {
+            Map<String, Object> request = new java.util.HashMap<>();
+            request.put("sessionId", sessionId);
+            request.put("content", "run a long command");
+            request.put("toolTimeouts", Map.of("execute_command", bad));
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    baseUrl + "/api/v1/chat", HttpMethod.POST,
+                    new HttpEntity<>(request, headers), Map.class);
+
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), "value " + bad);
+            assertEquals("INVALID_REQUEST", response.getBody().get("code"), "value " + bad);
+        }
+
+        Map<String, Object> wrongType = new java.util.HashMap<>();
+        wrongType.put("sessionId", sessionId);
+        wrongType.put("content", "run a long command");
+        wrongType.put("toolTimeouts", List.of(120));
+        ResponseEntity<Map> wrongTypeResponse = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(wrongType, headers), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, wrongTypeResponse.getStatusCode());
+        assertEquals("INVALID_REQUEST", wrongTypeResponse.getBody().get("code"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void chat_forwardsPerCallToolTimeoutsToAgentPayload() throws IOException, InterruptedException {
+        final String[] capturedBody = new String[1];
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                capturedBody[0] = new String(exchange.getRequestBody().readAllBytes());
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, 0);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write("event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n"
+                            .getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "run a long command",
+                "toolMode", "workspace",
+                "toolTimeouts", Map.of("execute_command", 120));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+
+        long deadline = System.currentTimeMillis() + 5000;
+        while (capturedBody[0] == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(100);
+        }
+        assertNotNull(capturedBody[0], "Agent request body should be captured");
+        Map<String, Object> agentRequest = objectMapper.readValue(capturedBody[0], Map.class);
+
+        Map<String, Object> waits = (Map<String, Object>) agentRequest.get("toolWaits");
+        Map<String, Object> origins = (Map<String, Object>) agentRequest.get("toolWaitOrigins");
+        Map<String, Object> rawTimeouts = (Map<String, Object>) agentRequest.get("toolTimeouts");
+        assertNotNull(waits, "payload must carry toolWaits");
+        assertEquals(124, ((Number) waits.get("execute_command")).intValue(),
+                "Agent wait = per-call 120 + 4");
+        assertEquals("per-call", origins.get("execute_command"));
+        assertEquals(120, ((Number) rawTimeouts.get("execute_command")).intValue(),
+                "raw per-call value travels for the inbound header");
+    }
+
     @TestConfiguration
     static class TestMockConfig {
 

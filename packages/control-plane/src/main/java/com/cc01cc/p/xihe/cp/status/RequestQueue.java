@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
 
@@ -31,13 +32,23 @@ public class RequestQueue {
     public boolean enqueue(String sessionId, String content, String provider, String model,
                            String toolMode, List<AttachmentInfo> attachments, String userId,
                            String workspaceId, String requestId, String runId) {
+        return enqueue(sessionId, content, provider, model, toolMode, attachments, userId,
+                workspaceId, requestId, runId, Map.of());
+    }
+
+    /** PLAN-0308 T1.9：per-call 超时（已校验）随排队请求保留，投递时不丢。 */
+    public boolean enqueue(String sessionId, String content, String provider, String model,
+                           String toolMode, List<AttachmentInfo> attachments, String userId,
+                           String workspaceId, String requestId, String runId,
+                           Map<String, Integer> toolTimeouts) {
         if (queue.size() >= MAX_SIZE) {
             logger.warn("[LIFECYCLE] service=cp event=requestQueueFull sessionId={} queueSize={}", sessionId, queue.size());
             return false;
         }
         queue.offer(new QueuedRequest(sessionId, content, provider, model, toolMode,
                 attachments == null ? List.of() : List.copyOf(attachments), userId, workspaceId,
-                Instant.now(), requestId, runId));
+                Instant.now(), requestId, runId,
+                toolTimeouts == null ? Map.of() : Map.copyOf(toolTimeouts)));
         logger.info("[LIFECYCLE] service=cp event=requestQueued sessionId={} reason=agent_down queueSize={}", sessionId, queue.size());
         return true;
     }
@@ -102,6 +113,7 @@ public class RequestQueue {
         String workspaceId,
         Instant createdAt,
         String requestId,
-        String runId
+        String runId,
+        Map<String, Integer> toolTimeouts
     ) {}
 }

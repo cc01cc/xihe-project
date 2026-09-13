@@ -13,6 +13,7 @@ import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
@@ -45,6 +46,7 @@ class McpProxyTest {
     private SessionRepository sessionRepository;
     private OperationService operationService;
     private McpProxyController controller;
+    private org.springframework.mock.env.MockEnvironment environment;
 
     @BeforeEach
     void setUp() {
@@ -60,6 +62,7 @@ class McpProxyTest {
         workspaceService = mock(WorkspaceService.class);
         sessionRepository = mock(SessionRepository.class);
         operationService = mock(OperationService.class);
+        environment = new org.springframework.mock.env.MockEnvironment();
 
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
@@ -67,7 +70,8 @@ class McpProxyTest {
                 mcpServerRepository, aliasRepository,
                 workspaceService, sessionRepository, operationService,
                 mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
-                new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy()
+                new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy(),
+                environment
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -427,6 +431,322 @@ class McpProxyTest {
     void verifySessionId_rejectsEmptyString() {
         String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "verifySessionId", "");
         assertNull(wsId);
+    }
+
+    // ── PLAN-0308 M1 T1.9：per-call 生产方（run payload + 入站头采纳/剥离） ──────────
+
+    @SuppressWarnings("unchecked")
+    private void seedToolCache(String tool, String serverId) {
+        Map<String, Map<String, String>> cache =
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+        Map<String, Instant> timestamps =
+                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of(tool, serverId)));
+        timestamps.put(TEST_WS_UUID, Instant.now());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void toolTimeoutPayload_perCallOverridesConfigAndShipsRawValues() {
+        com.cc01cc.p.xihe.cp.entity.McpServer server =
+                new com.cc01cc.p.xihe.cp.entity.McpServer(TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
+        server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
+        server.setEnabled(true);
+        server.setToolTimeoutS(90);
+        when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
+        seedToolCache("fake_echo", server.getId().toString());
+
+        Map<String, Object> payload = controller.toolTimeoutPayload(
+                TEST_WS_UUID, "u-1", Map.of("fake_echo", 120, "execute_command", 120));
+
+        Map<String, Object> waits = (Map<String, Object>) payload.get("toolWaits");
+        Map<String, Object> origins = (Map<String, Object>) payload.get("toolWaitOrigins");
+        // 映射内的工具：per-call 压制 config（90 → 120），Agent 等待 = 120 + 4。
+        assertEquals(124L, ((Number) waits.get("fake_echo")).longValue());
+        assertEquals("per-call", origins.get("fake_echo"));
+        // 映射外的工具（冷缓存 / 系统工具）：per-call 条目仍显式下发，不落回系统工具统一值。
+        assertEquals(124L, ((Number) waits.get("execute_command")).longValue());
+        assertEquals("per-call", origins.get("execute_command"));
+        // 原始 per-call 值随 payload 下发，供 Agent 随工具调用附带入站头。
+        assertEquals(120, ((Number) ((Map<String, Object>) payload.get("toolTimeouts"))
+                .get("execute_command")).intValue());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void toolTimeoutPayload_withoutPerCallOmitsRawKey() {
+        com.cc01cc.p.xihe.cp.entity.McpServer server =
+                new com.cc01cc.p.xihe.cp.entity.McpServer(TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
+        server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
+        server.setEnabled(true);
+        server.setToolTimeoutS(90);
+        when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
+        seedToolCache("fake_echo", server.getId().toString());
+
+        Map<String, Object> payload = controller.toolTimeoutPayload(TEST_WS_UUID, "u-1", Map.of());
+
+        Map<String, Object> waits = (Map<String, Object>) payload.get("toolWaits");
+        Map<String, Object> origins = (Map<String, Object>) payload.get("toolWaitOrigins");
+        assertEquals(94L, ((Number) waits.get("fake_echo")).longValue());
+        assertEquals("config", origins.get("fake_echo"));
+        assertFalse(payload.containsKey("toolTimeouts"));
+        assertEquals("full", payload.get("budgetCoverage"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_perCallHeaderAdoptedAndUpstreamTimeoutHeadersStripped() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("read_file", "__system__");
+
+        final String[] outboundTimeout = new String[1];
+        final String[] outboundOrigin = new String[1];
+        final String[] leakedPerCall = new String[1];
+        final String[] outboundItemId = new String[1];
+        final String[] outboundRunId = new String[1];
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            outboundTimeout[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Timeout-S");
+            outboundOrigin[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Timeout-Origin");
+            leakedPerCall[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Timeout-Per-Call");
+            outboundItemId[0] = exchange.getRequestHeaders().getFirst("X-Operation-Item-Id");
+            outboundRunId[0] = exchange.getRequestHeaders().getFirst("X-Chat-Run-Id");
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":3}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":3}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            headers.set("X-Operation-Item-Id", "call-abc-123");
+            headers.set("X-Xihe-Tool-Timeout-Per-Call", "120");
+            // 上游伪造的出站头必须被剥离，只认 CP 自己的计算（信任边界 spec S2.2 规则 5）。
+            headers.set("X-Xihe-Tool-Timeout-S", "9999");
+            headers.set("X-Xihe-Tool-Timeout-Origin", "config");
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            assertEquals("120", outboundTimeout[0]);
+            assertEquals("per-call", outboundOrigin[0]);
+            assertNull(leakedPerCall[0], "入站 per-call 头不得透传给 Runtime");
+            // 关联键透传：Runtime 用同一 toolCallId 打日志（spec S5.1 规则 1）。
+            assertEquals("call-abc-123", outboundItemId[0]);
+            assertEquals(TEST_WS_UUID, outboundRunId[0]);
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_rejectsInvalidPerCallHeaderWithoutForwarding() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("read_file", "__system__");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":4}";
+        Object access = accessContext(TEST_WS_UUID, "u-1");
+
+        for (String bad : new String[] {"abc", "0", "-5", "601", "12.5"}) {
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            headers.set("X-Xihe-Tool-Timeout-Per-Call", bad);
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1", access);
+
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), "value " + bad);
+            assertTrue(response.getBody().contains("INVALID_REQUEST"), "value " + bad);
+        }
+    }
+
+    // ── PLAN-0308 T3.4②（决策 #31）：输出上限授权 → 出站头 ───────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_setsOutputLimitHeaderFromConfigAndStripsUpstream() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("read_file", "__system__");
+        com.cc01cc.p.xihe.cp.config.ConfigService configService =
+                (com.cc01cc.p.xihe.cp.config.ConfigService) ReflectionTestUtils.getField(
+                        controller, "configService");
+        when(configService.resolve(
+                eq(com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy.SYSTEM_TOOL_DOMAIN),
+                eq(com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy.OUTPUT_LIMIT_KEY),
+                any(), any()))
+                .thenReturn("8192");
+
+        final String[] outboundLimit = new String[1];
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            outboundLimit[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Output-Limit");
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":6}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":6}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            // 上游伪造的同名头必须被剥离，只认 CP 的配置值（信任边界）。
+            headers.set("X-Xihe-Tool-Output-Limit", "1");
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            assertEquals("8192", outboundLimit[0]);
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_omitsOutputLimitHeaderWhenUnconfigured() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("read_file", "__system__");
+
+        final String[] outboundLimit = new String[1];
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            // 记录"头是否存在过"（null 表示未下发）
+            outboundLimit[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Output-Limit");
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":7}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            // 未配置但上游带了一个值：仍应被剥离（未授权不得下发）
+            headers.set("X-Xihe-Tool-Output-Limit", "1");
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID,
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":7}",
+                    headers, "sess-1", accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            assertNull(outboundLimit[0], "未配置时不得下发输出上限头");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // ── PLAN-0308 M1（spec S1/S2 三条判断 + S5.1 关联键）：CP 本跳 ENV / 透传 ──────────
+
+    @Test
+    void cpForwardWait_usesDerivedValueWithoutEnv() {
+        ToolTimeoutPolicy.ToolWaits waits = new ToolTimeoutPolicy()
+                .resolve(null, 90);
+        McpProxyController.ForwardWait wait = (McpProxyController.ForwardWait)
+                ReflectionTestUtils.invokeMethod(controller, "forwardWaitFor", waits, null);
+
+        assertEquals(92L, wait.seconds());
+        assertEquals("cp", wait.source());
+        assertEquals("config", wait.valueOrigin());
+        assertNull(wait.overriddenValue());
+    }
+
+    @Test
+    void cpForwardWait_envExplicitBeatsDerivedValue() {
+        environment.setProperty("xihe.mcp.forward-timeout-s", "25");
+        ReflectionTestUtils.setField(controller, "forwardTimeoutS", 25L);
+        ToolTimeoutPolicy.ToolWaits waits = new ToolTimeoutPolicy()
+                .resolve(null, 90);
+
+        McpProxyController.ForwardWait wait = (McpProxyController.ForwardWait)
+                ReflectionTestUtils.invokeMethod(controller, "forwardWaitFor", waits, null);
+
+        assertEquals(25L, wait.seconds());
+        assertEquals("env", wait.source());
+        assertEquals(92L, wait.overriddenValue(), "派生值被 ENV 压制并署名");
+    }
+
+    @Test
+    void cpForwardWait_perCallSuppressesEnv() {
+        environment.setProperty("xihe.mcp.forward-timeout-s", "25");
+        ReflectionTestUtils.setField(controller, "forwardTimeoutS", 25L);
+        ToolTimeoutPolicy.ToolWaits waits = new ToolTimeoutPolicy()
+                .resolve(120, 90);
+
+        McpProxyController.ForwardWait wait = (McpProxyController.ForwardWait)
+                ReflectionTestUtils.invokeMethod(controller, "forwardWaitFor", waits, 120L);
+
+        assertEquals(122L, wait.seconds());
+        assertEquals("cp", wait.source());
+        assertEquals("per-call", wait.valueOrigin());
+        assertEquals(25L, wait.overriddenValue(), "per-call 最高：本跳 ENV 被压制并署名");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_stdioPathCarriesBudgetHeader() throws Exception {        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("stdio_tool", "some-stdio-server");
+
+        final String[] outboundTimeout = new String[1];
+        final String[] outboundOrigin = new String[1];
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp/stdio/some-stdio-server",
+                exchange -> {
+                    outboundTimeout[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Timeout-S");
+                    outboundOrigin[0] = exchange.getRequestHeaders().getFirst("X-Xihe-Tool-Timeout-Origin");
+                    byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":5}"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, response.length);
+                    exchange.getResponseBody().write(response);
+                    exchange.close();
+                });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"stdio_tool\",\"arguments\":{}},\"id\":5}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            // 无 per-call、无配置 → 预算默认 30，出站 = 预算（Runtime 界）。
+            assertEquals("30", outboundTimeout[0]);
+            assertEquals("config", outboundOrigin[0]);
+        } finally {
+            stub.stop(0);
+        }
     }
 
 }

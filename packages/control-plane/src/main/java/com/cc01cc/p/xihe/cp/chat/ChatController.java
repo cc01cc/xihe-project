@@ -73,6 +73,7 @@ public class ChatController {
     private final ProviderCredentialLeaseService credentialLeases;
     private final ConfigService configService;
     private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
+    private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
@@ -108,7 +109,8 @@ public class ChatController {
             RequestQueue requestQueue,
             ProviderCredentialLeaseService credentialLeases,
             ConfigService configService,
-            com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController) {
+            com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
+            com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -128,6 +130,7 @@ public class ChatController {
         this.credentialLeases = credentialLeases;
         this.configService = configService;
         this.mcpProxyController = mcpProxyController;
+        this.toolTimeoutPolicy = toolTimeoutPolicy;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -144,7 +147,8 @@ public class ChatController {
                     }
                     logger.info("[LIFECYCLE] service=cp event=requestRedelivered requestId={} sessionId={} runId={} outcome=accepted",
                             requestId, req.sessionId(), runId);
-                    execAsync(req.sessionId(), req.content(), req.provider(), req.model(), req.toolMode(), req.attachments(),
+                    execAsync(req.sessionId(), req.content(), req.provider(), req.model(), req.toolMode(),
+                            req.toolTimeouts(), req.attachments(),
                             req.userId(), req.workspaceId(), requestId, runId);
                 }, req -> markQueuedRequestFailed(
                         req,
@@ -197,6 +201,14 @@ public class ChatController {
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
         String toolMode = (String) request.getOrDefault("toolMode", "none");
+        // PLAN-0308 M1 T1.9（决策 #28/#29，spec S2.2 规则 6）：run 请求可携带 per-tool 超时
+        // （per-call，最高优先输入）。非法/超上限 → 400 拒绝并署名，不静默截断。
+        com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy.PerCallMap perCallTimeouts =
+                toolTimeoutPolicy.validatePerCallMap(request.get("toolTimeouts"));
+        if (!perCallTimeouts.valid()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", perCallTimeouts.error());
+        }
         String idempotencyKey = idempotencyHeader == null || idempotencyHeader.isBlank()
                 ? UUID.randomUUID().toString()
                 : idempotencyHeader.trim();
@@ -301,7 +313,8 @@ public class ChatController {
             }
         }
 
-        String requestHash = requestHash(content, provider, model, toolMode, attachmentIds);
+        String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
+                perCallTimeouts.values());
         ChatRun existingRun = chatRunRepository
                 .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
                 .orElse(null);
@@ -345,7 +358,7 @@ public class ChatController {
                 chatRunRepository.save(chatRun);
                 boolean queued = requestQueue.enqueue(
                         sessionId, content, provider, model, toolMode, attachmentInfos,
-                        userId, workspaceId, requestId, runId);
+                        userId, workspaceId, requestId, runId, perCallTimeouts.values());
                 if (queued) {
                     logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
                             requestId, sessionId, runId);
@@ -363,7 +376,8 @@ public class ChatController {
                 chatRunRepository.save(chatRun);
             }
 
-            execAsync(sessionId, content, provider, model, toolMode, attachmentInfos, userId, workspaceId, requestId, runId);
+            execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),
+                    attachmentInfos, userId, workspaceId, requestId, runId);
             handedOff = true;
             return ResponseEntity.accepted().body(Map.of(
                 "status", "accepted",
@@ -485,6 +499,7 @@ public class ChatController {
     }
 
     private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
+                           Map<String, Integer> toolTimeouts,
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
                            String userId, String workspaceId, String requestId, String runId) {
         Thread worker = new Thread(() -> {
@@ -569,8 +584,9 @@ public class ChatController {
                 if (!workspaceOverrides.isEmpty()) {
                     agentRequest.put("workspaceOverrides", workspaceOverrides);
                 }
-                // PLAN-0308 M1（spec S2.1）：CP 计算好的等待值随 run 下发（Agent 只消费）。
-                agentRequest.putAll(mcpProxyController.toolTimeoutPayload(workspaceId, userId));
+                // PLAN-0308 M1（spec S2.1）：CP 计算好的等待值随 run 下发（Agent 只消费）；
+                // per-call 原始值（T1.9）同批下发，供 Agent 随工具调用附带入站头。
+                agentRequest.putAll(mcpProxyController.toolTimeoutPayload(workspaceId, userId, toolTimeouts));
                 if (!attachments.isEmpty()) {
                     List<Map<String, Object>> agentAttachments = new ArrayList<>();
                     for (com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo info : attachments) {
@@ -925,7 +941,8 @@ public class ChatController {
     }
 
     private String requestHash(String content, String provider, String model,
-                               String toolMode, List<String> attachmentIds) {
+                               String toolMode, List<String> attachmentIds,
+                               Map<String, Integer> toolTimeouts) {
         try {
             Map<String, Object> canonical = new LinkedHashMap<>();
             canonical.put("content", content == null ? "" : content);
@@ -933,6 +950,10 @@ public class ChatController {
             canonical.put("model", model == null ? "" : model);
             canonical.put("toolMode", toolMode == null || toolMode.isBlank() ? "none" : toolMode);
             canonical.put("attachments", attachmentIds == null ? List.of() : attachmentIds);
+            // per-call 超时改变本次运行行为：纳入幂等键指纹（键排序后才计算，与请求里的书写顺序无关）。
+            if (toolTimeouts != null && !toolTimeouts.isEmpty()) {
+                canonical.put("toolTimeouts", new java.util.TreeMap<>(toolTimeouts));
+            }
             byte[] bytes = objectMapper.writeValueAsBytes(canonical);
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
         } catch (Exception e) {

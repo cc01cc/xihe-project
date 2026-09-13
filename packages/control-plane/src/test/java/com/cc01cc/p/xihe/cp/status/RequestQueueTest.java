@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -44,9 +45,34 @@ class RequestQueueTest {
         assertEquals("run-1", request.runId());
     }
 
+    // PLAN-0308 T1.9：排队路径必须保留 per-call 超时（Agent 不可用时的投递不丢配置）。
+
     @Test
-    void drainNotifiesDropHandlerWhenSenderFails() {
+    void enqueuePreservesPerCallToolTimeouts() {
         RequestQueue queue = new RequestQueue();
+
+        assertTrue(queue.enqueue(
+                "s1", "hello", "deepseek", "deepseek-chat", "workspace",
+                List.of(), "user1", "ws1", "request-1", "run-1",
+                Map.of("execute_command", 120)));
+
+        List<RequestQueue.QueuedRequest> drained = new ArrayList<>();
+        assertEquals(1, queue.drain(drained::add));
+        assertEquals(Map.of("execute_command", 120), drained.get(0).toolTimeouts());
+    }
+
+    @Test
+    void enqueueDefaultsPerCallToolTimeoutsToEmpty() {
+        RequestQueue queue = new RequestQueue();
+        assertTrue(queue.enqueue("s1", "hello", null, "user1", "ws1"));
+
+        List<RequestQueue.QueuedRequest> drained = new ArrayList<>();
+        assertEquals(1, queue.drain(drained::add));
+        assertEquals(Map.of(), drained.get(0).toolTimeouts());
+    }
+
+    @Test
+    void drainNotifiesDropHandlerWhenSenderFails() {        RequestQueue queue = new RequestQueue();
         assertTrue(queue.enqueue("s1", "hello", "run-model", "user1", "ws1", "request-1", "run-1"));
 
         List<RequestQueue.QueuedRequest> dropped = new ArrayList<>();

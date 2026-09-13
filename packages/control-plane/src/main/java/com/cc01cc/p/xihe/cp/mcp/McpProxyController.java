@@ -55,6 +55,9 @@ public class McpProxyController {
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String HMAC_SECRET = "xihe-mcp-session-hmac-key-2026";
     private static final String REMOTE_SCOPE = "mcp:tools";
+    /** PLAN-0308（spec S2.2 规则 5 + 决策 #31）：只由 CP 写入的出站策略头。 */
+    private static final List<String> OUTBOUND_POLICY_HEADERS = List.of(
+            "X-Xihe-Tool-Timeout-S", "X-Xihe-Tool-Timeout-Origin", "X-Xihe-Tool-Output-Limit");
 
     private final HttpClient httpClient;
 
@@ -75,6 +78,7 @@ public class McpProxyController {
     private final McpToolAliasRepository aliases;
     private final ConfigService configService;
     private final ToolTimeoutPolicy toolTimeoutPolicy;
+    private final org.springframework.core.env.Environment environment;
     private final Map<String, AtomicLong> toolGenerations = new ConcurrentHashMap<>();
 
     @Value("${cp.mcp.runtime-url:http://localhost:12633}")
@@ -105,7 +109,8 @@ public class McpProxyController {
             SessionRepository sessionRepository,
             OperationService operationService,
             ConfigService configService,
-            ToolTimeoutPolicy toolTimeoutPolicy) {
+            ToolTimeoutPolicy toolTimeoutPolicy,
+            org.springframework.core.env.Environment environment) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -123,6 +128,7 @@ public class McpProxyController {
         this.operationService = operationService;
         this.configService = configService;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
+        this.environment = environment;
     }
 
     @PostMapping("/api/v1/mcp")
@@ -130,6 +136,10 @@ public class McpProxyController {
             @RequestBody String body,
             @RequestHeader HttpHeaders headers) {
 
+        // PLAN-0308 M1（spec S2.2 规则 5 信任边界）：`-S`/`-Origin` 两个出站头只由 CP 设置——
+        // 入站一律先剥离上游同名头（含伪造值），随后仅 handleToolsCall 按预算重新写入。
+        // 入站 per-call 头不在此剥离：它是合法的调用方请求，由 handleToolsCall 校验后采纳。
+        headers = stripOutboundPolicyHeaders(headers);
         String method = extractMethod(body);
         AuthorizationResult authorization = authorize(headers, body, "initialize".equals(method));
         if (!authorization.allowed()) {
@@ -476,21 +486,32 @@ public class McpProxyController {
         Integer configSeconds = resolveConfigTimeoutSeconds(wsId, serverId, access.userId());
         ToolTimeoutPolicy.ToolWaits waits = toolTimeoutPolicy.resolve(
                 perCallSeconds == null ? null : perCallSeconds.intValue(), configSeconds);
-        HttpHeaders mutable = new HttpHeaders();
-        mutable.addAll(headers);
-        mutable.remove("X-Xihe-Tool-Timeout-S");
-        mutable.remove("X-Xihe-Tool-Timeout-Origin");
+        HttpHeaders mutable = stripOutboundPolicyHeaders(headers);
         mutable.remove("X-Xihe-Tool-Timeout-Per-Call");
         mutable.set("X-Xihe-Tool-Timeout-S", String.valueOf(waits.runtimeSeconds()));
         mutable.set("X-Xihe-Tool-Timeout-Origin", waits.origin());
+        // T3.4②（决策 #31）：输出上限授权（调用方只可收窄）；未配置时不下发该头。
+        Long outputLimit = resolveConfigOutputLimit(wsId, access.userId());
+        if (outputLimit != null) {
+            mutable.set("X-Xihe-Tool-Output-Limit", String.valueOf(outputLimit));
+        }
         headers = mutable;
+        // PLAN-0308 M1（spec S2/S5.1）：一次工具调用的署名上下文——三跳日志共用同一 toolCallId
+        // （Agent 用 LangGraph 的 tool call id，经 X-Operation-Item-Id 透传）。
+        ForwardWait forwardWait = forwardWaitFor(waits, perCallSeconds);
+        forwardWait = forwardWait.withIdentity(
+                toolName, headers.getFirst("X-Operation-Item-Id"), headers.getFirst("X-Chat-Run-Id"));
         logger.info(
-                "[LIFECYCLE] service=cp event=tool_timeout_budget tool={} budget={}s origin={} cpWait={}s agentWait={}s sessionId={}",
-                toolName, waits.runtimeSeconds(), waits.origin(), waits.cpSeconds(),
-                waits.agentSeconds(), sessionId);
+                "[LIFECYCLE] service=cp event=tool_timeout_budget tool={} toolCallId={} runId={}"
+                        + " budget={}s valueOrigin={} cpWait={}s cpWaitSource={} cpOverriddenValue={} agentWait={}s outputLimit={} sessionId={}",
+                toolName, idOrDash(forwardWait.toolCallId()), idOrDash(forwardWait.runId()),
+                waits.runtimeSeconds(), waits.origin(), forwardWait.seconds(), forwardWait.source(),
+                forwardWait.overriddenValue() == null ? "-" : forwardWait.overriddenValue(),
+                waits.agentSeconds(),
+                outputLimit == null ? "-" : outputLimit, sessionId);
 
         if ("__system__".equals(serverId)) {
-            return forwardToRuntime(wsId, null, body, headers, sessionId, access, waits.cpSeconds());
+            return forwardToRuntime(wsId, null, body, headers, sessionId, access, forwardWait);
         }
 
         // Policy already evaluated above for all tool types (including __system__).
@@ -498,11 +519,56 @@ public class McpProxyController {
         Optional<McpServer> remote = remoteServer(wsId, serverId);
         if (remote.isPresent()) {
             return forwardRemoteToRuntime(
-                    wsId, remote.get(), rewritten, headers, sessionId, access, waits.cpSeconds());
+                    wsId, remote.get(), rewritten, headers, sessionId, access, forwardWait);
         }
 
         body = rewritten;
-        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access);
+        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardWait);
+    }
+
+    /**
+     * 一次 tools/call 转发的等待署名（spec S5）。
+     *
+     * @param seconds  本跳生效等待秒数
+     * @param source   {@code env}（本跳 ENV 显式，压制派生值）| {@code cp}（用派生值 B+2）
+     * @param valueOrigin 预算的性质（per-call | config）
+     * @param overriddenValue 本跳被忽略的值（ENV 生效时 = 派生值；per-call 压制 ENV 时 = ENV 值）
+     */
+    record ForwardWait(
+            long seconds, String source, String valueOrigin, Long overriddenValue,
+            String toolName, String toolCallId, String runId) {
+
+        ForwardWait withIdentity(String toolName, String toolCallId, String runId) {
+            return new ForwardWait(seconds, source, valueOrigin, overriddenValue, toolName, toolCallId, runId);
+        }
+    }
+
+    private static String idOrDash(String value) {
+        return value == null || value.isBlank() ? "-" : value;
+    }
+
+    /** CP 本跳 ENV 是否显式设置（`XIHE_MCP_FORWARD_TIMEOUT_S` / 同名配置项）。 */
+    private boolean forwardEnvExplicit() {
+        return environment != null
+                && environment.containsProperty("xihe.mcp.forward-timeout-s");
+    }
+
+    /**
+     * CP 自用转发等待（三条判断，决策 #27）：per-call 存在 → 用派生值（ENV 被压制）；
+     * 否则本跳 ENV 显式 → 用 ENV（压制派生值）；否则用派生值 B+2。
+     */
+    private ForwardWait forwardWaitFor(ToolTimeoutPolicy.ToolWaits waits, Long perCallSeconds) {
+        boolean perCall = perCallSeconds != null && perCallSeconds > 0;
+        boolean envExplicit = forwardEnvExplicit() && forwardTimeoutS > 0;
+        if (perCall) {
+            return new ForwardWait(waits.cpSeconds(), "cp", waits.origin(),
+                    envExplicit ? forwardTimeoutS : null, null, null, null);
+        }
+        if (envExplicit) {
+            return new ForwardWait(forwardTimeoutS, "env", waits.origin(), waits.cpSeconds(),
+                    null, null, null);
+        }
+        return new ForwardWait(waits.cpSeconds(), "cp", waits.origin(), null, null, null, null);
     }
 
     /**
@@ -532,22 +598,54 @@ public class McpProxyController {
     }
 
     /**
+     * 输出上限授权（决策 #31②）：config 键 {@code agent-runtime.toolOutputLimitBytes}；
+     * 未配置 → null（不下发头，Runtime 侧沿用调用方值 / 沙盒默认）。
+     */
+    private Long resolveConfigOutputLimit(String wsId, String userId) {
+        try {
+            String raw = configService.resolve(
+                    ToolTimeoutPolicy.SYSTEM_TOOL_DOMAIN,
+                    ToolTimeoutPolicy.OUTPUT_LIMIT_KEY,
+                    uuidOrNull(userId),
+                    uuidOrNull(wsId));
+            return toolTimeoutPolicy.parsePositiveLong(raw);
+        } catch (Exception e) {
+            logger.warn("tool output limit config unavailable: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * PLAN-0308 M1（spec S2.1）：为 run payload 组装下发片段——
      * {@code toolWaits}（remote 工具的 Agent 最终值）、{@code toolWaitOrigins}、
      * {@code systemToolWait}（系统工具统一值）、{@code budgetCoverage}（冷缓存可见化，决策 #23）。
+     * T1.9 增补：{@code toolTimeouts}（原始 per-call 值，供 Agent 随工具调用附带入站头）。
      * 计算只在 CP；Agent/Runtime 只消费。
      */
-    public Map<String, Object> toolTimeoutPayload(String wsId, String userId) {
+    public Map<String, Object> toolTimeoutPayload(
+            String wsId, String userId, Map<String, Integer> perCallTimeouts) {
+        Map<String, Integer> perCall = perCallTimeouts == null ? Map.of() : perCallTimeouts;
         refreshCacheIfNeeded(wsId);
         Map<String, String> mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
         Map<String, Long> waits = new LinkedHashMap<>();
         Map<String, String> origins = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : mapping.entrySet()) {
-            Integer seconds = resolveConfigTimeoutSeconds(wsId, entry.getValue(), userId);
-            if (seconds == null) {
+            Integer perCallSeconds = perCall.get(entry.getKey());
+            Integer configSeconds = resolveConfigTimeoutSeconds(wsId, entry.getValue(), userId);
+            if (perCallSeconds == null && configSeconds == null) {
                 continue;
             }
-            ToolTimeoutPolicy.ToolWaits resolved = toolTimeoutPolicy.resolve(null, seconds);
+            ToolTimeoutPolicy.ToolWaits resolved = toolTimeoutPolicy.resolve(perCallSeconds, configSeconds);
+            waits.put(entry.getKey(), resolved.agentSeconds());
+            origins.put(entry.getKey(), resolved.origin());
+        }
+        // per-call 条目可能不在映射里（冷缓存 / 系统工具）：显式补条目，使 Agent 取到 per-call
+        // 最终值而不是落回系统工具统一值（决策 #27/#28）。
+        for (Map.Entry<String, Integer> entry : perCall.entrySet()) {
+            if (waits.containsKey(entry.getKey())) {
+                continue;
+            }
+            ToolTimeoutPolicy.ToolWaits resolved = toolTimeoutPolicy.resolve(entry.getValue(), null);
             waits.put(entry.getKey(), resolved.agentSeconds());
             origins.put(entry.getKey(), resolved.origin());
         }
@@ -558,10 +656,13 @@ public class McpProxyController {
         payload.put("toolWaits", waits);
         payload.put("toolWaitOrigins", origins);
         payload.put("systemToolWait", systemWait);
+        if (!perCall.isEmpty()) {
+            payload.put("toolTimeouts", new LinkedHashMap<>(perCall));
+        }
         payload.put("budgetCoverage", mapping.isEmpty() ? "partial" : "full");
         logger.info(
-                "[LIFECYCLE] service=cp event=tool_timeout_payload wsId={} tools={} systemWait={}s coverage={}",
-                wsId, waits.size(), systemWait, payload.get("budgetCoverage"));
+                "[LIFECYCLE] service=cp event=tool_timeout_payload wsId={} tools={} perCall={} systemWait={}s coverage={}",
+                wsId, waits.size(), perCall.size(), systemWait, payload.get("budgetCoverage"));
         return payload;
     }
 
@@ -576,15 +677,42 @@ public class McpProxyController {
         }
     }
 
-    private ResponseEntity<String> forwardToRuntime(
-            String wsId, String serverId, String body, HttpHeaders headers,
-            String sessionId, AccessContext access) {
-        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardTimeoutS);
+    /** 剥离上游传入的 CP 出站策略头（信任边界 spec S2.2 规则 5；只保留 CP 写入的值）。 */
+    private static HttpHeaders stripOutboundPolicyHeaders(HttpHeaders headers) {
+        boolean present = OUTBOUND_POLICY_HEADERS.stream()
+                .anyMatch(name -> headers.getFirst(name) != null);
+        if (!present) {
+            return headers;
+        }
+        HttpHeaders sanitized = new HttpHeaders();
+        sanitized.addAll(headers);
+        OUTBOUND_POLICY_HEADERS.forEach(sanitized::remove);
+        return sanitized;
+    }
+
+    /** 把 CP 计算好的出站策略头附到 Runtime 转发请求上（入站头不会到达此处，见 proxy()）。 */
+    private static void copyOutboundPolicyHeaders(HttpHeaders headers, HttpRequest.Builder builder) {
+        for (String headerName : OUTBOUND_POLICY_HEADERS) {
+            String value = headers.getFirst(headerName);
+            if (value != null && !value.isBlank()) {
+                builder.header(headerName, value);
+            }
+        }
     }
 
     private ResponseEntity<String> forwardToRuntime(
             String wsId, String serverId, String body, HttpHeaders headers,
-            String sessionId, AccessContext access, long waitSeconds) {
+            String sessionId, AccessContext access) {
+        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, (ForwardWait) null);
+    }
+
+    private ResponseEntity<String> forwardToRuntime(
+            String wsId, String serverId, String body, HttpHeaders headers,
+            String sessionId, AccessContext access, ForwardWait forwardWait) {
+        long waitSeconds = forwardWait == null
+                ? forwardTimeoutS
+                : (forwardWait.seconds() > 0 ? forwardWait.seconds() : forwardTimeoutS);
+        long startedMs = System.currentTimeMillis();
         LedgerAttempt ledgerAttempt = null;
         try {
             // PLAN-242 M2: McpServer rows win over stdio config keys. A serverId
@@ -592,7 +720,8 @@ public class McpProxyController {
             if (serverId != null) {
                 Optional<McpServer> remote = remoteServer(wsId, serverId);
                 if (remote.isPresent()) {
-                    return forwardRemoteToRuntime(wsId, remote.get(), body, headers, sessionId, access);
+                    return forwardRemoteToRuntime(
+                            wsId, remote.get(), body, headers, sessionId, access, forwardWait);
                 }
             }
             ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
@@ -642,6 +771,7 @@ public class McpProxyController {
 
             requestBuilder.header("X-Workspace-Id", wsId);
             copyOperationHeaders(headers, requestBuilder);
+            copyOutboundPolicyHeaders(headers, requestBuilder);
 
             String requestMethod = extractMethod(body);
             if (requestMethod != null && !requestMethod.isEmpty()) {
@@ -683,12 +813,35 @@ public class McpProxyController {
                 .ifPresent(value -> responseHeaders.set("MCP-Protocol-Version", value));
             response.headers().firstValue("Last-Event-ID")
                 .ifPresent(value -> responseHeaders.set("Last-Event-ID", value));
+            if (forwardWait != null) {
+                // 转发结果署名的“下游”侧：状态码由 Runtime 给出（spec S5.1 的 origin 仅标注到界方）。
+                logger.info(
+                        "[LIFECYCLE] service=cp event=tool_forward_result tool={} toolCallId={} runId={}"
+                                + " outcome={} status={} durationMs={} origin={}",
+                        idOrDash(forwardWait.toolName()), idOrDash(forwardWait.toolCallId()),
+                        idOrDash(forwardWait.runId()),
+                        response.statusCode() >= 400 ? "error" : "ok", response.statusCode(),
+                        System.currentTimeMillis() - startedMs,
+                        response.statusCode() >= 400 ? "downstream" : "-");
+            }
             return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
 
         } catch (Exception e) {
             // A transport failure after dispatch cannot prove whether the tool ran.
             finishLedgerAttempt(ledgerAttempt, 502, "MCP_FORWARD_UNKNOWN");
             appendMcpExtension(ledgerAttempt, serverId, body, 502, null, "MCP_FORWARD_UNKNOWN", null);
+            if (forwardWait != null) {
+                boolean timeout = e instanceof java.net.http.HttpTimeoutException;
+                logger.error(
+                        "[LIFECYCLE] service=cp event={} layer=cp_forward tool={} toolCallId={} runId={}"
+                                + " effectiveSeconds={} source={} valueOrigin={} overriddenValue={} origin={} error={}",
+                        timeout ? "tool_forward_timeout" : "tool_forward_failed",
+                        idOrDash(forwardWait.toolName()), idOrDash(forwardWait.toolCallId()),
+                        idOrDash(forwardWait.runId()), forwardWait.seconds(), forwardWait.source(),
+                        forwardWait.valueOrigin(),
+                        forwardWait.overriddenValue() == null ? "-" : forwardWait.overriddenValue(),
+                        timeout ? "self" : "unknown", e.getMessage());
+            }
             logger.error("MCP forward failed: wsId={} serverId={} method={}", wsId, serverId, extractMethod(body), e);
             audit.record(sessionId, extractMethod(body), "error", e.getMessage());
             return problem(HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime MCP request failed");
@@ -867,7 +1020,10 @@ public class McpProxyController {
     }
 
     private void copyOperationHeaders(HttpHeaders headers, HttpRequest.Builder builder) {
-        for (String headerName : List.of("X-Operation-Id", "X-Operation-Item-Id", "X-Operation-Attempt-Id")) {
+        // PLAN-0308 M1（spec S5.1）：关联键随请求透传到 Runtime（同一 toolCallId 串起三层日志）。
+        for (String headerName : List.of(
+                "X-Operation-Id", "X-Operation-Item-Id", "X-Operation-Attempt-Id",
+                "X-Request-Id", "X-Chat-Run-Id")) {
             String value = headers.getFirst(headerName);
             if (value != null && !value.isBlank()) {
                 builder.header(headerName, value);
@@ -918,12 +1074,16 @@ public class McpProxyController {
     private ResponseEntity<String> forwardRemoteToRuntime(
             String wsId, McpServer server, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
-        return forwardRemoteToRuntime(wsId, server, body, headers, sessionId, access, forwardTimeoutS);
+        return forwardRemoteToRuntime(wsId, server, body, headers, sessionId, access, (ForwardWait) null);
     }
 
     private ResponseEntity<String> forwardRemoteToRuntime(
             String wsId, McpServer server, String body, HttpHeaders headers,
-            String sessionId, AccessContext access, long waitSeconds) {
+            String sessionId, AccessContext access, ForwardWait forwardWait) {
+        long waitSeconds = forwardWait == null
+                ? forwardTimeoutS
+                : (forwardWait.seconds() > 0 ? forwardWait.seconds() : forwardTimeoutS);
+        long startedMs = System.currentTimeMillis();
         String method = extractMethod(body);
         LedgerAttempt ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
         try {
@@ -968,6 +1128,7 @@ public class McpProxyController {
                     .header("Authorization", "Bearer " + runtimeServiceToken)
                     .header("X-Workspace-Id", wsId);
             copyOperationHeaders(headers, forwardBuilder);
+            copyOutboundPolicyHeaders(headers, forwardBuilder);
             HttpRequest forwardRequest = forwardBuilder
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(request)))
                     .timeout(Duration.ofSeconds(waitSeconds > 0 ? waitSeconds : 30))
@@ -980,6 +1141,16 @@ public class McpProxyController {
             responseHeaders.set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
             audit.record(sessionId, method, "allow",
                     aliasDetail(server.getId().toString(), request.path("tool").asText(""), currentGeneration(wsId)));
+            if (forwardWait != null) {
+                logger.info(
+                        "[LIFECYCLE] service=cp event=tool_forward_result tool={} toolCallId={} runId={}"
+                                + " outcome={} status={} durationMs={} origin={}",
+                        idOrDash(forwardWait.toolName()), idOrDash(forwardWait.toolCallId()),
+                        idOrDash(forwardWait.runId()),
+                        response.statusCode() >= 400 ? "error" : "ok", response.statusCode(),
+                        System.currentTimeMillis() - startedMs,
+                        response.statusCode() >= 400 ? "downstream" : "-");
+            }
             return new ResponseEntity<>(response.body(), responseHeaders,
                     HttpStatus.valueOf(response.statusCode()));
         } catch (Exception e) {
@@ -987,6 +1158,18 @@ public class McpProxyController {
             finishLedgerAttempt(ledgerAttempt, 502, "REMOTE_MCP_UNKNOWN");
             appendMcpExtension(ledgerAttempt, server.getId().toString(), body,
                     502, null, "REMOTE_MCP_UNKNOWN", headers.getFirst("MCP-Protocol-Version"));
+            if (forwardWait != null) {
+                boolean timeout = e instanceof java.net.http.HttpTimeoutException;
+                logger.error(
+                        "[LIFECYCLE] service=cp event={} layer=cp_forward tool={} toolCallId={} runId={}"
+                                + " effectiveSeconds={} source={} valueOrigin={} overriddenValue={} origin={} error={}",
+                        timeout ? "tool_forward_timeout" : "tool_forward_failed",
+                        idOrDash(forwardWait.toolName()), idOrDash(forwardWait.toolCallId()),
+                        idOrDash(forwardWait.runId()), forwardWait.seconds(), forwardWait.source(),
+                        forwardWait.valueOrigin(),
+                        forwardWait.overriddenValue() == null ? "-" : forwardWait.overriddenValue(),
+                        timeout ? "self" : "unknown", e.getMessage());
+            }
             logger.error("Remote MCP forward failed: wsId={} server={} method={}",
                     wsId, server.getId(), method, e);
             audit.record(sessionId, method, "error", e.getMessage());
