@@ -43,7 +43,6 @@ src/
 ├── mcp_bridge.rs      # 容器内 xihe-mcp-bridge binary
 ├── remote_mcp.rs      # 远程 MCP 出网
 ├── ws_file_handler.rs # workspace 文件处理
-├── config_client.rs   # CP 配置客户端（Rust）
 ├── fetch.rs           # HTTP 出网
 ├── log_redact.rs      # 日志脱敏
 └── error.rs           # 错误处理
