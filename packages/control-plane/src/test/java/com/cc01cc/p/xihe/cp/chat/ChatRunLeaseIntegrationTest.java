@@ -278,6 +278,83 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
                 "a late-termination event must be appended");
     }
 
+    // ── PLAN-0317 T2.5 / T2.6 / T2.8④：取消收敛、竞态与单驱动 ─────────────
+
+    /**
+     * T2.5 竞态：取消晚于自然完成时不得改写已终态（账本保留执行事实）。
+     */
+    @Test
+    void settleCancellationKeepsAnAlreadyCompletedItem() {
+        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
+                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
+        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
+        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+        operationService.transitionItem(item.getId(), "completed", "allow", null, null, null);
+
+        operationService.settleCancellation(item.getId(), null, "cancelled", null);
+
+        assertEquals("completed", operationService.findItem(item.getId().toString()).getStatus(),
+                "a naturally completed item must not be rewritten as cancelled");
+    }
+
+    /**
+     * T2.6 + T2.4：Agent 不回音（本测试无 Agent）时取消仍自主收敛；Runtime 不可达
+     * 时账本落 `aborted`（spec S4 三分映射的"未确认"分支）。
+     */
+    @Test
+    void cancelConvergesWithoutAgentEchoAndFallsBackToAborted() {
+        ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
+        var started = operationService.startOperation(userId, sessionId, workspaceId,
+                run.getId().toString(), UUID.randomUUID().toString(), "tool_call", "agent",
+                "agent", "agent-1", null, "test");
+        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
+        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+        operationService.startAttempt(item.getId(), "cp_forward", null, "cp",
+                UUID.randomUUID().toString());
+
+        com.cc01cc.p.xihe.cp.config.TenantContext.setUserId(userId);
+        com.cc01cc.p.xihe.cp.config.TenantContext.setWorkspaceId(workspaceId);
+        // @PreAuthorize 走方法级安全拦截，直接调用 bean 也需要 SecurityContext。
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        userId, null,
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_USER"))));
+        ResponseEntity<java.util.Map<String, Object>> response;
+        try {
+            response = chatController.cancelRun(run.getId().toString(), java.util.Map.of("reason", "user"));
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+        assertEquals(200, response.getStatusCode().value());
+
+        ChatRun after = chatRunRepository.findById(run.getId()).orElseThrow();
+        assertEquals("cancelled", after.getStatus(), "cancel must converge without an Agent echo");
+        assertEquals("cancelled", after.getTerminalOutcome());
+        assertEquals("aborted", operationService.findItem(item.getId().toString()).getStatus(),
+                "an unreachable/unconfirmed termination must land as aborted");
+    }
+
+    /**
+     * T2.8④ 单驱动：同一 (operationId, toolCallId) 的重复写入（中继先到 / 网关先到）
+     * 命中同一行，且既有 `source` 不被覆盖。
+     */
+    @Test
+    void appendItemIsIdempotentForTheSameToolCallId() {
+        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
+                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
+        String toolCallId = UUID.randomUUID().toString();
+
+        var agentItem = operationService.appendItem(started.operationId(), toolCallId, null,
+                "tool_call", "shell", "agent", "{\"cmd\":\"ls\"}", null, null);
+        var gatewayItem = operationService.appendItem(started.operationId(), toolCallId, null,
+                "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
+
+        assertEquals(agentItem.getId(), gatewayItem.getId(), "same key must hit the same row");
+        assertEquals("agent", gatewayItem.getSource(), "the existing owner must not be overwritten");
+    }
+
     @Autowired
     private ChatController chatController;
 
