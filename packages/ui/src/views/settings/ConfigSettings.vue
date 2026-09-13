@@ -91,6 +91,7 @@ const domainSchemas: Record<string, DomainField[]> = {
     { key: 'workersDir', label: t('settings.fieldWorkersDir'), type: 'text' },
     { key: 'instructions', label: t('settings.fieldInstructions'), type: 'textarea', instanceOnly: true },
     { key: 'systemToolTimeoutS', label: t('settings.fieldSystemToolTimeout'), type: 'number' },
+    { key: 'toolOutputLimitBytes', label: t('settings.fieldToolOutputLimit'), type: 'number' },
   ],
   'agent-profile': [
     { key: 'userName', label: t('settings.fieldUserName'), type: 'text' },

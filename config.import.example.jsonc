@@ -52,7 +52,10 @@
     "useSupervisor": "false",
     // PLAN-0308：系统工具（文件/命令等）的执行预算（秒）。CP 据此计算并进行下发；
     // 需要更长的合法超时请改这里，per-call 只用于"这一次多给点"（上限 600 秒）。
-    "systemToolTimeoutS": "30"
+    "systemToolTimeoutS": "30",
+    // PLAN-0308（决策 #31②）：单次工具返回的字节上限。调用方（模型）只能往小调；
+    // 超出部分会被截断并标注 "[truncated to N bytes]"（当前无 artifact 留存，截断即丢）。
+    "toolOutputLimitBytes": "4096"
   },
 
   // agent-profile — 用户展示名（instance 默认，user 可覆盖）

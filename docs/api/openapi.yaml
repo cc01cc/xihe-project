@@ -508,7 +508,7 @@ components:
     Session: { type: object, required: [id, workspaceId, title, archived], properties: { id: { type: string }, workspaceId: { type: string }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
-    ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } } } }
+    ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 600 (code constant, not configurable); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped).', additionalProperties: { type: integer, minimum: 1, maximum: 600 }, example: { execute_command: 120 } } } }
     ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, operationId: { type: string, format: uuid, readOnly: true, description: Durable Operation Ledger root for this ChatRun }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     ChatApprovalDecisionRequest: { type: object, required: [approved], additionalProperties: false, properties: { approved: { type: boolean } } }
     ChatApprovalDecisionResponse: { type: object, required: [status, requestId, approved], properties: { status: { type: string, enum: [accepted, already_decided] }, requestId: { type: string }, approved: { type: boolean } } }
@@ -693,6 +693,25 @@ components:
           type: object
           additionalProperties: { type: object, additionalProperties: { type: string } }
           description: "PLAN-0307 T2.7: run-scoped workspace-layer entries resolved by CP (same contract as userOverrides; workspace wins over user)."
+        toolWaits:
+          type: object
+          additionalProperties: { type: integer, minimum: 1 }
+          description: "PLAN-0308 M1 (spec S2.1): CP-computed final Agent wait per tool (budget + 4s margin). The Agent only consumes it; it never computes."
+        toolWaitOrigins:
+          type: object
+          additionalProperties: { type: string, enum: [per-call, config] }
+          description: "PLAN-0308 M1: value nature per tool. `per-call` makes the Agent use the delivered wait even when its own XIHE_MCP_TOOL_TIMEOUT_S env is set (decision #27)."
+        systemToolWait:
+          type: number
+          description: "PLAN-0308 M1: the single Agent wait covering all system tools (from the agent-runtime.systemToolTimeoutS config key); delivered without the per-tool map so cold caches still get a value."
+        toolTimeouts:
+          type: object
+          additionalProperties: { type: integer, minimum: 1, maximum: 600 }
+          description: "PLAN-0308 T1.9: raw per-call values (already validated by CP). The Agent attaches them per tool call as the inbound header X-Xihe-Tool-Timeout-Per-Call; CP validates again and forwards with valueOrigin=per-call."
+        budgetCoverage:
+          type: string
+          enum: [full, partial]
+          description: "PLAN-0308 M1 (decision #23): `partial` when the CP tool→server cache was cold at payload time, so some tools have no per-tool wait entry."
         attachments: { type: array, items: { type: object, additionalProperties: true } }
     OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }

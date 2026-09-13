@@ -78,3 +78,10 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 - Duplicate keys with the same payload return the existing run without starting Agent again; a different payload returns `409 IDEMPOTENCY_KEY_CONFLICT`.
 - Terminal outcomes are `success`, `error`, `partial`, and `ambiguous`. A provider disconnect with uncertain execution is `ambiguous` and must not be automatically retried. Manual retry uses a new key.
 - `/api/v1/exec` is intentionally absent; callers use `/api/v1/chat`.
+
+## Tool Timeout Budget (PLAN-0308 M1)
+
+- **per-call request**: `POST /api/v1/chat` accepts an optional `toolTimeouts` object (`{toolName: seconds}`) — the highest-priority input to the tool budget. Values are positive integer seconds, max 600 (code constant); invalid or oversized values return `400 INVALID_REQUEST` naming the offending key (never silently clamped). The map participates in the idempotency request hash, so replaying a key with different timeouts is `409 IDEMPOTENCY_KEY_CONFLICT`, not a silent reuse.
+- **CP → Agent delivery**: CP is the only timeout calculator; the run payload carries `toolWaits` (final per-tool Agent wait = budget + 4s), `toolWaitOrigins` (`per-call | config`), `systemToolWait` (single value covering all system tools), raw `toolTimeouts`, and `budgetCoverage` (`partial` when the tool→server cache was cold). The Agent only consumes these values (three judgments, no arithmetic).
+- **CP → Runtime delivery**: `X-Xihe-Tool-Timeout-S` (Runtime budget) and `X-Xihe-Tool-Timeout-Origin` are set by CP alone; upstream same-name headers are stripped at ingress, and a validated inbound per-call header is stripped before forwarding. The same headers ride both the system/stdio and remote forward paths.
+- **Agent → CP (per-call carrier)**: when the run payload has a per-call entry for the tool being called, the Agent attaches it as the inbound header `X-Xihe-Tool-Timeout-Per-Call`; CP validates it (positive integer ≤ 600, else `400`) and forwards with `valueOrigin=per-call`, which overrides each hop's own ENV.

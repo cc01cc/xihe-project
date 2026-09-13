@@ -53,6 +53,16 @@ async function sendCompletion(response, provider, requestBody) {
     return
   }
 
+  if (mode === 'exec_command') {
+    sendExecCommandCompletion(response, requestBody)
+    return
+  }
+
+  if (mode === 'read_file') {
+    sendReadFileCompletion(response, requestBody)
+    return
+  }
+
   if (mode === 'history-marker') {
     sendHistoryMarkerCompletion(response, requestBody)
     return
@@ -124,8 +134,7 @@ function sendApprovalCompletion(response, requestBody) {
 // message: XIHE-E2E-WRITE <path> <content...>. The content is emitted verbatim
 // so the approval preview exceeds the 500-char truncation bound and the
 // post-approve FS readback can assert the FULL payload survived grant matching.
-function sendWriteFileCompletion(response, requestBody) {
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+function sendWriteFileCompletion(response, requestBody) {  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
   const last = messages.at(-1) ?? {}
   // PLAN-294 M1 made conversation history (including old tool results) part
   // of every request, so "any tool result present" no longer identifies the
@@ -258,6 +267,115 @@ server.listen(port, '127.0.0.1', () => {
 
 function shutdown() {
   server.close(() => process.exit(0))
+}
+
+// PLAN-0308 M1 收尾（mode: exec_command）：确定性的长命令 execute_command 工具调用，
+// 供“三跳等待值 + 预算跑满”冒烟使用。spec 在用户消息里嵌入标记：
+//   XIHE-E2E-EXEC <shell command> [--timeout <secs>]
+// `--timeout` 透传给沙盒自身的单命令界（不传则用容器默认 30s —— 那是沙盒内层界，
+// 不属于 PLAN-0308 的三跳预算模型；冒烟必须显式给出更长的界才能验证外层预算）。
+function sendExecCommandCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const last = messages.at(-1) ?? {}
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+  const lastUserHasMarker =
+    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-EXEC ')
+  const followUp = last.role === 'tool' || (last.role === 'user' && !lastUserHasMarker)
+
+  if (!followUp) {
+    const text = typeof last.content === 'string' ? last.content : ''
+    const marker = text.indexOf('XIHE-E2E-EXEC ')
+    if (marker < 0) {
+      sendApprovalCompletion(response, requestBody)
+      return
+    }
+    const rest = text.slice(marker + 'XIHE-E2E-EXEC '.length).trim()
+    const timeoutMatch = rest.match(/--timeout\s+(\d+)\s*$/)
+    const command = (timeoutMatch ? rest.slice(0, timeoutMatch.index) : rest).trim()
+    const args = { command }
+    if (timeoutMatch) args.timeout = Number(timeoutMatch[1])
+    const toolCallDelta = {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call-exec-e2e-1',
+                type: 'function',
+                function: {
+                  name: 'execute_command',
+                  arguments: JSON.stringify(args),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    }
+    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
+    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  const chunks = ['Command completed. ', 'The long command returned successfully.']
+  for (const content of chunks) {
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+  }
+  response.end('data: [DONE]\n\n')
+}
+
+// PLAN-0308 M1 收尾（mode: read_file）：非审批工具调用的最小确定性驱动。
+// 用于隔离「审批后挂起」与「所有 MCP 工具调用都挂起」两类故障：
+//   XIHE-E2E-READ <path>
+function sendReadFileCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const last = messages.at(-1) ?? {}
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+  const lastUserHasMarker =
+    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-READ ')
+  const followUp = last.role === 'tool' || (last.role === 'user' && !lastUserHasMarker)
+
+  if (!followUp) {
+    const text = typeof last.content === 'string' ? last.content : ''
+    const marker = text.indexOf('XIHE-E2E-READ ')
+    if (marker < 0) {
+      sendApprovalCompletion(response, requestBody)
+      return
+    }
+    const path = text.slice(marker + 'XIHE-E2E-READ '.length).trim()
+    const toolCallDelta = {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call-read-e2e-1',
+                type: 'function',
+                function: { name: 'read_file', arguments: JSON.stringify({ path }) },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    }
+    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
+    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  const chunks = ['Read completed. ', 'The file content was returned.']
+  for (const content of chunks) {
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+  }
+  response.end('data: [DONE]\n\n')
 }
 
 process.once('SIGINT', shutdown)
