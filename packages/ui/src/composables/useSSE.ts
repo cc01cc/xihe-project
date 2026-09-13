@@ -98,6 +98,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
   }
 
   function resetStreamTimeout() {
+    if (!isStreaming.value) return
     if (streamTimeout) clearTimeout(streamTimeout)
     streamTimeout = setTimeout(() => {
       if (isStreaming.value) {
@@ -143,7 +144,12 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         }
         break
 
+      case 'heartbeat':
+        resetStreamTimeout()
+        break
+
       case 'tool_call':
+        resetStreamTimeout()
         try {
           const data = JSON.parse(msg.data) as Record<string, unknown>
           if (data.name) {
@@ -162,6 +168,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         break
 
       case 'tool_result':
+        resetStreamTimeout()
         try {
           const data = JSON.parse(msg.data) as Record<string, unknown>
           if (data.id) {
@@ -178,6 +185,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         break
 
       case 'approval_request':
+        resetStreamTimeout()
         try {
           const data = JSON.parse(msg.data) as Record<string, unknown>
           const requestId = typeof data.requestId === 'string' ? data.requestId : ''
@@ -204,6 +212,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         break
 
       case 'status':
+        resetStreamTimeout()
         try {
           const data = JSON.parse(msg.data) as { status?: string }
           if (data.status) {
@@ -352,6 +361,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
       })
       const result = await response.json() as ChatRunResponse
       isStreaming.value = true
+      resetStreamTimeout()
       return result
     } catch (err) {
       const payload = asErrorPayload(err)

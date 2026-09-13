@@ -171,3 +171,106 @@ describe('useSSE', () => {
     expect(chatTransport.stop).toHaveBeenCalledWith('test-session-id')
   })
 })
+
+describe('stream liveness timer (S-1)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function startStreamingRun() {
+    const transport = createTransportController()
+    const sse = useSSE('test-session-id')
+    const onError = vi.fn()
+    const onDone = vi.fn()
+    sse.connect({ onError, onDone })
+    await flushPromises()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ runId: 'run-1' }),
+    }))
+    await sse.sendMessage({ content: 'hello' })
+    await transport.simulateMessage('token', JSON.stringify({ content: 'hi' }))
+    return { transport, sse, onError, onDone }
+  }
+
+  it('keeps the run alive across long silent gaps while heartbeats arrive', async () => {
+    const { transport, sse, onError } = await startStreamingRun()
+
+    for (let i = 0; i < 4; i += 1) {
+      await vi.advanceTimersByTimeAsync(25_000)
+      await transport.simulateMessage('heartbeat', JSON.stringify({ type: 'heartbeat' }))
+    }
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    expect(onError).not.toHaveBeenCalled()
+    expect(sse.isStreaming.value).toBe(true)
+  })
+
+  it('times out as ambiguous when every event stops after content started', async () => {
+    const { onError, onDone } = await startStreamingRun()
+
+    await vi.advanceTimersByTimeAsync(31_000)
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'AGENT_TIMEOUT',
+      outcome: 'ambiguous',
+    }))
+    expect(onDone).toHaveBeenCalledWith('ambiguous')
+  })
+
+  it('times out as error when nothing arrives before the first token', async () => {
+    const sse = useSSE('test-session-id')
+    const onError = vi.fn()
+    sse.connect({ onError })
+    await flushPromises()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ runId: 'run-1' }),
+    }))
+    await sse.sendMessage({ content: 'hello' })
+
+    await vi.advanceTimersByTimeAsync(31_000)
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'AGENT_TIMEOUT',
+      outcome: 'error',
+    }))
+  })
+
+  it('does not arm the timer while idle', async () => {
+    const transport = createTransportController()
+    const { connect } = useSSE('test-session-id')
+    const onError = vi.fn()
+    connect({ onError })
+    await flushPromises()
+
+    for (let i = 0; i < 4; i += 1) {
+      await transport.simulateMessage('heartbeat', JSON.stringify({ type: 'heartbeat' }))
+      await vi.advanceTimersByTimeAsync(25_000)
+    }
+
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('treats tool, approval and status events as liveness signals', async () => {
+    const { transport, onError } = await startStreamingRun()
+    const events: Array<[string, unknown]> = [
+      ['tool_call', { id: 'tool-1', name: 'execute_command', arguments: '{}' }],
+      ['tool_result', { id: 'tool-1', result: 'done' }],
+      ['approval_request', { requestId: 'req-1', runId: 'run-1' }],
+      ['status', { status: 'executing' }],
+    ]
+
+    for (const [name, data] of events) {
+      await vi.advanceTimersByTimeAsync(25_000)
+      await transport.simulateMessage(name, JSON.stringify(data))
+    }
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    expect(onError).not.toHaveBeenCalled()
+  })
+})
