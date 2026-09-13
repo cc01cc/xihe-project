@@ -52,14 +52,14 @@ fn mark_oneshot_aborted(reason: &str) {
 async fn terminate_process_group(pgid: i32) {
     let _ = Command::new("sh")
         .arg("-c")
-        .arg(format!("kill -TERM -- -{pgid} 2>/dev/null"))
+        .arg(format!("/bin/kill -TERM -- -{pgid} 2>/dev/null"))
         .status()
         .await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     let _ = Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "kill -9 -- -{pgid} 2>/dev/null; kill -9 {pgid} 2>/dev/null"
+            "/bin/kill -9 -- -{pgid} 2>/dev/null; kill -9 {pgid} 2>/dev/null"
         ))
         .status()
         .await;
@@ -371,7 +371,9 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
         }
         "cleanup_jobs" => {
             let cleaned = cleanup_expired_jobs()?;
-            Ok(serde_json::json!({"cleaned": cleaned}))
+            // PLAN-0317 T3.3：同一通道顺带落实运行时限（宿主每 5 分钟驱动一次）。
+            let timed_out = enforce_job_timeouts()?;
+            Ok(serde_json::json!({"cleaned": cleaned, "timedOut": timed_out}))
         }
         "create_snapshot" => {
             let snapshot_id = req.payload.get("snapshotId").and_then(|v| v.as_str())
@@ -425,6 +427,10 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
     for a in &args { cmd.arg(a); }
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    // PLAN-0317 T2.2 修正：显式让命令成为新进程组的组长——否则它继承 oneshot
+    // 会话的 PGID，`kill -- -pid` 打空（还会误杀容器内服务），子进程变孤儿。
+    #[cfg(unix)]
+    cmd.process_group(0);
     let mut child = cmd.spawn().map_err(|e| RuntimeError::Command(format!("spawn failed: {e}")))?;
     // PLAN-0317 T2.2: 登记进程组供中止信号使用；若中止已到达则立即终止。
     let pgid = child.id().map(|id| id as i32);
@@ -476,12 +482,12 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
             let pid = child.id();
             if let Some(pid) = pid {
                 // Phase 1: SIGTERM (graceful)
-                let _ = Command::new("sh").arg("-c").arg(format!("kill -TERM -- -{pid} 2>/dev/null")).status().await;
+                let _ = Command::new("sh").arg("-c").arg(format!("/bin/kill -TERM -- -{pid} 2>/dev/null")).status().await;
                 // Phase 2: Wait 1s for graceful termination
                 let graceful = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
                 if graceful.is_err() {
                     // Phase 3: SIGKILL (force)
-                    let _ = Command::new("sh").arg("-c").arg(format!("kill -9 -- -{pid} 2>/dev/null; kill -9 {pid} 2>/dev/null")).status().await;
+                    let _ = Command::new("sh").arg("-c").arg(format!("/bin/kill -9 -- -{pid} 2>/dev/null; kill -9 {pid} 2>/dev/null")).status().await;
                     let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
                 }
             }
@@ -581,33 +587,15 @@ fn resolve_job_timeout(requested: Option<u64>) -> u64 {
 
 const BACKGROUND_JOB_WRAPPER: &str = r#"job_dir="$1"
 command="$2"
-timeout_secs="$3"
-shift 3
+shift 2
 printf '%s\n' "$$" > "$job_dir/pid"
-# PLAN-0317 T3.3：到点终止整个进程组并落 timeout 终态。看门狗放进独立会话
-# （setsid），否则组杀会连它一起干掉、没人写终态。
-if [ -n "$timeout_secs" ] && [ "$timeout_secs" != "0" ]; then
-  setsid sh -c '
-    sleep "$1"
-    printf "%s\n" timeout > "$2/meta"
-    printf "%s\n" 143 > "$2/exit"
-    kill -TERM -- -"$3" 2>/dev/null || kill -TERM "$3" 2>/dev/null
-    sleep 5
-    kill -9 -- -"$3" 2>/dev/null || kill -9 "$3" 2>/dev/null
-  ' xihe-job-timeout "$timeout_secs" "$job_dir" "$$" &
-fi
 sh -c "$command" xihe-shell "$@"
 exit_code=$?
 printf '%s\n' "$exit_code" > "$job_dir/exit"
 printf '%s\n' succeeded > "$job_dir/meta"
 "#;
 
-fn background_wrapper_args(
-    job_dir: &Path,
-    command: &str,
-    args: &[String],
-    timeout_secs: u64,
-) -> Vec<OsString> {
+fn background_wrapper_args(job_dir: &Path, command: &str, args: &[String]) -> Vec<OsString> {
     let mut wrapper_args = vec![
         OsString::from("sh"),
         OsString::from("-c"),
@@ -615,7 +603,6 @@ fn background_wrapper_args(
         OsString::from("xihe-job-wrapper"),
         job_dir.as_os_str().to_owned(),
         OsString::from(command),
-        OsString::from(timeout_secs.to_string()),
     ];
     wrapper_args.extend(args.iter().map(OsString::from));
     wrapper_args
@@ -625,12 +612,14 @@ fn build_background_command(
     job_dir: &Path,
     command: &str,
     args: &[String],
-    timeout_secs: u64,
     stdout: std::fs::File,
     stderr: std::fs::File,
 ) -> Command {
+    // 作业必须用 `setsid` 建立**独立会话**：否则它是 docker exec 会话的成员，
+    // 随 oneshot 进程退出被一并杀掉（实测作业秒死）。会话首领的 PGID = `pid`
+    // 文件里的 `$$`，`/bin/kill -- -<pid>` 可整组终止（见 T2.2/T3.3）。
     let mut cmd = Command::new("setsid");
-    cmd.args(background_wrapper_args(job_dir, command, args, timeout_secs))
+    cmd.args(background_wrapper_args(job_dir, command, args))
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
@@ -668,7 +657,7 @@ async fn start_background_job_at(
     }
     let stdout = std::fs::File::create(job_path.join("stdout")).map_err(RuntimeError::Io)?;
     let stderr = std::fs::File::create(job_path.join("stderr")).map_err(RuntimeError::Io)?;
-    let mut cmd = build_background_command(&job_path, command, &args, timeout_secs, stdout, stderr);
+    let mut cmd = build_background_command(&job_path, command, &args, stdout, stderr);
     let child = cmd
         .spawn()
         .map_err(|e| RuntimeError::Command(format!("failed to detach background job: {e}")))?;
@@ -719,7 +708,7 @@ fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
     let status = if meta == "running" {
         if let Some(pid_str) = &pid {
             if let Ok(pid_num) = pid_str.parse::<i32>() {
-                let still_running = std::process::Command::new("sh").arg("-c").arg(format!("kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null")).status().map(|s| s.success()).unwrap_or(false);
+                let still_running = std::process::Command::new("sh").arg("-c").arg(format!("/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null")).status().map(|s| s.success()).unwrap_or(false);
                 if !still_running { if exit_code.is_some() { "succeeded".to_string() } else { "failed".to_string() } } else { "running".to_string() }
             } else { meta }
         } else { meta }
@@ -739,7 +728,7 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
 
     // Phase 1: SIGTERM to process group (graceful shutdown)
     let _ = std::process::Command::new("sh").arg("-c")
-        .arg(format!("kill -TERM -- -{pid_num} 2>/dev/null"))
+        .arg(format!("/bin/kill -TERM -- -{pid_num} 2>/dev/null"))
         .status();
 
     // Phase 2: Wait up to 3 seconds for graceful termination
@@ -747,7 +736,7 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     for _ in 0..6 {
         std::thread::sleep(Duration::from_millis(500));
         let still_running = std::process::Command::new("sh").arg("-c")
-            .arg(format!("kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"))
+            .arg(format!("/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"))
             .status().map(|s| s.success()).unwrap_or(false);
         if !still_running { terminated = true; break; }
     }
@@ -755,14 +744,14 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     // Phase 3: SIGKILL if still running (force kill)
     if !terminated {
         let _ = std::process::Command::new("sh").arg("-c")
-            .arg(format!("kill -9 -- -{pid_num} 2>/dev/null; kill -9 {pid_num} 2>/dev/null"))
+            .arg(format!("/bin/kill -9 -- -{pid_num} 2>/dev/null; kill -9 {pid_num} 2>/dev/null"))
             .status();
         std::thread::sleep(Duration::from_millis(200));
     }
 
     // Phase 4: Verify process is gone
     let still_alive = std::process::Command::new("sh").arg("-c")
-        .arg(format!("kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"))
+        .arg(format!("/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"))
         .status().map(|s| s.success()).unwrap_or(false);
 
     let status = if still_alive { "failed" } else { "cancelled" };
@@ -856,7 +845,7 @@ fn process_group_alive(pid: i32) -> bool {
     std::process::Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "kill -0 -- -{pid} 2>/dev/null || kill -0 {pid} 2>/dev/null"
+            "/bin/kill -0 -- -{pid} 2>/dev/null || kill -0 {pid} 2>/dev/null"
         ))
         .status()
         .map(|s| s.success())
@@ -879,6 +868,88 @@ fn job_last_file_activity(job_path: &Path) -> Option<std::time::SystemTime> {
         }
     }
     latest
+}
+
+/// PLAN-0317 T3.3（决策 #3）：对超过运行时限的 job 执行终止并落 `timeout` 终态。
+/// 由宿主的清理通道（`cleanup_jobs` op）周期驱动——不在容器内留常驻看门狗进程。
+fn enforce_job_timeouts() -> Result<Vec<String>, RuntimeError> {
+    enforce_job_timeouts_with(
+        Path::new(JOB_DIR),
+        chrono::Utc::now(),
+        |pid| {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!(
+                    "/bin/kill -0 -- -{pid} 2>/dev/null || kill -0 {pid} 2>/dev/null"
+                ))
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        },
+        |pid| {
+            let _ = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("/bin/kill -TERM -- -{pid} 2>/dev/null"))
+                .status();
+            std::thread::sleep(Duration::from_secs(1));
+            let _ = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!(
+                    "/bin/kill -9 -- -{pid} 2>/dev/null; kill -9 {pid} 2>/dev/null"
+                ))
+                .status();
+        },
+    )
+}
+
+fn enforce_job_timeouts_with(
+    job_dir: &Path,
+    now: chrono::DateTime<chrono::Utc>,
+    alive: impl Fn(i32) -> bool,
+    kill: impl Fn(i32),
+) -> Result<Vec<String>, RuntimeError> {
+    let mut enforced = Vec::new();
+    if !job_dir.exists() {
+        return Ok(enforced);
+    }
+    for entry in std::fs::read_dir(job_dir).map_err(RuntimeError::Io)? {
+        let entry = entry.map_err(RuntimeError::Io)?;
+        let job_path = entry.path();
+        if !job_path.is_dir() || !job_is_running_with(&job_path, &alive) {
+            continue;
+        }
+        let limit = std::fs::read_to_string(job_path.join("timeout_secs"))
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        if limit == 0 {
+            continue;
+        }
+        let started = std::fs::read_to_string(job_path.join("started_at"))
+            .ok()
+            .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw.trim()).ok())
+            .map(|parsed| parsed.with_timezone(&chrono::Utc));
+        let Some(started) = started else { continue };
+        let elapsed = (now - started).num_seconds().max(0) as u64;
+        // 到达时限即终止（`num_seconds` 截断到秒：elapsed==limit 时已到点）。
+        if elapsed < limit {
+            continue;
+        }
+        let pid = std::fs::read_to_string(job_path.join("pid"))
+            .ok()
+            .and_then(|raw| raw.trim().parse::<i32>().ok());
+        if let Some(pid) = pid {
+            kill(pid);
+        }
+        let _ = std::fs::write(job_path.join("meta"), "timeout");
+        let _ = std::fs::write(job_path.join("exit"), "143");
+        let _ = std::fs::write(
+            job_path.join("updated_at"),
+            chrono::Utc::now().to_rfc3339(),
+        );
+        enforced.push(entry.file_name().to_string_lossy().to_string());
+    }
+    Ok(enforced)
 }
 
 // ── Snapshot/Revert/Patch (PLAN-275 M2) ────────────────────────────────
@@ -1726,14 +1797,11 @@ mod tests {
             Path::new("/tmp/job with spaces"),
             command,
             std::slice::from_ref(&argument),
-            0,
         );
 
         assert_eq!(wrapper_args[2], OsString::from(BACKGROUND_JOB_WRAPPER));
         assert_eq!(wrapper_args[5], OsString::from(command));
-        // PLAN-0317 T3.3：timeout 是第三个位置参数，用户参数紧随其后。
-        assert_eq!(wrapper_args[6], OsString::from("0"));
-        assert_eq!(wrapper_args[7], OsString::from(argument));
+        assert_eq!(wrapper_args[6], OsString::from(argument));
         assert!(!wrapper_args[2].to_string_lossy().contains("injected-file"));
     }
 
@@ -2078,18 +2146,55 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_enforces_timeout_in_a_separate_session() {
-        assert!(
-            BACKGROUND_JOB_WRAPPER.contains("shift 3"),
-            "wrapper must take the timeout as its third positional argument"
+    fn enforce_job_timeouts_kills_only_overdue_running_jobs() {
+        let tmp = TempDir::new().unwrap();
+        let now = chrono::Utc::now();
+
+        let overdue = write_fake_job(tmp.path(), "job-overdue", "running", Some("4321"), 0);
+        std::fs::write(overdue.join("timeout_secs"), "2").unwrap();
+        std::fs::write(overdue.join("started_at"), (now - chrono::Duration::seconds(30)).to_rfc3339())
+            .unwrap();
+
+        let fresh = write_fake_job(tmp.path(), "job-fresh", "running", Some("4321"), 0);
+        std::fs::write(fresh.join("timeout_secs"), "600").unwrap();
+        std::fs::write(fresh.join("started_at"), now.to_rfc3339()).unwrap();
+
+        let unlimited = write_fake_job(tmp.path(), "job-unlimited", "running", Some("4321"), 0);
+        std::fs::write(unlimited.join("started_at"), (now - chrono::Duration::seconds(3600)).to_rfc3339())
+            .unwrap();
+
+        let finished = write_fake_job(tmp.path(), "job-done", "succeeded", None, 0);
+        std::fs::write(finished.join("timeout_secs"), "2").unwrap();
+        std::fs::write(finished.join("started_at"), (now - chrono::Duration::seconds(60)).to_rfc3339())
+            .unwrap();
+
+        let killed: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+        let enforced =
+            enforce_job_timeouts_with(tmp.path(), now, |_pid| true, |pid| {
+                killed.lock().unwrap().push(pid)
+            })
+            .unwrap();
+
+        assert_eq!(enforced, vec!["job-overdue".to_string()]);
+        assert_eq!(*killed.lock().unwrap(), vec![4321]);
+        assert_eq!(
+            std::fs::read_to_string(overdue.join("meta")).unwrap().trim(),
+            "timeout"
         );
-        assert!(
-            BACKGROUND_JOB_WRAPPER.contains("setsid sh -c"),
-            "watchdog must escape the job's process group to survive the group kill"
+        assert_eq!(
+            std::fs::read_to_string(fresh.join("meta")).unwrap().trim(),
+            "running",
+            "a job inside its limit must not be terminated"
         );
-        assert!(
-            BACKGROUND_JOB_WRAPPER.contains("timeout") && BACKGROUND_JOB_WRAPPER.contains("/meta"),
-            "watchdog must record the timeout terminal state"
+        assert_eq!(
+            std::fs::read_to_string(unlimited.join("meta")).unwrap().trim(),
+            "running",
+            "a job without a limit (or timeout 0) must not be terminated"
+        );
+        assert_eq!(
+            std::fs::read_to_string(finished.join("meta")).unwrap().trim(),
+            "succeeded",
+            "finished jobs are not touched"
         );
     }
 }
