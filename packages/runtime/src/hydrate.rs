@@ -757,7 +757,7 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_chunked_body(move |writer| {
-                std::thread::sleep(Duration::from_millis(200));
+                std::thread::sleep(Duration::from_millis(2000));
                 writer.write_all(body.as_bytes())?;
                 Ok(())
             })
@@ -772,7 +772,7 @@ mod tests {
             ExecutionSpecClient::new(&server.url(), "test-token"),
             Some(host_root.path().to_path_buf()),
         )
-        .with_materialize_timeout(Duration::from_millis(10));
+        .with_materialize_timeout(Duration::from_millis(300));
 
         let error = ensurer
             .ensure_workspace_materialized("ws-timeout")
