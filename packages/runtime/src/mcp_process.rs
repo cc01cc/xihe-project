@@ -279,14 +279,10 @@ impl McpProcessManager {
                             .unwrap_or("")
                             .to_string();
                         let mut servers = Vec::new();
-                        if let Some(servers_arr) =
-                            config.get("servers").and_then(|v| v.as_array())
+                        if let Some(servers_arr) = config.get("servers").and_then(|v| v.as_array())
                         {
                             for srv in servers_arr {
-                                let sid = srv
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
+                                let sid = srv.get("name").and_then(|v| v.as_str()).unwrap_or("");
                                 if sid.is_empty() {
                                     continue;
                                 }
@@ -368,7 +364,10 @@ mod tests {
         let url = mgr.get_bridge_url("ws-1", "github").await;
         assert_eq!(url, Some("http://10.0.0.1:39000".to_string()));
         let base = url.expect("bridge base URL should exist");
-        assert_eq!(bridge_server_url(&base, "github"), "http://10.0.0.1:39000/github");
+        assert_eq!(
+            bridge_server_url(&base, "github"),
+            "http://10.0.0.1:39000/github"
+        );
         assert_eq!(bridge_health_url(&base), "http://10.0.0.1:39000/_health");
     }
 

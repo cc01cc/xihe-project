@@ -501,9 +501,9 @@ pub fn validate_endpoint_with_allowlist(
     let local_http = url.scheme() == "http"
         && allow_local_http
         && url.host_str().is_some_and(is_local_development_host);
-    if url.host_str().is_some_and(|host| {
-        host.eq_ignore_ascii_case("host.docker.internal") && !local_http
-    })
+    if url
+        .host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case("host.docker.internal") && !local_http)
     {
         return Err(RemoteMcpError::EndpointNotAllowed(
             "host.docker.internal is allowed only for explicit local HTTP development".into(),
@@ -534,8 +534,8 @@ pub fn validate_endpoint_with_allowlist(
     }
     if !local_http
         && (host_lower == "localhost"
-        || host_lower.ends_with(".localhost")
-        || host_lower == "localhost.localdomain")
+            || host_lower.ends_with(".localhost")
+            || host_lower == "localhost.localdomain")
     {
         return Err(RemoteMcpError::EndpointNotAllowed(
             "localhost is not allowed".into(),
@@ -566,8 +566,8 @@ fn host_matches_allowlist(host: &str, allowed: &str) -> bool {
 }
 
 pub async fn validate_endpoint_dns(endpoint: &Url) -> Result<(), RemoteMcpError> {
-    let allow_local_http = std::env::var("XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL")
-        .is_ok_and(|value| value == "true");
+    let allow_local_http =
+        std::env::var("XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL").is_ok_and(|value| value == "true");
     if endpoint.scheme() == "http"
         && allow_local_http
         && endpoint.host_str().is_some_and(is_local_development_host)
@@ -773,7 +773,8 @@ mod tests {
         json_response(body, None)
     }
 
-    fn json_response(body: Value, session: Option<(&str, &str)>) -> Response<Body> {        let mut response = Response::new(Body::from(body.to_string()));
+    fn json_response(body: Value, session: Option<(&str, &str)>) -> Response<Body> {
+        let mut response = Response::new(Body::from(body.to_string()));
         response.headers_mut().insert(
             "content-type",
             "application/json".parse().expect("content type"),
@@ -1010,9 +1011,15 @@ mod tests {
             },
         };
         let cancellation = CancellationToken::new();
-        let initialized = connector.initialize(&cancellation).await.expect("initialize");
+        let initialized = connector
+            .initialize(&cancellation)
+            .await
+            .expect("initialize");
         assert_eq!(initialized["protocolVersion"], "2025-11-25");
-        connector.tools_list(&cancellation).await.expect("tools/list");
+        connector
+            .tools_list(&cancellation)
+            .await
+            .expect("tools/list");
 
         let seen = seen.lock().expect("seen mutex poisoned");
         let version_of = |method: &str| {

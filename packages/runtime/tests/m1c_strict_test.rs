@@ -36,7 +36,10 @@ async fn test_strict_isolation_probes_pass() {
     mgr.delete_workspace(&ws_id)
         .await
         .expect("Sandbox cleanup should succeed");
-    assert!(std::path::Path::new(&ws_path).exists(), "WorkspaceStorage must survive delete");
+    assert!(
+        std::path::Path::new(&ws_path).exists(),
+        "WorkspaceStorage must survive delete"
+    );
 }
 
 #[tokio::test]
@@ -57,5 +60,8 @@ async fn test_coding_does_not_run_strict_probes() {
     mgr.delete_workspace(&ws_id)
         .await
         .expect("Sandbox cleanup should succeed");
-    assert!(std::path::Path::new(&ws_path).exists(), "WorkspaceStorage must survive delete");
+    assert!(
+        std::path::Path::new(&ws_path).exists(),
+        "WorkspaceStorage must survive delete"
+    );
 }

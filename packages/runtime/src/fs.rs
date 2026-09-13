@@ -152,7 +152,6 @@ pub fn resolve_write_path(path: &str, workspace: &str) -> Result<PathBuf> {
     Ok(target)
 }
 
-
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]
 fn secure_beneath_check(path: &str, workspace: &str) -> Result<()> {
@@ -165,12 +164,16 @@ fn secure_beneath_check(path: &str, workspace: &str) -> Result<()> {
     // Try to open with RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV
     let flags = rustix_fs::OFlags::empty();
     let mode = rustix_fs::Mode::empty();
-    let resolve = rustix_fs::ResolveFlags::BENEATH | rustix_fs::ResolveFlags::NO_SYMLINKS | rustix_fs::ResolveFlags::NO_MAGICLINKS;
+    let resolve = rustix_fs::ResolveFlags::BENEATH
+        | rustix_fs::ResolveFlags::NO_SYMLINKS
+        | rustix_fs::ResolveFlags::NO_MAGICLINKS;
     match rustix_fs::openat2(ws_fd, rel, flags, mode, resolve) {
         Ok(_) => Ok(()),
         Err(e) => {
             if e == rustix::io::Errno::NOSYS || e == rustix::io::Errno::INVAL {
-                return Err(RuntimeError::InvalidPath(format!("openat2 not supported: {e} – blocked")));
+                return Err(RuntimeError::InvalidPath(format!(
+                    "openat2 not supported: {e} – blocked"
+                )));
             }
             // If file doesn't exist, we check parent instead
             if e == rustix::io::Errno::NOENT {
@@ -183,7 +186,10 @@ fn secure_beneath_check(path: &str, workspace: &str) -> Result<()> {
                 return Ok(());
             }
             // Symlink escape or outside -> map to SymlinkEscape
-            Err(RuntimeError::SymlinkEscape { path: path.to_string(), resolved: format!("openat2 blocked: {e}") })
+            Err(RuntimeError::SymlinkEscape {
+                path: path.to_string(),
+                resolved: format!("openat2 blocked: {e}"),
+            })
         }
     }
 }
@@ -208,7 +214,6 @@ fn secure_write_beneath(path: &str, workspace: &str) -> Result<PathBuf> {
     // Fallback to lexical + canonical ancestor check on non-linux (should not happen in container)
     resolve_write_path(path, workspace)
 }
-
 
 pub fn strip_workspace<'a>(full_path: &'a Path, workspace: &str) -> &'a Path {
     if let Ok(relative) = full_path.strip_prefix(workspace) {
@@ -892,7 +897,9 @@ mod tests {
         let ws = dir.path().to_str().unwrap();
         fs::write(dir.path().join("note.txt"), "alpha\nbeta\ngamma\n").unwrap();
 
-        let result = read_file_range("note.txt", Some(2), Some(1), ws).await.unwrap();
+        let result = read_file_range("note.txt", Some(2), Some(1), ws)
+            .await
+            .unwrap();
         assert!(!result.is_binary);
         assert_eq!(result.total_lines, 3);
         assert_eq!(result.content, "2 | beta");

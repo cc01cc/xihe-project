@@ -499,10 +499,15 @@ mod tests {
             MaterializationState::Materializing
         );
 
-        registry.mark_failed("ws-1", "execution spec not found").await;
+        registry
+            .mark_failed("ws-1", "execution spec not found")
+            .await;
         let status = registry.status("ws-1").await.unwrap();
         assert_eq!(status.state, MaterializationState::Failed);
-        assert_eq!(status.last_error.as_deref(), Some("execution spec not found"));
+        assert_eq!(
+            status.last_error.as_deref(),
+            Some("execution spec not found")
+        );
     }
 
     #[tokio::test]
@@ -538,7 +543,12 @@ mod tests {
         let ws1_issues = registry.check_workspace_consistency("ws-1").await;
         assert_eq!(ws1_issues.len(), 1);
         assert!(ws1_issues[0].starts_with("ws-1:"));
-        assert!(registry.check_workspace_consistency("ws-2").await.is_empty());
+        assert!(
+            registry
+                .check_workspace_consistency("ws-2")
+                .await
+                .is_empty()
+        );
     }
 
     #[test]

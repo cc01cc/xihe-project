@@ -5,7 +5,7 @@
 //! per-call（可压过本模块 ENV）→ 本模块 ENV → CP 下发值 → 代码默认。
 //! 生效值经 task_local 传给 `executor::exec_oneshot`（同 task 内联 await，无 spawn 打断）。
 
-use axum::http::{request, HeaderMap};
+use axum::http::{HeaderMap, request};
 use tokio::task_local;
 
 /// 离线 / 直连 / 单测（无下发值且无 ENV）时的兜底等待。

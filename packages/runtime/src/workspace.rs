@@ -122,9 +122,9 @@ impl WorkspaceManager {
             )])),
         };
 
-        let labels = std::env::var("XIHE_E2E_RUN_ID").ok().map(|run_id| {
-            HashMap::from([(String::from("xihe.e2e.run-id"), run_id)])
-        });
+        let labels = std::env::var("XIHE_E2E_RUN_ID")
+            .ok()
+            .map(|run_id| HashMap::from([(String::from("xihe.e2e.run-id"), run_id)]));
 
         let host_config = HostConfig {
             memory: Some(512 * 1024 * 1024),
@@ -188,14 +188,16 @@ impl WorkspaceManager {
 
         // Start xihe-container-runtime inside the container.
         if let Err(error) = self.start_container_runtime(&state).await {
-            self.remove_container_best_effort(&state.container_name).await;
+            self.remove_container_best_effort(&state.container_name)
+                .await;
             return Err(error);
         }
 
         // M1b: verify mount via sentinel (host -> container) — grill B3/B4
         if let Err(e) = self.verify_mount(&state).await {
             // Clean up container on mount verification failure to avoid orphan
-            self.remove_container_best_effort(&state.container_name).await;
+            self.remove_container_best_effort(&state.container_name)
+                .await;
             return Err(e);
         }
 
@@ -203,7 +205,8 @@ impl WorkspaceManager {
         if profile == SecurityProfile::Strict
             && let Err(e) = self.verify_strict_isolation(&state).await
         {
-            self.remove_container_best_effort(&state.container_name).await;
+            self.remove_container_best_effort(&state.container_name)
+                .await;
             return Err(e);
         }
 
@@ -788,7 +791,10 @@ impl WorkspaceManager {
                     .as_ref()
                     .is_none_or(|labels| !labels.contains_key("xihe.e2e.run-id")),
             };
-            if is_runtime_owned && belongs_to_current_run && let Some(id) = &container.id {
+            if is_runtime_owned
+                && belongs_to_current_run
+                && let Some(id) = &container.id
+            {
                 match docker
                     .remove_container(
                         id,

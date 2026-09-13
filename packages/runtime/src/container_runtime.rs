@@ -14,8 +14,8 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
-use xihe_runtime::error::RuntimeError;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use xihe_runtime::error::RuntimeError;
 use xihe_runtime::fs;
 
 const WORKSPACE: &str = "/workspace";
@@ -145,7 +145,6 @@ async fn main() {
     axum::serve(listener, app).await.expect("server error");
 }
 
-
 // ── Oneshot dispatcher ───────────────────────────────────────────────────
 #[derive(serde::Deserialize)]
 #[allow(dead_code)]
@@ -211,10 +210,23 @@ async fn oneshot_main() -> anyhow::Result<()> {
         dispatch_operation(&req).await
     };
     let resp = match result {
-        Ok(val) => OperationResponse { ok: true, result: val, error: None, error_code: None },
+        Ok(val) => OperationResponse {
+            ok: true,
+            result: val,
+            error: None,
+            error_code: None,
+        },
         Err(e) => {
             let (code, msg) = map_runtime_error(&e);
-            OperationResponse { ok: false, result: serde_json::Value::Null, error: Some(OperationError { code: code.clone(), message: msg.clone() }), error_code: Some(code) }
+            OperationResponse {
+                ok: false,
+                result: serde_json::Value::Null,
+                error: Some(OperationError {
+                    code: code.clone(),
+                    message: msg.clone(),
+                }),
+                error_code: Some(code),
+            }
         }
     };
     let out = serde_json::to_string(&resp)?;
@@ -225,7 +237,10 @@ async fn oneshot_main() -> anyhow::Result<()> {
 fn map_runtime_error(e: &RuntimeError) -> (String, String) {
     match e {
         RuntimeError::PathTraversal { path } => ("PATH_TRAVERSAL".to_string(), path.clone()),
-        RuntimeError::SymlinkEscape { path, resolved } => ("SYMLINK_ESCAPE".to_string(), format!("{path} -> {resolved}")),
+        RuntimeError::SymlinkEscape { path, resolved } => (
+            "SYMLINK_ESCAPE".to_string(),
+            format!("{path} -> {resolved}"),
+        ),
         RuntimeError::InvalidPath(msg) => ("INVALID_PATH".to_string(), msg.clone()),
         RuntimeError::FileNotFound(msg) => ("FILE_NOT_FOUND".to_string(), msg.clone()),
         RuntimeError::WorkspaceNotFound(msg) => ("WORKSPACE_NOT_FOUND".to_string(), msg.clone()),
@@ -240,16 +255,32 @@ fn map_runtime_error(e: &RuntimeError) -> (String, String) {
 async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value, RuntimeError> {
     match req.operation.as_str() {
         "read_file" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
             let content = fs::read_file(path, WORKSPACE).await?;
             Ok(serde_json::json!({"content": content}))
         }
         // PLAN-292 T6: binary-safe read for image previews — fs::read_file_range
         // detects binary content and returns base64 with is_binary=true.
         "read_file_range" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
-            let offset = req.payload.get("offset").and_then(|v| v.as_u64()).map(|v| v as usize);
-            let limit = req.payload.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize);
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let offset = req
+                .payload
+                .get("offset")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let limit = req
+                .payload
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
             let result = fs::read_file_range(path, offset, limit, WORKSPACE).await?;
             Ok(serde_json::json!({
                 "content": result.content,
@@ -258,93 +289,243 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             }))
         }
         "write_file" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
-            let content = req.payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let content = req
+                .payload
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let msg = fs::write_file(path, content, WORKSPACE).await?;
             Ok(serde_json::json!({"message": msg}))
         }
         "list_directory" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
-            let entries = tokio::task::spawn_blocking({ let p = path.to_string(); move || fs::list_directory(&p, WORKSPACE) }).await.map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let entries = tokio::task::spawn_blocking({
+                let p = path.to_string();
+                move || fs::list_directory(&p, WORKSPACE)
+            })
+            .await
+            .map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
             Ok(serde_json::json!({"entries": entries}))
         }
         "glob" => {
-            let pattern = req.payload.get("pattern").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing pattern".into()))?;
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
-            let matches = tokio::task::spawn_blocking({ let pat = pattern.to_string(); let p = path.to_string(); move || fs::glob_files(&pat, &p, WORKSPACE) }).await.map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
+            let pattern = req
+                .payload
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing pattern".into()))?;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let matches = tokio::task::spawn_blocking({
+                let pat = pattern.to_string();
+                let p = path.to_string();
+                move || fs::glob_files(&pat, &p, WORKSPACE)
+            })
+            .await
+            .map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
             Ok(serde_json::json!({"matches": matches}))
         }
         "grep" => {
-            let pattern = req.payload.get("pattern").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing pattern".into()))?;
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
-            let matches = tokio::task::spawn_blocking({ let pat = pattern.to_string(); let p = path.to_string(); move || fs::grep_files(&pat, &p, WORKSPACE) }).await.map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
+            let pattern = req
+                .payload
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing pattern".into()))?;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let matches = tokio::task::spawn_blocking({
+                let pat = pattern.to_string();
+                let p = path.to_string();
+                move || fs::grep_files(&pat, &p, WORKSPACE)
+            })
+            .await
+            .map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
             Ok(serde_json::json!({"matches": matches}))
         }
         "get_file_info" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
-            let info = tokio::task::spawn_blocking({ let p = path.to_string(); move || fs::get_file_info(&p, WORKSPACE) }).await.map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let info = tokio::task::spawn_blocking({
+                let p = path.to_string();
+                move || fs::get_file_info(&p, WORKSPACE)
+            })
+            .await
+            .map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
             Ok(serde_json::to_value(info).unwrap())
         }
         "watch_directory" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
-            let events = tokio::task::spawn_blocking({ let p = path.to_string(); move || fs::watch_directory(&p, WORKSPACE) }).await.map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let events = tokio::task::spawn_blocking({
+                let p = path.to_string();
+                move || fs::watch_directory(&p, WORKSPACE)
+            })
+            .await
+            .map_err(|e| RuntimeError::InvalidPath(e.to_string()))??;
             Ok(serde_json::json!({"events": events}))
         }
         "edit_file" => {
-            let file_path = req.payload.get("file_path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing file_path".into()))?;
-            let old_string = req.payload.get("old_string").and_then(|v| v.as_str()).unwrap_or("");
-            let new_string = req.payload.get("new_string").and_then(|v| v.as_str()).unwrap_or("");
-            let replace_all = req.payload.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false);
-            let res = fs::edit_file(file_path, old_string, new_string, replace_all, WORKSPACE).await?;
+            let file_path = req
+                .payload
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing file_path".into()))?;
+            let old_string = req
+                .payload
+                .get("old_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let new_string = req
+                .payload
+                .get("new_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let replace_all = req
+                .payload
+                .get("replace_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let res =
+                fs::edit_file(file_path, old_string, new_string, replace_all, WORKSPACE).await?;
             Ok(serde_json::to_value(res).unwrap())
         }
         "delete_file" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
             let msg = fs::delete_file(path, WORKSPACE).await?;
             Ok(serde_json::json!({"message": msg}))
         }
         "delete_directory" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
-            let recursive = req.payload.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let recursive = req
+                .payload
+                .get("recursive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let msg = fs::delete_directory(path, recursive, WORKSPACE).await?;
             Ok(serde_json::json!({"message": msg}))
         }
         "move_file" => {
-            let from = req.payload.get("from").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing from".into()))?;
-            let to = req.payload.get("to").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing to".into()))?;
+            let from = req
+                .payload
+                .get("from")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing from".into()))?;
+            let to = req
+                .payload
+                .get("to")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing to".into()))?;
             let msg = fs::move_file(from, to, WORKSPACE).await?;
             Ok(serde_json::json!({"message": msg}))
         }
         "copy_file" => {
-            let from = req.payload.get("from").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing from".into()))?;
-            let to = req.payload.get("to").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing to".into()))?;
+            let from = req
+                .payload
+                .get("from")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing from".into()))?;
+            let to = req
+                .payload
+                .get("to")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing to".into()))?;
             let msg = fs::copy_file(from, to, WORKSPACE).await?;
             Ok(serde_json::json!({"message": msg}))
         }
         "mkdir" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
             let msg = fs::mkdir(path, WORKSPACE).await?;
             Ok(serde_json::json!({"message": msg}))
         }
         "extract_pdf_text" => {
-            let path = req.payload.get("path").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing path".into()))?;
             let text = fs::extract_pdf_text(path, WORKSPACE).await?;
             Ok(serde_json::json!({"content": text}))
         }
         "execute_command" => {
-            let command = req.payload.get("command").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing command".into()))?.to_string();
-            let args: Vec<String> = req.payload.get("args").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+            let command = req
+                .payload
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing command".into()))?
+                .to_string();
+            let args: Vec<String> = req
+                .payload
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
             let timeout = req.payload.get("timeout").and_then(|v| v.as_u64());
             let truncate_limit = req.payload.get("truncate_limit").and_then(|v| v.as_u64());
             let res = exec_shell_command(&command, args, timeout, truncate_limit).await?;
             Ok(serde_json::to_value(res).unwrap())
         }
         "start_background_process" => {
-            let workspace_id = req.payload.get("workspaceId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-            let command = req.payload.get("command").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing command".into()))?.to_string();
-            let args: Vec<String> = req.payload.get("args").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+            let workspace_id = req
+                .payload
+                .get("workspaceId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let command = req
+                .payload
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing command".into()))?
+                .to_string();
+            let args: Vec<String> = req
+                .payload
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
             // PLAN-0317 T3.3（决策 #3）：timeout 落实为任务运行时限（None→60 分钟默认，0→不限）。
-            let timeout_secs = resolve_job_timeout(req.payload.get("timeoutSecs").and_then(|v| v.as_u64()));
+            let timeout_secs =
+                resolve_job_timeout(req.payload.get("timeoutSecs").and_then(|v| v.as_u64()));
             let job_id = start_background_job(&workspace_id, &command, args, timeout_secs).await?;
             Ok(serde_json::json!({"jobId": job_id}))
         }
@@ -353,19 +534,39 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             Ok(serde_json::json!({"jobs": jobs}))
         }
         "get_background_process" => {
-            let job_id = req.payload.get("jobId").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing jobId".into()))?;
+            let job_id = req
+                .payload
+                .get("jobId")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing jobId".into()))?;
             let job = get_job(job_id)?;
             Ok(serde_json::to_value(job).unwrap())
         }
         "cancel_background_process" => {
-            let job_id = req.payload.get("jobId").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing jobId".into()))?;
+            let job_id = req
+                .payload
+                .get("jobId")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing jobId".into()))?;
             let res = cancel_job(job_id)?;
             Ok(serde_json::json!({"status": res}))
         }
         "read_command_output" => {
-            let artifact_id = req.payload.get("artifact_id").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing artifact_id".into()))?;
-            let offset = req.payload.get("offset").and_then(|v| v.as_u64()).map(|v| v as usize);
-            let limit = req.payload.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize);
+            let artifact_id = req
+                .payload
+                .get("artifact_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing artifact_id".into()))?;
+            let offset = req
+                .payload
+                .get("offset")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let limit = req
+                .payload
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
             let content = read_job_output(artifact_id, offset, limit)?;
             Ok(serde_json::json!({"content": content}))
         }
@@ -376,36 +577,48 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             Ok(serde_json::json!({"cleaned": cleaned, "timedOut": timed_out}))
         }
         "create_snapshot" => {
-            let snapshot_id = req.payload.get("snapshotId").and_then(|v| v.as_str())
+            let snapshot_id = req
+                .payload
+                .get("snapshotId")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| RuntimeError::InvalidPath("missing snapshotId".into()))?;
-            let files = req.payload.get("files").and_then(|v| v.as_array())
+            let files = req
+                .payload
+                .get("files")
+                .and_then(|v| v.as_array())
                 .ok_or_else(|| RuntimeError::InvalidPath("missing files array".into()))?;
             let result = create_snapshot(snapshot_id, files)?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "revert_snapshot" => {
-            let snapshot_id = req.payload.get("snapshotId").and_then(|v| v.as_str())
+            let snapshot_id = req
+                .payload
+                .get("snapshotId")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| RuntimeError::InvalidPath("missing snapshotId".into()))?;
             let result = revert_snapshot(snapshot_id)?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "apply_patch" => {
-            let patches = req.payload.get("patches").and_then(|v| v.as_array())
+            let patches = req
+                .payload
+                .get("patches")
+                .and_then(|v| v.as_array())
                 .ok_or_else(|| RuntimeError::InvalidPath("missing patches array".into()))?;
             let snapshot_id = req.payload.get("snapshotId").and_then(|v| v.as_str());
             let result = apply_patch(snapshot_id, patches)?;
             Ok(serde_json::to_value(result).unwrap())
         }
-        _ => Err(RuntimeError::InvalidPath(format!("unknown operation {}", req.operation))),
+        _ => Err(RuntimeError::InvalidPath(format!(
+            "unknown operation {}",
+            req.operation
+        ))),
     }
 }
-
-
 
 async fn health() -> &'static str {
     "ok"
 }
-
 
 // ── Shell execution with positional args, timeout, bounded output ──────────
 #[derive(Serialize, Deserialize)]
@@ -418,20 +631,29 @@ struct ExecResult {
     artifact_id: Option<String>,
 }
 
-async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u64>, truncate_limit: Option<u64>) -> Result<ExecResult, RuntimeError> {
+async fn exec_shell_command(
+    command: &str,
+    args: Vec<String>,
+    timeout: Option<u64>,
+    truncate_limit: Option<u64>,
+) -> Result<ExecResult, RuntimeError> {
     let timeout_dur = Duration::from_secs(timeout.unwrap_or(30));
     let limit = truncate_limit.unwrap_or(4096) as usize;
     let mut cmd = Command::new("sh");
     cmd.arg("-c").arg(command);
     cmd.arg("xihe-shell");
-    for a in &args { cmd.arg(a); }
+    for a in &args {
+        cmd.arg(a);
+    }
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     // PLAN-0317 T2.2 修正：显式让命令成为新进程组的组长——否则它继承 oneshot
     // 会话的 PGID，`kill -- -pid` 打空（还会误杀容器内服务），子进程变孤儿。
     #[cfg(unix)]
     cmd.process_group(0);
-    let mut child = cmd.spawn().map_err(|e| RuntimeError::Command(format!("spawn failed: {e}")))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| RuntimeError::Command(format!("spawn failed: {e}")))?;
     // PLAN-0317 T2.2: 登记进程组供中止信号使用；若中止已到达则立即终止。
     let pgid = child.id().map(|id| id as i32);
     register_oneshot_pgid(pgid);
@@ -452,12 +674,18 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
             loop {
                 match pipe.read(&mut tmp).await {
                     Ok(0) => break,
-                    Ok(n) => { if buf.len() < limit + 8192 { buf.extend_from_slice(&tmp[..n]); } },
+                    Ok(n) => {
+                        if buf.len() < limit + 8192 {
+                            buf.extend_from_slice(&tmp[..n]);
+                        }
+                    }
                     Err(_) => break,
                 }
             }
             buf
-        } else { Vec::new() }
+        } else {
+            Vec::new()
+        }
     });
     let stderr_handle = tokio::spawn(async move {
         if let Some(mut pipe) = stderr_pipe {
@@ -467,12 +695,18 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
             loop {
                 match pipe.read(&mut tmp).await {
                     Ok(0) => break,
-                    Ok(n) => { if buf.len() < limit + 8192 { buf.extend_from_slice(&tmp[..n]); } },
+                    Ok(n) => {
+                        if buf.len() < limit + 8192 {
+                            buf.extend_from_slice(&tmp[..n]);
+                        }
+                    }
                     Err(_) => break,
                 }
             }
             buf
-        } else { Vec::new() }
+        } else {
+            Vec::new()
+        }
     });
     let wait_fut = child.wait();
     let status = match tokio::time::timeout(timeout_dur, wait_fut).await {
@@ -482,12 +716,22 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
             let pid = child.id();
             if let Some(pid) = pid {
                 // Phase 1: SIGTERM (graceful)
-                let _ = Command::new("sh").arg("-c").arg(format!("/bin/kill -TERM -- -{pid} 2>/dev/null")).status().await;
+                let _ = Command::new("sh")
+                    .arg("-c")
+                    .arg(format!("/bin/kill -TERM -- -{pid} 2>/dev/null"))
+                    .status()
+                    .await;
                 // Phase 2: Wait 1s for graceful termination
                 let graceful = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
                 if graceful.is_err() {
                     // Phase 3: SIGKILL (force)
-                    let _ = Command::new("sh").arg("-c").arg(format!("/bin/kill -9 -- -{pid} 2>/dev/null; kill -9 {pid} 2>/dev/null")).status().await;
+                    let _ = Command::new("sh")
+                        .arg("-c")
+                        .arg(format!(
+                            "/bin/kill -9 -- -{pid} 2>/dev/null; kill -9 {pid} 2>/dev/null"
+                        ))
+                        .status()
+                        .await;
                     let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
                 }
             }
@@ -506,16 +750,28 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
     if abort_requested() && !status.success() {
         return Err(cancelled_error());
     }
-    let stdout_bytes = stdout_handle.await.map_err(|e| RuntimeError::Command(e.to_string()))?;
-    let stderr_bytes = stderr_handle.await.map_err(|e| RuntimeError::Command(e.to_string()))?;
+    let stdout_bytes = stdout_handle
+        .await
+        .map_err(|e| RuntimeError::Command(e.to_string()))?;
+    let stderr_bytes = stderr_handle
+        .await
+        .map_err(|e| RuntimeError::Command(e.to_string()))?;
     let stdout_str = String::from_utf8_lossy(&stdout_bytes).to_string();
     let stderr_str = String::from_utf8_lossy(&stderr_bytes).to_string();
     let (stdout_final, artifact_id) = if stdout_str.len() > limit {
         // 截断点必须是字符边界（此前按字节下标切片，多字节内容会 panic）。
         let (truncated, _) = truncate_utf8_safe(&stdout_str, limit);
         (truncated, None)
-    } else { (stdout_str, None) };
-    Ok(ExecResult { stdout: stdout_final, stderr: stderr_str, exit_code: status.code().unwrap_or(-1), success: status.success(), artifact_id })
+    } else {
+        (stdout_str, None)
+    };
+    Ok(ExecResult {
+        stdout: stdout_final,
+        stderr: stderr_str,
+        exit_code: status.code().unwrap_or(-1),
+        success: status.success(),
+        artifact_id,
+    })
 }
 
 // ── Job management via /tmp/xihe-jobs ────────────────────────────────────
@@ -558,7 +814,9 @@ fn is_safe_job_id(job_id: &str) -> bool {
         && !job_id.contains('\\')
         && !job_id.contains("..")
         && !job_id.contains('\0')
-        && job_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && job_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 async fn start_background_job(
@@ -567,7 +825,14 @@ async fn start_background_job(
     args: Vec<String>,
     timeout_secs: u64,
 ) -> Result<String, RuntimeError> {
-    start_background_job_at(Path::new(JOB_DIR), workspace_id, command, args, timeout_secs).await
+    start_background_job_at(
+        Path::new(JOB_DIR),
+        workspace_id,
+        command,
+        args,
+        timeout_secs,
+    )
+    .await
 }
 
 // Keep the wrapper script fixed and pass all user-controlled values as
@@ -675,59 +940,139 @@ async fn start_background_job_at(
 fn list_jobs() -> Result<Vec<JobInfo>, RuntimeError> {
     let mut jobs = Vec::new();
     let job_dir = Path::new(JOB_DIR);
-    if !job_dir.exists() { return Ok(jobs); }
+    if !job_dir.exists() {
+        return Ok(jobs);
+    }
     for entry in std::fs::read_dir(job_dir).map_err(RuntimeError::Io)? {
         let entry = entry.map_err(RuntimeError::Io)?;
         let job_id = entry.file_name().to_string_lossy().to_string();
-        if let Ok(job) = get_job(&job_id) { jobs.push(job); }
+        if let Ok(job) = get_job(&job_id) {
+            jobs.push(job);
+        }
     }
     Ok(jobs)
 }
 
 fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
     if !is_safe_job_id(job_id) {
-        return Err(RuntimeError::InvalidPath(format!("invalid job id: {job_id}")));
+        return Err(RuntimeError::InvalidPath(format!(
+            "invalid job id: {job_id}"
+        )));
     }
     let job_path = PathBuf::from(JOB_DIR).join(job_id);
-    if !job_path.exists() { return Err(RuntimeError::InvalidPath(format!("job not found: {job_id}"))); }
-    let meta = std::fs::read_to_string(job_path.join("meta")).unwrap_or_else(|_| "unknown".to_string()).trim().to_string();
-    let command = std::fs::read_to_string(job_path.join("command")).unwrap_or_default().trim().to_string();
-    let workspace_id = std::fs::read_to_string(job_path.join("workspace_id")).unwrap_or_default().trim().to_string();
-    let pid = std::fs::read_to_string(job_path.join("pid")).ok().map(|s| s.trim().to_string());
-    let started_at = std::fs::read_to_string(job_path.join("started_at")).unwrap_or_default().trim().to_string();
-    let updated_at = std::fs::read_to_string(job_path.join("updated_at")).ok().map(|s| s.trim().to_string());
-    let exit_code = std::fs::read_to_string(job_path.join("exit")).ok().and_then(|s| s.trim().parse::<i32>().ok());
+    if !job_path.exists() {
+        return Err(RuntimeError::InvalidPath(format!(
+            "job not found: {job_id}"
+        )));
+    }
+    let meta = std::fs::read_to_string(job_path.join("meta"))
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim()
+        .to_string();
+    let command = std::fs::read_to_string(job_path.join("command"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let workspace_id = std::fs::read_to_string(job_path.join("workspace_id"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let pid = std::fs::read_to_string(job_path.join("pid"))
+        .ok()
+        .map(|s| s.trim().to_string());
+    let started_at = std::fs::read_to_string(job_path.join("started_at"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let updated_at = std::fs::read_to_string(job_path.join("updated_at"))
+        .ok()
+        .map(|s| s.trim().to_string());
+    let exit_code = std::fs::read_to_string(job_path.join("exit"))
+        .ok()
+        .and_then(|s| s.trim().parse::<i32>().ok());
     let stdout_preview = std::fs::read(job_path.join("stdout")).ok().map(|bytes| {
-        let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(JOB_PREVIEW_BYTES)]).to_string();
-        if bytes.len() > JOB_PREVIEW_BYTES { preview + "..." } else { preview }
+        let preview =
+            String::from_utf8_lossy(&bytes[..bytes.len().min(JOB_PREVIEW_BYTES)]).to_string();
+        if bytes.len() > JOB_PREVIEW_BYTES {
+            preview + "..."
+        } else {
+            preview
+        }
     });
     let stderr_preview = std::fs::read(job_path.join("stderr")).ok().map(|bytes| {
-        let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(JOB_PREVIEW_BYTES)]).to_string();
-        if bytes.len() > JOB_PREVIEW_BYTES { preview + "..." } else { preview }
+        let preview =
+            String::from_utf8_lossy(&bytes[..bytes.len().min(JOB_PREVIEW_BYTES)]).to_string();
+        if bytes.len() > JOB_PREVIEW_BYTES {
+            preview + "..."
+        } else {
+            preview
+        }
     });
     let status = if meta == "running" {
         if let Some(pid_str) = &pid {
             if let Ok(pid_num) = pid_str.parse::<i32>() {
-                let still_running = std::process::Command::new("sh").arg("-c").arg(format!("/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null")).status().map(|s| s.success()).unwrap_or(false);
-                if !still_running { if exit_code.is_some() { "succeeded".to_string() } else { "failed".to_string() } } else { "running".to_string() }
-            } else { meta }
-        } else { meta }
-    } else { meta };
-    Ok(JobInfo { jobId: job_id.to_string(), workspace_id, command, status, pid, exit_code, created_at: started_at, updated_at, stdout_preview, stderr_preview })
+                let still_running = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(format!(
+                        "/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"
+                    ))
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if !still_running {
+                    if exit_code.is_some() {
+                        "succeeded".to_string()
+                    } else {
+                        "failed".to_string()
+                    }
+                } else {
+                    "running".to_string()
+                }
+            } else {
+                meta
+            }
+        } else {
+            meta
+        }
+    } else {
+        meta
+    };
+    Ok(JobInfo {
+        jobId: job_id.to_string(),
+        workspace_id,
+        command,
+        status,
+        pid,
+        exit_code,
+        created_at: started_at,
+        updated_at,
+        stdout_preview,
+        stderr_preview,
+    })
 }
 
 fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     if !is_safe_job_id(job_id) {
-        return Err(RuntimeError::InvalidPath(format!("invalid job id: {job_id}")));
+        return Err(RuntimeError::InvalidPath(format!(
+            "invalid job id: {job_id}"
+        )));
     }
     let job_path = PathBuf::from(JOB_DIR).join(job_id);
-    if !job_path.exists() { return Err(RuntimeError::InvalidPath(format!("job not found: {job_id}"))); }
-    let pid_str = std::fs::read_to_string(job_path.join("pid")).map_err(|_| RuntimeError::InvalidPath("pid not found".into()))?;
+    if !job_path.exists() {
+        return Err(RuntimeError::InvalidPath(format!(
+            "job not found: {job_id}"
+        )));
+    }
+    let pid_str = std::fs::read_to_string(job_path.join("pid"))
+        .map_err(|_| RuntimeError::InvalidPath("pid not found".into()))?;
     let pid_str = pid_str.trim();
-    let pid_num: i32 = pid_str.parse().map_err(|_| RuntimeError::InvalidPath("invalid pid".into()))?;
+    let pid_num: i32 = pid_str
+        .parse()
+        .map_err(|_| RuntimeError::InvalidPath("invalid pid".into()))?;
 
     // Phase 1: SIGTERM to process group (graceful shutdown)
-    let _ = std::process::Command::new("sh").arg("-c")
+    let _ = std::process::Command::new("sh")
+        .arg("-c")
         .arg(format!("/bin/kill -TERM -- -{pid_num} 2>/dev/null"))
         .status();
 
@@ -735,40 +1080,67 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     let mut terminated = false;
     for _ in 0..6 {
         std::thread::sleep(Duration::from_millis(500));
-        let still_running = std::process::Command::new("sh").arg("-c")
-            .arg(format!("/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"))
-            .status().map(|s| s.success()).unwrap_or(false);
-        if !still_running { terminated = true; break; }
+        let still_running = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"
+            ))
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !still_running {
+            terminated = true;
+            break;
+        }
     }
 
     // Phase 3: SIGKILL if still running (force kill)
     if !terminated {
-        let _ = std::process::Command::new("sh").arg("-c")
-            .arg(format!("/bin/kill -9 -- -{pid_num} 2>/dev/null; kill -9 {pid_num} 2>/dev/null"))
+        let _ = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "/bin/kill -9 -- -{pid_num} 2>/dev/null; kill -9 {pid_num} 2>/dev/null"
+            ))
             .status();
         std::thread::sleep(Duration::from_millis(200));
     }
 
     // Phase 4: Verify process is gone
-    let still_alive = std::process::Command::new("sh").arg("-c")
-        .arg(format!("/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"))
-        .status().map(|s| s.success()).unwrap_or(false);
+    let still_alive = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"
+        ))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
 
     let status = if still_alive { "failed" } else { "cancelled" };
     std::fs::write(job_path.join("meta"), status).map_err(RuntimeError::Io)?;
-    std::fs::write(job_path.join("updated_at"), chrono::Utc::now().to_rfc3339()).map_err(RuntimeError::Io)?;
+    std::fs::write(job_path.join("updated_at"), chrono::Utc::now().to_rfc3339())
+        .map_err(RuntimeError::Io)?;
     Ok(status.to_string())
 }
 
-fn read_job_output(job_id: &str, offset: Option<usize>, limit: Option<usize>) -> Result<String, RuntimeError> {
+fn read_job_output(
+    job_id: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<String, RuntimeError> {
     let job_path = PathBuf::from(JOB_DIR).join(job_id);
     let stdout_path = job_path.join("stdout");
-    if !stdout_path.exists() { return Err(RuntimeError::FileNotFound(format!("output not found for job {job_id}"))); }
+    if !stdout_path.exists() {
+        return Err(RuntimeError::FileNotFound(format!(
+            "output not found for job {job_id}"
+        )));
+    }
     let content = std::fs::read_to_string(&stdout_path).map_err(RuntimeError::Io)?;
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(content.len());
     let end = (offset + limit).min(content.len());
-    if offset >= content.len() { return Ok(String::new()); }
+    if offset >= content.len() {
+        return Ok(String::new());
+    }
     Ok(content[offset..end].to_string())
 }
 
@@ -816,7 +1188,17 @@ fn cleanup_expired_jobs_with(
             if let Ok(md) = std::fs::metadata(&fpath)
                 && md.len() > JOB_CAP as u64
             {
-                let _ = std::process::Command::new("sh").arg("-c").arg(format!("head -c {} {} > {}.tmp && mv {}.tmp {}", JOB_CAP, fpath.display(), fpath.display(), fpath.display(), fpath.display())).status();
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(format!(
+                        "head -c {} {} > {}.tmp && mv {}.tmp {}",
+                        JOB_CAP,
+                        fpath.display(),
+                        fpath.display(),
+                        fpath.display(),
+                        fpath.display()
+                    ))
+                    .status();
             }
         }
     }
@@ -943,10 +1325,7 @@ fn enforce_job_timeouts_with(
         }
         let _ = std::fs::write(job_path.join("meta"), "timeout");
         let _ = std::fs::write(job_path.join("exit"), "143");
-        let _ = std::fs::write(
-            job_path.join("updated_at"),
-            chrono::Utc::now().to_rfc3339(),
-        );
+        let _ = std::fs::write(job_path.join("updated_at"), chrono::Utc::now().to_rfc3339());
         enforced.push(entry.file_name().to_string_lossy().to_string());
     }
     Ok(enforced)
@@ -991,14 +1370,22 @@ struct SnapshotManifest {
 }
 
 fn sha256_hex(data: &[u8]) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     format!("{:x}", hasher.finalize())
 }
 
-fn create_snapshot(snapshot_id: &str, files: &[serde_json::Value]) -> Result<SnapshotResult, RuntimeError> {
-    create_snapshot_at(Path::new(SNAPSHOT_DIR), Path::new(WORKSPACE), snapshot_id, files)
+fn create_snapshot(
+    snapshot_id: &str,
+    files: &[serde_json::Value],
+) -> Result<SnapshotResult, RuntimeError> {
+    create_snapshot_at(
+        Path::new(SNAPSHOT_DIR),
+        Path::new(WORKSPACE),
+        snapshot_id,
+        files,
+    )
 }
 
 fn create_snapshot_at(
@@ -1008,10 +1395,16 @@ fn create_snapshot_at(
     files: &[serde_json::Value],
 ) -> Result<SnapshotResult, RuntimeError> {
     if !is_safe_job_id(snapshot_id) {
-        return Err(RuntimeError::InvalidPath(format!("invalid snapshot id: {snapshot_id}")));
+        return Err(RuntimeError::InvalidPath(format!(
+            "invalid snapshot id: {snapshot_id}"
+        )));
     }
     if files.len() > SNAPSHOT_MAX_FILES {
-        return Err(RuntimeError::InvalidPath(format!("snapshot file limit exceeded: {} > {}", files.len(), SNAPSHOT_MAX_FILES)));
+        return Err(RuntimeError::InvalidPath(format!(
+            "snapshot file limit exceeded: {} > {}",
+            files.len(),
+            SNAPSHOT_MAX_FILES
+        )));
     }
 
     let snapshot_dir = snapshot_root.join(snapshot_id);
@@ -1020,12 +1413,17 @@ fn create_snapshot_at(
     let mut captured = Vec::new();
 
     for file_entry in files {
-        let rel_path = file_entry.get("relativePath")
+        let rel_path = file_entry
+            .get("relativePath")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| RuntimeError::InvalidPath("missing relativePath in snapshot file entry".to_string()))?;
+            .ok_or_else(|| {
+                RuntimeError::InvalidPath("missing relativePath in snapshot file entry".to_string())
+            })?;
 
         if !is_safe_relative_path(rel_path) {
-            return Err(RuntimeError::PathTraversal { path: rel_path.to_string() });
+            return Err(RuntimeError::PathTraversal {
+                path: rel_path.to_string(),
+            });
         }
 
         let abs_path = workspace.join(rel_path);
@@ -1034,7 +1432,11 @@ fn create_snapshot_at(
         if existed_before {
             let content = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
             if content.len() > SNAPSHOT_MAX_SIZE {
-                return Err(RuntimeError::InvalidPath(format!("snapshot file too large: {} ({})", rel_path, content.len())));
+                return Err(RuntimeError::InvalidPath(format!(
+                    "snapshot file too large: {} ({})",
+                    rel_path,
+                    content.len()
+                )));
             }
             let hash = sha256_hex(&content);
             let dest = snapshot_dir.join(rel_path);
@@ -1064,14 +1466,22 @@ fn create_snapshot_at(
     let manifest = SnapshotManifest {
         files: captured.clone(),
     };
-    let manifest_payload = serde_json::to_vec(&manifest)
-        .map_err(|e| RuntimeError::Command(format!("failed to serialize snapshot manifest: {e}")))?;
+    let manifest_payload = serde_json::to_vec(&manifest).map_err(|e| {
+        RuntimeError::Command(format!("failed to serialize snapshot manifest: {e}"))
+    })?;
     std::fs::write(snapshot_dir.join(".manifest.json"), manifest_payload)
         .map_err(RuntimeError::Io)?;
 
     let files_captured = captured.len();
-    info!("snapshot_created id={} files={}", snapshot_id, files_captured);
-    Ok(SnapshotResult { snapshot_id: snapshot_id.to_string(), files_captured, files: captured })
+    info!(
+        "snapshot_created id={} files={}",
+        snapshot_id, files_captured
+    );
+    Ok(SnapshotResult {
+        snapshot_id: snapshot_id.to_string(),
+        files_captured,
+        files: captured,
+    })
 }
 
 #[derive(Serialize)]
@@ -1092,12 +1502,16 @@ fn revert_snapshot_at(
     snapshot_id: &str,
 ) -> Result<RevertResult, RuntimeError> {
     if !is_safe_job_id(snapshot_id) {
-        return Err(RuntimeError::InvalidPath(format!("invalid snapshot id: {snapshot_id}")));
+        return Err(RuntimeError::InvalidPath(format!(
+            "invalid snapshot id: {snapshot_id}"
+        )));
     }
 
     let snapshot_dir = snapshot_root.join(snapshot_id);
     if !snapshot_dir.exists() {
-        return Err(RuntimeError::FileNotFound(format!("snapshot not found: {snapshot_id}")));
+        return Err(RuntimeError::FileNotFound(format!(
+            "snapshot not found: {snapshot_id}"
+        )));
     }
 
     let manifest_path = snapshot_dir.join(".manifest.json");
@@ -1105,7 +1519,9 @@ fn revert_snapshot_at(
     let manifest: SnapshotManifest = serde_json::from_slice(&manifest_payload)
         .map_err(|e| RuntimeError::InvalidPath(format!("invalid snapshot manifest: {e}")))?;
     if manifest.files.len() > SNAPSHOT_MAX_FILES {
-        return Err(RuntimeError::InvalidPath("snapshot manifest file limit exceeded".into()));
+        return Err(RuntimeError::InvalidPath(
+            "snapshot manifest file limit exceeded".into(),
+        ));
     }
 
     let mut reverted = 0;
@@ -1121,11 +1537,13 @@ fn revert_snapshot_at(
 
         if !file.existed_before {
             if abs_path.exists() {
-                if abs_path.is_file() && file.post_content_hash.as_deref().is_some_and(|hash| {
-                    std::fs::read(&abs_path)
-                        .map(|content| sha256_hex(&content) == hash)
-                        .unwrap_or(false)
-                }) {
+                if abs_path.is_file()
+                    && file.post_content_hash.as_deref().is_some_and(|hash| {
+                        std::fs::read(&abs_path)
+                            .map(|content| sha256_hex(&content) == hash)
+                            .unwrap_or(false)
+                    })
+                {
                     std::fs::remove_file(&abs_path).map_err(RuntimeError::Io)?;
                     reverted += 1;
                 } else {
@@ -1148,7 +1566,8 @@ fn revert_snapshot_at(
             let current = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
             let current_hash = sha256_hex(&current);
             let already_reverted = current_hash == file.content_hash;
-            let matches_post_image = file.post_content_hash.as_deref() == Some(current_hash.as_str());
+            let matches_post_image =
+                file.post_content_hash.as_deref() == Some(current_hash.as_str());
             if !already_reverted && !matches_post_image {
                 conflicts.push(rel_path);
                 continue;
@@ -1162,8 +1581,17 @@ fn revert_snapshot_at(
         reverted += 1;
     }
 
-    info!("snapshot_reverted id={} reverted={} conflicts={}", snapshot_id, reverted, conflicts.len());
-    Ok(RevertResult { snapshot_id: snapshot_id.to_string(), files_reverted: reverted, conflicts })
+    info!(
+        "snapshot_reverted id={} reverted={} conflicts={}",
+        snapshot_id,
+        reverted,
+        conflicts.len()
+    );
+    Ok(RevertResult {
+        snapshot_id: snapshot_id.to_string(),
+        files_reverted: reverted,
+        conflicts,
+    })
 }
 
 #[derive(Serialize)]
@@ -1182,8 +1610,16 @@ struct PreparedPatch {
     content: String,
 }
 
-fn apply_patch(snapshot_id: Option<&str>, patches: &[serde_json::Value]) -> Result<PatchResult, RuntimeError> {
-    apply_patch_at(Path::new(WORKSPACE), Path::new(SNAPSHOT_DIR), snapshot_id, patches)
+fn apply_patch(
+    snapshot_id: Option<&str>,
+    patches: &[serde_json::Value],
+) -> Result<PatchResult, RuntimeError> {
+    apply_patch_at(
+        Path::new(WORKSPACE),
+        Path::new(SNAPSHOT_DIR),
+        snapshot_id,
+        patches,
+    )
 }
 
 fn apply_patch_at(
@@ -1201,16 +1637,26 @@ fn apply_patch_at(
 
     // Phase 1: validate and compute all new contents before applying any patch.
     for patch in patches {
-        let rel_path = patch.get("path").and_then(|v| v.as_str())
+        let rel_path = patch
+            .get("path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| RuntimeError::InvalidPath("missing path in patch".to_string()))?;
-        let expected_hash = patch.get("expectedHash").and_then(|v| v.as_str())
-            .ok_or_else(|| RuntimeError::InvalidPath("missing expectedHash in patch".to_string()))?;
+        let expected_hash = patch
+            .get("expectedHash")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                RuntimeError::InvalidPath("missing expectedHash in patch".to_string())
+            })?;
 
         if !is_safe_relative_path(rel_path) {
-            return Err(RuntimeError::PathTraversal { path: rel_path.to_string() });
+            return Err(RuntimeError::PathTraversal {
+                path: rel_path.to_string(),
+            });
         }
         if !seen_paths.insert(rel_path.to_string()) {
-            return Err(RuntimeError::InvalidPath(format!("duplicate patch path: {rel_path}")));
+            return Err(RuntimeError::InvalidPath(format!(
+                "duplicate patch path: {rel_path}"
+            )));
         }
 
         let abs_path = workspace.join(rel_path);
@@ -1233,10 +1679,14 @@ fn apply_patch_at(
             )));
         }
 
-        let hunks = patch.get("hunks").and_then(|v| v.as_array())
+        let hunks = patch
+            .get("hunks")
+            .and_then(|v| v.as_array())
             .ok_or_else(|| RuntimeError::InvalidPath("missing hunks in patch".to_string()))?;
         if hunks.is_empty() {
-            return Err(RuntimeError::InvalidPath(format!("empty hunks for {rel_path}")));
+            return Err(RuntimeError::InvalidPath(format!(
+                "empty hunks for {rel_path}"
+            )));
         }
 
         let mut content = original_content.clone();
@@ -1338,7 +1788,11 @@ fn apply_patch_at(
 
     let diff = diff_lines.join("\n");
     info!("patch_applied files={}", changed.len());
-    Ok(PatchResult { changed, diff, new_hashes })
+    Ok(PatchResult {
+        changed,
+        diff,
+        new_hashes,
+    })
 }
 
 fn prepare_snapshot_post_hashes(
@@ -1347,7 +1801,9 @@ fn prepare_snapshot_post_hashes(
     changes: &[PreparedPatch],
 ) -> Result<(PathBuf, Vec<u8>), RuntimeError> {
     if !is_safe_job_id(snapshot_id) {
-        return Err(RuntimeError::InvalidPath(format!("invalid snapshot id: {snapshot_id}")));
+        return Err(RuntimeError::InvalidPath(format!(
+            "invalid snapshot id: {snapshot_id}"
+        )));
     }
     let snapshot_dir = snapshot_root.join(snapshot_id);
     let manifest_path = snapshot_dir.join(".manifest.json");
@@ -1360,13 +1816,17 @@ fn prepare_snapshot_post_hashes(
             .files
             .iter_mut()
             .find(|file| file.relative_path == change.relative_path)
-            .ok_or_else(|| RuntimeError::InvalidPath(format!(
-                "snapshot manifest missing patch path: {}", change.relative_path
-            )))?;
+            .ok_or_else(|| {
+                RuntimeError::InvalidPath(format!(
+                    "snapshot manifest missing patch path: {}",
+                    change.relative_path
+                ))
+            })?;
         entry.post_content_hash = Some(hash);
     }
-    let updated = serde_json::to_vec(&manifest)
-        .map_err(|e| RuntimeError::Command(format!("failed to serialize snapshot manifest: {e}")))?;
+    let updated = serde_json::to_vec(&manifest).map_err(|e| {
+        RuntimeError::Command(format!("failed to serialize snapshot manifest: {e}"))
+    })?;
     Ok((manifest_path, updated))
 }
 
@@ -1381,8 +1841,6 @@ fn rollback_patches(changes: &[PreparedPatch], applied: &[usize]) -> Result<(), 
     }
     Ok(())
 }
-
-
 
 #[derive(Serialize)]
 struct ErrorResponse {
@@ -1786,9 +2244,9 @@ async fn exec_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     #[cfg(unix)]
     use std::time::Instant;
+    use tempfile::TempDir;
     #[test]
     fn background_wrapper_keeps_user_values_out_of_shell_script() {
         let command = r#"printf '%s' "$1""#;
@@ -1991,9 +2449,10 @@ mod tests {
         let tmp = TempDir::new().expect("temporary job directory");
         let marker = tmp.path().join("injected");
         let argument = format!("safe; touch {}", marker.display());
-        let job_id = start_background_job_at(tmp.path(), r#"printf '%s' "$1""#, vec![argument.clone()], 0)
-            .await
-            .expect("background job should spawn");
+        let job_id =
+            start_background_job_at(tmp.path(), r#"printf '%s' "$1""#, vec![argument.clone()], 0)
+                .await
+                .expect("background job should spawn");
         let job_path = tmp.path().join(&job_id);
 
         for _ in 0..20 {
@@ -2043,7 +2502,10 @@ mod tests {
         let (text, truncated) = truncate_utf8_safe(input, 4);
         assert!(truncated);
         assert!(text.starts_with("汉"), "got {text:?}");
-        assert!(!text.contains('\u{fffd}'), "must not split a char: {text:?}");
+        assert!(
+            !text.contains('\u{fffd}'),
+            "must not split a char: {text:?}"
+        );
         assert!(text.ends_with("[truncated to 3 bytes]"), "got {text:?}");
     }
 
@@ -2152,33 +2614,46 @@ mod tests {
 
         let overdue = write_fake_job(tmp.path(), "job-overdue", "running", Some("4321"), 0);
         std::fs::write(overdue.join("timeout_secs"), "2").unwrap();
-        std::fs::write(overdue.join("started_at"), (now - chrono::Duration::seconds(30)).to_rfc3339())
-            .unwrap();
+        std::fs::write(
+            overdue.join("started_at"),
+            (now - chrono::Duration::seconds(30)).to_rfc3339(),
+        )
+        .unwrap();
 
         let fresh = write_fake_job(tmp.path(), "job-fresh", "running", Some("4321"), 0);
         std::fs::write(fresh.join("timeout_secs"), "600").unwrap();
         std::fs::write(fresh.join("started_at"), now.to_rfc3339()).unwrap();
 
         let unlimited = write_fake_job(tmp.path(), "job-unlimited", "running", Some("4321"), 0);
-        std::fs::write(unlimited.join("started_at"), (now - chrono::Duration::seconds(3600)).to_rfc3339())
-            .unwrap();
+        std::fs::write(
+            unlimited.join("started_at"),
+            (now - chrono::Duration::seconds(3600)).to_rfc3339(),
+        )
+        .unwrap();
 
         let finished = write_fake_job(tmp.path(), "job-done", "succeeded", None, 0);
         std::fs::write(finished.join("timeout_secs"), "2").unwrap();
-        std::fs::write(finished.join("started_at"), (now - chrono::Duration::seconds(60)).to_rfc3339())
-            .unwrap();
+        std::fs::write(
+            finished.join("started_at"),
+            (now - chrono::Duration::seconds(60)).to_rfc3339(),
+        )
+        .unwrap();
 
         let killed: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
-        let enforced =
-            enforce_job_timeouts_with(tmp.path(), now, |_pid| true, |pid| {
-                killed.lock().unwrap().push(pid)
-            })
-            .unwrap();
+        let enforced = enforce_job_timeouts_with(
+            tmp.path(),
+            now,
+            |_pid| true,
+            |pid| killed.lock().unwrap().push(pid),
+        )
+        .unwrap();
 
         assert_eq!(enforced, vec!["job-overdue".to_string()]);
         assert_eq!(*killed.lock().unwrap(), vec![4321]);
         assert_eq!(
-            std::fs::read_to_string(overdue.join("meta")).unwrap().trim(),
+            std::fs::read_to_string(overdue.join("meta"))
+                .unwrap()
+                .trim(),
             "timeout"
         );
         assert_eq!(
@@ -2187,12 +2662,16 @@ mod tests {
             "a job inside its limit must not be terminated"
         );
         assert_eq!(
-            std::fs::read_to_string(unlimited.join("meta")).unwrap().trim(),
+            std::fs::read_to_string(unlimited.join("meta"))
+                .unwrap()
+                .trim(),
             "running",
             "a job without a limit (or timeout 0) must not be terminated"
         );
         assert_eq!(
-            std::fs::read_to_string(finished.join("meta")).unwrap().trim(),
+            std::fs::read_to_string(finished.join("meta"))
+                .unwrap()
+                .trim(),
             "succeeded",
             "finished jobs are not touched"
         );

@@ -262,9 +262,12 @@ async fn background_job_timeout_kills_group_and_records_terminal_state() {
             "timeoutSecs": 2
         }
     });
-    let reply = tokio::time::timeout(Duration::from_secs(15), run_oneshot(&docker, &container, op))
-        .await
-        .expect("start_background_process must answer promptly");
+    let reply = tokio::time::timeout(
+        Duration::from_secs(15),
+        run_oneshot(&docker, &container, op),
+    )
+    .await
+    .expect("start_background_process must answer promptly");
     let job_id = reply
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())

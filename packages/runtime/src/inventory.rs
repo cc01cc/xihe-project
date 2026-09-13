@@ -8,7 +8,11 @@ pub enum InventoryResult {
     Blocked(String),
 }
 
-pub fn scan_with_env(host_root: &Path, xihe_workspace: Option<&str>, gate: Option<&str>) -> InventoryResult {
+pub fn scan_with_env(
+    host_root: &Path,
+    xihe_workspace: Option<&str>,
+    gate: Option<&str>,
+) -> InventoryResult {
     if let Some(ws) = xihe_workspace
         && !ws.trim().is_empty()
         && gate != Some("true")
@@ -116,6 +120,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let result = scan_at_startup(dir.path());
         // In test env, XIHE_WORKSPACE is usually not set, so should be Clean unless host_root is tmp
-        assert!(matches!(result, InventoryResult::Clean | InventoryResult::Blocked(_)));
+        assert!(matches!(
+            result,
+            InventoryResult::Clean | InventoryResult::Blocked(_)
+        ));
     }
 }

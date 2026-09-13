@@ -27,7 +27,10 @@ async fn test_m1b_sentinel_mount_verified() {
         .create_exec(
             &state.container_name,
             bollard::exec::CreateExecOptions {
-                cmd: Some(vec!["cat".to_string(), "/workspace/.xihe-sentinel".to_string()]),
+                cmd: Some(vec![
+                    "cat".to_string(),
+                    "/workspace/.xihe-sentinel".to_string(),
+                ]),
                 attach_stdout: Some(true),
                 attach_stderr: Some(true),
                 ..Default::default()
@@ -68,8 +71,14 @@ async fn test_m1b_sentinel_mount_verified() {
     mgr.delete_workspace(&ws_id)
         .await
         .expect("Sandbox cleanup should succeed");
-    assert!(PathBuf::from(&ws_path).exists(), "WorkspaceStorage must survive Sandbox delete");
-    assert!(sentinel.exists(), "WorkspaceStorage sentinel must survive Sandbox delete");
+    assert!(
+        PathBuf::from(&ws_path).exists(),
+        "WorkspaceStorage must survive Sandbox delete"
+    );
+    assert!(
+        sentinel.exists(),
+        "WorkspaceStorage sentinel must survive Sandbox delete"
+    );
     println!(
         "cleanup done, host exists? {}",
         PathBuf::from(&ws_path).exists()
@@ -93,5 +102,8 @@ async fn test_m1b_host_writability_probe() {
         .await
         .expect("Sandbox cleanup should succeed");
     assert!(!state.container_name.is_empty());
-    assert!(PathBuf::from(&ws_path).exists(), "WorkspaceStorage must survive Sandbox delete");
+    assert!(
+        PathBuf::from(&ws_path).exists(),
+        "WorkspaceStorage must survive Sandbox delete"
+    );
 }

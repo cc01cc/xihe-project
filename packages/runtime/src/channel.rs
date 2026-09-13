@@ -10,19 +10,19 @@
 //! suspended (single-sink rule, no double reporting). On disconnect the
 //! Runtime falls back to HTTP automatically and logs channel_fallback.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::channel_proto::{
-    Envelope, WorkspaceSummary, TYPE_ACK, TYPE_EVENT, TYPE_HELLO, TYPE_WELCOME,
+    Envelope, TYPE_ACK, TYPE_EVENT, TYPE_HELLO, TYPE_WELCOME, WorkspaceSummary,
 };
 use crate::gateway::WorkspaceRegistry;
 
@@ -123,7 +123,11 @@ impl ChannelClient {
                 }
                 Err(error) => {
                     self.mark_fallback();
-                    warn!("channel_fallback reason={} backoffMs={}", error, backoff.as_millis());
+                    warn!(
+                        "channel_fallback reason={} backoffMs={}",
+                        error,
+                        backoff.as_millis()
+                    );
                 }
             }
             tokio::select! {
@@ -150,10 +154,9 @@ impl ChannelClient {
                 .parse()
                 .map_err(|_| "auth header build failed".to_string())?,
         );
-        let (mut ws, _response) =
-            tokio_tungstenite::connect_async(request)
-                .await
-                .map_err(|e| format!("connect failed: {e}"))?;
+        let (mut ws, _response) = tokio_tungstenite::connect_async(request)
+            .await
+            .map_err(|e| format!("connect failed: {e}"))?;
         info!("channel_connected url={}", self.url);
 
         // hello with the current workspace summary built from registry.

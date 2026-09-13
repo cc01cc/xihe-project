@@ -6,8 +6,8 @@ use std::time::Duration;
 // 生效值由 CP 下发 + 本模块 ENV 覆盖，经 task_local 传入本模块；此处只消费，不做计算。
 use crate::tool_timeout;
 
-use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::Docker;
+use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
@@ -125,7 +125,10 @@ impl InFlightExecutions {
     /// terminations are retained for the late-retry loop instead.
     pub fn unregister(&self, item_id: &str) {
         let mut map = self.inner.lock().expect("in-flight registry poisoned");
-        if map.get(item_id).is_some_and(|entry| entry.retain_unconfirmed) {
+        if map
+            .get(item_id)
+            .is_some_and(|entry| entry.retain_unconfirmed)
+        {
             return;
         }
         map.remove(item_id);
@@ -224,7 +227,9 @@ impl InFlightExecutions {
                 .expect("in-flight registry poisoned")
                 .remove(&item_id)
             {
-                let _ = entry.outcome.send(Some(ExecutionEnd::Cancelled { confirmed: true }));
+                let _ = entry
+                    .outcome
+                    .send(Some(ExecutionEnd::Cancelled { confirmed: true }));
             }
             tracing::info!(item_id = %item_id, "late-termination confirmed after unconfirmed cancel");
             late.push(LateTermination {
@@ -350,7 +355,8 @@ impl WorkspaceExecutionRouter {
         payload: Value,
     ) -> Result<Value> {
         let _instance = self.ensure(workspace_id).await?;
-        self.exec_oneshot_inner(workspace_id, operation, payload).await
+        self.exec_oneshot_inner(workspace_id, operation, payload)
+            .await
     }
 
     /// Executes against the already-materialized container **without**
@@ -363,7 +369,8 @@ impl WorkspaceExecutionRouter {
         operation: &str,
         payload: Value,
     ) -> Result<Value> {
-        self.exec_oneshot_inner(workspace_id, operation, payload).await
+        self.exec_oneshot_inner(workspace_id, operation, payload)
+            .await
     }
 
     async fn exec_oneshot_inner(
@@ -433,12 +440,13 @@ impl WorkspaceExecutionRouter {
             StartExecResults::Detached => {
                 return Err(RuntimeError::Docker(
                     "exec unexpectedly detached".to_string(),
-                ))
+                ));
             }
         };
         // PLAN-0317 T2.9：登记 exec 句柄，供追偿循环检查原执行是否仍在运行。
         if let Some(state) = &in_flight_state {
-            self.in_flight.attach_exec(&state.item_id, &container_name, &exec.id);
+            self.in_flight
+                .attach_exec(&state.item_id, &container_name, &exec.id);
         }
         let mut op_bytes = op_json.into_bytes();
         op_bytes.push(b'\n');
@@ -511,7 +519,7 @@ impl WorkspaceExecutionRouter {
                 Err(join_err) => {
                     return Err(RuntimeError::Docker(format!(
                         "collect task failed: {join_err}"
-                    )))
+                    )));
                 }
             },
             WaitOutcome::Aborted(reason) => {
@@ -525,8 +533,8 @@ impl WorkspaceExecutionRouter {
                     correlation.render()
                 );
                 let abort_frame = b"{\"abort\":true}\n";
-                let sent = input.write_all(abort_frame).await.is_ok()
-                    && input.flush().await.is_ok();
+                let sent =
+                    input.write_all(abort_frame).await.is_ok() && input.flush().await.is_ok();
                 let mut reply = if sent {
                     tokio::time::timeout(ABORT_CONFIRM_WAIT, &mut collector)
                         .await
@@ -561,10 +569,7 @@ impl WorkspaceExecutionRouter {
                     });
                 }
                 return Err(RuntimeError::Cancelled {
-                    detail: format!(
-                        "confirmed={confirmed}{}",
-                        correlation.render()
-                    ),
+                    detail: format!("confirmed={confirmed}{}", correlation.render()),
                     confirmed,
                 });
             }
@@ -933,7 +938,10 @@ mod in_flight_tests {
         let second = registry.register("ws-1", "item-1");
 
         assert_eq!(registry.len(), 1);
-        assert!(first.token.is_cancelled(), "stale execution must be cancelled");
+        assert!(
+            first.token.is_cancelled(),
+            "stale execution must be cancelled"
+        );
         assert!(!second.token.is_cancelled());
 
         assert!(registry.request_termination("ws-1", "item-1").is_some());
@@ -957,7 +965,11 @@ mod in_flight_tests {
         registry.retain_for_retry("item-1");
         registry.unregister("item-1");
 
-        assert_eq!(registry.len(), 1, "unconfirmed termination must be retained");
+        assert_eq!(
+            registry.len(),
+            1,
+            "unconfirmed termination must be retained"
+        );
     }
 
     /// PLAN-0317 T2.9：正常结束（未标记保留）照常注销。

@@ -15,8 +15,14 @@ fn test_job_dir_lifecycle() {
     std::fs::write(path.join("meta"), "running").unwrap();
     std::fs::write(path.join("stdout"), "hello").unwrap();
     assert!(path.exists());
-    assert_eq!(std::fs::read_to_string(path.join("meta")).unwrap(), "running");
-    assert_eq!(std::fs::read_to_string(path.join("stdout")).unwrap(), "hello");
+    assert_eq!(
+        std::fs::read_to_string(path.join("meta")).unwrap(),
+        "running"
+    );
+    assert_eq!(
+        std::fs::read_to_string(path.join("stdout")).unwrap(),
+        "hello"
+    );
     std::fs::remove_dir_all(&path).unwrap();
     assert!(!path.exists());
 }

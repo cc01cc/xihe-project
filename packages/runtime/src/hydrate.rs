@@ -15,8 +15,7 @@ use crate::sandbox::SecurityProfile;
 use crate::storage;
 use crate::workspace::{WorkspaceManager, WorkspaceState};
 
-const EXECUTION_SPEC_PATH: &str =
-    "/internal/v1/runtime/workspaces/{workspaceId}/execution-spec";
+const EXECUTION_SPEC_PATH: &str = "/internal/v1/runtime/workspaces/{workspaceId}/execution-spec";
 const DEFAULT_IMAGE: &str = "xihe/workspace:latest";
 
 // Encode every byte except the characters accepted by the CP workspace route.
@@ -156,8 +155,8 @@ impl ExecutionSpecClient {
     }
 
     pub fn from_env() -> Self {
-        let cp_url = std::env::var("XIHE_CP_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:12631".to_string());
+        let cp_url =
+            std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://127.0.0.1:12631".to_string());
         let api_token = std::env::var("XIHE_CP_API_TOKEN")
             .unwrap_or_else(|_| "dev-token-not-secure".to_string());
         Self::new(&cp_url, &api_token)
@@ -246,7 +245,12 @@ impl WorkspaceEnsurer {
         let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT")
             .ok()
             .map(PathBuf::from);
-        Self::new(registry, manager, ExecutionSpecClient::from_env(), host_root)
+        Self::new(
+            registry,
+            manager,
+            ExecutionSpecClient::from_env(),
+            host_root,
+        )
     }
 
     /// Test/embedding entry point: explicit spec client (no env reads).
@@ -294,7 +298,10 @@ impl WorkspaceEnsurer {
         }
         let workspace_lock = self.lock_for(workspace_id).await;
         let _guard = workspace_lock.lock().await;
-        self.client.fetch_for_workspace(workspace_id).await.map(|_| ())
+        self.client
+            .fetch_for_workspace(workspace_id)
+            .await
+            .map(|_| ())
     }
 
     pub async fn ensure_workspace_materialized(
@@ -405,26 +412,14 @@ impl WorkspaceEnsurer {
             let mut manager = self.manager.lock().await;
             let result = if force_recreate {
                 manager
-                    .recreate_workspace(
-                        workspace_id,
-                        &workspace_path_string,
-                        profile,
-                        &image,
-                    )
+                    .recreate_workspace(workspace_id, &workspace_path_string, profile, &image)
                     .await
             } else if let Some(existing) = manager.get_state(workspace_id).cloned() {
-                if existing.workspace_path == workspace_path_string
-                    && existing.profile == profile
-                {
+                if existing.workspace_path == workspace_path_string && existing.profile == profile {
                     Ok(existing)
                 } else {
                     manager
-                        .recreate_workspace(
-                            workspace_id,
-                            &workspace_path_string,
-                            profile,
-                            &image,
-                        )
+                        .recreate_workspace(workspace_id, &workspace_path_string, profile, &image)
                         .await
                 }
             } else {
@@ -468,8 +463,8 @@ impl WorkspaceEnsurer {
 
 #[cfg(test)]
 mod tests {
-    use mockito::Server;
     use crate::gateway::MaterializationState;
+    use mockito::Server;
 
     use super::*;
 
@@ -500,7 +495,10 @@ mod tests {
     fn execution_spec_validation_accepts_v1_host_directory() {
         let spec = valid_spec();
         assert!(spec.validate_for_workspace("ws-1").is_ok());
-        assert_eq!(spec.security_profile("ws-1").unwrap(), SecurityProfile::Strict);
+        assert_eq!(
+            spec.security_profile("ws-1").unwrap(),
+            SecurityProfile::Strict
+        );
     }
 
     #[test]
@@ -526,10 +524,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let hash = "a".repeat(64);
         let mock = server
-            .mock(
-                "GET",
-                "/internal/v1/runtime/workspaces/ws-1/execution-spec",
-            )
+            .mock("GET", "/internal/v1/runtime/workspaces/ws-1/execution-spec")
             .match_header("Authorization", "Bearer test-token")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -538,13 +533,10 @@ mod tests {
             .await;
 
         let host_root = tempfile::tempdir().unwrap();
-        let workspace_path = storage::resolve_host_path(
-            host_root.path().to_str().unwrap(),
-            "ws-1",
-            "ws-1",
-        )
-        .await
-        .unwrap();
+        let workspace_path =
+            storage::resolve_host_path(host_root.path().to_str().unwrap(), "ws-1", "ws-1")
+                .await
+                .unwrap();
         let registry = Arc::new(WorkspaceRegistry::new());
         registry
             .register_with_spec(
@@ -566,7 +558,10 @@ mod tests {
         let instance = ensurer.ensure_workspace_materialized("ws-1").await.unwrap();
         assert_eq!(instance.generation, 1);
         assert_eq!(instance.spec_hash, hash);
-        assert_eq!(registry.status("ws-1").await.unwrap().state, MaterializationState::Ready);
+        assert_eq!(
+            registry.status("ws-1").await.unwrap().state,
+            MaterializationState::Ready
+        );
         mock.assert_async().await;
     }
 
@@ -576,10 +571,7 @@ mod tests {
         let old_hash = "a".repeat(64);
         let new_hash = "b".repeat(64);
         let mock = server
-            .mock(
-                "GET",
-                "/internal/v1/runtime/workspaces/ws-1/execution-spec",
-            )
+            .mock("GET", "/internal/v1/runtime/workspaces/ws-1/execution-spec")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(spec_body("ws-1", 2, &new_hash))
@@ -587,13 +579,10 @@ mod tests {
             .await;
 
         let host_root = tempfile::tempdir().unwrap();
-        let workspace_path = storage::resolve_host_path(
-            host_root.path().to_str().unwrap(),
-            "ws-1",
-            "ws-1",
-        )
-        .await
-        .unwrap();
+        let workspace_path =
+            storage::resolve_host_path(host_root.path().to_str().unwrap(), "ws-1", "ws-1")
+                .await
+                .unwrap();
         let registry = Arc::new(WorkspaceRegistry::new());
         registry
             .register_with_spec(
@@ -615,7 +604,10 @@ mod tests {
         assert_eq!(instance.generation, 2);
         assert_eq!(instance.spec_hash, new_hash);
         assert!(workspace_path.join(".xihe-sentinel").is_file());
-        assert_eq!(registry.status("ws-1").await.unwrap().state, MaterializationState::Ready);
+        assert_eq!(
+            registry.status("ws-1").await.unwrap().state,
+            MaterializationState::Ready
+        );
         mock.assert_async().await;
     }
 
@@ -626,10 +618,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let hash = "a".repeat(64);
         let mock = server
-            .mock(
-                "GET",
-                "/internal/v1/runtime/workspaces/ws-1/execution-spec",
-            )
+            .mock("GET", "/internal/v1/runtime/workspaces/ws-1/execution-spec")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(spec_body("ws-1", 1, &hash))

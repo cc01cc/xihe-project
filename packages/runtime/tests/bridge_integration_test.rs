@@ -63,7 +63,9 @@ fn wait_for_ready(port: u16) {
 }
 
 fn stop_bridge(mut child: Child) {
-    child.kill().expect("MCP bridge process should still be running");
+    child
+        .kill()
+        .expect("MCP bridge process should still be running");
     child
         .wait()
         .expect("MCP bridge process should provide an exit status");

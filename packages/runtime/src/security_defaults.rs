@@ -119,7 +119,10 @@ mod tests {
     #[test]
     fn collect_violations_flags_all_dangerous_defaults() {
         let lookup = lookup_of(&[
-            ("XIHE_CP_JWT_SECRET", "xihe-cp-jwt-secret-key-change-in-production"),
+            (
+                "XIHE_CP_JWT_SECRET",
+                "xihe-cp-jwt-secret-key-change-in-production",
+            ),
             ("XIHE_CP_API_TOKEN", "dev-token-not-secure"),
             ("XIHE_AGENT_API_TOKEN", "dev-token-not-secure"),
             ("XIHE_CP_OAUTH_ALLOW_DEV_KEY", "true"),

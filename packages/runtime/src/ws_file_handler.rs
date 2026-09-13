@@ -93,10 +93,7 @@ pub async fn handle_read_file(
     Path(ws_id): Path<String>,
     Json(req): Json<ReadFileRestRequest>,
 ) -> Result<Json<ReadFileResult>, (StatusCode, Json<Value>)> {
-    let ws = app
-        .ensure_workspace(&ws_id)
-        .await
-        .map_err(map_error)?;
+    let ws = app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     let mut content = fs::read_file(&req.path, &ws.workspace_path)
         .await
         .map_err(map_error)?;
@@ -133,10 +130,7 @@ pub async fn handle_write_binary(
                 })),
             )
         })?;
-    let ws = app
-        .ensure_workspace(&ws_id)
-        .await
-        .map_err(map_error)?;
+    let ws = app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-274 explicit exception: binary writes stay on the host direct path
     // because the Docker-exec JSON frame only carries UTF-8 strings and would
@@ -153,10 +147,7 @@ pub async fn handle_list_directory(
     Path(ws_id): Path<String>,
     Json(req): Json<ListDirectoryRequest>,
 ) -> Result<Json<fs::DirectoryListing>, (StatusCode, Json<Value>)> {
-    let ws = app
-        .ensure_workspace(&ws_id)
-        .await
-        .map_err(map_error)?;
+    let ws = app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     let entries = fs::list_directory(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(fs::DirectoryListing { entries }))
 }
@@ -169,7 +160,11 @@ pub async fn handle_delete_file(
     // PLAN-274 §3.2: mutations share the Sandbox executor with MCP tools.
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
-    let msg = app.router.delete_file(&ws_id, &req.path).await.map_err(map_error)?;
+    let msg = app
+        .router
+        .delete_file(&ws_id, &req.path)
+        .await
+        .map_err(map_error)?;
     Ok(Json(serde_json::json!({ "message": msg })))
 }
 
@@ -181,7 +176,11 @@ pub async fn handle_mkdir(
     // PLAN-274 §3.2: mutations share the Sandbox executor with MCP tools.
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
-    let msg = app.router.mkdir(&ws_id, &req.path).await.map_err(map_error)?;
+    let msg = app
+        .router
+        .mkdir(&ws_id, &req.path)
+        .await
+        .map_err(map_error)?;
     Ok(Json(serde_json::json!({ "message": msg })))
 }
 
@@ -190,10 +189,7 @@ pub async fn handle_stat(
     Path(ws_id): Path<String>,
     Json(req): Json<GetFileInfoRequest>,
 ) -> Result<Json<fs::FileInfo>, (StatusCode, Json<Value>)> {
-    let ws = app
-        .ensure_workspace(&ws_id)
-        .await
-        .map_err(map_error)?;
+    let ws = app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     let info = fs::get_file_info(&req.path, &ws.workspace_path).map_err(map_error)?;
     Ok(Json(info))
 }
@@ -207,12 +203,12 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use tempfile::TempDir;
-    use tokio::task::JoinHandle;
     use tokio::sync::Mutex;
-    use xihe_runtime::hydrate::{ExecutionSpecClient, WorkspaceEnsurer};
-    use xihe_runtime::gateway::WorkspaceRegistry;
-    use xihe_runtime::workspace::WorkspaceManager;
+    use tokio::task::JoinHandle;
     use xihe_runtime::executor::WorkspaceExecutionRouter;
+    use xihe_runtime::gateway::WorkspaceRegistry;
+    use xihe_runtime::hydrate::{ExecutionSpecClient, WorkspaceEnsurer};
+    use xihe_runtime::workspace::WorkspaceManager;
 
     struct TestCp {
         task: JoinHandle<()>,
@@ -229,9 +225,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let ws_id = uuid::Uuid::new_v4().to_string();
         let hash = "a".repeat(64);
-        let route_path = format!(
-            "/internal/v1/runtime/workspaces/{ws_id}/execution-spec"
-        );
+        let route_path = format!("/internal/v1/runtime/workspaces/{ws_id}/execution-spec");
         let spec_body = serde_json::json!({
             "workspaceId": ws_id,
             "generation": 1,
@@ -240,9 +234,7 @@ mod tests {
             "storageBackend": "host_directory",
             "storageRef": ws_id,
         });
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let route_body = spec_body.clone();
         let router = axum::Router::new()
@@ -261,13 +253,10 @@ mod tests {
         });
 
         let registry = Arc::new(WorkspaceRegistry::new());
-        let workspace_path = xihe_runtime::storage::resolve_host_path(
-            dir.path().to_str().unwrap(),
-            &ws_id,
-            &ws_id,
-        )
-        .await
-        .unwrap();
+        let workspace_path =
+            xihe_runtime::storage::resolve_host_path(dir.path().to_str().unwrap(), &ws_id, &ws_id)
+                .await
+                .unwrap();
         tokio::fs::create_dir_all(&workspace_path).await.unwrap();
         registry
             .register_with_spec(

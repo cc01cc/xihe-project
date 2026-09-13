@@ -5,21 +5,21 @@ pub mod device;
 pub mod dotenv_loader;
 pub mod environment;
 pub mod error;
+pub mod executor;
 pub mod fetch;
 pub mod fs;
 pub mod gateway;
 pub mod heartbeat;
 pub mod hydrate;
+pub mod inventory;
 pub mod log_redact;
 pub mod mcp_process;
 pub mod remote_mcp;
 pub mod sandbox;
 pub mod security_defaults;
 pub mod storage;
-pub mod workspace;
-pub mod executor;
-pub mod inventory;
 pub mod tool_timeout;
+pub mod workspace;
 
 #[cfg(test)]
 mod tests {

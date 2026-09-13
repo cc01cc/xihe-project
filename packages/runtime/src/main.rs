@@ -32,7 +32,9 @@ mod ws_file_handler;
 use tokio::sync::Mutex;
 use xihe_runtime::device;
 use xihe_runtime::dotenv_loader;
+use xihe_runtime::error::RuntimeError;
 use xihe_runtime::executor::ExecutionEnd;
+use xihe_runtime::executor::WorkspaceExecutionRouter;
 use xihe_runtime::fetch;
 use xihe_runtime::fetch::WebFetchResult;
 use xihe_runtime::fs;
@@ -50,8 +52,6 @@ use xihe_runtime::sandbox;
 use xihe_runtime::storage;
 use xihe_runtime::tool_timeout;
 use xihe_runtime::workspace::WorkspaceManager;
-use xihe_runtime::executor::WorkspaceExecutionRouter;
-use xihe_runtime::error::RuntimeError;
 
 /// Shared runtime state for Axum handlers — holds the routing registry
 /// and the Docker-backed WorkspaceManager. This converges the former dual
@@ -310,10 +310,15 @@ impl XiheRuntime {
         &self,
         Parameters(ReadFileRequest { path }): Parameters<ReadFileRequest>,
     ) -> Result<String, String> {
-        self.router.read_file(&self.ws_id, &path).await.map_err(|e| e.to_string())
+        self.router
+            .read_file(&self.ws_id, &path)
+            .await
+            .map_err(|e| e.to_string())
     }
 
-    #[tool(description = "Read file with line range support, binary detection, and line numbers (binary files return base64 with is_binary=true, capped at 16 MiB)")]
+    #[tool(
+        description = "Read file with line range support, binary detection, and line numbers (binary files return base64 with is_binary=true, capped at 16 MiB)"
+    )]
     async fn read_file_range(
         &self,
         Parameters(ReadFileRangeRequest {
@@ -339,7 +344,10 @@ impl XiheRuntime {
         &self,
         Parameters(WriteFileRequest { path, content }): Parameters<WriteFileRequest>,
     ) -> Result<String, String> {
-        self.router.write_file(&self.ws_id, &path, &content).await.map_err(|e| e.to_string())
+        self.router
+            .write_file(&self.ws_id, &path, &content)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     #[tool(description = "List directory contents with file metadata")]
@@ -347,8 +355,14 @@ impl XiheRuntime {
         &self,
         Parameters(ListDirectoryRequest { path }): Parameters<ListDirectoryRequest>,
     ) -> Result<Json<fs::DirectoryListing>, String> {
-        let val = self.router.list_directory(&self.ws_id, &path).await.map_err(|e| e.to_string())?;
-        let entries: Vec<fs::FileInfo> = serde_json::from_value(val.get("entries").cloned().unwrap_or(val)).map_err(|e| format!("deserialize list: {e}"))?;
+        let val = self
+            .router
+            .list_directory(&self.ws_id, &path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let entries: Vec<fs::FileInfo> =
+            serde_json::from_value(val.get("entries").cloned().unwrap_or(val))
+                .map_err(|e| format!("deserialize list: {e}"))?;
         Ok(Json(fs::DirectoryListing { entries }))
     }
 
@@ -357,8 +371,14 @@ impl XiheRuntime {
         &self,
         Parameters(GlobRequest { pattern, path }): Parameters<GlobRequest>,
     ) -> Result<Json<fs::GlobResults>, String> {
-        let val = self.router.glob(&self.ws_id, &pattern, &path).await.map_err(|e| e.to_string())?;
-        let matches: Vec<String> = serde_json::from_value(val.get("matches").cloned().unwrap_or(val)).map_err(|e| format!("deserialize glob: {e}"))?;
+        let val = self
+            .router
+            .glob(&self.ws_id, &pattern, &path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let matches: Vec<String> =
+            serde_json::from_value(val.get("matches").cloned().unwrap_or(val))
+                .map_err(|e| format!("deserialize glob: {e}"))?;
         Ok(Json(fs::GlobResults { matches }))
     }
 
@@ -367,8 +387,14 @@ impl XiheRuntime {
         &self,
         Parameters(GrepRequest { pattern, path }): Parameters<GrepRequest>,
     ) -> Result<Json<fs::GrepResults>, String> {
-        let val = self.router.grep(&self.ws_id, &pattern, &path).await.map_err(|e| e.to_string())?;
-        let matches: Vec<fs::MatchResult> = serde_json::from_value(val.get("matches").cloned().unwrap_or(val)).map_err(|e| format!("deserialize grep: {e}"))?;
+        let val = self
+            .router
+            .grep(&self.ws_id, &pattern, &path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let matches: Vec<fs::MatchResult> =
+            serde_json::from_value(val.get("matches").cloned().unwrap_or(val))
+                .map_err(|e| format!("deserialize grep: {e}"))?;
         Ok(Json(fs::GrepResults { matches }))
     }
 
@@ -383,7 +409,11 @@ impl XiheRuntime {
         }): Parameters<ExecuteCommandRequest>,
     ) -> Result<Json<CommandResult>, String> {
         let args_vec = args;
-        let val = self.router.execute_command(&self.ws_id, &command, args_vec, timeout, truncate_limit).await.map_err(|e| e.to_string())?;
+        let val = self
+            .router
+            .execute_command(&self.ws_id, &command, args_vec, timeout, truncate_limit)
+            .await
+            .map_err(|e| e.to_string())?;
         let result: CommandResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(result))
     }
@@ -397,11 +427,19 @@ impl XiheRuntime {
             limit,
         }): Parameters<ReadCommandOutputRequest>,
     ) -> Result<Json<Vec<String>>, String> {
-        let val = self.router.read_command_output(&self.ws_id, &artifact_id, offset, limit).await.map_err(|e| e.to_string())?;
+        let val = self
+            .router
+            .read_command_output(&self.ws_id, &artifact_id, offset, limit)
+            .await
+            .map_err(|e| e.to_string())?;
         if let Some(content) = val.get("content").and_then(|v| v.as_str()) {
             Ok(Json(content.lines().map(|s| s.to_string()).collect()))
         } else if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
-            Ok(Json(arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()))
+            Ok(Json(
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect(),
+            ))
         } else {
             Ok(Json(vec![]))
         }
@@ -412,7 +450,11 @@ impl XiheRuntime {
         &self,
         Parameters(GetFileInfoRequest { path }): Parameters<GetFileInfoRequest>,
     ) -> Result<Json<FileInfo>, String> {
-        let val = self.router.get_file_info(&self.ws_id, &path).await.map_err(|e| e.to_string())?;
+        let val = self
+            .router
+            .get_file_info(&self.ws_id, &path)
+            .await
+            .map_err(|e| e.to_string())?;
         let info: FileInfo = serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(info))
     }
@@ -422,8 +464,14 @@ impl XiheRuntime {
         &self,
         Parameters(WatchDirectoryRequest { path }): Parameters<WatchDirectoryRequest>,
     ) -> Result<Json<fs::FileEventList>, String> {
-        let val = self.router.watch_directory(&self.ws_id, &path).await.map_err(|e| e.to_string())?;
-        let events: Vec<fs::FileEvent> = serde_json::from_value(val.get("events").cloned().unwrap_or(val)).map_err(|e| e.to_string())?;
+        let val = self
+            .router
+            .watch_directory(&self.ws_id, &path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let events: Vec<fs::FileEvent> =
+            serde_json::from_value(val.get("events").cloned().unwrap_or(val))
+                .map_err(|e| e.to_string())?;
         Ok(Json(fs::FileEventList { events }))
     }
 
@@ -439,7 +487,17 @@ impl XiheRuntime {
             replace_all,
         }): Parameters<EditFileRequest>,
     ) -> Result<Json<EditFileResult>, String> {
-        let val = self.router.edit_file(&self.ws_id, &file_path, &old_string, &new_string, replace_all.unwrap_or(false)).await.map_err(|e| e.to_string())?;
+        let val = self
+            .router
+            .edit_file(
+                &self.ws_id,
+                &file_path,
+                &old_string,
+                &new_string,
+                replace_all.unwrap_or(false),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
         let result: EditFileResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(result))
     }
@@ -449,7 +507,10 @@ impl XiheRuntime {
         &self,
         Parameters(DeleteFileRequest { path }): Parameters<DeleteFileRequest>,
     ) -> Result<String, String> {
-        self.router.delete_file(&self.ws_id, &path).await.map_err(|e| e.to_string())
+        self.router
+            .delete_file(&self.ws_id, &path)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     #[tool(description = "Delete a directory (requires recursive=true for non-empty dirs)")]
@@ -457,7 +518,10 @@ impl XiheRuntime {
         &self,
         Parameters(DeleteDirectoryRequest { path, recursive }): Parameters<DeleteDirectoryRequest>,
     ) -> Result<String, String> {
-        self.router.delete_directory(&self.ws_id, &path, recursive.unwrap_or(false)).await.map_err(|e| e.to_string())
+        self.router
+            .delete_directory(&self.ws_id, &path, recursive.unwrap_or(false))
+            .await
+            .map_err(|e| e.to_string())
     }
 
     #[tool(description = "Move or rename a file or directory")]
@@ -465,7 +529,10 @@ impl XiheRuntime {
         &self,
         Parameters(MoveFileRequest { from, to }): Parameters<MoveFileRequest>,
     ) -> Result<String, String> {
-        self.router.move_file(&self.ws_id, &from, &to).await.map_err(|e| e.to_string())
+        self.router
+            .move_file(&self.ws_id, &from, &to)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     #[tool(description = "Copy a file")]
@@ -473,7 +540,10 @@ impl XiheRuntime {
         &self,
         Parameters(CopyFileRequest { from, to }): Parameters<CopyFileRequest>,
     ) -> Result<String, String> {
-        self.router.copy_file(&self.ws_id, &from, &to).await.map_err(|e| e.to_string())
+        self.router
+            .copy_file(&self.ws_id, &from, &to)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     #[tool(description = "Create a directory (recursive, creates parents as needed)")]
@@ -481,7 +551,10 @@ impl XiheRuntime {
         &self,
         Parameters(MkdirRequest { path }): Parameters<MkdirRequest>,
     ) -> Result<String, String> {
-        self.router.mkdir(&self.ws_id, &path).await.map_err(|e| e.to_string())
+        self.router
+            .mkdir(&self.ws_id, &path)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     #[tool(description = "Extract text content from a PDF file")]
@@ -489,7 +562,10 @@ impl XiheRuntime {
         &self,
         Parameters(ExtractPdfTextRequest { path }): Parameters<ExtractPdfTextRequest>,
     ) -> Result<String, String> {
-        self.router.extract_pdf_text(&self.ws_id, &path).await.map_err(|e| e.to_string())
+        self.router
+            .extract_pdf_text(&self.ws_id, &path)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     #[tool(description = "Fetch a URL and return its content as text or markdown")]
@@ -517,15 +593,24 @@ impl XiheRuntime {
         }): Parameters<ExecuteCommandRequest>,
     ) -> Result<String, String> {
         let args_vec = args;
-        self.router.start_background_process(&self.ws_id, &command, args_vec, timeout).await.map_err(|e| e.to_string())
+        self.router
+            .start_background_process(&self.ws_id, &command, args_vec, timeout)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     #[tool(description = "List all background processes for this workspace")]
     async fn list_background_processes(
         &self,
     ) -> Result<Json<Vec<sandbox::BackgroundProcess>>, String> {
-        let val = self.router.list_background_processes(&self.ws_id).await.map_err(|e| e.to_string())?;
-        let jobs: Vec<sandbox::BackgroundProcess> = serde_json::from_value(val.get("jobs").cloned().unwrap_or(val)).map_err(|e| e.to_string())?;
+        let val = self
+            .router
+            .list_background_processes(&self.ws_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let jobs: Vec<sandbox::BackgroundProcess> =
+            serde_json::from_value(val.get("jobs").cloned().unwrap_or(val))
+                .map_err(|e| e.to_string())?;
         Ok(Json(jobs))
     }
 
@@ -534,8 +619,13 @@ impl XiheRuntime {
         &self,
         Parameters(JobIdRequest { job_id }): Parameters<JobIdRequest>,
     ) -> Result<Json<sandbox::BackgroundProcess>, String> {
-        let val = self.router.get_background_process(&self.ws_id, &job_id).await.map_err(|e| e.to_string())?;
-        let proc: sandbox::BackgroundProcess = serde_json::from_value(val).map_err(|e| e.to_string())?;
+        let val = self
+            .router
+            .get_background_process(&self.ws_id, &job_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let proc: sandbox::BackgroundProcess =
+            serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(proc))
     }
 
@@ -544,8 +634,16 @@ impl XiheRuntime {
         &self,
         Parameters(JobIdRequest { job_id }): Parameters<JobIdRequest>,
     ) -> Result<String, String> {
-        let val = self.router.cancel_background_process(&self.ws_id, &job_id).await.map_err(|e| e.to_string())?;
-        Ok(val.get("status").and_then(|v| v.as_str()).unwrap_or("cancelled").to_string())
+        let val = self
+            .router
+            .cancel_background_process(&self.ws_id, &job_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(val
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("cancelled")
+            .to_string())
     }
 }
 
@@ -609,8 +707,9 @@ fn resolve_runtime_log_filter_with(
     global_level: Option<&str>,
 ) -> EnvFilter {
     if let Some(runtime_log_filter) = runtime_log_filter.filter(|value| !value.is_empty()) {
-        return EnvFilter::try_new(with_timeout_target(runtime_log_filter))
-            .unwrap_or_else(|_| EnvFilter::new(with_timeout_target("xihe_runtime=info,rmcp=info")));
+        return EnvFilter::try_new(with_timeout_target(runtime_log_filter)).unwrap_or_else(|_| {
+            EnvFilter::new(with_timeout_target("xihe_runtime=info,rmcp=info"))
+        });
     }
 
     let level = runtime_level
@@ -619,7 +718,9 @@ fn resolve_runtime_log_filter_with(
         .map(normalize_runtime_log_level)
         .unwrap_or_else(|| "info".to_string());
 
-    EnvFilter::new(with_timeout_target(&format!("xihe_runtime={level},rmcp={level}")))
+    EnvFilter::new(with_timeout_target(&format!(
+        "xihe_runtime={level},rmcp={level}"
+    )))
 }
 
 /// PLAN-0308 M1（spec S5.1/V10）：工具超时署名日志用独立 target `timeout`，
@@ -684,9 +785,7 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::ExecutionSpecUnavailable { .. } => "EXECUTION_SPEC_UNAVAILABLE",
         RuntimeError::McpBridgeUnavailable { .. } => "MCP_BRIDGE_UNAVAILABLE",
         RuntimeError::InvalidExecutionSpec { .. } => "EXECUTION_SPEC_INVALID",
-        RuntimeError::WorkspaceMaterializationFailed { .. } => {
-            "WORKSPACE_MATERIALIZATION_FAILED"
-        }
+        RuntimeError::WorkspaceMaterializationFailed { .. } => "WORKSPACE_MATERIALIZATION_FAILED",
         RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => "FORBIDDEN",
         RuntimeError::InvalidPath(_) => "INVALID_REQUEST",
         _ => "RUNTIME_ERROR",
@@ -1285,9 +1384,14 @@ async fn mcp_spawn_handler(
             .map_err(runtime_problem)?
     };
     let bridge_base_url = mcp_process::bridge_base_url(&bridge_host, bridge_port);
-    if let Err(error) =
-        spawn_bridge_server(&ws_id, &bridge_base_url, &req.server_id, &req.command, &req.args)
-            .await
+    if let Err(error) = spawn_bridge_server(
+        &ws_id,
+        &bridge_base_url,
+        &req.server_id,
+        &req.command,
+        &req.args,
+    )
+    .await
     {
         let cleanup_result = {
             let manager = app.manager.lock().await;
@@ -1335,7 +1439,12 @@ async fn mcp_kill_handler(
         .await
         .map_err(runtime_problem)?;
     let manager = mcp_manager();
-    if !manager.list(&ws_id).await.iter().any(|bridge| bridge.server_id == server_id) {
+    if !manager
+        .list(&ws_id)
+        .await
+        .iter()
+        .any(|bridge| bridge.server_id == server_id)
+    {
         return Err(runtime_problem(RuntimeError::McpBridgeNotFound {
             workspace_id: ws_id,
             server_id,
@@ -1494,12 +1603,15 @@ async fn workspace_materialize_handler(
     if let Some(status) = app.registry.status(&ws_id).await
         && status.state == xihe_runtime::gateway::MaterializationState::Ready
     {
-        return Ok((StatusCode::ACCEPTED, AxumJson(serde_json::to_value(status).map_err(|error| {
-            runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
-                workspace_id: ws_id.clone(),
-                detail: format!("serialize workspace status: {error}"),
-            })
-        })?)));
+        return Ok((
+            StatusCode::ACCEPTED,
+            AxumJson(serde_json::to_value(status).map_err(|error| {
+                runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
+                    workspace_id: ws_id.clone(),
+                    detail: format!("serialize workspace status: {error}"),
+                })
+            })?),
+        ));
     }
     // PLAN-262 M4 P0 / PLAN-274: state is written before spawn so the 202
     // response never races a missing status. Failures mark Failed instead of
@@ -1513,8 +1625,15 @@ async fn workspace_materialize_handler(
                 tracing::info!("Explicit materialization completed: ws_id={}", ws_id_clone);
             }
             Err(error) => {
-                tracing::warn!("Explicit materialization failed: ws_id={} error={}", ws_id_clone, error);
-                app_clone.registry.mark_failed(&ws_id_clone, &error.to_string()).await;
+                tracing::warn!(
+                    "Explicit materialization failed: ws_id={} error={}",
+                    ws_id_clone,
+                    error
+                );
+                app_clone
+                    .registry
+                    .mark_failed(&ws_id_clone, &error.to_string())
+                    .await;
             }
         }
     });
@@ -1524,12 +1643,15 @@ async fn workspace_materialize_handler(
             detail: "materialization trigger accepted but status unavailable".to_string(),
         })
     })?;
-    Ok((StatusCode::ACCEPTED, AxumJson(serde_json::to_value(status).map_err(|error| {
-        runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
-            workspace_id: ws_id.clone(),
-            detail: format!("serialize workspace status: {error}"),
-        })
-    })?)))
+    Ok((
+        StatusCode::ACCEPTED,
+        AxumJson(serde_json::to_value(status).map_err(|error| {
+            runtime_problem(RuntimeError::WorkspaceMaterializationFailed {
+                workspace_id: ws_id.clone(),
+                detail: format!("serialize workspace status: {error}"),
+            })
+        })?),
+    ))
 }
 
 async fn create_workspace_handler(
@@ -1608,7 +1730,6 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn run() -> anyhow::Result<()> {
-
     // CP configuration is optional at startup. Keep readiness independent from CP and
     // refresh the optional config client after the HTTP listener is available.
     let log_dir = std::env::var("XIHE_LOG_DIR").unwrap_or_else(|_| "logs".to_string());
@@ -1655,7 +1776,11 @@ async fn run() -> anyhow::Result<()> {
         registry.clone(),
         manager.clone(),
     ));
-    let router = Arc::new(WorkspaceExecutionRouter::new(workspace_ensurer.clone(), manager.clone(), registry.clone()));
+    let router = Arc::new(WorkspaceExecutionRouter::new(
+        workspace_ensurer.clone(),
+        manager.clone(),
+        registry.clone(),
+    ));
     // M2-3.1: device_id persistence (grill A random UUID file)
     let state_dir = device::resolve_state_dir();
     let device_id = match device::ensure_device_id(&state_dir).await {
@@ -1709,8 +1834,8 @@ async fn run() -> anyhow::Result<()> {
     // XH Channel (PLAN-245): when XIHE_CHANNEL_URL is set, run the outbound
     // WebSocket control channel. Connection liveness drives the single-sink
     // rule (channel up → HTTP heartbeat idle; down → HTTP fallback).
-    let channel_client = xihe_runtime::channel::ChannelClient::from_env(device_id.clone())
-        .map(Arc::new);
+    let channel_client =
+        xihe_runtime::channel::ChannelClient::from_env(device_id.clone()).map(Arc::new);
     if let Some(channel) = channel_client.clone() {
         tracing::info!("channel: enabled url={}", channel.url);
         let channel_ct = ct.child_token();
@@ -1765,7 +1890,15 @@ async fn run() -> anyhow::Result<()> {
     let hb_device_id = device_id.clone();
     let hb_ct = ct.child_token();
     tokio::spawn(async move {
-        heartbeat::heartbeat_loop(hb_ready, hb_cp_url, hb_api_token, hb_device_id, hb_ct, channel_client).await;
+        heartbeat::heartbeat_loop(
+            hb_ready,
+            hb_cp_url,
+            hb_api_token,
+            hb_device_id,
+            hb_ct,
+            channel_client,
+        )
+        .await;
     });
     let _ = reaper_ready_marker;
 
@@ -1792,12 +1925,8 @@ async fn run() -> anyhow::Result<()> {
                 }
             };
             let profile = instance.profile;
-            let runtime = XiheRuntime::new(
-                &ws_id,
-                &instance.workspace_path,
-                profile,
-                router.clone(),
-            );
+            let runtime =
+                XiheRuntime::new(&ws_id, &instance.workspace_path, profile, router.clone());
             Ok(runtime)
         },
         LocalSessionManager::default().into(),
@@ -2494,7 +2623,9 @@ mod remote_handler_tests {
             }
             AxumJson(spec_json(&ws_id)).into_response()
         }
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind cp stub");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind cp stub");
         let addr = listener.local_addr().expect("cp stub addr").to_string();
         let app = Router::new().route(
             "/internal/v1/runtime/workspaces/{ws_id}/execution-spec",
@@ -2512,7 +2643,10 @@ mod remote_handler_tests {
             let bytes = to_bytes(body, usize::MAX).await.expect("read fake body");
             let payload: serde_json::Value =
                 serde_json::from_slice(&bytes).expect("fake received JSON");
-            let id = payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
+            let id = payload
+                .get("id")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             let response = match payload.get("method").and_then(|m| m.as_str()) {
                 Some("initialize") => serde_json::json!({
                     "jsonrpc": "2.0", "id": id,
@@ -2536,7 +2670,9 @@ mod remote_handler_tests {
                 response.to_string(),
             )
         }
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind fake mcp");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake mcp");
         let addr = listener.local_addr().expect("fake mcp addr").to_string();
         let app = Router::new().fallback(any(handler));
         tokio::spawn(async move {
@@ -2727,9 +2863,7 @@ mod tool_router_regression_tests {
     fn timeout_log_target_is_always_enabled() {
         let default_filter = resolve_runtime_log_filter_with(None, None, None);
         assert!(
-            default_filter
-                .to_string()
-                .contains("timeout=info"),
+            default_filter.to_string().contains("timeout=info"),
             "default filter must enable the timeout target: {default_filter}"
         );
 
@@ -2739,7 +2873,8 @@ mod tool_router_regression_tests {
             "custom filter must keep the timeout target: {custom}"
         );
 
-        let explicit = resolve_runtime_log_filter_with(Some("xihe_runtime=debug,timeout=warn"), None, None);
+        let explicit =
+            resolve_runtime_log_filter_with(Some("xihe_runtime=debug,timeout=warn"), None, None);
         assert_eq!(explicit.to_string().matches("timeout=").count(), 1);
     }
 }

@@ -141,7 +141,9 @@ pub fn load(cli_overrides: &HashMap<String, String>) {
                     lookup.insert(key.clone(), value.clone());
                 }
             }
-            Err(error) => tracing::warn!(file = %path.display(), error = %error, "Failed to parse env file"),
+            Err(error) => {
+                tracing::warn!(file = %path.display(), error = %error, "Failed to parse env file")
+            }
         }
     }
 
@@ -188,7 +190,10 @@ fn resolve_env_file(root: &Path, value: &str) -> PathBuf {
 /// Parse one env file: `${VAR:-default}` is resolved against the chain lookup first
 /// (dotenvy does not support the default form); plain `${VAR}` stays native so
 /// same-file references keep working, and unresolved ones are reported.
-fn parse_env_file(path: &Path, lookup: &HashMap<String, String>) -> Result<Vec<(String, String)>, String> {
+fn parse_env_file(
+    path: &Path,
+    lookup: &HashMap<String, String>,
+) -> Result<Vec<(String, String)>, String> {
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     let with_defaults = DEFAULT_FORM
         .replace_all(&text, |caps: &regex::Captures<'_>| {
@@ -229,7 +234,10 @@ fn find_project_root() -> Option<PathBuf> {
     let mut dir = Some(cwd.as_path());
     for _ in 0..MAX_DEPTH {
         let current = dir?;
-        if ROOT_MARKERS.iter().any(|marker| current.join(marker).exists()) {
+        if ROOT_MARKERS
+            .iter()
+            .any(|marker| current.join(marker).exists())
+        {
             return Some(current.to_path_buf());
         }
         if current.join(".git").exists() {
@@ -315,7 +323,11 @@ mod tests {
         let _env = EnvGuard::capture(&["XIHE_ENV"]);
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        fs::write(root.join(".env"), "XIHE_TEST_ALPHA=base\nXIHE_TEST_BETA=from_env\n").unwrap();
+        fs::write(
+            root.join(".env"),
+            "XIHE_TEST_ALPHA=base\nXIHE_TEST_BETA=from_env\n",
+        )
+        .unwrap();
         fs::write(root.join(".env.dev"), "XIHE_TEST_ALPHA=dev\n").unwrap();
         fs::write(root.join(".env.local"), "XIHE_TEST_ALPHA=local\n").unwrap();
 

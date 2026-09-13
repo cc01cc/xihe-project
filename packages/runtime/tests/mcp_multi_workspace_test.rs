@@ -99,10 +99,7 @@ async fn test_get_bridge_url_after_spawn() {
         .await;
 
     let url = mgr.get_bridge_url("ws-url", "my-server").await;
-    assert_eq!(
-        url,
-        Some("http://192.168.1.100:39100".to_string())
-    );
+    assert_eq!(url, Some("http://192.168.1.100:39100".to_string()));
 
     assert!(mgr.get_bridge_url("ws-url", "nonexistent").await.is_none());
     assert!(mgr.get_bridge_url("ws-other", "my-server").await.is_none());
