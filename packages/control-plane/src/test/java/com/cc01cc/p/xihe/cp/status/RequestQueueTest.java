@@ -54,11 +54,11 @@ class RequestQueueTest {
         assertTrue(queue.enqueue(
                 "s1", "hello", "deepseek", "deepseek-chat", "workspace",
                 List.of(), "user1", "ws1", "request-1", "run-1",
-                Map.of("execute_command", 120)));
+                Map.of("execute_command", 20)));
 
         List<RequestQueue.QueuedRequest> drained = new ArrayList<>();
         assertEquals(1, queue.drain(drained::add));
-        assertEquals(Map.of("execute_command", 120), drained.get(0).toolTimeouts());
+        assertEquals(Map.of("execute_command", 20), drained.get(0).toolTimeouts());
     }
 
     @Test

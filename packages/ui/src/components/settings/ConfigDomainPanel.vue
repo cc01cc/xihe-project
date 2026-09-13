@@ -9,6 +9,8 @@ export interface DomainField {
   label: string
   type: 'text' | 'password' | 'select' | 'number' | 'json' | 'textarea'
   options?: { label: string; value: string }[]
+  /** Upper bound for `number` fields (e.g. systemToolTimeoutS ≤ 30, PLAN-0308 T3.1). */
+  max?: number
   /** Written by the instance layer only (e.g. agent-runtime.instructions, decision #17). */
   instanceOnly?: boolean
 }
@@ -61,7 +63,22 @@ function isPasswordKey(key: string): boolean {
   return normalized.includes('apikey') || normalized.includes('secret') || normalized.includes('password')
 }
 
+const validationError = ref('')
+
 function handleSave() {
+  // T3.1 评审修复：`max` 必须参与保存校验（native max 不影响程序化提交）。
+  const invalid = props.schema.filter((field) => {
+    if (field.type !== 'number' || field.max === undefined) return false
+    const raw = editing.value[field.key]
+    if (raw === undefined || raw === '' || isLocked(field.key)) return false
+    const num = Number(raw)
+    return !Number.isInteger(num) || num < 1 || num > field.max
+  })
+  if (invalid.length > 0) {
+    validationError.value = invalid.map((field) => `${field.label} ≤ ${field.max}`).join('，')
+    return
+  }
+  validationError.value = ''
   const body = Object.fromEntries(
     Object.entries(editing.value).filter(([key, value]) => value !== '' && !isLocked(key)),
   )
@@ -136,6 +153,8 @@ function handleReset(key: string) {
           v-model="editing[field.key]"
           class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
           :type="field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text'"
+          :max="field.type === 'number' ? field.max : undefined"
+          :title="field.type === 'number' && field.max ? `≤ ${field.max}` : undefined"
         />
 
         <span v-else class="min-w-0 flex-1 text-sm truncate">
@@ -153,6 +172,9 @@ function handleReset(key: string) {
           ↺
         </button>
       </div>
+      <p v-if="validationError" class="text-xs text-destructive px-1 pb-1" role="alert">
+        {{ validationError }}
+      </p>
       <div v-if="!readonly" class="flex justify-end pt-1">
         <button
           class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90"

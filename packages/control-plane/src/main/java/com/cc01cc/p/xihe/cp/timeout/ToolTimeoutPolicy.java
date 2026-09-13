@@ -1,9 +1,13 @@
 package com.cc01cc.p.xihe.cp.timeout;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * PLAN-0308 M1（spec S1/S2）：工具超时的**唯一计算点**。
@@ -16,19 +20,28 @@ import java.util.Map;
 @Component
 public class ToolTimeoutPolicy {
 
+    private static final Logger logger = LoggerFactory.getLogger(ToolTimeoutPolicy.class);
+
     /** 系统工具预算的 config 域/键（决策 #22a/#24；配合三方同步）。 */
     public static final String SYSTEM_TOOL_DOMAIN = "agent-runtime";
     public static final String SYSTEM_TOOL_KEY = "systemToolTimeoutS";
     /** 单次工具返回的字节上限授权（决策 #31②；调用方只可收窄）。 */
     public static final String OUTPUT_LIMIT_KEY = "toolOutputLimitBytes";
 
-    /** 预算代码默认（离线/无配置时的缺省；数值由 M3 决策复核）。 */
+    /** 预算代码默认（离线/无配置时的缺省；T3.1 维持 30s）。 */
     public static final long DEFAULT_BUDGET_SECONDS = 30L;
     /** 外层余量：仅下游挂死不回包时兜底，正常路径不产生延迟。 */
     public static final long CP_MARGIN_SECONDS = 2L;
     public static final long AGENT_MARGIN_SECONDS = 4L;
-    /** per-call 上限（允许调用方请求的最大值；用户 2026-09-12 裁定）。 */
-    public static final long PER_CALL_MAX_SECONDS = 600L;
+    /**
+     * 预算上限（T3.1，用户 2026-09-13 裁定）：per-call 与数据库配置**同顶** 30s，
+     * 使 SDK 传输层默认 read=300s 结构上不可达（决策见 PLAN-0308 design #35）；
+     * 超过此上限的同步等待应改走异步 job，不做静默截断。
+     */
+    public static final long MAX_BUDGET_SECONDS = 30L;
+
+    /** T3.1 评审修复：遗留超限配置只告警一次（本方法在每次 tools/call 与每个映射项被调用）。 */
+    private final Set<String> warnedConfigValues = ConcurrentHashMap.newKeySet();
 
     /** 三跳最终等待值 + 值性质（camelCase，随请求下发）。 */
     public record ToolWaits(long runtimeSeconds, long cpSeconds, long agentSeconds, String origin) {}
@@ -42,7 +55,7 @@ public class ToolTimeoutPolicy {
 
     /**
      * 校验 run 请求携带的 per-call 映射（T1.9，决策 #28/#29）：每个值必须为正整数秒且
-     * ≤ {@link #PER_CALL_MAX_SECONDS}；非法/超限记录首个错误由调用方 400 拒绝，**不静默截断**。
+     * ≤ {@link #MAX_BUDGET_SECONDS}；非法/超限记录首个错误由调用方 400 拒绝，**不静默截断**。
      */
     public PerCallMap validatePerCallMap(Object raw) {
         if (raw == null) {
@@ -60,7 +73,7 @@ public class ToolTimeoutPolicy {
             Long seconds = parsePerCallValue(entry.getValue());
             if (seconds == null) {
                 return new PerCallMap(Map.of(), "toolTimeouts." + tool
-                        + " must be a positive integer <= " + PER_CALL_MAX_SECONDS
+                        + " must be a positive integer <= " + MAX_BUDGET_SECONDS
                         + " (got " + entry.getValue() + ")");
             }
             values.put(tool, seconds.intValue());
@@ -97,7 +110,7 @@ public class ToolTimeoutPolicy {
         } catch (NumberFormatException e) {
             return null;
         }
-        if (value <= 0 || value > PER_CALL_MAX_SECONDS) {
+        if (value <= 0 || value > MAX_BUDGET_SECONDS) {
             return null;
         }
         return value;
@@ -134,14 +147,31 @@ public class ToolTimeoutPolicy {
         return waits(budget, origin(perCallSeconds));
     }
 
-    /** 把配置字符串解析为正的秒数（非法/空/非正 → null）。 */
+    /**
+     * 把配置字符串解析为正的秒数（非法/空/非正/超上限 {@link #MAX_BUDGET_SECONDS} → null）。
+     *
+     * <p>T3.1：数据库预算与 per-call 同顶 30s；超限视为无效并回落代码默认（写入侧由
+     * config schema 的 `maximum` 拦数值、`pattern` 拦字符串——配置实际以字符串提交；
+     * 遗留大值在此告警一次后回落，而不是静默截断或每次刷日志）。
+     */
     public Integer parseConfigSeconds(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
         try {
             int value = Integer.parseInt(raw.trim());
-            return value > 0 ? value : null;
+            if (value <= 0) {
+                return null;
+            }
+            if (value > MAX_BUDGET_SECONDS) {
+                if (warnedConfigValues.add(String.valueOf(value))) {
+                    logger.warn(
+                            "Tool timeout config value {} exceeds MAX_BUDGET_SECONDS={}; falling back to default {}",
+                            value, MAX_BUDGET_SECONDS, DEFAULT_BUDGET_SECONDS);
+                }
+                return null;
+            }
+            return value;
         } catch (NumberFormatException e) {
             return null;
         }

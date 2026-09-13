@@ -558,7 +558,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setBearerAuth(authToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
-        for (Object bad : List.of(86400, 601, 0, -5, "abc", 12.5)) {
+        for (Object bad : List.of(86400, 601, 31, 0, -5, "abc", 12.5)) {
             Map<String, Object> request = new java.util.HashMap<>();
             request.put("sessionId", sessionId);
             request.put("content", "run a long command");
@@ -574,7 +574,7 @@ class ChatControllerTest extends AbstractH2Test {
         Map<String, Object> wrongType = new java.util.HashMap<>();
         wrongType.put("sessionId", sessionId);
         wrongType.put("content", "run a long command");
-        wrongType.put("toolTimeouts", List.of(120));
+        wrongType.put("toolTimeouts", List.of(20));
         ResponseEntity<Map> wrongTypeResponse = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
                 new HttpEntity<>(wrongType, headers), Map.class);
@@ -604,7 +604,7 @@ class ChatControllerTest extends AbstractH2Test {
                 "sessionId", sessionId,
                 "content", "run a long command",
                 "toolMode", "workspace",
-                "toolTimeouts", Map.of("execute_command", 120));
+                "toolTimeouts", Map.of("execute_command", 20));
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -623,10 +623,10 @@ class ChatControllerTest extends AbstractH2Test {
         Map<String, Object> origins = (Map<String, Object>) agentRequest.get("toolWaitOrigins");
         Map<String, Object> rawTimeouts = (Map<String, Object>) agentRequest.get("toolTimeouts");
         assertNotNull(waits, "payload must carry toolWaits");
-        assertEquals(124, ((Number) waits.get("execute_command")).intValue(),
-                "Agent wait = per-call 120 + 4");
+        assertEquals(24, ((Number) waits.get("execute_command")).intValue(),
+                "Agent wait = per-call 20 + 4");
         assertEquals("per-call", origins.get("execute_command"));
-        assertEquals(120, ((Number) rawTimeouts.get("execute_command")).intValue(),
+        assertEquals(20, ((Number) rawTimeouts.get("execute_command")).intValue(),
                 "raw per-call value travels for the inbound header");
     }
 

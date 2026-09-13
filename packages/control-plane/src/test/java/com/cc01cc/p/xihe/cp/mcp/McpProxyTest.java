@@ -460,23 +460,23 @@ class McpProxyTest {
                 new com.cc01cc.p.xihe.cp.entity.McpServer(TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
         server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
         server.setEnabled(true);
-        server.setToolTimeoutS(90);
+        server.setToolTimeoutS(15);
         when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
         seedToolCache("fake_echo", server.getId().toString());
 
         Map<String, Object> payload = controller.toolTimeoutPayload(
-                TEST_WS_UUID, "u-1", Map.of("fake_echo", 120, "execute_command", 120));
+                TEST_WS_UUID, "u-1", Map.of("fake_echo", 25, "execute_command", 25));
 
         Map<String, Object> waits = (Map<String, Object>) payload.get("toolWaits");
         Map<String, Object> origins = (Map<String, Object>) payload.get("toolWaitOrigins");
-        // 映射内的工具：per-call 压制 config（90 → 120），Agent 等待 = 120 + 4。
-        assertEquals(124L, ((Number) waits.get("fake_echo")).longValue());
+        // 映射内的工具：per-call 压制 config（15 → 25），Agent 等待 = 25 + 4。
+        assertEquals(29L, ((Number) waits.get("fake_echo")).longValue());
         assertEquals("per-call", origins.get("fake_echo"));
         // 映射外的工具（冷缓存 / 系统工具）：per-call 条目仍显式下发，不落回系统工具统一值。
-        assertEquals(124L, ((Number) waits.get("execute_command")).longValue());
+        assertEquals(29L, ((Number) waits.get("execute_command")).longValue());
         assertEquals("per-call", origins.get("execute_command"));
         // 原始 per-call 值随 payload 下发，供 Agent 随工具调用附带入站头。
-        assertEquals(120, ((Number) ((Map<String, Object>) payload.get("toolTimeouts"))
+        assertEquals(25, ((Number) ((Map<String, Object>) payload.get("toolTimeouts"))
                 .get("execute_command")).intValue());
     }
 
@@ -487,7 +487,7 @@ class McpProxyTest {
                 new com.cc01cc.p.xihe.cp.entity.McpServer(TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
         server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
         server.setEnabled(true);
-        server.setToolTimeoutS(90);
+        server.setToolTimeoutS(15);
         when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
         seedToolCache("fake_echo", server.getId().toString());
 
@@ -495,10 +495,33 @@ class McpProxyTest {
 
         Map<String, Object> waits = (Map<String, Object>) payload.get("toolWaits");
         Map<String, Object> origins = (Map<String, Object>) payload.get("toolWaitOrigins");
-        assertEquals(94L, ((Number) waits.get("fake_echo")).longValue());
+        assertEquals(19L, ((Number) waits.get("fake_echo")).longValue());
         assertEquals("config", origins.get("fake_echo"));
         assertFalse(payload.containsKey("toolTimeouts"));
         assertEquals("full", payload.get("budgetCoverage"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void toolTimeoutPayload_oversizedLegacyConfigFallsBackToDefault() {
+        // T3.1：数据库预算与 per-call 同顶 30s；旧上限时代的 90s 配置不再生效，
+        // 告警后回落代码默认（30s），而不是静默截断成 30 再署名 config=90。
+        com.cc01cc.p.xihe.cp.entity.McpServer server =
+                new com.cc01cc.p.xihe.cp.entity.McpServer(TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
+        server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
+        server.setEnabled(true);
+        server.setToolTimeoutS(90);
+        when(mcpServerRepository.findById(server.getId())).thenReturn(java.util.Optional.of(server));
+        seedToolCache("fake_echo", server.getId().toString());
+
+        Map<String, Object> payload = controller.toolTimeoutPayload(TEST_WS_UUID, "u-1", Map.of());
+
+        // 无有效配置行 → 不下发 per-tool 条目，Agent 回落系统工具统一值（预算默认 30 + 4）。
+        assertEquals(34L, ((Number) payload.get("systemToolWait")).longValue());
+        Object waitsRaw = payload.get("toolWaits");
+        Map<String, Object> waits = waitsRaw == null
+                ? Map.of() : (Map<String, Object>) waitsRaw;
+        assertFalse(waits.containsKey("fake_echo"));
     }
 
     @Test
@@ -536,7 +559,7 @@ class McpProxyTest {
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Chat-Run-Id", TEST_WS_UUID);
             headers.set("X-Operation-Item-Id", "call-abc-123");
-            headers.set("X-Xihe-Tool-Timeout-Per-Call", "120");
+            headers.set("X-Xihe-Tool-Timeout-Per-Call", "25");
             // 上游伪造的出站头必须被剥离，只认 CP 自己的计算（信任边界 spec S2.2 规则 5）。
             headers.set("X-Xihe-Tool-Timeout-S", "9999");
             headers.set("X-Xihe-Tool-Timeout-Origin", "config");
@@ -546,7 +569,7 @@ class McpProxyTest {
                     accessContext(TEST_WS_UUID, "u-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            assertEquals("120", outboundTimeout[0]);
+            assertEquals("25", outboundTimeout[0]);
             assertEquals("per-call", outboundOrigin[0]);
             assertNull(leakedPerCall[0], "入站 per-call 头不得透传给 Runtime");
             // 关联键透传：Runtime 用同一 toolCallId 打日志（spec S5.1 规则 1）。
@@ -567,7 +590,7 @@ class McpProxyTest {
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":4}";
         Object access = accessContext(TEST_WS_UUID, "u-1");
 
-        for (String bad : new String[] {"abc", "0", "-5", "601", "12.5"}) {
+        for (String bad : new String[] {"abc", "0", "-5", "31", "601", "12.5"}) {
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Chat-Run-Id", TEST_WS_UUID);
             headers.set("X-Xihe-Tool-Timeout-Per-Call", bad);
@@ -674,11 +697,11 @@ class McpProxyTest {
     @Test
     void cpForwardWait_usesDerivedValueWithoutEnv() {
         ToolTimeoutPolicy.ToolWaits waits = new ToolTimeoutPolicy()
-                .resolve(null, 90);
+                .resolve(null, 20);
         McpProxyController.ForwardWait wait = (McpProxyController.ForwardWait)
                 ReflectionTestUtils.invokeMethod(controller, "forwardWaitFor", waits, null);
 
-        assertEquals(92L, wait.seconds());
+        assertEquals(22L, wait.seconds());
         assertEquals("cp", wait.source());
         assertEquals("config", wait.valueOrigin());
         assertNull(wait.overriddenValue());
@@ -689,14 +712,14 @@ class McpProxyTest {
         environment.setProperty("xihe.mcp.forward-timeout-s", "25");
         ReflectionTestUtils.setField(controller, "forwardTimeoutS", 25L);
         ToolTimeoutPolicy.ToolWaits waits = new ToolTimeoutPolicy()
-                .resolve(null, 90);
+                .resolve(null, 20);
 
         McpProxyController.ForwardWait wait = (McpProxyController.ForwardWait)
                 ReflectionTestUtils.invokeMethod(controller, "forwardWaitFor", waits, null);
 
         assertEquals(25L, wait.seconds());
         assertEquals("env", wait.source());
-        assertEquals(92L, wait.overriddenValue(), "派生值被 ENV 压制并署名");
+        assertEquals(22L, wait.overriddenValue(), "派生值被 ENV 压制并署名");
     }
 
     @Test
@@ -704,12 +727,12 @@ class McpProxyTest {
         environment.setProperty("xihe.mcp.forward-timeout-s", "25");
         ReflectionTestUtils.setField(controller, "forwardTimeoutS", 25L);
         ToolTimeoutPolicy.ToolWaits waits = new ToolTimeoutPolicy()
-                .resolve(120, 90);
+                .resolve(28, 20);
 
         McpProxyController.ForwardWait wait = (McpProxyController.ForwardWait)
-                ReflectionTestUtils.invokeMethod(controller, "forwardWaitFor", waits, 120L);
+                ReflectionTestUtils.invokeMethod(controller, "forwardWaitFor", waits, 28L);
 
-        assertEquals(122L, wait.seconds());
+        assertEquals(30L, wait.seconds());
         assertEquals("cp", wait.source());
         assertEquals("per-call", wait.valueOrigin());
         assertEquals(25L, wait.overriddenValue(), "per-call 最高：本跳 ENV 被压制并署名");

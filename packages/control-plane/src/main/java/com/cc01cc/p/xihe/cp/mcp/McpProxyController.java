@@ -73,6 +73,8 @@ public class McpProxyController {
     // proxies can be given room without a recompile.
     @org.springframework.beans.factory.annotation.Value("${xihe.mcp.forward-timeout-s:30}")
     private long forwardTimeoutS;
+    /** T3.1 评审修复：遗留超限 remote 配置只告警一次，避免逐请求重复刷 WARN。 */
+    private final Set<String> warnedRemoteTimeouts = ConcurrentHashMap.newKeySet();
     private final RequestRewriter rewriter;
     private final PolicyEngine policy;
     private final AuditLogger audit;
@@ -427,7 +429,7 @@ public class McpProxyController {
             if (perCallSeconds == null) {
                 return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                         "per-call timeout must be a positive integer <= "
-                                + ToolTimeoutPolicy.PER_CALL_MAX_SECONDS);
+                                + ToolTimeoutPolicy.MAX_BUDGET_SECONDS);
             }
         }
         Integer configSeconds = resolveConfigTimeoutSeconds(wsId, serverId, access.userId());
@@ -527,10 +529,26 @@ public class McpProxyController {
             Optional<McpServer> server = remoteServer(wsId, serverId);
             if (server.isPresent()) {
                 Integer configured = server.get().getToolTimeoutS();
-                return configured != null && configured > 0 ? configured : null;
+                if (configured != null && configured > 0) {
+                    if (configured <= ToolTimeoutPolicy.MAX_BUDGET_SECONDS) {
+                        return configured;
+                    }
+                    // T3.1：数据库预算与 per-call 同顶 30s；遗留大值告警一次，并回落到
+                    // **系统工具预算**（而非代码默认）——保证 Agent/CP/Runtime 三跳取同一
+                    // 来源；此前落 null 会让 Agent 用 systemToolWait 而 CP/Runtime 用默认值，
+                    // 内层被外层提前掐断（评审 WARNING）。
+                    if (warnedRemoteTimeouts.add(serverId + "=" + configured)) {
+                        logger.warn(
+                                "Remote MCP server {} tool_timeout_s={} exceeds MAX_BUDGET_SECONDS={}; falling back to system tool budget",
+                                serverId, configured, ToolTimeoutPolicy.MAX_BUDGET_SECONDS);
+                    }
+                }
             }
-            return null;
         }
+        return resolveSystemTimeoutSeconds(wsId, userId);
+    }
+
+    private Integer resolveSystemTimeoutSeconds(String wsId, String userId) {
         try {
             String raw = configService.resolve(
                     ToolTimeoutPolicy.SYSTEM_TOOL_DOMAIN,
