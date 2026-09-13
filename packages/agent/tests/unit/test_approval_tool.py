@@ -633,3 +633,57 @@ def test_hash_covers_full_arguments_beyond_preview_limit():
         (details[:500] + "…[truncated]").encode("utf-8")
     ).hexdigest()
     assert arguments_hash != truncated_hash
+
+
+# ---------------------------------------------------------------------------
+# PLAN-0323 A-1: task cancellation must clean up pending approvals
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancellation_while_waiting_cleans_pending_state():
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+    published: list[dict] = []
+    context = _make_context("session-cancel-wait")
+
+    request_task = asyncio.create_task(
+        coordinator.request("delete file", "README.md", context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+    assert request_id in coordinator.pending_requests
+
+    request_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+
+    assert coordinator.get_pending() == []
+    assert coordinator.pending_requests == {}
+    assert coordinator.pending_payloads == {}
+    # A late decision has no stale pending record to replay.
+    assert coordinator.resolve_status(request_id, True) == ("not_found", None)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_publish_cleans_pending_state():
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+    context = _make_context("session-cancel-publish")
+    entered = asyncio.Event()
+
+    async def blocking_sink(payload):
+        entered.set()
+        await asyncio.sleep(30)
+
+    request_task = asyncio.create_task(
+        coordinator.request("deploy", None, context, blocking_sink)
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    assert coordinator.pending_requests != {}
+
+    request_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+
+    assert coordinator.get_pending() == []
+    assert coordinator.pending_requests == {}
+    assert coordinator.pending_payloads == {}

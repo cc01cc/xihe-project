@@ -149,6 +149,14 @@ class ApprovalCoordinator:
             self.pending_payloads.pop(request_id, None)
             self._complete(request_id, payload, "expired", None)
             raise ApprovalExpiredError(f"Approval request expired: {request_id}")
+        except asyncio.CancelledError:
+            # PLAN-0323 A-1: task cancellation (BaseException) must not leave
+            # the request pending, otherwise get_pending() keeps replaying an
+            # approval from a cancelled run.
+            logger.warning("Approval request cancelled: requestId={}", request_id)
+            self.pending_requests.pop(request_id, None)
+            self.pending_payloads.pop(request_id, None)
+            raise
         except Exception:
             self.pending_requests.pop(request_id, None)
             self.pending_payloads.pop(request_id, None)
