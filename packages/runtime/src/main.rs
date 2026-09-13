@@ -32,6 +32,7 @@ mod ws_file_handler;
 use tokio::sync::Mutex;
 use xihe_runtime::device;
 use xihe_runtime::dotenv_loader;
+use xihe_runtime::executor::ExecutionEnd;
 use xihe_runtime::fetch;
 use xihe_runtime::fetch::WebFetchResult;
 use xihe_runtime::fs;
@@ -825,6 +826,61 @@ async fn internal_auth_middleware(request: Request<axum::body::Body>, next: Next
             "detail": "A service Bearer token is required",
             "requestId": request_id
         })),
+    )
+        .into_response()
+}
+
+/// PLAN-0317 T2.3（决策 #13）：取消的有界等待——容器回帧后 CP 才能落
+/// `cancelled`；未确认则由 CP 落 `aborted` 并交给追偿（决策 #14）。
+const CANCEL_CONFIRM_WAIT: Duration = Duration::from_secs(6);
+
+/// 取消端点状态映射（纯函数，便于单测）。
+fn cancel_status(end: Option<ExecutionEnd>) -> (&'static str, bool) {
+    match end {
+        Some(ExecutionEnd::Cancelled { confirmed: true }) => ("cancelled", true),
+        Some(ExecutionEnd::Cancelled { confirmed: false }) => ("unconfirmed", false),
+        // 执行在我们到达前已自然结束：取消未命中，不得覆盖既有事实。
+        Some(ExecutionEnd::Completed) => ("already_finished", false),
+        None => ("unconfirmed", false),
+    }
+}
+
+/// 内部取消端点：按 (workspaceId, operationItemId) 定位在途执行并触发中止，
+/// 有界等待容器确认。找不到 → 404（幂等，不算错误）。
+async fn cancel_execution_handler(
+    State(state): State<Arc<AppState>>,
+    Path((ws_id, item_id)): Path<(String, String)>,
+) -> Response {
+    let in_flight = state.router.in_flight();
+    let Some(mut outcome) = in_flight.request_termination(&ws_id, &item_id) else {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        return (
+            StatusCode::NOT_FOUND,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            AxumJson(serde_json::json!({
+                "type": "https://xihe.dev/problems/execution-not-found",
+                "title": "Execution not found",
+                "status": 404,
+                "code": "EXECUTION_NOT_FOUND",
+                "detail": "No in-flight execution for this workspace and operation item",
+                "requestId": request_id
+            })),
+        )
+            .into_response();
+    };
+    let waited = tokio::time::timeout(
+        CANCEL_CONFIRM_WAIT,
+        outcome.wait_for(|value| value.is_some()),
+    )
+    .await;
+    let end = match waited {
+        Ok(Ok(value)) => *value,
+        _ => None,
+    };
+    let (status, confirmed) = cancel_status(end);
+    (
+        StatusCode::OK,
+        AxumJson(serde_json::json!({"status": status, "confirmed": confirmed})),
     )
         .into_response()
 }
@@ -1751,6 +1807,10 @@ async fn run() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/executions/{item_id}/cancel",
+            post(cancel_execution_handler),
+        )
+        .route(
             "/internal/v1/runtime/workspaces/{ws_id}/mcp",
             any(workspace_mcp_handler),
         )
@@ -2248,6 +2308,73 @@ async fn idle_reaper_loop(
 }
 
 #[cfg(test)]
+mod cancel_endpoint_tests {
+    use super::{ExecutionEnd, cancel_status};
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+
+    #[test]
+    fn cancel_status_maps_every_outcome() {
+        assert_eq!(
+            cancel_status(Some(ExecutionEnd::Cancelled { confirmed: true })),
+            ("cancelled", true)
+        );
+        assert_eq!(
+            cancel_status(Some(ExecutionEnd::Cancelled { confirmed: false })),
+            ("unconfirmed", false)
+        );
+        assert_eq!(
+            cancel_status(Some(ExecutionEnd::Completed)),
+            ("already_finished", false),
+            "a naturally finished execution must not be reported as cancelled"
+        );
+        assert_eq!(cancel_status(None), ("unconfirmed", false));
+    }
+
+    /// PLAN-0317 T2.3：端点级证据（无需 Docker）——未知 item 返回 404；
+    /// 已登记执行触发后由执行侧回报确认，端点返回 cancelled/confirmed。
+    #[tokio::test]
+    async fn cancel_endpoint_returns_404_for_unknown_and_cancelled_for_registered() {
+        let state = super::remote_handler_tests::test_state("http://127.0.0.1:1").await;
+
+        let unknown = super::cancel_execution_handler(
+            State(state.clone()),
+            Path(("ws-1".to_string(), "missing".to_string())),
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
+        let registration = state.router.in_flight().register("ws-1", "item-1");
+        let reporter = registration.outcome.clone();
+        tokio::spawn(async move {
+            registration.token.cancelled().await;
+            let _ = reporter.send(Some(ExecutionEnd::Cancelled { confirmed: true }));
+        });
+
+        let cancelled = super::cancel_execution_handler(
+            State(state.clone()),
+            Path(("ws-1".to_string(), "item-1".to_string())),
+        )
+        .await;
+        assert_eq!(cancelled.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(cancelled.into_body(), usize::MAX)
+            .await
+            .expect("read cancel body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("cancel JSON");
+        assert_eq!(json["status"], "cancelled");
+        assert_eq!(json["confirmed"], true);
+
+        // Cross-workspace attempts must not find the execution (spec S1.6).
+        let cross = super::cancel_execution_handler(
+            State(state),
+            Path(("ws-2".to_string(), "item-1".to_string())),
+        )
+        .await;
+        assert_eq!(cross.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[cfg(test)]
 mod reaper_tests {
     use super::should_cleanup_jobs;
 
@@ -2349,7 +2476,7 @@ mod remote_handler_tests {
         format!("http://{addr}/mcp")
     }
 
-    async fn test_state(cp_url: &str) -> Arc<AppState> {
+    pub(super) async fn test_state(cp_url: &str) -> Arc<AppState> {
         let registry = Arc::new(WorkspaceRegistry::new());
         let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
         let client = xihe_runtime::hydrate::ExecutionSpecClient::new(cp_url, "test-token");

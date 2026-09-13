@@ -20,15 +20,39 @@ use crate::gateway::WorkspaceRegistry;
 use crate::hydrate::WorkspaceEnsurer;
 use crate::workspace::WorkspaceManager;
 
+/// How a registered execution ended (PLAN-0317 T2.3): a cancel request uses the
+/// reported value to tell "terminated for sure" from "gave up waiting".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionEnd {
+    /// The execution finished on its own before (or despite) the cancel.
+    Completed,
+    /// Abort sequence ran; `confirmed` is true when the container answered.
+    Cancelled { confirmed: bool },
+}
+
+struct InFlightEntry {
+    workspace_id: String,
+    token: CancellationToken,
+    outcome: tokio::sync::watch::Sender<Option<ExecutionEnd>>,
+}
+
+/// Handles returned when an execution registers itself.
+pub struct ExecutionRegistration {
+    pub token: CancellationToken,
+    pub outcome: tokio::sync::watch::Sender<Option<ExecutionEnd>>,
+}
+
 /// Host-side registry of executions that are still running, keyed by
 /// `operationItemId` (PLAN-0317 T2.1, decision #12 — the same key CP stores in
 /// `operation_items.tool_call_id` and forwards as `X-Operation-Item-Id`).
 ///
-/// A cancel request looks the execution up by that key and triggers its
-/// [`CancellationToken`]; T2.2 wires the token to the container abort frame.
+/// A cancel request looks the execution up by that key **within its workspace**
+/// (decision #13: no cross-workspace termination) and triggers its
+/// [`CancellationToken`]; T2.2's abort sequence then reports back through the
+/// watch channel.
 #[derive(Default)]
 pub struct InFlightExecutions {
-    inner: StdMutex<HashMap<String, CancellationToken>>,
+    inner: StdMutex<HashMap<String, InFlightEntry>>,
 }
 
 impl InFlightExecutions {
@@ -37,17 +61,26 @@ impl InFlightExecutions {
     }
 
     /// Registers a running execution. The returned token is cancelled when a
-    /// cancel request arrives for the same `item_id`.
-    pub fn register(&self, item_id: &str) -> CancellationToken {
+    /// cancel request arrives for the same `item_id`; the exec task reports its
+    /// outcome through the returned watch sender.
+    pub fn register(&self, workspace_id: &str, item_id: &str) -> ExecutionRegistration {
         let token = CancellationToken::new();
+        let (outcome, _rx) = tokio::sync::watch::channel(None);
         let mut map = self.inner.lock().expect("in-flight registry poisoned");
         // A second registration for the same item replaces the previous token;
         // the old execution then becomes unaddressable, which is logged by the
         // caller rather than silently ignored.
-        if let Some(previous) = map.insert(item_id.to_string(), token.clone()) {
-            previous.cancel();
+        if let Some(previous) = map.insert(
+            item_id.to_string(),
+            InFlightEntry {
+                workspace_id: workspace_id.to_string(),
+                token: token.clone(),
+                outcome: outcome.clone(),
+            },
+        ) {
+            previous.token.cancel();
         }
-        token
+        ExecutionRegistration { token, outcome }
     }
 
     /// Removes an execution once it has finished (any exit path).
@@ -56,16 +89,21 @@ impl InFlightExecutions {
         map.remove(item_id);
     }
 
-    /// Requests termination; `false` when nothing is in flight for `item_id`.
+    /// Requests termination inside `workspace_id`; `None` when nothing is in
+    /// flight for that item in that workspace (callers map this to 404).
     /// Idempotent: repeated requests keep the token cancelled.
-    pub fn request_termination(&self, item_id: &str) -> bool {
+    pub fn request_termination(
+        &self,
+        workspace_id: &str,
+        item_id: &str,
+    ) -> Option<tokio::sync::watch::Receiver<Option<ExecutionEnd>>> {
         let map = self.inner.lock().expect("in-flight registry poisoned");
         match map.get(item_id) {
-            Some(token) => {
-                token.cancel();
-                true
+            Some(entry) if entry.workspace_id == workspace_id => {
+                entry.token.cancel();
+                Some(entry.outcome.subscribe())
             }
-            None => false,
+            _ => None,
         }
     }
 
@@ -85,7 +123,13 @@ impl InFlightExecutions {
 struct InFlightGuard {
     registry: Arc<InFlightExecutions>,
     item_id: String,
-    _token: CancellationToken,
+}
+
+/// Per-execution handles kept by the running call (PLAN-0317 T2.1/T2.3).
+struct InFlightState {
+    item_id: String,
+    token: CancellationToken,
+    outcome: tokio::sync::watch::Sender<Option<ExecutionEnd>>,
 }
 
 /// PLAN-0317 T2.2（决策 #13）：中止确认的有界等待（容器回帧）与 EOF 兜底等待。
@@ -211,21 +255,19 @@ impl WorkspaceExecutionRouter {
         // operationItemId so a cancel request can address this exact run. The
         // guard removes the entry on every exit path.
         let correlation = tool_timeout::current_correlation();
-        let (_in_flight_guard, cancel_token) = match correlation.tool_call_id.as_deref() {
-            Some(item_id) => {
-                let registry = self.in_flight.clone();
-                let token = registry.register(item_id);
-                (
-                    Some(InFlightGuard {
-                        registry,
-                        item_id: item_id.to_string(),
-                        _token: token.clone(),
-                    }),
-                    Some(token),
-                )
+        let in_flight_state = correlation.tool_call_id.as_deref().map(|item_id| {
+            let registration = self.in_flight.register(workspace_id, item_id);
+            InFlightState {
+                item_id: item_id.to_string(),
+                token: registration.token.clone(),
+                outcome: registration.outcome.clone(),
             }
-            None => (None, None),
-        };
+        });
+        let _in_flight_guard = in_flight_state.as_ref().map(|state| InFlightGuard {
+            registry: self.in_flight.clone(),
+            item_id: state.item_id.clone(),
+        });
+        let cancel_token = in_flight_state.as_ref().map(|state| state.token.clone());
         let op = OperationRequest {
             operation: operation.to_string(),
             payload,
@@ -373,6 +415,11 @@ impl WorkspaceExecutionRouter {
                         .ok();
                 }
                 let confirmed = reply.is_some();
+                if let Some(state) = &in_flight_state {
+                    let _ = state
+                        .outcome
+                        .send(Some(ExecutionEnd::Cancelled { confirmed }));
+                }
                 if reason == "timeout" {
                     return Err(RuntimeError::Timeout {
                         detail: format!(
@@ -391,6 +438,9 @@ impl WorkspaceExecutionRouter {
                 });
             }
         };
+        if let Some(state) = &in_flight_state {
+            let _ = state.outcome.send(Some(ExecutionEnd::Completed));
+        }
         if let Some(e) = stream_err {
             return Err(RuntimeError::Docker(e));
         }
@@ -696,44 +746,69 @@ impl WorkspaceExecutionRouter {
 mod in_flight_tests {
     use super::*;
 
-    /// PLAN-0317 T2.1：注册后可按 operationItemId 触发终止，且幂等。
+    /// PLAN-0317 T2.1/T2.3：注册后可按 (workspace, operationItemId) 触发终止，
+    /// 且幂等；执行侧通过 outcome 通道回报终局。
     #[test]
     fn request_termination_cancels_registered_execution_idempotently() {
         let registry = InFlightExecutions::new();
-        let token = registry.register("item-1");
+        let registration = registry.register("ws-1", "item-1");
         assert_eq!(registry.len(), 1);
 
-        assert!(registry.request_termination("item-1"));
-        assert!(token.is_cancelled());
+        let mut outcome = registry
+            .request_termination("ws-1", "item-1")
+            .expect("registered execution must be found");
+        assert!(registration.token.is_cancelled());
         // Repeated requests stay successful and keep the token cancelled.
-        assert!(registry.request_termination("item-1"));
-        assert!(token.is_cancelled());
+        assert!(registry.request_termination("ws-1", "item-1").is_some());
+        assert!(registration.token.is_cancelled());
+
+        registration
+            .outcome
+            .send(Some(ExecutionEnd::Cancelled { confirmed: true }))
+            .expect("outcome receiver alive");
+        assert_eq!(
+            *outcome.borrow_and_update(),
+            Some(ExecutionEnd::Cancelled { confirmed: true })
+        );
 
         registry.unregister("item-1");
         assert!(registry.is_empty());
-        assert!(!registry.request_termination("item-1"));
+        assert!(registry.request_termination("ws-1", "item-1").is_none());
     }
 
-    /// PLAN-0317 T2.1：未知 key 不误触发、不报错。
+    /// PLAN-0317 T2.3（spec S1.6）：不得跨 workspace 终止执行。
     #[test]
-    fn request_termination_is_false_for_unknown_item() {
+    fn request_termination_rejects_cross_workspace_item() {
         let registry = InFlightExecutions::new();
-        assert!(!registry.request_termination("missing"));
+        let registration = registry.register("ws-1", "item-1");
+
+        assert!(
+            registry.request_termination("ws-2", "item-1").is_none(),
+            "another workspace must not be able to cancel this execution"
+        );
+        assert!(!registration.token.is_cancelled());
     }
 
     /// PLAN-0317 T2.1：同一 key 重复注册只保留最新执行，旧执行被取消。
     #[test]
     fn duplicate_registration_replaces_and_cancels_previous() {
         let registry = InFlightExecutions::new();
-        let first = registry.register("item-1");
-        let second = registry.register("item-1");
+        let first = registry.register("ws-1", "item-1");
+        let second = registry.register("ws-1", "item-1");
 
         assert_eq!(registry.len(), 1);
-        assert!(first.is_cancelled(), "stale execution must be cancelled");
-        assert!(!second.is_cancelled());
+        assert!(first.token.is_cancelled(), "stale execution must be cancelled");
+        assert!(!second.token.is_cancelled());
 
-        assert!(registry.request_termination("item-1"));
-        assert!(second.is_cancelled());
+        assert!(registry.request_termination("ws-1", "item-1").is_some());
+        assert!(second.token.is_cancelled());
+    }
+
+    /// PLAN-0317 T2.1：未知 key 不误触发、不报错。
+    #[test]
+    fn request_termination_is_none_for_unknown_item() {
+        let registry = InFlightExecutions::new();
+        assert!(registry.request_termination("ws-1", "missing").is_none());
     }
 }
 
