@@ -921,6 +921,11 @@ public class ChatController {
         return activeRuns.get(sessionId);
     }
 
+    /** PLAN-0317 T2.7：该 run 是否正由本进程处理（周期对账的防误伤保护）。 */
+    boolean isRunActiveLocally(String runId) {
+        return runId != null && activeRuns.containsValue(runId);
+    }
+
     private boolean acquireLeaseForExistingRun(String runId) {
         return chatRunRepository.tryAcquireLease(
                 UUID.fromString(runId),
@@ -1349,7 +1354,9 @@ public class ChatController {
                             safeJsonPreview(payload.get("arguments")), null, null);
                 }
                 operationItems.put(toolCallId, item.getId());
-                if ("pending".equals(item.getStatus())) {
+                // PLAN-0317 T2.8③（决策 #10/#17）：source=mcp 的项由网关负责翻转，
+                // 中继只补 agent_tool attempt（双写状态会让终态竞态）。
+                if ("agent".equals(item.getSource()) && "pending".equals(item.getStatus())) {
                     operationService.transitionItem(item.getId(), "running", null, null, null, null);
                 }
                 if (!operationAttempts.containsKey(item.getId())) {
@@ -1380,8 +1387,13 @@ public class ChatController {
                 operationService.finishAttempt(attemptId, failed ? "failed" : "succeeded",
                         failed ? 500 : 200, failed ? "TOOL_FAILED" : null, null, null);
             }
-            operationService.transitionItem(itemId, failed ? "failed" : "completed",
-                    failed ? null : "allow", null, null, failed ? "TOOL_FAILED" : null);
+            // PLAN-0317 T2.8③：网关创建的项由其自己按 HTTP 响应落终态，中继不覆盖。
+            OperationItem resultItem = operationService.findItem(itemId.toString());
+            boolean gatewayOwned = resultItem != null && "mcp".equals(resultItem.getSource());
+            if (!gatewayOwned) {
+                operationService.transitionItem(itemId, failed ? "failed" : "completed",
+                        failed ? null : "allow", null, null, failed ? "TOOL_FAILED" : null);
+            }
             operationAttempts.remove(itemId);
             operationItems.remove(toolCallId);
         } catch (RuntimeException e) {

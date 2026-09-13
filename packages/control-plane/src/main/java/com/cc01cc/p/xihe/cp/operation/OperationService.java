@@ -617,6 +617,46 @@ public class OperationService {
         }
     }
 
+    /**
+     * PLAN-0317 T2.7（决策 #9）：周期对账的账本收口——把仍在途的 item/attempt
+     * 落为 {@code aborted}/{@code unknown}，并将 operation 推到目标终态。
+     * 幂等：已终态的行保留既有事实。
+     */
+    @Transactional
+    public void reconcileStaleOperation(String runId, String targetStatus) {
+        UUID operationId = findOperationIdByRunId(runId);
+        if (operationId == null) {
+            return;
+        }
+        for (OperationItem item : items.findByOperationIdOrderBySequenceAsc(operationId.toString())) {
+            if (isItemTerminal(item.getStatus())) {
+                continue;
+            }
+            for (OperationAttempt attempt : attempts.findByItemIdOrderByStartedAtAsc(item.getId().toString())) {
+                if ("started".equals(attempt.getStatus())) {
+                    attempts.finishStarted(attempt.getId(), "unknown", null, "RUN_RECONCILED",
+                            null, null, Instant.now());
+                }
+            }
+            try {
+                transitionItem(item.getId(), "aborted", null, null, null, "RUN_RECONCILED");
+            } catch (CpApiException e) {
+                if (!"OPERATION_STATE_CONFLICT".equals(e.getCode())) {
+                    throw e;
+                }
+            }
+        }
+        try {
+            transitionOperation(operationId, targetStatus, "RUN_RECONCILED", null);
+        } catch (CpApiException e) {
+            if (!"OPERATION_STATE_CONFLICT".equals(e.getCode())) {
+                throw e;
+            }
+        }
+        logger.info("[LIFECYCLE] service=cp event=operation_reconciled runId={} operationId={} targetStatus={}",
+                runId, operationId, targetStatus);
+    }
+
     private static boolean isTerminal(String status) {
         return "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status)
                 || "interrupted".equals(status) || "ambiguous".equals(status);

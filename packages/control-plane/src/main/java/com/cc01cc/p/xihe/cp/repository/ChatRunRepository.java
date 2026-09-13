@@ -62,4 +62,15 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
 
     /** PLAN-0317 T2.6：重启时收敛被取消请求卡住的 run（cancelling 无 lease、不在恢复集内）。 */
     List<ChatRun> findByStatus(String status);
+
+    /**
+     * PLAN-0317 T2.7（决策 #9）：周期对账候选——非终态、无有效 lease、且创建已超过
+     * 宽限期的 run。调用方必须再用"本进程是否正在处理该 run"做二次保护（避免误伤）。
+     */
+    @Query("select r from ChatRun r where r.status in :statuses "
+            + "and (r.leaseOwner is null or r.leaseExpiresAt is null or r.leaseExpiresAt < :staleBefore) "
+            + "and r.createdAt < :createdBefore")
+    List<ChatRun> findStaleActiveRuns(@Param("statuses") Collection<String> statuses,
+            @Param("staleBefore") Instant staleBefore,
+            @Param("createdBefore") Instant createdBefore);
 }

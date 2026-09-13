@@ -212,6 +212,47 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
                 operationService);
     }
 
+    // ── PLAN-0317 T2.7：周期对账（grace=-1 让所有测试 run 立即进入候选） ──────
+
+    private ChatRunReconciliationService staleRunReconciler() {
+        return new ChatRunReconciliationService(chatRunRepository, operationService, chatController, -1);
+    }
+
+    @Test
+    void staleRunWithoutLeaseIsReconciledToAmbiguous() {
+        ChatRun run = runWithLease("running", null, null);
+
+        staleRunReconciler().reconcileStaleRuns();
+
+        ChatRun marked = chatRunRepository.findById(run.getId()).orElseThrow();
+        assertEquals("ambiguous", marked.getStatus());
+        assertEquals("ambiguous", marked.getTerminalOutcome());
+        assertEquals("CP_RECONCILED", marked.getErrorCode());
+    }
+
+    @Test
+    void staleCancellingRunIsReconciledToCancelled() {
+        ChatRun run = runWithLease("cancelling", null, null);
+
+        staleRunReconciler().reconcileStaleRuns();
+
+        ChatRun marked = chatRunRepository.findById(run.getId()).orElseThrow();
+        assertEquals("cancelled", marked.getStatus());
+        assertEquals("cancelled", marked.getTerminalOutcome());
+        assertNull(marked.getErrorCode());
+    }
+
+    @Test
+    void locallyActiveRunIsNotReconciled() {
+        ChatRun run = runWithLease("running", null, null);
+        chatController.restoreActiveRun(sessionId, run.getId().toString());
+
+        staleRunReconciler().reconcileStaleRuns();
+
+        ChatRun untouched = chatRunRepository.findById(run.getId()).orElseThrow();
+        assertEquals("running", untouched.getStatus(), "an in-flight run must not be reconciled");
+    }
+
     @Autowired
     private ChatController chatController;
 
