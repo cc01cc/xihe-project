@@ -1725,9 +1725,21 @@ async fn run() -> anyhow::Result<()> {
     let reaper_registry = registry.clone();
     let reaper_manager = manager.clone();
     let reaper_router = router.clone();
+    let reaper_cp_url =
+        std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://127.0.0.1:12631".to_string());
+    let reaper_api_token =
+        std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-not-secure".to_string());
     let reaper_ct = ct.child_token();
     tokio::spawn(async move {
-        idle_reaper_loop(reaper_registry, reaper_manager, reaper_router, reaper_ct).await;
+        idle_reaper_loop(
+            reaper_registry,
+            reaper_manager,
+            reaper_router,
+            reaper_cp_url,
+            reaper_api_token,
+            reaper_ct,
+        )
+        .await;
     });
 
     let mcp_manager = mcp_manager();
@@ -2134,6 +2146,55 @@ async fn mcp_config_poll_loop(
 /// runs on the first tick and then every 5th (PLAN-0317 decision #3, J-1).
 const JOB_CLEANUP_EVERY_TICKS: u64 = 5;
 
+/// PLAN-0317 T2.9（决策 #14）：把追偿确认的迟到终止回报给 CP——CP 只追加
+/// `item.terminated.late` 事件，不回改 item 终态。
+async fn report_late_termination(
+    cp_url: &str,
+    api_token: &str,
+    late: &xihe_runtime::executor::LateTermination,
+) {
+    let url = format!(
+        "{cp_url}/internal/v1/operations/items/{}/late-termination",
+        late.item_id
+    );
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+    else {
+        tracing::warn!(item_id = %late.item_id, "late-termination: HTTP client build failed");
+        return;
+    };
+    match client
+        .post(&url)
+        .bearer_auth(api_token)
+        .json(&serde_json::json!({"confirmed": late.confirmed}))
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => {
+            tracing::info!(
+                item_id = %late.item_id,
+                workspace_id = %late.workspace_id,
+                "late-termination reported to CP"
+            );
+        }
+        Ok(response) => {
+            tracing::warn!(
+                item_id = %late.item_id,
+                status = %response.status(),
+                "late-termination report rejected by CP"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                item_id = %late.item_id,
+                error = %error,
+                "late-termination report failed"
+            );
+        }
+    }
+}
+
 fn should_cleanup_jobs(ticks: u64) -> bool {
     ticks == 1 || ticks.is_multiple_of(JOB_CLEANUP_EVERY_TICKS)
 }
@@ -2142,6 +2203,8 @@ async fn idle_reaper_loop(
     registry: Arc<WorkspaceRegistry>,
     manager: Arc<Mutex<WorkspaceManager>>,
     router: Arc<WorkspaceExecutionRouter>,
+    cp_url: String,
+    api_token: String,
     ct: tokio_util::sync::CancellationToken,
 ) {
     let mut ticker = interval(Duration::from_secs(60));
@@ -2301,6 +2364,12 @@ async fn idle_reaper_loop(
                             }
                         }
                     }
+                }
+
+                // PLAN-0317 T2.9（决策 #14）：追偿未确认终止的执行；确认结束
+                // 后回调 CP 追加 item.terminated.late（账本不改终态）。
+                for late in router.retry_unconfirmed_terminations().await {
+                    report_late_termination(&cp_url, &api_token, &late).await;
                 }
             }
         }

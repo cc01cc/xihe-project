@@ -32,9 +32,26 @@ pub enum ExecutionEnd {
 
 struct InFlightEntry {
     workspace_id: String,
+    container: String,
+    exec_id: Option<String>,
     token: CancellationToken,
     outcome: tokio::sync::watch::Sender<Option<ExecutionEnd>>,
+    /// PLAN-0317 T2.9: 未确认终止的条目保留在注册表，供追偿重试；上限后放弃。
+    retain_unconfirmed: bool,
+    retry_attempts: u32,
 }
+
+/// PLAN-0317 T2.9（决策 #14）：追偿成功（或确认执行已结束）的迟到终止，
+/// 由宿主回调 CP 追加 `item.terminated.late`。
+#[derive(Debug, Clone)]
+pub struct LateTermination {
+    pub item_id: String,
+    pub workspace_id: String,
+    pub confirmed: bool,
+}
+
+/// 追偿重试上限：超过后放弃并告警（交由容器生命周期兜底）。
+const LATE_RETRY_MAX_ATTEMPTS: u32 = 5;
 
 /// Handles returned when an execution registers itself.
 pub struct ExecutionRegistration {
@@ -74,8 +91,12 @@ impl InFlightExecutions {
             item_id.to_string(),
             InFlightEntry {
                 workspace_id: workspace_id.to_string(),
+                container: String::new(),
+                exec_id: None,
                 token: token.clone(),
                 outcome: outcome.clone(),
+                retain_unconfirmed: false,
+                retry_attempts: 0,
             },
         ) {
             previous.token.cancel();
@@ -83,9 +104,30 @@ impl InFlightExecutions {
         ExecutionRegistration { token, outcome }
     }
 
-    /// Removes an execution once it has finished (any exit path).
+    /// PLAN-0317 T2.9：登记 exec 句柄（create/start exec 成功后），供追偿检查。
+    pub fn attach_exec(&self, item_id: &str, container: &str, exec_id: &str) {
+        let mut map = self.inner.lock().expect("in-flight registry poisoned");
+        if let Some(entry) = map.get_mut(item_id) {
+            entry.container = container.to_string();
+            entry.exec_id = Some(exec_id.to_string());
+        }
+    }
+
+    /// PLAN-0317 T2.9：终止未确认时保留条目（不注销），等待追偿重试。
+    pub fn retain_for_retry(&self, item_id: &str) {
+        let mut map = self.inner.lock().expect("in-flight registry poisoned");
+        if let Some(entry) = map.get_mut(item_id) {
+            entry.retain_unconfirmed = true;
+        }
+    }
+
+    /// Removes an execution once it has finished (any exit path). Unconfirmed
+    /// terminations are retained for the late-retry loop instead.
     pub fn unregister(&self, item_id: &str) {
         let mut map = self.inner.lock().expect("in-flight registry poisoned");
+        if map.get(item_id).is_some_and(|entry| entry.retain_unconfirmed) {
+            return;
+        }
         map.remove(item_id);
     }
 
@@ -116,6 +158,82 @@ impl InFlightExecutions {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// PLAN-0317 T2.9（决策 #14）：对未确认终止的保留条目做追偿——通过
+    /// `inspect_exec` 判定原执行是否仍在运行：
+    ///   * 已结束（或 exec 已消失）→ 视为迟到终止成功，回调 CP；
+    ///   * 仍运行 → 计数重试；超过上限则放弃并告警（交由容器生命周期兜底）。
+    pub async fn retry_unconfirmed(&self, docker: &Docker) -> Vec<LateTermination> {
+        let candidates: Vec<(String, String, String, u32)> = {
+            let map = self.inner.lock().expect("in-flight registry poisoned");
+            map.iter()
+                .filter(|(_, entry)| entry.retain_unconfirmed)
+                .filter_map(|(item_id, entry)| {
+                    entry.exec_id.as_ref().map(|exec_id| {
+                        (
+                            item_id.clone(),
+                            entry.workspace_id.clone(),
+                            exec_id.clone(),
+                            entry.retry_attempts,
+                        )
+                    })
+                })
+                .collect()
+        };
+        let mut late = Vec::new();
+        for (item_id, workspace_id, exec_id, attempts) in candidates {
+            let still_running = match docker.inspect_exec(&exec_id).await {
+                Ok(info) => info.running.unwrap_or(false),
+                Err(error) => {
+                    tracing::debug!(
+                        item_id = %item_id,
+                        error = %error,
+                        "late-termination: exec no longer inspectable, treating as finished"
+                    );
+                    false
+                }
+            };
+            if still_running {
+                let exhausted = {
+                    let mut map = self.inner.lock().expect("in-flight registry poisoned");
+                    match map.get_mut(&item_id) {
+                        Some(entry) => {
+                            entry.retry_attempts = attempts + 1;
+                            entry.retry_attempts >= LATE_RETRY_MAX_ATTEMPTS
+                        }
+                        None => false,
+                    }
+                };
+                if exhausted {
+                    tracing::warn!(
+                        item_id = %item_id,
+                        attempts = attempts + 1,
+                        "late-termination retries exhausted; leaving termination to container lifecycle"
+                    );
+                    self.inner
+                        .lock()
+                        .expect("in-flight registry poisoned")
+                        .remove(&item_id);
+                }
+                continue;
+            }
+            if let Some(entry) = self
+                .inner
+                .lock()
+                .expect("in-flight registry poisoned")
+                .remove(&item_id)
+            {
+                let _ = entry.outcome.send(Some(ExecutionEnd::Cancelled { confirmed: true }));
+            }
+            tracing::info!(item_id = %item_id, "late-termination confirmed after unconfirmed cancel");
+            late.push(LateTermination {
+                item_id,
+                workspace_id,
+                confirmed: true,
+            });
+        }
+        late
     }
 }
 
@@ -208,6 +326,11 @@ impl WorkspaceExecutionRouter {
     /// address executions through it by `operationItemId`.
     pub fn in_flight(&self) -> Arc<InFlightExecutions> {
         self.in_flight.clone()
+    }
+
+    /// PLAN-0317 T2.9：追偿未确认终止；返回需要回调 CP 的迟到终止列表。
+    pub async fn retry_unconfirmed_terminations(&self) -> Vec<LateTermination> {
+        self.in_flight.retry_unconfirmed(&self.docker).await
     }
 
     async fn ensure(&self, workspace_id: &str) -> Result<crate::gateway::XiheRuntimeInstance> {
@@ -313,6 +436,10 @@ impl WorkspaceExecutionRouter {
                 ))
             }
         };
+        // PLAN-0317 T2.9：登记 exec 句柄，供追偿循环检查原执行是否仍在运行。
+        if let Some(state) = &in_flight_state {
+            self.in_flight.attach_exec(&state.item_id, &container_name, &exec.id);
+        }
         let mut op_bytes = op_json.into_bytes();
         op_bytes.push(b'\n');
         input
@@ -419,6 +546,10 @@ impl WorkspaceExecutionRouter {
                     let _ = state
                         .outcome
                         .send(Some(ExecutionEnd::Cancelled { confirmed }));
+                    if !confirmed {
+                        // PLAN-0317 T2.9（决策 #14）：未确认终止保留条目供追偿。
+                        self.in_flight.retain_for_retry(&state.item_id);
+                    }
                 }
                 if reason == "timeout" {
                     return Err(RuntimeError::Timeout {
@@ -809,6 +940,30 @@ mod in_flight_tests {
     fn request_termination_is_none_for_unknown_item() {
         let registry = InFlightExecutions::new();
         assert!(registry.request_termination("ws-1", "missing").is_none());
+    }
+
+    /// PLAN-0317 T2.9（决策 #14）：未确认终止的条目保留在注册表供追偿重试。
+    #[test]
+    fn unconfirmed_termination_is_retained_for_retry() {
+        let registry = InFlightExecutions::new();
+        let _registration = registry.register("ws-1", "item-1");
+        registry.attach_exec("item-1", "container-1", "exec-1");
+
+        registry.retain_for_retry("item-1");
+        registry.unregister("item-1");
+
+        assert_eq!(registry.len(), 1, "unconfirmed termination must be retained");
+    }
+
+    /// PLAN-0317 T2.9：正常结束（未标记保留）照常注销。
+    #[test]
+    fn completed_execution_is_unregistered() {
+        let registry = InFlightExecutions::new();
+        let _registration = registry.register("ws-1", "item-1");
+
+        registry.unregister("item-1");
+
+        assert!(registry.is_empty());
     }
 }
 
