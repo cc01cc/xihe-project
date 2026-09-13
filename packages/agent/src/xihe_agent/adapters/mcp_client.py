@@ -6,6 +6,8 @@ from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, NamedTuple
 
+import mcp.shared.version as _mcp_version
+import mcp.types as _mcp_types
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest
@@ -16,6 +18,16 @@ from mcp.client import streamable_http as _mcp_streamable_http
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTerminalError
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
+
+# PLAN-0308 M2（决策 #34③）：协议版本对齐 shim。
+# 本 SDK 版本（mcp 1.x）在 initialize 里**硬编码**声明 2025-11-25（会话世代），
+# 而 CP 现在固定按 2026-07-28（去会话）世代服务；客户端继续声明旧版本会拿到
+# 「服务端版本不受支持」的校验失败，也会保留会话/可恢复通道的期待。
+# 待 langchain-mcp-adapters 支持 mcp 2.x（其 0.3.2 仍 pin mcp<2.0.0）后删除本 shim。
+STATELESS_PROTOCOL_VERSION = "2026-07-28"
+if STATELESS_PROTOCOL_VERSION not in _mcp_version.SUPPORTED_PROTOCOL_VERSIONS:
+    _mcp_version.SUPPORTED_PROTOCOL_VERSIONS.append(STATELESS_PROTOCOL_VERSION)
+_mcp_types.LATEST_PROTOCOL_VERSION = STATELESS_PROTOCOL_VERSION
 
 DEFAULT_RETRY_INTERVAL = 2.0
 DEFAULT_MAX_RETRIES = 0

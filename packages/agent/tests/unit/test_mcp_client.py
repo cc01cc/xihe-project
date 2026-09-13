@@ -13,6 +13,17 @@ from xihe_agent.adapters.mcp_client import ApprovalMCPInterceptor, MCPClientMana
 from xihe_agent.interfaces.context import AgentContext
 
 
+def test_protocol_version_shim_aligns_sdk_to_stateless_generation():
+    """PLAN-0308 决策 #34③：SDK 1.x 硬编码声明 2025-11-25；本模块把声明版本
+    与支持列表对齐到 CP 实际服务的 2026-07-28（无会话世代）。"""
+    import mcp.shared.version as mcp_version
+    import mcp.types as mcp_types
+
+    assert mcp_client_module.STATELESS_PROTOCOL_VERSION == "2026-07-28"
+    assert mcp_types.LATEST_PROTOCOL_VERSION == "2026-07-28"
+    assert "2026-07-28" in mcp_version.SUPPORTED_PROTOCOL_VERSIONS
+
+
 class TestMCPClientManager:
     @pytest.fixture
     def manager(self):

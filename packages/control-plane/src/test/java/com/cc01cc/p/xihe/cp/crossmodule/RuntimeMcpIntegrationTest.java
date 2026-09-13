@@ -13,6 +13,15 @@ import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 
 import java.util.UUID;
 
+/**
+ * 逻辑 MCP 的**无会话**契约（PLAN-0308 M2 决策 #34）。
+ *
+ * <p>此前该测试断言的是「CP 签发/回传签名会话 id、按映射转发 mcp-session-id、
+ * GET/DELETE 原样转发」——2026-07-28（SEP-2567）去会话化与本 PLAN 的实测根因
+ * （Agent 侧 SDK 只能声明 2025-11-25 → 透传后 Runtime 走有会话/可恢复路径 →
+ * 同一响应在 POST 与 GET 两通道各投递一次导致工具调用挂死）共同决定了新姿态：
+ * 逻辑 MCP 固定按无会话世代服务，只谈 JSON，不签发会话，不提供 GET/DELETE。
+ */
 class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
@@ -27,7 +36,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
             {"jsonrpc":"2.0","method":"tools/list","id":1}
             """;
     private static final String INITIALIZE_BODY = """
-            {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2026-07-28"},"id":1}
+            {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-11-25"},"id":1}
             """;
 
     private String wsId;
@@ -48,46 +57,28 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         return new HttpEntity<>(body, headers);
     }
 
-    private String initializeMcpSession(String rawSessionId) {
+    /** Runtime 即使回传 mcp-session-id，CP 也不得再签发/回传给调用方（决策 #34）。 */
+    private void initializeMcpWithoutSessions() {
         String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
         wireMock.stubFor(post(urlEqualTo(runtimePath))
                 .withRequestBody(containing("\"method\":\"initialize\""))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
-                        .withHeader("mcp-session-id", rawSessionId)
+                        .withHeader("mcp-session-id", "runtime-session-" + UUID.randomUUID())
                         .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"protocolVersion\":\"2026-07-28\",\"capabilities\":{}},\"id\":1}")));
 
         ResponseEntity<String> response = restTemplate.postForEntity(
                 url("/api/v1/mcp"), mcpEntity(INITIALIZE_BODY), String.class);
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        String gatewaySessionId = response.getHeaders().getFirst("mcp-session-id");
-        assertNotNull(gatewaySessionId);
-        return gatewaySessionId;
-    }
-
-    private HttpEntity<String> mcpEntityWithSession(String body, String gatewaySessionId) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(token);
-        headers.set("X-Workspace-Id", wsId);
-        headers.set("mcp-session-id", gatewaySessionId);
-        return new HttpEntity<>(body, headers);
-    }
-
-    private HttpEntity<String> serviceMcpEntityWithSession(String body, String gatewaySessionId) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth("dev-token-not-secure");
-        headers.set("X-Workspace-Id", wsId);
-        headers.set("mcp-session-id", gatewaySessionId);
-        return new HttpEntity<>(body, headers);
+        assertNull(response.getHeaders().getFirst("mcp-session-id"),
+                "stateless logical MCP must not issue a protocol session id");
     }
 
     @Test
     void mcpToolsListForwardsToRuntime() {
         String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
-        String gatewaySessionId = initializeMcpSession("runtime-session-" + UUID.randomUUID());
+        initializeMcpWithoutSessions();
 
         wireMock.stubFor(post(urlEqualTo(runtimePath))
                 .withRequestBody(containing("\"method\":\"tools/list\""))
@@ -97,7 +88,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
                         .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}")));
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/api/v1/mcp"), mcpEntityWithSession(TOOLS_LIST_BODY, gatewaySessionId), String.class);
+                url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
@@ -106,12 +97,13 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
                 .withRequestBody(containing("tools/list")));
     }
 
+    /**
+     * 客户端声明旧版本 + SSE Accept 时：CP 仍按**固定版本**转发（上游必须收到规范的
+     * 双 Accept——rmcp 对只声明 JSON 的请求回 406），但不再转发会话与可恢复相关头。
+     */
     @Test
-    void mcpToolsListForwardsSessionIdHeader() {
+    void mcpForwardPinsStatelessProtocolVersionAndDropsSessionHeaders() {
         String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
-        String rawSessionId = "runtime-session-" + UUID.randomUUID();
-        String gatewaySessionId = initializeMcpSession(rawSessionId);
-
         wireMock.stubFor(post(urlEqualTo(runtimePath))
                 .withRequestBody(containing("\"method\":\"tools/list\""))
                 .willReturn(aResponse()
@@ -123,16 +115,45 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
         headers.set("X-Workspace-Id", wsId);
-        headers.set("mcp-session-id", gatewaySessionId);
-        HttpEntity<String> entity = new HttpEntity<>(TOOLS_LIST_BODY, headers);
+        headers.set("MCP-Protocol-Version", "2025-11-25");
+        headers.set("Accept", "application/json, text/event-stream");
+        headers.set("Last-Event-ID", "evt-1");
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/api/v1/mcp"), entity, String.class);
-
+                url("/api/v1/mcp"), new HttpEntity<>(TOOLS_LIST_BODY, headers), String.class);
         assertEquals(HttpStatus.OK, response.getStatusCode());
 
         wireMock.verify(postRequestedFor(urlEqualTo(runtimePath))
-                .withHeader("mcp-session-id", equalTo(rawSessionId)));
+                .withHeader("Accept", equalTo("application/json, text/event-stream"))
+                .withHeader("MCP-Protocol-Version", equalTo("2026-07-28")));
+        wireMock.verify(0, postRequestedFor(urlEqualTo(runtimePath))
+                .withHeader("mcp-session-id", matching(".+")));
+        wireMock.verify(0, postRequestedFor(urlEqualTo(runtimePath))
+                .withHeader("Last-Event-ID", matching(".+")));
+    }
+
+    /**
+     * 决策 #34②：Runtime 以 SSE 帧应答时，CP 在下游解包为纯 JSON
+     * （调用方不接触 SSE 帧、Last-Event-ID 与事件重放语义）。
+     */
+    @Test
+    void mcpForwardUnwrapsSseResponseToJson() {
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        wireMock.stubFor(post(urlEqualTo(runtimePath))
+                .withRequestBody(containing("\"method\":\"tools/list\""))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "text/event-stream")
+                        .withBody("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\n")));
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(MediaType.APPLICATION_JSON_VALUE, response.getHeaders().getFirst("Content-Type"));
+        assertEquals("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}", response.getBody(),
+                "SSE framing must be unwrapped before returning to the caller");
+        assertNull(response.getHeaders().getFirst("mcp-session-id"));
     }
 
     @Test
@@ -152,13 +173,13 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
     @Test
     void mcpToolsListHandlesRuntimeErrorGracefully() {
         String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
-        String gatewaySessionId = initializeMcpSession("runtime-session-" + UUID.randomUUID());
+        initializeMcpWithoutSessions();
         wireMock.stubFor(post(urlEqualTo(runtimePath))
                 .withRequestBody(containing("\"method\":\"tools/list\""))
                 .willReturn(aResponse().withStatus(500)));
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                url("/api/v1/mcp"), mcpEntityWithSession(TOOLS_LIST_BODY, gatewaySessionId), String.class);
+                url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertTrue(response.getBody().contains("\"tools\""));
@@ -167,60 +188,36 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
                 .withRequestBody(containing("\"method\":\"tools/list\"")));
     }
 
+    /** 决策 #34：无会话 ⇒ 不提供服务端主动推送通道（不再转发 GET）。 */
     @Test
-    void mcpGetForwardsSseHeadersAndBody() {
+    void mcpGetIsRejectedWithoutForwarding() {
         String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
-        String rawSessionId = "runtime-session-" + UUID.randomUUID();
-        String gatewaySessionId = initializeMcpSession(rawSessionId);
-        wireMock.stubFor(get(urlEqualTo(runtimePath))
-                .willReturn(aResponse()
-                        .withStatus(200)
-                        .withHeader("Content-Type", "text/event-stream")
-                        .withHeader("Last-Event-ID", "evt-2")
-                        .withBody("event: message\ndata: {\"ok\":true}\n\n")));
-
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.set("X-Workspace-Id", wsId);
-        headers.set("MCP-Protocol-Version", "2026-07-28");
-        headers.set("Last-Event-ID", "evt-1");
-        headers.set("mcp-session-id", gatewaySessionId);
+
         ResponseEntity<String> response = restTemplate.exchange(
                 url("/api/v1/mcp"), HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals("text/event-stream", response.getHeaders().getFirst("Content-Type"));
-        assertEquals("evt-2", response.getHeaders().getFirst("Last-Event-ID"));
-        assertTrue(response.getBody().contains("event: message"));
-        wireMock.verify(getRequestedFor(urlEqualTo(runtimePath))
-                .withHeader("Last-Event-ID", equalTo("evt-1"))
-                .withHeader("MCP-Protocol-Version", equalTo("2026-07-28"))
-                .withHeader("mcp-session-id", equalTo(rawSessionId)));
+        assertEquals(HttpStatus.METHOD_NOT_ALLOWED, response.getStatusCode());
+        assertTrue(response.getBody().contains("MCP_STREAM_NOT_SUPPORTED"));
+        wireMock.verify(0, getRequestedFor(urlEqualTo(runtimePath)));
     }
 
+    /** 决策 #34：无会话 ⇒ 没有可终止的协议会话（不再转发 DELETE）。 */
     @Test
-    void mcpDeleteForwardsSessionToRuntime() {
+    void mcpDeleteIsRejectedWithoutForwarding() {
         String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
-        String rawSessionId = "runtime-session-" + UUID.randomUUID();
-        String gatewaySessionId = initializeMcpSession(rawSessionId);
-        wireMock.stubFor(delete(urlEqualTo(runtimePath))
-                .willReturn(aResponse()
-                        .withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"disconnected\":true}}")));
-
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.set("X-Workspace-Id", wsId);
-        headers.set("mcp-session-id", gatewaySessionId);
+
         ResponseEntity<String> response = restTemplate.exchange(
                 url("/api/v1/mcp"), HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertTrue(response.getBody().contains("disconnected"));
-        wireMock.verify(deleteRequestedFor(urlEqualTo(runtimePath))
-                .withHeader("mcp-session-id", equalTo(rawSessionId))
-                .withHeader("MCP-Protocol-Version", equalTo("2026-07-28")));
+        assertEquals(HttpStatus.METHOD_NOT_ALLOWED, response.getStatusCode());
+        assertTrue(response.getBody().contains("MCP_SESSION_NOT_SUPPORTED"));
+        wireMock.verify(0, deleteRequestedFor(urlEqualTo(runtimePath)));
     }
 
     @Test
@@ -242,19 +239,22 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
                 url("/api/v1/mcp"), new HttpEntity<>(INITIALIZE_BODY, headers), String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertNotNull(response.getHeaders().getFirst("mcp-session-id"));
+        assertNull(response.getHeaders().getFirst("mcp-session-id"));
         wireMock.verify(postRequestedFor(urlEqualTo(runtimePath))
                 .withHeader("Authorization", equalTo("Bearer dev-token-not-secure")));
 
-        String gatewaySessionId = response.getHeaders().getFirst("mcp-session-id");
         wireMock.stubFor(post(urlEqualTo(runtimePath))
                 .withRequestBody(containing("\"method\":\"tools/list\""))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}")));
+        HttpHeaders followUpHeaders = new HttpHeaders();
+        followUpHeaders.setContentType(MediaType.APPLICATION_JSON);
+        followUpHeaders.setBearerAuth("dev-token-not-secure");
+        followUpHeaders.set("X-Workspace-Id", wsId);
         ResponseEntity<String> followUp = restTemplate.postForEntity(
-                url("/api/v1/mcp"), serviceMcpEntityWithSession(TOOLS_LIST_BODY, gatewaySessionId), String.class);
+                url("/api/v1/mcp"), new HttpEntity<>(TOOLS_LIST_BODY, followUpHeaders), String.class);
         assertEquals(HttpStatus.OK, followUp.getStatusCode());
     }
 
@@ -271,47 +271,18 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
     }
 
-    // MCP 2026-07-28 removed protocol sessions (SEP-2567); a session-less
-    // GET/DELETE is valid and must be forwarded to the Runtime.
+    /** 无法验证的会话 id 仍然拒绝（安全语义不变，即使 CP 自己不再签发）。 */
     @Test
-    void mcpGetForwardsWorkspaceHeaderWithoutBoundSession() {
-        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
-        wireMock.stubFor(get(urlEqualTo(runtimePath))
-                .willReturn(aResponse()
-                        .withStatus(200)
-                        .withHeader("Content-Type", "text/event-stream")
-                        .withBody("event: message\ndata: {}\n\n")));
-
+    void mcpRejectsUnverifiableSessionId() {
         HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(token);
         headers.set("X-Workspace-Id", wsId);
+        headers.set("mcp-session-id", "not-a-signed-session");
 
-        ResponseEntity<String> response = restTemplate.exchange(
-                url("/api/v1/mcp"), HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                url("/api/v1/mcp"), new HttpEntity<>(TOOLS_LIST_BODY, headers), String.class);
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        wireMock.verify(getRequestedFor(urlEqualTo(runtimePath))
-                .withHeader("X-Workspace-Id", equalTo(wsId)));
-    }
-
-    @Test
-    void mcpDeleteForwardsWorkspaceHeaderWithoutBoundSession() {
-        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
-        wireMock.stubFor(delete(urlEqualTo(runtimePath))
-                .willReturn(aResponse()
-                        .withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"disconnected\":true}}")));
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(token);
-        headers.set("X-Workspace-Id", wsId);
-
-        ResponseEntity<String> response = restTemplate.exchange(
-                url("/api/v1/mcp"), HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
-
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        wireMock.verify(deleteRequestedFor(urlEqualTo(runtimePath))
-                .withHeader("X-Workspace-Id", equalTo(wsId)));
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
     }
 }

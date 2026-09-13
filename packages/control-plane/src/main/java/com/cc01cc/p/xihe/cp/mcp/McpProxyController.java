@@ -55,6 +55,12 @@ public class McpProxyController {
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String HMAC_SECRET = "xihe-mcp-session-hmac-key-2026";
     private static final String REMOTE_SCOPE = "mcp:tools";
+    /**
+     * PLAN-0308 M2（决策 #34）：逻辑 MCP 的协议版本与语义固定为无会话世代——
+     * 不透传调用方声明的版本（Agent 侧 SDK 目前只能声明 2025-11-25，会导致
+     * Runtime 走有会话/可恢复路径并开启事件重放）。
+     */
+    private static final String STATELESS_PROTOCOL_VERSION = "2026-07-28";
     /** PLAN-0308（spec S2.2 规则 5 + 决策 #31）：只由 CP 写入的出站策略头。 */
     private static final List<String> OUTBOUND_POLICY_HEADERS = List.of(
             "X-Xihe-Tool-Timeout-S", "X-Xihe-Tool-Timeout-Origin", "X-Xihe-Tool-Output-Limit");
@@ -161,99 +167,34 @@ public class McpProxyController {
         return forwardToRuntime(wsId, null, body, headers, sessionId, access);
     }
 
+    /**
+     * PLAN-0308 M2（决策 #34）：逻辑 MCP 按**无会话**语义服务（2026-07-28 世代）。
+     * 服务端主动推送（GET SSE）在本代理上不存在——直接拒绝，不再转发 Runtime。
+     * 客户端若因旧版本协商期待该通道，会得到明确的 405 而不是被挂住的空流。
+     */
     @GetMapping("/api/v1/mcp")
-    public ResponseEntity<String> stream(
-            @RequestHeader HttpHeaders headers) {
+    public ResponseEntity<String> stream(@RequestHeader HttpHeaders headers) {
         AuthorizationResult authorization = authorize(headers, null, false);
         if (!authorization.allowed()) {
             return authorization.failure();
         }
-        return forwardGetToRuntime(authorization.context(), headers);
+        audit.record(authorization.context().auditSessionId(), "mcp/stream", "reject",
+                "stateless logical MCP: no server-initiated stream");
+        return problem(HttpStatus.METHOD_NOT_ALLOWED, "MCP_STREAM_NOT_SUPPORTED",
+                "The logical MCP endpoint is stateless and does not serve a server-initiated stream");
     }
 
+    /** 决策 #34：无会话 ⇒ 没有可终止的协议会话，DELETE 同样明确拒绝。 */
     @DeleteMapping("/api/v1/mcp")
-    public ResponseEntity<String> disconnect(
-            @RequestHeader HttpHeaders headers) {
+    public ResponseEntity<String> disconnect(@RequestHeader HttpHeaders headers) {
         AuthorizationResult authorization = authorize(headers, null, false);
         if (!authorization.allowed()) {
             return authorization.failure();
         }
-        AccessContext access = authorization.context();
-        String sessionId = access.auditSessionId();
-        String wsId = access.workspaceId();
-        try {
-            HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create(runtimeBaseUrl + "/internal/v1/runtime/workspaces/" + wsId + "/mcp"))
-                    .timeout(Duration.ofSeconds(forwardTimeoutS > 0 ? forwardTimeoutS : 30))
-                    .header("MCP-Protocol-Version", "2026-07-28")
-                    .header("Authorization", "Bearer " + runtimeServiceToken)
-                    .header("Accept", "application/json")
-                    .header("X-Workspace-Id", wsId)
-                    .DELETE();
-            copySessionHeaders(headers, builder);
-            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-            HttpHeaders responseHeaders = new HttpHeaders();
-            response.headers().firstValue("content-type").ifPresent(value -> responseHeaders.set("Content-Type", value));
-            audit.record(sessionId, "mcp/disconnect", "allow", "session disconnected");
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                String gatewaySessionId = headers.getFirst("mcp-session-id");
-                if (gatewaySessionId != null) {
-                    runtimeSessionByGatewaySession.remove(gatewaySessionId);
-                    mcpSessionBindings.remove(gatewaySessionId);
-                }
-            }
-            return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
-        } catch (Exception e) {
-            logger.error("MCP disconnect failed: wsId={} sessionId={}", wsId, sessionId, e);
-            return problem(HttpStatus.BAD_GATEWAY, "MCP_DISCONNECT_UNAVAILABLE", "MCP disconnect unavailable");
-        }
-    }
-
-    private void copySessionHeaders(HttpHeaders headers, HttpRequest.Builder builder) {
-        for (String name : List.of("mcp-session-id", "Last-Event-ID")) {
-            String value = headers.getFirst(name);
-            if (value != null && !value.isBlank()) {
-                if ("mcp-session-id".equalsIgnoreCase(name)) {
-                    value = runtimeSessionByGatewaySession.getOrDefault(value, value);
-                }
-                builder.header(name, value);
-            }
-        }
-    }
-
-    private ResponseEntity<String> forwardGetToRuntime(AccessContext access, HttpHeaders headers) {
-        String wsId = access.workspaceId();
-        String sessionId = access.auditSessionId();
-        try {
-            String requestedAccept = headers.getFirst("Accept");
-            String accept = requestedAccept != null && requestedAccept.contains(MediaType.TEXT_EVENT_STREAM_VALUE)
-                    ? requestedAccept : MediaType.TEXT_EVENT_STREAM_VALUE;
-            var builder = HttpRequest.newBuilder()
-                    .uri(URI.create(runtimeBaseUrl + "/internal/v1/runtime/workspaces/" + wsId + "/mcp"))
-                    .timeout(Duration.ofSeconds(forwardTimeoutS > 0 ? forwardTimeoutS : 30))
-                    .header("Accept", accept)
-                    .header("MCP-Protocol-Version", "2026-07-28")
-                    .header("Authorization", "Bearer " + runtimeServiceToken)
-                    .GET();
-            for (String name : List.of("Last-Event-ID", "mcp-session-id")) {
-                String value = headers.getFirst(name);
-                if ("mcp-session-id".equalsIgnoreCase(name) && value != null) {
-                    value = runtimeSessionByGatewaySession.getOrDefault(value, value);
-                }
-                if (value != null && !value.isBlank()) builder.header(name, value);
-            }
-            builder.header("X-Workspace-Id", wsId);
-            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-            HttpHeaders responseHeaders = new HttpHeaders();
-            response.headers().firstValue("content-type").ifPresent(value -> responseHeaders.set("Content-Type", value));
-            response.headers().firstValue("mcp-session-id").ifPresent(value -> responseHeaders.set("mcp-session-id", value));
-            response.headers().firstValue("last-event-id").ifPresent(value -> responseHeaders.set("Last-Event-ID", value));
-            audit.record(sessionId, "mcp/stream", "allow", "SSE response");
-            return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
-        } catch (Exception e) {
-            logger.error("MCP GET stream failed: wsId={} sessionId={}", wsId, sessionId, e);
-            return problem(HttpStatus.BAD_GATEWAY, "MCP_STREAM_UNAVAILABLE", "MCP stream unavailable");
-        }
+        audit.record(authorization.context().auditSessionId(), "mcp/disconnect", "reject",
+                "stateless logical MCP: no protocol session");
+        return problem(HttpStatus.METHOD_NOT_ALLOWED, "MCP_SESSION_NOT_SUPPORTED",
+                "The logical MCP endpoint is stateless; there is no protocol session to terminate");
     }
 
     private ResponseEntity<String> handleInitialize(
@@ -677,8 +618,45 @@ public class McpProxyController {
         }
     }
 
-    /** 剥离上游传入的 CP 出站策略头（信任边界 spec S2.2 规则 5；只保留 CP 写入的值）。 */
-    private static HttpHeaders stripOutboundPolicyHeaders(HttpHeaders headers) {
+    /**
+     * PLAN-0308 M2（决策 #34②）：把 Runtime 的 SSE 应答解包为纯 JSON。
+     *
+     * <p>MCP streamable-HTTP 允许服务端以 SSE 帧应答 POST；本代理是同步请求/响应代理，
+     * 向下游只呈现 JSON，使调用方（Python SDK 1.x）走最简单的 JSON 路径，
+     * 不触发 SSE 解析、Last-Event-ID 与事件重放语义（该语义是本 PLAN 实测挂起的成因）。
+     * 非 SSE 应答原样返回；多事件流取其中最后一个 JSON-RPC 响应/错误。
+     */
+    private String unwrapSseToJson(String body) {
+        if (body == null || body.isBlank() || !body.stripLeading().startsWith("data:")) {
+            return body;
+        }
+        String candidate = null;
+        for (String line : body.split("\n")) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) {
+                continue;
+            }
+            String payload = trimmed.substring("data:".length()).trim();
+            if (payload.isEmpty()) {
+                continue;
+            }
+            try {
+                JsonNode node = objectMapper.readTree(payload);
+                if (node.has("result") || node.has("error")) {
+                    candidate = payload;
+                }
+            } catch (Exception e) {
+                logger.debug("Ignoring non-JSON SSE data line: {}", e.getMessage());
+            }
+        }
+        if (candidate == null) {
+            logger.warn("SSE response without a JSON-RPC result/error payload; returning raw body");
+            return body;
+        }
+        return candidate;
+    }
+
+    /** 剥离上游传入的 CP 出站策略头（信任边界 spec S2.2 规则 5；只保留 CP 写入的值）。 */    private static HttpHeaders stripOutboundPolicyHeaders(HttpHeaders headers) {
         boolean present = OUTBOUND_POLICY_HEADERS.stream()
                 .anyMatch(name -> headers.getFirst(name) != null);
         if (!present) {
@@ -732,42 +710,16 @@ public class McpProxyController {
                 path = "/internal/v1/runtime/workspaces/" + wsId + "/mcp/stdio/" + serverId;
             }
 
-            String requestedAccept = headers.getFirst("Accept");
-            String forwardedAccept = requestedAccept != null
-                    && requestedAccept.contains(MediaType.APPLICATION_JSON_VALUE)
-                    && requestedAccept.contains(MediaType.TEXT_EVENT_STREAM_VALUE)
-                ? requestedAccept
-                : "application/json, text/event-stream";
-
-            String protocolVersion = extractProtocolVersion(body);
-            if (protocolVersion == null) {
-                protocolVersion = headers.getFirst("MCP-Protocol-Version");
-            }
-            if (protocolVersion == null || protocolVersion.isEmpty()) {
-                protocolVersion = "2026-07-28";
-            }
-
+            // PLAN-0308 M2（决策 #34）：上游按 MCP 规范**同时**声明两种 Accept
+            // （rmcp 对只声明 application/json 的请求回 406 Not Acceptable），
+            // 但下游由 CP 把 SSE 应答解包成纯 JSON（unwrapSseToJson）——调用方只见 JSON，
+            // 不触发 SSE 解析与可恢复（Last-Event-ID）语义；协议会话亦不下发/不转发。
             var requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(runtimeBaseUrl + path))
                 .header("Content-Type", "application/json")
-                .header("Accept", forwardedAccept)
-                .header("MCP-Protocol-Version", protocolVersion)
+                .header("Accept", "application/json, text/event-stream")
+                .header("MCP-Protocol-Version", STATELESS_PROTOCOL_VERSION)
                 .header("Authorization", "Bearer " + runtimeServiceToken);
-
-            for (String headerName : List.of("Last-Event-ID")) {
-                String headerValue = headers.getFirst(headerName);
-                if (headerValue != null && !headerValue.isEmpty()
-                        && !"Authorization".equalsIgnoreCase(headerName)) {
-                    requestBuilder.header(headerName, headerValue);
-                }
-            }
-
-            String gatewaySessionId = headers.getFirst("mcp-session-id");
-            if (gatewaySessionId != null && !gatewaySessionId.isEmpty()) {
-                String runtimeSessionId = runtimeSessionByGatewaySession
-                    .getOrDefault(gatewaySessionId, gatewaySessionId);
-                requestBuilder.header("mcp-session-id", runtimeSessionId);
-            }
 
             requestBuilder.header("X-Workspace-Id", wsId);
             copyOperationHeaders(headers, requestBuilder);
@@ -785,34 +737,29 @@ public class McpProxyController {
             }
 
             HttpRequest forwardRequest = requestBuilder
-                .POST(HttpRequest.BodyPublishers.ofString(normalizeRuntimeBody(body, protocolVersion)))
+                .POST(HttpRequest.BodyPublishers.ofString(normalizeRuntimeBody(body, STATELESS_PROTOCOL_VERSION)))
                 .timeout(Duration.ofSeconds(waitSeconds > 0 ? waitSeconds : 30))
                 .build();
 
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
 
-            finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);
-            appendMcpExtension(ledgerAttempt, serverId, body, response.statusCode(), response.body(), null,
-                    protocolVersion);
+            // 决策 #34②：下游只见 JSON——SSE 应答在此解包（客户端不接触 SSE 帧与可恢复语义）。
+            String responseBody = unwrapSseToJson(response.body());
+            boolean unwrapped = responseBody != response.body();
 
-            audit.record(sessionId, extractMethod(body), "allow", response.body());
+            finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);
+            appendMcpExtension(ledgerAttempt, serverId, body, response.statusCode(), responseBody, null,
+                    STATELESS_PROTOCOL_VERSION);
+
+            audit.record(sessionId, extractMethod(body), "allow", responseBody);
 
             HttpHeaders responseHeaders = new HttpHeaders();
-            String runtimeSessionId = response.headers().firstValue("mcp-session-id").orElse(null);
-            if (runtimeSessionId != null && !runtimeSessionId.isEmpty()) {
-                String signedGatewaySessionId = signSessionId(wsId, runtimeSessionId);
-                runtimeSessionByGatewaySession.put(signedGatewaySessionId, runtimeSessionId);
-                mcpSessionBindings.put(signedGatewaySessionId, new McpSessionBinding(
-                        wsId, access.userId(), access.applicationSessionId()));
-                responseHeaders.set("mcp-session-id", signedGatewaySessionId);
-            }
-            String contentType = response.headers().firstValue("content-type")
-                .orElse(MediaType.APPLICATION_JSON_VALUE);
+            // 决策 #34：不再签发/回传 mcp-session-id（无会话语义），也不回传可恢复相关头。
+            String contentType = unwrapped
+                    ? MediaType.APPLICATION_JSON_VALUE
+                    : response.headers().firstValue("content-type").orElse(MediaType.APPLICATION_JSON_VALUE);
             responseHeaders.set("Content-Type", contentType);
-            response.headers().firstValue("MCP-Protocol-Version")
-                .ifPresent(value -> responseHeaders.set("MCP-Protocol-Version", value));
-            response.headers().firstValue("Last-Event-ID")
-                .ifPresent(value -> responseHeaders.set("Last-Event-ID", value));
+            responseHeaders.set("MCP-Protocol-Version", STATELESS_PROTOCOL_VERSION);
             if (forwardWait != null) {
                 // 转发结果署名的“下游”侧：状态码由 Runtime 给出（spec S5.1 的 origin 仅标注到界方）。
                 logger.info(
@@ -824,7 +771,7 @@ public class McpProxyController {
                         System.currentTimeMillis() - startedMs,
                         response.statusCode() >= 400 ? "downstream" : "-");
             }
-            return new ResponseEntity<>(response.body(), responseHeaders, HttpStatus.valueOf(response.statusCode()));
+            return new ResponseEntity<>(responseBody, responseHeaders, HttpStatus.valueOf(response.statusCode()));
 
         } catch (Exception e) {
             // A transport failure after dispatch cannot prove whether the tool ran.
