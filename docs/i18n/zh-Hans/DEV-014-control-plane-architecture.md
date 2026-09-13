@@ -65,3 +65,11 @@ flowchart LR
 - Agent provider failure 进入 `failed`/`partial`，流断开或缺少终态进入 `ambiguous`；`ambiguous` 不自动 retry，人工确认后使用新的幂等键。
 - `/api/v1/exec` 已删除，所有聊天 caller 统一迁移至 `/api/v1/chat`。
 - **健康**：`/actuator/health`；方法级 `@PreAuthorize`（禁类级，避免与 `/health` 冲突）。
+
+## 7. 取消收敛与对账（PLAN-0317）
+
+- **`POST /api/v1/chat/runs/{runId}/cancel` 由 CP 自主收敛**（不等 Agent 回音）：并行转发 Agent 与调用 Runtime 取消端点；随后把四层状态一次收口——`operation_items`（确认终止 `cancelled` / 未确认 `aborted` / 已自然结束不改）、在途 `operation_attempts`（`cancelled`）、`session_operations`（`cancelled`）、`chat_runs`（`cancelling → cancelled`，成功/失败路径的转换期望集不含 `cancelling`）。
+- **关联键**：`operationItemId`（= `operation_items.tool_call_id` 规范化值）。CP 出站自行注入规范化 `X-Operation-Item-Id`；非 UUID 值统一 `nameUUIDFromBytes` 派生，保证中继与网关同一键。
+- **Runtime 不可达/未确认** → 账本落 `aborted` 并保留追偿：Runtime 复核结束后回调 `POST /internal/v1/operations/items/{itemId}/late-termination`，CP 只追加 `item.terminated.late` 事件、不回改终态。
+- **恢复与对账**：启动恢复把崩溃遗留的 `cancelling` 收敛为 `cancelled`；`ChatRunReconciliationService` 周期（默认 5 分钟，宽限 10 分钟）收敛无 lease 且超宽限的非终态 run（`cancelling → cancelled`，其余 `ambiguous(CP_RECONCILED)`），并收口 operation 与在途 item/attempt；**本进程活跃 run 一律跳过**（防误伤）。
+- 账本写路径约束：批量状态转换显式刷新 `updated_at`（`CURRENT_INSTANT`）；`appendItem` 先对 operation 行加悲观锁再分配序号，`appendEvent` 用聚合 `max`。

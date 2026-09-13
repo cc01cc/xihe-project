@@ -53,3 +53,10 @@ updated: 2026-09-06
 - **Jackson 2/3 混用**: CP 同时依赖 Jackson2（`com.fasterxml.jackson.databind`，如 `McpProxyController` 仍用 `fieldNames()`）与 Jackson3（`tools.jackson`）。3.x 新增 `propertyNames()`（返回 `Collection<String>`）；按所在模块的依赖对齐选用，禁跨版本混调
 - **JSONB @JdbcTypeCode**: JPA 实体含 `columnDefinition = "jsonb"` 的 String 字段必须加 `@JdbcTypeCode(SqlTypes.JSON)`，否则 PG 报类型不匹配
 - **ConfigClient URL 路径**（Agent `config_client.py`、Runtime `config_client.rs`）：CP 内部端点路径为 `/internal/v1/config/{layer}/{domain}`（注意是 `/internal/v1` 前缀；PLAN-049 T3 测试暴露过误用公开前缀拼接内部路径的 bug）。新增模块调用时确认路径为 `/internal/v1/config/...`
+
+## 技术债（PLAN-0317 收尾登记）
+
+- **账本权威纯度**：`operation_items` 仍有两类写者——MCP 网关（`source=mcp`，唯一翻转方）与 SSE 中继（`source=agent`，兜底 Agent 本地工具）；这是"单写者"的近似（PLAN-0317 决策 #17）。彻底方案（中继零写入 + 本地工具统一登记入口 + Agent→CP 上报契约）另立 `XH-ledger-single-writer`。
+- **`runtime_jobs` durable registry**：schema 与服务已建但**无 writer/caller**，与容器内 `jobId` 未打通（PLAN-274 债务 #11）。
+- **Rust lint/format 预存问题**：`cargo clippy --all-targets` 在 `remote_mcp.rs` 测试代码报 `type_complexity`（项目门禁不含 `--all-targets`）；仓库整体存在 rustfmt 漂移（`cargo fmt --check` 约 190 处 / 20 文件），CI 无 fmt 门禁，`scripts/mise/format.sh` 对失败静默吞错。
+- **容器侧改动生效条件**：修改 `container_runtime.rs` 后必须重建 `xihe/workspace` 镜像，否则沙盒内仍是旧二进制（PLAN-0317 实测曾据此误判）。
