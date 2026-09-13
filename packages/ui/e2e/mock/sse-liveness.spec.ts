@@ -136,9 +136,9 @@ test.describe('SSE liveness timer (S-1, real time)', () => {
 
     const toast = page.locator('[data-sonner-toast]')
     await expect(toast).toContainText('AGENT_TIMEOUT', { timeout: 40_000 })
-    // NOTE: toast DOM text is asserted here; the visual layer is covered by the
-    // message banner. A pre-existing app-wide defect (vue-sonner/style.css never
-    // imported) keeps toasts positioned below the fold — see DEV-018 (2026-09-13).
+    // PLAN-0325: the toast must be actually visible inside the viewport
+    // (the pre-fix defect placed it below the fold: rect.y == viewport height).
+    await expect(toast).toBeInViewport()
     await page.screenshot({ path: resolve(evidenceDir, 's1-liveness-pre-content-realtime.png') })
   })
 })

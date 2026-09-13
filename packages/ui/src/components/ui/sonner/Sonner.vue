@@ -12,6 +12,7 @@ import {
 import { computed } from "vue"
 import { cn } from "@/lib/utils"
 import { Toaster as Sonner, type ToasterProps } from "vue-sonner"
+import "vue-sonner/style.css"
 
 const props = defineProps<ToasterProps>()
 

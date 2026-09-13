@@ -79,6 +79,7 @@
 
 ### Fixed
 
+- UI toast 基础样式（PLAN-0325）：`components/ui/sonner/Sonner.vue` 显式导入 `vue-sonner/style.css`，修复 toast 落文档流底部、全应用不可见的问题（PLAN-0323 复核发现）。
 - 流活性语义（PLAN-0323 S-1）：UI 活性计时器改为心跳/工具/审批/状态事件均参与判活（`useSSE.ts`），长工具调用不再误报 `AGENT_TIMEOUT(ambiguous)`；"静默"口径 = 连续 ≥30s 无任何事件（含心跳），run 级停滞由 CP 终态/恢复接口承担（静默期已登记于 DEV-018 风险）。
 - 审批取消清理（PLAN-0323 A-1）：任务取消（`asyncio.CancelledError`，BaseException）不再绕过待决审批清理，已取消 run 的审批不再残留于 `get_pending()`。
 - 物化总时限（PLAN-0323 M-1）：`ensure_workspace_materialized` 增加总时限（env `XIHE_WORKSPACE_MATERIALIZE_TIMEOUT_SECS`，默认 600s，锁后计时）；超时 `mark_failed` 并署名，不再无限停留 `materializing`。
