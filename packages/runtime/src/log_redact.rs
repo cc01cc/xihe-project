@@ -103,7 +103,7 @@ mod tests {
         let out = redact_text(line);
         assert!(!out.contains("rt-secret-123"));
         assert!(out.contains("visible"));
-        assert!(out.contains(&format!("\"refresh_token\":\"{}\"", REDACTED)));
+        assert!(out.contains(&format!("\"refresh_token\":\"{REDACTED}\"")));
     }
 
     #[test]

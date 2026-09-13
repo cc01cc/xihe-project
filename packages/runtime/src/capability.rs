@@ -17,11 +17,11 @@ pub fn check(required_ok: bool, reason: &str) -> Observed {
 pub async fn check_required() -> Observed {
     let docker = match bollard::Docker::connect_with_local_defaults() {
         Ok(d) => d,
-        Err(e) => return Observed::Blocked(format!("Docker unavailable: {}", e)),
+        Err(e) => return Observed::Blocked(format!("Docker unavailable: {e}")),
     };
     match docker.inspect_image("xihe/workspace").await {
         Ok(_) => Observed::Ready,
-        Err(e) => Observed::Blocked(format!("image xihe/workspace not found: {}", e)),
+        Err(e) => Observed::Blocked(format!("image xihe/workspace not found: {e}")),
     }
 }
 
@@ -51,9 +51,9 @@ mod tests {
             Observed::Blocked(msg) => {
                 // If Docker unavailable, skip (don't fail)
                 if msg.contains("Docker unavailable") {
-                    println!("Docker unavailable, skipping: {}", msg);
+                    println!("Docker unavailable, skipping: {msg}");
                 } else {
-                    panic!("expected Ready but got Blocked: {}", msg);
+                    panic!("expected Ready but got Blocked: {msg}");
                 }
             }
         }

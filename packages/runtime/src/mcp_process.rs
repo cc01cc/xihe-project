@@ -208,7 +208,7 @@ impl McpProcessManager {
         // Q31 B: persist to DB — for v1, write to .xihe-state/bridge_observed.json (local file as DB stand-in)
         let state_dir =
             std::env::var("XIHE_RUNTIME_STATE_DIR").unwrap_or_else(|_| ".xihe-state".to_string());
-        let path = std::path::Path::new(&state_dir).join(format!("bridge_observed_{}.json", ws_id));
+        let path = std::path::Path::new(&state_dir).join(format!("bridge_observed_{ws_id}.json"));
         if let Ok(json) = serde_json::to_string(&bridges) {
             let _ = std::fs::create_dir_all(&state_dir);
             let _ = std::fs::write(&path, json);

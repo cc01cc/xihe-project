@@ -47,16 +47,14 @@ pub fn scan_with_env(host_root: &Path, xihe_workspace: Option<&str>, gate: Optio
     let host_root_str = host_root.to_string_lossy().to_lowercase();
     if host_root_str.contains("tmp") && host_root_str.contains("xihe-workspace") {
         return InventoryResult::Blocked(format!(
-            "negative inventory: host_root {:?} looks like legacy fallback; must use XIHE_WORKSPACE_HOST_ROOT allowlist",
-            host_root
+            "negative inventory: host_root {host_root:?} looks like legacy fallback; must use XIHE_WORKSPACE_HOST_ROOT allowlist"
         ));
     }
 
     let legacy_marker = host_root.join(".xihe-legacy-fallback");
     if legacy_marker.exists() {
         return InventoryResult::Blocked(format!(
-            "negative inventory: legacy marker exists at {:?}",
-            legacy_marker
+            "negative inventory: legacy marker exists at {legacy_marker:?}"
         ));
     }
 

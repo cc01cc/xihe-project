@@ -1410,7 +1410,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_str().unwrap();
         let content = (1..=100)
-            .map(|i| format!("line {}", i))
+            .map(|i| format!("line {i}"))
             .collect::<Vec<_>>()
             .join("\n");
         std::fs::write(dir.path().join("range.txt"), &content).unwrap();

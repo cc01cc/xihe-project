@@ -62,7 +62,7 @@ mod tests {
         let host = HostSnapshot::collect("H:\\test");
         let json = serde_json::to_string(&host).unwrap();
         // Simulate logging with a fake token nearby
-        let log_line = format!("snapshot {} with token Bearer abc123", json);
+        let log_line = format!("snapshot {json} with token Bearer abc123");
         let redacted = redact_text(&log_line);
         assert!(!redacted.contains("abc123"));
         assert!(redacted.contains("***redacted***"));

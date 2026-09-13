@@ -43,21 +43,18 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
     // B1: strict regex
     if !is_valid_storage_ref(storage_ref) {
         return Err(RuntimeError::InvalidPath(format!(
-            "invalid storageRef {:?}: must match {}",
-            storage_ref, STORAGE_REF_RE
+            "invalid storageRef {storage_ref:?}: must match {STORAGE_REF_RE}"
         )));
     }
     if storage_ref.contains('\0') {
         return Err(RuntimeError::InvalidPath(format!(
-            "storageRef contains NUL: {:?}",
-            storage_ref
+            "storageRef contains NUL: {storage_ref:?}"
         )));
     }
     // Ownership: workspaceId must equal storageRef (prevents cross-workspace write)
     if ws_id != storage_ref {
         return Err(RuntimeError::InvalidPath(format!(
-            "workspaceId {:?} != storageRef {:?}: ownership mismatch",
-            ws_id, storage_ref
+            "workspaceId {ws_id:?} != storageRef {storage_ref:?}: ownership mismatch"
         )));
     }
 
@@ -75,10 +72,7 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
     }
 
     let host_root_canonical = strip_unc_prefix(host_root_path.canonicalize().map_err(|e| {
-        RuntimeError::InvalidPath(format!(
-            "hostRoot canonicalize failed {:?}: {}",
-            host_root, e
-        ))
+        RuntimeError::InvalidPath(format!("hostRoot canonicalize failed {host_root:?}: {e}"))
     })?);
 
     // Join (lexically) — regex already guarantees no traversal, but we still canonical-check.
@@ -108,7 +102,7 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
     // Ensure joined is exactly hostRoot or hostRoot + separator + storageRef.
     // starts_with on Path would be case-sensitive on Windows, so use lowercased string.
     if joined_lower != host_lower
-        && !joined_lower.starts_with(&format!("{}/", host_lower))
+        && !joined_lower.starts_with(&format!("{host_lower}/"))
         && !joined_lower.starts_with(&format!("{}\\{}", host_lower, ""))
     // host_lower already ends without sep; handle both
     {
@@ -141,22 +135,17 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
 pub fn resolve_host_path_sync(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
     if !is_valid_storage_ref(storage_ref) {
         return Err(RuntimeError::InvalidPath(format!(
-            "invalid storageRef {:?}: must match {}",
-            storage_ref, STORAGE_REF_RE
+            "invalid storageRef {storage_ref:?}: must match {STORAGE_REF_RE}"
         )));
     }
     if ws_id != storage_ref {
         return Err(RuntimeError::InvalidPath(format!(
-            "workspaceId {:?} != storageRef {:?}: ownership mismatch",
-            ws_id, storage_ref
+            "workspaceId {ws_id:?} != storageRef {storage_ref:?}: ownership mismatch"
         )));
     }
     let host_root_path = Path::new(host_root);
     let host_root_canonical = strip_unc_prefix(host_root_path.canonicalize().map_err(|e| {
-        RuntimeError::InvalidPath(format!(
-            "hostRoot canonicalize failed {:?}: {}",
-            host_root, e
-        ))
+        RuntimeError::InvalidPath(format!("hostRoot canonicalize failed {host_root:?}: {e}"))
     })?);
     let joined = host_root_path.join(storage_ref);
     let joined_canonical = if joined.exists() {
@@ -211,7 +200,7 @@ mod tests {
         // Regex already rejects these, so they hit InvalidPath before canonical.
         for bad in ["../etc", "..", "a/b", "a\\b", "a:b", "a.dot"] {
             let r = resolve_host_path_sync(host_root, bad, bad);
-            assert!(r.is_err(), "should reject {:?}", bad);
+            assert!(r.is_err(), "should reject {bad:?}");
             let msg = r.unwrap_err().to_string();
             assert!(
                 msg.contains("invalid storageRef") || msg.contains("Invalid path"),
@@ -255,7 +244,7 @@ mod tests {
         let host_root = dir.path().to_str().unwrap();
         for bad in ["/etc/passwd", "C:\\Windows"] {
             let r = resolve_host_path_sync(host_root, bad, bad);
-            assert!(r.is_err(), "should reject absolute {:?}", bad);
+            assert!(r.is_err(), "should reject absolute {bad:?}");
         }
     }
 
@@ -276,10 +265,7 @@ mod tests {
         let sym_res = std::os::unix::fs::symlink(&outside_path, &link_path);
 
         if sym_res.is_err() {
-            println!(
-                "symlink creation not permitted, skipping test: {:?}",
-                sym_res
-            );
+            println!("symlink creation not permitted, skipping test: {sym_res:?}");
             return;
         }
 
@@ -294,7 +280,7 @@ mod tests {
         // Our current logic joins hostRoot/link_escape and for non-existing child we use hostRoot_canonical+child
         // which doesn't yet resolve symlink of child (since child is the symlink itself, it exists).
         // If the child exists and is a symlink, the exists() branch will canonicalize it and detect escape.
-        assert!(r.is_err(), "symlink escape should be rejected, got {:?}", r);
+        assert!(r.is_err(), "symlink escape should be rejected, got {r:?}");
         let msg = r.unwrap_err().to_string();
         assert!(
             msg.contains("Symlink") || msg.contains("outside"),

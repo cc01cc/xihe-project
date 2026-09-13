@@ -79,13 +79,12 @@ impl WorkspaceManager {
         // M1b: host writability probe — fail with STORAGE_UNAVAILABLE if not writable
         {
             let probe_file = PathBuf::from(workspace_path).join(".xihe-probe-writable");
-            let content = format!("probe-{}", ws_id);
+            let content = format!("probe-{ws_id}");
             if let Err(e) = fs::write(&probe_file, content.as_bytes()).await {
                 return Err(RuntimeError::Io(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
                     format!(
-                        "STORAGE_UNAVAILABLE: host writability probe failed for {}: {}",
-                        workspace_path, e
+                        "STORAGE_UNAVAILABLE: host writability probe failed for {workspace_path}: {e}"
                     ),
                 )));
             }
@@ -95,16 +94,14 @@ impl WorkspaceManager {
         {
             let available = fs2::available_space(workspace_path).map_err(|e| {
                 RuntimeError::Io(std::io::Error::other(format!(
-                    "STORAGE_UNAVAILABLE: available_space check failed for {}: {}",
-                    workspace_path, e
+                    "STORAGE_UNAVAILABLE: available_space check failed for {workspace_path}: {e}"
                 )))
             })?;
             if available < 64 * 1024 * 1024 {
                 return Err(RuntimeError::Io(std::io::Error::new(
                     std::io::ErrorKind::StorageFull,
                     format!(
-                        "STORAGE_UNAVAILABLE: insufficient space for {}: {} bytes available",
-                        workspace_path, available
+                        "STORAGE_UNAVAILABLE: insufficient space for {workspace_path}: {available} bytes available"
                     ),
                 )));
             }
@@ -452,7 +449,7 @@ impl WorkspaceManager {
                 ))
             })?;
         // Verify inside container: cat + grep
-        let check_cmd = format!("cat /workspace/.xihe-sentinel | grep -q \"{}\"", expected);
+        let check_cmd = format!("cat /workspace/.xihe-sentinel | grep -q \"{expected}\"");
         let exec = docker
             .create_exec(
                 &state.container_name,

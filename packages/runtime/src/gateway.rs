@@ -309,8 +309,7 @@ fn collect_consistency_issues(
                 && status.state == MaterializationState::Failed
             {
                 issues.push(format!(
-                    "{}: InstanceState::Active but MaterializationState::Failed",
-                    ws_id
+                    "{ws_id}: InstanceState::Active but MaterializationState::Failed"
                 ));
             }
             // Suspended/Released instance with Ready status is contradictory
