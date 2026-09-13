@@ -80,6 +80,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 引导变量（不写文件）：`XIHE_ENV`（dev/test/prod）、`XIHE_LOAD_DOTENV=0`（逃逸开关）、`XIHE_ENV_FILE`（指定单文件）。**禁止 `.env.prod.local`**：生产配置只来自 `.env.prod` 入库基线或部署注入（IaC/CI secret）。
 
 **业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表唯一重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL`（`.env` base 提供默认值）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效），日志记录冲突与胜者。
+**超时覆盖键**（`XIHE_MCP_TOOL_TIMEOUT_S` Agent / `XIHE_EXEC_COLLECT_TIMEOUT_S` Runtime / `xihe.mcp.forward-timeout-s` CP）登记为**本跳部署者覆盖**类：显式设置时该跳精确取该值并压制 CP 下发值；不参与 DB 域解析，正常路径由 CP 预算派生（PLAN-0308 决策 #21/#25）。
 
 | 变量 | 说明 |
 |------|------|

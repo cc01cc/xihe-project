@@ -106,7 +106,16 @@ flowchart TD
 
 两套事件命名空间不同，映射由 `LangGraphEventAdapter` 维护：
 
-**MCP 工具超时（PLAN-301）**：四级解析链（首个命中生效）——调用方传参 `toolTimeoutOverrides`（per-call，最强意图）→ server 级 `mcp_servers.tool_timeout_s`（V11）→ 全局 `XIHE_MCP_TOOL_TIMEOUT_S`（默认 30）→ 兜底 30。非法值/≤0 回退下一层并 WARN（fail-closed = 禁止无限等待）。冷启动宽限：workspace 物化后首次工具调用 ×3（`runtime_state.firstToolCallDone` 一次性标记，显式传参不受倍率影响）。相关 env：`XIHE_EXEC_COLLECT_TIMEOUT_S`（Runtime exec 收集界，默认 30）与 `xihe.mcp.forward-timeout-s`（CP 转发界，默认 30）——两者与 Agent 层解耦，调整时需协同。已知限制：Runtime 层的 per-server 头接收（min 语义）待 rmcp 穿透改造（见 PLAN-301 G 记录）。
+**调用链全局结构与 MCP 工具超时（PLAN-0308；结构来源 PLAN-0318 报告 §0.2）**
+
+- **全局结构（星型，CP 居中）**：任意两模块无直连——Agent 只连 CP 的 MCP 端点，UI 只调 CP 公开接口，Runtime 只被 CP 调用（反向：Runtime/Agent → CP 心跳与拉配置）。**超时嵌套是三层不是两层**：工具调用 = Agent 等 CP → CP 等 Runtime → Runtime 等容器进程；中继层从头等到尾，每多一个模块多一层等待。**保持同步核心**：MCP 是请求/响应协议、LLM 循环必须拿到工具结果；长任务按策略边界走异步 job（发起段受预算、任务本体有时限、观测段短超时），传输层不做全链路异步（升级路径为绝对 deadline 传播）。
+- **取值模型（决策 #25/#27）**：**CP 是唯一计算点**——预算 B 输入优先级 per-call > 数据库配置（`agent-runtime.systemToolTimeoutS` / remote `tool_timeout_s`）> 代码默认 30；CP 输出三跳最终等待值（Runtime = B、CP 转发 = B+2s、Agent = B+4s；固定余量仅兜内层挂死），经 run payload / 请求头下发。**模块侧只有三条判断（零算术）**：本模块 ENV 显式 → 用 ENV；per-call 性质标记存在 → 用下发值（压制本模块 ENV）；否则用下发值；都没有 → 代码默认。
+- **上限（T3.1，2026-09-13）**：per-call 与数据库配置**同顶 30s**（`MAX_BUDGET_SECONDS`，代码常量）；per-call 超限 → CP 400 拒绝，遗留配置超限 → 告警后回落默认。超过 30s 的同步等待走异步 job，不放大预算。
+- **传输兜底**：Agent 的 fastmcp 客户端显式 `timeout=3600s`（`SESSION_READ_HANG_BACKSTOP_S`），保证 SDK/会话默认值（`read=300s`）不抢先于逻辑授权值；权威等待界仍是 `asyncio.wait_for`。
+- **头与关联键**：调用方 per-call 走入站头 `X-Xihe-Tool-Timeout-Per-Call`；出站 `X-Xihe-Tool-Timeout-S` / `-Origin` 只由 CP 设置并覆盖上游同名头（防绕过）；输出上限走 `X-Xihe-Tool-Output-Limit`；`toolCallId` 经 `X-Operation-Item-Id` 三层贯通。
+- **错误署名**：超时错误写 `layer` / `effectiveSeconds` / `source`（env|cp|default）/ `valueOrigin`（per-call|config）/ `overriddenSeconds` / `origin=self|downstream`（容器守卫到界另带 `mechanism=guard`）；掐断层判定 = 时间线上最早的 `origin=self`（某跳 ENV 先到界属配置结果，非故障）。
+- **已废弃表述**：旧的「四级解析链 + min 语义 + 冷启动 ×3（`firstToolCallDone`）」不再适用；冷启动宽限机制未实施，按 PLAN-0308 决策 #35 ④ **显式延期**（需要时再立）。
+- 离线兜底：各模块 `XIHE_MCP_TOOL_TIMEOUT_S`（Agent）/ `XIHE_EXEC_COLLECT_TIMEOUT_S`（Runtime）/ `xihe.mcp.forward-timeout-s`（CP）仅作部署者**本跳覆盖**，正常路径由 CP 预算派生，各跳不做跨层比较。
 
 | 层 | 事件 |
 |----|------|
