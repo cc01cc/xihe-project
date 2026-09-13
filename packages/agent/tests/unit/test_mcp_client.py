@@ -67,13 +67,17 @@ class _FailingDiscoveryClient:
 
 
 def test_client_pins_stateless_protocol_generation():
-    """PLAN-0308 决策 #34：客户端直接采纳 2026-07-28（无会话世代），免 server/discover 探测。"""
+    """PLAN-0308 决策 #34/T3.1：pin 2026-07-28（无会话世代，免 server/discover 探测），
+    并显式设置 3600s 传输层挂死兜底（避免 SDK 默认 read=300s 抢先于逻辑授权值）。"""
     from fastmcp.client.transports import StreamableHttpTransport
 
     manager = MCPClientManager(cp_url="http://localhost:12631", workspace_id="ws-1")
     client = manager.new_client({})
     assert mcp_client_module.STATELESS_PROTOCOL_VERSION == "2026-07-28"
     assert client.mode == "2026-07-28"
+    assert client._session_kwargs["read_timeout_seconds"] == 3600.0
+    discovery = manager.new_client({}, timeout=mcp_client_module.DISCOVERY_READ_TIMEOUT_S)
+    assert discovery._session_kwargs["read_timeout_seconds"] == 30.0
     assert isinstance(client.transport, StreamableHttpTransport)
     assert client.transport.url == "http://localhost:12631"
 

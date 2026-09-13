@@ -59,8 +59,13 @@ DEFAULT_MCP_TOOL_TIMEOUT_S = _parse_timeout_s(
 # 下发值性质为 per-call → 用下发值（压过本模块 ENV）；
 # 否则本模块 ENV 显式 → 用 ENV；
 # 否则用下发值；都没有 → 代码默认。
-# 权威等待界由 `asyncio.wait_for` 承担；fastmcp 客户端请求读超时保持不设
-# （None = 无限），避免机制默认抢先于授权值（守卫/授权分离，决策 #31）。
+# 权威等待界由 `asyncio.wait_for` 承担；传输层读超时显式设为挂死兜底
+# （3600s，位于所有逻辑授权值之外），避免 SDK 默认值抢先于授权值
+# （T3.1：fastmcp 不传 timeout 时 SDK 默认 read=300s，会被误当"无限"）。
+# 发现/初始化路径不经 wait_for 包裹（持锁、非逐调用），单独用短界，
+# 避免兜底把发现挂死窗口从 300s 放大到 3600s（评审修复）。
+SESSION_READ_HANG_BACKSTOP_S = 3600.0
+DISCOVERY_READ_TIMEOUT_S = 30.0
 
 
 def _env_override() -> float | None:
@@ -407,10 +412,21 @@ class MCPClientManager:
         """静态头（workspace/服务鉴权）+ 逐调用动态头的合并结果。"""
         return {**self._static_headers(), **dynamic}
 
-    def new_client(self, headers: dict[str, str]) -> Client:
-        """构造一个携带指定头集合的 fastmcp 客户端（跨调用不复用，见决策 #34）。"""
+    def new_client(
+        self, headers: dict[str, str], timeout: float = SESSION_READ_HANG_BACKSTOP_S
+    ) -> Client:
+        """构造一个携带指定头集合的 fastmcp 客户端（跨调用不复用，见决策 #34）。
+
+        `timeout` = 传输层读超时兜底：逐调用路径用 3600s（位于授权值之外）；
+        发现/初始化路径传 {@link DISCOVERY_READ_TIMEOUT_S}（短界，防持锁挂死）。
+        """
         transport = StreamableHttpTransport(self.cp_url, headers=headers)
-        return Client(transport, name=self.server_name, mode=STATELESS_PROTOCOL_VERSION)
+        return Client(
+            transport,
+            name=self.server_name,
+            mode=STATELESS_PROTOCOL_VERSION,
+            timeout=timeout,
+        )
 
     async def call_tool(self, name: str, arguments: dict[str, Any], headers: dict[str, str]) -> Any:
         """逐调用执行 tools/call：短生命周期 Client + 当期头集合（静态头在此合并）。
@@ -433,7 +449,7 @@ class MCPClientManager:
             if not self.workspace_id:
                 raise ValueError("XIHE_WORKSPACE_ID is required for MCP initialization")
             headers = self._static_headers()
-            discovery = self.new_client(headers)
+            discovery = self.new_client(headers, timeout=DISCOVERY_READ_TIMEOUT_S)
             async with discovery:
                 raw_tools = await discovery.list_tools()
                 lc_tools = [await as_langchain_tool(tool, discovery) for tool in raw_tools]
