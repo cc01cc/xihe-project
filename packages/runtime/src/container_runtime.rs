@@ -1,6 +1,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::http::StatusCode;
@@ -24,6 +26,55 @@ const JOB_TTL_SECS: u64 = 15 * 60;
 // host port. Binding all container interfaces is required because Windows native
 // hosts cannot route directly to Docker Desktop's Linux bridge IP.
 const LISTEN_ADDR: &str = "0.0.0.0:39001";
+
+/// PLAN-0317 T2.2（决策 #13）：oneshot 执行期间的中止信号。
+/// 宿主在超时/取消时向 stdin 写中止帧（EOF 兜底）；容器侧监听后对当前进程组
+/// 执行两阶段终止。oneshot 进程一次只执行一个操作，故用进程级静态状态。
+static ONESHOT_ABORTED: AtomicBool = AtomicBool::new(false);
+static ONESHOT_PGID: StdMutex<Option<i32>> = StdMutex::new(None);
+
+fn abort_requested() -> bool {
+    ONESHOT_ABORTED.load(Ordering::SeqCst)
+}
+
+/// 标记中止并对已登记的进程组执行两阶段终止（SIGTERM → 1s → SIGKILL）。
+fn mark_oneshot_aborted(reason: &str) {
+    if ONESHOT_ABORTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    info!(target: "timeout", reason, "oneshot abort received");
+    let pgid = *ONESHOT_PGID.lock().expect("oneshot pgid poisoned");
+    if let Some(pgid) = pgid {
+        tokio::spawn(terminate_process_group(pgid));
+    }
+}
+
+async fn terminate_process_group(pgid: i32) {
+    let _ = Command::new("sh")
+        .arg("-c")
+        .arg(format!("kill -TERM -- -{pgid} 2>/dev/null"))
+        .status()
+        .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let _ = Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "kill -9 -- -{pgid} 2>/dev/null; kill -9 {pgid} 2>/dev/null"
+        ))
+        .status()
+        .await;
+}
+
+fn register_oneshot_pgid(pgid: Option<i32>) {
+    *ONESHOT_PGID.lock().expect("oneshot pgid poisoned") = pgid;
+}
+
+fn cancelled_error() -> RuntimeError {
+    RuntimeError::Cancelled {
+        detail: "container runtime aborted by host request".to_string(),
+        confirmed: true,
+    }
+}
 
 #[derive(Clone)]
 struct AppState;
@@ -129,7 +180,36 @@ async fn oneshot_main() -> anyhow::Result<()> {
         anyhow::bail!("empty stdin for oneshot");
     }
     let req: OperationRequest = serde_json::from_str(line.trim())?;
-    let result = dispatch_operation(&req).await;
+    // PLAN-0317 T2.2：宿主在执行期间保持 stdin 打开；并发监听中止帧/EOF，
+    // 命中即对当前操作登记过的进程组执行两阶段终止。
+    tokio::spawn(async move {
+        let mut extra = String::new();
+        loop {
+            extra.clear();
+            match reader.read_line(&mut extra).await {
+                Ok(0) => {
+                    mark_oneshot_aborted("stdin closed");
+                    break;
+                }
+                Ok(_) => {
+                    if extra.contains("\"abort\"") {
+                        mark_oneshot_aborted("abort frame");
+                        break;
+                    }
+                }
+                Err(_) => {
+                    mark_oneshot_aborted("stdin read error");
+                    break;
+                }
+            }
+        }
+    });
+    // 中止在操作开始前到达：不执行操作，直接回 CANCELLED（confirmed=true）。
+    let result = if abort_requested() {
+        Err(cancelled_error())
+    } else {
+        dispatch_operation(&req).await
+    };
     let resp = match result {
         Ok(val) => OperationResponse { ok: true, result: val, error: None, error_code: None },
         Err(e) => {
@@ -152,6 +232,7 @@ fn map_runtime_error(e: &RuntimeError) -> (String, String) {
         // PLAN-0308 T3.4（决策 #31）：守卫到界必须是独立错误码，host 侧据此补全署名并保持
         // Timeout 语义（此前落到 EXEC_FAILED，被 host 归成 Docker 错误、丢掉超时归因）。
         RuntimeError::Timeout { .. } => ("TIMEOUT".to_string(), e.to_string()),
+        RuntimeError::Cancelled { .. } => ("CANCELLED".to_string(), e.to_string()),
         _ => ("EXEC_FAILED".to_string(), e.to_string()),
     }
 }
@@ -343,6 +424,16 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| RuntimeError::Command(format!("spawn failed: {e}")))?;
+    // PLAN-0317 T2.2: 登记进程组供中止信号使用；若中止已到达则立即终止。
+    let pgid = child.id().map(|id| id as i32);
+    register_oneshot_pgid(pgid);
+    if abort_requested() {
+        if let Some(pgid) = pgid {
+            terminate_process_group(pgid).await;
+        }
+        register_oneshot_pgid(None);
+        return Err(cancelled_error());
+    }
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
     let stdout_handle = tokio::spawn(async move {
@@ -392,11 +483,21 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
                     let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
                 }
             }
+            register_oneshot_pgid(None);
+            // 中止信号先于守卫到界时，语义是"被取消"而非"超时"。
+            if abort_requested() {
+                return Err(cancelled_error());
+            }
             // PLAN-0308 T3.4（决策 #31①）：守卫值来自授权（host 派生后下发）；
             // 沙盒只报它能确知的：层名 + 机制 + 守卫秒数。
             return Err(RuntimeError::guard_timeout(timeout_dur.as_secs()));
         }
     };
+    register_oneshot_pgid(None);
+    // 进程已结束时中止信号不再有意义（未被杀死就不是取消）。
+    if abort_requested() && !status.success() {
+        return Err(cancelled_error());
+    }
     let stdout_bytes = stdout_handle.await.map_err(|e| RuntimeError::Command(e.to_string()))?;
     let stderr_bytes = stderr_handle.await.map_err(|e| RuntimeError::Command(e.to_string()))?;
     let stdout_str = String::from_utf8_lossy(&stdout_bytes).to_string();
@@ -1909,5 +2010,18 @@ mod tests {
         let cleaned = cleanup_expired_jobs_with(tmp.path(), 900, |_pid| false).unwrap();
         assert_eq!(cleaned, 1);
         assert!(!job.exists());
+    }
+
+    // ── T2.2（决策 #13）：中止信号必须闩锁，且无进程组时安全 ────────────────
+
+    #[test]
+    fn oneshot_abort_signal_is_latched_and_safe_without_pgid() {
+        register_oneshot_pgid(None);
+        assert!(!abort_requested(), "abort must start unset in this binary");
+        mark_oneshot_aborted("test frame");
+        assert!(abort_requested());
+        // Second abort is a no-op and must not panic when no group is registered.
+        mark_oneshot_aborted("duplicate frame");
+        assert!(abort_requested());
     }
 }

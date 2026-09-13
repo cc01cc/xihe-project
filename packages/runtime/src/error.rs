@@ -38,6 +38,12 @@ pub enum RuntimeError {
     #[error("Operation timed out ({detail})")]
     Timeout { detail: String },
 
+    /// PLAN-0317 T2.2（决策 #13）：执行被取消。`confirmed=true` 表示已收到容器
+    /// 的 `CANCELLED` 回帧（终止已确认）；`false` 表示有界等待内未收到回帧
+    /// （未确认，由对账/追偿兜底）。
+    #[error("Execution cancelled (confirmed={confirmed}, {detail})")]
+    Cancelled { detail: String, confirmed: bool },
+
     #[error("Watch error: {0}")]
     Watch(String),
 

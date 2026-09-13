@@ -88,6 +88,14 @@ struct InFlightGuard {
     _token: CancellationToken,
 }
 
+/// PLAN-0317 T2.2（决策 #13）：中止确认的有界等待（容器回帧）与 EOF 兜底等待。
+const ABORT_CONFIRM_WAIT: Duration = Duration::from_secs(5);
+const ABORT_EOF_WAIT: Duration = Duration::from_secs(2);
+
+/// 执行输出收集结果：stdout / stderr / 流错误。
+type CollectResult = (Vec<u8>, Vec<u8>, Option<String>);
+type CollectJoin = std::result::Result<CollectResult, tokio::task::JoinError>;
+
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
         self.registry.unregister(&self.item_id);
@@ -203,15 +211,21 @@ impl WorkspaceExecutionRouter {
         // operationItemId so a cancel request can address this exact run. The
         // guard removes the entry on every exit path.
         let correlation = tool_timeout::current_correlation();
-        let _in_flight_guard = correlation.tool_call_id.as_deref().map(|item_id| {
-            let registry = self.in_flight.clone();
-            let token = registry.register(item_id);
-            InFlightGuard {
-                registry,
-                item_id: item_id.to_string(),
-                _token: token,
+        let (_in_flight_guard, cancel_token) = match correlation.tool_call_id.as_deref() {
+            Some(item_id) => {
+                let registry = self.in_flight.clone();
+                let token = registry.register(item_id);
+                (
+                    Some(InFlightGuard {
+                        registry,
+                        item_id: item_id.to_string(),
+                        _token: token.clone(),
+                    }),
+                    Some(token),
+                )
             }
-        });
+            None => (None, None),
+        };
         let op = OperationRequest {
             operation: operation.to_string(),
             payload,
@@ -263,11 +277,16 @@ impl WorkspaceExecutionRouter {
             .write_all(&op_bytes)
             .await
             .map_err(|e| RuntimeError::Docker(format!("write stdin: {e}")))?;
-        let _ = input.shutdown().await;
-        let mut stdout_buf: Vec<u8> = Vec::new();
-        let mut stderr_buf: Vec<u8> = Vec::new();
-        let mut stream_err: Option<String> = None;
-        let collect = async {
+        input
+            .flush()
+            .await
+            .map_err(|e| RuntimeError::Docker(format!("flush stdin: {e}")))?;
+        // PLAN-0317 T2.2（决策 #13）：stdin 保持打开，超时/取消时写入中止帧；
+        // 仅在确认失败时以关闭写端（EOF）兜底。
+        let collector = tokio::spawn(async move {
+            let mut stdout_buf: Vec<u8> = Vec::new();
+            let mut stderr_buf: Vec<u8> = Vec::new();
+            let mut stream_err: Option<String> = None;
             while let Some(item) = output.next().await {
                 match item {
                     Ok(bollard::container::LogOutput::StdOut { message }) => {
@@ -286,7 +305,8 @@ impl WorkspaceExecutionRouter {
                     }
                 }
             }
-        };
+            (stdout_buf, stderr_buf, stream_err)
+        });
         let effective = tool_timeout::current_or_resolve();
         tracing::info!(
             target: "timeout",
@@ -296,22 +316,81 @@ impl WorkspaceExecutionRouter {
             effective.signature(),
             correlation.render()
         );
-        match tokio::time::timeout(Duration::from_secs(effective.seconds), collect).await {
-            Ok(_) => {}
-            Err(_) => {
+        enum WaitOutcome {
+            Finished(CollectJoin),
+            Aborted(&'static str),
+        }
+        let mut collector = collector;
+        let cancel_arm = {
+            let token = cancel_token.clone();
+            async move {
+                match token {
+                    Some(token) => token.cancelled_owned().await,
+                    None => std::future::pending::<()>().await,
+                }
+            }
+        };
+        let outcome = tokio::select! {
+            biased;
+            res = &mut collector => WaitOutcome::Finished(res),
+            _ = cancel_arm => WaitOutcome::Aborted("cancel"),
+            _ = tokio::time::sleep(Duration::from_secs(effective.seconds)) => WaitOutcome::Aborted("timeout"),
+        };
+        let (stdout_buf, stderr_buf, stream_err) = match outcome {
+            WaitOutcome::Finished(joined) => match joined {
+                Ok(collected) => collected,
+                Err(join_err) => {
+                    return Err(RuntimeError::Docker(format!(
+                        "collect task failed: {join_err}"
+                    )))
+                }
+            },
+            WaitOutcome::Aborted(reason) => {
                 tracing::warn!(
                     target: "timeout",
                     operation = %operation,
                     workspace_id = %workspace_id,
-                    "tool exec timeout: {}{}",
+                    reason,
+                    "tool exec abort: {}{}",
                     effective.timeout_signature(),
                     correlation.render()
                 );
-                return Err(RuntimeError::Timeout {
-                    detail: format!("{}{}", effective.timeout_signature(), correlation.render()),
+                let abort_frame = b"{\"abort\":true}\n";
+                let sent = input.write_all(abort_frame).await.is_ok()
+                    && input.flush().await.is_ok();
+                let mut reply = if sent {
+                    tokio::time::timeout(ABORT_CONFIRM_WAIT, &mut collector)
+                        .await
+                        .ok()
+                } else {
+                    None
+                };
+                if reply.is_none() {
+                    // EOF 兜底：关闭写端同样触发容器侧监听。
+                    let _ = input.shutdown().await;
+                    reply = tokio::time::timeout(ABORT_EOF_WAIT, &mut collector)
+                        .await
+                        .ok();
+                }
+                let confirmed = reply.is_some();
+                if reason == "timeout" {
+                    return Err(RuntimeError::Timeout {
+                        detail: format!(
+                            "{}{}",
+                            effective.timeout_signature(),
+                            correlation.render()
+                        ),
+                    });
+                }
+                return Err(RuntimeError::Cancelled {
+                    detail: format!(
+                        "confirmed={confirmed}{}",
+                        correlation.render()
+                    ),
+                    confirmed,
                 });
             }
-        }
+        };
         if let Some(e) = stream_err {
             return Err(RuntimeError::Docker(e));
         }
@@ -362,6 +441,11 @@ impl WorkspaceExecutionRouter {
                     tool_timeout::current_or_resolve().timeout_signature(),
                     tool_timeout::current_correlation().render()
                 ),
+            },
+            // PLAN-0317 T2.2（决策 #13）：容器确认终止时回 CANCELLED 帧。
+            "CANCELLED" => RuntimeError::Cancelled {
+                detail: msg,
+                confirmed: true,
             },
             _ => RuntimeError::Docker(format!("{code}: {msg}")),
         }
@@ -697,5 +781,20 @@ mod sandbox_error_mapping_tests {
             WorkspaceExecutionRouter::map_sandbox_error("EXEC_FAILED", "boom".to_string()),
             RuntimeError::Docker(_)
         ));
+    }
+
+    /// PLAN-0317 T2.2（决策 #13）：容器回 CANCELLED 帧 → host 映射为已确认取消。
+    #[test]
+    fn cancelled_sandbox_error_maps_to_confirmed_cancel() {
+        match WorkspaceExecutionRouter::map_sandbox_error(
+            "CANCELLED",
+            "container runtime aborted by host request".to_string(),
+        ) {
+            RuntimeError::Cancelled { confirmed, detail } => {
+                assert!(confirmed);
+                assert!(detail.contains("aborted"));
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
     }
 }
