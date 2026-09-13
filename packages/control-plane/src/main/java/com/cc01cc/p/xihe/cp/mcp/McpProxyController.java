@@ -317,11 +317,17 @@ public class McpProxyController {
             toolServerCache.put(wsId, mapping);
             cacheTimestamps.put(wsId, Instant.now());
 
-            String mergedJson = objectMapper.writeValueAsString(Map.of(
-                "jsonrpc", "2.0",
-                "result", Map.of("tools", allTools),
-                "id", 1
-            ));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("tools", allTools);
+            // 2026-07-28（modern）结果必填字段：客户端按协商版本做严格校验。
+            result.put("resultType", "complete");
+            result.put("cacheScope", "private");
+            result.put("ttlMs", 0);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("jsonrpc", "2.0");
+            response.put("result", result);
+            response.put("id", readJsonRpcId(body));
+            String mergedJson = objectMapper.writeValueAsString(response);
             return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(mergedJson);
@@ -1180,8 +1186,26 @@ public class McpProxyController {
         }
     }
 
-    private void refreshCacheIfNeeded(String wsId) {
-        Instant lastRefresh = cacheTimestamps.get(wsId);
+    /**
+     * 回显调用方的 JSON-RPC id 作为合并响应 id。
+     *
+     * 无会话世代（2026-07-28）客户端在**同一连接内逐请求递增 id**（tools/call=1、
+     * 校验补发的 tools/list=2…）；此前硬编码 {@code "id": 1} 只适用于每请求 id 恒为 1
+     * 的 1.x 会话模型，modern 客户端会把该响应按「未知/迟到 id」丢弃，等待者永久挂起。
+     */
+    private JsonNode readJsonRpcId(String body) {
+        try {
+            JsonNode id = objectMapper.readTree(body).get("id");
+            if (id != null && !id.isNull() && !id.isMissingNode()) {
+                return id;
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to read JSON-RPC id from request: {}", e.getMessage());
+        }
+        return objectMapper.getNodeFactory().numberNode(1);
+    }
+
+    private void refreshCacheIfNeeded(String wsId) {        Instant lastRefresh = cacheTimestamps.get(wsId);
         if (lastRefresh == null || Duration.between(lastRefresh, Instant.now()).compareTo(CACHE_TTL) > 0) {
             toolServerCache.remove(wsId);
             toolServerCache.put(wsId, new ConcurrentHashMap<>());

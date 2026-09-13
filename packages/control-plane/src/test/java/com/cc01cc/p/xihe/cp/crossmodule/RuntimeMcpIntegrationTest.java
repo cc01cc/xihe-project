@@ -151,7 +151,11 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(MediaType.APPLICATION_JSON_VALUE, response.getHeaders().getFirst("Content-Type"));
-        assertEquals("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}", response.getBody(),
+        // 合并响应回显调用方 id（id=1），并携带 2026-07-28 modern 结果必填字段。
+        assertEquals(
+                "{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[],\"resultType\":\"complete\","
+                        + "\"cacheScope\":\"private\",\"ttlMs\":0},\"id\":1}",
+                response.getBody(),
                 "SSE framing must be unwrapped before returning to the caller");
         assertNull(response.getHeaders().getFirst("mcp-session-id"));
     }

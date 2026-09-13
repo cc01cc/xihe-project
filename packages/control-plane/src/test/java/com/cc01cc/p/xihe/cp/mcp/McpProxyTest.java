@@ -247,7 +247,7 @@ class McpProxyTest {
             when(aliasRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             Object access = accessContext(TEST_WS_UUID, "u-1");
-            String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
+            String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":2,\"params\":{}}";
             org.springframework.http.ResponseEntity<String> listResp =
                     (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                             controller, "handleToolsList", TEST_WS_UUID, listBody,
@@ -255,6 +255,14 @@ class McpProxyTest {
             assertNotNull(listResp);
             assertTrue(listResp.getBody().contains("fake_echo"),
                     "merged list must contain the remote tool");
+            // 无会话世代：合并响应必须回显调用方 id，并携带 modern 结果必填字段，
+            // 否则客户端按「未知/迟到 id」丢弃该响应并永久等待（T2.4④ 实测根因）。
+            assertTrue(listResp.getBody().contains("\"id\":2"),
+                    "merged list must echo the caller's JSON-RPC id, got: " + listResp.getBody());
+            assertTrue(listResp.getBody().contains("\"resultType\":\"complete\""),
+                    "modern result must carry resultType, got: " + listResp.getBody());
+            assertTrue(listResp.getBody().contains("\"cacheScope\":\"private\""),
+                    "modern result must carry cacheScope, got: " + listResp.getBody());
             org.mockito.Mockito.verify(aliasRepository).save(
                     org.mockito.ArgumentMatchers.argThat(a ->
                             "fake_echo".equals(
