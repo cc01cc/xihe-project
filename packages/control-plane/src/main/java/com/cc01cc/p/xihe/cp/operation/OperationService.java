@@ -59,11 +59,15 @@ public class OperationService {
             // waiting_for_approval forever after a successful approval).
             "waiting_for_approval", List.of("running", "completed", "failed", "cancelled"));
     private static final Map<String, List<String>> ITEM_TRANSITIONS = Map.of(
-            "pending", List.of("running", "cancelled", "aborted", "failed"),
+            // 2026-09-13 E2E（V11）：pending → completed 用于"写完即完成"的记录型
+            // 条目（llm_usage），避免为它伪造 running 生命周期或残留 pending。
+            "pending", List.of("running", "completed", "cancelled", "aborted", "failed"),
             "running", List.of("waiting_for_approval", "completed", "failed", "aborted",
                     "cancelled", "ambiguous"),
             "waiting_for_approval", List.of("resolving", "cancelled"),
-            "resolving", List.of("completed", "failed", "aborted"));
+            // 2026-09-13 E2E（决策 #8 补充）：审批通过后的派发窗口 item 处于
+            // resolving，此刻取消必须能落 cancelled（否则 item 悬挂在 resolving）。
+            "resolving", List.of("completed", "failed", "aborted", "cancelled"));
 
     private final SessionOperationRepository operations;
     private final OperationItemRepository items;
@@ -208,6 +212,38 @@ public class OperationService {
                 "{\"confirmed\":" + confirmed + "}");
         logger.info("[LIFECYCLE] service=cp event=operation_item_late_termination itemId={} itemStatus={} confirmed={}",
                 itemId, item.getStatus(), confirmed);
+    }
+
+    /**
+     * PLAN-0317 决策 #8 补充（2026-09-13 宿主 E2E）：一次取消流程内四层终态落定。
+     * 在途 forward 由 {@link #settleCancellation} 结算后，operation 下可能仍存在
+     * 非终态 item（如中继重复建项、审批遗留）与其 started attempt——全部收口为
+     * {@code cancelled}，避免取消后账本残留中间态（V11）。
+     */
+    @Transactional
+    public void settleRemainingOpenItems(UUID operationId) {
+        if (operationId == null) {
+            return;
+        }
+        List<OperationItem> open = items.findByOperationIdAndStatusIn(operationId.toString(),
+                List.of("pending", "running", "waiting_for_approval", "resolving"));
+        for (OperationItem item : open) {
+            for (OperationAttempt attempt : attempts.findByItemIdOrderByStartedAtAsc(item.getId().toString())) {
+                if (!"started".equals(attempt.getStatus())) {
+                    continue;
+                }
+                attempts.finishStarted(attempt.getId(), "cancelled", 499, null, null, null, Instant.now());
+            }
+            try {
+                transitionItem(item.getId(), "cancelled", null, null, null, null);
+            } catch (CpApiException e) {
+                if (!"OPERATION_STATE_CONFLICT".equals(e.getCode())) {
+                    throw e;
+                }
+                logger.info("[LIFECYCLE] service=cp event=cancel_item_kept_terminal itemId={} reason={}",
+                        item.getId(), e.getMessage());
+            }
+        }
     }
 
     /**

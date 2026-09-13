@@ -709,6 +709,8 @@ class ChatControllerTest extends AbstractH2Test {
                     .findByItemIdAndExtensionKindAndSchemaVersion(usageItem.getId().toString(), "llm_usage", 1)
                     .orElseThrow();
             assertTrue(extension.getPayload().contains("source"), "usage extension payload must carry source tag");
+            // 2026-09-13 E2E（V11）：usage 条目写完即 completed，不得残留 pending。
+            assertEquals("completed", usageItem.getStatus());
         });
     }
 }

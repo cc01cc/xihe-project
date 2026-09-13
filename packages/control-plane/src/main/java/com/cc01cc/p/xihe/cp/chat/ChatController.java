@@ -438,6 +438,16 @@ public class ChatController {
 
     // ── PLAN-275 M1 Task 1.3: Cancel contract ──────────────────────────────
 
+    /**
+     * Agent 取消转发的目标 URL。2026-09-13 E2E 实测：旧的
+     * {@code agentUrl.replace("/chat", "")} 会产出
+     * {@code .../internal/v1/agent/internal/v1/agent/runs/...} 双前缀导致 404，
+     * Agent 侧从未收到取消信号；改为 URI.resolve 以 origin 为基准。
+     */
+    String buildAgentCancelUrl(String runId) {
+        return URI.create(agentUrl).resolve("/internal/v1/agent/runs/" + runId + "/cancel").toString();
+    }
+
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @PostMapping("/api/v1/chat/runs/{runId}/cancel")
     public ResponseEntity<Map<String, Object>> cancelRun(
@@ -474,7 +484,7 @@ public class ChatController {
         // Forward cancel to Agent
         String reason = request != null ? (String) request.getOrDefault("reason", "user_requested") : "user_requested";
         try {
-            String cancelUrl = agentUrl.replace("/chat", "") + "/internal/v1/agent/runs/" + runId + "/cancel";
+            String cancelUrl = buildAgentCancelUrl(runId);
             var agentRequest = HttpRequest.newBuilder()
                     .uri(URI.create(cancelUrl))
                     .header("Authorization", "Bearer " + agentApiToken)
@@ -535,6 +545,9 @@ public class ChatController {
                 logger.info("[LIFECYCLE] service=cp event=runtime_cancel_settled runId={} itemId={} status={} confirmed={} unreachable={}",
                         runId, item.getId(), itemStatus, outcome.confirmed(), outcome.unreachable());
             }
+            // 决策 #8 补充（2026-09-13 E2E）：在途 forward 结算后收口其余非终态
+            // item/attempt（中继重复建项、审批遗留），保证四层终态一次落定。
+            operationService.settleRemainingOpenItems(operationId);
         }
         int runUpdated = chatRunRepository.transition(UUID.fromString(runId), List.of("cancelling"),
                 "cancelled", "cancelled", null, null, 0, 0);
@@ -1219,6 +1232,8 @@ public class ChatController {
                     operationId, null, null, "llm_usage", "chat", "agent", null, null, null);
             operationService.appendExtension(item.getId(), null, "llm_usage", 1,
                     objectMapper.writeValueAsString(parsedPayload));
+            // 2026-09-13 E2E（V11）：usage 条目写完即终态，避免账本残留 pending 中间态。
+            operationService.transitionItem(item.getId(), "completed", null, null, null, null);
             // PLAN-294 M3 (decision #5 signal bridge): mirror the usage into
             // the context event store so the compaction gate reads a single
             // source. workspace_id/user_id are NOT NULL in context_events —
@@ -1340,6 +1355,14 @@ public class ChatController {
         if (toolName == null) {
             toolName = "unknown";
         }
+        // PLAN-0317 决策 #8 补充（2026-09-13 宿主 E2E）：run 进入取消流程后，中继
+        // 不得再写工具事件终态/新建条目——取消副作用（Agent 侧工具中止）产生的
+        // Tool error 不是执行事实，四层终态由取消路径自主落定。
+        if (isRunCancellingOrCancelled(runId)) {
+            logger.info("[LIFECYCLE] service=cp event=operation_tool_event_skipped_after_cancel runId={} event={} tool={}",
+                    runId, eventName, toolName);
+            return;
+        }
         // PLAN-0317 T2.8④：优先用 Agent 显式携带的 toolCallId（call/result 同一值），
         // 回退到 run_id（本地工具的历史路径）。
         String rawToolCallId = stringValue(payload, "toolCallId");
@@ -1417,6 +1440,22 @@ public class ChatController {
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=operation_arguments_redaction_failed");
             return "{\"redacted\":true}";
+        }
+    }
+
+    /** PLAN-0317 决策 #8 补充（2026-09-13 E2E）：run 是否已进入取消流程。 */
+    private boolean isRunCancellingOrCancelled(String runId) {
+        if (runId == null || runId.isBlank()) {
+            return false;
+        }
+        try {
+            return chatRunRepository.findById(UUID.fromString(runId))
+                    .map(run -> "cancelling".equals(run.getStatus()) || "cancelled".equals(run.getStatus()))
+                    .orElse(false);
+        } catch (IllegalArgumentException e) {
+            logger.debug("[LIFECYCLE] service=cp event=run_status_guard_skipped runId={} reason=invalid_uuid",
+                    runId);
+            return false;
         }
     }
 

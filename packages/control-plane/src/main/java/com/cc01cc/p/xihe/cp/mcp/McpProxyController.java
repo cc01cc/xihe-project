@@ -751,8 +751,15 @@ public class McpProxyController {
             // PLAN-0317 T2.8①（决策 #12）：出站关联键以 CP 规范化后的
             // operationItemId 为准——入站原始值可能非 UUID，两者派生结果不同，
             // 而 Runtime 侧注册表与 CP 账本必须用同一个键（否则取消无法定位）。
-            if (ledgerAttempt != null && ledgerAttempt.toolCallId() != null) {
-                requestBuilder.setHeader("X-Operation-Item-Id", ledgerAttempt.toolCallId());
+            // 注意：`startLedgerAttempt` 在条目已终态时会返回 null，此时**同样**
+            // 必须规范化（否则会把 Agent 原始头透传给 Runtime，取消再拿账本键
+            // 去查就查不到——2026-09-13 宿主 E2E 实测 404）。
+            String outboundItemId = ledgerAttempt != null ? ledgerAttempt.toolCallId() : null;
+            if (outboundItemId == null) {
+                outboundItemId = canonicalOperationItemId(headers.getFirst("X-Operation-Item-Id"), body);
+            }
+            if (outboundItemId != null) {
+                requestBuilder.setHeader("X-Operation-Item-Id", outboundItemId);
             }
 
             String requestMethod = extractMethod(body);
@@ -926,10 +933,17 @@ public class McpProxyController {
             if ("pending".equals(item.getStatus())) {
                 operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
             }
+            // 决策 #12 补充（2026-09-13 宿主 E2E 实测）：网关命中既有条目（如审批路径
+            // 由中继先建项）时，出站/注册表键必须取该条目的 tool_call_id——中继的 SSE
+            // 键与 MCP 头派生键可能不等（三源 id 分叉），否则取消按条目键定位会打空。
+            String effectiveToolCallId = item.getToolCallId();
+            if (effectiveToolCallId == null || effectiveToolCallId.isBlank()) {
+                effectiveToolCallId = toolCallId;
+            }
             String requestId = headers.getFirst("X-Request-Id");
             OperationAttempt attempt = operationService.startAttempt(
                     item.getId(), "cp_forward", null, "cp", requestId);
-            return new LedgerAttempt(item.getId(), attempt.getId(), toolCallId);
+            return new LedgerAttempt(item.getId(), attempt.getId(), effectiveToolCallId);
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=operation_mcp_attempt_start_failed sessionId={}", sessionId, e);
             throw e;
@@ -994,6 +1008,22 @@ public class McpProxyController {
     private String safeLedgerPreview(String body) {
         String redacted = LogRedactor.redact(body == null ? "" : body);
         return redacted.length() <= 4096 ? redacted : redacted.substring(0, 4096);
+    }
+
+    /**
+     * PLAN-0317 决策 #12：CP 与 Runtime 共用的规范化口径。UUID 值原样规范化，
+     * 其它值走 {@code nameUUIDFromBytes}；缺失时退化为对请求体求名（与
+     * {@code startLedgerAttempt} 的兜底一致，保证同一调用两端同键）。
+     */
+    private String canonicalOperationItemId(String raw, String body) {
+        if (raw == null || raw.isBlank()) {
+            return UUID.nameUUIDFromBytes(body.getBytes(StandardCharsets.UTF_8)).toString();
+        }
+        try {
+            return UUID.fromString(raw).toString();
+        } catch (IllegalArgumentException e) {
+            return UUID.nameUUIDFromBytes(raw.getBytes(StandardCharsets.UTF_8)).toString();
+        }
     }
 
     private void copyOperationHeaders(HttpHeaders headers, HttpRequest.Builder builder) {

@@ -404,6 +404,73 @@ class McpProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void handleToolsCall_approvalItemFound_outboundKeyReusesLedgerItemId() throws Exception {
+        // 2026-09-13 宿主 E2E 实测（PLAN-0317 T4.2）：审批路径由中继先建条目，网关
+        // 命中既有条目时若按请求头重新派生键，会与条目 tool_call_id 分叉（三源 id：
+        // 中继 SSE 键 66354ccb / MCP 头派生 6e464138 / LangGraph run_id）→ Runtime
+        // 注册表键与取消键不一致，取消 404 落 CANCEL_UNCONFIRMED。决策 #12 补充：
+        // 命中既有条目时，出站键必须复用条目自身的 tool_call_id。
+        String itemToolCallId = "66354ccb-0809-4c32-af9f-a968f888d466";
+        String headerToolCallId = "6e464138-f8d2-4fbf-9ef2-b1c0913924a7";
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluate(eq("write_file"), eq(body), eq("sess-1")))
+                .thenReturn(PolicyEngine.PolicyDecision.requireApproval("mutation requires approval"));
+        when(approvalService.consumeApprovedGrant(
+                eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
+                .thenReturn(true);
+        OperationItem item = new OperationItem();
+        item.setId(java.util.UUID.randomUUID());
+        item.setStatus("running");
+        item.setToolCallId(itemToolCallId);
+        OperationAttempt attempt = new OperationAttempt();
+        attempt.setId(java.util.UUID.randomUUID());
+        when(operationService.findItemByApprovalRequestId("grant-1")).thenReturn(item);
+        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(attempt);
+
+        Map<String, Map<String, String>> cache =
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
+        Map<String, Instant> timestamps =
+                (Map<String, Instant>) ReflectionTestUtils.getField(controller, "cacheTimestamps");
+        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
+        timestamps.put(TEST_WS_UUID, Instant.now());
+
+        final String[] outboundItemId = new String[1];
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            outboundItemId[0] = exchange.getRequestHeaders().getFirst("X-Operation-Item-Id");
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":8}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Xihe-Approval-Request-Id", "grant-1");
+            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+            headers.set("X-Operation-Item-Id", headerToolCallId);
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            assertEquals(itemToolCallId, outboundItemId[0],
+                    "命中既有条目时出站键必须复用条目 tool_call_id（取消键同源）");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void forwardToRuntime_transportFailureRecordsUnknownAttemptAndAmbiguousItem() throws Exception {
         OperationItem item = new OperationItem();
         item.setId(java.util.UUID.randomUUID());
@@ -572,9 +639,65 @@ class McpProxyTest {
             assertEquals("25", outboundTimeout[0]);
             assertEquals("per-call", outboundOrigin[0]);
             assertNull(leakedPerCall[0], "入站 per-call 头不得透传给 Runtime");
-            // 关联键透传：Runtime 用同一 toolCallId 打日志（spec S5.1 规则 1）。
-            assertEquals("call-abc-123", outboundItemId[0]);
+            // 关联键规范化后出站：入站原始值非 UUID 时走 nameUUIDFromBytes，
+            // 保证与 CP 账本、Runtime 注册表同键（PLAN-0317 决策 #12；spec S5.1 规则 1）。
+            assertEquals(
+                    java.util.UUID.nameUUIDFromBytes("call-abc-123".getBytes(
+                            java.nio.charset.StandardCharsets.UTF_8)).toString(),
+                    outboundItemId[0]);
             assertEquals(TEST_WS_UUID, outboundRunId[0]);
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_terminalLedgerItem_stillForwardsCanonicalItemId() throws Exception {
+        // 2026-09-13 宿主 E2E 实测（PLAN-0317 T4.2）：审批重放时账本条目已终态 →
+        // startLedgerAttempt 返回 null（McpProxyController:929-932），旧实现把 Agent
+        // 原始头透传给 Runtime（出站 b5d95382 vs 账本 3b4ab6f6），取消按账本键定位
+        // 在途注册表 404。决策 #12：无论账本分支如何，出站键都必须规范化。
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("read_file", "__system__");
+        OperationItem terminal = new OperationItem();
+        terminal.setId(java.util.UUID.randomUUID());
+        terminal.setStatus("cancelled");
+        when(operationService.findItemByApprovalRequestId(null)).thenReturn(terminal);
+
+        final String[] outboundItemId = new String[1];
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            outboundItemId[0] = exchange.getRequestHeaders().getFirst("X-Operation-Item-Id");
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":3}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":3}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+            headers.set("X-Operation-Item-Id", "call-abc-123");
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            assertEquals(
+                    java.util.UUID.nameUUIDFromBytes("call-abc-123".getBytes(
+                            java.nio.charset.StandardCharsets.UTF_8)).toString(),
+                    outboundItemId[0],
+                    "终态条目下出站键仍须规范化，禁止透传 Agent 原始头");
         } finally {
             stub.stop(0);
         }

@@ -26,6 +26,9 @@ public interface OperationItemRepository extends JpaRepository<OperationItem, UU
 
     List<OperationItem> findByApprovalRequestId(String approvalRequestId);
 
+    /** PLAN-0317 决策 #8 补充：取消收口时列出 operation 下所有非终态条目。 */
+    List<OperationItem> findByOperationIdAndStatusIn(String operationId, Collection<String> statuses);
+
     @Query("select coalesce(max(i.sequence), 0) from OperationItem i where i.operationId = :operationId")
     int findMaxSequence(@Param("operationId") String operationId);
 

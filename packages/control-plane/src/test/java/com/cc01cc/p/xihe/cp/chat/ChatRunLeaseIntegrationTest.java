@@ -395,6 +395,93 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         assertEquals(threads, appended, "every append must land with a unique sequence");
     }
 
+    /**
+     * 2026-09-13 E2E（决策 #8 补充）：审批通过后的派发窗口 item 在 `resolving`，
+     * 此刻确认终止必须能落 `cancelled`（此前状态机无 resolving→cancelled 边，
+     * item 会悬挂在 resolving）。
+     */
+    @Test
+    void settleCancellationClosesResolvingItemWithStartedForward() {
+        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
+                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
+        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "shell", "mcp", "{}", null, null);
+        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+        operationService.transitionItem(item.getId(), "waiting_for_approval", null, null, null, null);
+        operationService.transitionItem(item.getId(), "resolving", null, null, null, null);
+        var attempt = operationService.startAttempt(item.getId(), "cp_forward", null, "cp",
+                UUID.randomUUID().toString());
+
+        operationService.settleCancellation(item.getId(), attempt.getId(), "cancelled", null);
+
+        assertEquals("cancelled", operationService.findItem(item.getId().toString()).getStatus(),
+                "a confirmed termination during the dispatch window must land as cancelled");
+        assertEquals("cancelled",
+                operationAttemptRepository.findByItemIdOrderByStartedAtAsc(item.getId().toString())
+                        .get(0).getStatus());
+    }
+
+    /**
+     * 2026-09-13 E2E（决策 #8 补充）：取消收口必须清理 operation 下其余非终态
+     * item 与其 started attempt（中继重复建项、审批遗留），四层无中间态残留。
+     */
+    @Test
+    void settleRemainingOpenItemsClosesStrayItemsAndAttempts() {
+        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
+                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
+        var stray = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "shell", "agent", "{}", null, null);
+        operationService.transitionItem(stray.getId(), "running", "allow", null, null, null);
+        operationService.startAttempt(stray.getId(), "agent_tool", null, "agent",
+                UUID.randomUUID().toString());
+
+        operationService.settleRemainingOpenItems(started.operationId());
+
+        assertEquals("cancelled", operationService.findItem(stray.getId().toString()).getStatus(),
+                "stray open items must be closed by the cancellation sweep");
+        assertEquals("cancelled",
+                operationAttemptRepository.findByItemIdOrderByStartedAtAsc(stray.getId().toString())
+                        .get(0).getStatus(),
+                "started attempts must be closed by the cancellation sweep");
+    }
+
+    /**
+     * 2026-09-13 E2E（决策 #8 补充）：run 进入取消流程后，中继不得再为工具事件
+     * 写终态——取消副作用（Agent 工具中止 → Tool error）被回写为 failed 时，
+     * 与取消收口竞态导致 item 无法落 cancelled。
+     */
+    @Test
+    void relayToolResultSkippedAfterRunCancelled() {
+        ChatRun run = runWithLease("cancelled", null, null);
+        var started = operationService.startOperation(userId, sessionId, workspaceId,
+                run.getId().toString(), UUID.randomUUID().toString(), "tool_call", "agent",
+                "agent", "agent-1", null, "test");
+        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "shell", "agent", "{}", null, null);
+        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+
+        Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(chatController);
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(target, "recordLedgerToolEvent",
+                "tool_result",
+                java.util.Map.of("tool", "shell", "result", "Tool error: cancelled",
+                        "toolCallId", item.getToolCallId()),
+                run.getId().toString(), null,
+                new java.util.HashMap<String, UUID>(), new java.util.HashMap<UUID, UUID>());
+
+        assertEquals("running", operationService.findItem(item.getId().toString()).getStatus(),
+                "tool results after cancellation must not write terminal item facts");
+    }
+
+    /** 2026-09-13 E2E：CP→Agent 取消转发不得重复 `/internal/v1/agent` 前缀（曾 404）。 */
+    @Test
+    void agentCancelUrlHasNoDuplicatedPrefix() {
+        String runId = UUID.randomUUID().toString();
+        String url = chatController.buildAgentCancelUrl(runId);
+        assertTrue(url.endsWith("/internal/v1/agent/runs/" + runId + "/cancel"), url);
+        assertEquals(url.indexOf("/internal/v1/agent/runs/"),
+                url.lastIndexOf("/internal/v1/agent/runs/"), url);
+    }
+
     @Autowired
     private ChatController chatController;
 
@@ -403,4 +490,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.OperationEventRepository operationEventRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository operationAttemptRepository;
 }
