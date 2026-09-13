@@ -209,6 +209,15 @@ pub struct GetFileInfoRequest {
     pub path: String,
 }
 
+/// Background-process tool parameter: the caller-facing key is `jobId`
+/// (PLAN-0317 T1.2); it is the opaque id returned by
+/// `start_background_process`, not a process id.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct JobIdRequest {
+    #[serde(rename = "jobId")]
+    pub job_id: String,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WatchDirectoryRequest {
     pub path: String,
@@ -496,7 +505,7 @@ impl XiheRuntime {
             .map(Json)
     }
 
-    #[tool(description = "Execute a long-running command in the background and return a PID")]
+    #[tool(description = "Execute a long-running command in the background and return a jobId")]
     async fn start_background_process(
         &self,
         Parameters(ExecuteCommandRequest {
@@ -519,22 +528,22 @@ impl XiheRuntime {
         Ok(Json(jobs))
     }
 
-    #[tool(description = "Get status of a background process by PID")]
+    #[tool(description = "Get status of a background process by jobId")]
     async fn get_background_process(
         &self,
-        Parameters(GetFileInfoRequest { path: pid }): Parameters<GetFileInfoRequest>,
+        Parameters(JobIdRequest { job_id }): Parameters<JobIdRequest>,
     ) -> Result<Json<sandbox::BackgroundProcess>, String> {
-        let val = self.router.get_background_process(&self.ws_id, &pid).await.map_err(|e| e.to_string())?;
+        let val = self.router.get_background_process(&self.ws_id, &job_id).await.map_err(|e| e.to_string())?;
         let proc: sandbox::BackgroundProcess = serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(proc))
     }
 
-    #[tool(description = "Cancel a background process")]
+    #[tool(description = "Cancel a background process by jobId")]
     async fn cancel_background_process(
         &self,
-        Parameters(GetFileInfoRequest { path: pid }): Parameters<GetFileInfoRequest>,
+        Parameters(JobIdRequest { job_id }): Parameters<JobIdRequest>,
     ) -> Result<String, String> {
-        let val = self.router.cancel_background_process(&self.ws_id, &pid).await.map_err(|e| e.to_string())?;
+        let val = self.router.cancel_background_process(&self.ws_id, &job_id).await.map_err(|e| e.to_string())?;
         Ok(val.get("status").and_then(|v| v.as_str()).unwrap_or("cancelled").to_string())
     }
 }
@@ -1659,9 +1668,10 @@ async fn run() -> anyhow::Result<()> {
 
     let reaper_registry = registry.clone();
     let reaper_manager = manager.clone();
+    let reaper_router = router.clone();
     let reaper_ct = ct.child_token();
     tokio::spawn(async move {
-        idle_reaper_loop(reaper_registry, reaper_manager, reaper_ct).await;
+        idle_reaper_loop(reaper_registry, reaper_manager, reaper_router, reaper_ct).await;
     });
 
     let mcp_manager = mcp_manager();
@@ -2060,12 +2070,22 @@ async fn mcp_config_poll_loop(
     tracing::info!("MCP config polling stopped");
 }
 
+/// Job cleanup cadence: the idle reaper ticks every minute; job-file cleanup
+/// runs on the first tick and then every 5th (PLAN-0317 decision #3, J-1).
+const JOB_CLEANUP_EVERY_TICKS: u64 = 5;
+
+fn should_cleanup_jobs(ticks: u64) -> bool {
+    ticks == 1 || ticks.is_multiple_of(JOB_CLEANUP_EVERY_TICKS)
+}
+
 async fn idle_reaper_loop(
     registry: Arc<WorkspaceRegistry>,
     manager: Arc<Mutex<WorkspaceManager>>,
+    router: Arc<WorkspaceExecutionRouter>,
     ct: tokio_util::sync::CancellationToken,
 ) {
     let mut ticker = interval(Duration::from_secs(60));
+    let mut ticks: u64 = 0;
 
     loop {
         tokio::select! {
@@ -2074,6 +2094,7 @@ async fn idle_reaper_loop(
                 break;
             }
             _ = ticker.tick() => {
+                ticks += 1;
                 // Periodic cross-map consistency check
                 let consistency_issues = registry.check_consistency().await;
                 if !consistency_issues.is_empty() {
@@ -2186,8 +2207,58 @@ async fn idle_reaper_loop(
                         }
                     }
                 }
+
+                // J-1 (PLAN-0317 T1.1): reclaim expired job files inside
+                // already-active containers only. `cleanup_jobs` deliberately
+                // skips materialization and the activity timestamp, so this
+                // maintenance pass cannot start or keep alive an idle
+                // workspace.
+                if should_cleanup_jobs(ticks) {
+                    for instance in &instances {
+                        if instance.state != InstanceState::Active {
+                            continue;
+                        }
+                        match router.cleanup_jobs(&instance.ws_id).await {
+                            Ok(value) => {
+                                let cleaned = value
+                                    .get("cleaned")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                if cleaned > 0 {
+                                    tracing::info!(
+                                        workspace_id = %instance.ws_id,
+                                        cleaned,
+                                        "job cleanup reclaimed expired jobs"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    workspace_id = %instance.ws_id,
+                                    error = %e,
+                                    "job cleanup skipped"
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod reaper_tests {
+    use super::should_cleanup_jobs;
+
+    #[test]
+    fn job_cleanup_runs_on_first_tick_and_every_five() {
+        assert!(should_cleanup_jobs(1), "startup tick must attempt cleanup");
+        assert!(!should_cleanup_jobs(2));
+        assert!(!should_cleanup_jobs(4));
+        assert!(should_cleanup_jobs(5));
+        assert!(!should_cleanup_jobs(6));
+        assert!(should_cleanup_jobs(10));
     }
 }
 
@@ -2411,6 +2482,46 @@ mod tool_router_regression_tests {
             tools.len() >= 20,
             "expected the built-in tool surface, got {}",
             tools.len()
+        );
+    }
+
+    /// PLAN-0317 T1.2（V2）：后台任务工具的参数与描述统一为 `jobId`；
+    /// 旧的 `path` 参数写法不得残留。
+    #[test]
+    fn background_job_tools_use_job_id() {
+        let tools = XiheRuntime::tool_router().list_all();
+        for name in ["get_background_process", "cancel_background_process"] {
+            let tool = tools
+                .iter()
+                .find(|t| t.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("{name} missing from tool surface"));
+            let json = serde_json::to_value(tool).expect("tool serializes");
+            let props = json
+                .get("inputSchema")
+                .and_then(|schema| schema.get("properties"))
+                .and_then(|properties| properties.as_object())
+                .unwrap_or_else(|| panic!("{name} input schema missing"));
+            assert!(
+                props.contains_key("jobId"),
+                "{name} must take jobId: {props:?}"
+            );
+            assert!(
+                !props.contains_key("path"),
+                "{name} must not expose path: {props:?}"
+            );
+        }
+        let start = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "start_background_process")
+            .expect("start_background_process present");
+        let description = start.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("jobId"),
+            "start description must mention jobId: {description}"
+        );
+        assert!(
+            !description.contains("PID"),
+            "start description must not mention PID: {description}"
         );
     }
 

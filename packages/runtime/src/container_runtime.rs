@@ -643,22 +643,44 @@ fn read_job_output(job_id: &str, offset: Option<usize>, limit: Option<usize>) ->
 }
 
 fn cleanup_expired_jobs() -> Result<usize, RuntimeError> {
+    cleanup_expired_jobs_with(Path::new(JOB_DIR), JOB_TTL_SECS, process_group_alive)
+}
+
+/// Reclaims finished jobs whose last file activity is older than `ttl_secs`.
+///
+/// Guards (PLAN-0317 decision #15):
+///   * running jobs are never touched — liveness is decided by the job's
+///     `meta` state plus a `kill -0` probe on the process group, never by a
+///     directory mtime (long-running jobs do not update it);
+///   * the expiry clock uses the newest **file** mtime inside the job dir
+///     (meta/exit/stdout/...), not the directory entry itself.
+fn cleanup_expired_jobs_with(
+    job_dir: &Path,
+    ttl_secs: u64,
+    alive: impl Fn(i32) -> bool,
+) -> Result<usize, RuntimeError> {
     let mut cleaned = 0;
-    let job_dir = Path::new(JOB_DIR);
-    if !job_dir.exists() { return Ok(0); }
+    if !job_dir.exists() {
+        return Ok(0);
+    }
     let now = std::time::SystemTime::now();
     for entry in std::fs::read_dir(job_dir).map_err(RuntimeError::Io)? {
         let entry = entry.map_err(RuntimeError::Io)?;
-        let meta = entry.metadata().map_err(RuntimeError::Io)?;
-        if let Ok(modified) = meta.modified()
-            && let Ok(elapsed) = now.duration_since(modified)
-            && elapsed.as_secs() > JOB_TTL_SECS
-        {
-            let _ = std::fs::remove_dir_all(entry.path());
-            cleaned += 1;
+        let job_path = entry.path();
+        if !job_path.is_dir() {
+            continue;
         }
-        let job_id = entry.file_name().to_string_lossy().to_string();
-        let job_path = PathBuf::from(JOB_DIR).join(&job_id);
+        if job_is_running_with(&job_path, &alive) {
+            continue;
+        }
+        let expired = job_last_file_activity(&job_path)
+            .and_then(|last| now.duration_since(last).ok())
+            .is_some_and(|elapsed| elapsed.as_secs() > ttl_secs);
+        if expired {
+            let _ = std::fs::remove_dir_all(&job_path);
+            cleaned += 1;
+            continue;
+        }
         for fname in ["stdout", "stderr"] {
             let fpath = job_path.join(fname);
             if let Ok(md) = std::fs::metadata(&fpath)
@@ -669,6 +691,53 @@ fn cleanup_expired_jobs() -> Result<usize, RuntimeError> {
         }
     }
     Ok(cleaned)
+}
+
+/// A job is running when its recorded state says so and its process group is
+/// still alive. Unknown or unreadable state is treated as running (fail safe:
+/// never delete metadata we cannot judge).
+fn job_is_running_with(job_path: &Path, alive: &impl Fn(i32) -> bool) -> bool {
+    let meta = std::fs::read_to_string(job_path.join("meta")).unwrap_or_default();
+    if meta.trim() != "running" {
+        return false;
+    }
+    let Ok(pid) = std::fs::read_to_string(job_path.join("pid")) else {
+        return true;
+    };
+    let pid = pid.trim();
+    let Ok(pid_num) = pid.parse::<i32>() else {
+        return true;
+    };
+    alive(pid_num)
+}
+
+fn process_group_alive(pid: i32) -> bool {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "kill -0 -- -{pid} 2>/dev/null || kill -0 {pid} 2>/dev/null"
+        ))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Newest mtime across the job directory's files (never the directory itself).
+fn job_last_file_activity(job_path: &Path) -> Option<std::time::SystemTime> {
+    let entries = std::fs::read_dir(job_path).ok()?;
+    let mut latest: Option<std::time::SystemTime> = None;
+    for entry in entries.flatten() {
+        if let Ok(md) = entry.metadata()
+            && md.is_file()
+            && let Ok(modified) = md.modified()
+        {
+            latest = Some(match latest {
+                Some(prev) if prev >= modified => prev,
+                _ => modified,
+            });
+        }
+    }
+    latest
 }
 
 // ── Snapshot/Revert/Patch (PLAN-275 M2) ────────────────────────────────
@@ -1764,5 +1833,81 @@ mod tests {
         assert!(text.starts_with("汉"), "got {text:?}");
         assert!(!text.contains('\u{fffd}'), "must not split a char: {text:?}");
         assert!(text.ends_with("[truncated to 3 bytes]"), "got {text:?}");
+    }
+
+    // ── T1.1（决策 #15）：清理不得误伤运行中的 job，且不得用目录 mtime ──────
+
+    fn write_fake_job(
+        dir: &Path,
+        job_id: &str,
+        meta: &str,
+        pid: Option<&str>,
+        age_secs: u64,
+    ) -> PathBuf {
+        let job = dir.join(job_id);
+        std::fs::create_dir_all(&job).unwrap();
+        std::fs::write(job.join("meta"), format!("{meta}\n")).unwrap();
+        if let Some(pid) = pid {
+            std::fs::write(job.join("pid"), format!("{pid}\n")).unwrap();
+        }
+        std::fs::write(job.join("stdout"), b"out").unwrap();
+        let stamp = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+        for f in ["meta", "pid", "stdout"] {
+            let p = job.join(f);
+            if p.exists() {
+                std::fs::File::options()
+                    .write(true)
+                    .open(&p)
+                    .unwrap()
+                    .set_modified(stamp)
+                    .unwrap();
+            }
+        }
+        job
+    }
+
+    #[test]
+    fn cleanup_keeps_running_job_even_when_expired() {
+        let tmp = TempDir::new().unwrap();
+        let job = write_fake_job(tmp.path(), "job-running", "running", Some("4321"), 86400);
+        let cleaned = cleanup_expired_jobs_with(tmp.path(), 900, |_pid| true).unwrap();
+        assert_eq!(cleaned, 0);
+        assert!(job.join("meta").exists());
+    }
+
+    #[test]
+    fn cleanup_keeps_running_job_without_readable_pid() {
+        let tmp = TempDir::new().unwrap();
+        let job = write_fake_job(tmp.path(), "job-unknown", "running", None, 86400);
+        let cleaned = cleanup_expired_jobs_with(tmp.path(), 900, |_pid| false).unwrap();
+        assert_eq!(cleaned, 0);
+        assert!(job.exists());
+    }
+
+    #[test]
+    fn cleanup_reclaims_expired_finished_job() {
+        let tmp = TempDir::new().unwrap();
+        let job = write_fake_job(tmp.path(), "job-done", "succeeded", None, 86400);
+        let cleaned = cleanup_expired_jobs_with(tmp.path(), 900, |_pid| false).unwrap();
+        assert_eq!(cleaned, 1);
+        assert!(!job.exists());
+    }
+
+    #[test]
+    fn cleanup_keeps_recent_finished_job() {
+        let tmp = TempDir::new().unwrap();
+        let job = write_fake_job(tmp.path(), "job-recent", "succeeded", None, 3);
+        let cleaned = cleanup_expired_jobs_with(tmp.path(), 900, |_pid| false).unwrap();
+        assert_eq!(cleaned, 0);
+        assert!(job.exists());
+    }
+
+    #[test]
+    fn cleanup_treats_dead_pid_as_finished() {
+        let tmp = TempDir::new().unwrap();
+        let job = write_fake_job(tmp.path(), "job-dead", "running", Some("99999999"), 86400);
+        let cleaned = cleanup_expired_jobs_with(tmp.path(), 900, |_pid| false).unwrap();
+        assert_eq!(cleaned, 1);
+        assert!(!job.exists());
     }
 }

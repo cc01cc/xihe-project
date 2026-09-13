@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 // PLAN-0308 M1: 工具超时的取值与传递统一在 `tool_timeout`（spec S1 三条判断）：
@@ -12,11 +13,86 @@ use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{Result, RuntimeError};
 use crate::gateway::WorkspaceRegistry;
 use crate::hydrate::WorkspaceEnsurer;
 use crate::workspace::WorkspaceManager;
+
+/// Host-side registry of executions that are still running, keyed by
+/// `operationItemId` (PLAN-0317 T2.1, decision #12 — the same key CP stores in
+/// `operation_items.tool_call_id` and forwards as `X-Operation-Item-Id`).
+///
+/// A cancel request looks the execution up by that key and triggers its
+/// [`CancellationToken`]; T2.2 wires the token to the container abort frame.
+#[derive(Default)]
+pub struct InFlightExecutions {
+    inner: StdMutex<HashMap<String, CancellationToken>>,
+}
+
+impl InFlightExecutions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers a running execution. The returned token is cancelled when a
+    /// cancel request arrives for the same `item_id`.
+    pub fn register(&self, item_id: &str) -> CancellationToken {
+        let token = CancellationToken::new();
+        let mut map = self.inner.lock().expect("in-flight registry poisoned");
+        // A second registration for the same item replaces the previous token;
+        // the old execution then becomes unaddressable, which is logged by the
+        // caller rather than silently ignored.
+        if let Some(previous) = map.insert(item_id.to_string(), token.clone()) {
+            previous.cancel();
+        }
+        token
+    }
+
+    /// Removes an execution once it has finished (any exit path).
+    pub fn unregister(&self, item_id: &str) {
+        let mut map = self.inner.lock().expect("in-flight registry poisoned");
+        map.remove(item_id);
+    }
+
+    /// Requests termination; `false` when nothing is in flight for `item_id`.
+    /// Idempotent: repeated requests keep the token cancelled.
+    pub fn request_termination(&self, item_id: &str) -> bool {
+        let map = self.inner.lock().expect("in-flight registry poisoned");
+        match map.get(item_id) {
+            Some(token) => {
+                token.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("in-flight registry poisoned")
+            .len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Removes the in-flight entry on every exit path of an execution.
+struct InFlightGuard {
+    registry: Arc<InFlightExecutions>,
+    item_id: String,
+    _token: CancellationToken,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.registry.unregister(&self.item_id);
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OperationRequest {
@@ -49,6 +125,7 @@ pub struct WorkspaceExecutionRouter {
     ensurer: Arc<WorkspaceEnsurer>,
     manager: Arc<Mutex<WorkspaceManager>>,
     registry: Arc<WorkspaceRegistry>,
+    in_flight: Arc<InFlightExecutions>,
     docker: Docker,
 }
 
@@ -70,8 +147,15 @@ impl WorkspaceExecutionRouter {
             ensurer,
             manager,
             registry,
+            in_flight: Arc::new(InFlightExecutions::new()),
             docker,
         }
+    }
+
+    /// In-flight execution registry (PLAN-0317 T2.1); cancel requests (T2.3)
+    /// address executions through it by `operationItemId`.
+    pub fn in_flight(&self) -> Arc<InFlightExecutions> {
+        self.in_flight.clone()
     }
 
     async fn ensure(&self, workspace_id: &str) -> Result<crate::gateway::XiheRuntimeInstance> {
@@ -91,8 +175,43 @@ impl WorkspaceExecutionRouter {
         payload: Value,
     ) -> Result<Value> {
         let _instance = self.ensure(workspace_id).await?;
+        self.exec_oneshot_inner(workspace_id, operation, payload).await
+    }
+
+    /// Executes against the already-materialized container **without**
+    /// re-materializing the workspace or refreshing its activity timestamp.
+    /// Used by the periodic job cleanup so an idle workspace is neither
+    /// started nor kept alive by maintenance traffic.
+    async fn exec_oneshot_existing(
+        &self,
+        workspace_id: &str,
+        operation: &str,
+        payload: Value,
+    ) -> Result<Value> {
+        self.exec_oneshot_inner(workspace_id, operation, payload).await
+    }
+
+    async fn exec_oneshot_inner(
+        &self,
+        workspace_id: &str,
+        operation: &str,
+        payload: Value,
+    ) -> Result<Value> {
         let container_name = Self::container_name(workspace_id);
         let request_id = uuid::Uuid::new_v4().to_string();
+        // PLAN-0317 T2.1/T2.2: register the execution under the CP-provided
+        // operationItemId so a cancel request can address this exact run. The
+        // guard removes the entry on every exit path.
+        let correlation = tool_timeout::current_correlation();
+        let _in_flight_guard = correlation.tool_call_id.as_deref().map(|item_id| {
+            let registry = self.in_flight.clone();
+            let token = registry.register(item_id);
+            InFlightGuard {
+                registry,
+                item_id: item_id.to_string(),
+                _token: token,
+            }
+        });
         let op = OperationRequest {
             operation: operation.to_string(),
             payload,
@@ -169,7 +288,6 @@ impl WorkspaceExecutionRouter {
             }
         };
         let effective = tool_timeout::current_or_resolve();
-        let correlation = tool_timeout::current_correlation();
         tracing::info!(
             target: "timeout",
             operation = %operation,
@@ -467,6 +585,15 @@ impl WorkspaceExecutionRouter {
             .await
     }
 
+    /// Reclaims expired finished jobs inside an already-materialized
+    /// container. Deliberately skips materialization and the activity
+    /// timestamp so the periodic maintenance loop cannot keep an idle
+    /// workspace active (see PLAN-0317 T1.1).
+    pub async fn cleanup_jobs(&self, workspace_id: &str) -> Result<Value> {
+        self.exec_oneshot_existing(workspace_id, "cleanup_jobs", Value::Null)
+            .await
+    }
+
     pub async fn read_command_output(
         &self,
         workspace_id: &str,
@@ -478,6 +605,51 @@ impl WorkspaceExecutionRouter {
             serde_json::json!({"artifact_id": artifact_id, "offset": offset, "limit": limit});
         self.exec_oneshot(workspace_id, "read_command_output", payload)
             .await
+    }
+}
+
+#[cfg(test)]
+mod in_flight_tests {
+    use super::*;
+
+    /// PLAN-0317 T2.1：注册后可按 operationItemId 触发终止，且幂等。
+    #[test]
+    fn request_termination_cancels_registered_execution_idempotently() {
+        let registry = InFlightExecutions::new();
+        let token = registry.register("item-1");
+        assert_eq!(registry.len(), 1);
+
+        assert!(registry.request_termination("item-1"));
+        assert!(token.is_cancelled());
+        // Repeated requests stay successful and keep the token cancelled.
+        assert!(registry.request_termination("item-1"));
+        assert!(token.is_cancelled());
+
+        registry.unregister("item-1");
+        assert!(registry.is_empty());
+        assert!(!registry.request_termination("item-1"));
+    }
+
+    /// PLAN-0317 T2.1：未知 key 不误触发、不报错。
+    #[test]
+    fn request_termination_is_false_for_unknown_item() {
+        let registry = InFlightExecutions::new();
+        assert!(!registry.request_termination("missing"));
+    }
+
+    /// PLAN-0317 T2.1：同一 key 重复注册只保留最新执行，旧执行被取消。
+    #[test]
+    fn duplicate_registration_replaces_and_cancels_previous() {
+        let registry = InFlightExecutions::new();
+        let first = registry.register("item-1");
+        let second = registry.register("item-1");
+
+        assert_eq!(registry.len(), 1);
+        assert!(first.is_cancelled(), "stale execution must be cancelled");
+        assert!(!second.is_cancelled());
+
+        assert!(registry.request_termination("item-1"));
+        assert!(second.is_cancelled());
     }
 }
 
