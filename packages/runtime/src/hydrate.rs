@@ -7,7 +7,7 @@ use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use reqwest::Client;
 use serde::Deserialize;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::error::{Result, RuntimeError};
 use crate::gateway::{InstanceState, WorkspaceRegistry, XiheRuntimeInstance};
@@ -218,6 +218,8 @@ pub struct WorkspaceEnsurer {
     host_root: Option<PathBuf>,
     default_image: String,
     locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    materialize_timeout: Duration,
+    materialize_timeout_source: &'static str,
 }
 
 impl WorkspaceEnsurer {
@@ -227,6 +229,23 @@ impl WorkspaceEnsurer {
         client: ExecutionSpecClient,
         host_root: Option<PathBuf>,
     ) -> Self {
+        // PLAN-0323 M-1: total materialization bound (queue wait excluded).
+        let default_timeout = Duration::from_secs(600);
+        let (materialize_timeout, materialize_timeout_source) = match std::env::var(
+            "XIHE_WORKSPACE_MATERIALIZE_TIMEOUT_SECS",
+        ) {
+            Ok(raw) => match raw.trim().parse::<u64>() {
+                Ok(secs) if secs > 0 => (Duration::from_secs(secs), "env"),
+                _ => {
+                    warn!(
+                        value = %raw,
+                        "XIHE_WORKSPACE_MATERIALIZE_TIMEOUT_SECS is invalid; falling back to default"
+                    );
+                    (default_timeout, "default")
+                }
+            },
+            Err(_) => (default_timeout, "default"),
+        };
         Self {
             registry,
             manager,
@@ -235,7 +254,16 @@ impl WorkspaceEnsurer {
             default_image: std::env::var("XIHE_WORKSPACE_IMAGE")
                 .unwrap_or_else(|_| DEFAULT_IMAGE.to_string()),
             locks: Arc::new(Mutex::new(HashMap::new())),
+            materialize_timeout,
+            materialize_timeout_source,
         }
+    }
+
+    /// Test/embedding hook: override the materialization timeout (source=injected).
+    pub fn with_materialize_timeout(mut self, timeout: Duration) -> Self {
+        self.materialize_timeout = timeout;
+        self.materialize_timeout_source = "injected";
+        self
     }
 
     pub fn from_env(
@@ -323,6 +351,31 @@ impl WorkspaceEnsurer {
         let workspace_lock = self.lock_for(workspace_id).await;
         let _guard = workspace_lock.lock().await;
 
+        // PLAN-0323 M-1: bound materialization work so a stuck Docker
+        // create/start cannot leave the workspace in `materializing` forever.
+        // The timer starts after the per-workspace lock is acquired so queued
+        // callers are not charged for a peer's in-flight work. Partial
+        // containers are left to the next ensure's pre-create cleanup.
+        let timeout = self.materialize_timeout;
+        match tokio::time::timeout(timeout, self.materialize_locked(workspace_id)).await {
+            Ok(result) => result,
+            Err(_) => {
+                self.failure(
+                    workspace_id,
+                    RuntimeError::WorkspaceMaterializationFailed {
+                        workspace_id: workspace_id.to_string(),
+                        detail: format!(
+                            "workspace materialization timed out after {timeout:?} (layer=runtime.materialize, source={})",
+                            self.materialize_timeout_source
+                        ),
+                    },
+                )
+                .await
+            }
+        }
+    }
+
+    async fn materialize_locked(&self, workspace_id: &str) -> Result<XiheRuntimeInstance> {
         // A cache hit must still be checked against CP. Comparing the Registry with
         // itself cannot detect a changed ExecutionSpec.
         let cached_instance = self.registry.get(workspace_id).await;
@@ -688,5 +741,55 @@ mod tests {
             matches!(error, RuntimeError::InvalidExecutionSpec { .. }),
             "unexpected error: {error}"
         );
+    }
+
+    /// PLAN-0323 M-1: a total materialization timeout marks the workspace
+    /// failed with the effective value and its source, without needing Docker.
+    #[tokio::test]
+    async fn materialization_timeout_marks_failed_with_signature() {
+        let mut server = Server::new_async().await;
+        let body = spec_body("ws-timeout", 1, &"a".repeat(64));
+        let mock = server
+            .mock(
+                "GET",
+                "/internal/v1/runtime/workspaces/ws-timeout/execution-spec",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_chunked_body(move |writer| {
+                std::thread::sleep(Duration::from_millis(200));
+                writer.write_all(body.as_bytes())?;
+                Ok(())
+            })
+            .create_async()
+            .await;
+
+        let host_root = tempfile::tempdir().unwrap();
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let ensurer = WorkspaceEnsurer::new(
+            registry.clone(),
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new(&server.url(), "test-token"),
+            Some(host_root.path().to_path_buf()),
+        )
+        .with_materialize_timeout(Duration::from_millis(10));
+
+        let error = ensurer
+            .ensure_workspace_materialized("ws-timeout")
+            .await
+            .unwrap_err();
+        let detail = error.to_string();
+        assert!(
+            detail.contains("timed out after"),
+            "unexpected error: {detail}"
+        );
+        assert!(
+            detail.contains("source=injected"),
+            "unexpected error: {detail}"
+        );
+
+        let status = registry.status("ws-timeout").await.expect("status entry");
+        assert_eq!(status.state, MaterializationState::Failed);
+        mock.assert_async().await;
     }
 }
