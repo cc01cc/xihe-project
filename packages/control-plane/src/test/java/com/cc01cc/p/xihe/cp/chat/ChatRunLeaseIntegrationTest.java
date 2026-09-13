@@ -355,6 +355,46 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         assertEquals("agent", gatewayItem.getSource(), "the existing owner must not be overwritten");
     }
 
+    /**
+     * T2.5 决策 #7② 并发回归：同一 operation 的并发事件追加必须被行锁串行化，
+     * 不得出现 `OPERATION_EVENT_CONFLICT`（宿主 E2E 曾实测到）。
+     */
+    @Test
+    void concurrentEventAppendsDoNotConflict() throws Exception {
+        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
+                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
+        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
+
+        int threads = 4;
+        java.util.concurrent.ExecutorService pool =
+                java.util.concurrent.Executors.newFixedThreadPool(threads);
+        java.util.List<Throwable> errors = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        for (int i = 0; i < threads; i++) {
+            pool.submit(() -> {
+                try {
+                    start.await();
+                    operationService.recordLateTermination(item.getId().toString(), true);
+                } catch (Throwable t) {
+                    errors.add(t);
+                }
+            });
+        }
+        start.countDown();
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS));
+
+        assertTrue(errors.isEmpty(),
+                "concurrent event appends must serialize under the operation lock: " + errors);
+        long appended = operationEventRepository
+                .findByItemIdOrderBySequenceAsc(item.getId().toString())
+                .stream()
+                .filter(event -> "item.terminated.late".equals(event.getEventType()))
+                .count();
+        assertEquals(threads, appended, "every append must land with a unique sequence");
+    }
+
     @Autowired
     private ChatController chatController;
 

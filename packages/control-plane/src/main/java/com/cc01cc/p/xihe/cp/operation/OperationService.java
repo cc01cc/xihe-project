@@ -616,8 +616,9 @@ public class OperationService {
 
     private void appendEvent(UUID operationId, String itemId, String attemptId,
                              String eventType, String state, String actor, String payload) {
-        // PLAN-0317 决策 #7②：聚合查询取序号（此前加载该 operation 的全部事件
-        // 再求 max，长操作 O(n²)）。
+        // PLAN-0317 决策 #7②：与 appendItem 相同，序号分配必须在 operation 行锁下
+        // 进行——只换成聚合 max 仍会并发撞唯一约束（宿主 E2E 实测 OPERATION_EVENT_CONFLICT）。
+        operations.findByIdForUpdate(operationId);
         Long sequence = events.findMaxSequence(operationId.toString()) + 1;
         OperationEvent event = new OperationEvent(operationId.toString(), sequence, eventType,
                 state, actor, payload);
