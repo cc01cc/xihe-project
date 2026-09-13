@@ -343,7 +343,9 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             let workspace_id = req.payload.get("workspaceId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
             let command = req.payload.get("command").and_then(|v| v.as_str()).ok_or_else(|| RuntimeError::InvalidPath("missing command".into()))?.to_string();
             let args: Vec<String> = req.payload.get("args").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
-            let job_id = start_background_job(&workspace_id, &command, args).await?;
+            // PLAN-0317 T3.3（决策 #3）：timeout 落实为任务运行时限（None→60 分钟默认，0→不限）。
+            let timeout_secs = resolve_job_timeout(req.payload.get("timeoutSecs").and_then(|v| v.as_u64()));
+            let job_id = start_background_job(&workspace_id, &command, args, timeout_secs).await?;
             Ok(serde_json::json!({"jobId": job_id}))
         }
         "list_background_processes" => {
@@ -557,24 +559,55 @@ async fn start_background_job(
     workspace_id: &str,
     command: &str,
     args: Vec<String>,
+    timeout_secs: u64,
 ) -> Result<String, RuntimeError> {
-    start_background_job_at(Path::new(JOB_DIR), workspace_id, command, args).await
+    start_background_job_at(Path::new(JOB_DIR), workspace_id, command, args, timeout_secs).await
 }
 
 // Keep the wrapper script fixed and pass all user-controlled values as
 // positional arguments. This preserves the explicit shell-command contract
 // without interpolating command text, arguments, or paths into shell syntax.
+/// 后台任务默认运行时限（PLAN-0317 T3.3 / 决策 #3：60 分钟、可覆盖）。
+/// 调用方显式传 0 表示不设时限（opt-out）。
+const DEFAULT_JOB_TIMEOUT_SECS: u64 = 60 * 60;
+
+fn resolve_job_timeout(requested: Option<u64>) -> u64 {
+    match requested {
+        None => DEFAULT_JOB_TIMEOUT_SECS,
+        Some(0) => 0,
+        Some(secs) => secs,
+    }
+}
+
 const BACKGROUND_JOB_WRAPPER: &str = r#"job_dir="$1"
 command="$2"
-shift 2
+timeout_secs="$3"
+shift 3
 printf '%s\n' "$$" > "$job_dir/pid"
+# PLAN-0317 T3.3：到点终止整个进程组并落 timeout 终态。看门狗放进独立会话
+# （setsid），否则组杀会连它一起干掉、没人写终态。
+if [ -n "$timeout_secs" ] && [ "$timeout_secs" != "0" ]; then
+  setsid sh -c '
+    sleep "$1"
+    printf "%s\n" timeout > "$2/meta"
+    printf "%s\n" 143 > "$2/exit"
+    kill -TERM -- -"$3" 2>/dev/null || kill -TERM "$3" 2>/dev/null
+    sleep 5
+    kill -9 -- -"$3" 2>/dev/null || kill -9 "$3" 2>/dev/null
+  ' xihe-job-timeout "$timeout_secs" "$job_dir" "$$" &
+fi
 sh -c "$command" xihe-shell "$@"
 exit_code=$?
 printf '%s\n' "$exit_code" > "$job_dir/exit"
 printf '%s\n' succeeded > "$job_dir/meta"
 "#;
 
-fn background_wrapper_args(job_dir: &Path, command: &str, args: &[String]) -> Vec<OsString> {
+fn background_wrapper_args(
+    job_dir: &Path,
+    command: &str,
+    args: &[String],
+    timeout_secs: u64,
+) -> Vec<OsString> {
     let mut wrapper_args = vec![
         OsString::from("sh"),
         OsString::from("-c"),
@@ -582,6 +615,7 @@ fn background_wrapper_args(job_dir: &Path, command: &str, args: &[String]) -> Ve
         OsString::from("xihe-job-wrapper"),
         job_dir.as_os_str().to_owned(),
         OsString::from(command),
+        OsString::from(timeout_secs.to_string()),
     ];
     wrapper_args.extend(args.iter().map(OsString::from));
     wrapper_args
@@ -591,11 +625,12 @@ fn build_background_command(
     job_dir: &Path,
     command: &str,
     args: &[String],
+    timeout_secs: u64,
     stdout: std::fs::File,
     stderr: std::fs::File,
 ) -> Command {
     let mut cmd = Command::new("setsid");
-    cmd.args(background_wrapper_args(job_dir, command, args))
+    cmd.args(background_wrapper_args(job_dir, command, args, timeout_secs))
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
@@ -609,6 +644,7 @@ async fn start_background_job_at(
     workspace_id: &str,
     command: &str,
     args: Vec<String>,
+    timeout_secs: u64,
 ) -> Result<String, RuntimeError> {
     std::fs::create_dir_all(job_dir).map_err(RuntimeError::Io)?;
     let jobs = std::fs::read_dir(job_dir)
@@ -626,9 +662,13 @@ async fn start_background_job_at(
     std::fs::write(job_path.join("workspace_id"), workspace_id).map_err(RuntimeError::Io)?;
     std::fs::write(job_path.join("started_at"), &now).map_err(RuntimeError::Io)?;
     std::fs::write(job_path.join("updated_at"), &now).map_err(RuntimeError::Io)?;
+    if timeout_secs > 0 {
+        std::fs::write(job_path.join("timeout_secs"), timeout_secs.to_string())
+            .map_err(RuntimeError::Io)?;
+    }
     let stdout = std::fs::File::create(job_path.join("stdout")).map_err(RuntimeError::Io)?;
     let stderr = std::fs::File::create(job_path.join("stderr")).map_err(RuntimeError::Io)?;
-    let mut cmd = build_background_command(&job_path, command, &args, stdout, stderr);
+    let mut cmd = build_background_command(&job_path, command, &args, timeout_secs, stdout, stderr);
     let child = cmd
         .spawn()
         .map_err(|e| RuntimeError::Command(format!("failed to detach background job: {e}")))?;
@@ -1678,19 +1718,22 @@ mod tests {
     use tempfile::TempDir;
     #[cfg(unix)]
     use std::time::Instant;
-
     #[test]
-    fn background_wrapper_keeps_user_values_out_of_shell_script() {        let command = r#"printf '%s' "$1""#;
+    fn background_wrapper_keeps_user_values_out_of_shell_script() {
+        let command = r#"printf '%s' "$1""#;
         let argument = "value; touch injected-file".to_string();
         let wrapper_args = background_wrapper_args(
             Path::new("/tmp/job with spaces"),
             command,
             std::slice::from_ref(&argument),
+            0,
         );
 
         assert_eq!(wrapper_args[2], OsString::from(BACKGROUND_JOB_WRAPPER));
         assert_eq!(wrapper_args[5], OsString::from(command));
-        assert_eq!(wrapper_args[6], OsString::from(argument));
+        // PLAN-0317 T3.3：timeout 是第三个位置参数，用户参数紧随其后。
+        assert_eq!(wrapper_args[6], OsString::from("0"));
+        assert_eq!(wrapper_args[7], OsString::from(argument));
         assert!(!wrapper_args[2].to_string_lossy().contains("injected-file"));
     }
 
@@ -1823,7 +1866,7 @@ mod tests {
     async fn background_job_detaches_and_completes_metadata_asynchronously() {
         let tmp = TempDir::new().expect("temporary job directory");
         let started = Instant::now();
-        let job_id = start_background_job_at(tmp.path(), "sleep 2", Vec::new())
+        let job_id = start_background_job_at(tmp.path(), "sleep 2", Vec::new(), 0)
             .await
             .expect("background job should spawn");
         let job_path = tmp.path().join(&job_id);
@@ -1880,7 +1923,7 @@ mod tests {
         let tmp = TempDir::new().expect("temporary job directory");
         let marker = tmp.path().join("injected");
         let argument = format!("safe; touch {}", marker.display());
-        let job_id = start_background_job_at(tmp.path(), r#"printf '%s' "$1""#, vec![argument.clone()])
+        let job_id = start_background_job_at(tmp.path(), r#"printf '%s' "$1""#, vec![argument.clone()], 0)
             .await
             .expect("background job should spawn");
         let job_path = tmp.path().join(&job_id);
@@ -2023,5 +2066,30 @@ mod tests {
         // Second abort is a no-op and must not panic when no group is registered.
         mark_oneshot_aborted("duplicate frame");
         assert!(abort_requested());
+    }
+
+    // ── T3.3（决策 #3）：后台任务运行时限 ────────────────────────────────
+
+    #[test]
+    fn job_timeout_defaults_to_sixty_minutes_and_zero_opts_out() {
+        assert_eq!(resolve_job_timeout(None), 60 * 60);
+        assert_eq!(resolve_job_timeout(Some(0)), 0, "explicit 0 = no limit");
+        assert_eq!(resolve_job_timeout(Some(120)), 120);
+    }
+
+    #[test]
+    fn wrapper_enforces_timeout_in_a_separate_session() {
+        assert!(
+            BACKGROUND_JOB_WRAPPER.contains("shift 3"),
+            "wrapper must take the timeout as its third positional argument"
+        );
+        assert!(
+            BACKGROUND_JOB_WRAPPER.contains("setsid sh -c"),
+            "watchdog must escape the job's process group to survive the group kill"
+        );
+        assert!(
+            BACKGROUND_JOB_WRAPPER.contains("timeout") && BACKGROUND_JOB_WRAPPER.contains("/meta"),
+            "watchdog must record the timeout terminal state"
+        );
     }
 }

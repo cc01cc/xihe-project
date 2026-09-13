@@ -815,9 +815,14 @@ impl WorkspaceExecutionRouter {
         workspace_id: &str,
         command: &str,
         args: Vec<String>,
+        timeout_secs: Option<u64>,
     ) -> Result<String> {
-        let payload =
+        let mut payload =
             serde_json::json!({"workspaceId": workspace_id, "command": command, "args": args});
+        // PLAN-0317 T3.3：把工具面的 timeout 落实为任务运行时限（容器侧 None→默认 60 分钟）。
+        if let Some(timeout_secs) = timeout_secs {
+            payload["timeoutSecs"] = serde_json::json!(timeout_secs);
+        }
         let val = self
             .exec_oneshot(workspace_id, "start_background_process", payload)
             .await?;

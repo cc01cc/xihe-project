@@ -512,12 +512,12 @@ impl XiheRuntime {
         Parameters(ExecuteCommandRequest {
             command,
             args,
-            timeout: _timeout,
+            timeout,
             truncate_limit: _truncate,
         }): Parameters<ExecuteCommandRequest>,
     ) -> Result<String, String> {
         let args_vec = args;
-        self.router.start_background_process(&self.ws_id, &command, args_vec).await.map_err(|e| e.to_string())
+        self.router.start_background_process(&self.ws_id, &command, args_vec, timeout).await.map_err(|e| e.to_string())
     }
 
     #[tool(description = "List all background processes for this workspace")]
