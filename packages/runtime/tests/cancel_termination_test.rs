@@ -1,6 +1,7 @@
 //! PLAN-0317 T2.2b / T3.3 真实容器证据：
 //!   1. oneshot 中止帧 → 进程组被杀 + `CANCELLED` 回帧；
 //!   2. 后台任务到点（运行时限）→ 进程组被杀 + `timeout` 终态。
+//!
 //! 与 m1b/m1c 同层：需要 Docker（`mise run test:runtime` 环境）。
 
 use std::time::Duration;

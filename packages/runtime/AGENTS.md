@@ -4,7 +4,7 @@
 
 ## Tech Stack
 
-- **Rust** 1.88（edition 2024，rmcp 3.1.4）— 编译语言
+- **Rust** 1.97.1（edition 2024，rmcp 3.1.4；`rust-toolchain.toml` 固定）— 编译语言
 - **Cargo** — 构建/测试
 - **rmcp** — MCP 服务器框架
 - **Axum** — HTTP 服务器
@@ -22,8 +22,9 @@
 ### Full Suite
 - `cargo build` — 编译
 - `cargo test` — 全部测试（lib + integration）
-- `cargo clippy` — lint
-- `cargo fmt` — 格式化
+- `cargo clippy --all-targets -- -D warnings` — lint（门禁口径；`mise run lint:runtime` = fmt check + 本条）
+- `cargo fmt` — 格式化；校验用 `cargo fmt --check`
+- 工具链由 `rust-toolchain.toml` 固定 1.97.1（与 `mise.toml` `[tools].rust` 一致）
 
 ## Project Structure
 

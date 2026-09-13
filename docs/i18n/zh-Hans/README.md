@@ -67,7 +67,7 @@ flowchart LR
 | **UI** | 人类操作入口 | TypeScript | Vue 3, Vite, Tailwind v4, reka-ui, Pinia | DEV-010 |
 | **Agent** | Agent 操作入口 | Python 3.12+ | FastAPI, LangChain, LangGraph, litellm | DEV-013 |
 | **Control Plane** | 管理层 | Java 25 | Spring Boot 4, Spring Security, Flyway | DEV-014 |
-| **Runtime** | 基础设施 | Rust 1.88+ | rmcp, Tokio, Axum, bollard | DEV-015 |
+| **Runtime** | 基础设施 | Rust 1.97.1+ | rmcp, Tokio, Axum, bollard | DEV-015 |
 
 通信：UI↔CP 聊天（`POST /api/v1/chat` + 持久 `GET /api/v1/events?sessionId=` SSE）；Agent 工具调用经 CP MCP 反向代理；文件操作走 REST。架构总览见 DEV-001，会话模型见 DEV-017。
 

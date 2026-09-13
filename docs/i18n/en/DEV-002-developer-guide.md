@@ -95,8 +95,8 @@ java --version   # 25+
 mvn --version    # 3.8+ (system) / 3.9.x via mise
 
 # Rust (Runtime)
-rustc --version  # 1.88+
-cargo --version  # 1.88+
+rustc --version  # 1.97.1+
+cargo --version  # 1.97.1+
 ```
 
 ### 2.2. Install Dependencies

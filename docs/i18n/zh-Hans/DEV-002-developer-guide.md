@@ -25,7 +25,7 @@ xihe/
 │   │   └── src/main/java/.../cp/  # auth / chat / mcp / config / context / files / session / audit
 │   ├── agent/                 # Python 3.12 + LangChain/LangGraph + uv
 │   │   └── src/xihe_agent/    # interfaces / agent_runner / adapters / context / tools / llm / rag / registry
-│   └── runtime/               # Rust 1.88 edition 2024 + cargo
+│   └── runtime/               # Rust 1.97.1 edition 2024 + cargo
 │       └── src/               # main / executor / workspace / container_runtime / fs / sandbox / mcp_bridge / hydrate
 ├── docs/i18n/{zh-Hans,en}/    # 公开文档（编号规则见 DEV-030）
 ├── scripts/                   # dev-host / reset-admin / scan-log-secrets 等辅助脚本
@@ -48,7 +48,7 @@ cp .env.example .env.dev
 # 编辑 .env.dev（端口/DB/JWT/Workspace 根等，详见 DEV-003 §2）
 ```
 
-前置：Node 22+ / pnpm 10+ / Python 3.12+ + uv / Java 25+ + Maven 3.9 / Rust 1.88+ / Docker（Desktop for Windows 需 WSL2 集成）。
+前置：Node 22+ / pnpm 10+ / Python 3.12+ + uv / Java 25+ + Maven 3.9 / Rust 1.97.1+ / Docker（Desktop for Windows 需 WSL2 集成）。
 
 模块级等价命令：
 
@@ -205,7 +205,7 @@ Chat SSE 结构化事件与日志字段见 DEV-004 §6.3；UI 传输层见 DEV-0
 
 月度/告警（小代价）：删 `target/debug/incremental`（sweep 不处理增量目录，它是最大头，实测 20.3GB/286 个残留目录）。代价下次本地增量构建 +1~2min，deps 指纹不受影响，不触发全量重编。
 
-特殊：工具链切换（mise pin 1.88 vs 本机 rustup 漂移即产生整套孤儿）/ `Cargo.lock` 大升级后 `cargo clean -p xihe-runtime`；诡异链接错误 `cargo clean`；`build:runtime` 发版后 `cargo clean --release`（release 产物日常用不到，实测 sweep 后 release 1.9GB→0.1GB）。
+特殊：工具链统一由 `packages/runtime/rust-toolchain.toml` + mise `[tools].rust` 固定为 1.97.1（2026-09 对齐后；沿用 1.88 等其他版本仍会产生整套孤儿 target）/ `Cargo.lock` 大升级后 `cargo clean -p xihe-runtime`；诡异链接错误 `cargo clean`；`build:runtime` 发版后 `cargo clean --release`（release 产物日常用不到，实测 sweep 后 release 1.9GB→0.1GB）。
 
 实测（2026-09-05）：`target` 39.5→4.1GB（sweep 清 deps 孤儿 ~17GB + 增量清除 ~20GB），H 余量 1.6→27.3GB；sweep 后离线增量构建 70s（deps 复用、无重编）、`cargo test --lib` 137 passed/17s、`cargo check --all-targets` 52s。
 

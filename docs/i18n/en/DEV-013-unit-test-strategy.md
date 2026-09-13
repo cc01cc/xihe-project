@@ -21,7 +21,7 @@ xihe is a four-module architecture, each with different tech stacks and test fra
 | UI (Frontend) | TypeScript | Vitest + jsdom | `packages/ui/src/**/*.spec.ts` | ❌ |
 | CP (Control Plane) | Java 25 | JUnit 5 + Mockito | `packages/control-plane/src/test/` | ❌ (unit) |
 | Agent (Agent Service) | Python 3.12 | pytest + pytest-asyncio | `packages/agent/tests/unit/` | ❌ |
-| Runtime (Sandbox) | Rust 1.88 | cargo test --lib | `packages/runtime/tests/` | ❌ (unit) |
+| Runtime (Sandbox) | Rust 1.97.1 | cargo test --lib | `packages/runtime/tests/` | ❌ (unit) |
 
 ### 1.1 Current Overview (2026-06-17)
 

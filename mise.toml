@@ -8,7 +8,7 @@ python = "3.12"
 uv = "latest"
 java = "temurin-25"
 maven = "3.9"
-rust = "1.88"
+rust = "1.97.1"
 
 [tasks.setup]
 depends = ["setup:ui", "setup:agent", "setup:cp", "setup:runtime"]
@@ -187,8 +187,8 @@ dir = "packages/control-plane"
 alias = "lint:cp"
 
 [tasks."lint:runtime"]
-run = "cargo clippy -- -D warnings"
-description = "Run Runtime lint (clippy)"
+run = "cargo fmt --check && cargo clippy --all-targets -- -D warnings"
+description = "Run Runtime lint (rustfmt check + clippy all-targets)"
 dir = "packages/runtime"
 alias = "lint:runtime"
 

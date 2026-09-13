@@ -9,7 +9,7 @@
 | `packages/ui/` | 前端界面 (Vue 3 + Vite) | TypeScript |
 | `packages/control-plane/` | 路由 + 认证 + MCP 反向代理 | Java 25 / Spring Boot 4 |
 | `packages/agent/` | LLM 编排 + 工具调用 + RAG | Python 3.12 / LangChain |
-| `packages/runtime/` | 文件系统 + 沙盒 + 进程管理 | Rust 1.88 / rmcp 3.1.4 (edition 2024) |
+| `packages/runtime/` | 文件系统 + 沙盒 + 进程管理 | Rust 1.97.1 / rmcp 3.1.4 (edition 2024) |
 
 ## Tech Stack
 
@@ -81,7 +81,7 @@ mise run validate
 | `mise run lint:ui` | UI lint (oxlint) | — |
 | `mise run lint:agent` | Agent lint (ruff + mypy) | — |
 | `mise run lint:cp` | CP lint (Checkstyle) | — |
-| `mise run lint:runtime` | Runtime lint (clippy) | — |
+| `mise run lint:runtime` | Runtime lint (rustfmt check + clippy --all-targets) | — |
 | `mise run lint:links` | 文档链接检查 | — |
 | `mise run typecheck` | 运行类型检查 | 当前仅 UI |
 | `mise run format` | 格式化代码 | UI + Agent + Runtime |

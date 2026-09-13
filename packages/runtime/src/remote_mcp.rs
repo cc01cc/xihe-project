@@ -735,8 +735,10 @@ mod tests {
         }
     }
 
+    type SeenVersions = Arc<Mutex<Vec<(String, String)>>>;
+
     async fn versioned_handler(
-        State(seen): State<Arc<Mutex<Vec<(String, String)>>>>,
+        State(seen): State<SeenVersions>,
         request: Request<Body>,
     ) -> Response<Body> {
         let (parts, body) = request.into_parts();
@@ -974,7 +976,7 @@ mod tests {
         // PLAN-242 live runbook finding: DeepWiki caps at 2025-11-25 and
         // rejects later calls carrying 2026-07-28. The connector must adopt
         // the initialize result version for subsequent calls.
-        let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen: SeenVersions = Arc::new(Mutex::new(Vec::new()));
         let app = Router::new()
             .fallback(any(versioned_handler))
             .with_state(seen.clone());

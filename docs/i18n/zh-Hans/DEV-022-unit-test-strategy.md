@@ -21,7 +21,7 @@ xihe 是四模块架构，各模块技术栈和测试框架不同：
 | UI (前端) | TypeScript | Vitest + jsdom | `packages/ui/src/**/*.spec.ts` | ❌ |
 | CP (控制面) | Java 25 | JUnit 5 + Mockito | `packages/control-plane/src/test/` | ❌ (unit) |
 | Agent (Agent服务) | Python 3.12 | pytest + pytest-asyncio | `packages/agent/tests/unit/` | ❌ |
-| Runtime (沙盒) | Rust 1.88 | cargo test --lib | `packages/runtime/tests/` | ❌ (unit) |
+| Runtime (沙盒) | Rust 1.97.1 | cargo test --lib | `packages/runtime/tests/` | ❌ (unit) |
 
 ### 1.1 当前概况（2026-09-03 更新；基线为 2026-06-17 PLAN-020 快照，覆盖率数字以各模块实测为准）
 
