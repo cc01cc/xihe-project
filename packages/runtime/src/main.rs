@@ -559,15 +559,27 @@ impl ServerHandler for XiheRuntime {
     ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
         let effective = tool_timeout::resolve_from_extensions(&context.extensions)
             .unwrap_or_else(tool_timeout::current_or_resolve);
+        // PLAN-0308 M1 T1.8（spec S5.1）：关联键随请求透传，exec 日志与超时错误携带同一 toolCallId。
+        let correlation = tool_timeout::correlation_from_extensions(&context.extensions);
+        // T3.4（决策 #31 ②）：CP 下发的输出上限授权（调用方只可收窄）。
+        let output_limit = tool_timeout::output_limit_from_extensions(&context.extensions);
         tracing::info!(
             target: "timeout",
             tool = %request.name,
-            "tool call wait: {}",
-            effective.signature()
+            "tool call wait: {}{} outputLimit={}",
+            effective.signature(),
+            correlation.render(),
+            output_limit.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())
         );
         let tool_call_context =
             rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        tool_timeout::scope(effective, Self::tool_router().call(tool_call_context)).await
+        tool_timeout::scope_tool_call(
+            effective,
+            correlation,
+            output_limit,
+            Self::tool_router().call(tool_call_context),
+        )
+        .await
     }
 }
 
@@ -587,8 +599,8 @@ fn resolve_runtime_log_filter_with(
     global_level: Option<&str>,
 ) -> EnvFilter {
     if let Some(runtime_log_filter) = runtime_log_filter.filter(|value| !value.is_empty()) {
-        return EnvFilter::try_new(runtime_log_filter)
-            .unwrap_or_else(|_| EnvFilter::new("xihe_runtime=info,rmcp=info"));
+        return EnvFilter::try_new(with_timeout_target(runtime_log_filter))
+            .unwrap_or_else(|_| EnvFilter::new(with_timeout_target("xihe_runtime=info,rmcp=info")));
     }
 
     let level = runtime_level
@@ -597,7 +609,19 @@ fn resolve_runtime_log_filter_with(
         .map(normalize_runtime_log_level)
         .unwrap_or_else(|| "info".to_string());
 
-    EnvFilter::new(format!("xihe_runtime={level},rmcp={level}"))
+    EnvFilter::new(with_timeout_target(&format!("xihe_runtime={level},rmcp={level}")))
+}
+
+/// PLAN-0308 M1（spec S5.1/V10）：工具超时署名日志用独立 target `timeout`，
+/// 不在 `xihe_runtime` 前缀下——必须显式放行，否则三跳时间线缺 Runtime 一层。
+fn with_timeout_target(filter: &str) -> String {
+    if filter
+        .split(',')
+        .any(|directive| directive.trim_start().starts_with("timeout"))
+    {
+        return filter.to_string();
+    }
+    format!("{filter},timeout=info")
 }
 
 async fn health() -> &'static str {
@@ -2388,5 +2412,27 @@ mod tool_router_regression_tests {
             "expected the built-in tool surface, got {}",
             tools.len()
         );
+    }
+
+    /// PLAN-0308 M1（V10）：超时署名日志的 `timeout` target 必须在默认过滤器内可见，
+    /// 否则三跳时间线缺 Runtime 一层（预存缺陷：过滤器只放行 xihe_runtime/rmcp 前缀）。
+    #[test]
+    fn timeout_log_target_is_always_enabled() {
+        let default_filter = resolve_runtime_log_filter_with(None, None, None);
+        assert!(
+            default_filter
+                .to_string()
+                .contains("timeout=info"),
+            "default filter must enable the timeout target: {default_filter}"
+        );
+
+        let custom = resolve_runtime_log_filter_with(Some("xihe_runtime=debug"), None, None);
+        assert!(
+            custom.to_string().contains("timeout=info"),
+            "custom filter must keep the timeout target: {custom}"
+        );
+
+        let explicit = resolve_runtime_log_filter_with(Some("xihe_runtime=debug,timeout=warn"), None, None);
+        assert_eq!(explicit.to_string().matches("timeout=").count(), 1);
     }
 }

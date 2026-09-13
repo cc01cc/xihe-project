@@ -51,13 +51,22 @@ pub enum RuntimeError {
     ExecutionSpecNotFound(String),
 
     #[error("Workspace execution spec unavailable for {workspace_id}: {detail}")]
-    ExecutionSpecUnavailable { workspace_id: String, detail: String },
+    ExecutionSpecUnavailable {
+        workspace_id: String,
+        detail: String,
+    },
 
     #[error("Invalid workspace execution spec for {workspace_id}: {detail}")]
-    InvalidExecutionSpec { workspace_id: String, detail: String },
+    InvalidExecutionSpec {
+        workspace_id: String,
+        detail: String,
+    },
 
     #[error("Workspace materialization failed for {workspace_id}: {detail}")]
-    WorkspaceMaterializationFailed { workspace_id: String, detail: String },
+    WorkspaceMaterializationFailed {
+        workspace_id: String,
+        detail: String,
+    },
 
     #[error("MCP bridge not found for workspace {workspace_id}: {server_id}")]
     McpBridgeNotFound {
@@ -78,6 +87,15 @@ impl RuntimeError {
     pub fn timeout_now() -> Self {
         Self::Timeout {
             detail: crate::tool_timeout::current_signature(),
+        }
+    }
+
+    /// PLAN-0308 T3.4（决策 #31）：容器内命令守卫到界。
+    /// 与 `timeout_now()` 的区别：守卫值由**授权值派生**（不是本进程的默认解析），
+    /// 因此只报守卫确知的事实（层名 / 机制 / 秒数）；来源与 valueOrigin 由 host 侧补签。
+    pub fn guard_timeout(guard_seconds: u64) -> Self {
+        Self::Timeout {
+            detail: format!("layer=runtime_exec mechanism=guard effectiveSeconds={guard_seconds}"),
         }
     }
 }

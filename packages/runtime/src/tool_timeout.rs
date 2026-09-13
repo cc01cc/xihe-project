@@ -5,7 +5,7 @@
 //! per-call（可压过本模块 ENV）→ 本模块 ENV → CP 下发值 → 代码默认。
 //! 生效值经 task_local 传给 `executor::exec_oneshot`（同 task 内联 await，无 spawn 打断）。
 
-use axum::http::{HeaderMap, request};
+use axum::http::{request, HeaderMap};
 use tokio::task_local;
 
 /// 离线 / 直连 / 单测（无下发值且无 ENV）时的兜底等待。
@@ -17,6 +17,96 @@ pub const HEADER_TIMEOUT: &str = "x-xihe-tool-timeout-s";
 pub const HEADER_ORIGIN: &str = "x-xihe-tool-timeout-origin";
 /// 本模块 ENV 覆盖键（部署者本地上限）。
 pub const ENV_KEY: &str = "XIHE_EXEC_COLLECT_TIMEOUT_S";
+/// 关联键（spec S5.1）：CP 透传的 toolCallId / runId / requestId（同一工具调用跨三层可检索）。
+pub const HEADER_TOOL_CALL_ID: &str = "x-operation-item-id";
+pub const HEADER_RUN_ID: &str = "x-chat-run-id";
+pub const HEADER_REQUEST_ID: &str = "x-request-id";
+/// 出站头：CP 下发的单次工具返回字节上限（授权值；只由 CP 设置，见决策 #31 ②）。
+pub const HEADER_OUTPUT_LIMIT: &str = "x-xihe-tool-output-limit";
+
+/// 授权（授权值）→ 时间守卫（决策 #31 ①）：**调用方只可收窄**，超出授权无效。
+pub fn time_guard(authorized_secs: u64, caller_secs: Option<u64>) -> u64 {
+    match caller_secs {
+        Some(caller) if caller > 0 && caller < authorized_secs => caller,
+        _ => authorized_secs,
+    }
+}
+
+/// 授权（授权值）→ 输出守卫（决策 #31 ②）：调用方只可收窄；授权缺省时沿用调用方
+/// （两者都没有 → None，交由沙盒的既有默认值）。
+pub fn output_limit_guard(authorized: Option<u64>, caller: Option<u64>) -> Option<u64> {
+    match (authorized, caller) {
+        (Some(auth), Some(call)) => Some(auth.min(call)),
+        (Some(auth), None) => Some(auth),
+        (None, call) => call,
+    }
+}
+
+/// 从请求头解析输出上限（缺头/非法/0 → None）。
+pub fn output_limit_from_headers(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(HEADER_OUTPUT_LIMIT)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|limit| *limit > 0)
+}
+
+/// 从 rmcp 请求上下文 extensions 取输出上限。
+pub fn output_limit_from_extensions(extensions: &rmcp::model::Extensions) -> Option<u64> {
+    extensions
+        .get::<request::Parts>()
+        .and_then(|parts| output_limit_from_headers(&parts.headers))
+}
+
+/// 一次工具调用的关联键（spec S5.1 规则 1：三层日志共用；缺失时留空不猜测）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Correlation {
+    pub tool_call_id: Option<String>,
+    pub run_id: Option<String>,
+    pub request_id: Option<String>,
+}
+
+impl Correlation {
+    /// 单行追加载荷（署名后缀；无任何键时为空串）。
+    pub fn render(&self) -> String {
+        let mut out = String::new();
+        if let Some(id) = &self.tool_call_id {
+            out.push_str(&format!(" toolCallId={id}"));
+        }
+        if let Some(id) = &self.run_id {
+            out.push_str(&format!(" runId={id}"));
+        }
+        if let Some(id) = &self.request_id {
+            out.push_str(&format!(" requestId={id}"));
+        }
+        out
+    }
+}
+
+/// 从请求头解析关联键（HTTP transport 经 Parts 注入；直连/单测缺失时全空）。
+pub fn correlation_from_headers(headers: &HeaderMap) -> Correlation {
+    let value = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|raw| raw.to_str().ok())
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+            .map(str::to_string)
+    };
+    Correlation {
+        tool_call_id: value(HEADER_TOOL_CALL_ID),
+        run_id: value(HEADER_RUN_ID),
+        request_id: value(HEADER_REQUEST_ID),
+    }
+}
+
+/// 从 rmcp 请求上下文 extensions 取关联键。
+pub fn correlation_from_extensions(extensions: &rmcp::model::Extensions) -> Correlation {
+    extensions
+        .get::<request::Parts>()
+        .map(|parts| correlation_from_headers(&parts.headers))
+        .unwrap_or_default()
+}
 
 /// 生效值的来源（spec S5 `source` 字段）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,11 +185,51 @@ impl EffectiveWait {
 
 task_local! {
     static EFFECTIVE_WAIT: EffectiveWait;
+    static CORRELATION: Correlation;
+    static OUTPUT_LIMIT: Option<u64>;
 }
 
 /// 在 task_local 作用域内执行本次工具调用；`exec_oneshot` 由此读取生效值。
 pub async fn scope<F: std::future::Future>(effective: EffectiveWait, future: F) -> F::Output {
     EFFECTIVE_WAIT.scope(effective, future).await
+}
+
+/// 同 `scope`，并携带本次调用的关联键（spec S5.1）。
+pub async fn scope_with_correlation<F: std::future::Future>(
+    effective: EffectiveWait,
+    correlation: Correlation,
+    future: F,
+) -> F::Output {
+    EFFECTIVE_WAIT
+        .scope(effective, CORRELATION.scope(correlation, future))
+        .await
+}
+
+/// 完整作用域：生效值 + 关联键 + 输出上限授权（决策 #31 ②）。
+pub async fn scope_tool_call<F: std::future::Future>(
+    effective: EffectiveWait,
+    correlation: Correlation,
+    output_limit: Option<u64>,
+    future: F,
+) -> F::Output {
+    EFFECTIVE_WAIT
+        .scope(
+            effective,
+            CORRELATION.scope(correlation, OUTPUT_LIMIT.scope(output_limit, future)),
+        )
+        .await
+}
+
+/// 当前关联键；无 scope（直连 MCP / 单测）时全空。
+pub fn current_correlation() -> Correlation {
+    CORRELATION
+        .try_with(|value| value.clone())
+        .unwrap_or_default()
+}
+
+/// 当前输出上限授权；无 scope 时为 None（沿用调用方值 / 沙盒默认）。
+pub fn current_output_limit() -> Option<u64> {
+    OUTPUT_LIMIT.try_with(|value| *value).ok().flatten()
 }
 
 /// 当前生效值；无 scope（直连 MCP / 单测）时返回 None。
@@ -265,5 +395,97 @@ mod tests {
         let seen = scope(effective, async { current() }).await;
         assert_eq!(seen, Some(effective));
         assert!(current().is_none(), "scope must end with the future");
+    }
+
+    #[test]
+    fn correlation_headers_are_parsed_and_rendered() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_TOOL_CALL_ID, "call-abc-123".parse().unwrap());
+        headers.insert(HEADER_RUN_ID, "run-1".parse().unwrap());
+        let correlation = correlation_from_headers(&headers);
+        assert_eq!(correlation.tool_call_id.as_deref(), Some("call-abc-123"));
+        assert_eq!(correlation.run_id.as_deref(), Some("run-1"));
+        assert_eq!(correlation.request_id, None);
+        let rendered = correlation.render();
+        assert!(rendered.contains("toolCallId=call-abc-123"), "{rendered}");
+        assert!(rendered.contains("runId=run-1"), "{rendered}");
+        assert!(!rendered.contains("requestId="), "{rendered}");
+    }
+
+    #[test]
+    fn correlation_render_is_empty_without_keys() {
+        assert_eq!(Correlation::default().render(), "");
+    }
+
+    #[tokio::test]
+    async fn scope_with_correlation_exposes_ids() {
+        let effective = resolve(Some((90, Some(ValueOrigin::Config))), None);
+        let correlation = Correlation {
+            tool_call_id: Some("call-1".to_string()),
+            ..Correlation::default()
+        };
+        let seen = scope_with_correlation(effective, correlation.clone(), async {
+            (current(), current_correlation())
+        })
+        .await;
+        assert_eq!(seen.0, Some(effective));
+        assert_eq!(seen.1.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(current_correlation(), Correlation::default());
+    }
+
+    // ── T3.4（决策 #31）：授权 → 守卫派生（调用方只可收窄） ──────────────────────
+
+    #[test]
+    fn time_guard_derives_from_authorization_and_only_narrows() {
+        // 无调用方值 → 守卫 = 授权
+        assert_eq!(time_guard(90, None), 90);
+        // 调用方给更小 → 收窄
+        assert_eq!(time_guard(90, Some(20)), 20);
+        // 调用方给更大 → 无效（超出授权）
+        assert_eq!(time_guard(90, Some(600)), 90);
+        // 非法值（0）忽略
+        assert_eq!(time_guard(90, Some(0)), 90);
+    }
+
+    #[test]
+    fn output_limit_guard_only_narrows_and_falls_back() {
+        assert_eq!(output_limit_guard(Some(8192), None), Some(8192));
+        assert_eq!(output_limit_guard(Some(8192), Some(1024)), Some(1024));
+        assert_eq!(output_limit_guard(Some(8192), Some(65536)), Some(8192));
+        // 无授权时沿用调用方；两者皆无 → None（沙盒默认）
+        assert_eq!(output_limit_guard(None, Some(1024)), Some(1024));
+        assert_eq!(output_limit_guard(None, None), None);
+    }
+
+    #[test]
+    fn output_limit_header_is_parsed() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_OUTPUT_LIMIT, "8192".parse().unwrap());
+        assert_eq!(output_limit_from_headers(&headers), Some(8192));
+
+        let mut invalid = HeaderMap::new();
+        invalid.insert(HEADER_OUTPUT_LIMIT, "abc".parse().unwrap());
+        assert_eq!(output_limit_from_headers(&invalid), None);
+
+        let mut zero = HeaderMap::new();
+        zero.insert(HEADER_OUTPUT_LIMIT, "0".parse().unwrap());
+        assert_eq!(output_limit_from_headers(&zero), None);
+        assert_eq!(output_limit_from_headers(&HeaderMap::new()), None);
+    }
+
+    #[tokio::test]
+    async fn scope_tool_call_exposes_output_limit() {
+        let effective = resolve(Some((90, Some(ValueOrigin::Config))), None);
+        let seen = scope_tool_call(effective, Correlation::default(), Some(8192), async {
+            (current(), current_correlation(), current_output_limit())
+        })
+        .await;
+        assert_eq!(seen.0, Some(effective));
+        assert_eq!(seen.2, Some(8192));
+        assert_eq!(
+            current_output_limit(),
+            None,
+            "scope must end with the future"
+        );
     }
 }

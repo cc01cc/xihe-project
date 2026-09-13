@@ -138,7 +138,7 @@ async fn oneshot_main() -> anyhow::Result<()> {
         }
     };
     let out = serde_json::to_string(&resp)?;
-    println!("{}", out);
+    println!("{out}");
     Ok(())
 }
 
@@ -149,6 +149,9 @@ fn map_runtime_error(e: &RuntimeError) -> (String, String) {
         RuntimeError::InvalidPath(msg) => ("INVALID_PATH".to_string(), msg.clone()),
         RuntimeError::FileNotFound(msg) => ("FILE_NOT_FOUND".to_string(), msg.clone()),
         RuntimeError::WorkspaceNotFound(msg) => ("WORKSPACE_NOT_FOUND".to_string(), msg.clone()),
+        // PLAN-0308 T3.4（决策 #31）：守卫到界必须是独立错误码，host 侧据此补全署名并保持
+        // Timeout 语义（此前落到 EXEC_FAILED，被 host 归成 Docker 错误、丢掉超时归因）。
+        RuntimeError::Timeout { .. } => ("TIMEOUT".to_string(), e.to_string()),
         _ => ("EXEC_FAILED".to_string(), e.to_string()),
     }
 }
@@ -380,16 +383,18 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
             let pid = child.id();
             if let Some(pid) = pid {
                 // Phase 1: SIGTERM (graceful)
-                let _ = Command::new("sh").arg("-c").arg(format!("kill -TERM -- -{} 2>/dev/null", pid)).status().await;
+                let _ = Command::new("sh").arg("-c").arg(format!("kill -TERM -- -{pid} 2>/dev/null")).status().await;
                 // Phase 2: Wait 1s for graceful termination
                 let graceful = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
                 if graceful.is_err() {
                     // Phase 3: SIGKILL (force)
-                    let _ = Command::new("sh").arg("-c").arg(format!("kill -9 -- -{} 2>/dev/null; kill -9 {} 2>/dev/null", pid, pid)).status().await;
+                    let _ = Command::new("sh").arg("-c").arg(format!("kill -9 -- -{pid} 2>/dev/null; kill -9 {pid} 2>/dev/null")).status().await;
                     let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
                 }
             }
-            return Err(RuntimeError::timeout_now());
+            // PLAN-0308 T3.4（决策 #31①）：守卫值来自授权（host 派生后下发）；
+            // 沙盒只报它能确知的：层名 + 机制 + 守卫秒数。
+            return Err(RuntimeError::guard_timeout(timeout_dur.as_secs()));
         }
     };
     let stdout_bytes = stdout_handle.await.map_err(|e| RuntimeError::Command(e.to_string()))?;
@@ -397,7 +402,8 @@ async fn exec_shell_command(command: &str, args: Vec<String>, timeout: Option<u6
     let stdout_str = String::from_utf8_lossy(&stdout_bytes).to_string();
     let stderr_str = String::from_utf8_lossy(&stderr_bytes).to_string();
     let (stdout_final, artifact_id) = if stdout_str.len() > limit {
-        let truncated = stdout_str[..limit].to_string() + &format!("\n[truncated to {} chars]", limit);
+        // 截断点必须是字符边界（此前按字节下标切片，多字节内容会 panic）。
+        let (truncated, _) = truncate_utf8_safe(&stdout_str, limit);
         (truncated, None)
     } else { (stdout_str, None) };
     Ok(ExecResult { stdout: stdout_final, stderr: stderr_str, exit_code: status.code().unwrap_or(-1), success: status.success(), artifact_id })
@@ -420,6 +426,22 @@ struct JobInfo {
 }
 
 const JOB_PREVIEW_BYTES: usize = 256;
+
+/// PLAN-0308 T3.4（决策 #31②）：按**字节**上限截断，且截断点必须落在字符边界上
+/// （此前按字节下标直接切片，多字节内容会 panic）。返回 (文本, 是否发生截断)。
+fn truncate_utf8_safe(text: &str, limit: usize) -> (String, bool) {
+    if text.len() <= limit {
+        return (text.to_string(), false);
+    }
+    let mut cut = limit;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    (
+        format!("{}\n[truncated to {cut} bytes]", &text[..cut]),
+        true,
+    )
+}
 
 fn is_safe_job_id(job_id: &str) -> bool {
     !job_id.is_empty()
@@ -556,7 +578,7 @@ fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
     let status = if meta == "running" {
         if let Some(pid_str) = &pid {
             if let Ok(pid_num) = pid_str.parse::<i32>() {
-                let still_running = std::process::Command::new("sh").arg("-c").arg(format!("kill -0 -- -{} 2>/dev/null || kill -0 {} 2>/dev/null", pid_num, pid_num)).status().map(|s| s.success()).unwrap_or(false);
+                let still_running = std::process::Command::new("sh").arg("-c").arg(format!("kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null")).status().map(|s| s.success()).unwrap_or(false);
                 if !still_running { if exit_code.is_some() { "succeeded".to_string() } else { "failed".to_string() } } else { "running".to_string() }
             } else { meta }
         } else { meta }
@@ -576,7 +598,7 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
 
     // Phase 1: SIGTERM to process group (graceful shutdown)
     let _ = std::process::Command::new("sh").arg("-c")
-        .arg(format!("kill -TERM -- -{} 2>/dev/null", pid_num))
+        .arg(format!("kill -TERM -- -{pid_num} 2>/dev/null"))
         .status();
 
     // Phase 2: Wait up to 3 seconds for graceful termination
@@ -584,7 +606,7 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     for _ in 0..6 {
         std::thread::sleep(Duration::from_millis(500));
         let still_running = std::process::Command::new("sh").arg("-c")
-            .arg(format!("kill -0 -- -{} 2>/dev/null || kill -0 {} 2>/dev/null", pid_num, pid_num))
+            .arg(format!("kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"))
             .status().map(|s| s.success()).unwrap_or(false);
         if !still_running { terminated = true; break; }
     }
@@ -592,14 +614,14 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     // Phase 3: SIGKILL if still running (force kill)
     if !terminated {
         let _ = std::process::Command::new("sh").arg("-c")
-            .arg(format!("kill -9 -- -{} 2>/dev/null; kill -9 {} 2>/dev/null", pid_num, pid_num))
+            .arg(format!("kill -9 -- -{pid_num} 2>/dev/null; kill -9 {pid_num} 2>/dev/null"))
             .status();
         std::thread::sleep(Duration::from_millis(200));
     }
 
     // Phase 4: Verify process is gone
     let still_alive = std::process::Command::new("sh").arg("-c")
-        .arg(format!("kill -0 -- -{} 2>/dev/null || kill -0 {} 2>/dev/null", pid_num, pid_num))
+        .arg(format!("kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"))
         .status().map(|s| s.success()).unwrap_or(false);
 
     let status = if still_alive { "failed" } else { "cancelled" };
@@ -921,19 +943,19 @@ fn apply_patch_at(
             let current_hash = sha256_hex(original_content.as_bytes());
             if current_hash != expected_hash {
                 return Err(RuntimeError::InvalidPath(format!(
-                    "hash mismatch for {}: expected {}, got {}", rel_path, expected_hash, current_hash
+                    "hash mismatch for {rel_path}: expected {expected_hash}, got {current_hash}"
                 )));
             }
         } else if !expected_hash.is_empty() {
             return Err(RuntimeError::FileNotFound(format!(
-                "file not found for patch: {}", rel_path
+                "file not found for patch: {rel_path}"
             )));
         }
 
         let hunks = patch.get("hunks").and_then(|v| v.as_array())
             .ok_or_else(|| RuntimeError::InvalidPath("missing hunks in patch".to_string()))?;
         if hunks.is_empty() {
-            return Err(RuntimeError::InvalidPath(format!("empty hunks for {}", rel_path)));
+            return Err(RuntimeError::InvalidPath(format!("empty hunks for {rel_path}")));
         }
 
         let mut content = original_content.clone();
@@ -948,7 +970,7 @@ fn apply_patch_at(
                 content.replace_range(pos..pos + before.len(), after);
             } else {
                 return Err(RuntimeError::InvalidPath(format!(
-                    "hunk not found in {}: {:?}", rel_path, before
+                    "hunk not found in {rel_path}: {before:?}"
                 )));
             }
         }
@@ -1004,10 +1026,10 @@ fn apply_patch_at(
         diff_lines.push(format!("+++ b/{}", patch.relative_path));
         diff_lines.push(format!("@@ -0,0 +1,{} @@", patch.content.lines().count()));
         let mut diff_bytes = diff_lines.iter().map(|line| line.len() + 1).sum::<usize>();
-        let truncation_marker = format!("[diff truncated at {} bytes]", PATCH_DIFF_MAX_BYTES);
+        let truncation_marker = format!("[diff truncated at {PATCH_DIFF_MAX_BYTES} bytes]");
         let content_limit = PATCH_DIFF_MAX_BYTES.saturating_sub(truncation_marker.len() + 1);
         for line in patch.content.lines() {
-            let rendered = format!("+{}", line);
+            let rendered = format!("+{line}");
             if diff_bytes + rendered.len() + 1 > content_limit {
                 diff_lines.push(truncation_marker.clone());
                 break;
@@ -1488,8 +1510,7 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn background_wrapper_keeps_user_values_out_of_shell_script() {
-        let command = r#"printf '%s' "$1""#;
+    fn background_wrapper_keeps_user_values_out_of_shell_script() {        let command = r#"printf '%s' "$1""#;
         let argument = "value; touch injected-file".to_string();
         let wrapper_args = background_wrapper_args(
             Path::new("/tmp/job with spaces"),
@@ -1715,5 +1736,33 @@ mod tests {
                 .trim(),
             "0"
         );
+    }
+
+    // ── T3.4（决策 #31②）：字节上限截断必须 UTF-8 安全 ──────────────────────
+
+    #[test]
+    fn truncate_keeps_short_output_verbatim() {
+        let (text, truncated) = truncate_utf8_safe("hello", 4096);
+        assert_eq!(text, "hello");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn truncate_marks_byte_limit() {
+        let input = "a".repeat(100);
+        let (text, truncated) = truncate_utf8_safe(&input, 10);
+        assert!(truncated);
+        assert_eq!(text, format!("{}\n[truncated to 10 bytes]", "a".repeat(10)));
+    }
+
+    #[test]
+    fn truncate_never_splits_multibyte_chars() {
+        // 每个汉字 3 字节：limit=4 落在第二个字中间，必须回退到 3 字节边界。
+        let input = "汉字内容";
+        let (text, truncated) = truncate_utf8_safe(input, 4);
+        assert!(truncated);
+        assert!(text.starts_with("汉"), "got {text:?}");
+        assert!(!text.contains('\u{fffd}'), "must not split a char: {text:?}");
+        assert!(text.ends_with("[truncated to 3 bytes]"), "got {text:?}");
     }
 }
