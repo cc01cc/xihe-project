@@ -79,6 +79,29 @@ public class InternalOperationController {
         }
     }
 
+    /**
+     * PLAN-0317 T2.9（决策 #14）：Runtime 追偿成功后的迟到终止事件入口。
+     * 只追加事件、不改 item 终态（账本保留"当时未确认"的事实）。
+     */
+    @PostMapping("/items/{itemId}/late-termination")
+    public ResponseEntity<?> lateTermination(@PathVariable String itemId,
+                                             @RequestBody(required = false) LateTerminationRequest request) {
+        try {
+            boolean confirmed = request != null && request.confirmed();
+            operationService.recordLateTermination(itemId, confirmed);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("status", "recorded");
+            return ResponseEntity.ok(body);
+        } catch (CpApiException e) {
+            logger.warn("Late termination rejected: {}", e.getMessage());
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        } catch (IllegalArgumentException e) {
+            logger.warn("Late termination rejected: invalid itemId");
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "itemId must be a UUID");
+        }
+    }
+
     public record StartOperationRequest(
             String userId,
             String sessionId,
@@ -91,4 +114,6 @@ public class InternalOperationController {
             String actorId,
             String idempotencyKey,
             String summary) {}
+
+    public record LateTerminationRequest(boolean confirmed) {}
 }

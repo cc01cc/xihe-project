@@ -194,6 +194,23 @@ public class OperationService {
     }
 
     /**
+     * PLAN-0317 T2.9（决策 #14）：Runtime 追偿成功后记录的迟到终止事件。
+     * **只追加 {@code item.terminated.late}，不回改已终态**——账本保留"当时未确认"
+     * 的事实，迟到成功作为独立事件可被审计。
+     */
+    @Transactional
+    public void recordLateTermination(String itemId, boolean confirmed) {
+        OperationItem item = items.findById(UUID.fromString(itemId))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
+                        "Operation item not found"));
+        appendEvent(UUID.fromString(item.getOperationId()), item.getId().toString(), null,
+                "item.terminated.late", item.getStatus(), "runtime",
+                "{\"confirmed\":" + confirmed + "}");
+        logger.info("[LIFECYCLE] service=cp event=operation_item_late_termination itemId={} itemStatus={} confirmed={}",
+                itemId, item.getStatus(), confirmed);
+    }
+
+    /**
      * PLAN-0317 T2.5：取消链路的账本落地——在途 attempt 落 {@code cancelled}，
      * item 按终止确认结果落 {@code cancelled}/{@code aborted}。幂等：item 已是
      * 终态（取消与自然完成竞态）时保留既有事实，不覆盖。

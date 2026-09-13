@@ -253,9 +253,37 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         assertEquals("running", untouched.getStatus(), "an in-flight run must not be reconciled");
     }
 
+    /**
+     * PLAN-0317 T2.9（决策 #14）：追偿成功后只追加 item.terminated.late 事件，
+     * 不回改 item 已落定的终态。
+     */
+    @Test
+    void lateTerminationAppendsEventWithoutChangingItemStatus() {
+        var started = operationService.startOperation(userId, sessionId, workspaceId, null,
+                UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
+        com.cc01cc.p.xihe.cp.entity.OperationItem item = operationService.appendItem(
+                started.operationId(), UUID.randomUUID().toString(), null, "tool_call", "shell",
+                "mcp", "{\"cmd\":\"ls\"}", null, null);
+        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+        operationService.settleCancellation(item.getId(), null, "aborted", "CANCEL_UNCONFIRMED");
+
+        operationService.recordLateTermination(item.getId().toString(), true);
+
+        com.cc01cc.p.xihe.cp.entity.OperationItem after =
+                operationService.findItem(item.getId().toString());
+        assertEquals("aborted", after.getStatus(), "late termination must not rewrite the item state");
+        assertTrue(operationEventRepository.findByItemIdOrderBySequenceAsc(item.getId().toString())
+                        .stream()
+                        .anyMatch(event -> "item.terminated.late".equals(event.getEventType())),
+                "a late-termination event must be appended");
+    }
+
     @Autowired
     private ChatController chatController;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.operation.OperationService operationService;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.OperationEventRepository operationEventRepository;
 }
