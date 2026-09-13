@@ -62,7 +62,7 @@ mise run validate
 | `mise run dev:host:watch` | 启动 host 栈并监控健康端点，故障后重启任务组 | Node watcher；不启动 CP/Agent/Runtime 容器 |
 | `mise run dev:host:stop` | 停止 host 栈 PostgreSQL | 日常场景先 Ctrl+C 停止原生任务，再执行本命令 |
 | `mise run dev:reset` | 默认 dry-run；显式 `-Reset` 后备份并重建本地 dev 数据、清理 host workspace/Sandbox | 仅 dev；不连接生产，不删除 Runtime device identity |
-| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码（PLAN-229） | 缺省随机生成 24 字节 base64url 并打印；`pwsh scripts/reset-admin.ps1 -Password <pw>` 指定密码；免重启，账号不存在时以 ADMIN 创建，绝不删数据 |
+| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码 | 缺省随机生成 24 字节 base64url 并打印；`pwsh scripts/reset-admin.ps1 -Password <pw>` 指定密码；免重启，账号不存在时以 ADMIN 创建，绝不删数据 |
 | `mise run build` | 构建 UI + Runtime | — |
 | `mise run build:ui` | 构建 UI bundle | — |
 | `mise run build:runtime` | 构建 Runtime binaries | — |
@@ -130,53 +130,13 @@ packages/
 
 ## Architecture
 
-### 配置管理 (ConfigService)
+四模块 Hub-Module。设计细节见 `docs/i18n/zh-Hans/DEV-001-system-architecture.md` 及分模块文档（配置 DEV-003、Agent DEV-013、CP DEV-014、Runtime DEV-015、MCP DEV-016、Session DEV-017）。以下只留硬约束与关键边界：
 
-**现行模型（PLAN-0307 M2-B 已落地，2026-09-12）**：三层作用域 `instance / workspace / user`，域集合 `instance(8) ⊇ user(7) ⊇ workspace(5)`；解析链 `workspace > user > instance > 代码默认`（env 为部署权威，命中即锁定并显式暴露）。凭证 BYOK 两级 `WORKSPACE > USER`（`provider_connections` 加密表，**SYSTEM 层已废除**）；config 层任何 `*ApiKey` 写入都会被 `rejectProviderSecrets` 403。
-
-| Domain | instance | user | workspace | 备注 |
-|--------|----------|------|-----------|------|
-| `llm-provider` | ✅ | ✅ | ✅ | 无密钥键；模型/provider/base/采样参数 |
-| `context-policy` | ✅ | ✅ | ✅ | 结构化值 = JSON 文本 |
-| `embedding` / `rag` | ✅ | ✅ | ✅ | — |
-| `agent-runtime` | ✅ | ✅ | ✅ | `instructions` 仅 instance（决策 #17） |
-| `agent-profile` | ✅（默认） | ✅（个人） | ❌ | `userName` |
-| `user-preference` | ✅（默认） | ✅（个人） | ❌ | `theme` / `language` |
-| `logging` | ✅ | ❌ | ❌ | 运行期唯一权威（决策 #23） |
-
-裁撤：`infrastructure` / `workspace-config` / `mcp` 域；`mcp` 拆 `mcp_stdio_servers` / `mcp_remote_servers`（决策 #27）。详见 `plans/PLAN-0307-XH-config-governance-and-cleanup/spec/config-db-target.md`、决策 #37 与 `internal/A03-xihe/docs/config-architecture-2026-09.md`。
-
-### Provider 配置共享
-
-| 功能 | 配置来源 | 入口 |
-|------|---------|------|
-| Chat | per-run 合成（CP effective pull + run overrides；无租约时 env 兜底） | `packages/agent/src/xihe_agent/config_client.py` / `llm/base.py` |
-| Image | `ProviderManager`（provider_connections 租约/目录） | `tools/__init__.py` |
-| Embedding | 启动/周期拉取 `GET /internal/v1/config/effective/embedding` | `main.py` |
-
-> PLAN-0307 起 Agent 不再逐层 `from_config_client()` / `get_providers()` 拼装实例密钥：CP `GET /internal/v1/config/effective/{domain}` 提供单份 effective（含 env 覆盖），user/workspace 覆盖随 run payload push（决策 #3a）；凭证由 `provider_connections` 租约下发，env 兜底仅用于离线/无租约路径（决策 #40）。
-
-### Agent 模块接口抽象
-
-Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在接口之后：
-
-- `AgentRunner` — 编排抽象，`LangGraphRunner` 为当前实现
-- `BaseAgentTool` / `ToolSpec` — 工具抽象，MCP/Approval/Image 工具均实现该接口
-- `EventAdapter` — 将框架原始事件翻译为 SSE `AgentEvent`
-- `LLMProvider` — LLM 后端抽象，`complete()` / `stream_complete()`
-- `EventStore` / `AgentContext` — Event Sourcing 上下文管理（PLAN-035）
-
-详见 [docs/i18n/zh-Hans/DEV-013-agent-architecture.md](docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。
-
-### Runtime / Sandbox 生命周期边界
-
-- 当前 v1 的控制面与执行面保持分离：CP 负责 workspace 元数据、授权、健康状态和降级；Runtime 负责实际文件、命令、容器和 MCP bridge 执行；进程保活由外部 orchestrator（Docker/mise watcher）负责。
-- `GET /api/v1/workspaces/{workspaceId}/environment` 是只读诊断视图，展示 WorkspaceExecutionSpec、storageRef、Runtime observed status 和 heartbeat，不返回 raw host path、secret 或文件内容。
-- Runtime 启动只完成自身 liveness/readiness；通过受保护的 targeted ExecutionSpec API 按 `workspaceId` 懒加载 Workspace，`/ready` 不等待全部 Sandbox 物化，`/health` 仅表示进程存活。
-- `WorkspaceRegistry` 与真正的 `WorkspaceManager` 若同时存在，必须先收敛为一条可恢复的 workspace 状态机，统一覆盖 create、exec、MCP、pause/resume、restart 和 delete；不要在双路径上继续堆叠功能。
-- 单 Runtime/单设备 v1 不把 registration、heartbeat、generation、warm pool、microVM 或多设备接管设为运行前置条件；这些属于后续 runtime hardening/生产化范围。
-- 隔离引擎升级应排在生命周期状态机、持久化恢复和 fail-closed 边界之后。未知 workspace、Docker 不可用和执行超时必须显式失败，不能用默认目录或静默降级掩盖状态丢失。
-- 远程 MCP 仍只经 CP logical endpoint；多 workspace MCP client 缓存和清理属于独立后续工作，不应复用另一个 workspace 的已发现工具。
+- **配置（ConfigService）**：三层作用域 `instance / workspace / user`（域集合 `instance ⊇ user ⊇ workspace`），解析链 `workspace > user > instance > 代码默认`，env 为部署权威（命中即锁定并显式暴露）。凭证 BYOK 两级 `WORKSPACE > USER`（`provider_connections` 加密表，SYSTEM 层已废）；config 层任何 `*ApiKey` 写入一律 `rejectProviderSecrets` 403。`mcp` 域拆 `mcp_stdio_servers` / `mcp_remote_servers` 两载体；`infrastructure` / `workspace-config` 域已撤。
+- **Provider 共享**：Agent 不逐层拼装实例密钥；CP `GET /internal/v1/config/effective/{domain}` 提供单份 effective（含 env 覆盖），user/workspace 覆盖随 run payload push；凭证由 `provider_connections` 租约下发，env 兜底仅限离线/无租约路径。
+- **Agent 接口抽象**：`AgentRunner`（`LangGraphRunner` 实现）、`BaseAgentTool`/`ToolSpec`、`EventAdapter`（→ SSE `AgentEvent`）、`LLMProvider`、`EventStore`/`AgentContext`；LangChain/LangGraph 实现必须隔离在接口之后。
+- **Runtime / Sandbox 边界**：控制面（CP：workspace 元数据/授权/健康/降级）与执行面（Runtime：文件/命令/容器/MCP bridge）分离，进程保活由外部 orchestrator（Docker/mise watcher）负责。`/health` 仅进程存活、`/ready` 不等待全部 Sandbox 物化，Workspace 按 `workspaceId` 懒加载。单 Runtime/单设备 v1 不以 registration/heartbeat/generation/warm pool/microVM/多设备接管为前置条件。未知 workspace、Docker 不可用、执行超时必须显式失败，禁止默认目录或静默降级掩盖状态丢失。远程 MCP 仅经 CP logical endpoint，禁止跨 workspace 复用已发现工具。
+- **待收敛项**：`WorkspaceRegistry` 与 `WorkspaceManager` 必须收敛为单一可恢复 workspace 状态机（create/exec/MCP/pause/resume/restart/delete），不得在双路径继续堆叠；隔离引擎升级排在生命周期状态机、持久化恢复与 fail-closed 边界之后。详见 DEV-015 / DEV-018。
 
 ## Code Style
 
@@ -184,18 +144,16 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - **Agent 术语**: 代码包用 Agent 模块 (module)，运行进程用 Agent 服务 (server)，运行时单元用 Agent Worker (Worker)
 - **异常日志**: 每个 catch 必须有日志 + stacktrace，禁止 silent catch
 - **UI**: reka-ui + Tailwind v4；聊天组件使用自研 MessageScroller / Message / Bubble / Attachment / Marker 五个组件族；Toast 为唯一反馈渠道
-  - reka-ui 封装契约（PLAN-258 实证）：`ComboboxContent position=popper` 必须显式 `ComboboxAnchor` 包裹触发器，否则内容自参考内部 Input 定位到视口外且零报错；`CollapsibleTrigger` 已自带切换，触发按钮不得再绑额外 click handler（双重翻转 = 永远不折叠）
-  - workspace UI 基座（PLAN-262）：文件树/右键菜单基于 reka-ui `Tree`/`ContextMenu` 原语 + `shadcn-vue add` 拷贝封装（零新增运行时依赖）；`AlertDialogAction` 点击无条件关闭——需校验失败保持打开的场景用普通 destructive `Button`；reka-ui MenuItem 程序化选择在 jsdom 下不可行，交互连接层由 Playwright 覆盖
-  - workspace 管理（PLAN-262）：`POST /api/v1/workspaces` 接受 profile（strict/coding/isolated）+ image（白名单 v1 仅 `xihe/workspace:latest`），initialSpec 按选择生成；`POST /api/v1/workspaces/{id}/materialize` 异步触发（202）+ 轮询 environment；创建入口 = 无 workspace 空态；物理目录 `hostRoot/workspaceId` 派生，宿主机可直接系统文件操作访问
-- **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；消息附件已持久化到后端 Session 专属空间，刷新后仍可渲染（详见 DEV-001 §7、DEV-017）。
-  - 会话级持久 SSE（PLAN-230）：`GET /api/v1/events?sessionId=` 为单会话单活连接（`SseEmitterManager` generation + `compareAndRemove`），`done` 仅结束 run、不关闭 SSE，`heartbeat` 15s 不进业务气泡；`POST /api/v1/chat` 需已建立订阅（`409 SSE_SUBSCRIPTION_REQUIRED`）且单并发（`409 CHAT_IN_PROGRESS`），`requestId`/`runId` 经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传。
-  - 流式渲染：`useStreamParser` 将 token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`），`SSEStream` 每 `token` 调用 `chatStore.replaceStreamingParts` 整量替换当前流式 parts（修复旧 `lastSentCount` 仅 `parts.length` 增长时追加导致的卡首字符）；`Message.parts` 替代旧 `marked`，`useMarkdown` 仅处理纯 Markdown。
-  - 真实流式：`XiheLiteLLM._astream()` 显式 `streaming=True` 使 `astream_events` 产生 `on_chat_model_stream` 多 token，`sse_adapter` 按 `run_id` 去重使 `on_chat_model_end` 仅作无流 fallback；多 `token` 事件驱动气泡在 `done` 前多次增长。
-  - ChatRun（PLAN-247）：CP 在 LLM readiness gate 和 SSE subscription 通过后按 `(userId, sessionId, Idempotency-Key)` 持久化 run；`Message.runId` 关联 `success/error/partial/ambiguous` 终态，同 key 不重复启动 Agent，ambiguous 只能用新 key 手动重试。
-  - 上下文管道（PLAN-294）：LLM 输入 = CP 投影快照（`context.messages`，组装层截断最近 20 条）+ 当前轮；assistant 回复经 `assistant.responded` 事件落 context event store（与 messages 表同源）；压缩摘要经 `epoch.system_messages` 注入 system prompt；`compaction.applied.up_to_sequence` 为增量游标。自动压缩门在 run 启动前执行（llm.usage 信号 + 窗口 70% 软阈值 + 消息/工具数兜底 + 10 事件冷却），`CONTEXT_OVERFLOW` 为超窗兜底错误码；手动压缩走 `POST /api/v1/sessions/{id}/compact`（活跃 run 时 409）。已知 P1：非 fixture 触发的 MCP executor 请求可能挂 30s 超时（见 DEV-018）。
-  - Provider/model binding：UI、CP、Agent 全链路传递 `provider` + `model` + `toolMode`；`modelProvider + modelName` 是 session canonical pair，普通 Chat 固定 `toolMode=none`，Workspace/tool 操作显式使用 `workspace`。
-  - Operation Ledger（PLAN-281）：新 Chat 在 CP 持久化 ChatRun/Message 后创建 durable root `operationId` 并透传 Agent；CP relay 记录 tool item/Agent attempt，MCP proxy 记录 `cp_forward` attempt 与 hash/size-only `mcp_call` extension，Approval 复用同一 item。Runtime executor、Workspace lifecycle、Job/Snapshot、LLM usage extension 和 UI audit 仍按对应里程碑接入，不能把现有局部 trace 当作全链路完成。
-- **配置**: 三层 `instance / user / workspace`（解析链 `workspace > user > instance`，env 覆盖锁定显式化），CP ConfigService 统一管理（PLAN-0307 已落地）
+  - reka-ui 封装契约：`ComboboxContent position=popper` 必须显式 `ComboboxAnchor` 包裹触发器（否则定位到视口外且零报错）；`CollapsibleTrigger` 自带切换，不得再绑 click（双重翻转 = 永不折叠）；`AlertDialogAction` 点击无条件关闭——需校验失败保持打开时用普通 destructive `Button`；reka-ui MenuItem 程序化选择在 jsdom 不可行，交互层由 Playwright 覆盖
+  - workspace 管理：`POST /api/v1/workspaces` 接受 profile（strict/coding/isolated）+ image（v1 白名单仅 `xihe/workspace:latest`）；`materialize` 异步触发（202）+ 轮询 environment；创建入口 = 无 workspace 空态；物理目录 `hostRoot/workspaceId` 派生
+- **Chat 架构**: chat 与 workspace 为同一 Session 的不同视图，共享 `useSessionStore`；附件已持久化到后端 Session 专属空间（详见 DEV-001 §7、DEV-017）
+  - 会话级持久 SSE：`GET /api/v1/events?sessionId=` 单会话单活连接（`SseEmitterManager` generation），`done` 只结束 run 不关 SSE，`heartbeat` 15s 不进气泡；`POST /api/v1/chat` 需已订阅（`409 SSE_SUBSCRIPTION_REQUIRED`）且单并发（`409 CHAT_IN_PROGRESS`），`requestId`/`runId` 经 `X-Request-Id`/`X-Chat-Run-Id` 透传
+  - 流式渲染：`useStreamParser` 将 token 分类为 `MessagePart[]`（text/reasoning/citation/artifact），每 token 整量替换流式 parts；`Message.parts` 替代旧 `marked`。真实流式：`XiheLiteLLM._astream()` 显式 `streaming=True` 产生多 token `on_chat_model_stream`，`sse_adapter` 按 `run_id` 去重，`on_chat_model_end` 仅作无流 fallback
+  - ChatRun：按 `(userId, sessionId, Idempotency-Key)` 持久化 run；`Message.runId` 关联 success/error/partial/ambiguous 终态，同 key 不重复启动，ambiguous 只能新 key 手动重试
+  - 上下文管道：LLM 输入 = CP 投影快照（`context.messages`，截断最近 20 条）+ 当前轮；assistant 回复经 `assistant.responded` 落 context event store；压缩摘要经 `epoch.system_messages` 注入；自动压缩门在 run 启动前执行（70% 软阈值 + 冷却），`CONTEXT_OVERFLOW` 为兜底错误码；手动压缩 `POST /api/v1/sessions/{id}/compact`（活跃 run 409）。已知挂起见 DEV-018
+  - provider/model binding：全链路传 `provider` + `model` + `toolMode`；`modelProvider + modelName` 为 session canonical pair，普通 Chat 固定 `toolMode=none`，Workspace/tool 操作显式用 `workspace`
+  - Operation Ledger：新 Chat 持久化 ChatRun/Message 后创建 durable root `operationId` 并透传 Agent；CP relay / MCP proxy / Approval 复用同一 item；Runtime executor、Workspace lifecycle、Job/Snapshot、LLM usage extension、UI audit 按各自里程碑接入，不得以局部 trace 充当全链路完成
+- **配置**: 三层 `instance / user / workspace`（解析链 `workspace > user > instance`，env 覆盖锁定显式化），CP ConfigService 统一管理
 - **配置 key 三方同步（硬约束）**: 新增/修改 config domain key 必须同步三处——（a）CP `config-schemas/*.json`（JSON Schema，同时约束 import 与 UI Settings 保存）、（b）`config.import.example.jsonc` 模板、（c）UI `/settings/config` 表单；任一漏改会导致 import 与保存**同时 400**（2026-09-09 logging/user-preference 双 400 实证）。
 - **配置解析透明性（硬约束）**: env 与 DB 用户配置冲突时**必须显式暴露**——UI 显示被覆盖的 env 值并冻结/禁用该项、Agent 侧可见、日志记录冲突与最终生效来源；**禁止在底层静默合并/自动计算**（2026-09-11 用户明确「最核心是透明度」）。
 - **Service 纯函数**: Service 不依赖 ConfigClient，配置由调用方解析后传入
@@ -211,7 +169,7 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 | **环境变量** | 运行前固定（端口/DB/JWT/开关） | `.env` → `.env.$XIHE_ENV` → `.env.local`（模块内 dotenv loader 统一加载，后加载覆盖先加载、不覆盖系统 env；`.env`/`.env.dev`/`.env.test`/`.env.prod` 入库且仅非敏感占位值；`.env.local` gitignore 放真实本机值） | ❌（重启；`--set KEY=VALUE` 为 CLI 最高优先级） |
 | **ConfigService** | 运行时可改（模型/域参数/日志；凭证走 `provider_connections`） | `config.import.example.jsonc` → `config.import.local.jsonc`（gitignore） | ✅ UI / API |
 
-日常 host 开发推荐 `mise run dev:host`；`mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后按导入语义处理 `config.import.local.jsonc`（默认打印 reset-admin 指引，`XIHE_DEV_ADMIN_PASSWORD` 显式启用；该密码仅经 OS 环境变量注入，禁止写入脚本/git/日志）。配置优先级：per-call > CLI `--set` > env 文件链 > ConfigService 用户配置 > 代码默认；env 与 DB 冲突时显式暴露（UI 锁定显示 env 生效值，禁止静默合并）。三类配置归属速查见 DEV-003 §2；危险默认 fail-fast 见 DEV-003 §2 与 `spec/config-env-target.md` §6。
+日常 host 开发推荐 `mise run dev:host`；`mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后按导入语义处理 `config.import.local.jsonc`（默认打印 reset-admin 指引，`XIHE_DEV_ADMIN_PASSWORD` 显式启用；该密码仅经 OS 环境变量注入，禁止写入脚本/git/日志）。配置优先级：per-call > CLI `--set` > env 文件链 > ConfigService 用户配置 > 代码默认；env 与 DB 冲突时显式暴露（UI 锁定显示 env 生效值，禁止静默合并）。三类配置归属速查与危险默认 fail-fast 见 DEV-003。
 
 ## Testing
 
@@ -258,33 +216,31 @@ Agent 模块已引入接口抽象层，将 LangChain/LangGraph 实现隔离在�
 - CP 负责 OAuth Authorization Code + PKCE、workspace/server 授权、refresh token envelope encryption、refresh/revoke 和 token broker。
 - Runtime host-side connector 只接收短期 access token，负责远程 MCP 出网、HTTPS/allowlist/私网校验；workspace sandbox 不承载远程 OAuth。
 - Fake OAuth/Fake MCP 只用于真实 integration/E2E，必须验证 PKCE、Bearer、MCP protocol、refresh/revoke 和清理，不得把 mock-only 测试作为链路完成证据。
-- 远程 MCP 相关实施与 API 统一迁移分别见 `plans/archive/20260828/PLAN-190-XH-remote-mcp-oauth-egress.md`（已归档为架构基线，最小闭环由 PLAN-195 承接完成）和 `plans/PLAN-191-XH-unified-stable-api.md`。
+- 远程 MCP 与统一 API 的架构基线与最小闭环见 DEV-016 / DEV-014；本仓库 public route 恒 `/api/v1`、service route 恒 `/internal/v1`。
 
 ## Known Issues
 
-- **API migration**: Vite no longer rewrites API paths; callers must use the canonical `/api/v1` and `/internal/v1` contracts.
+- **API migration**: Vite 不再重写 API 路径；调用方必须用 canonical `/api/v1`、`/internal/v1`
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
-- **Spring Boot 4 HTTP 层 ≠ Hibernate Jackson2（PLAN-0307 M2-B 实证）**: CP 响应不得直接放 Jackson2 `JsonNode` / 第三方 mapper 类型——Boot 4 HTTP 消息转换器与 Hibernate 的 JSON 映射不同源，`JsonNode` 会被当 POJO 序列化（全 getter 展开成 `{array=false,…}`）；统一 `objectMapper.convertValue(node, Object.class)` 转普通 Map/List 再返回。另：`isProviderSecretKey` 类嗅探器注意 `maxTokens` 含 "token" 的误伤（用 `contains("token") && !contains("maxtoken")`）
+- **Spring Boot 4 HTTP 层 ≠ Hibernate Jackson2**: CP 响应不得直接放 Jackson2 `JsonNode` / 第三方 mapper 类型（Boot 4 消息转换器与 Hibernate JSON 映射不同源，`JsonNode` 会被当 POJO 序列化）；统一 `objectMapper.convertValue(node, Object.class)` 转普通 Map/List。`isProviderSecretKey` 类嗅探器注意 `maxTokens` 含 "token" 的误伤（`contains("token") && !contains("maxtoken")`）
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
-- **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU（PLAN-097）。OOM 时按需上调
-- **runtime 测试现状**: 全量 `cargo test` 可编译执行；当前库测试 142 通过（含 read_file_range 二进制安全读取，PLAN-292 T6），集成测试按 Docker 环境执行并有明确 ignored 的 CP 实时测试（PLAN-235 M3，2026-09-03）。runtime Dockerfile 已修复 dummy 缓存陷阱（`touch` 源码），此前镜像曾包含 stub 二进制
-- **Runtime 执行边界（PLAN-235）**: Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`--oneshot` 单帧 EOF），无 HTTP 通道/instance token/长驻 worker；background job 为 `/tmp/xihe-jobs` 状态文件约定（opaque `jobId` + `cancel_background_process`）；FS 写路径经 rustix openat2 helper
-- **Safe Coding Loop（PLAN-275）**: Runtime mutation core 使用 snapshot manifest + pre/post content hash + 多文件 patch 失败回滚；Agent MCP interceptor 通过一次性 durable approval grant 恢复批准后的 tool dispatch，grant 缺失/不匹配/重复消费仍 fail-closed；PLAN-292 M1 起匹配键为 canonical arguments SHA-256（`arguments_hash`，V9），preview 截断不再影响批准后执行
+- **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU；OOM 时按需上调
+- **Runtime 执行边界**: Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`--oneshot` 单帧 EOF），无 HTTP 通道/instance token/长驻 worker；background job 用 `/tmp/xihe-jobs` 状态文件（opaque `jobId` + `cancel_background_process`）；FS 写路径经 rustix openat2 helper
+- **Safe Coding Loop**: Runtime mutation core 用 snapshot manifest + pre/post content hash + 多文件 patch 失败回滚；Agent MCP interceptor 经一次性 durable approval grant 恢复批准后 dispatch，grant 缺失/不匹配/重复消费 fail-closed；grant 匹配键 = canonical arguments SHA-256（`arguments_hash`），preview 截断不影响批准后执行
 - **Vue i18n JSON placeholder**: `t()` 消息中不可含 `{...}`
-- **MCP session-id 签名**: 必须使用 HMAC 签名，禁止明文或仅 Base64 编码
-- **Agent MCP init 按需执行**: 纯 chat 即使带 current `workspaceId` 也不连接 CP MCP；只有明确需要 Workspace tool 的请求才触发工具发现和 Sandbox materialization。不得把一个 Workspace 的工具复用于其他 Workspace。
-- **dev:full/T3 拓扑边界**: 当前验证主线是 Windows `dev:host`。完整 Compose E2E 仍需要为 Runtime 提供 Docker Engine socket 和容器内 WorkspaceStorage 映射；未完成前不得将 `dev:full`/T3 的 workspace、MCP 和截图失败归因于 host v1。
-- **数据库必须 fresh baseline（PLAN-280）**：active Flyway 链以 `V1__init_schema.sql` 为 baseline，并包含后续正式的 V2-V13 migrations（Ledger、Job、Snapshot、Task Continuity、approval grant consumption、arguments_hash、llm usage item kind、remote MCP tool timeout、config 三层化 + MCP 分载体、旧域键清理）；`ddl-auto=validate`、`baseline-on-migrate=false`。旧本地数据库会被拒绝，恢复方式为 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内。
-- **dev seed 密码不可知**: `DataSeeder` 为 `admin@xihe.local` 生成的随机密码不打印、不落日志，`dev:reset` 重建库后无法用旧凭据登录；恢复方式为 `mise run reset-admin`（PLAN-229）。
-- **Runtime 生命周期技术债**: `WorkspaceRegistry` 与 `WorkspaceManager` 已部分收敛（idle reaper 路由到 WorkspaceManager、Strict 统一走 Docker 容器），但 REST 文件操作仍直接访问 host filesystem（未走 executor Docker exec），cross-map 一致性靠周期性检查兜底。后续应完全消除 WorkspaceManager 直接 Docker 操作并统一 REST/MCP 执行路径。
-- **`dev:host` 原生编排**: `mise run dev:host` 先以 Docker 启动并等待 PostgreSQL，再由 mise 并行管理原生 CP/Agent/Runtime/UI；`mise run dev:host:watch` 通过 Node watcher 检查四个健康端点并在任务组失败后重启。`scripts/dev-host.ps1` 仅保留兼容的检查/包装入口。`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根，默认 `A03-xihe\.xihe-workspaces`
-- **Host E2E 数据边界**: `mise run test:e2e:host` 每轮使用独立数据库和 host root，不连接长期 dev DB。成功、失败和中断都必须 teardown，并反向确认用户、Workspace、Session、ExecutionSpec、Sandbox、host 文件和 fixture 无本轮残留；`--keep` 仅限本地调试。
-- **Visual evidence boundary**: `toHaveScreenshot()` 只证明当前画面接近 baseline；人工 UI 审查还需读取 actual/diff、检查 DOM/computed style、overflow、console/pageerror 和交互状态。当前 A03 `*-snapshots/*.png` 按 `.gitignore` 规则作为本地生成工件处理，不能声称为 fresh checkout 可复现的 Git baseline。
-- **E2E evidence matrix**: 当前 profile、readiness、测试计数、失败分类和清理证据统一记录在 workspace 私有 internal 层（不在本仓库分发）；更新结果必须区分 Compose、host 和 manual，不得混合统计。
-- **PLAN-290 Journey A/B（2026-09-09 完成）**: Agent MCP 本地 hop 超时默认 ~30s（审批等待不计入）；禁用 Streamable HTTP GET server stream（CP 无 server-init SSE）；用户直连 MCP mutation 免 Agent 审批并记 `actorType=user`；Agent 单 workspace 绑定，换 workspace 须重启 Agent；Host 验收跑法：先 `restart-agent` 再 journey 探针/spec（retries=0）。详细挂起见 `plans/PLAN-290-XH-user-journeys-v1.md` §7。
-- **PLAN-292 post-290（2026-09-10）**: Grant 匹配键 = canonical arguments SHA-256（Agent `redact_approval_details` 与 CP `matchesArgumentsHash` 共享同向量）；`apply_patch/create_snapshot/revert_snapshot` 为 internal-only（契约测试钉死，Agent 名单不含）；`read_file_range` 为二进制安全读取（光栅图预览走 base64 data URL，svg 走 utf8，16MiB 上限）；断线恢复 `GET /api/v1/chat/runs/{runId}` + UI 恢复三态横幅；journey-c Host spec 需 `XIHE_E2E_LLM_MODE=write_file`（4/4 PASS）；operation 状态机允许 `waiting_for_approval→completed/failed`（run 终态为准）；中继流中断在审批等待期以 ambiguous 收尾，不判 run 失败。
+- **MCP session-id 签名**: 必须 HMAC 签名，禁止明文或仅 Base64
+- **Agent MCP init 按需执行**: 纯 chat 即使带 `workspaceId` 也不连接 CP MCP；仅明确需要 Workspace tool 的请求才触发工具发现与 Sandbox materialization；不得跨 Workspace 复用已发现工具
+- **dev:full/T3 拓扑边界**: 验证主线是 Windows `dev:host`；Compose E2E 需 Runtime 的 Docker Engine socket 与容器内 WorkspaceStorage 映射，未完成前不得把 `dev:full`/T3 失败归因于 host v1
+- **数据库必须 fresh baseline**: active Flyway 链以 `V1__init_schema.sql` 为 baseline（含 V2–V13），`ddl-auto=validate`、`baseline-on-migrate=false`；旧本地库会被拒绝，恢复用 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内
+- **dev seed 密码不可知**: `DataSeeder` 生成的 `admin@xihe.local` 随机密码不打印不落盘，`dev:reset` 后恢复用 `mise run reset-admin`
+- **Runtime 生命周期技术债**: `WorkspaceRegistry` / `WorkspaceManager` 已部分收敛，但 REST 文件操作仍直连 host filesystem（未走 executor Docker exec），cross-map 一致性靠周期检查兜底；后续须消除 WorkspaceManager 直接 Docker 操作并统一 REST/MCP 执行路径
+- **`dev:host` 原生编排**: `dev:host` 先以 Docker 起 PostgreSQL 再并行管理原生 CP/Agent/Runtime/UI；`dev:host:watch` 由 Node watcher 监控四健康端点并在任务组失败后重启；`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根（默认 `A03-xihe\.xihe-workspaces`）
+- **Host E2E 数据边界**: `test:e2e:host` 每轮独立 DB + host root，不连长期 dev DB；成功/失败/中断都必须 teardown 并反向确认无本轮残留；`--keep` 仅限本地调试
+- **Visual evidence boundary**: `toHaveScreenshot()` 只证明画面接近 baseline；人工 UI 审查还须读 actual/diff、检查 DOM/computed style、overflow、console/pageerror 与交互状态；`*-snapshots/*.png` 为本地生成工件，不能声称为 fresh checkout 可复现的 Git baseline
+- **E2E evidence matrix**: profile/readiness/测试计数/失败分类/清理证据记录在 workspace 私有 internal 层（不在本仓库分发）；必须区分 Compose/host/manual，不得混合统计
+- **Agent MCP hop / Grant 终态**: MCP 本地 hop 超时默认 ~30s（审批等待不计入）；禁用 Streamable HTTP GET server stream；用户直连 MCP mutation 免 Agent 审批并记 `actorType=user`；Agent 单 workspace 绑定，换 workspace 须重启 Agent；`apply_patch`/`create_snapshot`/`revert_snapshot` internal-only（契约测试钉死）；断线恢复 `GET /api/v1/chat/runs/{runId}`；operation 允许 `waiting_for_approval→completed/failed`（run 终态为准）；审批等待期中断以 ambiguous 收尾
 
-详见 `docs/i18n/zh-Hans/DEV-018-known-issues.md`。覆盖率缺口 `plans/archive/20260629/A03-xihe/PLAN-052-unit-test-gap-fill.md`。
+详见 `docs/i18n/zh-Hans/DEV-018-known-issues.md`。
 
 ## PLAN 实施收尾检查清单
 
