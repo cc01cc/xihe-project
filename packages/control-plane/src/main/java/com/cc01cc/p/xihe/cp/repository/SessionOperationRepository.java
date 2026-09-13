@@ -1,9 +1,11 @@
 package com.cc01cc.p.xihe.cp.repository;
 
 import com.cc01cc.p.xihe.cp.entity.SessionOperation;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -39,10 +41,21 @@ public interface SessionOperationRepository extends JpaRepository<SessionOperati
             @Param("status") String status,
             Pageable pageable);
 
+    /**
+     * PLAN-0317 决策 #7②：追加 item/event 前锁定该 operation 行，串行化同一
+     * operation 内的序号分配（并发时不再靠唯一约束回滚）。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from SessionOperation o where o.id = :id")
+    Optional<SessionOperation> findByIdForUpdate(@Param("id") UUID id);
+
+    // PLAN-0317 决策 #7①：批量状态转换必须显式刷新 updated_at（JPQL 绕过
+    // @PreUpdate，此前时间戳停在插入值）。
     @Modifying
     @Transactional
     @Query("update SessionOperation o set o.status = :status, o.errorCode = :errorCode, "
-            + "o.errorRef = :errorRef, o.finishedAt = :finishedAt "
+            + "o.errorRef = :errorRef, o.finishedAt = :finishedAt, "
+            + "o.updatedAt = CURRENT_INSTANT "
             + "where o.id = :id and o.status in :expectedStatuses")
     int transitionStatus(@Param("id") UUID id,
             @Param("expectedStatuses") Collection<String> expectedStatuses,

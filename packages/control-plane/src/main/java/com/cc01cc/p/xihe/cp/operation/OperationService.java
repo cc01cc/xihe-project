@@ -322,7 +322,9 @@ public class OperationService {
     public OperationItem appendItem(UUID operationId, String toolCallId, String parentId,
                                     String kind, String toolName, String source,
                                     String argumentsPreview, String normalizedArgv, String cwd) {
-        SessionOperation operation = operations.findById(operationId)
+        // PLAN-0317 决策 #7②：锁 operation 行串行化序号分配（同一 operation
+        // 内的 item/event 追加不再依赖唯一约束失败回滚）。
+        SessionOperation operation = operations.findByIdForUpdate(operationId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
         if (toolCallId != null && !toolCallId.isBlank()) {
@@ -597,10 +599,9 @@ public class OperationService {
 
     private void appendEvent(UUID operationId, String itemId, String attemptId,
                              String eventType, String state, String actor, String payload) {
-        Long sequence = events.findByOperationIdOrderBySequenceAsc(operationId.toString()).stream()
-                .mapToLong(OperationEvent::getSequence)
-                .max()
-                .orElse(-1L) + 1;
+        // PLAN-0317 决策 #7②：聚合查询取序号（此前加载该 operation 的全部事件
+        // 再求 max，长操作 O(n²)）。
+        Long sequence = events.findMaxSequence(operationId.toString()) + 1;
         OperationEvent event = new OperationEvent(operationId.toString(), sequence, eventType,
                 state, actor, payload);
         event.setId(UUID.randomUUID());

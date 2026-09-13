@@ -59,4 +59,7 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
 
     @Query("select r from ChatRun r where r.status in :activeStatuses")
     List<ChatRun> findRecoverableRuns(@Param("activeStatuses") Collection<String> activeStatuses);
+
+    /** PLAN-0317 T2.6：重启时收敛被取消请求卡住的 run（cancelling 无 lease、不在恢复集内）。 */
+    List<ChatRun> findByStatus(String status);
 }

@@ -208,9 +208,13 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     private ChatRunRecoveryService reconciliationService() {
-        return new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController);
+        return new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
+                operationService);
     }
 
     @Autowired
     private ChatController chatController;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.operation.OperationService operationService;
 }

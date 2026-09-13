@@ -36,7 +36,7 @@ public interface OperationAttemptRepository extends JpaRepository<OperationAttem
     @Transactional
     @Query("update OperationAttempt a set a.status = :status, a.httpStatus = :httpStatus, "
             + "a.errorCode = :errorCode, a.resultRef = :resultRef, a.durationMs = :durationMs, "
-            + "a.finishedAt = :finishedAt "
+            + "a.finishedAt = :finishedAt, a.updatedAt = CURRENT_INSTANT "
             + "where a.id = :id and a.status = 'started'")
     int finishStarted(@Param("id") UUID id,
             @Param("status") String status,

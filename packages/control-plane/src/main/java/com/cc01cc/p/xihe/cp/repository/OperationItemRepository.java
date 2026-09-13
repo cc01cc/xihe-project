@@ -33,7 +33,8 @@ public interface OperationItemRepository extends JpaRepository<OperationItem, UU
     @Transactional
     @Query("update OperationItem i set i.status = :status, i.policyDecision = :policyDecision, "
             + "i.approvalRequestId = :approvalRequestId, i.resultRef = :resultRef, "
-            + "i.errorCode = :errorCode, i.finishedAt = :finishedAt "
+            + "i.errorCode = :errorCode, i.finishedAt = :finishedAt, "
+            + "i.updatedAt = CURRENT_INSTANT "
             + "where i.id = :id and i.status in :expectedStatuses")
     int transitionStatus(@Param("id") UUID id,
             @Param("expectedStatuses") Collection<String> expectedStatuses,

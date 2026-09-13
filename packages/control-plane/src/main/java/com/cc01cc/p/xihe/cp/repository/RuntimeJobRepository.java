@@ -21,7 +21,7 @@ public interface RuntimeJobRepository extends JpaRepository<RuntimeJob, UUID> {
     @Modifying
     @Transactional
     @Query("update RuntimeJob j set j.status = :newStatus, j.ownerId = :ownerId, "
-            + "j.leaseExpiresAt = :leaseExpiresAt "
+            + "j.leaseExpiresAt = :leaseExpiresAt, j.updatedAt = CURRENT_INSTANT "
             + "where j.id = :id and j.status in :expectedStatuses")
     int transitionStatus(@Param("id") UUID id,
             @Param("expectedStatuses") Collection<String> expectedStatuses,
@@ -32,7 +32,7 @@ public interface RuntimeJobRepository extends JpaRepository<RuntimeJob, UUID> {
     @Modifying
     @Transactional
     @Query("update RuntimeJob j set j.status = :newStatus, j.exitCode = :exitCode, "
-            + "j.finishedAt = :finishedAt "
+            + "j.finishedAt = :finishedAt, j.updatedAt = CURRENT_INSTANT "
             + "where j.id = :id and j.status in :expectedStatuses")
     int completeJob(@Param("id") UUID id,
             @Param("expectedStatuses") Collection<String> expectedStatuses,
@@ -43,7 +43,7 @@ public interface RuntimeJobRepository extends JpaRepository<RuntimeJob, UUID> {
     @Modifying
     @Transactional
     @Query("update RuntimeJob j set j.status = :newStatus, j.errorCode = :errorCode, "
-            + "j.finishedAt = :finishedAt "
+            + "j.finishedAt = :finishedAt, j.updatedAt = CURRENT_INSTANT "
             + "where j.id = :id and j.status in :expectedStatuses")
     int failJob(@Param("id") UUID id,
             @Param("expectedStatuses") Collection<String> expectedStatuses,
@@ -53,7 +53,7 @@ public interface RuntimeJobRepository extends JpaRepository<RuntimeJob, UUID> {
 
     @Modifying
     @Transactional
-    @Query("update RuntimeJob j set j.status = 'orphaned', j.orphanedAt = :orphanedAt "
+    @Query("update RuntimeJob j set j.status = 'orphaned', j.orphanedAt = :orphanedAt, j.updatedAt = CURRENT_INSTANT "
             + "where j.ownerId = :ownerId and j.status in ('queued', 'running') "
             + "and (:excludedIds is null or j.id not in :excludedIds)")
     int orphanByOwner(@Param("ownerId") String ownerId,
