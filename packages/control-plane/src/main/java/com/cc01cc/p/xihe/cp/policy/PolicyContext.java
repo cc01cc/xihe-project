@@ -22,6 +22,17 @@ public record PolicyContext(List<LayeredPolicyResolver.LayerInput> layers,
 
     public static final PolicyContext EMPTY = new PolicyContext(List.of(), Map.of(), null, null);
 
+    /**
+     * Fail-closed context: one INSTANCE rule ({@code *, * → ask}) so every domain resolves to the
+     * instance layer and defaults to ask (spec §4.3). Used when persisted layers cannot be read.
+     */
+    public static PolicyContext failedClosed() {
+        return new PolicyContext(
+                List.of(new LayeredPolicyResolver.LayerInput(PolicyLayer.INSTANCE,
+                        List.of(PolicyRule.of("*", "*", PolicyEffect.ASK)))),
+                Map.of(), null, null);
+    }
+
     public PolicyContext {
         layers = List.copyOf(layers == null ? List.of() : layers);
         extraFaces = Map.copyOf(extraFaces == null ? Map.of() : extraFaces);

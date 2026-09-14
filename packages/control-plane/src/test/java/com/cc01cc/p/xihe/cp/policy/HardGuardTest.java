@@ -11,14 +11,14 @@ class HardGuardTest {
 
     private final HardGuard guard = new HardGuard();
 
-    private static PolicyRequest withResource(String resource) {
-        return new PolicyRequest("write_file", List.of("write"), List.of(resource),
+    private static PolicyRequest request(String actionClass, String resource) {
+        return new PolicyRequest("tool_" + actionClass, List.of(actionClass), List.of(resource),
                 ToolShape.STRUCTURED, "u1", "ws1", "s1");
     }
 
     @Test
     void blocksWorkspaceEscape() {
-        var deny = guard.check(withResource("../../etc/passwd"));
+        var deny = guard.check(request("write", "../../etc/passwd"));
         assertTrue(deny.isPresent());
         assertEquals(HardGuard.Kind.PATH_ESCAPE, deny.get().kind());
         assertTrue(deny.get().kind().enforceableHere());
@@ -26,21 +26,45 @@ class HardGuardTest {
 
     @Test
     void blocksCriticalPathDeletion() {
-        var deny = guard.check(withResource("/workspace/ws1/.git/config"));
+        var deny = guard.check(request("delete", "/workspace/ws1/.git/config"));
         assertTrue(deny.isPresent());
         assertEquals(HardGuard.Kind.CRITICAL_PATH_DELETION, deny.get().kind());
     }
 
     @Test
+    void readingCriticalPathIsNotADeletion() {
+        assertTrue(guard.check(request("read", "/workspace/sub/.gitignore")).isEmpty());
+        assertTrue(guard.check(request("exec", "git log -- .git/config")).isEmpty());
+    }
+
+    @Test
     void flagsCredentialLikeMaterial() {
-        var deny = guard.check(withResource("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"));
-        assertTrue(deny.isPresent());
-        assertEquals(HardGuard.Kind.CREDENTIAL_EXFILTRATION, deny.get().kind());
+        var ghp = guard.check(request("write", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"));
+        assertTrue(ghp.isPresent());
+        assertEquals(HardGuard.Kind.CREDENTIAL_EXFILTRATION, ghp.get().kind());
+
+        var akia = guard.check(request("write", "AKIAIOSFODNN7EXAMPLE"));
+        assertTrue(akia.isPresent());
+        assertEquals(HardGuard.Kind.CREDENTIAL_EXFILTRATION, akia.get().kind());
+
+        var openai = guard.check(request("write", "sk-proj-abcdefghijklmnopqrstuvwxyz012345"));
+        assertTrue(openai.isPresent());
+        assertEquals(HardGuard.Kind.CREDENTIAL_EXFILTRATION, openai.get().kind());
+
+        var pem = guard.check(request("write", "-----BEGIN RSA PRIVATE KEY-----"));
+        assertTrue(pem.isPresent());
+        assertEquals(HardGuard.Kind.CREDENTIAL_EXFILTRATION, pem.get().kind());
+    }
+
+    @Test
+    void ordinaryWordsWithCredentialLikeFragmentsAreAllowed() {
+        assertTrue(guard.check(request("exec", "grep -r task-notes docs/")).isEmpty());
+        assertTrue(guard.check(request("write", "risk-analysis.md")).isEmpty());
     }
 
     @Test
     void allowsOrdinaryWorkspacePath() {
-        assertTrue(guard.check(withResource("src/parser.ts")).isEmpty());
+        assertTrue(guard.check(request("write", "src/parser.ts")).isEmpty());
     }
 
     @Test

@@ -100,8 +100,8 @@ class GatewayToolRegistryContractTest {
     void evaluate_neverDeniesGatewayPublicTool() {
         PolicyEngine engine = createEngine();
         List<String> denied = GATEWAY_PUBLIC_TOOLS.stream()
-            .filter(t -> engine.evaluate(t, "{}", "contract-s1").getResult()
-                == PolicyEngine.PolicyDecision.PolicyResult.DENY)
+            .filter(t -> engine.evaluateVerdict(t, "{}", "contract-s1", null, null, null).effect()
+                == PolicyEffect.DENY)
             .toList();
         assertTrue(denied.isEmpty(),
             "PolicyEngine.evaluate must not DENY Gateway-public tools: " + denied);
@@ -111,18 +111,18 @@ class GatewayToolRegistryContractTest {
     void evaluate_matchesSetMembershipForEveryGatewayTool() {
         PolicyEngine engine = createEngine();
         for (String tool : GATEWAY_PUBLIC_TOOLS) {
-            PolicyEngine.PolicyDecision decision = engine.evaluate(tool, "{}", "contract-s2");
+            PolicyVerdict verdict = engine.evaluateVerdict(tool, "{}", "contract-s2", null, null, null);
             if (PolicyEngine.autoAllowTools().contains(tool)) {
                 assertEquals(
-                    PolicyEngine.PolicyDecision.PolicyResult.ALLOW,
-                    decision.getResult(),
+                    PolicyEffect.ALLOW,
+                    verdict.effect(),
                     tool + " is in AUTO_ALLOW, evaluate must ALLOW");
             } else {
                 assertTrue(PolicyEngine.requireApprovalTools().contains(tool),
                     tool + " must belong to REQUIRE_APPROVAL (else would DENY)");
                 assertEquals(
-                    PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL,
-                    decision.getResult(),
+                    PolicyEffect.ASK,
+                    verdict.effect(),
                     tool + " is in REQUIRE_APPROVAL, evaluate must REQUIRE_APPROVAL");
             }
         }
@@ -137,9 +137,9 @@ class GatewayToolRegistryContractTest {
     void webFetch_isAutoAllowed() {
         assertTrue(PolicyEngine.autoAllowTools().contains("web_fetch"),
             "web_fetch must be AUTO_ALLOW per PLAN-290 §3.6-B minimal fix");
-        PolicyEngine.PolicyDecision decision =
-            createEngine().evaluate("web_fetch", "{}", "contract-s3");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.ALLOW, decision.getResult());
+        PolicyVerdict verdict =
+            createEngine().evaluateVerdict("web_fetch", "{}", "contract-s3", null, null, null);
+        assertEquals(PolicyEffect.ALLOW, verdict.effect());
     }
 
     @Test
@@ -154,8 +154,8 @@ class GatewayToolRegistryContractTest {
             assertTrue(GATEWAY_PUBLIC_TOOLS.contains(tool),
                 "fixture hygiene: " + tool + " should be a Gateway tool");
             assertEquals(
-                PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL,
-                engine.evaluate(tool, "{}", "contract-s4").getResult(),
+                PolicyEffect.ASK,
+                engine.evaluateVerdict(tool, "{}", "contract-s4", null, null, null).effect(),
                 tool + " must require approval");
         }
     }
@@ -197,8 +197,8 @@ class GatewayToolRegistryContractTest {
         PolicyEngine engine = createEngine();
         for (String tool : INTERNAL_ONLY_TOOLS) {
             assertEquals(
-                PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL,
-                engine.evaluate(tool, "{}", "contract-s5").getResult(),
+                PolicyEffect.ASK,
+                engine.evaluateVerdict(tool, "{}", "contract-s5", null, null, null).effect(),
                 tool + " is internal-only but must still require approval if ever called");
         }
     }

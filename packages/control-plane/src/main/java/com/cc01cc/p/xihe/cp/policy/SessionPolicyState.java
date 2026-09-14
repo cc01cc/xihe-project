@@ -28,16 +28,30 @@ public class SessionPolicyState {
             LayeredPolicyResolver.MODE_DEFAULT,
             LayeredPolicyResolver.MODE_ACCEPT_EDITS,
             LayeredPolicyResolver.MODE_BYPASS,
-            "plan",
+            LayeredPolicyResolver.MODE_PLAN,
             LayeredPolicyResolver.MODE_MANAGED);
 
     /** Session state is short-lived: a stale entry must never keep granting (or bypassing). */
     static final Duration TTL = Duration.ofHours(12);
 
+    /** Opportunistic sweep cadence: every Nth lookup expired entries are dropped. */
+    private static final long SWEEP_INTERVAL = 64;
+
     public record Entry(String mode, List<PolicyRule> rules, Instant updatedAt) {}
 
     private final Map<String, Entry> sessions = new ConcurrentHashMap<>();
     private final java.util.concurrent.atomic.AtomicLong seq = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong accesses = new java.util.concurrent.atomic.AtomicLong();
+    private final Duration ttl;
+
+    public SessionPolicyState() {
+        this(TTL);
+    }
+
+    /** Package-private for tests: a tiny TTL makes the expiration sweep observable. */
+    SessionPolicyState(Duration ttl) {
+        this.ttl = ttl;
+    }
 
     public Optional<String> modeOf(String sessionId) {
         Entry entry = live(sessionId);
@@ -88,14 +102,23 @@ public class SessionPolicyState {
         if (sessionId == null || sessionId.isBlank()) {
             return null;
         }
+        if (accesses.incrementAndGet() % SWEEP_INTERVAL == 0) {
+            sweepExpired();
+        }
         Entry entry = sessions.get(sessionId);
         if (entry == null) {
             return null;
         }
-        if (entry.updatedAt().isBefore(Instant.now().minus(TTL))) {
+        if (entry.updatedAt().isBefore(Instant.now().minus(ttl))) {
             sessions.remove(sessionId, entry);
             return null;
         }
         return entry;
+    }
+
+    /** Opportunistic sweep: drop entries never touched again so the map cannot grow unbounded. */
+    private void sweepExpired() {
+        Instant cutoff = Instant.now().minus(ttl);
+        sessions.entrySet().removeIf(entry -> entry.getValue().updatedAt().isBefore(cutoff));
     }
 }

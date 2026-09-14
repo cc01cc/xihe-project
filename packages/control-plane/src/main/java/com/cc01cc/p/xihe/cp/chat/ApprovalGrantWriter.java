@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
@@ -69,12 +70,11 @@ public class ApprovalGrantWriter {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "actionClass is derived from the tool registry and cannot be overridden");
         }
-        String layer = switch (decision.kind()) {
-            case SESSION -> "session";
-            case SAVED, REJECT_ALWAYS -> decision.effectiveLayer();
-            default -> throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "decision does not grant a rule");
-        };
+        // Only session/saved/reject_always reach this point (grantsRule guard above); a switch
+        // expression over the 5-constant enum would still need an unreachable default arm.
+        String layer = decision.kind() == ApprovalDecision.Kind.SESSION
+                ? "session"
+                : decision.effectiveLayer();
         PolicyEffect effect = decision.kind() == ApprovalDecision.Kind.REJECT_ALWAYS
                 ? PolicyEffect.DENY : PolicyEffect.ALLOW;
         return new RulePlan(decision.kind().wireName(), layer, tool, actionClass,
@@ -111,6 +111,17 @@ public class ApprovalGrantWriter {
      */
     public boolean wouldAllow(String tool, String sessionId, String userId, String workspaceId) {
         return policyEngine.evaluateVerdict(tool, "", sessionId, null, userId, workspaceId).effect()
+                == PolicyEffect.ALLOW;
+    }
+
+    /** Loads the policy context once so a propagation sweep evaluates every row against one snapshot. */
+    public PolicyContext loadContext(String userId, String workspaceId, String sessionId) {
+        return policyEngine.loadContext(userId, workspaceId, sessionId);
+    }
+
+    /** Same re-solve against an already-loaded context: no per-row policy reload. */
+    public boolean wouldAllow(String tool, PolicyContext context, String sessionId) {
+        return policyEngine.evaluateVerdict(context, tool, "", sessionId, null).effect()
                 == PolicyEffect.ALLOW;
     }
 }

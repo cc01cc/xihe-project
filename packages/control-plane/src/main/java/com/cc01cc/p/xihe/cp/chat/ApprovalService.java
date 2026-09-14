@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +37,8 @@ public class ApprovalService {
     private static final int MAX_ACTION_LENGTH = 512;
     private static final int MAX_DETAILS_LENGTH = 512;
     private static final int MAX_ARGUMENTS_HASH_LENGTH = 96;
+    /** One decision may release/reject at most this many session peers (serial Agent HTTP bound). */
+    private static final int MAX_PROPAGATION_PER_DECISION = 20;
     // PLAN-292 M1: canonical form must byte-match the Agent's
     // json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).
     private static final String HASH_ALGORITHM = "SHA-256";
@@ -150,11 +153,6 @@ public class ApprovalService {
                 .toList();
     }
 
-    /** Legacy boolean decision (pre-0328 body): maps to once / reject. */
-    public Map<String, Object> decide(String requestId, String userId, String workspaceId, boolean approved) {
-        return decide(requestId, userId, workspaceId, ApprovalDecision.fromApproved(approved));
-    }
-
     /**
      * PLAN-0328 M1 (spec §14, decision #23/#25): one decision entry point for the three grant tiers,
      * rejection with feedback, and the session propagation semantics.
@@ -182,11 +180,7 @@ public class ApprovalService {
             throw new CpApiException(HttpStatus.GONE, "APPROVAL_EXPIRED", "Approval request expired");
         }
         if (isTerminal(approval.getState())) {
-            if (approval.getApproved() != null && approval.getApproved() == approved) {
-                return decisionResponse(requestId, "accepted", approved, decision, 0, null);
-            }
-            throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_CONFLICT",
-                    "Approval request already has a different decision");
+            return idempotentTerminal(approval, decision, approved);
         }
         // PLAN-290 M0.4 dispatch_unknown reconciliation: a lost dispatch outcome is
         // retryable by an explicit user decision (no automatic replay). Re-entering
@@ -209,6 +203,13 @@ public class ApprovalService {
             if (plan != null) {
                 grantWriter.commit(plan, approval.getSessionId(), userId, workspaceId);
             }
+        } catch (CpApiException e) {
+            // 领域错误（如 workspace OWNER 校验 403）不是写入故障：行标记 dispatch_unknown 可重试，
+            // 但客户端必须看到原始状态码而不是被包装成 500。
+            approvalRepository.markDispatchUnknown(approval.getRequestId(), e.getCode(), Instant.now());
+            logger.error("[LIFECYCLE] service=cp event=approval_rule_write_denied requestId={} code={}",
+                    requestId, e.getCode(), e);
+            throw e;
         } catch (RuntimeException e) {
             int unknown = approvalRepository.markDispatchUnknown(approval.getRequestId(),
                     "POLICY_RULE_WRITE_FAILED", Instant.now());
@@ -226,7 +227,8 @@ public class ApprovalService {
             }
             throw e;
         }
-        int decided = approvalRepository.markDecided(approval.getRequestId(), approved ? "approved" : "rejected", Instant.now());
+        int decided = approvalRepository.markDecided(approval.getRequestId(),
+                approved ? "approved" : "rejected", decision.kind().wireName(), Instant.now());
         if (decided == 0) {
             logger.error("[LIFECYCLE] service=cp event=chat_approval_decide_transition_lost requestId={} expected dispatching state", requestId);
         }
@@ -234,7 +236,29 @@ public class ApprovalService {
         audit.record(approval.getSessionId(), approval.getTool(), "approval_decision",
                 decision.kind().wireName() + (decision.feedback() == null ? "" : " feedback=" + safeFeedback(decision.feedback())));
         int propagated = propagate(approval, decision);
-        return decisionResponse(requestId, "accepted", approved, decision, propagated, plan);
+        return decisionResponse(requestId, "accepted", approved, decision.kind().wireName(), propagated, plan);
+    }
+
+    /**
+     * Terminal rows are idempotent only for the exact recorded decision kind (V16). Legacy rows
+     * without a recorded kind keep the boolean comparison; anything else fails closed with 409.
+     */
+    private Map<String, Object> idempotentTerminal(ChatApproval approval, ApprovalDecision decision,
+                                                   boolean approved) {
+        String requestId = approval.getRequestId().toString();
+        String recordedKind = approval.getDecisionKind();
+        if (recordedKind != null) {
+            if (!recordedKind.equals(decision.kind().wireName())) {
+                throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_CONFLICT",
+                        "Approval request already decided with a different decision kind");
+            }
+            return decisionResponse(requestId, "accepted", approved, recordedKind, 0, null);
+        }
+        if (approval.getApproved() != null && approval.getApproved() == approved) {
+            return decisionResponse(requestId, "accepted", approved, decision.kind().wireName(), 0, null);
+        }
+        throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_CONFLICT",
+                "Approval request already has a different decision");
     }
 
     /**
@@ -252,38 +276,52 @@ public class ApprovalService {
         List<ChatApproval> pending = approvalRepository
                 .findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
                         decided.getSessionId(), decided.getUserId(), decided.getWorkspaceId(), List.of("pending"));
+        // One context load for the whole sweep instead of one per pending row (V16 review fix).
+        PolicyContext context = approved
+                ? grantWriter.loadContext(decided.getUserId(), decided.getWorkspaceId(), decided.getSessionId())
+                : null;
         int affected = 0;
+        int attempted = 0;
+        int skipped = 0;
         for (ChatApproval row : pending) {
-            if (row.getRequestId().equals(decided.getRequestId()) || row.getExpiresAt().isBefore(Instant.now())) {
+            if (row.getExpiresAt().isBefore(Instant.now())) {
                 continue;
             }
-            if (approved && !grantWriter.wouldAllow(row.getTool(), row.getSessionId(),
-                    row.getUserId(), row.getWorkspaceId())) {
+            if (approved && !grantWriter.wouldAllow(row.getTool(), context, row.getSessionId())) {
                 continue;
             }
+            if (attempted >= MAX_PROPAGATION_PER_DECISION) {
+                skipped++;
+                continue;
+            }
+            attempted++;
             if (dispatchPropagated(row, approved)) {
                 affected++;
             }
+        }
+        if (skipped > 0) {
+            logger.warn("[LIFECYCLE] service=cp event=approval_propagation_capped sessionId={} skipped={} limit={}",
+                    decided.getSessionId(), skipped, MAX_PROPAGATION_PER_DECISION);
         }
         return affected;
     }
 
     private boolean dispatchPropagated(ChatApproval row, boolean approved) {
         String requestId = row.getRequestId().toString();
+        String kind = approved ? "propagated_allow" : "propagated_reject";
         int claimed = approvalRepository.markDispatching(row.getRequestId(), approved, Instant.now());
         if (claimed == 0) {
             return false;
         }
         try {
-            agentClient.respond(requestId, approved,
-                    approved ? "propagated_allow" : "propagated_reject", null);
+            agentClient.respond(requestId, approved, kind, null);
         } catch (CpApiException e) {
             approvalRepository.markDispatchUnknown(row.getRequestId(), e.getCode(), Instant.now());
             logger.warn("[LIFECYCLE] service=cp event=approval_propagation_dispatch_unknown requestId={} code={}",
                     requestId, e.getCode());
             return false;
         }
-        approvalRepository.markDecided(row.getRequestId(), approved ? "approved" : "rejected", Instant.now());
+        approvalRepository.markDecided(row.getRequestId(), approved ? "approved" : "rejected", kind, Instant.now());
         operationService.resolveApprovalItem(requestId, approved);
         audit.record(row.getSessionId(), row.getTool(),
                 approved ? "approval_propagated_allow" : "approval_propagated_reject", requestId);
@@ -298,8 +336,9 @@ public class ApprovalService {
         Map<String, Integer> counts = new LinkedHashMap<>();
         Map<String, Instant> oldest = new LinkedHashMap<>();
         Instant now = Instant.now();
-        for (ChatApproval row : approvalRepository.findByUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
-                userId, workspaceId, List.of("pending"))) {
+        for (ChatApproval row
+                : approvalRepository.findByUserIdAndWorkspaceIdAndStateInAndExpiresAtAfterOrderByCreatedAtAsc(
+                        userId, workspaceId, List.of("pending"), now)) {
             if (row.getExpiresAt().isBefore(now)) {
                 continue;
             }
@@ -473,13 +512,13 @@ public class ApprovalService {
     }
 
     private Map<String, Object> decisionResponse(String requestId, String status, boolean approved,
-                                                 ApprovalDecision decision, int propagated,
+                                                 String decisionKind, int propagated,
                                                  ApprovalGrantWriter.RulePlan plan) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("status", status);
         response.put("requestId", requestId);
         response.put("approved", approved);
-        response.put("decision", decision.kind().wireName());
+        response.put("decision", decisionKind);
         response.put("propagated", propagated);
         if (plan != null) {
             Map<String, Object> rule = new LinkedHashMap<>();

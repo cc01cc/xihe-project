@@ -32,6 +32,13 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
     List<ChatApproval> findByUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
             String userId, String workspaceId, Collection<String> states);
 
+    /**
+     * Same view with the expiry predicate pushed into SQL (V16 index
+     * {@code idx_approval_requests_user_workspace_state}); expired pending rows are never returned.
+     */
+    List<ChatApproval> findByUserIdAndWorkspaceIdAndStateInAndExpiresAtAfterOrderByCreatedAtAsc(
+            String userId, String workspaceId, Collection<String> states, Instant now);
+
     List<ChatApproval> findByStateInAndExpiresAtBefore(Collection<String> states, java.time.Instant expiresAt);
 
     List<ChatApproval> findByRunIdAndStateIn(String runId, Collection<String> states);
@@ -58,9 +65,11 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
 
     @Transactional
     @Modifying
-    @Query("update ChatApproval a set a.state = :state, a.decidedAt = :at, a.updatedAt = :at "
+    @Query("update ChatApproval a set a.state = :state, a.decisionKind = :decisionKind, "
+            + "a.decidedAt = :at, a.updatedAt = :at "
             + "where a.requestId = :requestId and a.state = 'dispatching'")
-    int markDecided(@Param("requestId") UUID requestId, @Param("state") String state, @Param("at") Instant at);
+    int markDecided(@Param("requestId") UUID requestId, @Param("state") String state,
+            @Param("decisionKind") String decisionKind, @Param("at") Instant at);
 
     @Transactional
     @Modifying

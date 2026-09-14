@@ -103,15 +103,16 @@ class ApprovalServiceTest {
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
         when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(Instant.class)))
                 .thenReturn(1);
-        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any(Instant.class)))
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
         when(agent.respond(TEST_REQUEST_ID, true, "once", null))
                 .thenReturn(Map.of("status", "accepted", "requestId", TEST_REQUEST_ID, "approved", true));
 
-        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, true);
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.once());
 
         assertEquals("accepted", response.get("status"));
-        verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any());
+        verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any());
         verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, true);
         verify(approvals, never()).saveAndFlush(any());
     }
@@ -123,7 +124,7 @@ class ApprovalServiceTest {
         when(approvals.markExpired(eq(UUID.fromString(TEST_REQUEST_ID)), any(Instant.class))).thenReturn(1);
 
         CpApiException error = assertThrows(CpApiException.class,
-                () -> service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, false));
+                () -> service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, ApprovalDecision.reject(null)));
 
         assertEquals(410, error.getStatus().value());
         assertEquals("APPROVAL_EXPIRED", error.getCode());
@@ -274,7 +275,7 @@ class ApprovalServiceTest {
     @Test
     void decideReturns400ForMalformedRequestId() {
         CpApiException error = assertThrows(CpApiException.class,
-                () -> service.decide("not-a-uuid", TEST_USER, TEST_WORKSPACE, true));
+                () -> service.decide("not-a-uuid", TEST_USER, TEST_WORKSPACE, ApprovalDecision.once()));
 
         assertEquals(400, error.getStatus().value());
         assertEquals("INVALID_REQUEST", error.getCode());
@@ -289,16 +290,17 @@ class ApprovalServiceTest {
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
         when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(Instant.class)))
                 .thenReturn(1);
-        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any(Instant.class)))
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
         when(agent.respond(TEST_REQUEST_ID, true, "once", null))
                 .thenReturn(Map.of("status", "accepted", "requestId", TEST_REQUEST_ID, "approved", true));
 
-        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, true);
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.once());
 
         assertEquals("accepted", response.get("status"));
         verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any());
-        verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any());
+        verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any());
         verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, true);
     }
 
@@ -311,7 +313,7 @@ class ApprovalServiceTest {
         when(approvals.markExpired(eq(UUID.fromString(TEST_REQUEST_ID)), any(Instant.class))).thenReturn(1);
 
         CpApiException error = assertThrows(CpApiException.class,
-                () -> service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, true));
+                () -> service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, ApprovalDecision.reject(null)));
 
         assertEquals(410, error.getStatus().value());
         assertEquals("APPROVAL_EXPIRED", error.getCode());

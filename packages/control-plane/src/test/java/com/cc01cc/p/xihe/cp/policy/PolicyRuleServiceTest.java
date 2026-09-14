@@ -11,18 +11,26 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 /** PLAN-0328 M1 batch 4: rule administration guardrails, effective-layer marking, conflicts. */
 class PolicyRuleServiceTest {
 
     private final PolicyRuleRepository repository = mock(PolicyRuleRepository.class);
-    private final PolicyRuleService service = new PolicyRuleService(repository);
+    private final PolicyRuleService service = new PolicyRuleService(repository, new PolicyVersion());
+
+    @AfterEach
+    void clearTenant() {
+        TenantContext.clear();
+    }
 
     private static PolicyRuleEntity rule(String layer, String owner, String actionClass, String resource,
                                          String effect, boolean locked) {
@@ -43,6 +51,7 @@ class PolicyRuleServiceTest {
 
     @Test
     void userAndWorkspaceLayersBindToCallerIdentity() {
+        TenantContext.setWorkspaceRole("OWNER");
         when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(anyString(), anyString()))
                 .thenReturn(List.of());
@@ -84,9 +93,9 @@ class PolicyRuleServiceTest {
     }
 
     @Test
-    void reportsAllowShadowedBySpecificDenyAtSameLayer() {
-        PolicyRuleEntity allow = rule("workspace", "ws1", "exec", "pnpm *", "allow", false);
-        PolicyRuleEntity deny = rule("workspace", "ws1", "exec", "pnpm test *", "deny", false);
+    void reportsAllowFullyCoveredByBroaderDeny() {
+        PolicyRuleEntity allow = rule("workspace", "ws1", "exec", "pnpm test *", "allow", false);
+        PolicyRuleEntity deny = rule("workspace", "ws1", "exec", "pnpm *", "deny", false);
         when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1"))
                 .thenReturn(List.of(allow, deny));
 
@@ -117,10 +126,78 @@ class PolicyRuleServiceTest {
 
     @Test
     void deleteRejectsCrossScopeAccess() {
+        TenantContext.setWorkspaceRole("OWNER");
         PolicyRuleEntity workspaceRule = rule("workspace", "ws2", "exec", "*", "deny", false);
         when(repository.findById(workspaceRule.getId())).thenReturn(Optional.of(workspaceRule));
 
-        assertThrows(CpApiException.class,
+        CpApiException error = assertThrows(CpApiException.class,
                 () -> service.delete(workspaceRule.getId(), "workspace", "u1", "ws1", false));
+        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
+    }
+
+    @Test
+    void instanceLayerListConflictsAndDeleteRequireAdmin() {
+        assertThrows(CpApiException.class, () -> service.list("instance", "u1", "ws1", false));
+        assertThrows(CpApiException.class, () -> service.conflicts("instance", "u1", "ws1", false));
+        assertThrows(CpApiException.class,
+                () -> service.delete(UUID.randomUUID(), "instance", "u1", "ws1", false));
+        assertEquals(0, service.list("instance", "u1", "ws1", true).size());
+    }
+
+    @Test
+    void workspaceLayerCreateRequiresWorkspaceOwnerOrAdmin() {
+        when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(anyString(), anyString()))
+                .thenReturn(List.of());
+
+        TenantContext.setWorkspaceRole("MEMBER");
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+
+        TenantContext.setUserRole("ADMIN");
+        assertNotNull(service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
+
+        TenantContext.setUserRole(null);
+        TenantContext.setWorkspaceRole("ADMIN");
+        assertNotNull(service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
+    }
+
+    @Test
+    void workspaceLayerDeleteRequiresWorkspaceOwnerOrAdmin() {
+        TenantContext.setWorkspaceRole("MEMBER");
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> service.delete(UUID.randomUUID(), "workspace", "u1", "ws1", false));
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+    }
+
+    @Test
+    void wildcardDenyShadowsPrefixedAllow() {
+        assertEquals(1, conflictsOf(rule("workspace", "ws1", "exec", "pnpm *", "allow", false),
+                rule("workspace", "ws1", "exec", "*", "deny", false)));
+    }
+
+    @Test
+    void broadAllowSurvivesNarrowDeny() {
+        assertEquals(0, conflictsOf(rule("workspace", "ws1", "exec", "*", "allow", false),
+                rule("workspace", "ws1", "exec", "docs/*", "deny", false)));
+    }
+
+    @Test
+    void prefixAllowSurvivesNarrowerDeny() {
+        assertEquals(0, conflictsOf(rule("workspace", "ws1", "exec", "docs/*", "allow", false),
+                rule("workspace", "ws1", "exec", "docs/secret/*", "deny", false)));
+    }
+
+    @Test
+    void identicalResourceAllowIsShadowed() {
+        assertEquals(1, conflictsOf(rule("workspace", "ws1", "exec", "docs/*", "allow", false),
+                rule("workspace", "ws1", "exec", "docs/*", "deny", false)));
+    }
+
+    private int conflictsOf(PolicyRuleEntity allow, PolicyRuleEntity deny) {
+        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1"))
+                .thenReturn(List.of(allow, deny));
+        return service.conflicts("workspace", "u1", "ws1", false).size();
     }
 }

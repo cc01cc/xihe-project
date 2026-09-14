@@ -19,7 +19,8 @@ import java.util.Optional;
  *
  * <p>Multi-domain: any DENY → DENY; else any ASK → ASK; else ALLOW.</p>
  *
- * <p>Modes: {@code bypass} turns ASK into ALLOW <em>after</em> DENY (decision #32) and records
+ * <p>Modes: {@code plan} denies mutating domains (write / delete / exec) before any mode handling;
+ * {@code bypass} turns ASK into ALLOW <em>after</em> DENY (decision #32) and records
  * {@code allowedBy}; {@code managed} considers only the INSTANCE layer.</p>
  */
 public class LayeredPolicyResolver {
@@ -28,6 +29,7 @@ public class LayeredPolicyResolver {
     public static final String MODE_BYPASS = "bypass";
     public static final String MODE_MANAGED = "managed";
     public static final String MODE_ACCEPT_EDITS = "accept-edits";
+    public static final String MODE_PLAN = "plan";
 
     /** One layer's ruleset. */
     public record LayerInput(PolicyLayer layer, List<PolicyRule> rules) {
@@ -39,6 +41,12 @@ public class LayeredPolicyResolver {
     public PolicyVerdict resolve(PolicyRequest request, List<LayerInput> layers, String mode, PolicyLayer modeLayer) {
         String effectiveMode = mode == null ? MODE_DEFAULT : mode;
         PolicyLayer resolvedModeLayer = modeLayer == null ? PolicyLayer.BUILTIN : modeLayer;
+
+        // plan mode denies mutating domains before any mode handling (bypass included)
+        if (MODE_PLAN.equals(effectiveMode) && deniesMutations(request)) {
+            return PolicyVerdict.of(PolicyEffect.DENY, null, resolvedModeLayer, effectiveMode,
+                    "plan mode denies mutations");
+        }
 
         List<LayerInput> effectiveLayers = MODE_MANAGED.equals(effectiveMode)
                 ? layers.stream().filter(l -> l.layer() == PolicyLayer.INSTANCE).toList()
@@ -65,6 +73,17 @@ public class LayeredPolicyResolver {
 
     private static boolean isAcceptEditsDomain(PolicyRequest request) {
         return request.actionClasses().stream().allMatch(ToolFaceRegistry.ACTION_WRITE::equals);
+    }
+
+    /** plan mode: any mutating domain makes the request mutating (read/network evaluate normally). */
+    private static boolean deniesMutations(PolicyRequest request) {
+        return request.actionClasses().stream().anyMatch(LayeredPolicyResolver::isMutatingDomain);
+    }
+
+    private static boolean isMutatingDomain(String actionClass) {
+        return ToolFaceRegistry.ACTION_WRITE.equals(actionClass)
+                || ToolFaceRegistry.ACTION_DELETE.equals(actionClass)
+                || ToolFaceRegistry.ACTION_EXEC.equals(actionClass);
     }
 
     private PolicyVerdict evaluateDomain(String actionClass, PolicyRequest request, List<LayerInput> layers) {

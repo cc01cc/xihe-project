@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
 import org.springframework.http.HttpStatus;
@@ -21,7 +22,7 @@ import java.util.UUID;
  * <p>Guardrails:</p>
  * <ul>
  *   <li>layer 只允许 instance / user / workspace；instance 层需 ADMIN（且 owner 恒为 null）；</li>
- *   <li>user 层 owner 取本人；workspace 层 owner 取当前 workspace（L3 写入需 owner，决策 #58）；</li>
+ *   <li>user 层 owner 取本人；workspace 层 owner 取当前 workspace（L3 写入需 workspace OWNER/ADMIN，决策 #58）；</li>
  *   <li>locked 仅 ADMIN 可设，且只能 deny/ask（与 V15 的 DB CHECK 一致）；</li>
  *   <li>删除按层校验归属，跨层/跨 owner 一律 404（不泄露存在性）。</li>
  * </ul>
@@ -38,9 +39,11 @@ public class PolicyRuleService {
     private static final int MAX_RESOURCE = 512;
 
     private final PolicyRuleRepository repository;
+    private final PolicyVersion policyVersion;
 
-    public PolicyRuleService(PolicyRuleRepository repository) {
+    public PolicyRuleService(PolicyRuleRepository repository, PolicyVersion policyVersion) {
         this.repository = repository;
+        this.policyVersion = policyVersion;
     }
 
     public record RuleInput(String actionClass, String resource, String effect, Integer priority, Boolean locked) {}
@@ -54,6 +57,7 @@ public class PolicyRuleService {
     @Transactional(readOnly = true)
     public List<RuleView> list(String layer, String userId, String workspaceId, boolean admin) {
         String owner = ownerFor(layer, userId, workspaceId, admin, false);
+        requireInstanceAdmin(layer, admin);
         List<PolicyRuleEntity> rules = owner == null
                 ? repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc(layer)
                 : repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(layer, owner);
@@ -73,6 +77,7 @@ public class PolicyRuleService {
     @Transactional
     public RuleView create(String layer, String userId, String workspaceId, boolean admin, RuleInput input) {
         String owner = ownerFor(layer, userId, workspaceId, admin, true);
+        requireWorkspaceAdmin(layer);
         String actionClass = requireText(input.actionClass(), "actionClass", MAX_ACTION_CLASS);
         String resource = requireText(input.resource(), "resource", MAX_RESOURCE);
         String effect = input.effect() == null ? "" : input.effect().toLowerCase();
@@ -93,6 +98,7 @@ public class PolicyRuleService {
         PolicyRuleEntity entity = new PolicyRuleEntity(UUID.randomUUID(), layer, owner, actionClass,
                 resource, effect, priority, locked, userId == null ? "system" : userId);
         repository.save(entity);
+        policyVersion.bump();
         return new RuleView(entity.getId(), layer, owner, actionClass, resource, effect, priority, locked,
                 true, conflictOf(layer, owner, entity));
     }
@@ -100,6 +106,8 @@ public class PolicyRuleService {
     @Transactional
     public void delete(UUID id, String layer, String userId, String workspaceId, boolean admin) {
         String owner = ownerFor(layer, userId, workspaceId, admin, false);
+        requireInstanceAdmin(layer, admin);
+        requireWorkspaceAdmin(layer);
         PolicyRuleEntity entity = repository.findById(id)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Rule not found"));
         boolean sameScope = layer.equals(entity.getLayer())
@@ -108,6 +116,7 @@ public class PolicyRuleService {
             throw new CpApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Rule not found");
         }
         repository.delete(entity);
+        policyVersion.bump();
     }
 
     /** Per-domain view: which layer is effective and how many rules each layer holds. */
@@ -214,37 +223,36 @@ public class PolicyRuleService {
     }
 
     /**
-     * True when {@code denyResource} covers the region of {@code allowResource} at least as
-     * specifically — i.e. the ALLOW can never win for the requests the DENY matches.
+     * True when {@code denyResource} fully covers {@code allowResource} — every request the ALLOW
+     * matches is also matched by the DENY, so the ALLOW can never win.
      */
     private static boolean shadows(String denyResource, String allowResource) {
         if (denyResource.equals(allowResource)) {
             return true;
         }
-        if (!allowResource.contains("*")) {
-            // an exact ALLOW can only be killed by an identical DENY
-            return false;
-        }
-        if (specificity(denyResource) < specificity(allowResource)) {
-            // a broader DENY does not shadow a more specific ALLOW
-            return false;
-        }
-        String sample = denyResource.replace("*", "");
+        String sample = allowResource.replace("*", "");
         if (sample.isEmpty()) {
             return false;
         }
-        return LayeredPolicyResolver.matches(allowResource, sample, ToolShape.INTERPRETER)
-                || LayeredPolicyResolver.matches(allowResource, sample, ToolShape.STRUCTURED);
+        return LayeredPolicyResolver.matches(denyResource, sample, ToolShape.STRUCTURED)
+                || LayeredPolicyResolver.matches(denyResource, sample, ToolShape.INTERPRETER);
     }
 
-    private static int specificity(String resource) {
-        if (!resource.contains("*")) {
-            return 2;
+    private static void requireInstanceAdmin(String layer, boolean admin) {
+        if (LAYER_INSTANCE.equals(layer) && !admin) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "instance-layer rules require ADMIN");
         }
-        if (resource.endsWith("*") && resource.indexOf('*') == resource.length() - 1) {
-            return 1;
+    }
+
+    private static void requireWorkspaceAdmin(String layer) {
+        if (!LAYER_WORKSPACE.equals(layer)) {
+            return;
         }
-        return 0;
+        String role = TenantContext.getWorkspaceRole();
+        if (!("OWNER".equals(role) || "ADMIN".equals(role) || "ADMIN".equals(TenantContext.getUserRole()))) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "workspace-layer rules require workspace OWNER or ADMIN");
+        }
     }
 
     private static String requireText(String value, String field, int max) {

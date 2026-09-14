@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -16,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,12 +34,14 @@ public class PolicyController {
     private final PolicyRuleService ruleService;
     private final ToolFaceService faceService;
     private final SessionPolicyState sessionState;
+    private final SessionService sessionService;
 
     public PolicyController(PolicyRuleService ruleService, ToolFaceService faceService,
-                            SessionPolicyState sessionState) {
+                            SessionPolicyState sessionState, SessionService sessionService) {
         this.ruleService = ruleService;
         this.faceService = faceService;
         this.sessionState = sessionState;
+        this.sessionService = sessionService;
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
@@ -137,9 +139,16 @@ public class PolicyController {
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @GetMapping("/mode")
     public ResponseEntity<?> getMode(@RequestParam String sessionId) {
-        if (TenantContext.getUserId() == null) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "User context is required");
+                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        try {
+            sessionService.requireCurrent(sessionId, userId, workspaceId);
+        } catch (CpApiException e) {
+            return problem(e);
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("sessionId", sessionId);
@@ -160,6 +169,17 @@ public class PolicyController {
         if (sessionId == null || mode == null) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "sessionId and mode are required");
+        }
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+        }
+        try {
+            sessionService.requireCurrent(sessionId, userId, workspaceId);
+        } catch (CpApiException e) {
+            return problem(e);
         }
         try {
             sessionState.setMode(sessionId, mode);
@@ -195,10 +215,5 @@ public class PolicyController {
     private static Boolean asBoolean(Map<String, Object> body, String key) {
         Object value = body == null ? null : body.get(key);
         return value instanceof Boolean bool ? bool : null;
-    }
-
-    /** Static conflict listing helper for tests and future UI wiring. */
-    static List<String> conflictMessages(List<PolicyRuleService.RuleView> rules) {
-        return rules.stream().map(PolicyRuleService.RuleView::conflict).filter(java.util.Objects::nonNull).toList();
     }
 }

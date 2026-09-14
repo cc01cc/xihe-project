@@ -27,8 +27,4 @@ public record PolicyRequest(
         resources = List.copyOf(resources == null ? List.of("*") : resources);
         shape = shape == null ? ToolShape.OPAQUE : shape;
     }
-
-    public static PolicyRequest of(String tool, String actionClass) {
-        return new PolicyRequest(tool, List.of(actionClass), List.of("*"), ToolShape.OPAQUE, null, null, null);
-    }
 }

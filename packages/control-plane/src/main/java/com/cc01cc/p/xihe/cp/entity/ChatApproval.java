@@ -83,6 +83,10 @@ public class ChatApproval {
     @Column(name = "arguments_hash", length = 96)
     private String argumentsHash;
 
+    /** Wire name of the terminal decision (V16); null for rows decided before the column existed. */
+    @Column(name = "decision_kind", length = 32)
+    private String decisionKind;
+
     public ChatApproval() {}
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
@@ -141,12 +145,14 @@ public class ChatApproval {
 
     public void setState(String state) { this.state = state; }
     public void setApproved(Boolean approved) { this.approved = approved; }
+    public void setDecisionKind(String decisionKind) { this.decisionKind = decisionKind; }
     public void setDecidedAt(Instant decidedAt) { this.decidedAt = decidedAt; }
     public void setDispatchErrorCode(String dispatchErrorCode) { this.dispatchErrorCode = dispatchErrorCode; }
     public String getSnapshotId() { return snapshotId; }
     public String getPolicyClass() { return policyClass; }
     public Instant getGrantConsumedAt() { return grantConsumedAt; }
     public String getArgumentsHash() { return argumentsHash; }
+    public String getDecisionKind() { return decisionKind; }
     public void setSnapshotId(String snapshotId) { this.snapshotId = snapshotId; }
     public void setPolicyClass(String policyClass) { this.policyClass = policyClass; }
     public void setGrantConsumedAt(Instant grantConsumedAt) { this.grantConsumedAt = grantConsumedAt; }

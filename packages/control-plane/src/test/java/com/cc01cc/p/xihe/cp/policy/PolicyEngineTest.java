@@ -13,59 +13,59 @@ class PolicyEngineTest {
 
     @Test
     void autoAllow_readFile_returnsAllow() {
-        PolicyEngine.PolicyDecision decision = createEngine().evaluate("read_file", "{}", "s1");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.ALLOW, decision.getResult());
+        PolicyVerdict verdict = createEngine().evaluateVerdict("read_file", "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.ALLOW, verdict.effect());
     }
 
     @Test
     void autoAllow_listDirectory_returnsAllow() {
-        PolicyEngine.PolicyDecision decision = createEngine().evaluate("list_directory", "{}", "s1");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.ALLOW, decision.getResult());
+        PolicyVerdict verdict = createEngine().evaluateVerdict("list_directory", "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.ALLOW, verdict.effect());
     }
 
     @Test
     void requireApproval_writeFile_returnsApproval() {
-        PolicyEngine.PolicyDecision decision = createEngine().evaluate("write_file", "{}", "s1");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL, decision.getResult());
-        assertTrue(decision.getReason().contains("write_file"));
+        PolicyVerdict verdict = createEngine().evaluateVerdict("write_file", "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.ASK, verdict.effect());
+        assertTrue(verdict.reason().contains("write"));
     }
 
     @Test
     void requireApproval_executeCommand_returnsApproval() {
-        PolicyEngine.PolicyDecision decision = createEngine().evaluate("execute_command", "{}", "s1");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL, decision.getResult());
+        PolicyVerdict verdict = createEngine().evaluateVerdict("execute_command", "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.ASK, verdict.effect());
     }
 
     @Test
     void requireApproval_applyPatch_returnsApproval() {
-        PolicyEngine.PolicyDecision decision = createEngine().evaluate("apply_patch", "{}", "s1");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL, decision.getResult());
+        PolicyVerdict verdict = createEngine().evaluateVerdict("apply_patch", "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.ASK, verdict.effect());
     }
 
     @Test
     void deny_unknownTool_returnsDeny() {
-        PolicyEngine.PolicyDecision decision = createEngine().evaluate("unknown_tool", "{}", "s1");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.DENY, decision.getResult());
-        assertTrue(decision.getReason().contains("unknown"));
+        PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.DENY, verdict.effect());
+        assertTrue(verdict.reason().contains("unknown"));
     }
 
     @Test
     void deny_emptyTool_returnsDeny() {
-        PolicyEngine.PolicyDecision decision = createEngine().evaluate("", "{}", "s1");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.DENY, decision.getResult());
+        PolicyVerdict verdict = createEngine().evaluateVerdict("", "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.DENY, verdict.effect());
     }
 
     @Test
     void deny_nullTool_returnsDeny() {
-        PolicyEngine.PolicyDecision decision = createEngine().evaluate(null, "{}", "s1");
-        assertEquals(PolicyEngine.PolicyDecision.PolicyResult.DENY, decision.getResult());
+        PolicyVerdict verdict = createEngine().evaluateVerdict(null, "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.DENY, verdict.effect());
     }
 
     @Test
-    void evaluate_recordsAuditLog() {
+    void evaluateVerdict_recordsAuditLog() {
         AuditLogger audit = mock(AuditLogger.class);
         PolicyEngine engine = new PolicyEngine(audit, new BuiltinPolicyContextProvider());
-        engine.evaluate("read_file", "{}", "session-1");
+        engine.evaluateVerdict("read_file", "{}", "session-1", null, null, null);
         verify(audit).record("session-1", "read_file", "policy_check", "auto_allow");
     }
 }

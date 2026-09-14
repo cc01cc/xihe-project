@@ -171,6 +171,36 @@ class LayeredPolicyResolverTest {
     }
 
     @Test
+    void planModeDeniesMutatingDomains() {
+        var allowAll = List.of(layer(PolicyLayer.SESSION,
+                PolicyRule.of("*", "*", PolicyEffect.ALLOW)));
+
+        PolicyVerdict write = resolver.resolve(multiDomain(List.of("write"), List.of("src/a.ts")),
+                allowAll, LayeredPolicyResolver.MODE_PLAN, PolicyLayer.SESSION);
+        assertEquals(PolicyEffect.DENY, write.effect());
+        assertEquals("plan mode denies mutations", write.reason());
+        assertEquals(PolicyLayer.SESSION, write.sourceLayer());
+        assertEquals(LayeredPolicyResolver.MODE_PLAN, write.mode());
+
+        assertEquals(PolicyEffect.DENY, resolver.resolve(request("exec", "pnpm test"),
+                allowAll, LayeredPolicyResolver.MODE_PLAN, PolicyLayer.SESSION).effect());
+        assertEquals(PolicyEffect.DENY, resolver.resolve(
+                multiDomain(List.of("delete"), List.of("src/a.ts")),
+                allowAll, LayeredPolicyResolver.MODE_PLAN, PolicyLayer.SESSION).effect());
+    }
+
+    @Test
+    void planModeKeepsReadDomainEvaluation() {
+        var layers = List.of(layer(PolicyLayer.WORKSPACE, PolicyRule.of("read", "*", PolicyEffect.ALLOW)));
+
+        PolicyVerdict verdict = resolver.resolve(request("read", "src/a.ts"), layers,
+                LayeredPolicyResolver.MODE_PLAN, PolicyLayer.SESSION);
+
+        assertEquals(PolicyEffect.ALLOW, verdict.effect());
+        assertEquals(PolicyLayer.WORKSPACE, verdict.sourceLayer());
+    }
+
+    @Test
     void wildcardMatchingSupportsPrefixAndGlob() {
         // 解释器型（命令串）：* 可跨 / 与空格
         assertTrue(LayeredPolicyResolver.matches("git push *", "git push origin main", ToolShape.INTERPRETER));

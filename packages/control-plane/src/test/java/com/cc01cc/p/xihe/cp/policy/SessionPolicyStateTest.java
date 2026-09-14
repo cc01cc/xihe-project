@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 /** PLAN-0328 M1: session mode + session-only rules (L4) never leak into other scopes. */
@@ -53,5 +54,23 @@ class SessionPolicyStateTest {
 
         assertTrue(state.modeOf("s1").isEmpty());
         assertTrue(state.rulesOf("s1").isEmpty());
+    }
+
+    @Test
+    void opportunisticSweepDropsExpiredEntriesButKeepsLiveOnes() throws InterruptedException {
+        SessionPolicyState shortLived = new SessionPolicyState(Duration.ofMillis(500));
+        for (int i = 0; i < 5; i++) {
+            shortLived.addRule("stale-" + i, PolicyRule.of("exec", "*", PolicyEffect.ALLOW));
+        }
+        Thread.sleep(600);
+        shortLived.addRule("live", PolicyRule.of("exec", "*", PolicyEffect.ALLOW));
+
+        for (int i = 0; i < 64; i++) {
+            shortLived.rulesOf("live");
+        }
+
+        assertEquals(1, shortLived.size(), "only the live entry may remain after the sweep");
+        assertTrue(shortLived.rulesOf("stale-0").isEmpty());
+        assertEquals(1, shortLived.rulesOf("live").size());
     }
 }

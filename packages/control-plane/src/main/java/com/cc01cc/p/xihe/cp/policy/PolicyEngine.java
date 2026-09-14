@@ -123,20 +123,6 @@ public class PolicyEngine {
         return rules;
     }
 
-    public PolicyDecision evaluate(String toolName, String body, String sessionId) {
-        PolicyVerdict verdict = evaluateVerdict(toolName, body, sessionId, LayeredPolicyResolver.MODE_DEFAULT);
-        return switch (verdict.effect()) {
-            case ALLOW -> PolicyDecision.allow();
-            case DENY -> PolicyDecision.deny(verdict.reason());
-            case ASK -> PolicyDecision.requireApproval("mutation tool requires approval: " + toolName);
-        };
-    }
-
-    /** Evaluation without caller identity (built-in layer plus instance-level rules only). */
-    public PolicyVerdict evaluateVerdict(String toolName, String body, String sessionId, String mode) {
-        return evaluateVerdict(toolName, body, sessionId, mode, null, null);
-    }
-
     /**
      * Action class of one tool as resolved by the registry (built-ins + persisted faces), used by
      * the approval-grant path (PLAN-0328 M1 batch 4b) so grants cannot invent their own class.
@@ -156,12 +142,31 @@ public class PolicyEngine {
      */
     public PolicyVerdict evaluateVerdict(String toolName, String body, String sessionId, String mode,
                                          String userId, String workspaceId) {
+        return evaluateVerdict(contextProvider.load(userId, workspaceId, sessionId),
+                toolName, body, sessionId, mode, userId, workspaceId);
+    }
+
+    /**
+     * Evaluation against an already-loaded context (PLAN-0328 M1 propagation): callers that resolve
+     * many requests in one batch load the context once instead of once per request.
+     */
+    public PolicyVerdict evaluateVerdict(PolicyContext context, String toolName, String body,
+                                         String sessionId, String mode) {
+        return evaluateVerdict(context, toolName, body, sessionId, mode, null, null);
+    }
+
+    /** Loads the policy context for one identity; callers may reuse it for a batch of verdicts. */
+    public PolicyContext loadContext(String userId, String workspaceId, String sessionId) {
+        return contextProvider.load(userId, workspaceId, sessionId);
+    }
+
+    private PolicyVerdict evaluateVerdict(PolicyContext context, String toolName, String body,
+                                          String sessionId, String mode, String userId, String workspaceId) {
         if (toolName == null || toolName.isBlank()) {
             audit.record(sessionId, toolName, "policy_check", "deny_empty_tool");
             return PolicyVerdict.of(PolicyEffect.DENY, null, PolicyLayer.BUILTIN, mode, "tool name is required");
         }
 
-        PolicyContext context = contextProvider.load(userId, workspaceId, sessionId);
         ToolFaceRegistry registry = context.extraFaces().isEmpty()
                 ? builtinRegistry
                 : new ToolFaceRegistry(context.extraFaces());
@@ -173,8 +178,8 @@ public class PolicyEngine {
         }
 
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
-        PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()), List.of("*"),
-                face.shape(), userId, workspaceId, sessionId);
+        PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
+                PolicyResourceExtractor.extract(body), face.shape(), userId, workspaceId, sessionId);
 
         var hardDeny = hardGuard.check(request);
         if (hardDeny.isPresent()) {
@@ -207,10 +212,5 @@ public class PolicyEngine {
         List<LayeredPolicyResolver.LayerInput> all = new ArrayList<>(builtinLayers);
         all.addAll(persisted);
         return all;
-    }
-
-    /** The built-in layer input, exposed for tests that need to compose extra layers. */
-    List<LayeredPolicyResolver.LayerInput> builtinLayers() {
-        return builtinLayers;
     }
 }

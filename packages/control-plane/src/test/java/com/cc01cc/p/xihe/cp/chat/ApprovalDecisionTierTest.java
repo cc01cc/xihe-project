@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
+import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
@@ -11,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -21,9 +23,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -64,7 +68,7 @@ class ApprovalDecisionTierTest {
     private void claimPrimary() {
         when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), anyBoolean(), any(Instant.class)))
                 .thenReturn(1);
-        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(Instant.class)))
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(), any(Instant.class)))
                 .thenReturn(1);
     }
 
@@ -130,19 +134,86 @@ class ApprovalDecisionTierTest {
                 .thenReturn(List.of(
                         pendingRow(releasedId, "write_file", Instant.now().plusSeconds(60)),
                         pendingRow(keptId, "execute_command", Instant.now().plusSeconds(60))));
-        when(grantWriter.wouldAllow("write_file", TEST_SESSION, TEST_USER, TEST_WORKSPACE)).thenReturn(true);
-        when(grantWriter.wouldAllow("execute_command", TEST_SESSION, TEST_USER, TEST_WORKSPACE)).thenReturn(false);
+        PolicyContext context = PolicyContext.EMPTY;
+        when(grantWriter.loadContext(TEST_USER, TEST_WORKSPACE, TEST_SESSION)).thenReturn(context);
+        when(grantWriter.wouldAllow("write_file", context, TEST_SESSION)).thenReturn(true);
+        when(grantWriter.wouldAllow("execute_command", context, TEST_SESSION)).thenReturn(false);
         when(approvals.markDispatching(eq(UUID.fromString(releasedId)), eq(true), any(Instant.class))).thenReturn(1);
-        when(approvals.markDecided(eq(UUID.fromString(releasedId)), eq("approved"), any(Instant.class))).thenReturn(1);
+        when(approvals.markDecided(eq(UUID.fromString(releasedId)), eq("approved"), any(), any(Instant.class)))
+                .thenReturn(1);
 
         Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
                 ApprovalDecision.of(ApprovalDecision.Kind.SESSION, null, null, null, null));
 
         assertEquals(1, response.get("propagated"));
+        verify(grantWriter).loadContext(TEST_USER, TEST_WORKSPACE, TEST_SESSION);
+        verify(grantWriter).wouldAllow("write_file", context, TEST_SESSION);
+        verify(grantWriter).wouldAllow("execute_command", context, TEST_SESSION);
         verify(agent).respond(releasedId, true, "propagated_allow", null);
         verify(operationService).resolveApprovalItem(releasedId, true);
         verify(approvals, never()).markDispatching(eq(UUID.fromString(keptId)), anyBoolean(), any(Instant.class));
         verify(agent, never()).respond(eq(keptId), anyBoolean(), any(), any());
+    }
+
+    @Test
+    void propagationEvaluatesEveryRowAgainstOneLoadedContext() {
+        String firstId = "61111111-1111-1111-1111-111111111111";
+        String secondId = "62222222-2222-2222-2222-222222222222";
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID)))
+                .thenReturn(Optional.of(pendingRow(TEST_REQUEST_ID, "write_file", Instant.now().plusSeconds(60))));
+        claimPrimary();
+        when(grantWriter.prepare(any(), any(), any(), any())).thenReturn(SESSION_PLAN);
+        when(agent.respond(TEST_REQUEST_ID, true, "session", null)).thenReturn(Map.of("status", "accepted"));
+        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending")))
+                .thenReturn(List.of(
+                        pendingRow(firstId, "write_file", Instant.now().plusSeconds(60)),
+                        pendingRow(secondId, "write_file", Instant.now().plusSeconds(60))));
+        PolicyContext context = PolicyContext.EMPTY;
+        when(grantWriter.loadContext(TEST_USER, TEST_WORKSPACE, TEST_SESSION)).thenReturn(context);
+        when(grantWriter.wouldAllow("write_file", context, TEST_SESSION)).thenReturn(true);
+        when(approvals.markDispatching(eq(UUID.fromString(firstId)), eq(true), any(Instant.class))).thenReturn(1);
+        when(approvals.markDispatching(eq(UUID.fromString(secondId)), eq(true), any(Instant.class))).thenReturn(1);
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.of(ApprovalDecision.Kind.SESSION, null, null, null, null));
+
+        assertEquals(2, response.get("propagated"));
+        verify(grantWriter, times(1)).loadContext(TEST_USER, TEST_WORKSPACE, TEST_SESSION);
+        verify(grantWriter, times(2)).wouldAllow("write_file", context, TEST_SESSION);
+    }
+
+    @Test
+    void propagationStopsAtTwentyAttemptsAndSkipsTheRest() {
+        int rowCount = 25;
+        List<ChatApproval> rows = new ArrayList<>();
+        List<String> rowIds = new ArrayList<>();
+        for (int i = 0; i < rowCount; i++) {
+            String rowId = String.format("70000000-0000-0000-0000-%012d", i);
+            rowIds.add(rowId);
+            rows.add(pendingRow(rowId, "write_file", Instant.now().plusSeconds(60)));
+        }
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID)))
+                .thenReturn(Optional.of(pendingRow(TEST_REQUEST_ID, "write_file", Instant.now().plusSeconds(60))));
+        claimPrimary();
+        when(grantWriter.prepare(any(), any(), any(), any())).thenReturn(SESSION_PLAN);
+        when(agent.respond(TEST_REQUEST_ID, true, "session", null)).thenReturn(Map.of("status", "accepted"));
+        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending"))).thenReturn(rows);
+        PolicyContext context = PolicyContext.EMPTY;
+        when(grantWriter.loadContext(TEST_USER, TEST_WORKSPACE, TEST_SESSION)).thenReturn(context);
+        when(grantWriter.wouldAllow(anyString(), eq(context), anyString())).thenReturn(true);
+        when(approvals.markDispatching(any(), anyBoolean(), any(Instant.class))).thenReturn(1);
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.of(ApprovalDecision.Kind.SESSION, null, null, null, null));
+
+        assertEquals(20, response.get("propagated"));
+        verify(agent, times(20)).respond(anyString(), eq(true), eq("propagated_allow"), any());
+        verify(agent, never()).respond(eq(rowIds.get(20)), anyBoolean(), any(), any());
+        verify(agent, never()).respond(eq(rowIds.get(24)), anyBoolean(), any(), any());
+        verify(approvals, never()).markDispatching(eq(UUID.fromString(rowIds.get(20))), anyBoolean(), any(Instant.class));
+        verify(grantWriter, times(1)).loadContext(TEST_USER, TEST_WORKSPACE, TEST_SESSION);
     }
 
     @Test
@@ -173,7 +244,7 @@ class ApprovalDecisionTierTest {
                 TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending")))
                 .thenReturn(List.of(pendingRow(otherId, "execute_command", Instant.now().plusSeconds(60))));
         when(approvals.markDispatching(eq(UUID.fromString(otherId)), eq(false), any(Instant.class))).thenReturn(1);
-        when(approvals.markDecided(eq(UUID.fromString(otherId)), eq("rejected"), any(Instant.class))).thenReturn(1);
+        when(approvals.markDecided(eq(UUID.fromString(otherId)), eq("rejected"), any(), any(Instant.class))).thenReturn(1);
 
         Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
                 ApprovalDecision.reject("请改用追加写入"));
@@ -237,7 +308,28 @@ class ApprovalDecisionTierTest {
         verify(approvals).markDispatchUnknown(eq(UUID.fromString(TEST_REQUEST_ID)),
                 eq("POLICY_RULE_WRITE_FAILED"), any(Instant.class));
         verify(agent, never()).respond(any(), anyBoolean(), any(), any());
-        verify(approvals, never()).markDecided(any(), any(), any(Instant.class));
+        verify(approvals, never()).markDecided(any(), any(), any(), any(Instant.class));
+    }
+
+    @Test
+    void forbiddenRuleWriteRethrowsTheDomainErrorAndKeepsTheRowRetryable() {
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID)))
+                .thenReturn(Optional.of(pendingRow(TEST_REQUEST_ID, "write_file", Instant.now().plusSeconds(60))));
+        claimPrimary();
+        when(grantWriter.prepare(any(), any(), any(), any())).thenReturn(SESSION_PLAN);
+        org.mockito.Mockito.doThrow(new CpApiException(
+                        org.springframework.http.HttpStatus.FORBIDDEN, "FORBIDDEN", "workspace OWNER required"))
+                .when(grantWriter).commit(any(), any(), any(), any());
+
+        CpApiException error = assertThrows(CpApiException.class, () -> service.decide(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.of(ApprovalDecision.Kind.SESSION, null, null, null, null)));
+
+        assertEquals(403, error.getStatus().value());
+        assertEquals("FORBIDDEN", error.getCode());
+        verify(approvals).markDispatchUnknown(eq(UUID.fromString(TEST_REQUEST_ID)),
+                eq("FORBIDDEN"), any(Instant.class));
+        verify(agent, never()).respond(any(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -271,6 +363,72 @@ class ApprovalDecisionTierTest {
     }
 
     @Test
+    void terminalRepeatWithADifferentDecisionKindIsRejected() {
+        ChatApproval approvedRow = terminalRow("once", true);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approvedRow));
+
+        CpApiException error = assertThrows(CpApiException.class, () -> service.decide(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.of(ApprovalDecision.Kind.SESSION, null, null, null, null)));
+
+        assertEquals(409, error.getStatus().value());
+        assertEquals("APPROVAL_DECISION_CONFLICT", error.getCode());
+        assertTrue(error.getMessage().contains("different decision kind"), error.getMessage());
+        verifyNoInteractions(grantWriter);
+        verifyNoInteractions(agent);
+    }
+
+    @Test
+    void terminalRepeatOfAPersistentDenyIsNotSilentlyDropped() {
+        ChatApproval rejectedRow = terminalRow("reject_always", false);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(rejectedRow));
+
+        CpApiException error = assertThrows(CpApiException.class, () -> service.decide(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, ApprovalDecision.reject(null)));
+
+        assertEquals("APPROVAL_DECISION_CONFLICT", error.getCode());
+        verifyNoInteractions(grantWriter);
+    }
+
+    @Test
+    void terminalRepeatOfTheSameKindEchoesTheRecordedKind() {
+        ChatApproval rejectedRow = terminalRow("reject_always", false);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(rejectedRow));
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.of(ApprovalDecision.Kind.REJECT_ALWAYS, null, null, null, null));
+
+        assertEquals("accepted", response.get("status"));
+        assertEquals("reject_always", response.get("decision"));
+        assertEquals(false, response.get("approved"));
+        assertEquals(0, response.get("propagated"));
+        verifyNoInteractions(grantWriter);
+        verifyNoInteractions(agent);
+    }
+
+    @Test
+    void legacyTerminalRowWithoutDecisionKindStillMatchesTheBoolean() {
+        ChatApproval legacyRow = terminalRow(null, true);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(legacyRow));
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.once());
+
+        assertEquals("accepted", response.get("status"));
+        assertEquals("once", response.get("decision"));
+        verifyNoInteractions(grantWriter);
+        verifyNoInteractions(agent);
+    }
+
+    private ChatApproval terminalRow(String decisionKind, boolean approved) {
+        ChatApproval row = pendingRow(TEST_REQUEST_ID, "write_file", Instant.now().plusSeconds(60));
+        row.setState(approved ? "approved" : "rejected");
+        row.setApproved(approved);
+        row.setDecisionKind(decisionKind);
+        return row;
+    }
+
+    @Test
     void pendingSummariesGroupLiveRowsBySessionWithOldestFirst() {
         Instant older = Instant.now().minusSeconds(120);
         Instant newer = Instant.now().minusSeconds(60);
@@ -286,8 +444,9 @@ class ApprovalDecisionTierTest {
         when(expired.getSessionId()).thenReturn("session-b");
         when(expired.getExpiresAt()).thenReturn(Instant.now().minusSeconds(1));
         when(expired.getCreatedAt()).thenReturn(older);
-        when(approvals.findByUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
-                TEST_USER, TEST_WORKSPACE, List.of("pending"))).thenReturn(List.of(first, second, expired));
+        when(approvals.findByUserIdAndWorkspaceIdAndStateInAndExpiresAtAfterOrderByCreatedAtAsc(
+                eq(TEST_USER), eq(TEST_WORKSPACE), eq(List.of("pending")), any(Instant.class)))
+                .thenReturn(List.of(first, second, expired));
 
         List<Map<String, Object>> summaries = service.pendingSummaries(TEST_USER, TEST_WORKSPACE);
 

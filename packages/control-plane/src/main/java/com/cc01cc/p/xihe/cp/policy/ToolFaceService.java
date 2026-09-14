@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ToolFaceEntity;
 import com.cc01cc.p.xihe.cp.repository.ToolFaceRepository;
 import org.springframework.http.HttpStatus;
@@ -22,13 +23,16 @@ public class ToolFaceService {
     public static final String SCOPE_WORKSPACE = "workspace";
     private static final Set<String> SCOPES = Set.of(SCOPE_INSTANCE, SCOPE_WORKSPACE);
     private static final Set<String> SHAPES = Set.of("structured", "interpreter", "opaque");
+    private static final ToolFaceRegistry BUILTIN_REGISTRY = new ToolFaceRegistry();
     private static final int MAX_TOOL = 128;
     private static final int MAX_ACTION_CLASS = 64;
 
     private final ToolFaceRepository repository;
+    private final PolicyVersion policyVersion;
 
-    public ToolFaceService(ToolFaceRepository repository) {
+    public ToolFaceService(ToolFaceRepository repository, PolicyVersion policyVersion) {
         this.repository = repository;
+        this.policyVersion = policyVersion;
     }
 
     public record FaceInput(String tool, String actionClass, String shape) {}
@@ -57,6 +61,11 @@ public class ToolFaceService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "shape must be one of structured/interpreter/opaque");
         }
+        if (SCOPE_WORKSPACE.equals(scope) && BUILTIN_REGISTRY.configuredFace(tool).isPresent()) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "built-in tool classification cannot be overridden at workspace scope; "
+                            + "instance ADMIN may override");
+        }
         List<ToolFaceEntity> existing = owner == null
                 ? repository.findByScopeAndOwnerIdIsNullOrderByCreatedAtAscIdAsc(scope)
                 : repository.findByScopeAndOwnerIdOrderByCreatedAtAscIdAsc(scope, owner);
@@ -68,6 +77,7 @@ public class ToolFaceService {
         entity.setActionClass(actionClass);
         entity.setShape(shape);
         repository.save(entity);
+        policyVersion.bump();
         return new FaceView(entity.getId(), scope, owner, tool, actionClass, shape);
     }
 
@@ -98,6 +108,15 @@ public class ToolFaceService {
             throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
                     "Workspace context is required");
         }
+        if (requireOwner && !workspaceManager()) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "workspace-scope faces require workspace OWNER or ADMIN");
+        }
         return workspaceId;
+    }
+
+    private static boolean workspaceManager() {
+        String role = TenantContext.getWorkspaceRole();
+        return "OWNER".equals(role) || "ADMIN".equals(role) || "ADMIN".equals(TenantContext.getUserRole());
     }
 }

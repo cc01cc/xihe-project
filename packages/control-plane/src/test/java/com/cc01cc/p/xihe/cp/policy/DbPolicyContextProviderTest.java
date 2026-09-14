@@ -1,13 +1,15 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
 import com.cc01cc.p.xihe.cp.entity.ToolFaceEntity;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
@@ -22,8 +24,9 @@ class DbPolicyContextProviderTest {
     private final PolicyRuleRepository ruleRepository = mock(PolicyRuleRepository.class);
     private final ToolFaceRepository faceRepository = mock(ToolFaceRepository.class);
     private final SessionPolicyState sessionState = new SessionPolicyState();
+    private final PolicyVersion policyVersion = new PolicyVersion();
     private final DbPolicyContextProvider provider =
-            new DbPolicyContextProvider(ruleRepository, faceRepository, sessionState);
+            new DbPolicyContextProvider(ruleRepository, faceRepository, sessionState, policyVersion);
 
     private static PolicyRuleEntity rule(String layer, String owner, String actionClass, String resource,
                                          String effect, boolean locked) {
@@ -83,15 +86,59 @@ class DbPolicyContextProviderTest {
     }
 
     @Test
-    void loadFailureFailsClosedToEmptyContext() {
+    void loadFailureFailsClosedToForcedAsk() {
         when(ruleRepository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance"))
                 .thenThrow(new IllegalStateException("db down"));
 
         PolicyContext context = provider.load("u1", "ws1", "s1");
 
-        assertTrue(context.layers().isEmpty());
+        assertEquals(1, context.layers().size());
+        LayeredPolicyResolver.LayerInput forced = context.layers().get(0);
+        assertEquals(PolicyLayer.INSTANCE, forced.layer());
+        assertEquals(1, forced.rules().size());
+        assertEquals(PolicyEffect.ASK, forced.rules().get(0).effect());
+        assertEquals("*", forced.rules().get(0).actionClass());
         assertTrue(context.extraFaces().isEmpty());
-        assertFalse(false, "fail-closed must never relax decisions");
+    }
+
+    @Test
+    void failedClosedContextAsksForNormallyAllowedReadTool() {
+        when(ruleRepository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance"))
+                .thenThrow(new IllegalStateException("db down"));
+        PolicyEngine engine = new PolicyEngine(mock(AuditLogger.class), provider);
+
+        PolicyVerdict verdict = engine.evaluateVerdict("read_file", "{}", "s1", null, "u1", "ws1");
+
+        assertEquals(PolicyEffect.ASK, verdict.effect());
+        assertEquals(PolicyLayer.INSTANCE, verdict.sourceLayer());
+    }
+
+    @Test
+    void reusesDbSnapshotUntilVersionBumps() {
+        provider.load("u1", "ws1", "s1");
+        provider.load("u1", "ws1", "s1");
+
+        verify(ruleRepository, times(1)).findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance");
+        verify(ruleRepository, times(1)).findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("user", "u1");
+        verify(ruleRepository, times(1)).findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1");
+        verify(faceRepository, times(1)).findByScopeAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance");
+
+        policyVersion.bump();
+        provider.load("u1", "ws1", "s1");
+
+        verify(ruleRepository, times(2)).findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance");
+        verify(faceRepository, times(2)).findByScopeAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance");
+    }
+
+    @Test
+    void sessionRulesAreAlwaysReadFreshFromSessionState() {
+        PolicyContext first = provider.load("u1", "ws1", "s1");
+        sessionState.addRule("s1", PolicyRule.of("exec", "pnpm test *", PolicyEffect.ALLOW));
+        PolicyContext second = provider.load("u1", "ws1", "s1");
+
+        assertTrue(first.layers().stream().noneMatch(layer -> layer.layer() == PolicyLayer.SESSION));
+        assertEquals(1, second.layers().stream().filter(layer -> layer.layer() == PolicyLayer.SESSION).count());
+        verify(ruleRepository, times(1)).findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance");
     }
 
     @Test

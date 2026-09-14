@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 19
 status: active
 created: 2026-09-07
-updated: 2026-09-12
+updated: 2026-09-15
 description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V14 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
@@ -679,6 +679,10 @@ erDiagram
 | 看轮次 | `SELECT id, session_id, status, terminal_outcome, error_code FROM chat_runs ORDER BY created_at DESC LIMIT 20;` |
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
+
+> **V15 回滚（`policy_rules` / `tool_faces`）**：迁移源 `V15__policy_rules_and_tool_faces.sql`，两表为新增、无数据迁移。
+> 回滚步骤：`DROP TABLE tool_faces, policy_rules;` **并**清除 Flyway 历史行（`DELETE FROM flyway_schema_history WHERE version = '15';` 或 `flyway repair`）。
+> 注意：只 DROP 表会残留历史行，旧 CP 构建启动即报 `Detected applied migration not resolved locally`；完成上述清理前，旧版本 CP 无法启动。
 
 ## 附录 A：表—Entity—迁移三向对照
 

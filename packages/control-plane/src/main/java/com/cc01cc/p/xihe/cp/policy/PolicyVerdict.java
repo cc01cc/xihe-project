@@ -23,8 +23,4 @@ public record PolicyVerdict(
     public PolicyVerdict allowedByMode(String bypassOrigin) {
         return new PolicyVerdict(PolicyEffect.ALLOW, matchedRule, sourceLayer, mode, reason, bypassOrigin);
     }
-
-    public boolean denied() {
-        return effect == PolicyEffect.DENY;
-    }
 }
