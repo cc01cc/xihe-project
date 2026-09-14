@@ -17,8 +17,14 @@ def render_sse(event: str, data: dict[str, Any]) -> str:
 class LangGraphEventAdapter(EventAdapter):
     """Translates LangGraph `astream_events` payloads into `AgentEvent`."""
 
-    def __init__(self) -> None:
+    def __init__(self, local_tool_names: set[str] | None = None) -> None:
         self._streamed_runs: set[str] = set()
+        # PLAN-0326 决策 #9：通道事实判别——工具事件带 origin，CP 中继按通道归属
+        # 记账（Agent 侧事实 vs 网关派发事实）。非本地工具名一律视为 mcp 路由。
+        self._local_tool_names = {n for n in (local_tool_names or set()) if n}
+
+    def _origin(self, tool_name: str) -> str:
+        return "local" if tool_name in self._local_tool_names else "mcp"
 
     def translate(self, raw_event: dict[str, Any]) -> AgentEvent | list[AgentEvent] | None:
         event_type = raw_event.get("event", "")
@@ -100,10 +106,15 @@ class LangGraphEventAdapter(EventAdapter):
                     "type": "tool_call",
                     "run_id": run_id,
                     "toolCallId": tool_call_id,
+                    "origin": self._origin(name),
                 },
             )
 
         if event_type == "on_tool_end":
+            if name == "request_approval":
+                # PLAN-0326：审批原语的 tool_result 由审批项承载（spec §0.6/§1.2
+                # 排除清单），抑制孤儿事件，避免 CP 中继 unmatched 噪声。
+                return None
             tool_output = data.get("output")
             if isinstance(tool_output, ToolMessage):
                 formatted = tool_output.content
@@ -119,6 +130,7 @@ class LangGraphEventAdapter(EventAdapter):
                     "type": "tool_result",
                     "run_id": run_id,
                     "toolCallId": tool_call_id,
+                    "origin": self._origin(name),
                 },
             )
 

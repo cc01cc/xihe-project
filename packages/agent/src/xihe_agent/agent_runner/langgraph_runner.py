@@ -215,7 +215,11 @@ class LangGraphRunner(AgentRunner):
     ):
         self._model_factory = model_factory
         self._event_store = event_store
-        self._event_adapter = event_adapter or LangGraphEventAdapter()
+        # PLAN-0326 决策 #9：本地（非网关路由）工具名集合——事件 origin 判别的依据。
+        # approval 是控制流原语（事件被抑制），generate_image 是本地执行工具。
+        self._event_adapter = event_adapter or LangGraphEventAdapter(
+            local_tool_names={"request_approval", "generate_image"}
+        )
 
     async def stream(
         self,
