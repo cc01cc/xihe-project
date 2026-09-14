@@ -8,7 +8,7 @@ import static org.mockito.Mockito.*;
 class PolicyEngineTest {
 
     private PolicyEngine createEngine() {
-        return new PolicyEngine(mock(AuditLogger.class));
+        return new PolicyEngine(mock(AuditLogger.class), new BuiltinPolicyContextProvider());
     }
 
     @Test
@@ -64,7 +64,7 @@ class PolicyEngineTest {
     @Test
     void evaluate_recordsAuditLog() {
         AuditLogger audit = mock(AuditLogger.class);
-        PolicyEngine engine = new PolicyEngine(audit);
+        PolicyEngine engine = new PolicyEngine(audit, new BuiltinPolicyContextProvider());
         engine.evaluate("read_file", "{}", "session-1");
         verify(audit).record("session-1", "read_file", "policy_check", "auto_allow");
     }

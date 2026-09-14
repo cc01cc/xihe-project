@@ -7,7 +7,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
+import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
+import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
+import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
@@ -75,8 +78,8 @@ class McpProxyTest {
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
-        when(policyEngine.evaluate(anyString(), anyString(), anyString()))
-                .thenReturn(PolicyEngine.PolicyDecision.allow());
+        when(policyEngine.evaluateVerdict(anyString(), anyString(), anyString(), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "default", "auto_allow"));
     }
 
     @Test
@@ -288,8 +291,9 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":7}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluate(eq("write_file"), eq(body), eq("sess-1")))
-                .thenReturn(PolicyEngine.PolicyDecision.requireApproval("mutation requires approval"));
+        when(policyEngine.evaluateVerdict(eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
+                        "default", "mutation requires approval"));
 
         Map<String, Map<String, String>> cache =
                 (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
@@ -324,8 +328,9 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":9}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluate(eq("write_file"), eq(body), eq("sess-1")))
-                .thenReturn(PolicyEngine.PolicyDecision.requireApproval("mutation requires approval"));
+        when(policyEngine.evaluateVerdict(eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
+                        "default", "mutation requires approval"));
 
         Map<String, Map<String, String>> cache =
                 (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
@@ -350,8 +355,9 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluate(eq("write_file"), eq(body), eq("sess-1")))
-                .thenReturn(PolicyEngine.PolicyDecision.requireApproval("mutation requires approval"));
+        when(policyEngine.evaluateVerdict(eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
+                        "default", "mutation requires approval"));
         when(approvalService.consumeApprovedGrant(
                 eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
                 .thenReturn(true);
@@ -412,8 +418,9 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluate(eq("write_file"), eq(body), eq("sess-1")))
-                .thenReturn(PolicyEngine.PolicyDecision.requireApproval("mutation requires approval"));
+        when(policyEngine.evaluateVerdict(eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
+                        "default", "mutation requires approval"));
         when(approvalService.consumeApprovedGrant(
                 eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
                 .thenReturn(true);

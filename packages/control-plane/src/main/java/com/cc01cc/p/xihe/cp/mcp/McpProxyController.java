@@ -19,7 +19,9 @@ import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
 import com.cc01cc.p.xihe.cp.entity.McpToolAlias;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
+import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
@@ -393,17 +395,20 @@ public class McpProxyController {
         // __system__ tools are auto_allow (read-only) or require_approval (mutations).
         // Unknown tools are deny (fail-closed).
         String rewritten = rewriter.rewrite(toolName, body, sessionId);
-        PolicyEngine.PolicyDecision decision = policy.evaluate(toolName, rewritten, sessionId);
+        // PLAN-0328 M1：闸门按分层 Verdict 判定（身份入参供 instance/user/workspace 层解析；
+        // mode 传 null 表示由会话态决定）。硬保护/模式/命中层已在引擎内记录审计。
+        PolicyVerdict verdict = policy.evaluateVerdict(toolName, rewritten, sessionId, null,
+                access.userId(), wsId);
         audit.record(sessionId, toolName, "request", rewritten);
 
-        if (decision.getResult() == PolicyEngine.PolicyDecision.PolicyResult.DENY) {
+        if (verdict.effect() == PolicyEffect.DENY) {
             sse.send(sessionId, "tool_exec_denied",
-                Map.of("tool", toolName, "reason", decision.getReason()));
-            audit.record(sessionId, toolName, "deny", decision.getReason());
+                Map.of("tool", toolName, "reason", verdict.reason()));
+            audit.record(sessionId, toolName, "deny", verdict.reason());
             return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
         }
 
-        if (decision.getResult() == PolicyEngine.PolicyDecision.PolicyResult.REQUIRE_APPROVAL) {
+        if (verdict.effect() == PolicyEffect.ASK) {
             String grantId = headers.getFirst("X-Xihe-Approval-Request-Id");
             if (grantId != null && approvalService.consumeApprovedGrant(
                     grantId, access.userId(), wsId, sessionId, toolName, body)) {
@@ -413,12 +418,13 @@ public class McpProxyController {
                 audit.record(sessionId, toolName, "user_direct_allow", "no agent grant required");
             } else {
                 sse.send(sessionId, "tool_exec_approval_required",
-                    Map.of("tool", toolName, "reason", decision.getReason()));
-                audit.record(sessionId, toolName, "approval_required", decision.getReason());
+                    Map.of("tool", toolName, "reason", verdict.reason()));
+                audit.record(sessionId, toolName, "approval_required", verdict.reason());
                 return problem(HttpStatus.CONFLICT, "APPROVAL_REQUIRED",
                         "Tool execution requires approval before dispatch");
             }
         }
+        // ALLOW：引擎已记 policy_check / policy_verdict；模式放行另有 policy_allowed_by_mode。
 
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
         // 且先剥离上游同名头（信任边界）。此块位于 __system__ 分支之前——系统工具同样受管。

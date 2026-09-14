@@ -1,25 +1,44 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 
 /**
  * PolicyEngine evaluates whether a tool call should be allowed.
- * Implements PLAN-275 §3.2 tool classification:
- * - auto_allow: read-only tools (no workspace mutation)
- * - require_approval: mutation tools (write/edit/delete/command)
- * - deny: unknown tools (fail-closed)
  *
- * Per-workspace policy overrides deferred to v2.
+ * <p>Since PLAN-0328 M1 the evaluation is layered ("select the layer per domain first, then
+ * evaluate"; decision #37) and always runs a code-built hard guard before any rule
+ * (decision #17 / #35). Persisted layers and tool faces come from a {@link PolicyContextProvider}
+ * so the built-in sets below remain the L0 floor.</p>
+ *
+ * <ul>
+ *   <li>{@code auto_allow}: read-only tools (no workspace mutation)</li>
+ *   <li>{@code require_approval}: mutation tools (write/edit/delete/command)</li>
+ *   <li>{@code deny}: unknown tools (fail-closed)</li>
+ * </ul>
  */
 @Component
 public class PolicyEngine {
 
     private final AuditLogger audit;
+    private final PolicyContextProvider contextProvider;
+    private final ToolFaceRegistry builtinRegistry;
+    private final HardGuard hardGuard;
+    private final LayeredPolicyResolver resolver;
+    private final List<LayeredPolicyResolver.LayerInput> builtinLayers;
 
-    public PolicyEngine(AuditLogger audit) {
+    public PolicyEngine(AuditLogger audit, PolicyContextProvider contextProvider) {
         this.audit = audit;
+        this.contextProvider = contextProvider;
+        this.builtinRegistry = new ToolFaceRegistry();
+        this.hardGuard = new HardGuard();
+        this.resolver = new LayeredPolicyResolver();
+        this.builtinLayers = List.of(new LayeredPolicyResolver.LayerInput(
+                PolicyLayer.BUILTIN, builtinRules()));
     }
 
     public static class PolicyDecision {
@@ -61,7 +80,7 @@ public class PolicyEngine {
     );
 
     // PLAN-292 M2 (T2/T4): names aligned with container_runtime implementations
-    // (create_snapshot/revert_snapshot, container_runtime.rs:277/285) and the
+    // (create_snapshot/revert_snapshot, container_runtime.rs:1379/1495) and the
     // dead write_file_binary entry removed — it is not a Gateway tool, not an
     // Agent tool, and REST binary write does not travel through MCP policy.
     // apply_patch/create_snapshot/revert_snapshot stay classified as
@@ -84,23 +103,101 @@ public class PolicyEngine {
         return REQUIRE_APPROVAL_TOOLS;
     }
 
+    /** Built-in ruleset derived from the legacy tool sets, expressed over action classes. */
+    private static List<PolicyRule> builtinRules() {
+        List<PolicyRule> rules = new ArrayList<>();
+        long seq = 0;
+        ToolFaceRegistry registry = new ToolFaceRegistry();
+        Set<String> allowClasses = AUTO_ALLOW_TOOLS.stream()
+                .map(tool -> registry.faceOf(tool).actionClass())
+                .collect(Collectors.toSet());
+        Set<String> askClasses = REQUIRE_APPROVAL_TOOLS.stream()
+                .map(tool -> registry.faceOf(tool).actionClass())
+                .collect(Collectors.toSet());
+        for (String actionClass : allowClasses) {
+            rules.add(PolicyRule.of(actionClass, "*", PolicyEffect.ALLOW, 0, seq++));
+        }
+        for (String actionClass : askClasses) {
+            rules.add(PolicyRule.of(actionClass, "*", PolicyEffect.ASK, 0, seq++));
+        }
+        return rules;
+    }
+
     public PolicyDecision evaluate(String toolName, String body, String sessionId) {
+        PolicyVerdict verdict = evaluateVerdict(toolName, body, sessionId, LayeredPolicyResolver.MODE_DEFAULT);
+        return switch (verdict.effect()) {
+            case ALLOW -> PolicyDecision.allow();
+            case DENY -> PolicyDecision.deny(verdict.reason());
+            case ASK -> PolicyDecision.requireApproval("mutation tool requires approval: " + toolName);
+        };
+    }
+
+    /** Evaluation without caller identity (built-in layer plus instance-level rules only). */
+    public PolicyVerdict evaluateVerdict(String toolName, String body, String sessionId, String mode) {
+        return evaluateVerdict(toolName, body, sessionId, mode, null, null);
+    }
+
+    /**
+     * Rich evaluation used by the gate (spec §4.2 step 7): the verdict carries the effective layer
+     * and matched rule for audit and UI. Persisted layers come from {@link PolicyContextProvider}.
+     */
+    public PolicyVerdict evaluateVerdict(String toolName, String body, String sessionId, String mode,
+                                         String userId, String workspaceId) {
         if (toolName == null || toolName.isBlank()) {
             audit.record(sessionId, toolName, "policy_check", "deny_empty_tool");
-            return PolicyDecision.deny("tool name is required");
+            return PolicyVerdict.of(PolicyEffect.DENY, null, PolicyLayer.BUILTIN, mode, "tool name is required");
         }
 
-        if (AUTO_ALLOW_TOOLS.contains(toolName)) {
-            audit.record(sessionId, toolName, "policy_check", "auto_allow");
-            return PolicyDecision.allow();
+        PolicyContext context = contextProvider.load(userId, workspaceId, sessionId);
+        ToolFaceRegistry registry = context.extraFaces().isEmpty()
+                ? builtinRegistry
+                : new ToolFaceRegistry(context.extraFaces());
+
+        if (!registry.known(toolName)) {
+            audit.record(sessionId, toolName, "policy_check", "deny_unknown");
+            return PolicyVerdict.of(PolicyEffect.DENY, null, PolicyLayer.BUILTIN, mode,
+                    "unknown tool (fail-closed): " + toolName);
         }
 
-        if (REQUIRE_APPROVAL_TOOLS.contains(toolName)) {
-            audit.record(sessionId, toolName, "policy_check", "require_approval");
-            return PolicyDecision.requireApproval("mutation tool requires approval: " + toolName);
+        ToolFaceRegistry.Face face = registry.faceOf(toolName);
+        PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()), List.of("*"),
+                face.shape(), userId, workspaceId, sessionId);
+
+        var hardDeny = hardGuard.check(request);
+        if (hardDeny.isPresent()) {
+            audit.record(sessionId, toolName, "policy_hard_deny", hardDeny.get().kind() + ":" + hardDeny.get().reason());
+            return PolicyVerdict.of(PolicyEffect.DENY, null, PolicyLayer.BUILTIN, mode,
+                    "hard guard: " + hardDeny.get().reason());
         }
 
-        audit.record(sessionId, toolName, "policy_check", "deny_unknown");
-        return PolicyDecision.deny("unknown tool (fail-closed): " + toolName);
+        // Explicit argument wins; otherwise the session-scoped mode (L4) applies.
+        String effectiveMode = mode != null ? mode : context.mode();
+        PolicyLayer modeLayer = mode != null ? PolicyLayer.BUILTIN
+                : (context.modeLayer() == null ? PolicyLayer.BUILTIN : context.modeLayer());
+
+        PolicyVerdict verdict = resolver.resolve(request, withBuiltin(context.layers()), effectiveMode, modeLayer);
+
+        String legacyDetail = verdict.effect() == PolicyEffect.ALLOW ? "auto_allow" : "require_approval";
+        audit.record(sessionId, toolName, "policy_check", legacyDetail);
+        audit.record(sessionId, toolName, "policy_verdict",
+                verdict.effect() + ":" + verdict.sourceLayer() + ":" + (verdict.matchedRule() == null ? "-" : verdict.matchedRule()));
+        if (verdict.allowedBy() != null) {
+            audit.record(sessionId, toolName, "policy_allowed_by_mode", verdict.allowedBy());
+        }
+        return verdict;
+    }
+
+    private List<LayeredPolicyResolver.LayerInput> withBuiltin(List<LayeredPolicyResolver.LayerInput> persisted) {
+        if (persisted.isEmpty()) {
+            return builtinLayers;
+        }
+        List<LayeredPolicyResolver.LayerInput> all = new ArrayList<>(builtinLayers);
+        all.addAll(persisted);
+        return all;
+    }
+
+    /** The built-in layer input, exposed for tests that need to compose extra layers. */
+    List<LayeredPolicyResolver.LayerInput> builtinLayers() {
+        return builtinLayers;
     }
 }

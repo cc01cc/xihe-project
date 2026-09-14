@@ -61,7 +61,7 @@ class GatewayToolRegistryContractTest {
     );
 
     private PolicyEngine createEngine() {
-        return new PolicyEngine(mock(AuditLogger.class));
+        return new PolicyEngine(mock(AuditLogger.class), new BuiltinPolicyContextProvider());
     }
 
     private static Set<String> classifiedUnion() {
