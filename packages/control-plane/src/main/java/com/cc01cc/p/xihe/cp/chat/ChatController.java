@@ -72,6 +72,7 @@ public class ChatController {
     private final RequestQueue requestQueue;
     private final ProviderCredentialLeaseService credentialLeases;
     private final ConfigService configService;
+    private final com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder;
     private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
     private final com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient;
@@ -110,6 +111,7 @@ public class ChatController {
             RequestQueue requestQueue,
             ProviderCredentialLeaseService credentialLeases,
             ConfigService configService,
+            com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder,
             com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
             com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient) {
@@ -131,6 +133,7 @@ public class ChatController {
         this.requestQueue = requestQueue;
         this.credentialLeases = credentialLeases;
         this.configService = configService;
+        this.ledgerToolRecorder = ledgerToolRecorder;
         this.mcpProxyController = mcpProxyController;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.runtimeExecutionClient = runtimeExecutionClient;
@@ -1076,6 +1079,7 @@ public class ChatController {
         int eventIndex = 0;
         Map<String, UUID> operationItems = new LinkedHashMap<>();
         Map<UUID, UUID> operationAttempts = new LinkedHashMap<>();
+        var runLedger = new com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger(operationItems, operationAttempts);
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
             String eventName = "message";
             StringBuilder data = new StringBuilder();
@@ -1137,7 +1141,7 @@ public class ChatController {
                     }
                     if (!isDone || terminalSent.compareAndSet(false, true)) {
                         dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
-                                userId, workspaceId, operationItems, operationAttempts);
+                                userId, workspaceId, runLedger);
                     }
                     eventName = "message";
                     data.setLength(0);
@@ -1189,7 +1193,7 @@ public class ChatController {
             }
             if (!isDone || terminalSent.compareAndSet(false, true)) {
                 dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
-                        userId, workspaceId, operationItems, operationAttempts);
+                        userId, workspaceId, runLedger);
             }
         }
         if (!doneSeen) {
@@ -1329,151 +1333,17 @@ public class ChatController {
 
     private void dispatchRelayedEvent(String sessionId, String eventName, String payload,
                                       String runId, String requestId, String userId, String workspaceId,
-                                      Map<String, UUID> operationItems,
-                                      Map<UUID, UUID> operationAttempts) {
+                                      com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger runLedger) {
         Object parsedPayload = parsePayload(eventName, payload);
-        recordLedgerToolEvent(eventName, asMap(parsedPayload), runId, requestId,
-                operationItems, operationAttempts);
+        // PLAN-0326 决策 #8/#9：Agent 侧工具事实记账统一走 LedgerToolRecorder
+        // （按事件阶段映射，幂等限定同源）；本类只做事件分发，不再散写账本。
+        ledgerToolRecorder.record(eventName, asMap(parsedPayload), runId, requestId, runLedger);
         if ("approval_request".equals(eventName)) {
             approvalService.recordPending(asMap(parsedPayload), sessionId, runId, userId, workspaceId);
             transitionRun(runId, List.of("running", "streaming"), "awaiting_approval", null, null, null, 0, 0);
         }
         sseManager.send(sessionId, eventName, parsedPayload);
     }
-
-    private void recordLedgerToolEvent(String eventName, Map<?, ?> payload, String runId,
-                                       String requestId, Map<String, UUID> operationItems,
-                                       Map<UUID, UUID> operationAttempts) {
-        if (!"tool_call".equals(eventName) && !"tool_result".equals(eventName)) {
-            return;
-        }
-        UUID operationId = operationService.findOperationIdByRunId(runId);
-        if (operationId == null) {
-            return;
-        }
-        String toolName = stringValue(payload, "tool");
-        if (toolName == null) {
-            toolName = "unknown";
-        }
-        // PLAN-0317 决策 #8 补充（2026-09-13 宿主 E2E）：run 进入取消流程后，中继
-        // 不得再写工具事件终态/新建条目——取消副作用（Agent 侧工具中止）产生的
-        // Tool error 不是执行事实，四层终态由取消路径自主落定。
-        if (isRunCancellingOrCancelled(runId)) {
-            logger.info("[LIFECYCLE] service=cp event=operation_tool_event_skipped_after_cancel runId={} event={} tool={}",
-                    runId, eventName, toolName);
-            return;
-        }
-        // PLAN-0317 T2.8④：优先用 Agent 显式携带的 toolCallId（call/result 同一值），
-        // 回退到 run_id（本地工具的历史路径）。
-        String rawToolCallId = stringValue(payload, "toolCallId");
-        if (rawToolCallId == null) {
-            rawToolCallId = stringValue(payload, "run_id");
-        }
-        String toolCallId = canonicalToolCallId(rawToolCallId, runId, toolName, payload);
-        try {
-            if ("tool_call".equals(eventName)) {
-                OperationItem item = operationService.findLatestOpenItem(operationId, toolName);
-                if (item == null) {
-                    item = operationService.appendItem(
-                            operationId, toolCallId, null, "tool_call", toolName, "agent",
-                            safeJsonPreview(payload.get("arguments")), null, null);
-                }
-                operationItems.put(toolCallId, item.getId());
-                // PLAN-0317 T2.8③（决策 #10/#17）：source=mcp 的项由网关负责翻转，
-                // 中继只补 agent_tool attempt（双写状态会让终态竞态）。
-                if ("agent".equals(item.getSource()) && "pending".equals(item.getStatus())) {
-                    operationService.transitionItem(item.getId(), "running", null, null, null, null);
-                }
-                if (!operationAttempts.containsKey(item.getId())) {
-                    OperationAttempt attempt = operationService.startAttempt(
-                            item.getId(), "agent_tool", null, "agent", requestId);
-                    operationAttempts.put(item.getId(), attempt.getId());
-                }
-                return;
-            }
-
-            UUID itemId = operationItems.get(toolCallId);
-            if (itemId == null) {
-                OperationItem item = operationService.findLatestOpenItem(operationId, toolName);
-                if (item != null) {
-                    itemId = item.getId();
-                    operationItems.put(toolCallId, itemId);
-                }
-            }
-            if (itemId == null) {
-                logger.warn("[LIFECYCLE] service=cp event=operation_tool_result_unmatched runId={} toolCallId={} toolName={}",
-                        runId, toolCallId, toolName);
-                return;
-            }
-            UUID attemptId = operationAttempts.get(itemId);
-            Object rawResult = payload.get("result");
-            boolean failed = rawResult != null && String.valueOf(rawResult).startsWith("Tool error:");
-            if (attemptId != null) {
-                operationService.finishAttempt(attemptId, failed ? "failed" : "succeeded",
-                        failed ? 500 : 200, failed ? "TOOL_FAILED" : null, null, null);
-            }
-            // PLAN-0317 T2.8③：网关创建的项由其自己按 HTTP 响应落终态，中继不覆盖。
-            OperationItem resultItem = operationService.findItem(itemId.toString());
-            boolean gatewayOwned = resultItem != null && "mcp".equals(resultItem.getSource());
-            if (!gatewayOwned) {
-                operationService.transitionItem(itemId, failed ? "failed" : "completed",
-                        failed ? null : "allow", null, null, failed ? "TOOL_FAILED" : null);
-            }
-            operationAttempts.remove(itemId);
-            operationItems.remove(toolCallId);
-        } catch (RuntimeException e) {
-            logger.error("[LIFECYCLE] service=cp event=operation_tool_record_failed runId={} toolCallId={} toolName={}",
-                    runId, toolCallId, toolName, e);
-            if (e instanceof com.cc01cc.p.xihe.cp.config.CpApiException apiException
-                    && "OPERATION_STATE_CONFLICT".equals(apiException.getCode())) {
-                return;
-            }
-            throw e;
-        }
-    }
-
-    private String safeJsonPreview(Object value) {
-        try {
-            String json = objectMapper.writeValueAsString(value == null ? Map.of() : value);
-            String redacted = LogRedactor.redact(json);
-            return redacted.length() <= 4096 ? redacted : redacted.substring(0, 4096);
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=operation_arguments_redaction_failed");
-            return "{\"redacted\":true}";
-        }
-    }
-
-    /** PLAN-0317 决策 #8 补充（2026-09-13 E2E）：run 是否已进入取消流程。 */
-    private boolean isRunCancellingOrCancelled(String runId) {
-        if (runId == null || runId.isBlank()) {
-            return false;
-        }
-        try {
-            return chatRunRepository.findById(UUID.fromString(runId))
-                    .map(run -> "cancelling".equals(run.getStatus()) || "cancelled".equals(run.getStatus()))
-                    .orElse(false);
-        } catch (IllegalArgumentException e) {
-            logger.debug("[LIFECYCLE] service=cp event=run_status_guard_skipped runId={} reason=invalid_uuid",
-                    runId);
-            return false;
-        }
-    }
-
-    private String canonicalToolCallId(String rawToolCallId, String runId, String toolName,
-                                       Map<?, ?> payload) {
-        if (rawToolCallId != null) {
-            try {
-                return UUID.fromString(rawToolCallId).toString();
-            } catch (IllegalArgumentException ignored) {
-                // PLAN-0317 T2.8④（决策 #12）：与网关侧派生规则统一为
-                // nameUUIDFromBytes，使中继与网关对同一原始 id 得到同一个键。
-                return UUID.nameUUIDFromBytes(rawToolCallId.getBytes(StandardCharsets.UTF_8))
-                        .toString();
-            }
-        }
-        return UUID.nameUUIDFromBytes((runId + ":" + toolName + ":" + safeJsonPreview(payload)).getBytes(StandardCharsets.UTF_8)).toString();
-    }
-
     private Object parsePayload(String eventName, String payload) {
         try {
             return objectMapper.readValue(payload, Object.class);

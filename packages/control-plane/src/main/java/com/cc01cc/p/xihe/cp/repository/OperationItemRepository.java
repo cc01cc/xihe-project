@@ -17,10 +17,8 @@ public interface OperationItemRepository extends JpaRepository<OperationItem, UU
 
     List<OperationItem> findByOperationIdOrderBySequenceAsc(String operationId);
 
-    Optional<OperationItem> findByOperationIdAndToolCallId(String operationId, String toolCallId);
-
-    Optional<OperationItem> findFirstByOperationIdAndToolNameAndStatusInOrderByCreatedAtDesc(
-            String operationId, String toolName, Collection<String> statuses);
+    /** PLAN-0326 决策 #9：行身份 = (operation_id, source, tool_call_id)，幂等收敛限定同源。 */
+    Optional<OperationItem> findByOperationIdAndSourceAndToolCallId(String operationId, String source, String toolCallId);
 
     List<OperationItem> findByParentItemId(String parentItemId);
 

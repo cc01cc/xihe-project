@@ -127,16 +127,6 @@ public class OperationService {
     }
 
     @Transactional(readOnly = true)
-    public OperationItem findLatestOpenItem(UUID operationId, String toolName) {
-        if (operationId == null || toolName == null || toolName.isBlank()) {
-            return null;
-        }
-        return items.findFirstByOperationIdAndToolNameAndStatusInOrderByCreatedAtDesc(
-                operationId.toString(), toolName, List.of("pending", "running", "waiting_for_approval", "resolving"))
-                .orElse(null);
-    }
-
-    @Transactional(readOnly = true)
     public OperationItem findItemByApprovalRequestId(String approvalRequestId) {
         if (approvalRequestId == null || approvalRequestId.isBlank()) {
             return null;
@@ -380,12 +370,14 @@ public class OperationService {
         SessionOperation operation = operations.findByIdForUpdate(operationId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
+        // PLAN-0326 决策 #9：行身份 = (operation_id, source, tool_call_id)。
+        // 幂等收敛限定在同源内——同一通道的重放命中，跨通道各建己行。
         if (toolCallId != null && !toolCallId.isBlank()) {
             OperationItem existing = items
-                    .findByOperationIdAndToolCallId(operationId.toString(), toolCallId).orElse(null);
+                    .findByOperationIdAndSourceAndToolCallId(operationId.toString(), source, toolCallId).orElse(null);
             if (existing != null) {
-                logger.info("[LIFECYCLE] service=cp event=operation_item_idempotent_hit itemId={} toolCallId={}",
-                        existing.getId(), toolCallId);
+                logger.info("[LIFECYCLE] service=cp event=operation_item_idempotent_hit itemId={} source={} toolCallId={}",
+                        existing.getId(), source, toolCallId);
                 return existing;
             }
         }
@@ -406,11 +398,11 @@ public class OperationService {
             // Assigned IDs make save() a merge: keep the managed copy.
             item = items.saveAndFlush(item);
         } catch (DataIntegrityViolationException e) {
-            logger.warn("[LIFECYCLE] service=cp event=operation_item_conflict operationId={} toolCallId={} reason={}",
-                    operationId, toolCallId, e.getMessage());
+            logger.warn("[LIFECYCLE] service=cp event=operation_item_conflict operationId={} source={} toolCallId={} reason={}",
+                    operationId, source, toolCallId, e.getMessage());
             if (toolCallId != null && !toolCallId.isBlank()) {
                 OperationItem existing = items
-                        .findByOperationIdAndToolCallId(operationId.toString(), toolCallId).orElse(null);
+                        .findByOperationIdAndSourceAndToolCallId(operationId.toString(), source, toolCallId).orElse(null);
                 if (existing != null) {
                     return existing;
                 }
