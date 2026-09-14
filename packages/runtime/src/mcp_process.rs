@@ -4,10 +4,9 @@ use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 pub const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(30);
-const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
 pub fn bridge_base_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}")
@@ -61,34 +60,6 @@ impl McpProcessManager {
         Self {
             bridges: Arc::new(RwLock::new(HashMap::new())),
         }
-    }
-
-    pub async fn touch(&self, ws_id: &str, server_id: &str) {
-        let mut bridges = self.bridges.write().await;
-        if let Some(ws_bridges) = bridges.get_mut(ws_id)
-            && let Some(info) = ws_bridges.get_mut(server_id)
-        {
-            info.last_active = SystemTime::now();
-        }
-    }
-
-    pub async fn reap_idle(&self, idle: Duration) -> usize {
-        let mut bridges = self.bridges.write().await;
-        let mut removed = 0;
-        for ws_bridges in bridges.values_mut() {
-            let before = ws_bridges.len();
-            ws_bridges.retain(|_, info| {
-                info.last_active
-                    .elapsed()
-                    .map(|e| e < idle)
-                    .unwrap_or(false)
-            });
-            removed += before - ws_bridges.len();
-        }
-        if removed > 0 {
-            info!("bridge idle reaped: {}", removed);
-        }
-        removed
     }
 
     pub async fn spawn(
@@ -215,111 +186,66 @@ impl McpProcessManager {
         }
     }
 
-    pub async fn health_check_loop(&self) {
-        let mut interval = tokio::time::interval(HEALTH_CHECK_INTERVAL);
-        loop {
-            interval.tick().await;
-            let all: Vec<(String, String)> = {
-                let bridges = self.bridges.read().await;
-                bridges
-                    .iter()
-                    .flat_map(|(ws, servers)| {
-                        servers.keys().map(move |sid| (ws.clone(), sid.clone()))
-                    })
-                    .collect()
-            };
-            for (ws_id, server_id) in &all {
-                if let Some(url) = self.get_bridge_url(ws_id, server_id).await {
-                    match reqwest::get(bridge_health_url(&url)).await {
-                        Ok(resp) if resp.status().is_success() => {}
-                        _ => {
-                            warn!("bridge health check failed: ws={ws_id} server={server_id}");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub async fn poll_config(
-        &self,
-        ws_id: &str,
-        cp_url: &str,
-        api_token: &str,
-    ) -> Vec<(String, String, Vec<String>)> {
-        let (_generation, _hash, servers) = self
-            .poll_config_with_generation(ws_id, cp_url, api_token)
-            .await;
-        servers
-    }
-
+    /// Polls the desired STDIO server set for `ws_id`.
+    ///
+    /// `Err` distinguishes a failed fetch/parse from a legitimately empty
+    /// configuration, so callers never mistake a transient CP outage (or an
+    /// unparseable body) for "no servers configured" and stop live bridges.
     pub async fn poll_config_with_generation(
         &self,
         ws_id: &str,
         cp_url: &str,
         api_token: &str,
-    ) -> (u64, String, Vec<(String, String, Vec<String>)>) {
+    ) -> Result<(u64, String, Vec<(String, String, Vec<String>)>), String> {
         let url = format!("{cp_url}/internal/v1/workspaces/{ws_id}/stdio-servers");
-        match reqwest::Client::new()
+        let resp = reqwest::Client::new()
             .get(&url)
             .bearer_auth(api_token)
             .send()
             .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(config) => {
-                        let generation = config
-                            .get("generation")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let hash = config
-                            .get("hash")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let mut servers = Vec::new();
-                        if let Some(servers_arr) = config.get("servers").and_then(|v| v.as_array())
-                        {
-                            for srv in servers_arr {
-                                let sid = srv.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                                if sid.is_empty() {
-                                    continue;
-                                }
-                                let config_obj = srv.get("config");
-                                let cmd = config_obj
-                                    .and_then(|c| c.get("command"))
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                let args: Vec<String> = config_obj
-                                    .and_then(|c| c.get("args"))
-                                    .and_then(|v| v.as_array())
-                                    .map(|a| {
-                                        a.iter()
-                                            .filter_map(|v| v.as_str().map(String::from))
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                                servers.push((sid.to_string(), cmd.to_string(), args));
-                            }
-                        }
-                        (generation, hash, servers)
-                    }
-                    Err(e) => {
-                        error!("failed to parse stdio-servers: {e}");
-                        (0, String::new(), Vec::new())
-                    }
+            .map_err(|e| format!("mcp-config poll request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("stdio-servers poll returned {}", resp.status()));
+        }
+        let config = resp
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("failed to parse stdio-servers: {e}"))?;
+
+        let generation = config
+            .get("generation")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let hash = config
+            .get("hash")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut servers = Vec::new();
+        if let Some(servers_arr) = config.get("servers").and_then(|v| v.as_array()) {
+            for srv in servers_arr {
+                let sid = srv.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if sid.is_empty() {
+                    continue;
                 }
-            }
-            Ok(resp) => {
-                warn!("stdio-servers poll returned {}", resp.status());
-                (0, String::new(), Vec::new())
-            }
-            Err(e) => {
-                error!("mcp-config poll request failed: {e}");
-                (0, String::new(), Vec::new())
+                let config_obj = srv.get("config");
+                let cmd = config_obj
+                    .and_then(|c| c.get("command"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let args: Vec<String> = config_obj
+                    .and_then(|c| c.get("args"))
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                servers.push((sid.to_string(), cmd.to_string(), args));
             }
         }
+        Ok((generation, hash, servers))
     }
 }
 

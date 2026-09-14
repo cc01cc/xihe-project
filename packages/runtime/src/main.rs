@@ -2101,8 +2101,6 @@ async fn mcp_config_poll_loop(
         tokio::select! {
             _ = ct.cancelled() => break,
             _ = interval.tick() => {
-                // Q11: reap idle bridges (15 min) — grill A timeout
-                manager.reap_idle(Duration::from_secs(900)).await;
                 let instances = registry.all_instances().await;
                 for instance in &instances {
                     let ws_id = &instance.ws_id;
@@ -2118,8 +2116,21 @@ async fn mcp_config_poll_loop(
                             .await;
                         continue;
                     }
-                    let (generation, hash, servers) =
-                        manager.poll_config_with_generation(ws_id, &cp_url, &cp_api_token).await;
+                    // CHN-2: a failed poll must never be mistaken for "no servers
+                    // configured". On error, skip this workspace's reconcile entirely
+                    // and keep the currently running bridges untouched.
+                    let (generation, hash, servers) = match manager
+                        .poll_config_with_generation(ws_id, &cp_url, &cp_api_token)
+                        .await
+                    {
+                        Ok(polled) => polled,
+                        Err(error) => {
+                            tracing::warn!(
+                                "config poll: stdio-servers fetch failed for {ws_id}: {error}; keeping current bridges"
+                            );
+                            continue;
+                        }
+                    };
                     let existing = manager.list(ws_id).await;
                     for (server_id, command, args) in &servers {
                         if let Some(existing_info) =

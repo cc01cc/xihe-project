@@ -645,6 +645,24 @@ impl WorkspaceManager {
         Ok((container_ip, container_port))
     }
 
+    fn bridge_pid_file(server_id: &str) -> String {
+        format!("/workspace/.xihe-bridge-{server_id}.pid")
+    }
+
+    /// Shell command that starts the in-container STDIO bridge.
+    ///
+    /// Any stale process recorded in the pid file is terminated first. After a
+    /// Runtime restart the in-memory bridge registry is empty while the previous
+    /// bridge process can still be alive inside the container; spawning over the
+    /// old pid file would make that orphan unkillable forever (CHN-3b).
+    fn bridge_start_command(server_id: &str, port: u16) -> String {
+        let pid_file = Self::bridge_pid_file(server_id);
+        format!(
+            "kill $(cat {pid_file} 2>/dev/null) 2>/dev/null; rm -f {pid_file}; \
+             /usr/local/bin/xihe-mcp-bridge --port {port} & echo $! > {pid_file}"
+        )
+    }
+
     pub async fn start_mcp_bridge(
         &self,
         ws_id: &str,
@@ -666,9 +684,7 @@ impl WorkspaceManager {
             .as_ref()
             .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
 
-        let bridge_cmd = format!(
-            "/usr/local/bin/xihe-mcp-bridge --port {port} & echo $! > /workspace/.xihe-bridge-{server_id}.pid"
-        );
+        let bridge_cmd = Self::bridge_start_command(server_id, port);
 
         let exec = docker
             .create_exec(
@@ -712,10 +728,8 @@ impl WorkspaceManager {
             .as_ref()
             .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
 
-        let kill_cmd = format!(
-            "kill $(cat /workspace/.xihe-bridge-{server_id}.pid 2>/dev/null) 2>/dev/null; \
-             rm -f /workspace/.xihe-bridge-{server_id}.pid"
-        );
+        let pid_file = Self::bridge_pid_file(server_id);
+        let kill_cmd = format!("kill $(cat {pid_file} 2>/dev/null) 2>/dev/null; rm -f {pid_file}");
 
         let exec = docker
             .create_exec(
@@ -877,5 +891,36 @@ impl WorkspaceManager {
                 container_name, error
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CHN-3b: the bridge start command must terminate any stale process recorded
+    /// in the pid file *before* spawning, so a bridge left over from a previous
+    /// Runtime lifetime cannot be orphaned by the pid file being overwritten.
+    #[test]
+    fn bridge_start_command_kills_stale_pid_before_spawn() {
+        let cmd = WorkspaceManager::bridge_start_command("filesystem", 39001);
+        let pid_file = "/workspace/.xihe-bridge-filesystem.pid";
+        let kill_at = cmd
+            .find("kill $(cat ")
+            .expect("start command must kill the stale pid");
+        let spawn_at = cmd
+            .find("/usr/local/bin/xihe-mcp-bridge --port 39001")
+            .expect("start command must spawn the bridge on the requested port");
+        assert!(kill_at < spawn_at, "kill must precede spawn: {cmd}");
+        assert!(cmd.contains(&format!("rm -f {pid_file}")), "{cmd}");
+        assert!(cmd.contains(&format!("echo $! > {pid_file}")), "{cmd}");
+    }
+
+    #[test]
+    fn bridge_pid_file_is_workspace_scoped_by_server_id() {
+        assert_eq!(
+            WorkspaceManager::bridge_pid_file("github"),
+            "/workspace/.xihe-bridge-github.pid"
+        );
     }
 }
