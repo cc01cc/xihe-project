@@ -18,7 +18,7 @@ updated: 2026-09-03
 | Binary | 位置 | 职责 |
 |--------|------|------|
 | `xihe-runtime` | host Gateway 主进程 | 注册 `/workspace/{ws_id}/mcp` 等路由；Workspace 操作经 `WorkspaceExecutionRouter` 转 per-request Docker exec |
-| `xihe-container-runtime` | 容器内（镜像预装） | `--oneshot` 模式：stdin 单 operation JSON → stdout 单 result JSON，EOF 即边界；处理文件/命令工具与 `/tmp/xihe-jobs` 后台任务 |
+| `xihe-container-runtime` | 容器内（镜像预装） | `--oneshot` 模式：stdin 单 operation JSON → stdout 单 result JSON；宿主读取首个完整 result JSON 后关闭 stdin，EOF 是清理边界；处理文件/命令工具与 `/tmp/xihe-jobs` 后台任务 |
 | `xihe-mcp-bridge` | 容器内（镜像预装） | STDIO bridge：用户 STDIO MCP server ↔ HTTP（`POST /{server_id}`，30s 超时 / 1MB 缓冲；`/_spawn`、`/_kill/{id}`、`/_health` 管理端点） |
 
 > 两者平行无调用：bridge 不调 container-runtime，container-runtime 无 HTTP server，唯一交集是同住一个容器（端到端工具路径见 DEV-016）。remote MCP 不进容器，走 host 出网（身份校验，不建容器）。
@@ -38,7 +38,7 @@ sequenceDiagram
   R->>D: start_exec (attach stdin/stdout)
   R->>C: 写 operation JSON → shutdown stdin
   C->>C: 执行（文件/命令/job）
-  C-->>R: stdout 单 result JSON → EOF 即边界
+  C-->>R: stdout 首个完整 result JSON → 宿主关闭 stdin，EOF 为清理边界
 ```
 
 锚点：`executor.rs: create_exec→start_exec` + `container_runtime.rs: --oneshot`。

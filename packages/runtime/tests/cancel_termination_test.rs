@@ -135,6 +135,28 @@ async fn run_oneshot(docker: &Docker, container: &str, op: serde_json::Value) ->
     String::from_utf8_lossy(&buf).to_string()
 }
 
+/// PLAN-0326 T3.1：正常 list_directory 必须在 attached Bollard 流上返回一帧。
+#[tokio::test]
+async fn oneshot_list_directory_returns_success_frame() {
+    let (_mgr, _dir, _ws_id, container) = materialize_coding_workspace().await;
+    let docker = Docker::connect_with_local_defaults().expect("docker client");
+    let response = run_oneshot(
+        &docker,
+        &container,
+        serde_json::json!({
+            "operation": "list_directory",
+            "payload": {"path": "."},
+            "request_id": "list-directory-test"
+        }),
+    )
+    .await;
+
+    assert!(
+        response.contains("\"ok\":true"),
+        "list_directory should return a success frame: {response}"
+    );
+}
+
 /// T2.2b：宿主中止帧 → 容器两阶段终止进程组并回 `CANCELLED`。
 #[tokio::test]
 async fn oneshot_abort_frame_kills_process_group_and_reports_cancelled() {

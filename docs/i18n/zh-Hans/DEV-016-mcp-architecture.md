@@ -43,7 +43,7 @@ flowchart TD
         G4["配置轮询 30s: GET /internal/v1/workspaces/{wsId}/stdio-servers, diff 后管理"]
     end
     subgraph SB["容器 xihe-workspace-ws_{id}"]
-        S1["container-runtime --oneshot<br/>stdin 单 operation JSON → stdout 单 result JSON<br/>EOF 即边界 · 文件操作 + 显式 Shell + /tmp/xihe-jobs<br/>无 HTTP server / 无端口发布 / 无 instance token"]
+        S1["container-runtime --oneshot<br/>stdin 单 operation JSON → stdout 单 result JSON<br/>首帧响应后宿主关闭 stdin，EOF 为清理边界 · 文件操作 + 显式 Shell + /tmp/xihe-jobs<br/>无 HTTP server / 无端口发布 / 无 instance token"]
         S2["mcp-bridge: POST /{server_id} → STDIN → STDOUT<br/>streaming resp · 30s 超时 / 1MB 缓冲<br/>health check · auto-restart"]
         S3["STDIO 子进程 (npx, docker, python 等)"]
     end

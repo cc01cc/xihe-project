@@ -225,7 +225,7 @@ packages/
 - **Spring Boot 4 HTTP 层 ≠ Hibernate Jackson2**: CP 响应不得直接放 Jackson2 `JsonNode` / 第三方 mapper 类型（Boot 4 消息转换器与 Hibernate JSON 映射不同源，`JsonNode` 会被当 POJO 序列化）；统一 `objectMapper.convertValue(node, Object.class)` 转普通 Map/List。`isProviderSecretKey` 类嗅探器注意 `maxTokens` 含 "token" 的误伤（`contains("token") && !contains("maxtoken")`）
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
 - **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU；OOM 时按需上调
-- **Runtime 执行边界**: Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`--oneshot` 单帧 EOF），无 HTTP 通道/instance token/长驻 worker；background job 用 `/tmp/xihe-jobs` 状态文件（opaque `jobId` + `cancel_background_process`）；FS 写路径经 rustix openat2 helper
+- **Runtime 执行边界**: Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`--oneshot` 单帧：宿主读取首个完整 result JSON 后关闭 stdin，EOF 仅为清理边界），无 HTTP 通道/instance token/长驻 worker；background job 用 `/tmp/xihe-jobs` 状态文件（opaque `jobId` + `cancel_background_process`）；FS 写路径经 rustix openat2 helper
 - **Safe Coding Loop**: Runtime mutation core 用 snapshot manifest + pre/post content hash + 多文件 patch 失败回滚；Agent MCP interceptor 经一次性 durable approval grant 恢复批准后 dispatch，grant 缺失/不匹配/重复消费 fail-closed；grant 匹配键 = canonical arguments SHA-256（`arguments_hash`），preview 截断不影响批准后执行
 - **Vue i18n JSON placeholder**: `t()` 消息中不可含 `{...}`
 - **MCP session-id 签名**: 必须 HMAC 签名，禁止明文或仅 Base64

@@ -54,7 +54,7 @@ src/
 - MCP endpoint 通过 rmcp 自动注册
 - 配置文件通过 ConfigClient（HTTP）从 CP 获取
 - 沙盒隔离依赖 Docker/bollard；新增 `rustix`（`fs` feature）用于 `openat2` 写路径 helper，需走 approval
-- Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`create_exec` → `start_exec(attach)` → 写 operation JSON → 读 stdout 到 EOF）；不再使用 `container_addr` HTTP loopback、`instance token`、长驻 worker 或 NDJSON 多路复用。`container_runtime` 提供 `--oneshot` CLI 模式（stdin 单帧 → stdout 单帧，EOF 即边界）。
+- Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`create_exec` → `start_exec(attach)` → 写 operation JSON → 读首个完整 result JSON frame → 关闭 stdin）；不再使用 `container_addr` HTTP loopback、`instance token`、长驻 worker 或 NDJSON 多路复用。`container_runtime` 提供 `--oneshot` CLI 模式（stdin 单帧 → stdout 单帧；EOF 是关闭 stdin 后的清理边界，不是宿主正常响应的完成条件）。
 - 后台 job 通过 `start_exec(detach)` + `/tmp/xihe-jobs/<jobId>/` 状态文件（`meta/pid/stdout/stderr/exit`）实现；`cancel` 为 `kill -- -PGID`，TTL 清理为周期 oneshot exec；容器重建即 `/tmp` 消失，旧 jobId 不复用。
 - Coding Loop mutation core 通过 `create_snapshot`/`revert_snapshot`/`apply_patch` 执行；snapshot 的 `.manifest.json` 保存 Workspace-relative pre-image、`existedBefore`、`postContentHash` 和 hash，revert 对未知外部修改返回 conflict；多文件 patch 全量预计算并在写入或 manifest 更新失败时回滚，统一 diff 上限为 256KiB。
 - FS 写路径在容器内经 `rustix::fs::openat2`（`RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`）包住 create/open/rename/copy；内核不支持时 blocked。

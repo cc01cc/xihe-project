@@ -467,13 +467,24 @@ impl WorkspaceExecutionRouter {
             while let Some(item) = output.next().await {
                 match item {
                     Ok(bollard::container::LogOutput::StdOut { message }) => {
-                        stdout_buf.extend_from_slice(&message)
+                        stdout_buf.extend_from_slice(&message);
+                        // xihe-container-runtime --oneshot keeps stdin open so the host can
+                        // send an abort frame while the operation is running. A successful
+                        // response is nevertheless a single JSON line; waiting for Docker
+                        // exec EOF here deadlocks normal operations until the 30s guard fires.
+                        // Stop at the first protocol frame and close stdin below.
+                        if message.contains(&b'\n') {
+                            break;
+                        }
                     }
                     Ok(bollard::container::LogOutput::StdErr { message }) => {
                         stderr_buf.extend_from_slice(&message)
                     }
                     Ok(bollard::container::LogOutput::Console { message }) => {
-                        stdout_buf.extend_from_slice(&message)
+                        stdout_buf.extend_from_slice(&message);
+                        if message.contains(&b'\n') {
+                            break;
+                        }
                     }
                     Ok(bollard::container::LogOutput::StdIn { .. }) => {}
                     Err(e) => {
@@ -515,7 +526,13 @@ impl WorkspaceExecutionRouter {
         };
         let (stdout_buf, stderr_buf, stream_err) = match outcome {
             WaitOutcome::Finished(joined) => match joined {
-                Ok(collected) => collected,
+                Ok(collected) => {
+                    // The response frame is complete, but the container-side abort monitor
+                    // intentionally still owns stdin. Closing the write side lets the
+                    // oneshot process exit instead of leaking an attached exec session.
+                    let _ = input.shutdown().await;
+                    collected
+                }
                 Err(join_err) => {
                     return Err(RuntimeError::Docker(format!(
                         "collect task failed: {join_err}"
