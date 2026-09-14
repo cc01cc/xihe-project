@@ -919,13 +919,13 @@ public class McpProxyController {
                     toolCallId = UUID.nameUUIDFromBytes(toolCallId.getBytes(StandardCharsets.UTF_8)).toString();
                 }
             }
-            String approvalRequestId = headers.getFirst("X-Xihe-Approval-Request-Id");
-            OperationItem item = operationService.findItemByApprovalRequestId(approvalRequestId);
-            if (item == null) {
-                item = operationService.appendItem(
-                        operationId, toolCallId, null, "tool_call", toolName, "mcp",
-                        safeLedgerPreview(body), null, null);
-            }
+            // PLAN-0326 决策 #9：网关自建 source=mcp 的派发事实行，不再复用中继的
+            // agent 行（0317 #18 的跨源复用否决）。同键同源的重放由 appendItem 的
+            // 同源幂等收敛（0317 幂等语义保留）；同键异源两行并存 = 各通道事实。
+            // 被拒/未派发的调用根本不会到这里（无派发即无网关事实，spec §0.6）。
+            OperationItem item = operationService.appendItem(
+                    operationId, toolCallId, null, "tool_call", toolName, "mcp",
+                    safeLedgerPreview(body), null, null);
             if (List.of("completed", "failed", "aborted", "cancelled", "ambiguous")
                     .contains(item.getStatus())) {
                 return null;
@@ -933,9 +933,8 @@ public class McpProxyController {
             if ("pending".equals(item.getStatus())) {
                 operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
             }
-            // 决策 #12 补充（2026-09-13 宿主 E2E 实测）：网关命中既有条目（如审批路径
-            // 由中继先建项）时，出站/注册表键必须取该条目的 tool_call_id——中继的 SSE
-            // 键与 MCP 头派生键可能不等（三源 id 分叉），否则取消按条目键定位会打空。
+            // 决策 #12 补充（2026-09-13 宿主 E2E 实测）：出站/注册表键取本行的
+            // tool_call_id——v3 下本行即网关权威行；approvalRequestId 仅留日志关联。
             String effectiveToolCallId = item.getToolCallId();
             if (effectiveToolCallId == null || effectiveToolCallId.isBlank()) {
                 effectiveToolCallId = toolCallId;
