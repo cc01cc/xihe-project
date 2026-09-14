@@ -84,20 +84,21 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
-    void deleteWorkspaceReturnsStableFailureWhenRuntimeUnavailable() {
+    void deleteWorkspaceSucceedsAndDefersCleanupWhenRuntimeUnavailable() {
+        // STO-1: the delete transaction commits unconditionally; a failing Runtime
+        // cleanup is best-effort and reconciled later by Runtime orphan cleanup.
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
                 .willReturn(aResponse().withStatus(500)));
 
         String ownerId = UUID.randomUUID().toString();
         createdWorkspace = workspaceService.createWorkspace(
                 "offline-ws-" + UUID.randomUUID().toString().substring(0, 8), ownerId);
+        String workspaceId = createdWorkspace.getId().toString();
 
-        com.cc01cc.p.xihe.cp.config.CpApiException exception = assertThrows(
-                com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> workspaceService.deleteWorkspace(createdWorkspace.getId().toString(), ownerId));
+        assertDoesNotThrow(() -> workspaceService.deleteWorkspace(workspaceId, ownerId));
 
-        assertEquals("RUNTIME_CLEANUP_FAILED", exception.getCode());
-        assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(createdWorkspace.getId()).isPresent());
+        assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(createdWorkspace.getId()).isEmpty(),
+                "DB delete is authoritative even when Runtime cleanup fails");
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces/delete")));
     }
 

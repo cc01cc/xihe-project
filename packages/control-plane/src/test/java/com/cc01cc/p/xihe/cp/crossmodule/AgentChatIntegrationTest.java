@@ -168,8 +168,14 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 Map.of("defaultModel", "mimo-v2.5"), "test", uid, null);
         configService.putLayer("user", "agent-profile",
                 Map.of("userName", "Alice"), "test", uid, null);
+        configService.putLayer("user", "rag",
+                Map.of("chunkSize", "512"), "test", uid, null);
+        configService.putLayer("user", "embedding",
+                Map.of("model", "text-embedding-3-small", "dimensions", "1536"), "test", uid, null);
         configService.putLayer("workspace", "llm-provider",
                 Map.of("temperature", "0.2"), "test", uid, wid);
+        configService.putLayer("workspace", "agent-runtime",
+                Map.of("useRegistry", "true"), "test", uid, wid);
 
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse()
@@ -199,11 +205,20 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 .withRequestBody(matchingJsonPath(
                         "$.userOverrides['agent-profile'].userName", equalTo("Alice")))
                 .withRequestBody(matchingJsonPath(
-                        "$.workspaceOverrides['llm-provider'].temperature", equalTo("0.2"))));
+                        "$.userOverrides['rag'].chunkSize", equalTo("512")))
+                .withRequestBody(matchingJsonPath(
+                        "$.userOverrides['embedding'].model", equalTo("text-embedding-3-small")))
+                .withRequestBody(matchingJsonPath(
+                        "$.workspaceOverrides['llm-provider'].temperature", equalTo("0.2")))
+                .withRequestBody(matchingJsonPath(
+                        "$.workspaceOverrides['agent-runtime'].useRegistry", equalTo("true"))));
 
         configService.deleteKey("user", "llm-provider", "defaultModel", "test", uid, null);
         configService.deleteKey("user", "agent-profile", "userName", "test", uid, null);
+        configService.deleteKey("user", "rag", "chunkSize", "test", uid, null);
+        configService.deleteKey("user", "embedding", "model", "test", uid, null);
         configService.deleteKey("workspace", "llm-provider", "temperature", "test", uid, wid);
+        configService.deleteKey("workspace", "agent-runtime", "useRegistry", "test", uid, wid);
     }
 
     @Test

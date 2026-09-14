@@ -87,7 +87,7 @@ public class ChatController {
      * workspace-bound effective pull; instance-only domains stay pull-only.
      */
     private static final List<String> AGENT_RUN_OVERRIDE_DOMAINS =
-        List.of("llm-provider", "agent-profile");
+        List.of("llm-provider", "agent-profile", "embedding", "rag", "agent-runtime");
 
     @Value("${cp.agent-url:http://localhost:12632/chat}")
     private String agentUrl;

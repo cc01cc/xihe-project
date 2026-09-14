@@ -16,7 +16,10 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Instant;
@@ -53,7 +56,7 @@ public class WorkspaceService {
                             WorkspaceUserRepository workspaceUserRepository,
                             UserRepository userRepository,
                             WorkspaceExecutionSpecService executionSpecService,
-                            RestTemplate restTemplate,
+                            @Qualifier("runtimeCleanupRestTemplate") RestTemplate restTemplate,
                             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
                             @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
         this.workspaceRepository = workspaceRepository;
@@ -195,7 +198,25 @@ public class WorkspaceService {
         workspaceRepository.save(workspace);
 
         // Runtime owns the ephemeral Sandbox. WorkspaceStorage remains untouched.
-        notifyRuntimeDelete(workspaceId, workspace.getStorageRef());
+        // STO-1: the Runtime notification must not run inside the delete
+        // transaction (it would hold the workspace row lock across a remote call),
+        // and a Runtime outage must not roll back an already-written logical
+        // delete. Register it for after-commit and treat it as best-effort: the DB
+        // delete is authoritative, and the Runtime reconciles orphan containers at
+        // startup (cleanup_orphans).
+        String storageRef = workspace.getStorageRef();
+        Runnable cleanup = () -> notifyRuntimeDeleteBestEffort(workspaceId, storageRef);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cleanup.run();
+                }
+            });
+        } else {
+            cleanup.run();
+        }
+
         logger.info("Workspace logically deleted: id={} name={}", workspaceId, workspace.getName());
         return workspace;
     }
@@ -261,7 +282,13 @@ public class WorkspaceService {
                 "An active workspace already exists for this user");
     }
 
-    private void notifyRuntimeDelete(String workspaceId, String storageRef) {
+    /**
+     * Best-effort Runtime sandbox cleanup, invoked after the delete transaction
+     * has committed. It never throws and never blocks rollback; failures are
+     * recorded with an explicit code and reconciled later by the Runtime's
+     * startup orphan cleanup.
+     */
+    private void notifyRuntimeDeleteBestEffort(String workspaceId, String storageRef) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -276,27 +303,15 @@ public class WorkspaceService {
                     new HttpEntity<>(body, headers),
                     String.class);
             if (!response.getStatusCode().is2xxSuccessful()) {
-                logger.error("Runtime workspace cleanup rejected workspaceId={} status={}",
+                logger.error(
+                        "RUNTIME_CLEANUP_FAILED workspaceId={} status={} (deferred to Runtime orphan reconciliation)",
                         workspaceId, response.getStatusCode());
-                throw runtimeCleanupFailure(workspaceId, response.getStatusCode().toString(), null);
             }
         } catch (Exception e) {
-            if (e instanceof CpApiException apiException) {
-                throw apiException;
-            }
-            logger.error("Runtime workspace cleanup failed workspaceId={} storageRef={}: {}",
+            logger.error(
+                    "RUNTIME_CLEANUP_FAILED workspaceId={} storageRef={} reason={} (deferred to Runtime orphan reconciliation)",
                     workspaceId, storageRef, e.getMessage(), e);
-            throw runtimeCleanupFailure(workspaceId, "request failed", e);
         }
-    }
-
-    private CpApiException runtimeCleanupFailure(String workspaceId, String reason, Throwable cause) {
-        String detail = "Runtime workspace cleanup failed for " + workspaceId + " (" + reason + ")";
-        return cause == null
-                ? new CpApiException(org.springframework.http.HttpStatus.BAD_GATEWAY,
-                        "RUNTIME_CLEANUP_FAILED", detail)
-                : new CpApiException(org.springframework.http.HttpStatus.BAD_GATEWAY,
-                        "RUNTIME_CLEANUP_FAILED", "Runtime workspace cleanup failed", cause);
     }
 
     private void requireNonBlank(String value, String field) {

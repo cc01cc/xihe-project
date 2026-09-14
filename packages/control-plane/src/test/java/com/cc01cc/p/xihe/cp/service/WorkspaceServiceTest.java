@@ -75,15 +75,14 @@ class WorkspaceServiceTest {
     }
 
     @Test
-    void deleteWorkspace_runtimeUnavailableLeavesWorkspaceActive() {
+    void deleteWorkspace_runtimeUnavailableStillDeletesLogically() {
         String userId = java.util.UUID.randomUUID().toString();
         Workspace ws = workspaceService.createWorkspace("delete-test", userId);
-        com.cc01cc.p.xihe.cp.config.CpApiException e = assertThrows(
-                com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> workspaceService.deleteWorkspace(ws.getId().toString(), userId));
-        assertEquals("RUNTIME_CLEANUP_FAILED", e.getCode());
-        assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(ws.getId()).isPresent(),
-                "Failed Runtime cleanup must not report a logically deleted workspace");
+        // STO-1: Runtime cleanup is best-effort after commit; an unreachable
+        // Runtime must not roll back or block the logical delete.
+        assertDoesNotThrow(() -> workspaceService.deleteWorkspace(ws.getId().toString(), userId));
+        assertTrue(workspaceRepository.findByIdAndDeletedAtIsNull(ws.getId()).isEmpty(),
+                "DB delete is authoritative even when Runtime cleanup fails");
     }
 
     @Test
