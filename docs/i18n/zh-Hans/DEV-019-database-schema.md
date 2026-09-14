@@ -44,7 +44,7 @@ tags:
 
 > **PLAN-280 rebaseline（2026-09-07）**：本地数据库一次性重建为单一 `V1__init_schema.sql`（21 张表）。统一原生 UUID、TIMESTAMPTZ、显式命名约束与 ON DELETE、`ddl-auto=validate`。旧 V1~V22+U6 迁移链已从 active classpath 移出（仅 Git 历史可追溯）。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
 >
-> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V13）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
+> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V14）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
 
 ## 2. ER 关系（分域 erDiagram）
 
@@ -626,7 +626,26 @@ erDiagram
 > - `idx_audit_logs_workspace_id (workspace_id)`
 > - `idx_audit_logs_action (action)`
 
-## 4. 迁移对照（当前链 V1~V13）
+### 3.7 操作账本（session_operations / operation_items / operation_attempts / operation_events / operation_extensions）
+
+> PLAN-0326（v3 通道事实模型，2026-09-14）后的行身份与写者语义。完整列定义/索引/迁移见 `plans/PLAN-0326-XH-ledger-single-writer/spec/ledger-data-model.md`（本节为项目侧速查，两者互为补充）。
+
+**职责分层**：`session_operations` = 一次用户动作的审计根（谁/何时/终态）；`operation_items` = 通道事实总表（**每通道事实一行**，`kind` 区分事实种类，`source` 是行身份位）；`operation_attempts` = 实际执行尝试（`agent_tool` 中继 / `cp_forward` 网关）；`operation_events` = append-only 状态流转流水；`operation_extensions` = 通道个性载荷（`mcp_call`/`llm_usage`/未来 kind）。
+
+**行身份（v3，V14）**：`uq_operation_items_operation_source_tool_call (operation_id, source, tool_call_id) WHERE tool_call_id IS NOT NULL`——同一次工具调用在中继（agent）与网关（mcp）各有一行，`toolCallId` 为跨通道关联键（join 得完整故事）；是否实际派发以 `source=mcp` 行是否存在为准。无键行（`tool_call_id IS NULL`，如 `llm_usage`/`chat`）不参与该唯一键。时间线唯一：`(operation_id, sequence)`（行锁分配，0317 决策 #7②）。
+
+**payload schema 注册表**（新 kind 前置条件：DEV-019 已登记字段清单，禁止未登记写入）：
+
+| kind | 写者 | payload 字段（camelCase） |
+|------|------|---------------------------|
+| `mcp_call` | 网关 | `httpStatus` int、`durationMs` bigint、`resultHash` string?、`resultSize` int?、`errorCode` string? |
+| `llm_usage` | 中继 | `inputTokens` int、`outputTokens` int、`totalTokens` int、`source` string（`real`/`estimated`） |
+
+`arguments_preview`（operation_items JSONB）：截断脱敏后的参数 JSON，外层含 `truncated` bool 标记。
+
+**V14 变更**：drop 空表 `runtime_jobs`（悬空 registry，PLAN-274 债务 #11）；唯一键替换为上式（历史不迁移，开发态按 fresh baseline 清库）。
+
+## 4. 迁移对照（当前链 V1~V14）
 
 > 历史链 V1~V22 已被 PLAN-280 destructive rebaseline 取代（旧 V2~V22/U6 移出仓库，仅 Git 历史可追溯）；下表为当前 active 链。原文末尾的历史 V1~V22 对照表保留在 Git 历史中，本节按当前链重写。
 
@@ -645,6 +664,7 @@ erDiagram
 | V11 | `V11__mcp_server_tool_timeout.sql` | remote MCP 工具超时列 | `mcp_servers.tool_timeout_seconds` |
 | V12 | `V12__config_tiers_and_mcp_split.sql` | config 三层化（instance/workspace/user + scope 约束/部分唯一索引、删 `environment`/`mcp_config`/`is_set`）+ MCP 分载体（新建 `mcp_stdio_servers`、`mcp_servers` → `mcp_remote_servers`）+ `config_audit.config_id` SET NULL（PLAN-0307 决策 #27/#30/#37） | `config/config_audit/mcp_stdio_servers/mcp_remote_servers` |
 | V13 | `V13__config_legacy_key_cleanup.sql` | 旧域键清理：裁撤域整体删除 + 各域废弃键删除（不搬移，决策 #39） | `config` |
+| V14 | `V14__ledger_channel_identity.sql` | 通道事实行身份（唯一键含 `source`）+ drop 悬空 `runtime_jobs`（PLAN-0326 决策 #4/#9） | `operation_items`/`runtime_jobs` |
 
 ## 5. 本地查看与运维
 
@@ -693,7 +713,6 @@ erDiagram
 | operation_events | `entity/OperationEvent.java` | V2 |
 | operation_extensions | `entity/OperationExtension.java` | V2 |
 | diagnostic_artifacts | `entity/DiagnosticArtifact.java` | V2 |
-| runtime_jobs | `entity/RuntimeJob.java` | V3 |
 | workspace_snapshots | `entity/WorkspaceSnapshot.java` | V4 |
 | workspace_snapshot_files | `entity/WorkspaceSnapshotFile.java` | V4 |
 | task_plans | `entity/TaskPlan.java` | V6 |

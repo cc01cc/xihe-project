@@ -164,7 +164,11 @@ async def test_runner_fans_in_approval_event_before_blocked_tool_completes(monke
             approval_tool.resolve_approval(event.data["requestId"], True)
 
     types = [event.type for event in received]
-    assert types.index("approval_request") < types.index("tool_result")
+    # PLAN-0326 决策 #8：审批原语的 tool_call/tool_result 事件被抑制（其正规记录 =
+    # 审批项），只保留 approval_request 事件本身；"先于工具放行"的语义由
+    # approval_request 出现即代表阻塞成立来保证。
+    assert "approval_request" in types
+    assert "tool_result" not in types
     assert received[types.index("approval_request")].data["runId"] == "run-1"
 
 

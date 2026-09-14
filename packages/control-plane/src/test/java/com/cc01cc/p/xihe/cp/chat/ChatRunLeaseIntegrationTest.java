@@ -33,6 +33,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -337,11 +338,12 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * T2.8④ 单驱动：同一 (operationId, toolCallId) 的重复写入（中继先到 / 网关先到）
-     * 命中同一行，且既有 `source` 不被覆盖。
+     * PLAN-0326 决策 #9（v3 通道事实模型）：同一 (operationId, toolCallId) 下，
+     * 中继（agent）与网关（mcp）各建己行、互不复用——"跨源命中同一行"的旧语义
+     * 被决策 #9 否决；同源重放才幂等命中。
      */
     @Test
-    void appendItemIsIdempotentForTheSameToolCallId() {
+    void appendItemCreatesIndependentRowsPerChannel() {
         var started = operationService.startOperation(userId, sessionId, workspaceId, null,
                 UUID.randomUUID().toString(), "tool_call", "agent", "agent", "agent-1", null, "test");
         String toolCallId = UUID.randomUUID().toString();
@@ -351,8 +353,15 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         var gatewayItem = operationService.appendItem(started.operationId(), toolCallId, null,
                 "tool_call", "shell", "mcp", "{\"cmd\":\"ls\"}", null, null);
 
-        assertEquals(agentItem.getId(), gatewayItem.getId(), "same key must hit the same row");
-        assertEquals("agent", gatewayItem.getSource(), "the existing owner must not be overwritten");
+        assertNotEquals(agentItem.getId(), gatewayItem.getId(),
+                "v3: each channel owns its own fact row for the same tool call");
+        assertEquals("agent", agentItem.getSource());
+        assertEquals("mcp", gatewayItem.getSource());
+
+        // 同源重放幂等：再次以 (agent, toolCallId) 追加命中 agent 行。
+        var replayed = operationService.appendItem(started.operationId(), toolCallId, null,
+                "tool_call", "shell", "agent", "{\"cmd\":\"ls\"}", null, null);
+        assertEquals(agentItem.getId(), replayed.getId(), "same-source replay must hit the same row");
     }
 
     /**
@@ -461,12 +470,15 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
 
         Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(chatController);
-        org.springframework.test.util.ReflectionTestUtils.invokeMethod(target, "recordLedgerToolEvent",
-                "tool_result",
+        // PLAN-0326：记账已抽 LedgerToolRecorder（决策 #8），直接以其 record() 驱动。
+        com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder recorder =
+                (com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder) org.springframework.test.util.ReflectionTestUtils
+                        .getField(target, "ledgerToolRecorder");
+        recorder.record("tool_result",
                 java.util.Map.of("tool", "shell", "result", "Tool error: cancelled",
                         "toolCallId", item.getToolCallId()),
                 run.getId().toString(), null,
-                new java.util.HashMap<String, UUID>(), new java.util.HashMap<UUID, UUID>());
+                com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger.create());
 
         assertEquals("running", operationService.findItem(item.getId().toString()).getStatus(),
                 "tool results after cancellation must not write terminal item facts");

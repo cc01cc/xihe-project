@@ -281,3 +281,59 @@ async def test_unknown_event_passthrough():
     async for sse in translate_events(async_iter(events)):
         results.append(sse)
     assert len(results) == 0
+
+
+# ── PLAN-0326 决策 #9：事件 origin 判别 + 审批原语孤儿事件抑制 ──────────────────
+
+def _parse(result: str) -> dict[str, Any]:
+    prefix = result.split("\ndata: ", 1)[0]
+    return json.loads(result.removeprefix(prefix + "\ndata: ").strip())
+
+
+@pytest.mark.asyncio
+async def test_tool_events_default_origin_mcp():
+    adapter = LangGraphEventAdapter()
+    events = [
+        {"event": "on_tool_start", "name": "read_file", "data": {"input": {}}, "run_id": "run-9"},
+        {"event": "on_tool_end", "name": "read_file",
+         "data": {"output": ToolMessage(content="ok", tool_call_id="call-9")}, "run_id": "run-9"},
+    ]
+    translated = [e for raw in events for e in _as_list(adapter.translate(raw))]
+    assert [e.data["origin"] for e in translated] == ["mcp", "mcp"]
+
+
+@pytest.mark.asyncio
+async def test_tool_events_local_origin_for_custom_tools():
+    adapter = LangGraphEventAdapter(local_tool_names={"request_approval", "generate_image"})
+    events = [
+        {"event": "on_tool_start", "name": "generate_image", "data": {"input": {}}, "run_id": "run-10"},
+        {"event": "on_tool_end", "name": "generate_image",
+         "data": {"output": ToolMessage(content="img", tool_call_id="call-10")}, "run_id": "run-10"},
+    ]
+    translated = [e for raw in events for e in _as_list(adapter.translate(raw))]
+    assert [e.data["origin"] for e in translated] == ["local", "local"]
+
+
+@pytest.mark.asyncio
+async def test_request_approval_tool_result_suppressed():
+    adapter = LangGraphEventAdapter(local_tool_names={"request_approval", "generate_image"})
+    events = [
+        {"event": "on_tool_end", "name": "request_approval",
+         "data": {"output": ToolMessage(content="approved", tool_call_id="call-a")}, "run_id": "run-11"},
+    ]
+    assert [e for raw in events for e in _as_list(adapter.translate(raw))] == []
+
+
+@pytest.mark.asyncio
+async def test_request_approval_tool_call_also_suppressed():
+    adapter = LangGraphEventAdapter(local_tool_names={"request_approval", "generate_image"})
+    events = [
+        {"event": "on_tool_start", "name": "request_approval", "data": {"input": {}}, "run_id": "run-12"},
+    ]
+    assert [e for raw in events for e in _as_list(adapter.translate(raw))] == []
+
+
+def _as_list(value):
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]

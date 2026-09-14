@@ -152,7 +152,7 @@ packages/
   - ChatRun：按 `(userId, sessionId, Idempotency-Key)` 持久化 run；`Message.runId` 关联 success/error/partial/ambiguous 终态，同 key 不重复启动，ambiguous 只能新 key 手动重试
   - 上下文管道：LLM 输入 = CP 投影快照（`context.messages`，截断最近 20 条）+ 当前轮；assistant 回复经 `assistant.responded` 落 context event store；压缩摘要经 `epoch.system_messages` 注入；自动压缩门在 run 启动前执行（70% 软阈值 + 冷却），`CONTEXT_OVERFLOW` 为兜底错误码；手动压缩 `POST /api/v1/sessions/{id}/compact`（活跃 run 409）。已知挂起见 DEV-018
   - provider/model binding：全链路传 `provider` + `model` + `toolMode`；`modelProvider + modelName` 为 session canonical pair，普通 Chat 固定 `toolMode=none`，Workspace/tool 操作显式用 `workspace`
-  - Operation Ledger：新 Chat 持久化 ChatRun/Message 后创建 durable root `operationId` 并透传 Agent；CP relay / MCP proxy / Approval 复用同一 item；Runtime executor、Workspace lifecycle、Job/Snapshot、LLM usage extension、UI audit 按各自里程碑接入，不得以局部 trace 充当全链路完成
+  - Operation Ledger（PLAN-0326 v3 通道事实模型）：新 Chat 持久化 ChatRun/Message 后创建 durable root `operationId` 并透传 Agent；**账本单位 = 通道事实**——中继按事件阶段经 `LedgerToolRecorder` 记 Agent 侧事实（`source=agent`），网关自建派发事实行（`source=mcp`），行身份 `(operation_id, source, tool_call_id)`（V14），`toolCallId` 为跨通道关联键、启发式匹配禁止；Runtime executor、Workspace lifecycle、Job/Snapshot 按各自里程碑接入，不得以局部 trace 充当全链路完成
 - **配置**: 三层 `instance / user / workspace`（解析链 `workspace > user > instance`，env 覆盖锁定显式化），CP ConfigService 统一管理
 - **配置 key 三方同步（硬约束）**: 新增/修改 config domain key 必须同步三处——（a）CP `config-schemas/*.json`（JSON Schema，同时约束 import 与 UI Settings 保存）、（b）`config.import.example.jsonc` 模板、（c）UI `/settings/config` 表单；任一漏改会导致 import 与保存**同时 400**（2026-09-09 logging/user-preference 双 400 实证）。
 - **配置解析透明性（硬约束）**: env 与 DB 用户配置冲突时**必须显式暴露**——UI 显示被覆盖的 env 值并冻结/禁用该项、Agent 侧可见、日志记录冲突与最终生效来源；**禁止在底层静默合并/自动计算**（2026-09-11 用户明确「最核心是透明度」）。
@@ -233,7 +233,7 @@ packages/
 - **dev:full/T3 拓扑边界**: 验证主线是 Windows `dev:host`；Compose E2E 需 Runtime 的 Docker Engine socket 与容器内 WorkspaceStorage 映射，未完成前不得把 `dev:full`/T3 失败归因于 host v1
 - **数据库必须 fresh baseline**: active Flyway 链以 `V1__init_schema.sql` 为 baseline（含 V2–V13），`ddl-auto=validate`、`baseline-on-migrate=false`；旧本地库会被拒绝，恢复用 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内
 - **dev seed 密码不可知**: `DataSeeder` 生成的 `admin@xihe.local` 随机密码不打印不落盘，`dev:reset` 后恢复用 `mise run reset-admin`
-- **Runtime 生命周期技术债**: `WorkspaceRegistry` / `WorkspaceManager` 已部分收敛，但 REST 文件操作仍直连 host filesystem（未走 executor Docker exec），cross-map 一致性靠周期检查兜底；后续须消除 WorkspaceManager 直接 Docker 操作并统一 REST/MCP 执行路径
+- **Runtime 生命周期技术债**: `WorkspaceRegistry` / `WorkspaceManager` 已部分收敛，但 REST 文件操作仍直连 host filesystem（未走 executor Docker exec），cross-map 一致性靠周期检查兜底；后续须消除 WorkspaceManager 直接 Docker 操作并统一 REST/MCP 执行路径。`runtime_jobs` 悬空 registry 已随 PLAN-0326 删除（V14）；J-3/P1-10 立项时按需重新设计
 - **`dev:host` 原生编排**: `dev:host` 先以 Docker 起 PostgreSQL 再并行管理原生 CP/Agent/Runtime/UI；`dev:host:watch` 由 Node watcher 监控四健康端点并在任务组失败后重启；`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根（默认 `A03-xihe\.xihe-workspaces`）
 - **Host E2E 数据边界**: `test:e2e:host` 每轮独立 DB + host root，不连长期 dev DB；成功/失败/中断都必须 teardown 并反向确认无本轮残留；`--keep` 仅限本地调试
 - **Visual evidence boundary**: `toHaveScreenshot()` 只证明画面接近 baseline；人工 UI 审查还须读 actual/diff、检查 DOM/computed style、overflow、console/pageerror 与交互状态；`*-snapshots/*.png` 为本地生成工件，不能声称为 fresh checkout 可复现的 Git baseline
