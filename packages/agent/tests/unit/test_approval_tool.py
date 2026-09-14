@@ -294,6 +294,29 @@ async def test_coordinator_reject_transition_preserves_payload_and_raises():
 
 
 @pytest.mark.asyncio
+async def test_coordinator_reject_carries_bounded_feedback_to_terminal_error():
+    """PLAN-0328 M1: rejection feedback travels CP→Agent and surfaces in the terminal error."""
+    coordinator = ApprovalCoordinator(timeout_seconds=1)
+    published: list[dict] = []
+    context = _make_context("session-reject-feedback")
+
+    request_task = asyncio.create_task(
+        coordinator.request("rm -rf", None, context, _publishing_sink(published))
+    )
+    await _wait_for_published(published)
+    request_id = published[0]["requestId"]
+
+    assert coordinator.resolve_status(request_id, False, "x" * 900) == ("accepted", False)
+    with pytest.raises(ApprovalRejectedError) as error:
+        await request_task
+
+    message = str(error.value)
+    assert "User feedback:" in message
+    assert message.count("x") == 512
+    assert coordinator.approval_feedback == {}
+
+
+@pytest.mark.asyncio
 async def test_coordinator_expiry_transitions_to_expired_and_raises():
     coordinator = ApprovalCoordinator(timeout_seconds=0.01)
     published: list[dict] = []

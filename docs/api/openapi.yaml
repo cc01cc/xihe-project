@@ -165,6 +165,26 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '410': { $ref: '#/components/responses/Problem' }
         '502': { $ref: '#/components/responses/Problem' }
+  /api/v1/approvals/pending:
+    get:
+      operationId: listPendingApprovals
+      summary: Cross-session pending approval indicator (counts only)
+      description: |
+        PLAN-0328 M1 T1.16 (spec/ui-ux §1.2): one entry per session with at least one live
+        pending approval for the authenticated user in the current workspace. Counts and
+        timestamps only — never tool arguments, approval details or rule text
+        (spec/approval.md §15).
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Pending approval summaries, oldest session first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PendingApprovalSummary' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/events:
     get:
       operationId: chatEvents
@@ -520,9 +540,62 @@ components:
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
     ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, operationId: { type: string, format: uuid, readOnly: true, description: Durable Operation Ledger root for this ChatRun }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
-    ChatApprovalDecisionRequest: { type: object, required: [approved], additionalProperties: false, properties: { approved: { type: boolean } } }
-    ChatApprovalDecisionResponse: { type: object, required: [status, requestId, approved], properties: { status: { type: string, enum: [accepted, already_decided] }, requestId: { type: string }, approved: { type: boolean } } }
-    AgentApprovalDecisionRequest: { type: object, required: [requestId, approved], additionalProperties: false, properties: { requestId: { type: string }, approved: { type: boolean } } }
+    ChatApprovalDecisionRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        PLAN-0328 M1 approval decision. `decision` selects the grant tier (`once` | `session` |
+        `saved`) or a rejection (`reject` | `reject_always`); the legacy `approved` boolean is
+        still accepted and maps to once/reject. Exactly one of `decision` / `approved` is
+        required. `feedback` is reject-only; `layer`/`rule` apply to rule-granting decisions.
+      properties:
+        decision: { type: string, enum: [once, session, saved, reject, reject_always] }
+        approved: { type: boolean, description: Legacy boolean decision (maps to once/reject) }
+        feedback: { type: string, maxLength: 512, description: Rejection feedback carried to the model }
+        layer: { type: string, enum: [workspace, user], description: Target layer for saved/reject_always; default workspace }
+        rule: { $ref: '#/components/schemas/ChatApprovalRuleSpec' }
+    ChatApprovalRuleSpec:
+      type: object
+      additionalProperties: false
+      description: Optional narrowing of the granted rule; actionClass must equal the registry value (classification authority stays with the classification workflow).
+      properties:
+        actionClass: { type: string, maxLength: 64 }
+        resource: { type: string, maxLength: 512 }
+    ChatApprovalGrantedRule:
+      type: object
+      required: [layer, actionClass, resource, effect]
+      properties:
+        layer: { type: string, enum: [session, workspace, user] }
+        actionClass: { type: string }
+        resource: { type: string }
+        effect: { type: string, enum: [allow, deny] }
+    ChatApprovalDecisionResponse:
+      type: object
+      required: [status, requestId, approved]
+      properties:
+        status: { type: string, enum: [accepted, already_decided] }
+        requestId: { type: string }
+        approved: { type: boolean }
+        decision: { type: string, enum: [once, session, saved, reject, reject_always] }
+        propagated: { type: integer, minimum: 0, description: Same-session pending requests resolved by propagation }
+        rule: { $ref: '#/components/schemas/ChatApprovalGrantedRule' }
+    PendingApprovalSummary:
+      type: object
+      required: [sessionId, workspaceId, count, oldestRequestedAt]
+      properties:
+        sessionId: { type: string }
+        workspaceId: { type: string }
+        count: { type: integer, minimum: 1 }
+        oldestRequestedAt: { type: string, format: date-time }
+    AgentApprovalDecisionRequest:
+      type: object
+      required: [requestId, approved]
+      additionalProperties: false
+      properties:
+        requestId: { type: string }
+        approved: { type: boolean }
+        decision: { type: string, enum: [once, session, saved, reject, reject_always, propagated_allow, propagated_reject] }
+        feedback: { type: string, maxLength: 512 }
     AgentApprovalStatus: { type: object, required: [status, requestId], properties: { status: { type: string, enum: [pending, approved, rejected, expired] }, requestId: { type: string }, runId: { type: string }, sessionId: { type: string }, workspaceId: { type: string }, approved: { type: [boolean, 'null'] }, action: { type: string }, details: { type: string }, expiresAt: { type: string, format: date-time } } }
     ProviderCatalogResponse:
        type: object

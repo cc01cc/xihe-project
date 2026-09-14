@@ -13,8 +13,10 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -58,6 +60,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     private static HttpServer agentServer;
     private static final AtomicReference<Integer> AGENT_DECISION_STATUS = new AtomicReference<>(200);
     private static final AtomicReference<String> AGENT_DECISION_AUTH = new AtomicReference<>("");
+    private static final AtomicReference<String> AGENT_DECISION_BODY = new AtomicReference<>("");
 
     @Autowired
     private UserRepository userRepository;
@@ -83,6 +86,12 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private ApprovalService approvalService;
 
+    @Autowired
+    private SessionPolicyState sessionPolicyState;
+
+    @Autowired
+    private PolicyRuleRepository policyRuleRepository;
+
     private String authToken;
     private String userId;
     private String workspaceId;
@@ -97,6 +106,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
             agentServer.createContext("/internal/v1/agent/approval/respond", exchange -> {
                 String auth = exchange.getRequestHeaders().getFirst("Authorization");
                 AGENT_DECISION_AUTH.set(auth == null ? "" : auth);
+                AGENT_DECISION_BODY.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 byte[] body = "{\"status\":\"accepted\"}".getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
                 exchange.sendResponseHeaders(AGENT_DECISION_STATUS.get(), body.length);
@@ -130,6 +140,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         AGENT_DECISION_STATUS.set(200);
+        AGENT_DECISION_BODY.set("");
         String email = "approval-int-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         RegisterRequest register = new RegisterRequest(email, TestDataFactory.PASSWORD, "ApprovalIntTest");
         ResponseEntity<AuthResponse> regResponse = restTemplate.postForEntity(
@@ -423,5 +434,154 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals("AGENT_EVENT_INVALID", error.getCode());
         assertTrue(approvalRepository.findById(UUID.fromString(requestId)).isEmpty());
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0328 M1 batch 4b — decision tiers, feedback, propagation, pending indicator
+    // ------------------------------------------------------------------
+
+    private ChatApproval pendingToolApproval(String reqId, String tool, String run, String session,
+                                             String user, String workspace, Instant expiresAt) {
+        ChatApproval approval = new ChatApproval(reqId, run, session, user, workspace,
+                tool, "Execute " + tool, "preview", "pending", expiresAt, null, "require_approval");
+        return approvalRepository.save(approval);
+    }
+
+    private ResponseEntity<Map> decideWithBody(String reqId, Map<String, Object> body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return restTemplate.exchange(
+                baseUrl + "/api/v1/chat/approvals/" + reqId + "/decision",
+                HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+    }
+
+    @Test
+    void sessionTierApprovesRowAndAddsL4Rule() {
+        activeRun("running");
+        pendingToolApproval(requestId, "write_file", runId, sessionId, userId, workspaceId,
+                Instant.now().plusSeconds(300));
+
+        ResponseEntity<Map> response = decideWithBody(requestId, Map.of("decision", "session"));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("session", response.getBody().get("decision"));
+        assertEquals("approved", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+        assertTrue(sessionPolicyState.rulesOf(sessionId).stream()
+                        .anyMatch(rule -> "write".equals(rule.actionClass())),
+                "session tier must add the L4 allow rule");
+    }
+
+    @Test
+    void savedTierWritesWorkspaceRuleAndApprovesRow() {
+        activeRun("running");
+        pendingToolApproval(requestId, "write_file", runId, sessionId, userId, workspaceId,
+                Instant.now().plusSeconds(300));
+
+        ResponseEntity<Map> response = decideWithBody(requestId, Map.of("decision", "saved"));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("saved", response.getBody().get("decision"));
+        assertEquals("approved", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+        assertTrue(policyRuleRepository
+                        .findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", workspaceId).stream()
+                        .anyMatch(rule -> "write".equals(rule.getActionClass()) && "allow".equals(rule.getEffect())),
+                "saved tier must persist the workspace-layer allow rule");
+    }
+
+    @Test
+    void rejectCarriesFeedbackToTheAgent() {
+        activeRun("running");
+        pendingToolApproval(requestId, "write_file", runId, sessionId, userId, workspaceId,
+                Instant.now().plusSeconds(300));
+
+        ResponseEntity<Map> response = decideWithBody(requestId,
+                Map.of("decision", "reject", "feedback", "use append mode instead"));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("rejected", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+        assertTrue(AGENT_DECISION_BODY.get().contains("\"feedback\":\"use append mode instead\""),
+                "feedback must be forwarded to the Agent: " + AGENT_DECISION_BODY.get());
+        assertTrue(AGENT_DECISION_BODY.get().contains("\"decision\":\"reject\""));
+    }
+
+    @Test
+    void rejectPropagatesToOtherPendingRequestsOfTheSameSession() {
+        activeRun("running");
+        String otherId = UUID.randomUUID().toString();
+        pendingToolApproval(requestId, "write_file", runId, sessionId, userId, workspaceId,
+                Instant.now().plusSeconds(300));
+        pendingToolApproval(otherId, "execute_command", runId, sessionId, userId, workspaceId,
+                Instant.now().plusSeconds(300));
+
+        ResponseEntity<Map> response = decideWithBody(requestId, Map.of("decision", "reject"));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(1, response.getBody().get("propagated"));
+        assertEquals("rejected", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+        assertEquals("rejected", approvalRepository.findById(UUID.fromString(otherId)).orElseThrow().getState());
+    }
+
+    @Test
+    void savedTierRefusesUnclassifiedToolWithoutClaimingTheRow() {
+        activeRun("running");
+        pendingToolApproval(requestId, "third_party_tool", runId, sessionId, userId, workspaceId,
+                Instant.now().plusSeconds(300));
+
+        ResponseEntity<Map> response = noErrorClient().exchange(
+                baseUrl + "/api/v1/chat/approvals/" + requestId + "/decision",
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of("decision", "saved"), authorizedHeaders()),
+                Map.class);
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals("TOOL_UNCLASSIFIED", response.getBody().get("code"));
+        assertEquals("pending", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+    }
+
+    @Test
+    void pendingEndpointReturnsCountsScopedToUserAndSession() {
+        activeRun("running");
+        pendingToolApproval(requestId, "write_file", runId, sessionId, userId, workspaceId,
+                Instant.now().plusSeconds(300));
+        pendingToolApproval(UUID.randomUUID().toString(), "write_file", runId, sessionId, userId, workspaceId,
+                Instant.now().plusSeconds(300));
+        String expiredId = UUID.randomUUID().toString();
+        pendingToolApproval(expiredId, "write_file", runId, sessionId, userId, workspaceId,
+                Instant.now().minusSeconds(1));
+
+        String otherSession = UUID.randomUUID().toString();
+        Session session = new Session(workspaceId, userId, "Other session");
+        session.setId(UUID.fromString(otherSession));
+        sessionRepository.save(session);
+        String otherRun = UUID.randomUUID().toString();
+        chatRunRepository.save(new ChatRun(otherRun, otherSession, userId, workspaceId,
+                "idem-" + UUID.randomUUID(), "hash", "openai", "gpt-test", "workspace", "running"));
+        pendingToolApproval(UUID.randomUUID().toString(), "execute_command", otherRun, otherSession,
+                userId, workspaceId, Instant.now().plusSeconds(300));
+
+        ResponseEntity<List> response = restTemplate.exchange(
+                baseUrl + "/api/v1/approvals/pending", HttpMethod.GET,
+                new HttpEntity<>(authorizedHeaders()), List.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        List<Map<String, Object>> summaries = response.getBody();
+        assertEquals(2, summaries.size());
+        Map<String, Object> first = summaries.stream()
+                .filter(row -> sessionId.equals(row.get("sessionId"))).findFirst().orElseThrow();
+        assertEquals(2, first.get("count"));
+        assertEquals(workspaceId, first.get("workspaceId"));
+        assertNotNull(first.get("oldestRequestedAt"));
+        assertFalse(first.containsKey("tool") || first.containsKey("details"));
+        Map<String, Object> second = summaries.stream()
+                .filter(row -> otherSession.equals(row.get("sessionId"))).findFirst().orElseThrow();
+        assertEquals(1, second.get("count"));
+    }
+
+    private HttpHeaders authorizedHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return headers;
     }
 }

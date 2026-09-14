@@ -1412,7 +1412,10 @@ async def approval_respond(request: Request, _token: None = Depends(verify_api_t
     data = await request.json()
     request_id = data.get("requestId", "")
     approved = data.get("approved", False)
-    status, decision = approval_tool.resolve_approval_status(request_id, bool(approved))
+    # PLAN-0328 M1 (decision #23): optional rejection feedback forwarded to the blocked tool.
+    raw_feedback = data.get("feedback")
+    feedback = raw_feedback if isinstance(raw_feedback, str) and raw_feedback else None
+    status, decision = approval_tool.resolve_approval_status(request_id, bool(approved), feedback)
     if status in {"accepted", "already_decided"}:
         return {
             "status": status,

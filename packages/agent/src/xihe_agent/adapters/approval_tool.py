@@ -38,6 +38,7 @@ class ApprovalExecutorUnsupportedError(ApprovalTerminalError):
 
 
 APPROVAL_DETAILS_PREVIEW_LIMIT = 500
+APPROVAL_FEEDBACK_LIMIT = 512
 
 _SECRET_PATTERNS = (
     re.compile(r'(?i)(bearer\s+[A-Za-z0-9\-._~+/=]+)'),
@@ -100,6 +101,9 @@ class ApprovalCoordinator:
         self.pending_requests: dict[str, asyncio.Event] = {}
         self.pending_payloads: dict[str, dict[str, Any]] = {}
         self.approval_results: dict[str, bool] = {}
+        # PLAN-0328 M1: rejection feedback travels CP → Agent and is surfaced to the
+        # model/terminal error; it is never persisted here beyond the pending window.
+        self.approval_feedback: dict[str, str] = {}
         self.completed_payloads: dict[str, dict[str, Any]] = {}
         self.completed_statuses: dict[str, str] = {}
         self.completed_decisions: dict[str, bool | None] = {}
@@ -136,6 +140,7 @@ class ApprovalCoordinator:
         if event_sink is None:
             self.pending_requests.pop(request_id, None)
             self.pending_payloads.pop(request_id, None)
+            self.approval_feedback.pop(request_id, None)
             logger.error("Approval event sink is unavailable: requestId={}", request_id)
             raise RuntimeError("Approval request could not be delivered")
 
@@ -147,6 +152,7 @@ class ApprovalCoordinator:
             logger.warning("Approval request expired: requestId={}", request_id)
             self.pending_requests.pop(request_id, None)
             self.pending_payloads.pop(request_id, None)
+            self.approval_feedback.pop(request_id, None)
             self._complete(request_id, payload, "expired", None)
             raise ApprovalExpiredError(f"Approval request expired: {request_id}")
         except asyncio.CancelledError:
@@ -156,18 +162,26 @@ class ApprovalCoordinator:
             logger.warning("Approval request cancelled: requestId={}", request_id)
             self.pending_requests.pop(request_id, None)
             self.pending_payloads.pop(request_id, None)
+            self.approval_feedback.pop(request_id, None)
             raise
         except Exception:
             self.pending_requests.pop(request_id, None)
             self.pending_payloads.pop(request_id, None)
+            self.approval_feedback.pop(request_id, None)
             raise
 
         approved = self.approval_results.pop(request_id, False)
+        feedback = self.approval_feedback.pop(request_id, None)
         self.pending_requests.pop(request_id, None)
         self.pending_payloads.pop(request_id, None)
         self._complete(request_id, payload, "approved" if approved else "rejected", approved)
         if not approved:
-            raise ApprovalRejectedError(f"Approval request rejected: {request_id}")
+            # PLAN-0328 M1 (decision #23): rejection may carry user feedback; it travels with
+            # the terminal error so the model/user sees why the action was refused.
+            message = f"Approval request rejected: {request_id}"
+            if feedback:
+                message = f"{message}. User feedback: {feedback}"
+            raise ApprovalRejectedError(message)
         return {
             "content": f"Approved: {action}",
             "approval": "approved",
@@ -178,7 +192,10 @@ class ApprovalCoordinator:
         status, _ = self.resolve_status(request_id, approved)
         return status in {"accepted", "already_decided"}
 
-    def resolve_status(self, request_id: str, approved: bool) -> tuple[str, bool | None]:
+    def resolve_status(
+        self, request_id: str, approved: bool, feedback: str | None = None
+    ) -> tuple[str, bool | None]:
+        """Resolve one pending request; PLAN-0328 M1 adds optional rejection feedback."""
         self._purge_completed()
         event = self.pending_requests.get(request_id)
         if event is not None:
@@ -186,6 +203,8 @@ class ApprovalCoordinator:
                 existing = self.approval_results[request_id]
                 return ("already_decided", existing) if existing == approved else ("conflict", existing)
             self.approval_results[request_id] = approved
+            if feedback:
+                self.approval_feedback[request_id] = feedback[:APPROVAL_FEEDBACK_LIMIT]
             event.set()
             return "accepted", approved
 
@@ -233,6 +252,7 @@ class ApprovalCoordinator:
                 self.completed_payloads.pop(request_id, None)
                 self.completed_statuses.pop(request_id, None)
                 self.completed_decisions.pop(request_id, None)
+                self.approval_feedback.pop(request_id, None)
 
 
 class ApprovalAgentTool(BaseAgentTool):
@@ -282,8 +302,10 @@ class ApprovalAgentTool(BaseAgentTool):
     def get_pending(self) -> list[dict[str, Any]]:
         return self.coordinator.get_pending()
 
-    def resolve_approval_status(self, request_id: str, approved: bool) -> tuple[str, bool | None]:
-        return self.coordinator.resolve_status(request_id, approved)
+    def resolve_approval_status(
+        self, request_id: str, approved: bool, feedback: str | None = None
+    ) -> tuple[str, bool | None]:
+        return self.coordinator.resolve_status(request_id, approved, feedback)
 
     def get_approval_status(self, request_id: str) -> dict[str, Any] | None:
         return self.coordinator.get_status(request_id)

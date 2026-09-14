@@ -202,4 +202,31 @@ class GatewayToolRegistryContractTest {
                 tool + " is internal-only but must still require approval if ever called");
         }
     }
+
+    /**
+     * PLAN-0328 M1 T1.20: every Gateway-public tool must resolve to a classified action class
+     * and a declared shape — the approval-grant path refuses unclassified tools, so a gap here
+     * would make "保存为规则" fail on a Gateway tool.
+     */
+    @Test
+    void everyGatewayTool_hasAClassifiedFace() {
+        ToolFaceRegistry registry = new ToolFaceRegistry();
+        for (String tool : GATEWAY_PUBLIC_TOOLS) {
+            ToolFaceRegistry.Face face = registry.faceOf(tool);
+            assertTrue(ToolFaceRegistry.builtinActionClasses().contains(face.actionClass()),
+                tool + " must resolve to a built-in action class but got " + face.actionClass());
+        }
+    }
+
+    @Test
+    void shapesMatchTheToolSemantics() {
+        ToolFaceRegistry registry = new ToolFaceRegistry();
+        assertEquals(ToolShape.INTERPRETER, registry.faceOf("execute_command").shape(),
+            "shell execution is the interpreter face (resource cannot be enumerated)");
+        assertEquals(ToolShape.STRUCTURED, registry.faceOf("write_file").shape());
+        assertEquals(ToolShape.STRUCTURED, registry.faceOf("read_file").shape());
+        ToolFaceRegistry.Face unknown = registry.faceOf("third_party_mcp_tool");
+        assertEquals(PolicyLayer.UNCLASSIFIED_ACTION, unknown.actionClass());
+        assertEquals(ToolShape.OPAQUE, unknown.shape());
+    }
 }

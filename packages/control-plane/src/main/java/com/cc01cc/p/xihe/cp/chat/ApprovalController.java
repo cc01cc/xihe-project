@@ -28,15 +28,45 @@ public class ApprovalController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
-        Object rawApproved = body == null ? null : body.get("approved");
-        if (!(rawApproved instanceof Boolean approved)) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "approved must be a boolean");
-        }
         try {
-            return ResponseEntity.ok(approvalService.decide(requestId, userId, workspaceId, approved));
+            return ResponseEntity.ok(approvalService.decide(requestId, userId, workspaceId, parseDecision(body)));
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+    }
+
+    /**
+     * PLAN-0328 M1: accepts the new {@code decision} body and keeps the legacy {@code approved}
+     * boolean working (mapped to once / reject). Unknown shapes fail closed with 400.
+     */
+    private static ApprovalDecision parseDecision(Map<String, Object> body) {
+        if (body == null) {
+            throw new com.cc01cc.p.xihe.cp.config.CpApiException(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "decision or approved is required");
+        }
+        Object rawDecision = body.get("decision");
+        Object rawApproved = body.get("approved");
+        ApprovalDecision.Kind kind;
+        if (rawDecision != null) {
+            kind = ApprovalDecision.Kind.fromWire(String.valueOf(rawDecision));
+        } else if (rawApproved instanceof Boolean approved) {
+            kind = approved ? ApprovalDecision.Kind.ONCE : ApprovalDecision.Kind.REJECT;
+        } else {
+            throw new com.cc01cc.p.xihe.cp.config.CpApiException(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "decision or approved is required");
+        }
+        String actionClass = null;
+        String resource = null;
+        Object rule = body.get("rule");
+        if (rule instanceof Map<?, ?> ruleMap) {
+            actionClass = asText(ruleMap.get("actionClass"));
+            resource = asText(ruleMap.get("resource"));
+        }
+        return ApprovalDecision.of(kind, asText(body.get("feedback")), asText(body.get("layer")),
+                actionClass, resource);
+    }
+
+    private static String asText(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 }

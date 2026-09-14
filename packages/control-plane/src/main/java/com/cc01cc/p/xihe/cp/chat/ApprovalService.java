@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -45,12 +46,16 @@ public class ApprovalService {
     private final ObjectMapper objectMapper;
     private final ObjectMapper canonicalMapper;
     private final OperationService operationService;
+    private final ApprovalGrantWriter grantWriter;
+    private final AuditLogger audit;
 
     public ApprovalService(ChatApprovalRepository approvalRepository,
                            ChatRunRepository chatRunRepository,
                            ApprovalAgentClient agentClient,
                            ObjectMapper objectMapper,
-                           OperationService operationService) {
+                           OperationService operationService,
+                           ApprovalGrantWriter grantWriter,
+                           AuditLogger audit) {
         this.approvalRepository = approvalRepository;
         this.chatRunRepository = chatRunRepository;
         this.agentClient = agentClient;
@@ -58,6 +63,8 @@ public class ApprovalService {
         this.canonicalMapper = objectMapper.copy()
                 .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
         this.operationService = operationService;
+        this.grantWriter = grantWriter;
+        this.audit = audit;
     }
 
     @Transactional
@@ -143,10 +150,28 @@ public class ApprovalService {
                 .toList();
     }
 
+    /** Legacy boolean decision (pre-0328 body): maps to once / reject. */
     public Map<String, Object> decide(String requestId, String userId, String workspaceId, boolean approved) {
+        return decide(requestId, userId, workspaceId, ApprovalDecision.fromApproved(approved));
+    }
+
+    /**
+     * PLAN-0328 M1 (spec §14, decision #23/#25): one decision entry point for the three grant tiers,
+     * rejection with feedback, and the session propagation semantics.
+     *
+     * <p>Order of operations: validate/derive the grant → claim the row → materialize the rule
+     * (session L4 or persistent L2/L3) → notify the Agent → mark decided → propagate
+     * (allow → re-solve pending; reject → same-session reject). A rule-write failure leaves the row
+     * in {@code dispatch_unknown} so an explicit retry can complete it — no silent half-grants.</p>
+     */
+    public Map<String, Object> decide(String requestId, String userId, String workspaceId, ApprovalDecision decision) {
+        if (decision == null) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "decision is required");
+        }
         ChatApproval approval = approvalRepository.findById(parseRequestId(requestId))
                 .filter(row -> userId.equals(row.getUserId()) && workspaceId.equals(row.getWorkspaceId()))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "APPROVAL_NOT_FOUND", "Approval request not found"));
+        boolean approved = decision.kind().isApproved();
         Instant now = Instant.now();
         if (approval.getExpiresAt().isBefore(now) && !isTerminal(approval.getState())) {
             int marked = approvalRepository.markExpired(approval.getRequestId(), now);
@@ -158,7 +183,7 @@ public class ApprovalService {
         }
         if (isTerminal(approval.getState())) {
             if (approval.getApproved() != null && approval.getApproved() == approved) {
-                return decisionResponse(requestId, "accepted", approved);
+                return decisionResponse(requestId, "accepted", approved, decision, 0, null);
             }
             throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_CONFLICT",
                     "Approval request already has a different decision");
@@ -170,13 +195,30 @@ public class ApprovalService {
             throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
                     "Approval decision is already being dispatched");
         }
+        // Derive and validate the grant before claiming the row: an invalid decision
+        // (unclassified tool, bad layer) must leave the request pending and retryable.
+        ApprovalGrantWriter.RulePlan plan = decision.kind().grantsRule()
+                ? grantWriter.prepare(decision, approval.getTool(), userId, workspaceId)
+                : null;
         int claimed = approvalRepository.markDispatching(approval.getRequestId(), approved, now);
         if (claimed == 0) {
             throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
                     "Approval decision is already being dispatched");
         }
         try {
-            agentClient.respond(requestId, approved);
+            if (plan != null) {
+                grantWriter.commit(plan, approval.getSessionId(), userId, workspaceId);
+            }
+        } catch (RuntimeException e) {
+            int unknown = approvalRepository.markDispatchUnknown(approval.getRequestId(),
+                    "POLICY_RULE_WRITE_FAILED", Instant.now());
+            logger.error("[LIFECYCLE] service=cp event=approval_rule_write_failed requestId={} marked={}",
+                    requestId, unknown, e);
+            throw new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR, "POLICY_RULE_WRITE_FAILED",
+                    "Approval grant could not be materialized as a policy rule", e);
+        }
+        try {
+            agentClient.respond(requestId, approved, decision.kind().wireName(), decision.feedback());
         } catch (CpApiException e) {
             int marked = approvalRepository.markDispatchUnknown(approval.getRequestId(), e.getCode(), Instant.now());
             if (marked == 0) {
@@ -189,7 +231,98 @@ public class ApprovalService {
             logger.error("[LIFECYCLE] service=cp event=chat_approval_decide_transition_lost requestId={} expected dispatching state", requestId);
         }
         operationService.resolveApprovalItem(requestId, approved);
-        return decisionResponse(requestId, "accepted", approved);
+        audit.record(approval.getSessionId(), approval.getTool(), "approval_decision",
+                decision.kind().wireName() + (decision.feedback() == null ? "" : " feedback=" + safeFeedback(decision.feedback())));
+        int propagated = propagate(approval, decision);
+        return decisionResponse(requestId, "accepted", approved, decision, propagated, plan);
+    }
+
+    /**
+     * Session propagation (decision #23): an allow that materialized a rule re-solves the other
+     * pending requests of the session and releases the ones the new ruleset now allows; a reject
+     * fails the remaining pending requests of the session (同会话连坐). Best-effort per row with
+     * explicit logging — the primary decision above already succeeded.
+     */
+    private int propagate(ChatApproval decided, ApprovalDecision decision) {
+        boolean approved = decision.kind().isApproved();
+        if (approved && !decision.kind().grantsRule()) {
+            // `once` grants one invocation only: it must not release anything else.
+            return 0;
+        }
+        List<ChatApproval> pending = approvalRepository
+                .findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
+                        decided.getSessionId(), decided.getUserId(), decided.getWorkspaceId(), List.of("pending"));
+        int affected = 0;
+        for (ChatApproval row : pending) {
+            if (row.getRequestId().equals(decided.getRequestId()) || row.getExpiresAt().isBefore(Instant.now())) {
+                continue;
+            }
+            if (approved && !grantWriter.wouldAllow(row.getTool(), row.getSessionId(),
+                    row.getUserId(), row.getWorkspaceId())) {
+                continue;
+            }
+            if (dispatchPropagated(row, approved)) {
+                affected++;
+            }
+        }
+        return affected;
+    }
+
+    private boolean dispatchPropagated(ChatApproval row, boolean approved) {
+        String requestId = row.getRequestId().toString();
+        int claimed = approvalRepository.markDispatching(row.getRequestId(), approved, Instant.now());
+        if (claimed == 0) {
+            return false;
+        }
+        try {
+            agentClient.respond(requestId, approved,
+                    approved ? "propagated_allow" : "propagated_reject", null);
+        } catch (CpApiException e) {
+            approvalRepository.markDispatchUnknown(row.getRequestId(), e.getCode(), Instant.now());
+            logger.warn("[LIFECYCLE] service=cp event=approval_propagation_dispatch_unknown requestId={} code={}",
+                    requestId, e.getCode());
+            return false;
+        }
+        approvalRepository.markDecided(row.getRequestId(), approved ? "approved" : "rejected", Instant.now());
+        operationService.resolveApprovalItem(requestId, approved);
+        audit.record(row.getSessionId(), row.getTool(),
+                approved ? "approval_propagated_allow" : "approval_propagated_reject", requestId);
+        logger.info("[LIFECYCLE] service=cp event=approval_propagated requestId={} approved={} sessionId={}",
+                requestId, approved, row.getSessionId());
+        return true;
+    }
+
+    /** Cross-session waiting indicator (T1.16): counts only, no parameters or plaintext detail. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> pendingSummaries(String userId, String workspaceId) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        Map<String, Instant> oldest = new LinkedHashMap<>();
+        Instant now = Instant.now();
+        for (ChatApproval row : approvalRepository.findByUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
+                userId, workspaceId, List.of("pending"))) {
+            if (row.getExpiresAt().isBefore(now)) {
+                continue;
+            }
+            counts.merge(row.getSessionId(), 1, Integer::sum);
+            oldest.merge(row.getSessionId(), row.getCreatedAt(),
+                    (left, right) -> left.isBefore(right) ? left : right);
+        }
+        List<Map<String, Object>> summaries = new java.util.ArrayList<>();
+        for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("sessionId", entry.getKey());
+            summary.put("workspaceId", workspaceId);
+            summary.put("count", entry.getValue());
+            summary.put("oldestRequestedAt", oldest.get(entry.getKey()));
+            summaries.add(summary);
+        }
+        return summaries;
+    }
+
+    /** Feedback is user-authored text: keep it bounded and redacted in the audit trail. */
+    private static String safeFeedback(String feedback) {
+        String redacted = LogRedactor.redact(feedback);
+        return redacted.length() <= 200 ? redacted : redacted.substring(0, 200) + "…";
     }
 
     private void recordLedgerApprovalItem(Map<?, ?> payload, String runId, String requestId) {
@@ -339,11 +472,23 @@ public class ApprovalService {
         return payload;
     }
 
-    private Map<String, Object> decisionResponse(String requestId, String status, boolean approved) {
+    private Map<String, Object> decisionResponse(String requestId, String status, boolean approved,
+                                                 ApprovalDecision decision, int propagated,
+                                                 ApprovalGrantWriter.RulePlan plan) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("status", status);
         response.put("requestId", requestId);
         response.put("approved", approved);
+        response.put("decision", decision.kind().wireName());
+        response.put("propagated", propagated);
+        if (plan != null) {
+            Map<String, Object> rule = new LinkedHashMap<>();
+            rule.put("layer", plan.layer());
+            rule.put("actionClass", plan.actionClass());
+            rule.put("resource", plan.resource());
+            rule.put("effect", plan.effect().name().toLowerCase());
+            response.put("rule", rule);
+        }
         return response;
     }
 

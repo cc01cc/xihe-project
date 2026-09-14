@@ -144,8 +144,31 @@ class ApprovalAgentIntegrationTest extends AbstractWireMockTest {
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/approval/respond"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure"))
                 .withHeader("Content-Type", containing("application/json"))
-                .withRequestBody(equalToJson("{\"requestId\":\"" + requestId + "\",\"approved\":true}")));
+                .withRequestBody(equalToJson("{\"requestId\":\"" + requestId
+                        + "\",\"approved\":true,\"decision\":\"once\"}")));
         assertEquals("approved", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+    }
+
+    /** PLAN-0328 M1: the rejection kind and its feedback travel to the Agent verbatim. */
+    @Test
+    void rejectionFeedbackIsForwardedInTheAgentPayload() {
+        activeRun();
+        pendingApproval();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = noErrorClient().exchange(
+                url("/api/v1/chat/approvals/" + requestId + "/decision"),
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of("decision", "reject", "feedback", "use append mode"), headers),
+                Map.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/approval/respond"))
+                .withRequestBody(equalToJson("{\"requestId\":\"" + requestId
+                        + "\",\"approved\":false,\"decision\":\"reject\",\"feedback\":\"use append mode\"}")));
+        assertEquals("rejected", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
     }
 
     @Test

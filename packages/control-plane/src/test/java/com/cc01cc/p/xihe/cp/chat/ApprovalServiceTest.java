@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -32,7 +33,10 @@ class ApprovalServiceTest {
     private final ChatRunRepository runs = mock(ChatRunRepository.class);
     private final ApprovalAgentClient agent = mock(ApprovalAgentClient.class);
     private final OperationService operationService = mock(OperationService.class);
-    private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(), operationService);
+    private final ApprovalGrantWriter grantWriter = mock(ApprovalGrantWriter.class);
+    private final AuditLogger audit = mock(AuditLogger.class);
+    private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
+            operationService, grantWriter, audit);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
@@ -101,7 +105,7 @@ class ApprovalServiceTest {
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any(Instant.class)))
                 .thenReturn(1);
-        when(agent.respond(TEST_REQUEST_ID, true))
+        when(agent.respond(TEST_REQUEST_ID, true, "once", null))
                 .thenReturn(Map.of("status", "accepted", "requestId", TEST_REQUEST_ID, "approved", true));
 
         Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, true);
@@ -124,7 +128,7 @@ class ApprovalServiceTest {
         assertEquals(410, error.getStatus().value());
         assertEquals("APPROVAL_EXPIRED", error.getCode());
         verify(approvals).markExpired(eq(UUID.fromString(TEST_REQUEST_ID)), any());
-        verify(agent, never()).respond(any(), anyBoolean());
+        verify(agent, never()).respond(any(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -274,7 +278,7 @@ class ApprovalServiceTest {
 
         assertEquals(400, error.getStatus().value());
         assertEquals("INVALID_REQUEST", error.getCode());
-        verify(agent, never()).respond(any(), anyBoolean());
+        verify(agent, never()).respond(any(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -287,7 +291,7 @@ class ApprovalServiceTest {
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), any(Instant.class)))
                 .thenReturn(1);
-        when(agent.respond(TEST_REQUEST_ID, true))
+        when(agent.respond(TEST_REQUEST_ID, true, "once", null))
                 .thenReturn(Map.of("status", "accepted", "requestId", TEST_REQUEST_ID, "approved", true));
 
         Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, true);
@@ -311,7 +315,7 @@ class ApprovalServiceTest {
 
         assertEquals(410, error.getStatus().value());
         assertEquals("APPROVAL_EXPIRED", error.getCode());
-        verify(agent, never()).respond(any(), anyBoolean());
+        verify(agent, never()).respond(any(), anyBoolean(), any(), any());
     }
 
     @Test

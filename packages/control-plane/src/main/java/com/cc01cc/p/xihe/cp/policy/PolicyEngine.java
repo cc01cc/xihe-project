@@ -138,6 +138,19 @@ public class PolicyEngine {
     }
 
     /**
+     * Action class of one tool as resolved by the registry (built-ins + persisted faces), used by
+     * the approval-grant path (PLAN-0328 M1 batch 4b) so grants cannot invent their own class.
+     * Unclassified tools resolve to {@link PolicyLayer#UNCLASSIFIED_ACTION}.
+     */
+    public String actionClassOf(String toolName, String userId, String workspaceId) {
+        PolicyContext context = contextProvider.load(userId, workspaceId, null);
+        ToolFaceRegistry registry = context.extraFaces().isEmpty()
+                ? builtinRegistry
+                : new ToolFaceRegistry(context.extraFaces());
+        return registry.faceOf(toolName).actionClass();
+    }
+
+    /**
      * Rich evaluation used by the gate (spec §4.2 step 7): the verdict carries the effective layer
      * and matched rule for audit and UI. Persisted layers come from {@link PolicyContextProvider}.
      */

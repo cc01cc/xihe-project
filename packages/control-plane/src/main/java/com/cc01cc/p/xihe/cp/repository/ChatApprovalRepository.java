@@ -28,6 +28,10 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
     List<ChatApproval> findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
             String sessionId, String userId, String workspaceId, Collection<String> states);
 
+    /** Cross-session pending view for the approval indicator (PLAN-0328 M1 T1.16). */
+    List<ChatApproval> findByUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
+            String userId, String workspaceId, Collection<String> states);
+
     List<ChatApproval> findByStateInAndExpiresAtBefore(Collection<String> states, java.time.Instant expiresAt);
 
     List<ChatApproval> findByRunIdAndStateIn(String runId, Collection<String> states);

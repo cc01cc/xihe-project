@@ -34,10 +34,20 @@ public class ApprovalAgentClient {
         this.agentApiToken = agentApiToken;
     }
 
-    public Map<String, Object> respond(String requestId, boolean approved) {
+    /**
+     * Forwards one decision to the Agent (PLAN-0328 M1): {@code decision} is the wire kind and
+     * {@code feedback} the optional rejection note carried to the model (decision #23).
+     */
+    public Map<String, Object> respond(String requestId, boolean approved, String decision, String feedback) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("requestId", requestId);
         body.put("approved", approved);
+        if (decision != null && !decision.isBlank()) {
+            body.put("decision", decision);
+        }
+        if (feedback != null && !feedback.isBlank()) {
+            body.put("feedback", feedback);
+        }
         return post("/internal/v1/agent/approval/respond", body);
     }
 
