@@ -13,7 +13,19 @@ from xihe_agent.main import (
 
 
 def _report(status: str) -> dict:
-    return {"domains": {"llm-provider": {"effective": status}}}
+    """SyncReport with the real production shape (CFG-1).
+
+    Domain entries carry `status`/`revision`/`source`. The old fixture used a
+    separate `effective` key that `ConfigClient.sync()` never writes, which hid
+    the readiness guard reading a dead key.
+    """
+    ok = status == "ok"
+    return {
+        "ok": ok,
+        "domains": {"llm-provider": {"status": status, "revision": "", "source": ""}},
+        "revision": "",
+        "refreshed": ok,
+    }
 
 
 def test_derive_llm_ready_requires_verified_default_model():

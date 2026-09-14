@@ -34,6 +34,7 @@ class SyncReport(TypedDict):
     domains: dict[str, DomainSyncResult]
     revision: str
     refreshed: bool
+    degraded: list[str]
 
 
 class ConfigClient:
@@ -64,12 +65,20 @@ class ConfigClient:
             "domains": {},
             "revision": "",
             "refreshed": False,
+            "degraded": [],
         }
 
     async def sync(self) -> SyncReport:
-        staged: dict[str, dict[str, str]] = {}
+        # CFG-2: seed the staged snapshot from the current cache so that a
+        # transient failure of a non-required domain keeps its last known-good
+        # values. The old code replaced the cache wholesale, silently dropping
+        # (e.g.) rag/embedding/agent-runtime settings on a single blip.
+        staged: dict[str, dict[str, str]] = {
+            domain: dict(entries) for domain, entries in self._effective_cache.items()
+        }
         domain_results: dict[str, DomainSyncResult] = {}
         revisions: list[str] = []
+        degraded: list[str] = []
 
         async with httpx.AsyncClient() as client:
             headers = {"Authorization": f"Bearer {self.api_token}"}
@@ -84,6 +93,13 @@ class ConfigClient:
                 }
                 if data is not None:
                     staged[domain] = data
+                elif status == "missing":
+                    # A definitive "no config for this domain" answer clears it.
+                    staged.pop(domain, None)
+                else:
+                    # Transport-ish failure: keep the carried-over snapshot and
+                    # surface the domain as degraded.
+                    degraded.append(domain)
                 if revision:
                     revisions.append(revision)
 
@@ -101,19 +117,30 @@ class ConfigClient:
             "domains": domain_results,
             "revision": revision,
             "refreshed": not transport_failure,
+            "degraded": degraded,
         }
 
         if report["refreshed"]:
             self._effective_cache = staged
             self._last_fetch = time.time()
             self._config_revision = revision
-            logger.info(
-                "ConfigClient: synced effective domains={} revision={} workspaceBound={} llmStatus={}",
-                len(self._effective_cache),
-                self._config_revision,
-                bool(self.workspace_id),
-                required_statuses,
-            )
+            if degraded:
+                logger.warning(
+                    "ConfigClient: synced effective domains={} degraded={} revision={} workspaceBound={} llmStatus={}",
+                    len(self._effective_cache),
+                    degraded,
+                    self._config_revision,
+                    bool(self.workspace_id),
+                    required_statuses,
+                )
+            else:
+                logger.info(
+                    "ConfigClient: synced effective domains={} revision={} workspaceBound={} llmStatus={}",
+                    len(self._effective_cache),
+                    self._config_revision,
+                    bool(self.workspace_id),
+                    required_statuses,
+                )
         else:
             logger.error(
                 "ConfigClient: required effective refresh failed statuses={} revision={} keeping previous snapshot",

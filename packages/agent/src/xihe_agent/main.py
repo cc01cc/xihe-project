@@ -337,7 +337,7 @@ def _derive_llm_ready(
     required_status = (
         report.get("domains", {})
         .get("llm-provider", {})
-        .get("effective", "unknown")
+        .get("status", "unknown")
     )
     if required_status in {"unreachable", "unauthorized", "invalid_response"}:
         return "unknown", None

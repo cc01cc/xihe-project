@@ -284,6 +284,41 @@ class TestConfigClientSync:
         assert c.get("llm-provider", "openaiApiKey") == "sk-first"
         assert c.config_revision == previous_revision
 
+    @patch("httpx.AsyncClient")
+    async def test_non_required_domain_transient_failure_keeps_previous_value(self, mock_httpx):
+        """CFG-2: a blip on a non-required domain must not drop its values."""
+        mock_client = AsyncMock()
+        mock_httpx.return_value.__aenter__.return_value = mock_client
+
+        async def first_get(url, **kwargs):
+            if url.endswith("/effective/llm-provider"):
+                return _mock_response(200, _effective({"defaultModel": "mimo-v2.5"}))
+            if url.endswith("/effective/rag"):
+                return _mock_response(200, _effective({"chunkSize": "512"}, revision="rag-r1"))
+            return _mock_response(404)
+
+        mock_client.get = first_get
+        c = ConfigClient("http://cp:8080", "token")
+        await c.sync()
+        assert c.get("rag", "chunkSize") == "512"
+
+        async def transient_rag_failure(url, **kwargs):
+            if url.endswith("/effective/llm-provider"):
+                return _mock_response(200, _effective({"defaultModel": "mimo-v2.5"}))
+            if url.endswith("/effective/rag"):
+                return _mock_response(500)
+            return _mock_response(404)
+
+        mock_client.get = transient_rag_failure
+        report = await c.sync()
+
+        assert report["ok"] is True
+        assert c.get("rag", "chunkSize") == "512", (
+            "transient non-required failure must keep the last known-good value"
+        )
+        assert report["domains"]["rag"]["status"] == "unreachable"
+        assert "rag" in report["degraded"]
+
 
 class TestConfigClientSyncWithRetry:
     @patch("httpx.AsyncClient")
