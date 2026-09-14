@@ -48,6 +48,13 @@ updated: 2026-09-06
 - 普通 Chat 固定 `toolMode=none`，Agent 启动不做 MCP discovery；Workspace/tool 操作才按 workspace 懒加载 MCP，跨 workspace 复用会 fail-fast。
 - provider catalog 只返回状态、模型能力和验证时间；ConfigAudit 的 provider secret 只保留 present/missing 与 fingerprint。
 
+## PLAN-0327 已修复边界
+
+- **STDIO bridge 生命周期（CHN-2/3/4）**：配置轮询失败（连接错/非 2xx/解析失败）现返回 `Err` 并跳过该 workspace 的 reconcile，**不再被当作"配置为空"停掉在跑 bridge**；删除失效的空闲回收（只删内存记账、不杀容器进程）与零调用宿主健康循环；起 bridge 前先按 pid 文件终止残留进程，消除宿主重启后的孤儿 bridge。
+- **CP→Runtime 调用超时（CHN-5）**：CP 端 `RestTemplate` 加 connect 2s / read 10s（该 bean 仅 CP→Runtime 调用点消费），Runtime 半死（TCP 可连不响应）不再悬挂 CP 请求线程；超时走各调用点既有显式降级（状态 `blocked`、文件/上下文 `Optional.empty`/`false`），无 host fallback。
+- **工作区删除语义（STO-1）**：Runtime 清理移出事务、在提交后 best-effort 执行；失败记 `RUNTIME_CLEANUP_FAILED` 日志（含 stacktrace），DB 逻辑删除为权威，接口恒返回 `204`（与 OpenAPI 一致；旧实现返回未文档化的 `502`）。孤儿沙盒容器由 Runtime 启动期 `cleanup_orphans` 兜底。
+- **Agent 配置（CFG-1/2/3）**：修复 llm-ready 守卫读死键 `effective`（改读 `status`），fail-closed 恢复生效；非必需域瞬断保留上一份有效值并在 `SyncReport.degraded` + 日志上报，不再整体替换缓存导致静默丢配置；user 层 `embedding`/`rag`/`agent-runtime` 覆盖随 run payload（`userOverrides`/`workspaceOverrides`）送达 Agent（`context-policy`/`user-preference` 无 Agent 读取点，不纳入）。
+
 ## Code
 
 - **Jackson 2/3 混用**: CP 同时依赖 Jackson2（`com.fasterxml.jackson.databind`，如 `McpProxyController` 仍用 `fieldNames()`）与 Jackson3（`tools.jackson`）。3.x 新增 `propertyNames()`（返回 `Collection<String>`）；按所在模块的依赖对齐选用，禁跨版本混调

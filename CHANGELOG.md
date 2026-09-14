@@ -8,6 +8,13 @@
 - E2E 效率基建：e2e-host `--persistent/--teardown` 驻留栈模式（复用运行 17s/轮 vs 全栈生灭 ~4min）、失败 run 自动保留日志与 DB 状态快照（context_events/operation_extensions/chat_runs）、12633 dev runtime 冲突预检与处置指引、>3 天旧 run 目录自动回收；fake-llm-server `history-marker` 模式（多轮记忆断言）与 write_file 阶段判定修复（M1 历史 tool 消息不再误判 followUp）；journey helper 抽取（register/seed/send/terminal-wait/empty-state 恢复）。`scan-log-secrets` 挂入 `mise run lint`（lint:log-secrets）。
 
 - post-290 加固三线（PLAN-292 M1-M3）：① **Grant 哈希匹配**——`approval_requests.arguments_hash`（V9 migration）+ `consumeApprovedGrant` canonical SHA-256 匹配优先（Python↔Java 同向量 fixture，无 hash 存量行走 legacy JSON 比较，仍 fail-closed），大参数 `write_file` 批准后不再因 preview 截断 409；② **工具面收敛**——契约测试新增 `INTERNAL_ONLY` 集（`apply_patch/create_snapshot/revert_snapshot` 保持 require_approval 但不上 Gateway，分类全量记账），Policy 死名对齐 Runtime 实现（`snapshot/revert→create_snapshot/revert_snapshot`），`write_file_binary` 死配置从 Policy/Proxy/Agent 三处清理，`read_file_range` 接通沙盒二进制安全实现（16MiB 预览上限；修复 Gateway 侧文本重复实现且硬编码 `is_binary:false` 的漂移）；③ **旅程 C 最小可恢复**——`GET /api/v1/chat/runs/{runId}`（所有权校验、leaseExpired、活跃审批派生 `awaiting_approval`）+ UI 恢复三态横幅（会话已恢复/任务已取消/请重试，SSE 错误与页面挂载自动触发）+ 刷新后 pending approval 重放可继续 approve/reject。修复 PLAN-290 收尾遗留回归：`McpProxyTest` 过时断言（补 Agent run header 表征 Agent 路径 + 新增 B2 用户直连旁路用例）、`WorkspaceServiceTest` 与 dev 栈的环境耦合（钉死不可达 runtime URL）。`journey-c.spec.ts` Host 用例 **4/4 PASS**（T6/H2/C1-C3/C2-reject，`XIHE_E2E_LLM_MODE=write_file` 标记模式）；实施中另修：operation 状态机 `waiting_for_approval→completed/failed` 缺口（批准后 run 收尾被拒永久卡住）、中继流中断误判 run 失败（approval_in_flight 时改为 ambiguous 收尾保持可恢复）、Gateway `read_file_range` 未接沙盒二进制实现的漂移。
+### Fixed
+
+- Runtime bridge 生命周期止血（PLAN-0327 / CHN-2/3/4）：stdio 配置轮询失败不再被当作"配置为空"而停掉在跑 bridge（`poll_config_with_generation` 区分失败/空配置）；删除失效的空闲回收（只删内存记账、不杀容器进程）与零调用宿主健康检查循环；起 bridge 前先按 pid 文件终止残留进程，消除宿主重启后的孤儿 bridge + pid 覆盖。
+- CP→Runtime 调用超时有界（PLAN-0327 / CHN-5）：唯一 CP 端 `RestTemplate` 加 connect 2s / read 10s，Runtime 半死不再悬挂 CP 请求线程（新增 10s 有界性测试）。
+- 工作区删除语义（PLAN-0327 / STO-1）：Runtime 清理移出事务、提交后 best-effort（失败记 `RUNTIME_CLEANUP_FAILED` 日志）；DB 逻辑删除为权威，接口恒 `204`（与 OpenAPI 一致，移除未文档化的 502）。
+- Agent 配置送达与韧性（PLAN-0327 / CFG-1/2/3）：修复 llm-ready 守卫读死键 `effective`（改 `status`）；非必需域瞬断保留上一份有效值并上报 `degraded`；user 层 `embedding`/`rag`/`agent-runtime` 覆盖经 run payload 送达 Agent。
+
 ### Changed
 
 - PLAN-0326：操作账本改为 v3 通道事实模型——中继按 SSE 阶段记录 Agent 侧事实，MCP 网关记录派发事实；`source` 纳入 `operation_items` 唯一键 `(operation_id, source, tool_call_id)`，删除启发式匹配与悬空 `runtime_jobs`（V14）。修复 Runtime attached collector 等待 oneshot EOF 导致正常 `list_directory` 命中 30 秒超时：首个完整 JSON 帧即返回并关闭 stdin。
