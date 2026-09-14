@@ -119,7 +119,7 @@ flowchart TD
 
 | 层 | 事件 |
 |----|------|
-| SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done` |
+| SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done`；工具事件携带 `toolCallId` + `origin`（`local`/`mcp`）供 CP 按通道事实记账，`request_approval` 工具事件抑制、以审批事件为正规记录 |
 | 持久化域 `Event` | 见 §3.2 事件表 |
 
 ### 3.3 AgentContext 投影

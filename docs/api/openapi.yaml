@@ -175,7 +175,7 @@ paths:
         * `done` terminates a **run**, not the session SSE. The connection stays open across multiple `POST /api/v1/chat` turns and only closes on client disconnect, session deletion, or explicit server termination.
         * The server sends a `heartbeat` comment/event every 15s to keep the connection observable. Heartbeat never enters the message bubble nor resets the run's token count.
         * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
-         * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable.
+          * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for the channel-fact ledger; `request_approval` itself is represented by the approval event/item and does not emit a duplicate tool event. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
@@ -199,6 +199,12 @@ paths:
 
                 event: token
                 data: {"content":"world","type":"token","runId":"run-abc"}
+
+                event: tool_call
+                data: {"tool":"write_file","toolCallId":"call-1","origin":"mcp","type":"tool_call","runId":"run-abc"}
+
+                event: tool_result
+                data: {"tool":"write_file","toolCallId":"call-1","origin":"mcp","type":"tool_result","runId":"run-abc","result":"ok"}
 
                 event: done
                 data: {"type":"done","runId":"run-abc"}
@@ -750,7 +756,7 @@ components:
         sessionId: { type: [string, 'null'], readOnly: true }
         workspaceId: { type: [string, 'null'], readOnly: true }
         runId: { type: [string, 'null'], readOnly: true }
-        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other], readOnly: true }
+        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other, llm_usage], readOnly: true }
         source: { type: string, enum: [ui, agent, runtime, system, mcp], readOnly: true }
         actorType: { type: string, enum: [user, agent, system, service], readOnly: true }
         status: { type: string, enum: [accepted, running, waiting_for_approval, completed, failed, cancelled, interrupted, ambiguous], readOnly: true }
@@ -777,7 +783,7 @@ components:
         toolCallId: { type: [string, 'null'], readOnly: true }
         parentItemId: { type: [string, 'null'], readOnly: true }
         sequence: { type: integer, readOnly: true }
-        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other], readOnly: true }
+        kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other, llm_usage], readOnly: true }
         toolName: { type: [string, 'null'], readOnly: true }
         source: { type: string, enum: [ui, agent, runtime, system, mcp], readOnly: true }
         policyDecision: { type: [string, 'null'], readOnly: true }
