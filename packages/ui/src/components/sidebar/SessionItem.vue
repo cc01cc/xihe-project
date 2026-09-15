@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquareText } from '@lucide/vue'
+import { CircleAlert, MessageSquareText } from '@lucide/vue'
 import type { Session } from '../../types'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   session: Session
   isActive: boolean
-}>()
+  pendingCount?: number
+}>(), {
+  pendingCount: 0,
+})
 
 const emit = defineEmits<{
   select: [id: string]
@@ -23,6 +26,14 @@ const contextMenuPosition = ref({ x: 0, y: 0 })
 
 function handleClick() {
   emit('select', props.session.id)
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (isRenaming.value) return
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    handleClick()
+  }
 }
 
 function handleContextMenu(e: MouseEvent) {
@@ -60,7 +71,12 @@ function handleRenameKeydown(e: KeyboardEvent) {
     data-testid="session-item"
     class="group relative flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
     :class="isActive ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50 text-sidebar-foreground'"
+    role="button"
+    tabindex="0"
+    :aria-current="isActive ? 'page' : undefined"
+    :aria-label="session.title"
     @click="handleClick"
+    @keydown="handleKeydown"
     @contextmenu="handleContextMenu"
   >
     <MessageSquareText class="size-4 shrink-0 opacity-70" />
@@ -70,11 +86,21 @@ function handleRenameKeydown(e: KeyboardEvent) {
         class="w-full px-2 py-0.5 text-sm rounded border bg-background"
         autofocus
         @blur="confirmRename"
-        @keydown="handleRenameKeydown"
+        @keydown.stop="handleRenameKeydown"
         @click.stop
       />
     </div>
     <span v-else class="flex-1 truncate text-sm">{{ session.title }}</span>
+    <span
+      v-if="pendingCount > 0"
+      data-testid="session-pending-badge"
+      class="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-foreground"
+      aria-live="polite"
+    >
+      <CircleAlert class="size-3" aria-hidden="true" />
+      <span>{{ t('sidebar.pendingApprovalBadge') }}</span>
+      <span class="tabular-nums">{{ pendingCount }}</span>
+    </span>
   </div>
 
   <Teleport to="body">

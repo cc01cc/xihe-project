@@ -33,4 +33,28 @@ describe('SessionItem', () => {
     expect(wrapper.text()).toContain('Clickable')
     expect(wrapper.find('div').exists()).toBe(true)
   })
+
+  it('renders a non-interactive pending approval badge with its count', () => {
+    const session = { id: 's1', title: 'Pending', updatedAt: new Date().toISOString() }
+    const wrapper = mount(SessionItem, {
+      props: { session, isActive: false, pendingCount: 2 },
+    })
+
+    const badge = wrapper.find('[data-testid="session-pending-badge"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toContain('sidebar.pendingApprovalBadge')
+    expect(badge.text()).toContain('2')
+    expect(badge.element.tagName).toBe('SPAN')
+  })
+
+  it('supports keyboard selection without adding a nested button', async () => {
+    const session = { id: 's1', title: 'Keyboard', updatedAt: new Date().toISOString() }
+    const wrapper = mount(SessionItem, {
+      props: { session, isActive: false },
+    })
+
+    await wrapper.find('[data-testid="session-item"]').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('select')).toEqual([['s1']])
+    expect(wrapper.find('[data-testid="session-pending-badge"]').exists()).toBe(false)
+  })
 })

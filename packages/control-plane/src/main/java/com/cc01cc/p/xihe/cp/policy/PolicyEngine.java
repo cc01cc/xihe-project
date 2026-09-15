@@ -129,11 +129,24 @@ public class PolicyEngine {
      * Unclassified tools resolve to {@link PolicyLayer#UNCLASSIFIED_ACTION}.
      */
     public String actionClassOf(String toolName, String userId, String workspaceId) {
-        PolicyContext context = contextProvider.load(userId, workspaceId, null);
+        return faceOf(toolName, userId, workspaceId).actionClass();
+    }
+
+    /**
+     * Resolves the complete tool face from the same built-in and persisted registry used by policy
+     * evaluation. Callers that need both the action class and shape must use this accessor rather
+     * than maintaining a second tool classification map.
+     */
+    public ToolFaceRegistry.Face faceOf(String toolName, String userId, String workspaceId) {
+        return faceOf(loadContext(userId, workspaceId, null), toolName);
+    }
+
+    /** Resolves a face from a context already loaded for the current decision. */
+    public ToolFaceRegistry.Face faceOf(PolicyContext context, String toolName) {
         ToolFaceRegistry registry = context.extraFaces().isEmpty()
                 ? builtinRegistry
                 : new ToolFaceRegistry(context.extraFaces());
-        return registry.faceOf(toolName).actionClass();
+        return registry.faceOf(toolName);
     }
 
     /**
@@ -160,8 +173,8 @@ public class PolicyEngine {
         return contextProvider.load(userId, workspaceId, sessionId);
     }
 
-    private PolicyVerdict evaluateVerdict(PolicyContext context, String toolName, String body,
-                                          String sessionId, String mode, String userId, String workspaceId) {
+    public PolicyVerdict evaluateVerdict(PolicyContext context, String toolName, String body,
+                                         String sessionId, String mode, String userId, String workspaceId) {
         if (toolName == null || toolName.isBlank()) {
             audit.record(sessionId, toolName, "policy_check", "deny_empty_tool");
             return PolicyVerdict.of(PolicyEffect.DENY, null, PolicyLayer.BUILTIN, mode, "tool name is required");

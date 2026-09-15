@@ -60,6 +60,16 @@ describe('useChatStore', () => {
     expect(store.isStreaming('s1')).toBe(true)
   })
 
+  it('keeps streaming and run state scoped to each session', () => {
+    const store = useChatStore()
+    store.setSessionRunState('session-a', 'awaiting_approval', 'run-a')
+
+    expect(store.isStreaming('session-a')).toBe(true)
+    expect(store.getSessionRunId('session-a')).toBe('run-a')
+    expect(store.isStreaming('session-b')).toBe(false)
+    expect(store.getSessionRunState('session-b').status).toBe('idle')
+  })
+
   it('loadMessages does not replace an in-flight streaming message', () => {
     const store = useChatStore()
     store.createStreamingMessage('s1')
@@ -209,6 +219,14 @@ describe('useChatStore', () => {
 })
 
 describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
+  const SESSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const RUN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  const NEW_RUN_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+  const OLD_RUN_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+  const REQUEST_ID_1 = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+  const REQUEST_ID_2 = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+  const TERMINAL_REQUEST_ID = '99999999-9999-4999-8999-999999999999'
+
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
@@ -217,67 +235,147 @@ describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
   async function mockStatus(status: string, extra: Record<string, unknown> = {}) {
     const { api } = await import('../../composables/api')
     vi.mocked(api.getChatRunStatus).mockResolvedValue({
-      runId: 'r1', sessionId: 's1', status, leaseExpired: false, pendingApprovals: [], ...extra,
+      runId: RUN_ID, sessionId: SESSION_ID, status, leaseExpired: false, pendingApprovals: [], ...extra,
     })
   }
 
   it('resumed when run awaits approval; replays approvals into agent store', async () => {
     await mockStatus('awaiting_approval', {
-      pendingApprovals: [{ requestId: 'req-1', runId: 'r1', sessionId: 's1', tool: 'write_file', action: 'a', details: 'd' }],
+      pendingApprovals: [{ requestId: REQUEST_ID_1, runId: RUN_ID, sessionId: SESSION_ID, tool: 'write_file', action: 'a', details: 'd' }],
     })
     const store = useChatStore()
-    await store.refreshRunRecovery('s1', 'r1')
-    expect(store.runRecovery['s1']?.state).toBe('resumed')
+    await store.refreshRunRecovery(SESSION_ID, RUN_ID)
+    expect(store.runRecovery[SESSION_ID]?.state).toBe('resumed')
     const { useAgentStore } = await import('../agent')
-    expect(useAgentStore().agentState.pendingApprovals.some((a) => a.requestId === 'req-1')).toBe(true)
+    expect(useAgentStore().agentState.pendingApprovals.some((a) => a.requestId === REQUEST_ID_1)).toBe(true)
   })
 
   it('resumed when a failed run carries an ambiguous outcome with a pending approval', async () => {
     await mockStatus('failed', {
       terminalOutcome: 'ambiguous',
-      pendingApprovals: [{ requestId: 'req-2', runId: 'r1', sessionId: 's1', tool: 'write_file', action: 'a', details: 'd' }],
+      pendingApprovals: [{ requestId: REQUEST_ID_2, runId: RUN_ID, sessionId: SESSION_ID, tool: 'write_file', action: 'a', details: 'd' }],
     })
     const store = useChatStore()
-    await store.refreshRunRecovery('s1', 'r1')
-    expect(store.runRecovery['s1']?.state).toBe('resumed')
+    await store.refreshRunRecovery(SESSION_ID, RUN_ID)
+    expect(store.runRecovery[SESSION_ID]?.state).toBe('resumed')
     const { useAgentStore } = await import('../agent')
-    expect(useAgentStore().agentState.pendingApprovals.some((a) => a.requestId === 'req-2')).toBe(true)
+    expect(useAgentStore().agentState.pendingApprovals.some((a) => a.requestId === REQUEST_ID_2)).toBe(true)
   })
 
   it('cancelled for terminal run states', async () => {
     await mockStatus('cancelled')
     const store = useChatStore()
-    await store.refreshRunRecovery('s1', 'r1')
-    expect(store.runRecovery['s1']?.state).toBe('cancelled')
+    await store.refreshRunRecovery(SESSION_ID, RUN_ID)
+    expect(store.runRecovery[SESSION_ID]?.state).toBe('cancelled')
   })
 
   it('retry when the lease expired on a running run', async () => {
     await mockStatus('running', { leaseExpired: true })
     const store = useChatStore()
-    await store.refreshRunRecovery('s1', 'r1')
-    expect(store.runRecovery['s1']?.state).toBe('retry')
+    await store.refreshRunRecovery(SESSION_ID, RUN_ID)
+    expect(store.runRecovery[SESSION_ID]?.state).toBe('retry')
   })
 
   it('sets no banner for succeeded runs', async () => {
     await mockStatus('succeeded')
     const store = useChatStore()
-    await store.refreshRunRecovery('s1', 'r1')
-    expect(store.runRecovery['s1']).toBeUndefined()
+    await store.refreshRunRecovery(SESSION_ID, RUN_ID)
+    expect(store.runRecovery[SESSION_ID]).toBeUndefined()
   })
 
   it('retry when the status query fails', async () => {
     const { api } = await import('../../composables/api')
     vi.mocked(api.getChatRunStatus).mockRejectedValue(new Error('network down'))
     const store = useChatStore()
-    await store.refreshRunRecovery('s1', 'r1')
-    expect(store.runRecovery['s1']?.state).toBe('retry')
+    await store.refreshRunRecovery(SESSION_ID, RUN_ID)
+    expect(store.runRecovery[SESSION_ID]?.state).toBe('retry')
+  })
+
+  it('ignores a stale recovery response for an older run', async () => {
+    const { api } = await import('../../composables/api')
+    let resolveOld: ((value: {
+      runId: string
+      sessionId: string
+      status: string
+      leaseExpired: boolean
+      pendingApprovals: never[]
+    }) => void) | undefined
+    vi.mocked(api.getChatRunStatus)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+      .mockResolvedValueOnce({
+        runId: NEW_RUN_ID,
+        sessionId: SESSION_ID,
+        status: 'cancelled',
+        leaseExpired: false,
+        pendingApprovals: [],
+      })
+    const store = useChatStore()
+    const oldRequest = store.refreshRunRecovery(SESSION_ID, OLD_RUN_ID)
+    const newRequest = store.refreshRunRecovery(SESSION_ID, NEW_RUN_ID)
+    await newRequest
+    resolveOld?.({
+      runId: OLD_RUN_ID,
+      sessionId: SESSION_ID,
+      status: 'awaiting_approval',
+      leaseExpired: false,
+      pendingApprovals: [],
+    })
+    await oldRequest
+
+    expect(store.runRecovery[SESSION_ID]).toMatchObject({ runId: NEW_RUN_ID, state: 'cancelled' })
+  })
+
+  it('ignores a recovery response invalidated by a completed decision', async () => {
+    const { api } = await import('../../composables/api')
+    let resolveStatus: ((value: {
+      runId: string
+      sessionId: string
+      status: string
+      leaseExpired: boolean
+      pendingApprovals: never[]
+    }) => void) | undefined
+    vi.mocked(api.getChatRunStatus).mockImplementationOnce(() => new Promise((resolve) => { resolveStatus = resolve }))
+    const store = useChatStore()
+    const pending = store.refreshRunRecovery(SESSION_ID, RUN_ID)
+    store.invalidateRunRecovery(SESSION_ID, RUN_ID)
+    resolveStatus?.({
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+      status: 'awaiting_approval',
+      leaseExpired: false,
+      pendingApprovals: [],
+    })
+    await pending
+
+    expect(store.runRecovery[SESSION_ID]).toBeUndefined()
+    expect(store.getSessionRunState(SESSION_ID).status).toBe('idle')
+  })
+
+  it('keeps terminal recovery from resurrecting approvals for the run', async () => {
+    const { useAgentStore } = await import('../agent')
+    const agent = useAgentStore()
+    agent.addApprovalRequest({
+      requestId: TERMINAL_REQUEST_ID,
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+      tool: 'write_file',
+      action: 'write',
+      details: 'd',
+      state: 'pending',
+    })
+    await mockStatus('succeeded')
+    const store = useChatStore()
+    await store.refreshRunRecovery(SESSION_ID, RUN_ID)
+
+    expect(agent.agentState.pendingApprovals).toEqual([])
+    expect(agent.resolvedApprovals[TERMINAL_REQUEST_ID]?.state).toBe('dispatch_unknown')
   })
 
   it('dismissRunRecovery clears the banner', async () => {
     await mockStatus('cancelled')
     const store = useChatStore()
-    await store.refreshRunRecovery('s1', 'r1')
-    store.dismissRunRecovery('s1')
-    expect(store.runRecovery['s1']).toBeUndefined()
+    await store.refreshRunRecovery(SESSION_ID, RUN_ID)
+    store.dismissRunRecovery(SESSION_ID)
+    expect(store.runRecovery[SESSION_ID]).toBeUndefined()
   })
 })

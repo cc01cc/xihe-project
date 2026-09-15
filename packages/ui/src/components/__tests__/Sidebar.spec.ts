@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n'
 import Sidebar from '../sidebar/Sidebar.vue'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
+import { useAgentStore } from '../../stores/agent'
 
 const messages = {
   'zh-CN': {
@@ -21,6 +22,7 @@ const messages = {
       workspace: '工作区',
       logout: '退出登录',
       noWorkspace: '没有可用工作区',
+      pendingApprovalBadge: '待审批',
     },
   },
 }
@@ -171,6 +173,29 @@ describe('Sidebar', () => {
     const input = wrapper.find('input')
     expect(input.exists()).toBe(true)
     expect(input.attributes('placeholder')).toBe('搜索对话...')
+  })
+
+  it('shows the pending approval count on the matching session row', async () => {
+    mockAuth()
+    const sessions = useSessionStore()
+    sessions.sessions.push({
+      id: 'pending-session',
+      title: 'Pending chat',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    const agent = useAgentStore()
+    agent.pendingApprovalSummaries = [{
+      sessionId: 'pending-session',
+      workspaceId: 'ws-test',
+      count: 3,
+      oldestRequestedAt: new Date().toISOString(),
+    }]
+
+    const wrapper = await mountSidebar()
+
+    expect(wrapper.find('[data-testid="session-pending-badge"]').text()).toContain('3')
+    expect(wrapper.find('[data-testid="session-pending-badge"]').text()).toContain('待审批')
   })
 
   it('search input filters sessions via store', async () => {

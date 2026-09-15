@@ -46,6 +46,25 @@ export interface ToolCall {
   completedAt?: string
 }
 
+export type ApprovalPolicyEffect = 'allow' | 'ask' | 'deny'
+export type ApprovalPolicySourceLayer = 'builtin' | 'instance' | 'user' | 'workspace' | 'session' | 'per_call'
+export type ApprovalPolicyMode = 'default' | 'bypass' | 'managed' | 'accept-edits' | 'plan' | null
+export type SessionPolicyMode = Exclude<ApprovalPolicyMode, null>
+export type ApprovalPolicyShape = 'structured' | 'interpreter' | 'opaque'
+
+export interface ApprovalPolicy {
+  effect: ApprovalPolicyEffect
+  sourceLayer: ApprovalPolicySourceLayer
+  matchedRule: string | null
+  reason: string
+  mode: ApprovalPolicyMode
+  modeAtGrant?: ApprovalPolicyMode
+  actionClass: string
+  shape: ApprovalPolicyShape
+}
+
+export type ApprovalRequestState = 'pending' | 'dispatching' | 'approved' | 'rejected' | 'expired' | 'dispatch_unknown'
+
 export interface ApprovalRequest {
   requestId: string
   operationId?: string
@@ -55,9 +74,46 @@ export interface ApprovalRequest {
   tool: string
   action: string
   details: string
+  snapshotId?: string | null
+  policyClass?: string | null
+  argumentsHash?: string | null
   expiresAt?: string
   replayed?: boolean
-  state?: 'pending' | 'dispatching' | 'approved' | 'rejected' | 'expired' | 'dispatch_unknown'
+  state?: ApprovalRequestState
+  modeAtGrant?: ApprovalPolicyMode
+  policy?: ApprovalPolicy
+}
+
+export type ApprovalDecisionKind = 'once' | 'session' | 'saved' | 'reject' | 'reject_always'
+
+export interface ApprovalRuleSpec {
+  resource?: string
+}
+
+export interface ApprovalDecision {
+  decision: ApprovalDecisionKind
+  feedback?: string
+  layer?: 'workspace' | 'user'
+  rule?: ApprovalRuleSpec
+}
+
+export interface PendingApprovalSummary {
+  sessionId: string
+  workspaceId: string
+  count: number
+  oldestRequestedAt: string
+}
+
+export interface SessionPolicyModeState {
+  sessionId: string
+  mode: SessionPolicyMode
+  sessionRules?: number
+}
+
+export interface PolicyModeUpdateResponse {
+  sessionId: string
+  mode: SessionPolicyMode
+  scope: 'session'
 }
 
 export interface AttachmentFile {
@@ -237,6 +293,11 @@ export interface AgentState {
   status: 'idle' | 'thinking' | 'executing' | 'awaiting_approval' | 'error'
   currentToolCall: ToolCall | null
   pendingApprovals: ApprovalRequest[]
+}
+
+export interface ChatSessionRunState {
+  runId?: string
+  status: AgentState['status']
 }
 
 export type LangChainEventType =

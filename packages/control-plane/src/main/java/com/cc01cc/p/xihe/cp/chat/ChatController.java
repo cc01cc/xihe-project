@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.entity.File;
+import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
@@ -1339,11 +1340,17 @@ public class ChatController {
         // （按事件阶段映射，幂等限定同源）；本类只做事件分发，不再散写账本。
         ledgerToolRecorder.record(eventName, asMap(parsedPayload), runId, requestId, runLedger);
         if ("approval_request".equals(eventName)) {
-            approvalService.recordPending(asMap(parsedPayload), sessionId, runId, userId, workspaceId);
+            ChatApproval storedApproval = approvalService.recordPending(
+                    asMap(parsedPayload), sessionId, runId, userId, workspaceId);
             transitionRun(runId, List.of("running", "streaming"), "awaiting_approval", null, null, null, 0, 0);
+
+            // Keep ledger/audit input unchanged; relay only the durable canonical row.
+            sseManager.send(sessionId, eventName, approvalService.payloadFor(storedApproval, false));
+            return;
         }
         sseManager.send(sessionId, eventName, parsedPayload);
     }
+
     private Object parsePayload(String eventName, String payload) {
         try {
             return objectMapper.readValue(payload, Object.class);

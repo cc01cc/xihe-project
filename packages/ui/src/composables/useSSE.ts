@@ -1,8 +1,9 @@
 import { ref, onUnmounted, getCurrentInstance, toValue, type MaybeRefOrGetter } from 'vue'
+import { getActivePinia } from 'pinia'
 import { useAgentStore } from '../stores/agent'
 import { logger } from '../lib/logger'
 import { chatTransport } from '../services/chatTransport'
-import { ApiError, apiAuthHeaders, apiRaw } from './api'
+import { ApiError, apiAuthHeaders, apiRaw, normalizeApprovalRequest } from './api'
 import type { EventSourceMessage } from '@microsoft/fetch-event-source'
 import type { ChatRunResponse } from '../types'
 
@@ -62,7 +63,13 @@ export interface SendMessageOptions {
 
 const STREAM_TIMEOUT_MS = 30000
 
+function getAgentStoreOrNull() {
+  const pinia = getActivePinia()
+  return pinia ? useAgentStore(pinia) : null
+}
+
 export function useSSE(sessionId: MaybeRefOrGetter<string>) {
+  const agentStore = getAgentStoreOrNull()
   const isConnected = ref(false)
   const isStreaming = ref(false)
   const error = ref<string | null>(null)
@@ -71,6 +78,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
   let connectionErrorReported = false
   let activeSessionId: string | null = null
   let contentStarted = false
+  let connectionGeneration = 0
+  let activeApprovalEpoch: string | null = null
 
   function asErrorPayload(error: unknown, fallbackCode = 'AGENT_STREAM_FAILED'): SSEErrorPayload {
     if (error instanceof ApiError) {
@@ -100,8 +109,12 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
   function resetStreamTimeout() {
     if (!isStreaming.value) return
     if (streamTimeout) clearTimeout(streamTimeout)
+    const approvalEpoch = activeApprovalEpoch
     streamTimeout = setTimeout(() => {
-      if (isStreaming.value) {
+      if (isStreaming.value
+        && approvalEpoch !== null
+        && activeSessionId !== null
+        && agentStore?.isApprovalEpochCurrent(activeSessionId, approvalEpoch)) {
         isStreaming.value = false
         const timeoutError: SSEErrorPayload = {
           code: 'AGENT_TIMEOUT',
@@ -124,6 +137,9 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
   }
 
   function handleMessage(msg: EventSourceMessage) {
+    if (activeSessionId !== null
+      && activeApprovalEpoch !== null
+      && !agentStore?.isApprovalEpochCurrent(activeSessionId, activeApprovalEpoch)) return
     switch (msg.event) {
       case 'token':
         try {
@@ -153,8 +169,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         try {
           const data = JSON.parse(msg.data) as Record<string, unknown>
           if (data.name) {
-            const store = useAgentStore()
-            store.addToolCall({
+            agentStore?.addToolCall({
               id: String(data.id ?? crypto.randomUUID()),
               name: String(data.name),
               arguments: typeof data.arguments === 'string' ? data.arguments : JSON.stringify(data.arguments),
@@ -172,8 +187,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         try {
           const data = JSON.parse(msg.data) as Record<string, unknown>
           if (data.id) {
-            const store = useAgentStore()
-            store.updateToolCall(String(data.id), {
+            agentStore?.updateToolCall(String(data.id), {
               result: typeof data.result === 'string' ? data.result : JSON.stringify(data.result),
               status: 'completed',
             })
@@ -188,22 +202,10 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         resetStreamTimeout()
         try {
           const data = JSON.parse(msg.data) as Record<string, unknown>
-          const requestId = typeof data.requestId === 'string' ? data.requestId : ''
-          if (requestId) {
-            const store = useAgentStore()
-            store.addApprovalRequest({
-              requestId,
-              operationId: typeof data.operationId === 'string' ? data.operationId : undefined,
-              runId: String(data.runId ?? ''),
-              sessionId: String(data.sessionId ?? activeSessionId ?? ''),
-              workspaceId: typeof data.workspaceId === 'string' ? data.workspaceId : undefined,
-              tool: String(data.tool ?? 'request_approval'),
-              action: String(data.action ?? ''),
-              details: String(data.details ?? ''),
-              expiresAt: typeof data.expiresAt === 'string' ? data.expiresAt : undefined,
-              replayed: data.replayed === true,
-              state: 'pending',
-            })
+          const approval = normalizeApprovalRequest(data, activeSessionId ?? '')
+          if (approval) {
+            agentStore?.addApprovalRequest(approval)
+            if (agentStore) void agentStore.refreshPendingApprovals()
           }
           currentCallbacks.onApprovalRequest?.(data)
         } catch {
@@ -283,11 +285,13 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
 
   function connect(callbacks: SSECallbacks = {}) {
     disconnect()
+    const generation = ++connectionGeneration
     currentCallbacks = callbacks
     contentStarted = false
 
     const currentSessionId = toValue(sessionId)
     activeSessionId = currentSessionId
+    activeApprovalEpoch = agentStore?.getApprovalEpoch(currentSessionId) ?? null
 
     const url = `/api/v1/events?sessionId=${encodeURIComponent(currentSessionId)}`
 
@@ -296,21 +300,27 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         url,
         headers: apiAuthHeaders(undefined, false),
         onopen: () => {
+          if (generation !== connectionGeneration) return
           isConnected.value = true
           error.value = null
           connectionErrorReported = false
         },
-        onmessage: handleMessage,
+        onmessage: (message) => {
+          if (generation === connectionGeneration) handleMessage(message)
+        },
         onerror: (err) => {
+          if (generation !== connectionGeneration) return
           const msg = err.message || 'SSE connection error'
           logger.warn('useSSE connection error', err)
           error.value = msg
         },
         onclose: () => {
+          if (generation !== connectionGeneration) return
           isConnected.value = false
         },
       })
       .catch((err: Error) => {
+        if (generation !== connectionGeneration) return
         if (err.name === 'AbortError') return
         logger.warn('useSSE connect failed', err)
         const payload = asErrorPayload(err, 'SSE_CONNECTION_FAILED')
@@ -323,9 +333,11 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
   }
 
   function disconnect() {
+    connectionGeneration += 1
     const sessionToStop = activeSessionId ?? toValue(sessionId)
     chatTransport.stop(sessionToStop)
     activeSessionId = null
+    activeApprovalEpoch = null
     isConnected.value = false
     isStreaming.value = false
     contentStarted = false
@@ -333,9 +345,11 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
   }
 
   async function sendMessage({ content, attachments, model, provider, toolMode, idempotencyKey, sessionId: overrideSid }: SendMessageOptions): Promise<ChatRunResponse | null> {
+    const generation = connectionGeneration
     error.value = null
     contentStarted = false
     const sid = overrideSid ?? toValue(sessionId)
+    const approvalEpoch = agentStore?.getApprovalEpoch(sid) ?? null
 
     try {
       const body: Record<string, unknown> = {
@@ -360,10 +374,14 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         body: JSON.stringify(body),
       })
       const result = await response.json() as ChatRunResponse
+      if (generation !== connectionGeneration
+        || (approvalEpoch !== null && !agentStore?.isApprovalEpochCurrent(sid, approvalEpoch))) return null
       isStreaming.value = true
       resetStreamTimeout()
       return result
     } catch (err) {
+      if (generation !== connectionGeneration
+        || (approvalEpoch !== null && !agentStore?.isApprovalEpochCurrent(sid, approvalEpoch))) return null
       const payload = asErrorPayload(err)
       logger.error('Failed to send message via SSE: ' + errorText(payload))
       error.value = errorText(payload)

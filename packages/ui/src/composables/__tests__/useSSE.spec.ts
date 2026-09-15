@@ -3,6 +3,16 @@ import { setActivePinia, createPinia } from 'pinia'
 import { flushPromises } from '@vue/test-utils'
 import { chatTransport } from '@/services/chatTransport'
 import { useSSE } from '../useSSE'
+import { useAgentStore } from '../../stores/agent'
+import { useAuthStore } from '../../stores/auth'
+
+const SESSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const RUN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const REQUEST_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+const LATE_REQUEST_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+const LOGOUT_REQUEST_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+const LIVENESS_REQUEST_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+const WORKSPACE_ID = '99999999-9999-4999-8999-999999999999'
 
 vi.mock('@/services/chatTransport', () => ({
   chatTransport: {
@@ -63,20 +73,20 @@ afterEach(() => {
 
 describe('useSSE', () => {
   it('connect calls chatTransport.sendMessages with correct URL and session id', async () => {
-    const { connect } = useSSE('test-session-id')
+    const { connect } = useSSE(SESSION_ID)
     connect()
     await flushPromises()
     expect(chatTransport.sendMessages).toHaveBeenCalledWith(
-      'test-session-id',
+      SESSION_ID,
       expect.objectContaining({
-        url: '/api/v1/events?sessionId=test-session-id',
+        url: `/api/v1/events?sessionId=${SESSION_ID}`,
       }),
     )
   })
 
   it('sets isConnected to true when transport opens', async () => {
     const transport = createTransportController()
-    const { connect, isConnected } = useSSE('test-session-id')
+    const { connect, isConnected } = useSSE(SESSION_ID)
     connect()
     await flushPromises()
     await transport.simulateOpen()
@@ -85,13 +95,13 @@ describe('useSSE', () => {
 
   it('passes Authorization header from localStorage token', async () => {
     localStorage.setItem('xihe-token', 'my-token')
-    const { connect } = useSSE('test-session-id')
+    const { connect } = useSSE(SESSION_ID)
     connect()
     await flushPromises()
     expect(chatTransport.sendMessages).toHaveBeenCalledWith(
-      'test-session-id',
+      SESSION_ID,
       expect.objectContaining({
-        url: '/api/v1/events?sessionId=test-session-id',
+        url: `/api/v1/events?sessionId=${SESSION_ID}`,
         headers: { Authorization: 'Bearer my-token' },
       }),
     )
@@ -99,7 +109,7 @@ describe('useSSE', () => {
 
   it('emits tokens via onToken callback', async () => {
     const transport = createTransportController()
-    const { connect } = useSSE('test-session-id')
+    const { connect } = useSSE(SESSION_ID)
     const onToken = vi.fn()
     connect({ onToken })
     await flushPromises()
@@ -109,7 +119,7 @@ describe('useSSE', () => {
 
   it('does not start content lifecycle before the first token', async () => {
     const transport = createTransportController()
-    const { connect } = useSSE('test-session-id')
+    const { connect } = useSSE(SESSION_ID)
     const onStart = vi.fn()
     connect({ onStart })
     await flushPromises()
@@ -123,7 +133,7 @@ describe('useSSE', () => {
 
   it('emits status via onStatus callback', async () => {
     const transport = createTransportController()
-    const { connect } = useSSE('test-session-id')
+    const { connect } = useSSE(SESSION_ID)
     const onStatus = vi.fn()
     connect({ onStatus })
     await flushPromises()
@@ -131,9 +141,97 @@ describe('useSSE', () => {
     expect(onStatus).toHaveBeenCalledWith('executing')
   })
 
+  it('preserves nested policy evidence on approval requests', async () => {
+    const transport = createTransportController()
+    const { connect } = useSSE(SESSION_ID)
+    connect()
+    await flushPromises()
+
+    const policy = {
+      effect: 'ask',
+      sourceLayer: 'workspace',
+      matchedRule: null,
+      reason: 'No matching allow rule',
+      mode: 'default',
+      modeAtGrant: 'managed',
+      actionClass: 'write',
+      shape: 'structured',
+    }
+    await transport.simulateMessage('approval_request', JSON.stringify({
+      requestId: REQUEST_ID,
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+      workspaceId: WORKSPACE_ID,
+      tool: 'write_file',
+      action: 'write file',
+      details: '/README.md',
+      snapshotId: null,
+      policyClass: 'ask_approval',
+      argumentsHash: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+      state: 'pending',
+      replayed: true,
+      policy,
+    }))
+
+    expect(useAgentStore().agentState.pendingApprovals[0]).toMatchObject({
+      requestId: REQUEST_ID,
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+      workspaceId: WORKSPACE_ID,
+      snapshotId: null,
+      policyClass: 'ask_approval',
+      argumentsHash: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+      state: 'pending',
+      replayed: true,
+      policy,
+    })
+  })
+
+  it('drops late approval events after the agent store epoch changes', async () => {
+    const transport = createTransportController()
+    const { connect } = useSSE(SESSION_ID)
+    connect()
+    await flushPromises()
+    useAgentStore().reset()
+
+    await transport.simulateMessage('approval_request', JSON.stringify({
+      requestId: LATE_REQUEST_ID,
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+      workspaceId: WORKSPACE_ID,
+      tool: 'write_file',
+      action: 'write file',
+      details: '/README.md',
+      state: 'pending',
+    }))
+
+    expect(useAgentStore().agentState.pendingApprovals).toEqual([])
+  })
+
+  it('drops late approval events after logout cleanup resets the agent store', async () => {
+    const transport = createTransportController()
+    const { connect } = useSSE(SESSION_ID)
+    connect()
+    await flushPromises()
+    useAuthStore().logout()
+
+    await transport.simulateMessage('approval_request', JSON.stringify({
+      requestId: LOGOUT_REQUEST_ID,
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+      workspaceId: WORKSPACE_ID,
+      tool: 'write_file',
+      action: 'write file',
+      details: '/README.md',
+      state: 'pending',
+    }))
+
+    expect(useAgentStore().agentState.pendingApprovals).toEqual([])
+  })
+
   it('emits done via onDone callback and stops streaming flag', async () => {
     const transport = createTransportController()
-    const { connect, isStreaming } = useSSE('test-session-id')
+    const { connect, isStreaming } = useSSE(SESSION_ID)
     const onDone = vi.fn()
     connect({ onDone })
     await flushPromises()
@@ -144,7 +242,7 @@ describe('useSSE', () => {
 
   it('emits error via onError callback when connect fails', async () => {
     vi.mocked(chatTransport.sendMessages).mockRejectedValueOnce(new Error('connect failed'))
-    const { connect } = useSSE('test-session-id')
+    const { connect } = useSSE(SESSION_ID)
     const onError = vi.fn()
     connect({ onError })
     await flushPromises()
@@ -156,7 +254,7 @@ describe('useSSE', () => {
 
   it('does not emit transport retry errors via onError callback', async () => {
     const transport = createTransportController()
-    const { connect } = useSSE('test-session-id')
+    const { connect } = useSSE(SESSION_ID)
     const onError = vi.fn()
     connect({ onError })
     await flushPromises()
@@ -166,9 +264,9 @@ describe('useSSE', () => {
   })
 
   it('stops transport on disconnect', () => {
-    const { disconnect } = useSSE('test-session-id')
+    const { disconnect } = useSSE(SESSION_ID)
     disconnect()
-    expect(chatTransport.stop).toHaveBeenCalledWith('test-session-id')
+    expect(chatTransport.stop).toHaveBeenCalledWith(SESSION_ID)
   })
 })
 
@@ -183,14 +281,14 @@ describe('stream liveness timer (S-1)', () => {
 
   async function startStreamingRun() {
     const transport = createTransportController()
-    const sse = useSSE('test-session-id')
+    const sse = useSSE(SESSION_ID)
     const onError = vi.fn()
     const onDone = vi.fn()
     sse.connect({ onError, onDone })
     await flushPromises()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ runId: 'run-1' }),
+      json: async () => ({ runId: RUN_ID }),
     }))
     await sse.sendMessage({ content: 'hello' })
     await transport.simulateMessage('token', JSON.stringify({ content: 'hi' }))
@@ -223,13 +321,13 @@ describe('stream liveness timer (S-1)', () => {
   })
 
   it('times out as error when nothing arrives before the first token', async () => {
-    const sse = useSSE('test-session-id')
+    const sse = useSSE(SESSION_ID)
     const onError = vi.fn()
     sse.connect({ onError })
     await flushPromises()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ runId: 'run-1' }),
+      json: async () => ({ runId: RUN_ID }),
     }))
     await sse.sendMessage({ content: 'hello' })
 
@@ -243,7 +341,7 @@ describe('stream liveness timer (S-1)', () => {
 
   it('does not arm the timer while idle', async () => {
     const transport = createTransportController()
-    const { connect } = useSSE('test-session-id')
+    const { connect } = useSSE(SESSION_ID)
     const onError = vi.fn()
     connect({ onError })
     await flushPromises()
@@ -261,7 +359,15 @@ describe('stream liveness timer (S-1)', () => {
     const events: Array<[string, unknown]> = [
       ['tool_call', { id: 'tool-1', name: 'execute_command', arguments: '{}' }],
       ['tool_result', { id: 'tool-1', result: 'done' }],
-      ['approval_request', { requestId: 'req-1', runId: 'run-1' }],
+      ['approval_request', {
+        requestId: LIVENESS_REQUEST_ID,
+        runId: RUN_ID,
+        sessionId: SESSION_ID,
+        workspaceId: WORKSPACE_ID,
+        tool: 'request_approval',
+        action: 'write file',
+        details: '/README.md',
+      }],
       ['status', { status: 'executing' }],
     ]
 

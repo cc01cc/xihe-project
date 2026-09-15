@@ -2,10 +2,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useSessionStore } from '../session'
 import { useAuthStore } from '../auth'
+import { useAgentStore } from '../agent'
 
 const originalFetch = globalThis.fetch
+const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
+const RUN_ID = '22222222-2222-4222-8222-222222222222'
+const SESSION_ID = '33333333-3333-4333-8333-333333333333'
+const WORKSPACE_ID = '44444444-4444-4444-8444-444444444444'
 
-function mockAuth(workspaceId = 'ws-test') {
+function mockAuth(workspaceId = WORKSPACE_ID) {
   const auth = useAuthStore()
   auth.$patch({
     token: 'mock-token',
@@ -100,6 +105,37 @@ describe('useSessionStore (server canonical)', () => {
       `/api/v1/sessions/${s2.id}`,
       expect.objectContaining({ method: 'DELETE' }),
     )
+    spy.mockRestore()
+  })
+
+  it('deleteSession clears approval state for the removed session', async () => {
+    mockAuth()
+    const store = useSessionStore()
+    const agent = useAgentStore()
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+
+     agent.addApprovalRequest({
+       requestId: REQUEST_ID,
+       runId: RUN_ID,
+       sessionId: SESSION_ID,
+       workspaceId: WORKSPACE_ID,
+      tool: 'write_file',
+      action: 'write',
+      details: '/README.md',
+    })
+    agent.pendingApprovalSummaries = [{
+       sessionId: SESSION_ID,
+       workspaceId: WORKSPACE_ID,
+      count: 1,
+      oldestRequestedAt: new Date().toISOString(),
+    }]
+
+     await store.deleteSession(SESSION_ID)
+
+    expect(agent.agentState.pendingApprovals).toEqual([])
+    expect(agent.pendingApprovalSummaries).toEqual([])
     spy.mockRestore()
   })
 

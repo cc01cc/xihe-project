@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** PLAN-0328 M1: session mode + session-only rules (L4) never leak into other scopes. */
@@ -43,6 +45,19 @@ class SessionPolicyStateTest {
 
         assertEquals(1, state.rulesOf("s1").size());
         assertEquals(LayeredPolicyResolver.MODE_DEFAULT, state.modeOf("s1").orElseThrow());
+    }
+
+    @Test
+    void snapshotEntryKeepsRulesImmutable() {
+        var mutableRules = new java.util.ArrayList<>(List.of(
+                PolicyRule.of("exec", "pnpm test *", PolicyEffect.ALLOW)));
+        SessionPolicyState.Entry entry = new SessionPolicyState.Entry(
+                LayeredPolicyResolver.MODE_MANAGED, mutableRules, Instant.now());
+        mutableRules.clear();
+
+        assertEquals(1, entry.rules().size());
+        assertThrows(UnsupportedOperationException.class,
+                () -> entry.rules().add(PolicyRule.of("exec", "*", PolicyEffect.DENY)));
     }
 
     @Test

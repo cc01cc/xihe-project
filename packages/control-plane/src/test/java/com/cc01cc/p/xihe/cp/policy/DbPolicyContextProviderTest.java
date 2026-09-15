@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -139,6 +140,25 @@ class DbPolicyContextProviderTest {
         assertTrue(first.layers().stream().noneMatch(layer -> layer.layer() == PolicyLayer.SESSION));
         assertEquals(1, second.layers().stream().filter(layer -> layer.layer() == PolicyLayer.SESSION).count());
         verify(ruleRepository, times(1)).findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance");
+    }
+
+    @Test
+    void loadsSessionModeAndRulesFromOneCoherentSnapshot() {
+        SessionPolicyState coherentState = mock(SessionPolicyState.class);
+        PolicyRule sessionRule = PolicyRule.of("exec", "pnpm test *", PolicyEffect.ALLOW);
+        SessionPolicyState.Entry entry = new SessionPolicyState.Entry(
+                LayeredPolicyResolver.MODE_MANAGED, List.of(sessionRule), java.time.Instant.now());
+        when(coherentState.snapshot("s1")).thenReturn(java.util.Optional.of(entry));
+        DbPolicyContextProvider coherentProvider = new DbPolicyContextProvider(
+                ruleRepository, faceRepository, coherentState, policyVersion);
+
+        PolicyContext context = coherentProvider.load("u1", "ws1", "s1");
+
+        assertEquals(LayeredPolicyResolver.MODE_MANAGED, context.mode());
+        assertEquals(List.of(sessionRule), context.layers().get(context.layers().size() - 1).rules());
+        verify(coherentState).snapshot("s1");
+        verify(coherentState, never()).modeOf("s1");
+        verify(coherentState, never()).rulesOf("s1");
     }
 
     @Test

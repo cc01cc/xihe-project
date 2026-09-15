@@ -5,6 +5,8 @@ import { logger } from '../lib/logger'
 import { useSessionStore } from './session'
 import { useChatStore } from './chat'
 import { useConfigStore } from './config'
+import { useAgentStore } from './agent'
+import { usePolicyStore } from './policy'
 import type { User } from '../types'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -104,6 +106,17 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const configStore = useConfigStore()
       configStore.clearForUserSwitch()
+    } catch {
+      // Pinia not yet initialised — store will start fresh on next access.
+    }
+    try {
+      const agentStore = useAgentStore()
+      agentStore.reset()
+    } catch {
+      // Pinia not yet initialised — store will start fresh on next access.
+    }
+    try {
+      usePolicyStore().reset()
     } catch {
       // Pinia not yet initialised — store will start fresh on next access.
     }

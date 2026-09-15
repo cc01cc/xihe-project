@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { api } from '../api'
+import { api, normalizeApprovalRequest } from '../api'
 
 let fetchSpy: ReturnType<typeof vi.spyOn>
 const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`
 const INVALID_PASSWORD = `ui-invalid-${globalThis.crypto.randomUUID()}`
+const APPROVAL_ID = '11111111-1111-4111-8111-111111111111'
+const APPROVAL_ID_2 = '22222222-2222-4222-8222-222222222222'
+const RUN_ID = '33333333-3333-4333-8333-333333333333'
+const RUN_ID_2 = '44444444-4444-4444-8444-444444444444'
+const SESSION_ID = '55555555-5555-4555-8555-555555555555'
+const WORKSPACE_ID = '66666666-6666-4666-8666-666666666666'
+const SNAPSHOT_ID = '77777777-7777-4777-8777-777777777777'
 
 beforeEach(() => {
   localStorage.clear()
@@ -213,6 +220,286 @@ describe('api.deleteSession', () => {
 
     const callOptions = fetchSpy.mock.calls[0][1] as RequestInit
     expect((callOptions.headers as Record<string, string>).Authorization).toBe('Bearer some-token')
+  })
+})
+
+describe('api.decideChatApproval', () => {
+  it('sends the structured decision body', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        status: 'accepted',
+        requestId: APPROVAL_ID,
+        approved: true,
+        decision: 'saved',
+        propagated: 2,
+        modeAtGrant: 'managed',
+        rule: { layer: 'workspace', actionClass: 'write', resource: 'src/**', effect: 'allow' },
+      }),
+    } as Response)
+
+    const result = await api.decideChatApproval(APPROVAL_ID, {
+      decision: 'saved',
+      layer: 'workspace',
+      rule: { resource: 'src/**' },
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/api/v1/chat/approvals/${APPROVAL_ID}/decision`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          decision: 'saved',
+          layer: 'workspace',
+          rule: { resource: 'src/**' },
+        }),
+      }),
+    )
+    expect(result.propagated).toBe(2)
+    expect(result.modeAtGrant).toBe('managed')
+    expect(result.rule?.resource).toBe('src/**')
+  })
+
+  it('keeps the legacy boolean body available for compatibility', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ status: 'accepted', requestId: APPROVAL_ID_2, approved: false }),
+    } as Response)
+
+    await api.decideChatApproval(APPROVAL_ID_2, false)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/api/v1/chat/approvals/${APPROVAL_ID_2}/decision`,
+      expect.objectContaining({ body: JSON.stringify({ approved: false }) }),
+    )
+  })
+})
+
+describe('api.getPendingApprovals', () => {
+  it('returns endpoint-only session summaries', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{
+        sessionId: SESSION_ID,
+        workspaceId: WORKSPACE_ID,
+        count: 2,
+        oldestRequestedAt: '2026-09-14T12:00:00Z',
+      }]),
+    } as Response)
+
+    const result = await api.getPendingApprovals()
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/approvals/pending', expect.objectContaining({ headers: expect.any(Object) }))
+    expect(result).toEqual([{
+      sessionId: SESSION_ID,
+      workspaceId: WORKSPACE_ID,
+      count: 2,
+      oldestRequestedAt: '2026-09-14T12:00:00Z',
+    }])
+  })
+
+  it('accepts explicit zero-count pending summaries as authoritative', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{
+        sessionId: SESSION_ID,
+        workspaceId: WORKSPACE_ID,
+        count: 0,
+        oldestRequestedAt: '2026-09-14T12:00:00Z',
+      }]),
+    } as Response)
+
+    await expect(api.getPendingApprovals()).resolves.toEqual([{
+        sessionId: SESSION_ID,
+        workspaceId: WORKSPACE_ID,
+      count: 0,
+      oldestRequestedAt: '2026-09-14T12:00:00Z',
+    }])
+  })
+
+  it('aborts a stalled pending summary request after five seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      fetchSpy.mockImplementation((_input, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+      }))
+
+      const request = api.getPendingApprovals()
+      const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' })
+      await vi.advanceTimersByTimeAsync(5000)
+
+      await rejected
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('api policy mode', () => {
+  it('reads a session mode with its server-derived rule count', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'bypass', sessionRules: 3 }),
+    } as Response)
+
+    const result = await api.getPolicyMode(SESSION_ID)
+
+    expect(fetchSpy).toHaveBeenCalledWith(`/api/v1/policy/mode?sessionId=${SESSION_ID}`, expect.any(Object))
+    expect(result).toEqual({ sessionId: SESSION_ID, mode: 'bypass', sessionRules: 3 })
+  })
+
+  it('writes only the selected session mode', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'default', scope: 'session' }),
+    } as Response)
+
+    const result = await api.setPolicyMode(SESSION_ID, 'default')
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/policy/mode', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ sessionId: SESSION_ID, mode: 'default' }),
+    }))
+    expect(result).toEqual({ sessionId: SESSION_ID, mode: 'default', scope: 'session' })
+  })
+
+  it('rejects a POST response without the session scope marker', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'default' }),
+    } as Response)
+
+    await expect(api.setPolicyMode(SESSION_ID, 'default')).rejects.toThrow('Invalid policy mode update response')
+  })
+})
+
+describe('api.getChatRunStatus approval recovery', () => {
+  it('normalizes and preserves nested policy evidence', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        runId: RUN_ID,
+        sessionId: SESSION_ID,
+        status: 'awaiting_approval',
+        leaseExpired: false,
+        pendingApprovals: [{
+          requestId: APPROVAL_ID,
+          runId: RUN_ID,
+          sessionId: SESSION_ID,
+          tool: 'write_file',
+          action: 'write',
+          details: '/README.md',
+          snapshotId: SNAPSHOT_ID,
+          policyClass: 'ask_approval',
+          argumentsHash: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+          state: 'pending',
+          replayed: true,
+          policy: {
+            effect: 'ask',
+            sourceLayer: 'workspace',
+            matchedRule: null,
+            reason: 'No rule matched',
+            mode: null,
+            actionClass: 'write',
+            shape: 'interpreter',
+          },
+        }],
+      }),
+    } as Response)
+
+    const result = await api.getChatRunStatus(RUN_ID)
+
+    expect(result.pendingApprovals[0]?.policy).toEqual({
+      effect: 'ask',
+      sourceLayer: 'workspace',
+      matchedRule: null,
+      reason: 'No rule matched',
+      mode: null,
+      actionClass: 'write',
+      shape: 'interpreter',
+    })
+    expect(result.pendingApprovals[0]).toMatchObject({
+      requestId: APPROVAL_ID,
+      snapshotId: SNAPSHOT_ID,
+      policyClass: 'ask_approval',
+      argumentsHash: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+      state: 'pending',
+      replayed: true,
+    })
+  })
+
+  it('preserves strict mode-at-grant evidence without replacing ask-time mode', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        runId: RUN_ID,
+        sessionId: SESSION_ID,
+        status: 'awaiting_approval',
+        pendingApprovals: [{
+          requestId: APPROVAL_ID,
+          runId: RUN_ID,
+          sessionId: SESSION_ID,
+          policy: {
+            effect: 'ask',
+            sourceLayer: 'workspace',
+            matchedRule: null,
+            reason: 'No rule matched',
+            mode: 'default',
+            modeAtGrant: 'managed',
+            actionClass: 'write',
+            shape: 'structured',
+          },
+        }],
+      }),
+    } as Response)
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        runId: RUN_ID_2,
+        sessionId: SESSION_ID,
+        status: 'awaiting_approval',
+        pendingApprovals: [{
+          requestId: APPROVAL_ID_2,
+          runId: RUN_ID_2,
+          sessionId: SESSION_ID,
+          snapshotId: null,
+          policyClass: null,
+          argumentsHash: null,
+          state: 'pending',
+          modeAtGrant: 'plan',
+        }],
+      }),
+    } as Response)
+
+    const nested = await api.getChatRunStatus(RUN_ID)
+    const topLevel = await api.getChatRunStatus(RUN_ID_2)
+
+    expect(nested.pendingApprovals[0]?.policy).toMatchObject({ mode: 'default', modeAtGrant: 'managed' })
+    expect(topLevel.pendingApprovals[0]?.modeAtGrant).toBe('plan')
+    expect(normalizeApprovalRequest({ requestId: APPROVAL_ID, sessionId: SESSION_ID, modeAtGrant: 'future-mode' })).toBeNull()
+  })
+
+  it('does not invent omitted envelope metadata or copy details into policy', () => {
+    const normalized = normalizeApprovalRequest({
+      requestId: APPROVAL_ID_2,
+      sessionId: SESSION_ID,
+      policy: {
+        effect: 'ask',
+        sourceLayer: 'workspace',
+        matchedRule: null,
+        reason: 'No rule matched',
+        mode: 'default',
+        modeAtGrant: null,
+        actionClass: 'write',
+        shape: 'structured',
+        details: 'must not be copied',
+      },
+    })
+
+    expect(normalized).not.toHaveProperty('state')
+    expect(normalized).not.toHaveProperty('snapshotId')
+    expect(normalized?.policy).toMatchObject({ modeAtGrant: null })
+    expect(normalized?.policy).not.toHaveProperty('details')
   })
 })
 

@@ -33,6 +33,7 @@ let activeRunId: string | undefined
 watch(
   () => props.sessionId,
   (id) => {
+    activeRunId = undefined
     if (id) {
       connectSession(id)
     }
@@ -43,12 +44,15 @@ watch(
 function connectSession(id: string) {
   const parser = useStreamParser()
   let terminalError: SSEErrorPayload | null = null
+  const isCurrentSession = () => props.sessionId === id
   connect({
     onStart: () => {
+      if (!isCurrentSession()) return
       parser.reset()
       chatStore.createStreamingMessage(id, activeRunId)
     },
     onToken: (token: string, hint?) => {
+      if (!isCurrentSession()) return
       if (hint === 'reasoning') {
         chatStore.appendToParts(id, { type: 'reasoning', content: token })
         return
@@ -61,7 +65,12 @@ function connectSession(id: string) {
       chatStore.replaceStreamingParts(id, parser.parts.value)
     },
     onStatus: (status: string) => {
-      agentStore.setStatus(status as 'thinking' | 'executing' | 'idle')
+      if (!isCurrentSession()) return
+      const nextStatus = status === 'thinking' || status === 'executing' || status === 'awaiting_approval' || status === 'error'
+        ? status
+        : 'idle'
+      chatStore.setSessionRunState(id, nextStatus, activeRunId)
+      agentStore.setStatus(nextStatus)
       if (status === 'thinking' || status === 'executing') {
         chatStore.addMarker(id, {
           role: 'system',
@@ -73,6 +82,7 @@ function connectSession(id: string) {
       }
     },
     onDone: (outcome?: string) => {
+      if (!isCurrentSession()) return
       parser.finalize()
       if (parser.parts.value.length > 0) {
         chatStore.replaceStreamingParts(id, parser.parts.value)
@@ -89,14 +99,27 @@ function connectSession(id: string) {
         chatStore.finalizeStreaming(id)
       }
       agentStore.setStatus('idle')
+      chatStore.setSessionRunState(id, 'idle')
+      activeRunId = undefined
     },
     onError: (payload: SSEErrorPayload) => {
+      if (!isCurrentSession()) return
       terminalError = payload
       chatStore.markStreamingError(id, payload)
       agentStore.setStatus('error')
+      chatStore.setSessionRunState(id, 'error', activeRunId)
+      activeRunId = undefined
       toast.error(chatErrorToastText(payload.code, payload.detail))
     },
+    onApprovalRequest: (data) => {
+      if (!isCurrentSession()) return
+      if (data.state !== undefined && data.state !== 'pending') return
+      chatStore.setSessionRunState(id, 'awaiting_approval', activeRunId)
+      agentStore.setStatus('awaiting_approval')
+    },
     onToolCall: (name: string, args: Record<string, unknown>) => {
+      if (!isCurrentSession()) return
+      chatStore.setSessionRunState(id, 'executing', activeRunId)
       handleToolCall(name, args)
     },
   })
@@ -113,6 +136,7 @@ async function handleSend(content: string, options?: { attachments?: string[]; t
       const msg = 'SSE connection not established'
       logger.warn(msg)
       agentStore.setStatus('idle')
+      chatStore.setSessionRunState(sessionId, 'idle')
       toast.error(msg)
       return null
     }
@@ -129,8 +153,10 @@ async function handleSend(content: string, options?: { attachments?: string[]; t
     sessionId,
     attachments: options?.attachments,
   })
+  if (props.sessionId !== sessionId) return null
   if (result) {
     activeRunId = result.runId
+    chatStore.setSessionRunState(sessionId, 'thinking', result.runId)
     agentStore.setStatus('thinking')
   }
   return result
@@ -150,12 +176,16 @@ function waitForConnection(timeoutMs: number): Promise<boolean> {
 }
 
 function stopStreaming() {
-  if (activeRunId) {
-    api.cancelChatRun(activeRunId).catch((err) => {
+  const sessionId = props.sessionId
+  const runId = activeRunId ?? chatStore.getSessionRunId(sessionId)
+  activeRunId = undefined
+  if (runId && sessionId === props.sessionId) {
+    api.cancelChatRun(runId).catch((err) => {
       logger.warn('Failed to cancel chat run:', err)
     })
   }
   disconnect()
+  chatStore.setSessionRunState(sessionId, 'idle')
   agentStore.setStatus('idle')
 }
 

@@ -27,7 +27,7 @@ import java.util.List;
 public class ChatRunRecoveryService {
 
     private static final Logger logger = LoggerFactory.getLogger(ChatRunRecoveryService.class);
-    private static final List<String> LIVE_APPROVAL_STATES = List.of("pending", "dispatching");
+    private static final List<String> LIVE_APPROVAL_STATES = List.of("pending", "dispatching", "dispatch_unknown");
 
     private final ChatRunRepository chatRunRepository;
     private final ChatApprovalRepository approvalRepository;

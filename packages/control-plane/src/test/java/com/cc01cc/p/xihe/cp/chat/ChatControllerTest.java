@@ -51,9 +51,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -92,6 +96,9 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Autowired
     private OperationService operationService;
+
+    @Autowired
+    private ApprovalService approvalService;
 
     @Autowired
     private SseEmitterManager sseEmitterManager;
@@ -628,6 +635,65 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals("per-call", origins.get("execute_command"));
         assertEquals(20, ((Number) rawTimeouts.get("execute_command")).intValue(),
                 "raw per-call value travels for the inbound header");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void chat_enrichesLiveApprovalRequestWithPolicySummary() throws IOException {
+        String requestId = UUID.randomUUID().toString();
+        String sseBody = "event: approval_request\n"
+                + "data: {\"requestId\":\"" + requestId + "\",\"tool\":\"write_file\","
+                + "\"action\":\"Execute write_file\","
+                + "\"details\":\"{\\\"tool\\\":\\\"write_file\\\",\\\"arguments\\\":{\\\"path\\\":\\\"secret.md\\\"}}\","
+                + "\"expiresAt\":\"2099-01-01T00:00:00Z\",\"agentOnly\":\"discard\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, sseBody.getBytes(StandardCharsets.UTF_8).length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(sseBody.getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Please write the file",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), payload.capture());
+        Map<String, Object> event = (Map<String, Object>) payload.getValue();
+        Map<String, Object> policy = (Map<String, Object>) event.get("policy");
+        assertEquals(requestId, event.get("requestId"));
+        assertEquals("ask", policy.get("effect"));
+        assertEquals("builtin", policy.get("sourceLayer"));
+        assertEquals("write", policy.get("actionClass"));
+        assertEquals("structured", policy.get("shape"));
+        assertTrue(policy.get("reason") instanceof String reason && !reason.isBlank());
+        assertFalse(policy.toString().contains("secret.md"));
+        var ledgerItem = operationService.findItemByApprovalRequestId(requestId);
+        assertNotNull(ledgerItem);
+        assertFalse(ledgerItem.getArgumentsPreview().contains("\"policy\""));
+        Map<String, Object> replay = approvalService.replayPending(sessionId, userId, workspaceId).stream()
+                .filter(item -> requestId.equals(item.get("requestId")))
+                .findFirst().orElseThrow();
+        assertEquals(event.keySet(), replay.keySet());
+        assertEquals("pending", event.get("state"));
+        assertEquals(Boolean.FALSE, event.get("replayed"));
+        assertEquals(Boolean.TRUE, replay.get("replayed"));
+        assertFalse(event.containsKey("agentOnly"));
     }
 
     @TestConfiguration

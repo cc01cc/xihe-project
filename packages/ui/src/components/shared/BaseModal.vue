@@ -2,7 +2,7 @@
 import { onMounted, onBeforeUnmount } from 'vue'
 import { X } from '@lucide/vue'
 
-defineProps<{
+const props = defineProps<{
   title?: string
   show: boolean
 }>()
@@ -12,7 +12,7 @@ const emit = defineEmits<{
 }>()
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
+  if (props.show && e.key === 'Escape') emit('close')
 }
 
 onMounted(() => document.addEventListener('keydown', onKeydown))
@@ -27,7 +27,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
         <div data-testid="modal-content" class="relative z-10 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
           <div v-if="title" class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-semibold">{{ title }}</h2>
-            <button class="p-1 rounded hover:bg-accent" aria-label="Close" @click="emit('close')">
+             <button type="button" class="p-1 rounded hover:bg-accent" aria-label="Close" @click="emit('close')">
                <X class="size-4" aria-hidden="true" />
             </button>
           </div>

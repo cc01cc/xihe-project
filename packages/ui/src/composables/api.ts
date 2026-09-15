@@ -1,4 +1,20 @@
-import type { OperationListResponse, OperationTrace, OperationStatus } from '../types'
+import type {
+  ApprovalDecision,
+  ApprovalDecisionKind,
+  ApprovalPolicy,
+  ApprovalPolicyEffect,
+  ApprovalPolicyMode,
+  ApprovalPolicyShape,
+  ApprovalPolicySourceLayer,
+  ApprovalRequest,
+  OperationListResponse,
+  OperationTrace,
+  OperationStatus,
+  PolicyModeUpdateResponse,
+  PendingApprovalSummary,
+  SessionPolicyMode,
+  SessionPolicyModeState,
+} from '../types'
 
 const API_BASE = '/api/v1'
 
@@ -51,12 +67,159 @@ export interface ChatApprovalDecisionResponse {
   status: 'accepted' | 'already_decided'
   requestId: string
   approved: boolean
+  decision?: ApprovalDecisionKind
+  propagated?: number
+  modeAtGrant?: ApprovalPolicyMode
+  rule?: {
+    layer: 'session' | 'workspace' | 'user'
+    actionClass: string
+    resource: string
+    effect: 'allow' | 'deny'
+  }
 }
 
 type JsonRecord = Record<string, unknown>
 
+const approvalPolicyEffects = ['allow', 'ask', 'deny'] as const
+const approvalPolicySourceLayers = ['builtin', 'instance', 'user', 'workspace', 'session', 'per_call'] as const
+const approvalPolicyModes = ['default', 'bypass', 'managed', 'accept-edits', 'plan'] as const
+const approvalPolicyShapes = ['structured', 'interpreter', 'opaque'] as const
+
+function isEnumValue<T extends string>(value: unknown, values: readonly T[]): value is T {
+  return typeof value === 'string' && values.includes(value as T)
+}
+
 function asRecord(value: unknown): JsonRecord | null {
   return typeof value === 'object' && value !== null ? value as JsonRecord : null
+}
+
+function normalizeApprovalPolicy(value: unknown): ApprovalPolicy | undefined {
+  const record = asRecord(value)
+  if (!record
+    || !isEnumValue(record.effect, approvalPolicyEffects)
+    || !isEnumValue(record.sourceLayer, approvalPolicySourceLayers)
+    || typeof record.reason !== 'string'
+    || typeof record.actionClass !== 'string'
+    || !isEnumValue(record.shape, approvalPolicyShapes)
+    || !(record.matchedRule === null || typeof record.matchedRule === 'string')
+    || !(record.mode === null || isEnumValue(record.mode, approvalPolicyModes))
+    || !(record.modeAtGrant === undefined || record.modeAtGrant === null || isEnumValue(record.modeAtGrant, approvalPolicyModes))) {
+    return undefined
+  }
+
+  return {
+    effect: record.effect as ApprovalPolicyEffect,
+    sourceLayer: record.sourceLayer as ApprovalPolicySourceLayer,
+    matchedRule: record.matchedRule as string | null,
+    reason: record.reason,
+    mode: record.mode as ApprovalPolicyMode,
+    ...(record.modeAtGrant !== undefined ? { modeAtGrant: record.modeAtGrant as ApprovalPolicyMode } : {}),
+    actionClass: record.actionClass,
+    shape: record.shape as ApprovalPolicyShape,
+  }
+}
+
+const approvalStates = ['pending', 'dispatching', 'approved', 'rejected', 'expired', 'dispatch_unknown'] as const
+
+function hasField(record: JsonRecord, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key)
+}
+
+/** Normalize approval payloads from SSE/recovery without inventing policy evidence. */
+export function normalizeApprovalRequest(value: unknown, fallbackSessionId = ''): ApprovalRequest | null {
+  const record = asRecord(value)
+  if (!record) return null
+  if (fallbackSessionId
+    && typeof record.sessionId === 'string'
+    && record.sessionId.length > 0
+    && record.sessionId !== fallbackSessionId) return null
+  const requestId = typeof record.requestId === 'string' ? record.requestId : ''
+  const sessionId = typeof record.sessionId === 'string' && record.sessionId.length > 0
+    ? record.sessionId
+    : fallbackSessionId
+  if (!requestId || !sessionId) return null
+
+  const state = record.state === undefined
+    ? undefined
+    : isEnumValue(record.state, approvalStates) ? record.state : null
+  if (state === null) return null
+  for (const key of ['snapshotId', 'policyClass', 'argumentsHash']) {
+    if (hasField(record, key) && record[key] !== null && typeof record[key] !== 'string') return null
+  }
+  if (record.modeAtGrant !== undefined
+    && record.modeAtGrant !== null
+    && !isEnumValue(record.modeAtGrant, approvalPolicyModes)) return null
+  const policy = record.policy === undefined ? undefined : normalizeApprovalPolicy(record.policy)
+
+  return {
+    requestId,
+    operationId: typeof record.operationId === 'string' ? record.operationId : undefined,
+    runId: typeof record.runId === 'string' ? record.runId : '',
+    sessionId,
+    workspaceId: typeof record.workspaceId === 'string' ? record.workspaceId : undefined,
+    tool: typeof record.tool === 'string' ? record.tool : 'request_approval',
+    action: typeof record.action === 'string' ? record.action : '',
+    details: typeof record.details === 'string' ? record.details : '',
+    ...(hasField(record, 'snapshotId') ? { snapshotId: record.snapshotId as string | null } : {}),
+    ...(hasField(record, 'policyClass') ? { policyClass: record.policyClass as string | null } : {}),
+    ...(hasField(record, 'argumentsHash') ? { argumentsHash: record.argumentsHash as string | null } : {}),
+    expiresAt: typeof record.expiresAt === 'string' ? record.expiresAt : undefined,
+    ...(typeof record.replayed === 'boolean' ? { replayed: record.replayed } : {}),
+    ...(state !== undefined ? { state } : {}),
+    ...(record.modeAtGrant !== undefined ? { modeAtGrant: record.modeAtGrant as ApprovalPolicyMode } : {}),
+    ...(policy ? { policy } : {}),
+  }
+}
+
+function normalizePendingApprovalSummary(value: unknown): PendingApprovalSummary | null {
+  const record = asRecord(value)
+  const count = record?.count
+  if (!record
+    || typeof record.sessionId !== 'string'
+    || typeof record.workspaceId !== 'string'
+    || !Number.isInteger(count)
+    || (count as number) < 0
+    || (typeof record.oldestRequestedAt !== 'string' && count !== 0)) {
+    return null
+  }
+  return {
+    sessionId: record.sessionId,
+    workspaceId: record.workspaceId,
+    count: count as number,
+    oldestRequestedAt: typeof record.oldestRequestedAt === 'string' ? record.oldestRequestedAt : '',
+  }
+}
+
+function normalizePolicyModeState(value: unknown, fallbackSessionId: string): SessionPolicyModeState {
+  const record = asRecord(value)
+  if (!record
+    || typeof record.sessionId !== 'string'
+    || record.sessionId !== fallbackSessionId
+    || !isEnumValue(record.mode, approvalPolicyModes)) {
+    throw new Error('Invalid policy mode response')
+  }
+  if (record.sessionRules !== undefined
+    && (!Number.isInteger(record.sessionRules) || (record.sessionRules as number) < 0)) {
+    throw new Error('Invalid policy mode response')
+  }
+  return {
+    sessionId: record.sessionId,
+    mode: record.mode as SessionPolicyMode,
+    ...(record.sessionRules === undefined ? {} : { sessionRules: record.sessionRules as number }),
+  }
+}
+
+function normalizePolicyModeUpdateResponse(value: unknown, fallbackSessionId: string): PolicyModeUpdateResponse {
+  const state = normalizePolicyModeState(value, fallbackSessionId)
+  const record = asRecord(value)
+  if (!record || record.scope !== 'session') {
+    throw new Error('Invalid policy mode update response')
+  }
+  return {
+    sessionId: state.sessionId,
+    mode: state.mode,
+    scope: 'session',
+  }
 }
 
 function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
@@ -300,11 +463,42 @@ export const api = {
   deleteMessage(sessionId: string, messageId: string) {
     return apiDelete(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`)
   },
-  decideChatApproval(requestId: string, approved: boolean): Promise<ChatApprovalDecisionResponse> {
+  decideChatApproval(requestId: string, decision: ApprovalDecision | boolean): Promise<ChatApprovalDecisionResponse> {
     return request<ChatApprovalDecisionResponse>(`/chat/approvals/${encodeURIComponent(requestId)}/decision`, {
       method: 'POST',
-      body: JSON.stringify({ approved }),
+      body: JSON.stringify(typeof decision === 'boolean' ? { approved: decision } : decision),
     })
+  },
+  async getPendingApprovals(signal?: AbortSignal): Promise<PendingApprovalSummary[]> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5000)
+    const abortFromCaller = () => controller.abort()
+    if (signal) {
+      if (signal.aborted) controller.abort()
+      else signal.addEventListener('abort', abortFromCaller, { once: true })
+    }
+    try {
+      const payload = await request<unknown>('/approvals/pending', { signal: controller.signal })
+      if (!Array.isArray(payload)) throw new Error('Invalid pending approvals response: expected an array')
+      const summaries = payload.map(normalizePendingApprovalSummary)
+      if (summaries.some((summary): summary is null => summary === null)) {
+        throw new Error('Invalid pending approvals response: malformed summary')
+      }
+      return summaries.filter((summary): summary is PendingApprovalSummary => summary !== null)
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abortFromCaller)
+    }
+  },
+  async getPolicyMode(sessionId: string): Promise<SessionPolicyModeState> {
+    const query = new URLSearchParams({ sessionId }).toString()
+    return normalizePolicyModeState(await request<unknown>(`/policy/mode?${query}`), sessionId)
+  },
+  async setPolicyMode(sessionId: string, mode: SessionPolicyMode): Promise<PolicyModeUpdateResponse> {
+    return normalizePolicyModeUpdateResponse(await request<unknown>('/policy/mode', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, mode }),
+    }), sessionId)
   },
   getHealth() {
     return request<{ status: string }>('/health')
@@ -487,14 +681,33 @@ export const api = {
     return apiPost(`/chat/runs/${encodeURIComponent(runId)}/cancel`, JSON.stringify({ reason }))
   },
   // PLAN-292 M3 (C2): run status recovery for reconnected/refreshed clients.
-  getChatRunStatus(runId: string): Promise<{
+  async getChatRunStatus(runId: string): Promise<{
     runId: string
     sessionId: string
     status: string
     terminalOutcome?: string | null
     leaseExpired: boolean
-    pendingApprovals: Array<Record<string, unknown>>
+    pendingApprovals: ApprovalRequest[]
   }> {
-    return request(`/chat/runs/${encodeURIComponent(runId)}`, { method: 'GET' })
+    const payload = await request<unknown>(`/chat/runs/${encodeURIComponent(runId)}`, { method: 'GET' })
+    const record = asRecord(payload)
+    if (!record || typeof record.sessionId !== 'string') {
+      throw new Error('Invalid chat run response: missing sessionId')
+    }
+    const rawApprovals = Array.isArray(record.pendingApprovals) ? record.pendingApprovals : []
+    const pendingApprovals = rawApprovals
+      .map((approval) => normalizeApprovalRequest(approval, record.sessionId as string))
+      .map((approval) => approval ? { ...approval, runId: approval.runId || runId } : null)
+      .filter((approval): approval is ApprovalRequest => approval !== null)
+    return {
+      runId: typeof record.runId === 'string' ? record.runId : runId,
+      sessionId: record.sessionId,
+      status: typeof record.status === 'string' ? record.status : 'unknown',
+      terminalOutcome: typeof record.terminalOutcome === 'string' || record.terminalOutcome === null
+        ? record.terminalOutcome
+        : undefined,
+      leaseExpired: record.leaseExpired === true,
+      pendingApprovals,
+    }
   },
 }

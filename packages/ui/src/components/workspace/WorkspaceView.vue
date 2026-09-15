@@ -8,6 +8,7 @@ import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import { FolderTree } from '@lucide/vue'
+import { useMediaQuery } from '@vueuse/core'
 import WorkspaceToolbar from './WorkspaceToolbar.vue'
 import WorkspaceCreateDialog from './WorkspaceCreateDialog.vue'
 import WorkspaceSettingsDialog from './WorkspaceSettingsDialog.vue'
@@ -23,6 +24,7 @@ const router = useRouter()
 const ws = useWorkspaceStore()
 const sessionStore = useSessionStore()
 const auth = useAuthStore()
+const isMobileViewport = useMediaQuery('(max-width: 767px)')
 
 const routeWorkspaceId = computed(() => (route.params.workspaceId as string | undefined) ?? '')
 
@@ -133,7 +135,7 @@ onMounted(() => {
     </div>
 
     <div
-      v-if="sessionId"
+      v-if="sessionId && !isMobileViewport"
       class="w-96 border-l bg-muted/5 flex-col shrink-0 hidden md:flex"
     >
        <div

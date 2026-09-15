@@ -28,13 +28,13 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
     List<ChatApproval> findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
             String sessionId, String userId, String workspaceId, Collection<String> states);
 
-    /** Cross-session pending view for the approval indicator (PLAN-0328 M1 T1.16). */
+    /** Cross-session live approval/retry view; callers choose actionable states explicitly. */
     List<ChatApproval> findByUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
             String userId, String workspaceId, Collection<String> states);
 
     /**
      * Same view with the expiry predicate pushed into SQL (V16 index
-     * {@code idx_approval_requests_user_workspace_state}); expired pending rows are never returned.
+     * {@code idx_approval_requests_user_workspace_state}); expired actionable rows are never returned.
      */
     List<ChatApproval> findByUserIdAndWorkspaceIdAndStateInAndExpiresAtAfterOrderByCreatedAtAsc(
             String userId, String workspaceId, Collection<String> states, Instant now);
@@ -52,10 +52,18 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
     @Transactional
     @Modifying
     @Query("update ChatApproval a set a.state = 'dispatching', a.approved = :approved, "
-            + "a.dispatchErrorCode = null, a.updatedAt = :at "
+            + "a.dispatchErrorCode = null, a.modeAtGrant = coalesce(a.modeAtGrant, :modeAtGrant), "
+            + "a.updatedAt = :at "
             + "where a.requestId = :requestId and a.state in ('pending', 'dispatch_unknown')")
     int markDispatching(@Param("requestId") UUID requestId, @Param("approved") boolean approved,
-            @Param("at") Instant at);
+            @Param("modeAtGrant") String modeAtGrant, @Param("at") Instant at);
+
+    @Transactional
+    @Modifying
+    @Query("update ChatApproval a set a.policySummary = :policySummary, a.updatedAt = :at "
+            + "where a.requestId = :requestId")
+    int updatePolicySummary(@Param("requestId") UUID requestId,
+            @Param("policySummary") String policySummary, @Param("at") Instant at);
 
     @Transactional
     @Modifying

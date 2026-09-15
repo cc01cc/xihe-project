@@ -133,13 +133,37 @@ paths:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example: { type: "https://xihe.dev/problems/sse-subscription-required", title: "SSE subscription required", status: 409, code: "SSE_SUBSCRIPTION_REQUIRED", detail: "An active SSE subscription is required", requestId: "req-..." }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{runId}:
+    get:
+      operationId: getChatRunStatus
+      summary: Get a ChatRun status and its pending approvals
+      description: |
+        Returns the authenticated user's ChatRun status for the current workspace.
+        `pendingApprovals` contains the CP-owned durable approval envelope, not the
+        raw Agent approval status. The envelope is also used for reconnect/reload
+        recovery and contains only the bounded approval preview and safe policy metadata.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ChatRun recovery status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatRunStatusResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/approvals/{requestId}/decision:
     post:
       operationId: decideChatApproval
       summary: Submit a user decision for a pending Chat approval
       description: |
         The browser submits an approval decision through Control Plane. The
-        requestId is opaque and must belong to the authenticated user's current
+        requestId is a UUID and must belong to the authenticated user's current
         workspace/session/run. Control Plane forwards the decision to Agent
         with the service Bearer; browsers must never call the Agent internal
         approval endpoint directly. Repeating the same decision is idempotent.
@@ -148,7 +172,7 @@ paths:
         - in: path
           name: requestId
           required: true
-          schema: { type: string, pattern: '^[A-Za-z0-9-]{1,128}$' }
+          schema: { type: string, format: uuid }
       requestBody:
         required: true
         content:
@@ -168,11 +192,12 @@ paths:
   /api/v1/approvals/pending:
     get:
       operationId: listPendingApprovals
-      summary: Cross-session pending approval indicator (counts only)
+      summary: Cross-session live actionable approval/retry indicator (counts only)
       description: |
-        PLAN-0328 M1 T1.16 (spec/ui-ux §1.2): one entry per session with at least one live
-        pending approval for the authenticated user in the current workspace. Counts and
-        timestamps only — never tool arguments, approval details or rule text
+        PLAN-0328 M1 T1.16 (spec/ui-ux §1.2): one entry per session with at least one of the
+        live actionable approval/retry states (`pending` or `dispatch_unknown`) for the authenticated
+        user in the current workspace. `dispatching` remains in-flight and is not counted.
+        Counts and timestamps only — never tool arguments, approval details or rule text
         (spec/approval.md §15).
       security: [{ bearerAuth: [] }]
       responses:
@@ -185,6 +210,45 @@ paths:
                 items: { $ref: '#/components/schemas/PendingApprovalSummary' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/policy/mode:
+    get:
+      operationId: getPolicyMode
+      summary: Get the session-scoped policy mode
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current session policy mode and session rule count
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PolicyModeState' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: setPolicyMode
+      summary: Set the session-scoped policy mode
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PolicyModeUpdateRequest' }
+      responses:
+        '200':
+          description: Updated session policy mode
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PolicyModeUpdateResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/events:
     get:
       operationId: chatEvents
@@ -195,7 +259,7 @@ paths:
         * `done` terminates a **run**, not the session SSE. The connection stays open across multiple `POST /api/v1/chat` turns and only closes on client disconnect, session deletion, or explicit server termination.
         * The server sends a `heartbeat` comment/event every 15s to keep the connection observable. Heartbeat never enters the message bubble nor resets the run's token count.
         * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
-          * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for the channel-fact ledger; `request_approval` itself is represented by the approval event/item and does not emit a duplicate tool event. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable.
+          * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for the channel-fact ledger; `request_approval` itself is represented by the approval event/item and does not emit a duplicate tool event. Approval live/replay envelopes are built from the durable row only and include `state` plus `replayed=false/true`; at creation, the display-only `policy` summary is persisted when it can be captured: `effect`, `sourceLayer`, `matchedRule`, `reason`, `mode`, `actionClass`, and `shape`. The policy summary never contains raw tool arguments. After the atomic decision claim, `policy.modeAtGrant` records the effective session mode at that decision and is never rewritten by a retry; replay uses the stored snapshot, and descriptor failure omits only policy metadata without blocking delivery. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
@@ -434,7 +498,7 @@ paths:
   /internal/v1/agent/approval/pending:
     get: { operationId: pendingApprovals, security: [{ bearerAuth: [] }], responses: { '200': { description: Pending approvals } } }
   /internal/v1/agent/approval/{requestId}:
-    get: { operationId: approvalStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: requestId, required: true, schema: { type: string } }], responses: { '200': { description: Approval status, content: { application/json: { schema: { $ref: '#/components/schemas/AgentApprovalStatus' } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+    get: { operationId: approvalStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: requestId, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Approval status, content: { application/json: { schema: { $ref: '#/components/schemas/AgentApprovalStatus' } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/mcp/reinit:
     post: { operationId: reinitializeAgentMcp, security: [{ bearerAuth: [] }], responses: { '200': { description: Reinitialized } } }
   /internal/v1/agent/registry/workers:
@@ -546,45 +610,83 @@ components:
       description: |
         PLAN-0328 M1 approval decision. `decision` selects the grant tier (`once` | `session` |
         `saved`) or a rejection (`reject` | `reject_always`); the legacy `approved` boolean is
-        still accepted and maps to once/reject. Exactly one of `decision` / `approved` is
-        required. `feedback` is reject-only; `layer`/`rule` apply to rule-granting decisions.
+        still accepted and maps to once/reject. When both fields are supplied, `decision` takes
+        precedence. `feedback` is reject-only; `layer`/`rule` apply to rule-granting decisions.
       properties:
-        decision: { type: string, enum: [once, session, saved, reject, reject_always] }
+        decision: { type: string, minLength: 1, enum: [once, session, saved, reject, reject_always] }
         approved: { type: boolean, description: Legacy boolean decision (maps to once/reject) }
-        feedback: { type: string, maxLength: 512, description: Rejection feedback carried to the model }
-        layer: { type: string, enum: [workspace, user], description: Target layer for saved/reject_always; default workspace }
+        feedback: { type: string, minLength: 1, maxLength: 512, description: Rejection feedback carried to the model }
+        layer: { type: string, minLength: 1, enum: [workspace, user], description: Target layer for saved/reject_always; default workspace }
         rule: { $ref: '#/components/schemas/ChatApprovalRuleSpec' }
+      anyOf:
+        - required: [decision]
+        - required: [approved]
+      allOf:
+        - if:
+            required: [feedback]
+          then:
+            anyOf:
+              - required: [decision]
+                properties: { decision: { enum: [reject, reject_always] } }
+              - required: [approved]
+                properties: { approved: { const: false } }
+        - if:
+            required: [layer]
+          then:
+            required: [decision]
+            properties: { decision: { enum: [saved, reject_always] } }
+        - if:
+            required: [rule]
+          then:
+            required: [decision]
+            properties: { decision: { enum: [session, saved, reject_always] } }
     ChatApprovalRuleSpec:
       type: object
       additionalProperties: false
       description: Optional narrowing of the granted rule; actionClass must equal the registry value (classification authority stays with the classification workflow).
       properties:
-        actionClass: { type: string, maxLength: 64 }
-        resource: { type: string, maxLength: 512 }
+        actionClass: { type: string, minLength: 1, maxLength: 64 }
+        resource: { type: string, minLength: 1, maxLength: 512 }
     ChatApprovalGrantedRule:
       type: object
       required: [layer, actionClass, resource, effect]
       properties:
         layer: { type: string, enum: [session, workspace, user] }
-        actionClass: { type: string }
-        resource: { type: string }
+        actionClass: { type: string, minLength: 1 }
+        resource: { type: string, minLength: 1 }
         effect: { type: string, enum: [allow, deny] }
+    ChatRunStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [runId, sessionId, status, terminalOutcome, leaseExpired, pendingApprovals]
+      properties:
+        runId: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+        status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, cancelling, dispatching, succeeded, failed, partial, ambiguous, cancelled] }
+        terminalOutcome: { type: [string, 'null'], enum: [success, error, partial, ambiguous, cancelled] }
+        leaseExpired: { type: boolean }
+        pendingApprovals: { type: array, items: { $ref: '#/components/schemas/ChatApprovalRequest' } }
     ChatApprovalDecisionResponse:
       type: object
       required: [status, requestId, approved]
       properties:
         status: { type: string, enum: [accepted, already_decided] }
-        requestId: { type: string }
+        requestId: { type: string, format: uuid }
         approved: { type: boolean }
         decision: { type: string, enum: [once, session, saved, reject, reject_always] }
         propagated: { type: integer, minimum: 0, description: Same-session pending requests resolved by propagation }
+        modeAtGrant:
+          oneOf:
+            - $ref: '#/components/schemas/PolicyMode'
+            - type: 'null'
+          description: Effective session mode captured before Agent notification; legacy rows may omit it or return null.
         rule: { $ref: '#/components/schemas/ChatApprovalGrantedRule' }
     PendingApprovalSummary:
       type: object
       required: [sessionId, workspaceId, count, oldestRequestedAt]
       properties:
-        sessionId: { type: string }
-        workspaceId: { type: string }
+        sessionId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
         count: { type: integer, minimum: 1 }
         oldestRequestedAt: { type: string, format: date-time }
     AgentApprovalDecisionRequest:
@@ -592,11 +694,101 @@ components:
       required: [requestId, approved]
       additionalProperties: false
       properties:
-        requestId: { type: string }
+        requestId: { type: string, format: uuid }
         approved: { type: boolean }
-        decision: { type: string, enum: [once, session, saved, reject, reject_always, propagated_allow, propagated_reject] }
-        feedback: { type: string, maxLength: 512 }
-    AgentApprovalStatus: { type: object, required: [status, requestId], properties: { status: { type: string, enum: [pending, approved, rejected, expired] }, requestId: { type: string }, runId: { type: string }, sessionId: { type: string }, workspaceId: { type: string }, approved: { type: [boolean, 'null'] }, action: { type: string }, details: { type: string }, expiresAt: { type: string, format: date-time } } }
+        decision: { type: string, minLength: 1, enum: [once, session, saved, reject, reject_always, propagated_allow, propagated_reject] }
+        feedback: { type: string, minLength: 1, maxLength: 512 }
+    AgentApprovalDecisionResponse:
+      type: object
+      additionalProperties: false
+      description: Raw Agent response to an approval decision. CP-only decision metadata is not returned by Agent.
+      required: [status, requestId, approved]
+      properties:
+        status: { type: string, enum: [accepted, already_decided] }
+        requestId: { type: string, format: uuid }
+        approved: { type: boolean }
+    AgentApprovalStatus:
+      type: object
+      additionalProperties: false
+      description: Raw Agent coordinator status. This internal response does not include the CP policy summary, CP approval state, replay marker, or modeAtGrant.
+      required: [status, requestId]
+      properties:
+        status: { type: string, enum: [pending, approved, rejected, expired] }
+        requestId: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        tool: { type: string }
+        action: { type: string }
+        details: { type: string }
+        argumentsHash: { type: [string, 'null'] }
+        expiresAt: { type: string, format: date-time }
+        approved: { type: [boolean, 'null'] }
+    PolicyMode:
+      type: string
+      enum: [default, bypass, managed, accept-edits, plan]
+    PolicyModeState:
+      type: object
+      additionalProperties: false
+      required: [sessionId, mode, sessionRules]
+      properties:
+        sessionId: { type: string, format: uuid }
+        mode: { $ref: '#/components/schemas/PolicyMode' }
+        sessionRules: { type: integer, minimum: 0 }
+    PolicyModeUpdateRequest:
+      type: object
+      required: [sessionId, mode]
+      properties:
+        sessionId: { type: string, format: uuid }
+        mode: { $ref: '#/components/schemas/PolicyMode' }
+    PolicyModeUpdateResponse:
+      type: object
+      additionalProperties: false
+      required: [sessionId, mode, scope]
+      properties:
+        sessionId: { type: string, format: uuid }
+        mode: { $ref: '#/components/schemas/PolicyMode' }
+        scope: { type: string, enum: [session] }
+    ChatApprovalRequest:
+      type: object
+      additionalProperties: false
+      description: CP-owned durable approval envelope used by live/replayed SSE events and ChatRun recovery. Details is a bounded preview; raw tool arguments are never included. Legacy rows may omit snapshotId, policyClass, argumentsHash, and state; when present they are preserved as emitted.
+      required: [requestId, runId, sessionId, workspaceId, tool, action, details, expiresAt, replayed]
+      properties:
+        requestId: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        tool: { type: string, minLength: 1 }
+        action: { type: string, minLength: 1 }
+        details: { type: string, minLength: 1 }
+        snapshotId: { type: [string, 'null'], format: uuid }
+        policyClass: { type: [string, 'null'], minLength: 1 }
+        argumentsHash: { type: [string, 'null'], description: Hash of the canonical arguments; the arguments themselves are not included. }
+        expiresAt: { type: string, format: date-time }
+        state: { type: string, enum: [pending, dispatching, dispatch_unknown, approved, rejected, expired] }
+        replayed: { type: boolean }
+        modeAtGrant: { $ref: '#/components/schemas/PolicyMode', description: Fallback top-level placement used only when no policy summary is available. }
+        policy: { $ref: '#/components/schemas/ApprovalPolicySummary' }
+    ApprovalPolicySummary:
+      type: object
+      additionalProperties: false
+      description: Safe, display-only policy metadata. Raw tool arguments are never included.
+      required: [effect, sourceLayer, matchedRule, reason, mode, actionClass, shape]
+      properties:
+        effect: { type: string, enum: [allow, ask, deny] }
+        sourceLayer: { type: string, enum: [builtin, instance, user, workspace, session, per_call] }
+        matchedRule: { type: [string, 'null'], minLength: 1 }
+        reason: { type: string, minLength: 1 }
+        mode: { type: [string, 'null'], enum: [default, bypass, managed, accept-edits, plan] }
+        actionClass: { type: string, minLength: 1 }
+        shape: { type: string, enum: [structured, interpreter, opaque] }
+        modeAtGrant:
+          oneOf:
+            - $ref: '#/components/schemas/PolicyMode'
+            - type: 'null'
+          description: Effective session mode captured by the atomic decision claim; legacy rows may omit it or return null.
     ProviderCatalogResponse:
        type: object
        required: [catalogRevision, providers]
@@ -860,7 +1052,7 @@ components:
         toolName: { type: [string, 'null'], readOnly: true }
         source: { type: string, enum: [ui, agent, runtime, system, mcp], readOnly: true }
         policyDecision: { type: [string, 'null'], readOnly: true }
-        approvalRequestId: { type: [string, 'null'], readOnly: true }
+        approvalRequestId: { type: [string, 'null'], format: uuid, readOnly: true }
         status: { type: string, enum: [pending, running, waiting_for_approval, resolving, completed, failed, aborted, cancelled, ambiguous], readOnly: true }
         errorCode: { type: [string, 'null'], readOnly: true }
         resultRef: { type: [string, 'null'], readOnly: true, description: 'Internal trace projection only; omitted from user views.' }

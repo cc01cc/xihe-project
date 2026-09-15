@@ -4,15 +4,19 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.policy.BuiltinPolicyContextProvider;
+import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
+import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,14 +39,23 @@ class ApprovalServiceTest {
     private final OperationService operationService = mock(OperationService.class);
     private final ApprovalGrantWriter grantWriter = mock(ApprovalGrantWriter.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final ApprovalPolicySummary policySummary = new ApprovalPolicySummary(
+            new PolicyEngine(mock(AuditLogger.class), new BuiltinPolicyContextProvider()));
+    private final ApprovalPendingStore pendingStore = new ApprovalPendingStore(
+            approvals, new ObjectMapper(), policySummary);
+    private final SessionPolicyState sessionPolicyState = new SessionPolicyState();
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
-            operationService, grantWriter, audit);
+            operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
     private static final String TEST_USER = "33333333-3333-3333-3333-333333333333";
     private static final String TEST_WORKSPACE = "44444444-4444-4444-4444-444444444444";
     private static final String TEST_SESSION = "55555555-5555-5555-5555-555555555555";
+    private static final String POLICY_SNAPSHOT = "{\"effect\":\"ask\",\"sourceLayer\":\"builtin\","
+            + "\"matchedRule\":\"{ write, \\\"*\\\", ask }\","
+            + "\"reason\":\"requires approval for domain write\",\"mode\":\"default\","
+            + "\"actionClass\":\"write\",\"shape\":\"structured\"}";
 
     private Map<String, Object> approvalPayload(String sessionId) {
         return Map.of(
@@ -59,6 +72,12 @@ class ApprovalServiceTest {
     private ChatRun runningRun() {
         return new ChatRun(TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
                 "idem-1", "hash", "openai", "model", "workspace", "running");
+    }
+
+    private ApprovalService serviceWith(ApprovalPolicySummary summary) {
+        return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
+                operationService, grantWriter, audit, summary,
+                new ApprovalPendingStore(approvals, new ObjectMapper(), summary), sessionPolicyState);
     }
 
     @Test
@@ -82,6 +101,55 @@ class ApprovalServiceTest {
     }
 
     @Test
+    void recordPendingBuildsAndSerializesPolicyAtCreationOnly() throws Exception {
+        ApprovalPolicySummary summary = mock(ApprovalPolicySummary.class);
+        Map<String, Object> policy = new LinkedHashMap<>();
+        policy.put("effect", "ask");
+        policy.put("sourceLayer", "builtin");
+        policy.put("matchedRule", null);
+        policy.put("reason", "requires approval");
+        policy.put("mode", "default");
+        policy.put("actionClass", "write");
+        policy.put("shape", "structured");
+        when(summary.buildAtCreation("write_file", TEST_SESSION, TEST_USER, TEST_WORKSPACE))
+                .thenReturn(Optional.of(policy));
+        ApprovalService creationService = serviceWith(summary);
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
+        when(approvals.updatePolicySummary(any(), any(), any())).thenReturn(1);
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
+        HashMap<String, Object> payload = new HashMap<>(approvalPayload(TEST_SESSION));
+        payload.put("tool", "write_file");
+        payload.put("details", "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"secret.md\"}}");
+
+        creationService.recordPending(payload, TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
+
+        ArgumentCaptor<ChatApproval> captor = ArgumentCaptor.forClass(ChatApproval.class);
+        verify(summary).buildAtCreation("write_file", TEST_SESSION, TEST_USER, TEST_WORKSPACE);
+        verify(approvals).save(captor.capture());
+        assertEquals(new ObjectMapper().writeValueAsString(policy), captor.getValue().getPolicySummary());
+    }
+
+    @Test
+    void policySnapshotFailureDoesNotPreventPendingRowPersistence() {
+        ApprovalPolicySummary failingSummary = mock(ApprovalPolicySummary.class);
+        when(failingSummary.buildAtCreation("write_file", TEST_SESSION, TEST_USER, TEST_WORKSPACE))
+                .thenThrow(new IllegalStateException("policy repository unavailable"));
+        ApprovalService failureTolerantService = serviceWith(failingSummary);
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
+
+        Map<String, Object> payload = new HashMap<>(approvalPayload(TEST_SESSION));
+        payload.put("tool", "write_file");
+        ChatApproval saved = failureTolerantService.recordPending(
+                payload, TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
+
+        assertNotNull(saved);
+        assertNull(saved.getPolicySummary());
+        verify(approvals).save(any(ChatApproval.class));
+    }
+
+    @Test
     void recordPendingRejectsMismatchedRunIdentity() {
         ChatRun run = runningRun();
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(run));
@@ -101,7 +169,7 @@ class ApprovalServiceTest {
     void decidePersistsApprovedOnlyAfterAgentAccepts() {
         ChatApproval approval = pending(Instant.now().plusSeconds(60));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
-        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(Instant.class)))
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(), any(Instant.class)))
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
@@ -133,9 +201,29 @@ class ApprovalServiceTest {
     }
 
     @Test
+    void decideCapturesModeAtGrantInTheAtomicClaim() {
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), eq("managed"), any(Instant.class)))
+                .thenReturn(1);
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
+                .thenReturn(1);
+        when(agent.respond(TEST_REQUEST_ID, true, "once", null)).thenReturn(Map.of("status", "accepted"));
+        sessionPolicyState.setMode(TEST_SESSION, "managed");
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.once());
+
+        assertEquals("managed", response.get("modeAtGrant"));
+        assertEquals("managed", approval.getModeAtGrant());
+        verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true),
+                eq("managed"), any(Instant.class));
+    }
+
+    @Test
     void replayIsScopedToTheAuthorizedSessionAndWorkspace() {
         ChatApproval approval = pending(Instant.now().plusSeconds(60));
-        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending", "dispatching")))
+        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending", "dispatching", "dispatch_unknown")))
                 .thenReturn(List.of(approval));
 
         List<Map<String, Object>> replay = service.replayPending(TEST_SESSION, TEST_USER, TEST_WORKSPACE);
@@ -143,6 +231,71 @@ class ApprovalServiceTest {
         assertEquals(1, replay.size());
         assertEquals(TEST_REQUEST_ID, replay.get(0).get("requestId").toString());
         assertEquals(true, replay.get(0).get("replayed"));
+    }
+
+    @Test
+    void replayIncludesUnexpiredDispatchUnknownAndPreservesCanonicalState() {
+        Instant expiresAt = Instant.now().plusSeconds(60);
+        ChatApproval approval = dispatchUnknown(expiresAt);
+        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, TEST_USER, TEST_WORKSPACE,
+                List.of("pending", "dispatching", "dispatch_unknown")))
+                .thenReturn(List.of(approval));
+
+        Map<String, Object> payload = service.replayPending(TEST_SESSION, TEST_USER, TEST_WORKSPACE).get(0);
+
+        assertEquals("dispatch_unknown", payload.get("state"));
+        assertEquals(TEST_RUN_ID, payload.get("runId"));
+        assertEquals(TEST_SESSION, payload.get("sessionId"));
+        assertEquals(TEST_WORKSPACE, payload.get("workspaceId"));
+        assertEquals(expiresAt, payload.get("expiresAt"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void replayWriteFileIncludesDisplayPolicyWithoutArguments() {
+        ChatApproval approval = new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER,
+                TEST_WORKSPACE, "write_file", "Execute write_file",
+                "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"secret.md\",\"content\":\"secret\"}}",
+                "pending", Instant.now().plusSeconds(60), null, null);
+        approval.setPolicySummary(POLICY_SNAPSHOT);
+        approval.setModeAtGrant("managed");
+        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending", "dispatching", "dispatch_unknown")))
+                .thenReturn(List.of(approval));
+
+        Map<String, Object> payload = service.replayPending(TEST_SESSION, TEST_USER, TEST_WORKSPACE).get(0);
+        Map<String, Object> policy = (Map<String, Object>) payload.get("policy");
+
+        assertEquals("ask", policy.get("effect"));
+        assertEquals("builtin", policy.get("sourceLayer"));
+        assertEquals("write", policy.get("actionClass"));
+        assertEquals("structured", policy.get("shape"));
+        assertTrue(policy.get("reason") instanceof String reason && !reason.isBlank());
+        assertFalse(policy.containsKey("arguments"));
+        assertFalse(policy.containsKey("details"));
+        assertFalse(policy.toString().contains("secret.md"));
+        assertFalse(policy.toString().contains("secret"));
+        assertEquals("managed", policy.get("modeAtGrant"));
+    }
+
+    @Test
+    void replayKeepsLegacyPayloadWhenPolicyDescriptorFails() {
+        ApprovalPolicySummary failingSummary = mock(ApprovalPolicySummary.class);
+        when(failingSummary.readStored(null))
+                .thenReturn(Optional.empty());
+        ApprovalService fallbackService = serviceWith(failingSummary);
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending", "dispatching", "dispatch_unknown")))
+                .thenReturn(List.of(approval));
+
+        Map<String, Object> payload = fallbackService.replayPending(TEST_SESSION, TEST_USER, TEST_WORKSPACE).get(0);
+
+        assertEquals(TEST_REQUEST_ID, payload.get("requestId").toString());
+        assertEquals("README.md", payload.get("details"));
+        assertFalse(payload.containsKey("policy"));
+        verify(failingSummary, never()).buildAtCreation(any(), any(), any(), any());
     }
 
     @Test
@@ -288,7 +441,7 @@ class ApprovalServiceTest {
                 "request_approval", "delete file", "README.md", "dispatch_unknown",
                 Instant.now().plusSeconds(60), null, null);
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
-        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(Instant.class)))
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(), any(Instant.class)))
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
@@ -299,7 +452,7 @@ class ApprovalServiceTest {
                 ApprovalDecision.once());
 
         assertEquals("accepted", response.get("status"));
-        verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any());
+        verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(), any());
         verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any());
         verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, true);
     }
@@ -365,27 +518,38 @@ class ApprovalServiceTest {
     }
 
     private ChatApproval pending(Instant expiresAt) {
+        return approval("pending", expiresAt);
+    }
+
+    private ChatApproval dispatchUnknown(Instant expiresAt) {
+        return approval("dispatch_unknown", expiresAt);
+    }
+
+    private ChatApproval approval(String state, Instant expiresAt) {
         return new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "request_approval", "delete file", "README.md", "pending", expiresAt, null, null);
+                "request_approval", "delete file", "README.md", state, expiresAt, null, null);
     }
 
     @Test
     void findActiveForRunReturnsOnlyOwnedNonExpiredReplayables() {
-        ChatApproval active = pending(Instant.now().plusSeconds(60));
-        ChatApproval expired = pending(Instant.now().minusSeconds(1));
-        when(approvals.findByRunIdAndStateIn(TEST_RUN_ID, List.of("pending", "dispatching")))
+        ChatApproval active = dispatchUnknown(Instant.now().plusSeconds(60));
+        ChatApproval expired = dispatchUnknown(Instant.now().minusSeconds(1));
+        when(approvals.findByRunIdAndStateIn(TEST_RUN_ID,
+                List.of("pending", "dispatching", "dispatch_unknown")))
                 .thenReturn(List.of(active, expired));
 
         List<Map<String, Object>> activeForRun = service.findActiveForRun(TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
 
         assertEquals(1, activeForRun.size());
         assertEquals(TEST_REQUEST_ID, activeForRun.get(0).get("requestId").toString());
+        assertEquals("dispatch_unknown", activeForRun.get(0).get("state"));
         assertEquals(Boolean.TRUE, activeForRun.get(0).get("replayed"));
     }
 
     @Test
     void findActiveForRunRejectsForeignUserOrWorkspace() {
-        when(approvals.findByRunIdAndStateIn(TEST_RUN_ID, List.of("pending", "dispatching")))
+        when(approvals.findByRunIdAndStateIn(TEST_RUN_ID,
+                List.of("pending", "dispatching", "dispatch_unknown")))
                 .thenReturn(List.of(pending(Instant.now().plusSeconds(60))));
 
         assertTrue(service.findActiveForRun(TEST_RUN_ID, "99999999-9999-9999-9999-999999999999", TEST_WORKSPACE).isEmpty());

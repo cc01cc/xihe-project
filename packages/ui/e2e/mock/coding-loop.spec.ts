@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test'
 import { setupMockAuth, setupMockSessions } from './helpers/auth'
 
-const SESSION_ID = 'coding-loop-session'
+const SESSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const WORKSPACE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const RUN_ID_1 = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+const RUN_ID_2 = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+const REQUEST_ID_1 = '22222222-2222-4222-8222-222222222222'
+const REQUEST_ID_2 = '33333333-3333-4333-8333-333333333333'
 
 test.describe('PLAN-275: Safe Coding Loop E2E', () => {
   test.beforeEach(async ({ page }) => {
@@ -53,19 +58,19 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
       await page.goto(`/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
-      await page.evaluate(() => {
+      await page.evaluate(({ requestId, runId, sessionId, workspaceId }) => {
         ;(window as unknown as Record<string, unknown>).__pushApprovalEvent!({
-          requestId: 'req-1',
-          runId: 'run-1',
-          sessionId: 'coding-loop-session',
-          workspaceId: 'workspace-1',
+          requestId,
+          runId,
+          sessionId,
+          workspaceId,
           tool: 'write_file',
           action: 'write file',
           details: 'src/main.rs',
           policyClass: 'ask_approval',
           expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
         })
-      })
+      }, { requestId: REQUEST_ID_1, runId: RUN_ID_1, sessionId: SESSION_ID, workspaceId: WORKSPACE_ID })
 
       const dialog = page.locator('[data-testid="modal-content"]')
       await expect(dialog).toBeVisible({ timeout: 5000 })
@@ -77,19 +82,19 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
       await page.goto(`/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
-      await page.evaluate(() => {
+      await page.evaluate(({ requestId, runId, sessionId, workspaceId }) => {
         ;(window as unknown as Record<string, unknown>).__pushApprovalEvent!({
-          requestId: 'req-2',
-          runId: 'run-2',
-          sessionId: 'coding-loop-session',
-          workspaceId: 'workspace-1',
+          requestId,
+          runId,
+          sessionId,
+          workspaceId,
           tool: 'edit_file',
           action: 'edit file',
           details: 'src/lib.rs',
           policyClass: 'ask_approval',
           expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
         })
-      })
+      }, { requestId: REQUEST_ID_2, runId: RUN_ID_2, sessionId: SESSION_ID, workspaceId: WORKSPACE_ID })
 
       const dialog = page.locator('[data-testid="modal-content"]')
       await expect(dialog).toBeVisible({ timeout: 5000 })
@@ -137,7 +142,7 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ status: 'cancel_accepted', runId: 'run-1' }),
+          body: JSON.stringify({ status: 'cancel_accepted', runId: RUN_ID_1 }),
         })
       })
 
@@ -145,14 +150,14 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       // Verify route is registered by making a fetch from page context
-      const result = await page.evaluate(async () => {
-        const resp = await fetch('/api/v1/chat/runs/run-1/cancel', {
+      const result = await page.evaluate(async (runId) => {
+        const resp = await fetch(`/api/v1/chat/runs/${runId}/cancel`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reason: 'user_requested' }),
         })
         return { status: resp.status, body: await resp.json() }
-      })
+      }, RUN_ID_1)
       expect(result.status).toBe(200)
       expect(result.body.status).toBe('cancel_accepted')
     })
@@ -175,14 +180,14 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
       await page.goto(`/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
-      const result = await page.evaluate(async () => {
-        const resp = await fetch('/api/v1/chat/runs/run-1/cancel', {
+      const result = await page.evaluate(async (runId) => {
+        const resp = await fetch(`/api/v1/chat/runs/${runId}/cancel`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         })
         return { status: resp.status, body: await resp.json() }
-      })
+      }, RUN_ID_1)
       expect(result.status).toBe(409)
       expect(result.body.code).toBe('RUN_NOT_CANCELLABLE')
     })

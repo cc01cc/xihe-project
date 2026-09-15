@@ -87,6 +87,12 @@ public class ChatApproval {
     @Column(name = "decision_kind", length = 32)
     private String decisionKind;
 
+    @Column(name = "policy_summary", columnDefinition = "TEXT")
+    private String policySummary;
+
+    @Column(name = "mode_at_grant", length = 32)
+    private String modeAtGrant;
+
     public ChatApproval() {}
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
@@ -153,7 +159,11 @@ public class ChatApproval {
     public Instant getGrantConsumedAt() { return grantConsumedAt; }
     public String getArgumentsHash() { return argumentsHash; }
     public String getDecisionKind() { return decisionKind; }
+    public String getPolicySummary() { return policySummary; }
+    public String getModeAtGrant() { return modeAtGrant; }
     public void setSnapshotId(String snapshotId) { this.snapshotId = snapshotId; }
     public void setPolicyClass(String policyClass) { this.policyClass = policyClass; }
     public void setGrantConsumedAt(Instant grantConsumedAt) { this.grantConsumedAt = grantConsumedAt; }
+    public void setPolicySummary(String policySummary) { this.policySummary = policySummary; }
+    public void setModeAtGrant(String modeAtGrant) { this.modeAtGrant = modeAtGrant; }
 }

@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -68,7 +69,9 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
     @Override
     @Transactional(readOnly = true)
     public PolicyContext load(String userId, String workspaceId, String sessionId) {
+        Optional<SessionPolicyState.Entry> sessionSnapshot = Optional.empty();
         try {
+            sessionSnapshot = sessionState.snapshot(sessionId);
             long version = policyVersion.current();
             String cacheKey = cacheKey(userId, workspaceId);
             CachedContext cached = cache.get(cacheKey);
@@ -80,11 +83,11 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
             List<LayeredPolicyResolver.LayerInput> layers = new ArrayList<>(cached.layers());
 
             // L4 session state is memory-only and never persisted (decision #28/#29)
-            List<PolicyRule> sessionRules = sessionState.rulesOf(sessionId);
+            List<PolicyRule> sessionRules = sessionSnapshot.map(SessionPolicyState.Entry::rules).orElse(List.of());
             if (!sessionRules.isEmpty()) {
                 layers.add(new LayeredPolicyResolver.LayerInput(PolicyLayer.SESSION, sessionRules));
             }
-            String mode = sessionState.modeOf(sessionId).orElse(null);
+            String mode = sessionSnapshot.map(SessionPolicyState.Entry::mode).orElse(null);
             PolicyLayer modeLayer = mode == null ? null : PolicyLayer.SESSION;
 
             return new PolicyContext(layers, cached.faces(), mode, modeLayer);
@@ -92,7 +95,8 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
             // fail-closed: an unreadable rule set must never relax the decision
             log.error("[POLICY] context load failed, falling back to forced ask (fail-closed) "
                     + "userId={} workspaceId={} sessionId={}", userId, workspaceId, sessionId, e);
-            return PolicyContext.failedClosed();
+            String sessionMode = sessionSnapshot.map(SessionPolicyState.Entry::mode).orElse(null);
+            return PolicyContext.failedClosed(sessionMode);
         }
     }
 

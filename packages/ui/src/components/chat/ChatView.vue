@@ -3,9 +3,8 @@ import { computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
-import { useAgentStore } from '../../stores/agent'
 import { useAuthStore } from '../../stores/auth'
-import { api, ApiError } from '../../composables/api'
+import { ApiError, api } from '../../composables/api'
 import { parseRawToParts } from '../../composables/useStreamParser'
 import { logger } from '../../lib/logger'
 import type { Message } from '../../types'
@@ -14,7 +13,6 @@ import ChatPanel from './ChatPanel.vue'
 const route = useRoute()
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
-const agentStore = useAgentStore()
 const auth = useAuthStore()
 
 const routeSessionId = computed(() => {
@@ -25,9 +23,8 @@ const routeSessionId = computed(() => {
 
 const currentSessionId = computed(() => routeSessionId.value || sessionStore.currentSessionId || '')
 
-const isStreaming = computed(() => {
-  return agentStore.agentState.status === 'thinking' || agentStore.agentState.status === 'executing'
-})
+const isStreaming = computed(() => chatStore.isStreaming(currentSessionId.value))
+const currentRunState = computed(() => chatStore.getSessionRunState(currentSessionId.value))
 
 async function ensureSession(): Promise<string | null> {
   const fromRoute = routeSessionId.value
@@ -109,7 +106,9 @@ watch(
   async (id) => {
     if (!id) {
       const ensured = await ensureSession()
-      if (ensured) await loadSessionMessages(ensured)
+      if (ensured) {
+        await loadSessionMessages(ensured)
+      }
       return
     }
     sessionStore.selectSession(id)
@@ -135,17 +134,15 @@ onMounted(async () => {
       <h2 class="text-sm font-medium truncate">
         {{ sessionStore.currentSession?.title || 'xihe' }}
       </h2>
-      <div class="flex items-center gap-2">
-        <div v-if="isStreaming" class="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span class="relative flex size-3">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-            <span class="relative inline-flex rounded-full size-3 bg-primary" />
-          </span>
-          <span class="tabular-nums">
-            {{ agentStore.agentState.status === 'executing' ? 'Executing' : 'Thinking' }}
-          </span>
-          <span class="animate-bounce">...</span>
-        </div>
+      <div v-if="isStreaming" class="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span class="relative flex size-3">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+          <span class="relative inline-flex rounded-full size-3 bg-primary" />
+        </span>
+        <span class="tabular-nums">
+          {{ currentRunState.status === 'executing' ? 'Executing' : 'Thinking' }}
+        </span>
+        <span class="animate-bounce">...</span>
       </div>
     </header>
 

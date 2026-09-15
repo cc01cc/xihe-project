@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api, type ApiSession } from '../composables/api'
 import type { Session, SessionContext, RAGContext, MCPContext, FileContext, AttachmentFile } from '../types'
+import { useAgentStore } from './agent'
 
 function getTimeGroup(dateStr: string): 'today' | 'yesterday' | 'earlier' {
   const date = new Date(dateStr)
@@ -190,6 +191,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function deleteSession(id: string): Promise<void> {
     await api.deleteSession(id)
+    useAgentStore().clearSession(id)
     const index = sessions.value.findIndex((s) => s.id === id)
     if (index >= 0) {
       sessions.value.splice(index, 1)

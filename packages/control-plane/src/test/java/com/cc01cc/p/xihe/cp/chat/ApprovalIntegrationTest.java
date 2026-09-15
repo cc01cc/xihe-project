@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -14,6 +15,8 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
+import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
+import com.cc01cc.p.xihe.cp.policy.PolicyRule;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
@@ -37,6 +40,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.client.DefaultResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -51,6 +55,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -85,6 +90,12 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ApprovalService approvalService;
+
+    @Autowired
+    private AuditLogger auditLogger;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private SessionPolicyState sessionPolicyState;
@@ -216,6 +227,46 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void recordPendingSnapshotsPolicyAndReplayDoesNotReevaluateAfterModeChanges() throws Exception {
+        activeRun("running");
+        approvalService.recordPending(Map.of(
+                        "requestId", requestId,
+                        "runId", runId,
+                        "sessionId", sessionId,
+                        "tool", "write_file",
+                        "action", "Execute write_file",
+                        "details", "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"secret.md\"}}",
+                        "expiresAt", Instant.now().plusSeconds(300).toString()),
+                sessionId, runId, userId, workspaceId);
+
+        ChatApproval saved = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
+        assertNotNull(saved.getPolicySummary());
+        Map<String, Object> stored = objectMapper.readValue(saved.getPolicySummary(), Map.class);
+        assertEquals("ask", stored.get("effect"));
+        assertEquals("builtin", stored.get("sourceLayer"));
+        assertEquals("default", stored.get("mode"));
+        assertEquals("write", stored.get("actionClass"));
+        assertEquals("structured", stored.get("shape"));
+        assertTrue(stored.get("reason") instanceof String reason && !reason.isBlank());
+        assertFalse(saved.getPolicySummary().contains("secret.md"));
+
+        String auditKey = sessionId + ":write_file:policy_verdict";
+        AuditLogger.AuditRecord creationAudit = auditLogger.getRecentRecords().get(auditKey);
+        assertNotNull(creationAudit);
+
+        sessionPolicyState.setMode(sessionId, "bypass");
+        sessionPolicyState.addRule(sessionId, PolicyRule.of("write", "*", PolicyEffect.ALLOW));
+        Map<String, Object> replay = approvalService.replayPending(sessionId, userId, workspaceId).stream()
+                .filter(item -> requestId.equals(String.valueOf(item.get("requestId"))))
+                .findFirst().orElseThrow();
+        Map<String, Object> replayPolicy = (Map<String, Object>) replay.get("policy");
+
+        assertEquals(stored, replayPolicy);
+        assertSame(creationAudit, auditLogger.getRecentRecords().get(auditKey));
+    }
+
+    @Test
     void replayReturnsOnlyLivePendingApprovalsForOwnedSession() {
         activeRun("running");
         pendingApproval(requestId, Instant.now().plusSeconds(300));
@@ -232,6 +283,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, replay.size());
         assertEquals(requestId, replay.get(0).get("requestId").toString());
         assertEquals(Boolean.TRUE, replay.get(0).get("replayed"));
+        assertFalse(replay.get(0).containsKey("policy"));
     }
 
     @Test
@@ -261,6 +313,28 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.OK, second.getStatusCode());
         assertEquals("accepted", second.getBody().get("status"));
         assertEquals("approved", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+    }
+
+    @Test
+    void decidePersistsModeAtGrantAndKeepsItAcrossLaterModeChanges() {
+        activeRun("running");
+        pendingApproval(requestId, Instant.now().plusSeconds(300));
+        sessionPolicyState.setMode(sessionId, "managed");
+
+        ResponseEntity<Map> first = decide(requestId, true);
+
+        assertEquals(HttpStatus.OK, first.getStatusCode());
+        assertEquals("managed", first.getBody().get("modeAtGrant"));
+        assertEquals("managed", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
+                .getModeAtGrant());
+
+        sessionPolicyState.setMode(sessionId, "bypass");
+        ResponseEntity<Map> repeated = decide(requestId, true);
+
+        assertEquals(HttpStatus.OK, repeated.getStatusCode());
+        assertEquals("managed", repeated.getBody().get("modeAtGrant"));
+        assertEquals("managed", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
+                .getModeAtGrant());
     }
 
     @Test
@@ -349,6 +423,31 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         ChatApproval unknown = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
         assertEquals("dispatch_unknown", unknown.getState());
         assertNotNull(unknown.getDispatchErrorCode());
+    }
+
+    @Test
+    void retryDoesNotRewriteModeAtGrantAfterDispatchUnknown() {
+        activeRun("running");
+        pendingApproval(requestId, Instant.now().plusSeconds(300));
+        sessionPolicyState.setMode(sessionId, "managed");
+        AGENT_DECISION_STATUS.set(500);
+
+        ResponseEntity<Map> first = noErrorClient().exchange(
+                baseUrl + "/api/v1/chat/approvals/" + requestId + "/decision",
+                HttpMethod.POST, authorizedBody(true), Map.class);
+
+        assertEquals(HttpStatus.BAD_GATEWAY, first.getStatusCode());
+        assertEquals("managed", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
+                .getModeAtGrant());
+
+        sessionPolicyState.setMode(sessionId, "bypass");
+        AGENT_DECISION_STATUS.set(200);
+        ResponseEntity<Map> retry = decide(requestId, true);
+
+        assertEquals(HttpStatus.OK, retry.getStatusCode());
+        assertEquals("managed", retry.getBody().get("modeAtGrant"));
+        assertEquals("managed", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
+                .getModeAtGrant());
     }
 
     @Test

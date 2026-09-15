@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
+import { useAgentStore } from '../../stores/agent'
 import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
@@ -12,6 +13,7 @@ const { t } = useI18n()
 const router = useRouter()
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
+const agentStore = useAgentStore()
 
 const timeGroupLabels: Record<string, string> = {
   today: 'sidebar.today',
@@ -56,6 +58,7 @@ function handleDelete(id: string) {
         :key="session.id"
         :session="session"
         :is-active="session.id === sessionStore.currentSessionId"
+        :pending-count="agentStore.pendingApprovalCount(session.id)"
         @select="handleSelect"
         @rename="handleRename"
         @delete="handleDelete"

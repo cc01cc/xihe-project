@@ -39,7 +39,7 @@ public class ApprovalController {
      * PLAN-0328 M1: accepts the new {@code decision} body and keeps the legacy {@code approved}
      * boolean working (mapped to once / reject). Unknown shapes fail closed with 400.
      */
-    private static ApprovalDecision parseDecision(Map<String, Object> body) {
+    static ApprovalDecision parseDecision(Map<String, Object> body) {
         if (body == null) {
             throw new com.cc01cc.p.xihe.cp.config.CpApiException(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "decision or approved is required");
@@ -57,13 +57,32 @@ public class ApprovalController {
         }
         String actionClass = null;
         String resource = null;
-        Object rule = body.get("rule");
-        if (rule instanceof Map<?, ?> ruleMap) {
-            actionClass = asText(ruleMap.get("actionClass"));
-            resource = asText(ruleMap.get("resource"));
+        if (body.containsKey("rule")) {
+            Object rule = body.get("rule");
+            if (!(rule instanceof Map<?, ?> ruleMap)) {
+                throw invalid("rule must be an object");
+            }
+            actionClass = ruleText(ruleMap, "actionClass");
+            resource = ruleText(ruleMap, "resource");
         }
         return ApprovalDecision.of(kind, asText(body.get("feedback")), asText(body.get("layer")),
                 actionClass, resource);
+    }
+
+    private static String ruleText(Map<?, ?> rule, String key) {
+        if (!rule.containsKey(key)) {
+            return null;
+        }
+        Object value = rule.get(key);
+        if (!(value instanceof String text)) {
+            throw invalid("rule." + key + " must be a string");
+        }
+        return text;
+    }
+
+    private static com.cc01cc.p.xihe.cp.config.CpApiException invalid(String detail) {
+        return new com.cc01cc.p.xihe.cp.config.CpApiException(
+                HttpStatus.BAD_REQUEST, "INVALID_REQUEST", detail);
     }
 
     private static String asText(Object value) {

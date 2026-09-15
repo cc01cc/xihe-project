@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
 import { ApiError, api } from '../../composables/api'
 import { logger } from '../../lib/logger'
-import type { AttachmentFile, Message } from '../../types'
+import type { ApprovalDecision, AttachmentFile, Message } from '../../types'
 import MessageList from './MessageList.vue'
 import InputArea from './InputArea.vue'
 import SSEStream from './SSEStream.vue'
 import ApprovalModal from './ApprovalModal.vue'
+import SessionPolicyControls from './SessionPolicyControls.vue'
 
 const props = withDefaults(defineProps<{
   sessionId: string
@@ -25,27 +26,15 @@ const suggestions = computed(() => props.toolMode === 'workspace'
   : ['今天天气怎么样？', '帮我写一封邮件', '解释一下这个概念', '总结一下这段代码'])
 
 const messages = computed(() => chatStore.getMessages(props.sessionId))
-const isStreaming = computed(() => {
-  return agentStore.agentState.status === 'thinking'
-    || agentStore.agentState.status === 'executing'
-    || agentStore.agentState.status === 'awaiting_approval'
-})
+const isStreaming = computed(() => chatStore.isStreaming(props.sessionId))
 
 const pendingApproval = computed(() => agentStore.agentState.pendingApprovals.find(
-  (approval) => approval.sessionId === props.sessionId,
+  (approval) => approval.sessionId === props.sessionId
+    && (approval.state === undefined || approval.state === 'pending' || approval.state === 'dispatch_unknown'),
 ) ?? null)
-const approvalDismissedFor = ref<string | null>(null)
 const approvalSubmitting = ref(false)
 const approvalError = ref<string | null>(null)
-const showApproval = computed(() => pendingApproval.value !== null
-  && pendingApproval.value.requestId !== approvalDismissedFor.value)
-
-watch(() => pendingApproval.value?.requestId, (requestId) => {
-  if (requestId !== approvalDismissedFor.value) {
-    approvalDismissedFor.value = null
-    approvalError.value = null
-  }
-})
+const showApproval = computed(() => pendingApproval.value !== null)
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null)
 const inputComponent = ref<InstanceType<typeof InputArea> | null>(null)
@@ -107,21 +96,17 @@ function rejectTool(toolId: string) {
   agentStore.rejectTool(toolId)
 }
 
-function dismissApproval() {
-  approvalDismissedFor.value = pendingApproval.value?.requestId ?? null
-  approvalError.value = null
-}
-
-async function decideApproval(approved: boolean) {
+async function decideApproval(decision: ApprovalDecision) {
   const approval = pendingApproval.value
   if (!approval || approvalSubmitting.value) return
 
   approvalSubmitting.value = true
   approvalError.value = null
   try {
-    await api.decideChatApproval(approval.requestId, approved)
-    agentStore.removeApprovalRequest(approval.requestId)
-    approvalDismissedFor.value = null
+    const response = await agentStore.decideApproval(approval.requestId, decision)
+    if (response.status === 'accepted' || response.status === 'already_decided') {
+      chatStore.invalidateRunRecovery(approval.sessionId, approval.runId)
+    }
   } catch (err) {
     const message = err instanceof ApiError
       ? `${err.problem.code}: ${err.problem.detail ?? err.message}`
@@ -172,6 +157,8 @@ const recoveryBannerClass = computed(() => {
 
 <template>
   <div class="flex flex-col h-full min-h-0 overflow-hidden">
+    <SessionPolicyControls :session-id="sessionId" />
+
     <div
       v-if="runRecovery"
       data-testid="run-recovery-banner"
@@ -219,25 +206,13 @@ const recoveryBannerClass = computed(() => {
       @stop="stopStreaming"
     />
 
-    <div
-      v-if="pendingApproval && !showApproval"
-      data-testid="approval-pending-banner"
-      class="flex items-center justify-between gap-3 border-t bg-muted/40 px-4 py-2 text-sm"
-    >
-      <span>{{ $t('chat.approvalRequired') }}</span>
-      <button class="text-primary underline" type="button" @click="approvalDismissedFor = null">
-        {{ $t('chat.reviewApproval') }}
-      </button>
-    </div>
-
     <ApprovalModal
       :approval="pendingApproval"
       :show="showApproval"
       :busy="approvalSubmitting"
       :error="approvalError"
-      @approve="decideApproval(true)"
-      @reject="decideApproval(false)"
-      @close="dismissApproval"
+      @approve="decideApproval"
+      @reject="decideApproval"
     />
 
     <SSEStream

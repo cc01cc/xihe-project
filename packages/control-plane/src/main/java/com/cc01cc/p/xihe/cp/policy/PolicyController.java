@@ -151,9 +151,11 @@ public class PolicyController {
             return problem(e);
         }
         Map<String, Object> payload = new LinkedHashMap<>();
+        SessionPolicyState.Entry snapshot = sessionState.snapshot(sessionId).orElse(null);
         payload.put("sessionId", sessionId);
-        payload.put("mode", sessionState.modeOf(sessionId).orElse(LayeredPolicyResolver.MODE_DEFAULT));
-        payload.put("sessionRules", sessionState.rulesOf(sessionId).size());
+        payload.put("mode", snapshot == null || snapshot.mode() == null
+                ? LayeredPolicyResolver.MODE_DEFAULT : snapshot.mode());
+        payload.put("sessionRules", snapshot == null ? 0 : snapshot.rules().size());
         return ResponseEntity.ok(payload);
     }
 

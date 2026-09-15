@@ -37,7 +37,11 @@ public class SessionPolicyState {
     /** Opportunistic sweep cadence: every Nth lookup expired entries are dropped. */
     private static final long SWEEP_INTERVAL = 64;
 
-    public record Entry(String mode, List<PolicyRule> rules, Instant updatedAt) {}
+    public record Entry(String mode, List<PolicyRule> rules, Instant updatedAt) {
+        public Entry {
+            rules = rules == null ? List.of() : List.copyOf(rules);
+        }
+    }
 
     private final Map<String, Entry> sessions = new ConcurrentHashMap<>();
     private final java.util.concurrent.atomic.AtomicLong seq = new java.util.concurrent.atomic.AtomicLong();
@@ -54,8 +58,7 @@ public class SessionPolicyState {
     }
 
     public Optional<String> modeOf(String sessionId) {
-        Entry entry = live(sessionId);
-        return entry == null ? Optional.empty() : Optional.ofNullable(entry.mode());
+        return snapshot(sessionId).map(Entry::mode);
     }
 
     public void setMode(String sessionId, String mode) {
@@ -70,8 +73,12 @@ public class SessionPolicyState {
     }
 
     public List<PolicyRule> rulesOf(String sessionId) {
-        Entry entry = live(sessionId);
-        return entry == null ? List.of() : entry.rules();
+        return snapshot(sessionId).map(Entry::rules).orElse(List.of());
+    }
+
+    /** Returns one coherent live entry for callers that need mode and rules together. */
+    public Optional<Entry> snapshot(String sessionId) {
+        return Optional.ofNullable(live(sessionId));
     }
 
     /** Adds a rule granted for this session only ("本会话允许"). */

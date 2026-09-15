@@ -10,7 +10,9 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.policy.LayeredPolicyResolver;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
+import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,7 +35,8 @@ import java.util.Map;
 public class ApprovalService {
 
     private static final Logger logger = LoggerFactory.getLogger(ApprovalService.class);
-    private static final List<String> REPLAYABLE_STATES = List.of("pending", "dispatching");
+    private static final List<String> REPLAYABLE_STATES = List.of("pending", "dispatching", "dispatch_unknown");
+    private static final List<String> ACTIONABLE_SUMMARY_STATES = List.of("pending", "dispatch_unknown");
     private static final int MAX_ACTION_LENGTH = 512;
     private static final int MAX_DETAILS_LENGTH = 512;
     private static final int MAX_ARGUMENTS_HASH_LENGTH = 96;
@@ -51,6 +54,9 @@ public class ApprovalService {
     private final OperationService operationService;
     private final ApprovalGrantWriter grantWriter;
     private final AuditLogger audit;
+    private final ApprovalPolicySummary policySummary;
+    private final ApprovalPendingStore pendingStore;
+    private final SessionPolicyState sessionPolicyState;
 
     public ApprovalService(ChatApprovalRepository approvalRepository,
                            ChatRunRepository chatRunRepository,
@@ -58,7 +64,10 @@ public class ApprovalService {
                            ObjectMapper objectMapper,
                            OperationService operationService,
                            ApprovalGrantWriter grantWriter,
-                           AuditLogger audit) {
+                           AuditLogger audit,
+                           ApprovalPolicySummary policySummary,
+                           ApprovalPendingStore pendingStore,
+                           SessionPolicyState sessionPolicyState) {
         this.approvalRepository = approvalRepository;
         this.chatRunRepository = chatRunRepository;
         this.agentClient = agentClient;
@@ -68,11 +77,14 @@ public class ApprovalService {
         this.operationService = operationService;
         this.grantWriter = grantWriter;
         this.audit = audit;
+        this.policySummary = policySummary;
+        this.pendingStore = pendingStore;
+        this.sessionPolicyState = sessionPolicyState;
     }
 
     @Transactional
-    public void recordPending(Map<?, ?> payload, String expectedSessionId, String expectedRunId,
-                              String userId, String workspaceId) {
+    public ChatApproval recordPending(Map<?, ?> payload, String expectedSessionId, String expectedRunId,
+                                      String userId, String workspaceId) {
         String requestId = required(payload, "requestId");
         String runId = optional(payload, "runId", expectedRunId);
         String sessionId = optional(payload, "sessionId", expectedSessionId);
@@ -106,25 +118,39 @@ public class ApprovalService {
                         "Approval request identity changed for an existing requestId");
             }
             recordLedgerApprovalItem(payload, runId, requestId);
-            return;
+            return existing;
         }
-        approvalRepository.save(new ChatApproval(
+        String tool = optional(payload, "tool", "request_approval");
+        ChatApproval approval = new ChatApproval(
                 requestId,
                 runId,
                 sessionId,
                 userId,
                 workspaceId,
-                optional(payload, "tool", "request_approval"),
+                tool,
                 action,
                 details,
                 "pending",
                 expiresAt,
                 snapshotId,
                 policyClass,
-                argumentsHash));
+                argumentsHash);
+        ChatApproval saved = pendingStore.save(approval);
+        String storedPolicy = null;
+        try {
+            storedPolicy = pendingStore.capturePolicySummary(
+                    approval.getRequestId(), tool, sessionId, userId, workspaceId);
+        } catch (RuntimeException e) {
+            logger.warn("[POLICY] approval_summary_failed failureType={}", e.getClass().getName());
+        }
+        approval.setPolicySummary(storedPolicy);
+        if (saved != null) {
+            saved.setPolicySummary(storedPolicy);
+        }
         recordLedgerApprovalItem(payload, runId, requestId);
         logger.info("[LIFECYCLE] service=cp event=chat_approval_pending requestId={} sessionId={} runId={}",
                 requestId, sessionId, runId);
+        return saved == null ? approval : saved;
     }
 
     @Transactional(readOnly = true)
@@ -133,7 +159,7 @@ public class ApprovalService {
                 .findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(sessionId, userId, workspaceId, REPLAYABLE_STATES)
                 .stream()
                 .filter(approval -> approval.getExpiresAt().isAfter(Instant.now()))
-                .map(approval -> toPayload(approval, true))
+                .map(approval -> payloadFor(approval, true))
                 .toList();
     }
 
@@ -149,7 +175,7 @@ public class ApprovalService {
                 .filter(approval -> approval.getUserId().equals(userId)
                         && approval.getWorkspaceId().equals(workspaceId)
                         && approval.getExpiresAt().isAfter(Instant.now()))
-                .map(approval -> toPayload(approval, true))
+                .map(approval -> payloadFor(approval, true))
                 .toList();
     }
 
@@ -194,11 +220,14 @@ public class ApprovalService {
         ApprovalGrantWriter.RulePlan plan = decision.kind().grantsRule()
                 ? grantWriter.prepare(decision, approval.getTool(), userId, workspaceId)
                 : null;
-        int claimed = approvalRepository.markDispatching(approval.getRequestId(), approved, now);
+        String modeAtGrant = effectiveModeAtGrant(approval);
+        int claimed = approvalRepository.markDispatching(
+                approval.getRequestId(), approved, modeAtGrant, now);
         if (claimed == 0) {
             throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
                     "Approval decision is already being dispatched");
         }
+        approval.setModeAtGrant(modeAtGrant);
         try {
             if (plan != null) {
                 grantWriter.commit(plan, approval.getSessionId(), userId, workspaceId);
@@ -236,7 +265,8 @@ public class ApprovalService {
         audit.record(approval.getSessionId(), approval.getTool(), "approval_decision",
                 decision.kind().wireName() + (decision.feedback() == null ? "" : " feedback=" + safeFeedback(decision.feedback())));
         int propagated = propagate(approval, decision);
-        return decisionResponse(requestId, "accepted", approved, decision.kind().wireName(), propagated, plan);
+        return decisionResponse(requestId, "accepted", approved, decision.kind().wireName(), propagated,
+                plan, modeAtGrant);
     }
 
     /**
@@ -252,10 +282,12 @@ public class ApprovalService {
                 throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_CONFLICT",
                         "Approval request already decided with a different decision kind");
             }
-            return decisionResponse(requestId, "accepted", approved, recordedKind, 0, null);
+            return decisionResponse(requestId, "accepted", approved, recordedKind, 0, null,
+                    approval.getModeAtGrant());
         }
         if (approval.getApproved() != null && approval.getApproved() == approved) {
-            return decisionResponse(requestId, "accepted", approved, decision.kind().wireName(), 0, null);
+            return decisionResponse(requestId, "accepted", approved, decision.kind().wireName(), 0, null,
+                    approval.getModeAtGrant());
         }
         throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_CONFLICT",
                 "Approval request already has a different decision");
@@ -309,10 +341,13 @@ public class ApprovalService {
     private boolean dispatchPropagated(ChatApproval row, boolean approved) {
         String requestId = row.getRequestId().toString();
         String kind = approved ? "propagated_allow" : "propagated_reject";
-        int claimed = approvalRepository.markDispatching(row.getRequestId(), approved, Instant.now());
+        String modeAtGrant = effectiveModeAtGrant(row);
+        int claimed = approvalRepository.markDispatching(
+                row.getRequestId(), approved, modeAtGrant, Instant.now());
         if (claimed == 0) {
             return false;
         }
+        row.setModeAtGrant(modeAtGrant);
         try {
             agentClient.respond(requestId, approved, kind, null);
         } catch (CpApiException e) {
@@ -330,7 +365,7 @@ public class ApprovalService {
         return true;
     }
 
-    /** Cross-session waiting indicator (T1.16): counts only, no parameters or plaintext detail. */
+    /** Cross-session indicator: counts live actionable approval/retry states only. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> pendingSummaries(String userId, String workspaceId) {
         Map<String, Integer> counts = new LinkedHashMap<>();
@@ -338,7 +373,7 @@ public class ApprovalService {
         Instant now = Instant.now();
         for (ChatApproval row
                 : approvalRepository.findByUserIdAndWorkspaceIdAndStateInAndExpiresAtAfterOrderByCreatedAtAsc(
-                        userId, workspaceId, List.of("pending"), now)) {
+                        userId, workspaceId, ACTIONABLE_SUMMARY_STATES, now)) {
             if (row.getExpiresAt().isBefore(now)) {
                 continue;
             }
@@ -495,9 +530,9 @@ public class ApprovalService {
         }
     }
 
-    private Map<String, Object> toPayload(ChatApproval approval, boolean replayed) {
+    Map<String, Object> payloadFor(ChatApproval approval, boolean replayed) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("requestId", approval.getRequestId());
+        payload.put("requestId", approval.getRequestId().toString());
         payload.put("runId", approval.getRunId());
         payload.put("sessionId", approval.getSessionId());
         payload.put("workspaceId", approval.getWorkspaceId());
@@ -506,20 +541,48 @@ public class ApprovalService {
         payload.put("details", approval.getDetails());
         payload.put("snapshotId", approval.getSnapshotId());
         payload.put("policyClass", approval.getPolicyClass());
+        payload.put("argumentsHash", approval.getArgumentsHash());
         payload.put("expiresAt", approval.getExpiresAt());
+        payload.put("state", approval.getState());
         payload.put("replayed", replayed);
+        policySummary.readStored(approval.getPolicySummary()).ifPresent(policy -> {
+            if (approval.getModeAtGrant() != null && !approval.getModeAtGrant().isBlank()) {
+                Map<String, Object> enriched = new LinkedHashMap<>(policy);
+                enriched.put("modeAtGrant", approval.getModeAtGrant());
+                payload.put("policy", enriched);
+            } else {
+                payload.put("policy", policy);
+            }
+        });
+        if (!payload.containsKey("policy")
+                && approval.getModeAtGrant() != null && !approval.getModeAtGrant().isBlank()) {
+            payload.put("modeAtGrant", approval.getModeAtGrant());
+        }
         return payload;
+    }
+
+    private String effectiveModeAtGrant(ChatApproval approval) {
+        String storedMode = approval.getModeAtGrant();
+        if (storedMode != null && !storedMode.isBlank()) {
+            return storedMode;
+        }
+        return sessionPolicyState.snapshot(approval.getSessionId())
+                .map(SessionPolicyState.Entry::mode)
+                .filter(mode -> mode != null && !mode.isBlank())
+                .orElse(LayeredPolicyResolver.MODE_DEFAULT);
     }
 
     private Map<String, Object> decisionResponse(String requestId, String status, boolean approved,
                                                  String decisionKind, int propagated,
-                                                 ApprovalGrantWriter.RulePlan plan) {
+                                                 ApprovalGrantWriter.RulePlan plan,
+                                                 String modeAtGrant) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("status", status);
         response.put("requestId", requestId);
         response.put("approved", approved);
         response.put("decision", decisionKind);
         response.put("propagated", propagated);
+        response.put("modeAtGrant", modeAtGrant);
         if (plan != null) {
             Map<String, Object> rule = new LinkedHashMap<>();
             rule.put("layer", plan.layer());

@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Message, MessagePart } from '../types'
-import { api } from '../composables/api'
+import type { ChatSessionRunState, Message, MessagePart } from '../types'
+import { ApiError, api } from '../composables/api'
+import { logger } from '../lib/logger'
 import { useAgentStore } from './agent'
 
 export const XIHE_STORAGE_KEYS = ['xihe-token', 'xihe-user', 'xihe-workspace'] as const
@@ -23,6 +24,7 @@ export const useChatStore = defineStore('chat', () => {
   // and the session store + chat store are cleared on user switch / logout.
   const messages = ref<Record<string, Message[]>>({})
   const streamingMessageId = ref<Record<string, string | null>>({})
+  const sessionRunStates = ref<Record<string, ChatSessionRunState>>({})
 
   function getMessages(sessionId: string): Message[] {
     return messages.value[sessionId] ?? []
@@ -32,8 +34,31 @@ export const useChatStore = defineStore('chat', () => {
     return streamingMessageId.value[sessionId] ?? null
   }
 
+  function getSessionRunState(sessionId: string): ChatSessionRunState {
+    return sessionRunStates.value[sessionId] ?? { status: 'idle' }
+  }
+
+  function getSessionRunId(sessionId: string): string | undefined {
+    return sessionRunStates.value[sessionId]?.runId
+  }
+
+  function setSessionRunState(sessionId: string, status: ChatSessionRunState['status'], runId?: string) {
+    if (status === 'idle' && runId === undefined) {
+      delete sessionRunStates.value[sessionId]
+      return
+    }
+    sessionRunStates.value[sessionId] = {
+      status,
+      ...(runId !== undefined ? { runId } : {}),
+    }
+  }
+
   function isStreaming(sessionId: string): boolean {
-    return streamingMessageId.value[sessionId] !== undefined && streamingMessageId.value[sessionId] !== null
+    const status = sessionRunStates.value[sessionId]?.status
+    return (streamingMessageId.value[sessionId] !== undefined && streamingMessageId.value[sessionId] !== null)
+      || status === 'thinking'
+      || status === 'executing'
+      || status === 'awaiting_approval'
   }
 
   function addMessage(sessionId: string, message: Message) {
@@ -78,6 +103,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     addMessage(sessionId, message)
     streamingMessageId.value[sessionId] = id
+    setSessionRunState(sessionId, 'thinking', runId)
     return id
   }
 
@@ -139,6 +165,7 @@ export const useChatStore = defineStore('chat', () => {
   function finalizeStreaming(sessionId: string) {
     const messageId = streamingMessageId.value[sessionId]
     if (!messageId) {
+      setSessionRunState(sessionId, 'idle')
       return
     }
 
@@ -156,6 +183,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     streamingMessageId.value[sessionId] = null
+    setSessionRunState(sessionId, 'idle')
   }
 
   function markStreamingError(sessionId: string, error: {
@@ -176,6 +204,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!hasContent) {
         messages.value[sessionId] = messages.value[sessionId].filter((msg) => msg.id !== messageId)
         streamingMessageId.value[sessionId] = null
+        setSessionRunState(sessionId, 'idle')
         if (error.runId) void refreshRunRecovery(sessionId, error.runId)
         return
       }
@@ -197,46 +226,62 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     streamingMessageId.value[sessionId] = null
+    setSessionRunState(sessionId, 'idle')
     if (error.runId) void refreshRunRecovery(sessionId, error.runId)
   }
 
   const runRecovery = ref<Record<string, RunRecovery | undefined>>({})
+  const recoveryGenerations = new Map<string, number>()
+  const recoveryRunIds = new Map<string, string>()
+  let recoveryGeneration = 0
 
   // PLAN-292 M3 (C2): ask the CP what actually happened to the run behind a
   // dead SSE stream. Server truth decides the banner; never fabricate a state.
   async function refreshRunRecovery(sessionId: string, runId: string): Promise<void> {
+    const requestGeneration = ++recoveryGeneration
+    recoveryGenerations.set(sessionId, requestGeneration)
+    recoveryRunIds.set(sessionId, runId)
+    const isCurrent = () => recoveryGenerations.get(sessionId) === requestGeneration
     try {
       const res = await api.getChatRunStatus(runId)
+      if (!isCurrent() || res.sessionId !== sessionId || res.runId !== runId) return
+      const agentStore = useAgentStore()
       if (res.status === 'awaiting_approval' || (res.status === 'running' && !res.leaseExpired)) {
+        setSessionRunState(sessionId, res.status === 'awaiting_approval' ? 'awaiting_approval' : 'thinking', runId)
         runRecovery.value[sessionId] = {
           state: 'resumed',
           runId,
           message: '会话已恢复，任务仍在执行，待审批操作可继续处理',
         }
-        const agentStore = useAgentStore()
         for (const approval of res.pendingApprovals ?? []) {
-          agentStore.addApprovalRequest(approval as unknown as Parameters<typeof agentStore.addApprovalRequest>[0])
+          agentStore.addApprovalRequest(approval)
         }
+        void agentStore.refreshPendingApprovals()
       } else if (res.status === 'failed' && res.terminalOutcome === 'ambiguous') {
         // PLAN-292 C1: the relay stream broke while an approval was in
         // flight — the run is failed/ambiguous but the pending decision is
         // still replayable from the server.
+        setSessionRunState(sessionId, 'awaiting_approval', runId)
         runRecovery.value[sessionId] = {
           state: 'resumed',
           runId,
           message: '连接中断，待审批操作仍可继续处理',
         }
-        const agentStore = useAgentStore()
         for (const approval of res.pendingApprovals ?? []) {
-          agentStore.addApprovalRequest(approval as unknown as Parameters<typeof agentStore.addApprovalRequest>[0])
+          agentStore.addApprovalRequest(approval)
         }
-      } else if (['cancelling', 'cancelled', 'failed', 'ambiguous'].includes(res.status)) {
+        void agentStore.refreshPendingApprovals()
+      } else if (['cancelling', 'cancelled', 'failed', 'ambiguous', 'completed'].includes(res.status)) {
+        agentStore.resolveApprovalsForRun(sessionId, runId)
+        setSessionRunState(sessionId, 'idle')
         runRecovery.value[sessionId] = {
           state: 'cancelled',
           runId,
           message: '任务已取消或结束，未完成的执行不会继续',
         }
       } else if (res.status === 'running' && res.leaseExpired) {
+        agentStore.resolveApprovalsForRun(sessionId, runId)
+        setSessionRunState(sessionId, 'idle')
         runRecovery.value[sessionId] = {
           state: 'retry',
           runId,
@@ -244,9 +289,19 @@ export const useChatStore = defineStore('chat', () => {
         }
       } else {
         // succeeded — history already shows the final message, no banner.
+        agentStore.resolveApprovalsForRun(sessionId, runId)
+        setSessionRunState(sessionId, 'idle')
         delete runRecovery.value[sessionId]
       }
-    } catch {
+    } catch (cause) {
+      if (!isCurrent()) return
+      if (cause instanceof ApiError && (cause.problem.status === 401 || cause.problem.status === 403)) {
+        logger.warn('Chat run recovery authorization failed', cause)
+        useAgentStore().reset()
+        delete runRecovery.value[sessionId]
+        return
+      }
+      logger.warn('Failed to refresh chat run recovery', cause)
       runRecovery.value[sessionId] = {
         state: 'retry',
         runId,
@@ -256,12 +311,31 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function dismissRunRecovery(sessionId: string) {
+    if (recoveryRunIds.has(sessionId) || runRecovery.value[sessionId]) {
+      recoveryGeneration += 1
+      recoveryGenerations.set(sessionId, recoveryGeneration)
+      recoveryRunIds.delete(sessionId)
+    }
     delete runRecovery.value[sessionId]
+  }
+
+  function invalidateRunRecovery(sessionId: string, runId: string) {
+    const activeRunId = recoveryRunIds.get(sessionId) ?? runRecovery.value[sessionId]?.runId
+    if (activeRunId !== runId) return
+    recoveryGeneration += 1
+    recoveryGenerations.set(sessionId, recoveryGeneration)
+    recoveryRunIds.delete(sessionId)
+    delete runRecovery.value[sessionId]
+    setSessionRunState(sessionId, 'idle')
   }
 
   function clearSession(sessionId: string) {
     delete messages.value[sessionId]
     delete streamingMessageId.value[sessionId]
+    delete sessionRunStates.value[sessionId]
+    delete runRecovery.value[sessionId]
+    recoveryGenerations.delete(sessionId)
+    recoveryRunIds.delete(sessionId)
   }
 
   function deleteSession(sessionId: string) {
@@ -278,19 +352,33 @@ export const useChatStore = defineStore('chat', () => {
     }
     messages.value = {}
     streamingMessageId.value = {}
+    sessionRunStates.value = {}
+    runRecovery.value = {}
+    recoveryGeneration += 1
+    recoveryGenerations.clear()
+    recoveryRunIds.clear()
   }
 
   function clearForUserSwitch() {
     messages.value = {}
     streamingMessageId.value = {}
+    sessionRunStates.value = {}
+    runRecovery.value = {}
+    recoveryGeneration += 1
+    recoveryGenerations.clear()
+    recoveryRunIds.clear()
   }
 
   return {
     messages,
     streamingMessageId,
+    sessionRunStates,
     runRecovery,
     getMessages,
     getStreamingMessageId,
+    getSessionRunState,
+    getSessionRunId,
+    setSessionRunState,
     isStreaming,
     addMessage,
     loadMessages,
@@ -303,6 +391,7 @@ export const useChatStore = defineStore('chat', () => {
     markStreamingError,
     refreshRunRecovery,
     dismissRunRecovery,
+    invalidateRunRecovery,
     clearSession,
     deleteSession,
     clearAllData,

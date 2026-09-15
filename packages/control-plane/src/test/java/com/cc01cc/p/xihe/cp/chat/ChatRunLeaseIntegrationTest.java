@@ -22,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.Instant;
 import java.util.List;
@@ -37,6 +38,11 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
@@ -182,6 +188,23 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void reconciliationRestoresAwaitingApprovalForLiveDispatchUnknownWithoutAgentResponse() {
+        ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
+        ChatApproval unknown = new ChatApproval(UUID.randomUUID().toString(), run.getId().toString(),
+                sessionId, userId, workspaceId, "request_approval", "delete file", "README.md",
+                "dispatch_unknown", Instant.now().plusSeconds(300), null, null);
+        approvalRepository.save(unknown);
+
+        reconciliationService().reconcileOnStartup();
+
+        ChatRun restored = chatRunRepository.findById(run.getId()).orElseThrow();
+        assertEquals("awaiting_approval", restored.getStatus());
+        assertEquals(run.getId().toString(), chatController.activeRunId(sessionId));
+        assertEquals("dispatch_unknown", approvalRepository.findById(unknown.getRequestId()).orElseThrow().getState());
+        verify(approvalAgentClient, never()).respond(anyString(), anyBoolean(), anyString(), any());
+    }
+
+    @Test
     void reconciliationMarksAmbiguousWithoutLiveApproval() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
 
@@ -206,6 +229,23 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         ChatRun marked = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals("ambiguous", marked.getStatus());
         assertEquals("CP_RESTARTED", marked.getErrorCode());
+    }
+
+    @Test
+    void reconciliationIgnoresExpiredDispatchUnknownAndMarksAmbiguous() {
+        ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
+        ChatApproval expired = new ChatApproval(UUID.randomUUID().toString(), run.getId().toString(),
+                sessionId, userId, workspaceId, "request_approval", "delete file", "README.md",
+                "dispatch_unknown", Instant.now().minusSeconds(1), null, null);
+        approvalRepository.save(expired);
+
+        reconciliationService().reconcileOnStartup();
+
+        ChatRun marked = chatRunRepository.findById(run.getId()).orElseThrow();
+        assertEquals("ambiguous", marked.getStatus());
+        assertEquals("CP_RESTARTED", marked.getErrorCode());
+        assertNull(chatController.activeRunId(sessionId));
+        assertEquals("dispatch_unknown", approvalRepository.findById(expired.getRequestId()).orElseThrow().getState());
     }
 
     private ChatRunRecoveryService reconciliationService() {
@@ -496,6 +536,9 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatController chatController;
+
+    @MockitoBean
+    private ApprovalAgentClient approvalAgentClient;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.operation.OperationService operationService;

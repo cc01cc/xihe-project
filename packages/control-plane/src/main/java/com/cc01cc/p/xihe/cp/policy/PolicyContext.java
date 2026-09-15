@@ -14,11 +14,20 @@ import java.util.Map;
  * @param extraFaces  tool → face declarations from persistence; may be empty
  * @param mode        session mode when one is set (bypass / accept-edits / plan / managed); null = default
  * @param modeLayer   layer that supplied {@code mode} (audit field `allowed_by=bypass@Lx`)
+ * @param sessionMode coherent session mode retained for fail-closed evidence; not applied to resolution
  */
 public record PolicyContext(List<LayeredPolicyResolver.LayerInput> layers,
                             Map<String, ToolFaceRegistry.Face> extraFaces,
                             String mode,
-                            PolicyLayer modeLayer) {
+                            PolicyLayer modeLayer,
+                            String sessionMode) {
+
+    public PolicyContext(List<LayeredPolicyResolver.LayerInput> layers,
+                         Map<String, ToolFaceRegistry.Face> extraFaces,
+                         String mode,
+                         PolicyLayer modeLayer) {
+        this(layers, extraFaces, mode, modeLayer, mode);
+    }
 
     public static final PolicyContext EMPTY = new PolicyContext(List.of(), Map.of(), null, null);
 
@@ -27,10 +36,15 @@ public record PolicyContext(List<LayeredPolicyResolver.LayerInput> layers,
      * instance layer and defaults to ask (spec §4.3). Used when persisted layers cannot be read.
      */
     public static PolicyContext failedClosed() {
+        return failedClosed(null);
+    }
+
+    /** Fail-closed context retaining session mode for evidence without applying bypass semantics. */
+    public static PolicyContext failedClosed(String sessionMode) {
         return new PolicyContext(
                 List.of(new LayeredPolicyResolver.LayerInput(PolicyLayer.INSTANCE,
                         List.of(PolicyRule.of("*", "*", PolicyEffect.ASK)))),
-                Map.of(), null, null);
+                Map.of(), null, null, sessionMode);
     }
 
     public PolicyContext {

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,8 +38,8 @@ class PolicyControllerModeTest {
     void getModeChecksSessionOwnership() {
         TenantContext.setUserId("u1");
         TenantContext.setWorkspaceId("ws1");
-        when(sessionState.modeOf("s1")).thenReturn(Optional.of("bypass"));
-        when(sessionState.rulesOf("s1")).thenReturn(List.of());
+        when(sessionState.snapshot("s1"))
+                .thenReturn(Optional.of(new SessionPolicyState.Entry("bypass", List.of(), Instant.now())));
 
         ResponseEntity<?> response = controller.getMode("s1");
 
