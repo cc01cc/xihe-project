@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { api, normalizeApprovalRequest } from '../api'
+import { api, normalizeApprovalRequest, normalizeOperationPolicy } from '../api'
 
 let fetchSpy: ReturnType<typeof vi.spyOn>
 const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`
@@ -517,5 +517,349 @@ describe('api.getHealth', () => {
       expect.objectContaining({ headers: expect.any(Object) }),
     )
     expect(result.status).toBe('UP')
+  })
+})
+
+const RULE_ID = '77777777-7777-4777-8777-777777777777'
+const FACE_ID = '88888888-8888-4888-8888-888888888888'
+
+describe('api policy admin (PLAN-0328)', () => {
+  it('lists policy domains with the effective layer and rule counts', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([
+        { actionClass: 'exec', effectiveLayer: 'workspace', configuredLayers: ['user', 'workspace'], ruleCounts: { user: 1, workspace: 2 } },
+        { actionClass: 'read', effectiveLayer: 'builtin', configuredLayers: [], ruleCounts: {} },
+      ]),
+    } as Response)
+
+    const domains = await api.listPolicyDomains()
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/policy/domains', expect.any(Object))
+    expect(domains[0]).toEqual({
+      actionClass: 'exec',
+      effectiveLayer: 'workspace',
+      configuredLayers: ['user', 'workspace'],
+      ruleCounts: { user: 1, workspace: 2 },
+    })
+    expect(domains[1]?.effectiveLayer).toBe('builtin')
+  })
+
+  it('rejects a malformed domains payload instead of inventing defaults', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{ actionClass: 'exec', effectiveLayer: 'unknown-layer', configuredLayers: [], ruleCounts: {} }]),
+    } as Response)
+
+    await expect(api.listPolicyDomains()).rejects.toThrow('Invalid policy domains response')
+  })
+
+  it('lists rules for one layer and preserves effective plus conflict fields', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{
+        id: RULE_ID,
+        layer: 'workspace',
+        ownerId: WORKSPACE_ID,
+        actionClass: 'exec',
+        resource: 'pnpm *',
+        effect: 'allow',
+        priority: 5,
+        locked: false,
+        effective: true,
+        conflict: '该 allow 不会生效：存在更具体的 deny "pnpm test *"',
+      }]),
+    } as Response)
+
+    const rules = await api.listPolicyRules('workspace')
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/policy/rules?layer=workspace', expect.any(Object))
+    expect(rules[0]).toMatchObject({ id: RULE_ID, effective: true, locked: false, priority: 5 })
+    expect(rules[0]?.conflict).toContain('allow')
+  })
+
+  it('creates a rule with the full layer-scoped draft body', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        id: RULE_ID,
+        layer: 'user',
+        ownerId: null,
+        actionClass: 'exec',
+        resource: 'pnpm *',
+        effect: 'ask',
+        priority: 3,
+        locked: true,
+        effective: false,
+        conflict: null,
+      }),
+    } as Response)
+
+    const created = await api.createPolicyRule({
+      layer: 'user',
+      actionClass: 'exec',
+      resource: 'pnpm *',
+      effect: 'ask',
+      priority: 3,
+      locked: true,
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/policy/rules', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        layer: 'user',
+        actionClass: 'exec',
+        resource: 'pnpm *',
+        effect: 'ask',
+        priority: 3,
+        locked: true,
+      }),
+    }))
+    expect(created.locked).toBe(true)
+    expect(created.conflict).toBeNull()
+  })
+
+  it('deletes a rule scoped by layer', async () => {
+    fetchSpy.mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+
+    await api.deletePolicyRule(RULE_ID, 'workspace')
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/api/v1/policy/rules/${RULE_ID}?layer=workspace`,
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+  })
+
+  it('lists only conflict-carrying rules for a layer', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{
+        id: RULE_ID,
+        layer: 'user',
+        ownerId: null,
+        actionClass: 'exec',
+        resource: 'pnpm *',
+        effect: 'allow',
+        priority: 0,
+        locked: false,
+        effective: false,
+        conflict: 'shadowed by deny',
+      }]),
+    } as Response)
+
+    const conflicts = await api.listPolicyRuleConflicts('user')
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/policy/rules/conflicts?layer=user', expect.any(Object))
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]?.conflict).toBe('shadowed by deny')
+  })
+
+  it('lists tool faces including builtin rows with nullable id and owner', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([
+        { id: null, scope: 'builtin', ownerId: null, tool: 'read_file', actionClass: 'read', shape: 'structured' },
+        { id: FACE_ID, scope: 'workspace', ownerId: WORKSPACE_ID, tool: 'mcp_tool', actionClass: 'unclassified', shape: 'opaque' },
+      ]),
+    } as Response)
+
+    const faces = await api.listPolicyToolFaces('workspace')
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/policy/tool-faces?scope=workspace', expect.any(Object))
+    expect(faces[0]).toEqual({ id: null, scope: 'builtin', ownerId: null, tool: 'read_file', actionClass: 'read', shape: 'structured' })
+    expect(faces[1]).toMatchObject({ id: FACE_ID, ownerId: WORKSPACE_ID, actionClass: 'unclassified' })
+  })
+
+  it('upserts a tool-face classification for the requested scope', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ id: FACE_ID, scope: 'workspace', ownerId: WORKSPACE_ID, tool: 'mcp_tool', actionClass: 'exec', shape: 'interpreter' }),
+    } as Response)
+
+    const face = await api.upsertPolicyToolFace({
+      scope: 'workspace',
+      tool: 'mcp_tool',
+      actionClass: 'exec',
+      shape: 'interpreter',
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/policy/tool-faces', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ scope: 'workspace', tool: 'mcp_tool', actionClass: 'exec', shape: 'interpreter' }),
+    }))
+    expect(face.actionClass).toBe('exec')
+  })
+
+  it('rejects a malformed rule row instead of guessing missing evidence', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{
+        id: RULE_ID,
+        layer: 'workspace',
+        ownerId: null,
+        actionClass: 'exec',
+        resource: 'pnpm *',
+        effect: 'allow',
+        priority: 0,
+        locked: false,
+      }]),
+    } as Response)
+
+    await expect(api.listPolicyRules('workspace')).rejects.toThrow('Invalid policy rules response')
+  })
+})
+
+const OPERATION_ID = '99999999-9999-4999-8999-999999999999'
+
+// Exact shape produced by CP OperationPolicySummary (PLAN-0328 T1.15). A bypass verdict is
+// `effect: 'allow'` with a non-null allowedBy; the ask rule it upgraded stays in matchedRule.
+const OPERATION_POLICY = {
+  effect: 'allow',
+  sourceLayer: 'builtin',
+  matchedRule: '{ write, "*", ask }',
+  reason: 'requires approval for domain write',
+  mode: 'bypass',
+  allowedBy: 'bypass@session',
+  actionClass: 'write',
+  shape: 'structured',
+}
+
+// A plain non-bypass ask verdict: the same key set with no allowedBy.
+const OPERATION_ASK_POLICY = {
+  effect: 'ask',
+  sourceLayer: 'builtin',
+  matchedRule: null,
+  reason: 'exec requires approval',
+  mode: 'default',
+  allowedBy: null,
+  actionClass: 'exec',
+  shape: 'structured',
+}
+
+const OPERATION_ITEM = {
+  id: 'item-1',
+  operationId: OPERATION_ID,
+  toolCallId: 'call-bypass-1',
+  sequence: 1,
+  kind: 'tool_call',
+  toolName: 'write_file',
+  source: 'mcp',
+  policyDecision: 'allow',
+  status: 'completed',
+}
+
+function operationTrace(items: unknown[]) {
+  return {
+    operation: { id: OPERATION_ID, kind: 'chat', source: 'agent', actorType: 'agent', status: 'completed' },
+    items,
+    attempts: [],
+    events: [],
+  }
+}
+
+describe('api operation policy projection (PLAN-0328 T1.15)', () => {
+  it('normalizes the server projection verbatim and ignores unknown keys', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(operationTrace([
+        { ...OPERATION_ITEM, policy: { ...OPERATION_POLICY, arguments: 'raw' } },
+        { ...OPERATION_ITEM, id: 'item-2', toolCallId: 'call-ask-2', policy: OPERATION_ASK_POLICY },
+      ])),
+    } as Response)
+
+    const trace = await api.getOperationTrace(OPERATION_ID)
+
+    expect(fetchSpy).toHaveBeenCalledWith(`/api/v1/operations/${OPERATION_ID}`, expect.any(Object))
+    expect(trace.items[0]?.policy).toEqual(OPERATION_POLICY)
+    expect(trace.items[0]?.policyDecision).toBe('allow')
+    expect(trace.items[1]?.policy).toEqual(OPERATION_ASK_POLICY)
+  })
+
+  it('preserves explicitly null matchedRule, mode and allowedBy', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(operationTrace([{
+        ...OPERATION_ITEM,
+        toolCallId: 'call-default-2',
+        policy: { ...OPERATION_POLICY, effect: 'deny', matchedRule: null, mode: null, allowedBy: null },
+      }])),
+    } as Response)
+
+    const trace = await api.getOperationTrace(OPERATION_ID)
+
+    expect(trace.items[0]?.policy).toEqual({
+      ...OPERATION_POLICY,
+      effect: 'deny',
+      matchedRule: null,
+      mode: null,
+      allowedBy: null,
+    })
+  })
+
+  it('omits the policy entirely for legacy rows instead of deriving one from policyDecision', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(operationTrace([OPERATION_ITEM])),
+    } as Response)
+
+    const trace = await api.getOperationTrace(OPERATION_ID)
+
+    expect(trace.items[0]).not.toHaveProperty('policy')
+    expect(trace.items[0]?.policyDecision).toBe('allow')
+  })
+
+  it('treats a malformed projection as absent rather than fabricating a default', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(operationTrace([{ ...OPERATION_ITEM, policy: { effect: 'ALLOW' } }])),
+    } as Response)
+
+    const trace = await api.getOperationTrace(OPERATION_ID)
+
+    expect(trace.items[0]).not.toHaveProperty('policy')
+  })
+
+  it('drops non-object items instead of rendering them', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(operationTrace([null, 'ghost', OPERATION_ITEM])),
+    } as Response)
+
+    const trace = await api.getOperationTrace(OPERATION_ID)
+
+    expect(trace.items).toHaveLength(1)
+    expect(trace.items[0]?.id).toBe('item-1')
+  })
+})
+
+describe('normalizeOperationPolicy', () => {
+  it('returns undefined for absent or non-object projections', () => {
+    expect(normalizeOperationPolicy(undefined)).toBeUndefined()
+    expect(normalizeOperationPolicy(null)).toBeUndefined()
+    expect(normalizeOperationPolicy('ask')).toBeUndefined()
+    expect(normalizeOperationPolicy([])).toBeUndefined()
+  })
+
+  it('accepts the exact projection and ignores unknown keys', () => {
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, extra: 'ignored' })).toEqual(OPERATION_POLICY)
+  })
+
+  it('rejects uppercase or unknown enums, blank required text and non-string nullable fields', () => {
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, effect: 'ALLOW' })).toBeUndefined()
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, sourceLayer: 'cloud' })).toBeUndefined()
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, shape: 'magic' })).toBeUndefined()
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, mode: 'future-mode' })).toBeUndefined()
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reason: '' })).toBeUndefined()
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, actionClass: '' })).toBeUndefined()
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, matchedRule: 42 })).toBeUndefined()
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, allowedBy: false })).toBeUndefined()
+  })
+
+  it('rejects projections that omit nullable keys instead of fabricating defaults', () => {
+    const withoutNullables: Record<string, unknown> = { ...OPERATION_POLICY }
+    delete withoutNullables.matchedRule
+    delete withoutNullables.mode
+    delete withoutNullables.allowedBy
+    expect(normalizeOperationPolicy(withoutNullables)).toBeUndefined()
   })
 })

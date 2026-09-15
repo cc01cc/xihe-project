@@ -639,6 +639,37 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void unknownToolCreatesOpaqueAskSnapshotAndOnlyOnceCanBeApproved() throws Exception {
+        activeRun("running");
+        approvalService.recordPending(Map.of(
+                        "requestId", requestId,
+                        "runId", runId,
+                        "sessionId", sessionId,
+                        "tool", "third_party_tool",
+                        "action", "Execute third_party_tool",
+                        "details", "{\"tool\":\"third_party_tool\",\"arguments\":{}}",
+                        "expiresAt", Instant.now().plusSeconds(300).toString()),
+                sessionId, runId, userId, workspaceId);
+
+        ChatApproval pending = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
+        Map<String, Object> policy = objectMapper.readValue(pending.getPolicySummary(), Map.class);
+        assertEquals("ask", policy.get("effect"));
+        assertEquals("unclassified", policy.get("actionClass"));
+        assertEquals("opaque", policy.get("shape"));
+        assertTrue(String.valueOf(policy.get("reason"))
+                .contains("unclassified tool requires explicit classification"));
+
+        ResponseEntity<Map> response = decideWithBody(requestId, Map.of("decision", "once"));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("once", response.getBody().get("decision"));
+        assertEquals("approved", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+        assertTrue(policyRuleRepository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", workspaceId)
+                .stream().noneMatch(rule -> "unclassified".equals(rule.getActionClass())));
+    }
+
+    @Test
     void pendingEndpointReturnsCountsScopedToUserAndSession() {
         activeRun("running");
         pendingToolApproval(requestId, "write_file", runId, sessionId, userId, workspaceId,

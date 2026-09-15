@@ -49,6 +49,10 @@ public class OperationItem {
     @Column(name = "policy_decision", length = 24)
     private String policyDecision;
 
+    /** PLAN-0328 T1.15: safe policy verdict snapshot (see {@code OperationPolicySummary}). */
+    @Column(name = "policy_summary", columnDefinition = "TEXT")
+    private String policySummary;
+
     @Column(name = "approval_request_id", length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String approvalRequestId;
@@ -126,6 +130,8 @@ public class OperationItem {
     public void setSource(String source) { this.source = source; }
     public String getPolicyDecision() { return policyDecision; }
     public void setPolicyDecision(String policyDecision) { this.policyDecision = policyDecision; }
+    public String getPolicySummary() { return policySummary; }
+    public void setPolicySummary(String policySummary) { this.policySummary = policySummary; }
     public String getApprovalRequestId() { return approvalRequestId; }
     public void setApprovalRequestId(String approvalRequestId) { this.approvalRequestId = approvalRequestId; }
     public String getRequestHash() { return requestHash; }

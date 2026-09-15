@@ -18,7 +18,7 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
  * <ul>
  *   <li>{@code auto_allow}: read-only tools (no workspace mutation)</li>
  *   <li>{@code require_approval}: mutation tools (write/edit/delete/command)</li>
- *   <li>{@code deny}: unknown tools (fail-closed)</li>
+ *   <li>{@code ask}: unclassified tools (opaque, no automatic allow or reuse)</li>
  * </ul>
  */
 @Component
@@ -184,12 +184,6 @@ public class PolicyEngine {
                 ? builtinRegistry
                 : new ToolFaceRegistry(context.extraFaces());
 
-        if (!registry.known(toolName)) {
-            audit.record(sessionId, toolName, "policy_check", "deny_unknown");
-            return PolicyVerdict.of(PolicyEffect.DENY, null, PolicyLayer.BUILTIN, mode,
-                    "unknown tool (fail-closed): " + toolName);
-        }
-
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
         PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
                 PolicyResourceExtractor.extract(body), face.shape(), userId, workspaceId, sessionId);
@@ -203,8 +197,23 @@ public class PolicyEngine {
 
         // Explicit argument wins; otherwise the session-scoped mode (L4) applies.
         String effectiveMode = mode != null ? mode : context.mode();
+        if (effectiveMode == null) {
+            effectiveMode = LayeredPolicyResolver.MODE_DEFAULT;
+        }
         PolicyLayer modeLayer = mode != null ? PolicyLayer.BUILTIN
                 : (context.modeLayer() == null ? PolicyLayer.BUILTIN : context.modeLayer());
+
+        // An unclassified tool is deliberately visible to the approval workflow, but it can never
+        // inherit an allow rule or a mode-based automatic allow. The approval grant writer still
+        // rejects session/saved rule materialization until an owner/admin classifies the face.
+        if (PolicyLayer.UNCLASSIFIED_ACTION.equals(face.actionClass())) {
+            PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN,
+                    effectiveMode, "unclassified tool requires explicit classification: " + toolName);
+            audit.record(sessionId, toolName, "policy_check", "require_approval");
+            audit.record(sessionId, toolName, "policy_verdict",
+                    verdict.effect() + ":" + verdict.sourceLayer() + ":-");
+            return verdict;
+        }
 
         PolicyVerdict verdict = resolver.resolve(request, withBuiltin(context.layers()), effectiveMode, modeLayer);
 

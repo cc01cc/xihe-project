@@ -43,6 +43,16 @@ const router = createRouter({
           component: () => import('../views/settings/ConfigSettings.vue'),
         },
         {
+          path: 'policy',
+          name: 'settings-policy',
+          component: () => import('../views/settings/PolicyRulesView.vue'),
+        },
+        {
+          path: 'tool-faces',
+          name: 'settings-tool-faces',
+          component: () => import('../views/settings/ToolFacesView.vue'),
+        },
+        {
           path: 'knowledge',
           name: 'settings-knowledge',
           component: () => import('../views/settings/KnowledgeBaseView.vue'),

@@ -249,6 +249,174 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/policy/domains:
+    get:
+      operationId: listPolicyDomains
+      summary: List action-class domains with their effective layer
+      description: |
+        PLAN-0328 M1 (spec/ui-ux §3.3): per-domain (`actionClass`) view of the persisted policy
+        layers. `effectiveLayer` is the highest layer that configures the domain, or `builtin`
+        when only built-in defaults apply. `ruleCounts` lists only layers that hold at least one
+        rule. Domains are the built-in action classes plus every action class configured by
+        persisted instance/user/workspace rules.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Domain views
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PolicyDomainView' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/policy/rules:
+    get:
+      operationId: listPolicyRules
+      summary: List persisted rules of one layer
+      description: |
+        Returns the rules persisted in the requested layer together with the server-derived
+        `effective` flag (this layer is the domain's effective layer) and the static conflict
+        note (`conflict`, null when none). It does not report runtime matches. Instance-layer
+        reads require ADMIN; workspace-layer reads use the authenticated workspace scope.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: layer
+          required: true
+          schema: { type: string, enum: [instance, user, workspace] }
+      responses:
+        '200':
+          description: Layer rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PolicyRuleView' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createPolicyRule
+      summary: Create a persisted rule in one layer
+      description: |
+        Instance-layer writes require the server-side ADMIN guard; workspace-layer writes require
+        the workspace OWNER/ADMIN guard. `locked` is ADMIN-only and may only accompany deny/ask.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PolicyRuleCreateRequest' }
+      responses:
+        '200':
+          description: Created rule
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PolicyRuleView' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/policy/rules/{id}:
+    delete:
+      operationId: deletePolicyRule
+      summary: Delete a persisted rule in its layer
+      description: |
+        Deletion is scoped by `layer` and ownership; a rule of another layer/owner is reported as
+        404 without leaking its existence. Instance-layer deletes require ADMIN; workspace-layer
+        deletes require workspace OWNER/ADMIN.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: layer
+          required: true
+          schema: { type: string, enum: [instance, user, workspace] }
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/policy/rules/conflicts:
+    get:
+      operationId: listPolicyRuleConflicts
+      summary: List the conflict-carrying rules of one layer
+      description: |
+        Static conflict view for one layer: the subset of `GET /api/v1/policy/rules?layer=` whose
+        `conflict` note is present (for example an allow shadowed by a more specific deny).
+        Conflict detection is server-side; clients never derive it locally.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: layer
+          required: true
+          schema: { type: string, enum: [instance, user, workspace] }
+      responses:
+        '200':
+          description: Rules carrying a conflict note
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PolicyRuleView' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/policy/tool-faces:
+    get:
+      operationId: listPolicyToolFaces
+      summary: List built-in and persisted tool classifications
+      description: |
+        Returns the effective tool-face catalog for the requested `instance` or `workspace`
+        scope. Built-in entries are returned with `id: null`, `scope: builtin`, and
+        `ownerId: null`. Persisted instance entries override built-ins; workspace entries
+        override both for a workspace request. Unknown third-party tools are intentionally
+        absent until their first approval request and explicit classification. Authorization
+        is enforced server-side from the authenticated TenantContext.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: scope
+          required: true
+          schema: { type: string, enum: [instance, workspace] }
+          description: Effective catalog scope to list; `builtin` is response metadata only.
+      responses:
+        '200':
+          description: Effective tool-face catalog, sorted by tool name
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ToolFaceView' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: upsertPolicyToolFace
+      summary: Classify a tool face
+      description: |
+        Creates or updates an explicit instance or workspace classification. Built-in faces
+        cannot be written as a scope. Instance writes require the server-side ADMIN guard;
+        workspace writes require the server-side workspace owner/admin guard.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ToolFaceUpsertRequest' }
+      responses:
+        '200':
+          description: Persisted classification
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ToolFaceView' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/events:
     get:
       operationId: chatEvents
@@ -750,6 +918,75 @@ components:
         sessionId: { type: string, format: uuid }
         mode: { $ref: '#/components/schemas/PolicyMode' }
         scope: { type: string, enum: [session] }
+    PolicyDomainView:
+      type: object
+      additionalProperties: false
+      required: [actionClass, effectiveLayer, configuredLayers, ruleCounts]
+      properties:
+        actionClass: { type: string, minLength: 1, maxLength: 64 }
+        effectiveLayer: { type: string, enum: [builtin, instance, user, workspace] }
+        configuredLayers:
+          type: array
+          items: { type: string, enum: [instance, user, workspace] }
+        ruleCounts:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+    PolicyRuleView:
+      type: object
+      additionalProperties: false
+      description: |
+        Persisted authorization rule. `effective` reports whether this rule's layer is the
+        domain's effective layer (configured by the highest layer); it is not a runtime match
+        result. `conflict` carries the server's static conflict note (for example an allow
+        shadowed by a more specific deny) or null when the row has none.
+      required: [id, layer, ownerId, actionClass, resource, effect, priority, locked, effective, conflict]
+      properties:
+        id: { type: string, format: uuid }
+        layer: { type: string, enum: [instance, user, workspace] }
+        ownerId: { type: [string, 'null'] }
+        actionClass: { type: string, minLength: 1, maxLength: 64 }
+        resource: { type: string, minLength: 1, maxLength: 512 }
+        effect: { type: string, enum: [allow, ask, deny] }
+        priority: { type: integer }
+        locked: { type: boolean }
+        effective: { type: boolean }
+        conflict: { type: [string, 'null'] }
+    PolicyRuleCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [layer, actionClass, resource, effect]
+      properties:
+        layer: { type: string, enum: [instance, user, workspace] }
+        actionClass: { type: string, minLength: 1, maxLength: 64 }
+        resource: { type: string, minLength: 1, maxLength: 512 }
+        effect: { type: string, enum: [allow, ask, deny] }
+        priority: { type: integer, default: 0 }
+        locked: { type: boolean, default: false, description: ADMIN only, and only with deny/ask. }
+    ToolFaceView:
+      type: object
+      additionalProperties: false
+      description: |
+        Tool classification entry. Catalog built-ins use a nullable id and ownerId and the
+        literal response scope `builtin`; persisted instance/workspace rows retain their UUID
+        and owner. An unclassified tool is not a catalog entry and is represented at approval
+        time as actionClass `unclassified` with shape `opaque` and effect `ask`.
+      required: [id, scope, ownerId, tool, actionClass, shape]
+      properties:
+        id: { type: [string, 'null'], format: uuid, readOnly: true }
+        scope: { type: string, enum: [builtin, instance, workspace], readOnly: true }
+        ownerId: { type: [string, 'null'], readOnly: true }
+        tool: { type: string, minLength: 1, readOnly: true }
+        actionClass: { type: string, minLength: 1, readOnly: true }
+        shape: { type: string, enum: [structured, interpreter, opaque], readOnly: true }
+    ToolFaceUpsertRequest:
+      type: object
+      additionalProperties: false
+      required: [scope, tool, actionClass, shape]
+      properties:
+        scope: { type: string, enum: [instance, workspace] }
+        tool: { type: string, minLength: 1, maxLength: 128 }
+        actionClass: { type: string, minLength: 1, maxLength: 64 }
+        shape: { type: string, enum: [structured, interpreter, opaque] }
     ChatApprovalRequest:
       type: object
       additionalProperties: false
@@ -1051,7 +1288,8 @@ components:
         kind: { type: string, enum: [chat, tool_call, approval, job, workspace_lifecycle, system, other, llm_usage], readOnly: true }
         toolName: { type: [string, 'null'], readOnly: true }
         source: { type: string, enum: [ui, agent, runtime, system, mcp], readOnly: true }
-        policyDecision: { type: [string, 'null'], readOnly: true }
+        policyDecision: { type: [string, 'null'], readOnly: true, description: 'Legacy coarse decision marker (allow/deny/pending/...); the typed safe verdict snapshot is `policy`.' }
+        policy: { $ref: '#/components/schemas/OperationPolicySummary', description: 'Optional safe verdict snapshot for dispatched calls; omitted on legacy rows and non-dispatch items.' }
         approvalRequestId: { type: [string, 'null'], format: uuid, readOnly: true }
         status: { type: string, enum: [pending, running, waiting_for_approval, resolving, completed, failed, aborted, cancelled, ambiguous], readOnly: true }
         errorCode: { type: [string, 'null'], readOnly: true }
@@ -1060,6 +1298,25 @@ components:
         cwd: { type: [string, 'null'], readOnly: true, description: 'Internal trace projection only.' }
         startedAt: { type: [string, 'null'], format: date-time, readOnly: true }
         finishedAt: { type: [string, 'null'], format: date-time, readOnly: true }
+    OperationPolicySummary:
+      type: object
+      additionalProperties: false
+      description: >-
+        Safe verdict snapshot attached to the dispatch ledger item (PLAN-0328 T1.15): why the call
+        was allowed or blocked. Raw tool arguments, MCP request bodies and free-form exception text
+        are never included; legacy V19-absent rows omit the whole `policy` object.
+      required: [effect, sourceLayer, matchedRule, reason, mode, allowedBy, actionClass, shape]
+      properties:
+        effect: { type: string, enum: [allow, ask, deny] }
+        sourceLayer: { type: string, enum: [builtin, instance, user, workspace, session, per_call] }
+        matchedRule: { type: [string, 'null'], minLength: 1 }
+        reason: { type: string, minLength: 1 }
+        mode: { type: [string, 'null'], enum: [default, bypass, managed, accept-edits, plan] }
+        allowedBy:
+          type: [string, 'null']
+          description: Lower-cased mode-bypass marker (e.g. `bypass@session`, `accept-edits@workspace`) when the allow came from a mode rather than a rule.
+        actionClass: { type: string, minLength: 1 }
+        shape: { type: string, enum: [structured, interpreter, opaque] }
     OperationAttemptView:
       type: object
       required: [id, itemId, stage, retryNo, module, status]

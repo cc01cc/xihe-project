@@ -7,10 +7,17 @@ import type {
   ApprovalPolicyShape,
   ApprovalPolicySourceLayer,
   ApprovalRequest,
+  OperationItemView,
   OperationListResponse,
+  OperationPolicyView,
   OperationTrace,
   OperationStatus,
+  PolicyDomainView,
   PolicyModeUpdateResponse,
+  PolicyRuleLayer,
+  PolicyRuleView,
+  PolicyToolFaceQueryScope,
+  PolicyToolFaceView,
   PendingApprovalSummary,
   SessionPolicyMode,
   SessionPolicyModeState,
@@ -36,6 +43,8 @@ export interface ApiWorkspace {
   id: string
   name: string
   description?: string | null
+  /** CP workspace owner (used to gate owner-only actions such as tool classification). */
+  ownerId?: string
   storageBackend?: string
   storageRef?: string
   createdAt?: string
@@ -84,6 +93,8 @@ const approvalPolicyEffects = ['allow', 'ask', 'deny'] as const
 const approvalPolicySourceLayers = ['builtin', 'instance', 'user', 'workspace', 'session', 'per_call'] as const
 const approvalPolicyModes = ['default', 'bypass', 'managed', 'accept-edits', 'plan'] as const
 const approvalPolicyShapes = ['structured', 'interpreter', 'opaque'] as const
+const policyRuleLayers = ['instance', 'user', 'workspace'] as const
+const policyToolFaceScopes = ['builtin', 'instance', 'workspace'] as const
 
 function isEnumValue<T extends string>(value: unknown, values: readonly T[]): value is T {
   return typeof value === 'string' && values.includes(value as T)
@@ -117,6 +128,61 @@ function normalizeApprovalPolicy(value: unknown): ApprovalPolicy | undefined {
     actionClass: record.actionClass,
     shape: record.shape as ApprovalPolicyShape,
   }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0
+}
+
+/**
+ * Strict normalizer for the optional operation item `policy` projection (PLAN-0328 T1.15).
+ * Returns `undefined` when the projection is absent or malformed so the view can show the
+ * explicit no-verdict state; it never fabricates defaults (e.g. `mode: 'default'`) and
+ * ignores unknown keys.
+ */
+export function normalizeOperationPolicy(value: unknown): OperationPolicyView | undefined {
+  const record = asRecord(value)
+  if (!record
+    || !isEnumValue(record.effect, approvalPolicyEffects)
+    || !isEnumValue(record.sourceLayer, approvalPolicySourceLayers)
+    || !isNonEmptyString(record.reason)
+    || !isNonEmptyString(record.actionClass)
+    || !isEnumValue(record.shape, approvalPolicyShapes)
+    || !(record.matchedRule === null || isNonEmptyString(record.matchedRule))
+    || !(record.mode === null || isEnumValue(record.mode, approvalPolicyModes))
+    || !(record.allowedBy === null || isNonEmptyString(record.allowedBy))) {
+    return undefined
+  }
+
+  return {
+    effect: record.effect,
+    sourceLayer: record.sourceLayer,
+    matchedRule: record.matchedRule,
+    reason: record.reason,
+    mode: record.mode,
+    allowedBy: record.allowedBy,
+    actionClass: record.actionClass,
+    shape: record.shape,
+  }
+}
+
+function normalizeOperationItem(value: unknown): OperationItemView | null {
+  const record = asRecord(value)
+  if (!record || !isNonEmptyString(record.id)) return null
+  const { policy: rawPolicy, ...rest } = record
+  const policy = normalizeOperationPolicy(rawPolicy)
+  return (policy ? { ...rest, policy } : rest) as unknown as OperationItemView
+}
+
+function normalizeOperationTrace(value: unknown): OperationTrace {
+  const record = asRecord(value)
+  if (!record || !Array.isArray(record.items)) return value as OperationTrace
+  return {
+    ...record,
+    items: record.items
+      .map(normalizeOperationItem)
+      .filter((item): item is OperationItemView => item !== null),
+  } as unknown as OperationTrace
 }
 
 const approvalStates = ['pending', 'dispatching', 'approved', 'rejected', 'expired', 'dispatch_unknown'] as const
@@ -222,6 +288,92 @@ function normalizePolicyModeUpdateResponse(value: unknown, fallbackSessionId: st
   }
 }
 
+function normalizePolicyDomainView(value: unknown): PolicyDomainView {
+  const record = asRecord(value)
+  if (!record
+    || typeof record.actionClass !== 'string'
+    || record.actionClass.length === 0
+    || !isEnumValue(record.effectiveLayer, approvalPolicySourceLayers)
+    || !Array.isArray(record.configuredLayers)
+    || !record.configuredLayers.every((layer) => isEnumValue(layer, policyRuleLayers))) {
+    throw new Error('Invalid policy domains response')
+  }
+  const countsRecord = asRecord(record.ruleCounts)
+  if (!countsRecord) throw new Error('Invalid policy domains response')
+  const ruleCounts: Partial<Record<PolicyRuleLayer, number>> = {}
+  for (const [layer, count] of Object.entries(countsRecord)) {
+    if (!isEnumValue(layer, policyRuleLayers) || !Number.isInteger(count) || (count as number) < 0) {
+      throw new Error('Invalid policy domains response')
+    }
+    ruleCounts[layer] = count as number
+  }
+  return {
+    actionClass: record.actionClass,
+    effectiveLayer: record.effectiveLayer as ApprovalPolicySourceLayer,
+    configuredLayers: [...record.configuredLayers] as PolicyRuleLayer[],
+    ruleCounts,
+  }
+}
+
+function normalizePolicyRuleView(value: unknown): PolicyRuleView {
+  const record = asRecord(value)
+  if (!record
+    || typeof record.id !== 'string'
+    || record.id.length === 0
+    || !isEnumValue(record.layer, policyRuleLayers)
+    || !(record.ownerId === null || typeof record.ownerId === 'string')
+    || typeof record.actionClass !== 'string'
+    || record.actionClass.length === 0
+    || typeof record.resource !== 'string'
+    || !isEnumValue(record.effect, approvalPolicyEffects)
+    || !Number.isInteger(record.priority)
+    || typeof record.locked !== 'boolean'
+    || typeof record.effective !== 'boolean'
+    || !(record.conflict === null || record.conflict === undefined || typeof record.conflict === 'string')) {
+    throw new Error('Invalid policy rules response')
+  }
+  return {
+    id: record.id,
+    layer: record.layer as PolicyRuleLayer,
+    ownerId: (record.ownerId as string | null) ?? null,
+    actionClass: record.actionClass,
+    resource: record.resource,
+    effect: record.effect as ApprovalPolicyEffect,
+    priority: record.priority as number,
+    locked: record.locked,
+    effective: record.effective,
+    conflict: typeof record.conflict === 'string' ? record.conflict : null,
+  }
+}
+
+function normalizePolicyToolFace(value: unknown): PolicyToolFaceView {
+  const record = asRecord(value)
+  if (!record
+    || !(record.id === null || typeof record.id === 'string')
+    || !isEnumValue(record.scope, policyToolFaceScopes)
+    || !(record.ownerId === null || typeof record.ownerId === 'string')
+    || typeof record.tool !== 'string'
+    || record.tool.length === 0
+    || typeof record.actionClass !== 'string'
+    || record.actionClass.length === 0
+    || !isEnumValue(record.shape, approvalPolicyShapes)) {
+    throw new Error('Invalid policy tool-faces response')
+  }
+  return {
+    id: (record.id as string | null) ?? null,
+    scope: record.scope,
+    ownerId: (record.ownerId as string | null) ?? null,
+    tool: record.tool,
+    actionClass: record.actionClass,
+    shape: record.shape as ApprovalPolicyShape,
+  }
+}
+
+function normalizePolicyArray<T>(payload: unknown, normalize: (value: unknown) => T, label: string): T[] {
+  if (!Array.isArray(payload)) throw new Error(`Invalid ${label} response: expected an array`)
+  return payload.map(normalize)
+}
+
 function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
   const record = asRecord(value)
   if (!record || typeof record.id !== 'string' || typeof record.name !== 'string') return undefined
@@ -229,6 +381,7 @@ function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
     id: record.id,
     name: record.name,
     description: typeof record.description === 'string' ? record.description : record.description === null ? null : undefined,
+    ownerId: typeof record.ownerId === 'string' ? record.ownerId : undefined,
     storageBackend: typeof record.storageBackend === 'string' ? record.storageBackend : undefined,
     storageRef: typeof record.storageRef === 'string' ? record.storageRef : undefined,
     createdAt: typeof record.createdAt === 'string' ? record.createdAt : undefined,
@@ -500,6 +653,78 @@ export const api = {
       body: JSON.stringify({ sessionId, mode }),
     }), sessionId)
   },
+  /** PLAN-0328 M1: per-domain effective layer and per-layer rule counts. */
+  async listPolicyDomains(): Promise<PolicyDomainView[]> {
+    return normalizePolicyArray(await request<unknown>('/policy/domains'), normalizePolicyDomainView, 'policy domains')
+  },
+  /** Rules of one persisted layer, including the server's `effective` flag and `conflict` note. */
+  async listPolicyRules(layer: PolicyRuleLayer): Promise<PolicyRuleView[]> {
+    const query = new URLSearchParams({ layer }).toString()
+    return normalizePolicyArray(await request<unknown>(`/policy/rules?${query}`), normalizePolicyRuleView, 'policy rules')
+  },
+  async createPolicyRule(input: {
+    layer: PolicyRuleLayer
+    actionClass: string
+    resource: string
+    effect: ApprovalPolicyEffect
+    priority?: number
+    locked?: boolean
+  }): Promise<PolicyRuleView> {
+    const body: Record<string, unknown> = {
+      layer: input.layer,
+      actionClass: input.actionClass,
+      resource: input.resource,
+      effect: input.effect,
+    }
+    if (input.priority !== undefined) body.priority = input.priority
+    if (input.locked !== undefined) body.locked = input.locked
+    return normalizePolicyRuleView(await request<unknown>('/policy/rules', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }))
+  },
+  deletePolicyRule(id: string, layer: PolicyRuleLayer) {
+    const query = new URLSearchParams({ layer }).toString()
+    return apiDelete(`/policy/rules/${encodeURIComponent(id)}?${query}`)
+  },
+  /** Static conflict view for one layer: the subset of rules carrying a `conflict` note. */
+  async listPolicyRuleConflicts(layer: PolicyRuleLayer): Promise<PolicyRuleView[]> {
+    const query = new URLSearchParams({ layer }).toString()
+    return normalizePolicyArray(
+      await request<unknown>(`/policy/rules/conflicts?${query}`),
+      normalizePolicyRuleView,
+      'policy rule conflicts',
+    )
+  },
+  /**
+   * Effective tool-face catalog. `builtin` is response metadata only: persisted instance rows
+   * override built-ins and workspace rows override both for a workspace request.
+   */
+  async listPolicyToolFaces(scope: PolicyToolFaceQueryScope): Promise<PolicyToolFaceView[]> {
+    const query = new URLSearchParams({ scope }).toString()
+    return normalizePolicyArray(
+      await request<unknown>(`/policy/tool-faces?${query}`),
+      normalizePolicyToolFace,
+      'policy tool-faces',
+    )
+  },
+  /** Explicit classification (workspace OWNER/ADMIN, or instance ADMIN). Never automatic. */
+  async upsertPolicyToolFace(input: {
+    scope: PolicyToolFaceQueryScope
+    tool: string
+    actionClass: string
+    shape: ApprovalPolicyShape
+  }): Promise<PolicyToolFaceView> {
+    return normalizePolicyToolFace(await request<unknown>('/policy/tool-faces', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: input.scope,
+        tool: input.tool,
+        actionClass: input.actionClass,
+        shape: input.shape,
+      }),
+    }))
+  },
   getHealth() {
     return request<{ status: string }>('/health')
   },
@@ -538,8 +763,8 @@ export const api = {
     const query = params.toString()
     return request<OperationListResponse>(`/operations${query ? `?${query}` : ''}`)
   },
-  getOperationTrace(operationId: string): Promise<OperationTrace> {
-    return request<OperationTrace>(`/operations/${encodeURIComponent(operationId)}`)
+  async getOperationTrace(operationId: string): Promise<OperationTrace> {
+    return normalizeOperationTrace(await request<unknown>(`/operations/${encodeURIComponent(operationId)}`))
   },
   async listDirectory(path: string, workspaceId: string) {
     const raw = await callRuntimeTool<{ entries?: Array<{ name: string; path: string; is_dir?: boolean; type?: string; size?: number; modified?: string }> }>(

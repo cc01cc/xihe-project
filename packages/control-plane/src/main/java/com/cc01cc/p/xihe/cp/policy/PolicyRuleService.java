@@ -99,8 +99,9 @@ public class PolicyRuleService {
                 resource, effect, priority, locked, userId == null ? "system" : userId);
         repository.save(entity);
         policyVersion.bump();
+        boolean effective = effectiveDomains(layer, userId, workspaceId).contains(actionClass);
         return new RuleView(entity.getId(), layer, owner, actionClass, resource, effect, priority, locked,
-                true, conflictOf(layer, owner, entity));
+                effective, conflictOf(layer, owner, entity));
     }
 
     @Transactional

@@ -2,6 +2,8 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import org.junit.jupiter.api.Test;
+import java.util.List;
+import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -43,10 +45,59 @@ class PolicyEngineTest {
     }
 
     @Test
-    void deny_unknownTool_returnsDeny() {
+    void unclassified_unknownTool_returnsAsk() {
         PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", "{}", "s1", null, null, null);
+        assertEquals(PolicyEffect.ASK, verdict.effect());
+        assertEquals(PolicyLayer.BUILTIN, verdict.sourceLayer());
+        assertEquals(LayeredPolicyResolver.MODE_DEFAULT, verdict.mode());
+        assertNull(verdict.allowedBy());
+        assertTrue(verdict.reason().contains("unclassified tool requires explicit classification"));
+    }
+
+    @Test
+    void unclassified_unknownTool_bypassStillAsks() {
+        PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", "", "s1",
+                LayeredPolicyResolver.MODE_BYPASS, null, null);
+
+        assertEquals(PolicyEffect.ASK, verdict.effect());
+        assertEquals(LayeredPolicyResolver.MODE_BYPASS, verdict.mode());
+        assertNull(verdict.allowedBy());
+    }
+
+    @Test
+    void unclassified_unknownTool_neverUsesOtherAutomaticModes() {
+        for (String mode : List.of(LayeredPolicyResolver.MODE_ACCEPT_EDITS,
+                LayeredPolicyResolver.MODE_PLAN)) {
+            PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", "", "s1",
+                    mode, null, null);
+
+            assertEquals(PolicyEffect.ASK, verdict.effect(), mode);
+            assertNull(verdict.allowedBy(), mode);
+        }
+    }
+
+    @Test
+    void unclassified_unknownTool_hardGuardDenyWins() {
+        String body = "{\"params\":{\"arguments\":{\"path\":\"../../etc/passwd\"}}}";
+
+        PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", body, "s1",
+                LayeredPolicyResolver.MODE_BYPASS, null, null);
+
         assertEquals(PolicyEffect.DENY, verdict.effect());
-        assertTrue(verdict.reason().contains("unknown"));
+        assertTrue(verdict.reason().startsWith("hard guard:"));
+    }
+
+    @Test
+    void classifiedTool_usesNormalResolverAfterFaceIsPersisted() {
+        PolicyContext context = new PolicyContext(List.of(), Map.of(
+                "third_party_tool", new ToolFaceRegistry.Face(ToolFaceRegistry.ACTION_READ,
+                        ToolShape.STRUCTURED)), null, null);
+        PolicyEngine engine = new PolicyEngine(mock(AuditLogger.class), (userId, workspaceId, sessionId) -> context);
+
+        PolicyVerdict verdict = engine.evaluateVerdict("third_party_tool", "{}", "s1", null, "u1", "ws1");
+
+        assertEquals(PolicyEffect.ALLOW, verdict.effect());
+        assertEquals("allowed by read rules", verdict.reason());
     }
 
     @Test

@@ -205,6 +205,41 @@ public class OperationService {
     }
 
     /**
+     * PLAN-0328 T1.15：把当次派发的安全 Verdict 快照挂到**既有**账本条目上
+     * （绝不新建第二个条目）。条目缺失 → 安全跳过并记生命周期事件；已有快照
+     * 保持不变（同键重放幂等，不重写首次派发时的事实）。快照内容由
+     * {@link OperationPolicySummary} 保证只含安全键。
+     */
+    @Transactional
+    public boolean attachPolicySummary(UUID itemId, String policySummaryJson) {
+        if (itemId == null || policySummaryJson == null || policySummaryJson.isBlank()) {
+            return false;
+        }
+        // Defense in depth: only the exact safe shape is ever persisted — a caller that
+        // accidentally passes a raw body / arguments payload is rejected here.
+        if (OperationPolicySummary.parse(policySummaryJson).isEmpty()) {
+            logger.warn("[LIFECYCLE] service=cp event=operation_policy_summary_rejected itemId={} reason=unsafe_shape",
+                    itemId);
+            return false;
+        }
+        OperationItem item = items.findById(itemId).orElse(null);
+        if (item == null) {
+            logger.info("[LIFECYCLE] service=cp event=operation_policy_summary_skipped itemId={} reason=item_missing",
+                    itemId);
+            return false;
+        }
+        if (item.getPolicySummary() != null && !item.getPolicySummary().isBlank()) {
+            logger.info("[LIFECYCLE] service=cp event=operation_policy_summary_kept itemId={} reason=already_attached",
+                    itemId);
+            return false;
+        }
+        item.setPolicySummary(policySummaryJson);
+        items.save(item);
+        logger.info("[LIFECYCLE] service=cp event=operation_policy_summary_attached itemId={}", itemId);
+        return true;
+    }
+
+    /**
      * PLAN-0317 决策 #8 补充（2026-09-13 宿主 E2E）：一次取消流程内四层终态落定。
      * 在途 forward 由 {@link #settleCancellation} 结算后，operation 下可能仍存在
      * 非终态 item（如中继重复建项、审批遗留）与其 started attempt——全部收口为

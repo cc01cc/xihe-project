@@ -97,6 +97,16 @@ export interface ApprovalDecision {
   rule?: ApprovalRuleSpec
 }
 
+/**
+ * Decision envelope emitted by the approval modal: the decision plus the `requestId` it was
+ * composed for. The classify-and-allow write can resolve after the pending request changed, so
+ * the caller must verify the envelope still matches the actionable request before deciding; the
+ * `requestId` is dropped again before the API payload is built.
+ */
+export interface ApprovalDecisionEnvelope extends ApprovalDecision {
+  requestId: string
+}
+
 export interface PendingApprovalSummary {
   sessionId: string
   workspaceId: string
@@ -114,6 +124,64 @@ export interface PolicyModeUpdateResponse {
   sessionId: string
   mode: SessionPolicyMode
   scope: 'session'
+}
+
+/** Persisted policy layers (PLAN-0328 decision #53); `builtin` never holds persisted rules. */
+export type PolicyRuleLayer = 'instance' | 'user' | 'workspace'
+
+/** Response scope of a tool-face row; `builtin` is catalog metadata, never a write scope. */
+export type PolicyToolFaceScope = 'builtin' | 'instance' | 'workspace'
+
+/** Effective catalog scope accepted by `GET /api/v1/policy/tool-faces`. */
+export type PolicyToolFaceQueryScope = 'instance' | 'workspace'
+
+/**
+ * `DomainView` from the CP policy admin API (PLAN-0328 M1).
+ *
+ * `effectiveLayer` is the highest configured layer for the domain (`builtin` when no persisted
+ * layer configures it); `ruleCounts` only lists layers that hold at least one rule.
+ */
+export interface PolicyDomainView {
+  actionClass: string
+  effectiveLayer: ApprovalPolicySourceLayer
+  configuredLayers: PolicyRuleLayer[]
+  ruleCounts: Partial<Record<PolicyRuleLayer, number>>
+}
+
+/**
+ * `RuleView` from the CP policy admin API (PLAN-0328 M1).
+ *
+ * `effective` means this rule's layer is the domain's effective layer — it does NOT mean the
+ * rule matched at runtime. `conflict` carries the server's static conflict note (for example an
+ * allow shadowed by a more specific deny) and is null when the row has none.
+ */
+export interface PolicyRuleView {
+  id: string
+  layer: PolicyRuleLayer
+  ownerId: string | null
+  actionClass: string
+  resource: string
+  effect: ApprovalPolicyEffect
+  priority: number
+  locked: boolean
+  effective: boolean
+  conflict: string | null
+}
+
+/**
+ * `FaceView` from the CP policy admin API (PLAN-0328 M1).
+ *
+ * Built-in catalog rows use `id: null`, `scope: 'builtin'` and `ownerId: null`. Persisted
+ * instance/workspace rows override built-ins for the same tool; an unclassified third-party tool
+ * is absent until its first approval request.
+ */
+export interface PolicyToolFaceView {
+  id: string | null
+  scope: PolicyToolFaceScope
+  ownerId: string | null
+  tool: string
+  actionClass: string
+  shape: ApprovalPolicyShape
 }
 
 export interface AttachmentFile {
@@ -232,6 +300,22 @@ export interface OperationSummary {
   createdAt?: string | null
 }
 
+/**
+ * Safe policy verdict snapshot carried by operation items (PLAN-0328 T1.15, spec ui-ux §3.5).
+ * Exactly the server-projected fields; `matchedRule` / `mode` / `allowedBy` are nullable and
+ * absent for legacy rows or non-MCP paths. The projection never contains raw arguments.
+ */
+export interface OperationPolicyView {
+  effect: ApprovalPolicyEffect
+  sourceLayer: ApprovalPolicySourceLayer
+  matchedRule: string | null
+  reason: string
+  mode: ApprovalPolicyMode
+  allowedBy: string | null
+  actionClass: string
+  shape: ApprovalPolicyShape
+}
+
 export interface OperationItemView {
   id: string
   operationId: string
@@ -241,6 +325,7 @@ export interface OperationItemView {
   toolName?: string | null
   source: string
   policyDecision?: string | null
+  policy?: OperationPolicyView
   approvalRequestId?: string | null
   status: string
   errorCode?: string | null

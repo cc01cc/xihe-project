@@ -99,6 +99,7 @@ onMounted(() => {
       mobileMediaQuery.addListener(updateViewport)
     }
   }
+  void auth.hydrateWorkspace()
   refreshPendingApprovals()
   pendingPollTimer = setInterval(refreshPendingApprovals, pendingPollIntervalMs)
 })

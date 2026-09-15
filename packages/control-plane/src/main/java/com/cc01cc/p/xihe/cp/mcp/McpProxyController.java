@@ -20,6 +20,7 @@ import com.cc01cc.p.xihe.cp.entity.McpToolAlias;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
+import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
@@ -27,6 +28,7 @@ import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
@@ -397,7 +399,9 @@ public class McpProxyController {
         String rewritten = rewriter.rewrite(toolName, body, sessionId);
         // PLAN-0328 M1：闸门按分层 Verdict 判定（身份入参供 instance/user/workspace 层解析；
         // mode 传 null 表示由会话态决定）。硬保护/模式/命中层已在引擎内记录审计。
-        PolicyVerdict verdict = policy.evaluateVerdict(toolName, rewritten, sessionId, null,
+        // T1.15：同一次加载的 context 同时供 Verdict 与工具面解析使用（不二次加载）。
+        PolicyContext policyContext = policy.loadContext(access.userId(), wsId, sessionId);
+        PolicyVerdict verdict = policy.evaluateVerdict(policyContext, toolName, rewritten, sessionId, null,
                 access.userId(), wsId);
         audit.record(sessionId, toolName, "request", rewritten);
 
@@ -425,6 +429,10 @@ public class McpProxyController {
             }
         }
         // ALLOW：引擎已记 policy_check / policy_verdict；模式放行另有 policy_allowed_by_mode。
+        // PLAN-0328 T1.15：只为**实际派发**的调用构建安全 Verdict 快照（deny/未获批不落账本，
+        // 也不得凭空造 Verdict）；快照随后挂到该次派发的既有账本条目上。
+        String policySummary = OperationPolicySummary.buildSnapshot(
+                verdict, policy.faceOf(policyContext, toolName), policyContext).orElse(null);
 
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
         // 且先剥离上游同名头（信任边界）。此块位于 __system__ 分支之前——系统工具同样受管。
@@ -466,7 +474,7 @@ public class McpProxyController {
                 outputLimit == null ? "-" : outputLimit, sessionId);
 
         if ("__system__".equals(serverId)) {
-            return forwardToRuntime(wsId, null, body, headers, sessionId, access, forwardWait);
+            return forwardToRuntime(wsId, null, body, headers, sessionId, access, forwardWait, policySummary);
         }
 
         // Policy already evaluated above for all tool types (including __system__).
@@ -474,11 +482,11 @@ public class McpProxyController {
         Optional<McpServer> remote = remoteServer(wsId, serverId);
         if (remote.isPresent()) {
             return forwardRemoteToRuntime(
-                    wsId, remote.get(), rewritten, headers, sessionId, access, forwardWait);
+                    wsId, remote.get(), rewritten, headers, sessionId, access, forwardWait, policySummary);
         }
 
         body = rewritten;
-        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardWait);
+        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardWait, policySummary);
     }
 
     /**
@@ -711,12 +719,18 @@ public class McpProxyController {
     private ResponseEntity<String> forwardToRuntime(
             String wsId, String serverId, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
-        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, (ForwardWait) null);
+        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, (ForwardWait) null, null);
     }
 
     private ResponseEntity<String> forwardToRuntime(
             String wsId, String serverId, String body, HttpHeaders headers,
             String sessionId, AccessContext access, ForwardWait forwardWait) {
+        return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardWait, null);
+    }
+
+    private ResponseEntity<String> forwardToRuntime(
+            String wsId, String serverId, String body, HttpHeaders headers,
+            String sessionId, AccessContext access, ForwardWait forwardWait, String policySummary) {
         long waitSeconds = forwardWait == null
                 ? forwardTimeoutS
                 : (forwardWait.seconds() > 0 ? forwardWait.seconds() : forwardTimeoutS);
@@ -729,10 +743,11 @@ public class McpProxyController {
                 Optional<McpServer> remote = remoteServer(wsId, serverId);
                 if (remote.isPresent()) {
                     return forwardRemoteToRuntime(
-                            wsId, remote.get(), body, headers, sessionId, access, forwardWait);
+                            wsId, remote.get(), body, headers, sessionId, access, forwardWait, policySummary);
                 }
             }
             ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
+            attachPolicySummary(ledgerAttempt, policySummary, forwardWait);
             String path;
             if (serverId == null) {
                 path = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
@@ -1001,6 +1016,29 @@ public class McpProxyController {
         }
     }
 
+    /**
+     * PLAN-0328 T1.15：把该次派发的安全 Verdict 快照挂到既有账本条目（不新建条目）。
+     * 条目缺失（无 operation 头 / 条目已终态）→ 跳过并记生命周期事件；挂载失败
+     * 只记日志，不影响派发本身。
+     */
+    private void attachPolicySummary(LedgerAttempt ledgerAttempt, String policySummary,
+                                     ForwardWait forwardWait) {
+        if (policySummary == null || policySummary.isBlank()) {
+            return;
+        }
+        if (ledgerAttempt == null) {
+            logger.info("[LIFECYCLE] service=cp event=operation_policy_summary_skipped tool={} reason=ledger_item_missing",
+                    forwardWait == null ? "-" : idOrDash(forwardWait.toolName()));
+            return;
+        }
+        try {
+            operationService.attachPolicySummary(ledgerAttempt.itemId(), policySummary);
+        } catch (RuntimeException e) {
+            logger.warn("[LIFECYCLE] service=cp event=operation_policy_summary_failed itemId={} failureType={}",
+                    ledgerAttempt.itemId(), e.getClass().getName());
+        }
+    }
+
     private String sha256(String value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
@@ -1086,18 +1124,19 @@ public class McpProxyController {
     private ResponseEntity<String> forwardRemoteToRuntime(
             String wsId, McpServer server, String body, HttpHeaders headers,
             String sessionId, AccessContext access) {
-        return forwardRemoteToRuntime(wsId, server, body, headers, sessionId, access, (ForwardWait) null);
+        return forwardRemoteToRuntime(wsId, server, body, headers, sessionId, access, (ForwardWait) null, null);
     }
 
     private ResponseEntity<String> forwardRemoteToRuntime(
             String wsId, McpServer server, String body, HttpHeaders headers,
-            String sessionId, AccessContext access, ForwardWait forwardWait) {
+            String sessionId, AccessContext access, ForwardWait forwardWait, String policySummary) {
         long waitSeconds = forwardWait == null
                 ? forwardTimeoutS
                 : (forwardWait.seconds() > 0 ? forwardWait.seconds() : forwardTimeoutS);
         long startedMs = System.currentTimeMillis();
         String method = extractMethod(body);
         LedgerAttempt ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
+        attachPolicySummary(ledgerAttempt, policySummary, forwardWait);
         try {
             ObjectNode request = objectMapper.createObjectNode();
             request.put("endpoint", server.getEndpoint());

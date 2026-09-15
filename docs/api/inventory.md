@@ -30,13 +30,20 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `GET /api/v1/approvals/pending` | unchanged under `/api/v1/approvals/pending` | user Bearer + current workspace/user | UI cross-session indicator for live actionable approval/retry states (`pending` and `dispatch_unknown`) — counts and oldest timestamps only; no tool arguments, details or rule text |
 | CP | `GET /api/v1/policy/mode?sessionId=` | unchanged under `/api/v1/policy/mode?sessionId=` | user Bearer + current workspace/user + session ownership | UI session policy control — reads one session's fixed mode set: `default`, `bypass`, `managed`, `accept-edits`, `plan` |
 | CP | `POST /api/v1/policy/mode` | unchanged under `/api/v1/policy/mode` | user Bearer + current workspace/user + session ownership | UI session policy control — writes only the selected session's fixed mode and returns `scope: session`; mode state is memory-only |
+| CP | `GET /api/v1/policy/tool-faces?scope=instance\|workspace` | unchanged under `/api/v1/policy/tool-faces` | user/admin Bearer + server-side TenantContext scope | UI tool registry — returns built-in (`id: null`, `scope: builtin`) and effective persisted faces; workspace rows override instance rows; unknown third-party tools are absent until first ask |
+| CP | `POST /api/v1/policy/tool-faces` | unchanged under `/api/v1/policy/tool-faces` | user/admin Bearer + server-side instance ADMIN or workspace OWNER/ADMIN guard | UI tool classification — accepts only `scope: instance\|workspace`; explicit classification unlocks normal policy resolution, while unclassified tools remain `ask` + `opaque` |
+| CP | `GET /api/v1/policy/domains` | unchanged under `/api/v1/policy/domains` | user/admin Bearer + current workspace/user | UI permission-rules page — per-`actionClass` effective layer (`builtin` when unconfigured) and per-layer rule counts |
+| CP | `GET /api/v1/policy/rules?layer=instance\|user\|workspace` | unchanged under `/api/v1/policy/rules` | user/admin Bearer + instance layer ADMIN / workspace scope | UI permission-rules page — layer rules with server-derived `effective` flag (this layer is the domain's effective layer, not a runtime match) and static `conflict` note |
+| CP | `POST /api/v1/policy/rules` | unchanged under `/api/v1/policy/rules` | user/admin Bearer + instance ADMIN or workspace OWNER/ADMIN guard | UI permission-rules page — creates `{layer, actionClass, resource, effect, priority, locked}`; `locked` is ADMIN-only and only with deny/ask |
+| CP | `DELETE /api/v1/policy/rules/{id}?layer=` | unchanged under `/api/v1/policy/rules/{id}` | user/admin Bearer + instance ADMIN or workspace OWNER/ADMIN guard | UI permission-rules page — deletes one rule scoped by layer; cross-layer/owner deletion is 404 without leaking existence |
+| CP | `GET /api/v1/policy/rules/conflicts?layer=instance\|user\|workspace` | unchanged under `/api/v1/policy/rules/conflicts` | user/admin Bearer + instance layer ADMIN / workspace scope | UI permission-rules page — subset of rules carrying a static `conflict` note; detection is server-side only |
 | CP | `GET /api/v1/events?sessionId=` | `GET /api/v1/events?sessionId=` — **session-scoped persistent SSE** | user Bearer + current workspace | UI — one active emitter per `sessionId`; `done` ends run, not SSE; `heartbeat` (15s) is transport-only, never enters `MessagePart` |
 | CP | `/api/v1/status`, `/api/v1/health`, `/api/v1/logs`, `/api/v1/telemetry/*` | unchanged `/api/v1/...` | public/user Bearer | UI/telemetry |
 | CP | `/api/v1/sessions/{sessionId}/messages[/{messageId}]` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `GET /api/v1/operations` | unchanged (paginated, redacted user projection) | user Bearer | UI audit view (PLAN-281) |
-| CP | `GET /api/v1/operations/{operationId}` | unchanged (owner-only trace, non-owner 404) | user Bearer | UI audit detail (PLAN-281) |
+| CP | `GET /api/v1/operations/{operationId}` | unchanged (owner-only trace, non-owner 404); items may carry the optional safe `policy` verdict summary (`effect` / `sourceLayer` / `matchedRule` / `reason` / `mode` / `allowedBy` / `actionClass` / `shape`, no raw arguments) | user Bearer | UI audit detail (PLAN-281, PLAN-0328 T1.15) |
 | CP | `POST /internal/v1/operations` | unchanged (service-to-service ledger entry; idempotent replay returns 200) | service Bearer | Agent, Runtime (PLAN-281) |
-| CP | `GET /internal/v1/operations/{operationId}/trace` | unchanged (full trace with refs; artifact contents excluded) | service Bearer | Agent, Runtime, admin diagnostics (PLAN-281) |
+| CP | `GET /internal/v1/operations/{operationId}/trace` | unchanged (full trace with refs; artifact contents excluded); items include the same optional safe `policy` verdict summary | service Bearer | Agent, Runtime, admin diagnostics (PLAN-281, PLAN-0328 T1.15) |
 | CP | `/api/v1/sessions/{sessionId}/attachments[/{fileId}]` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `/api/v1/files/{fileId}`, `/api/v1/files/upload` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `/api/v1/rag/stats`, `/api/v1/rag/ingest`, `/api/v1/rag/search`, `/api/v1/rag/documents/{docId}` | unchanged `/api/v1/...` | user Bearer | UI |
@@ -65,6 +72,21 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 - Errors use `application/problem+json` with `type`, `title`, `status`,
   `code`, `detail`, and `requestId`.
 - No query-string tokens, `X-Api-Token`, old path aliases, or field fallbacks.
+
+## Policy Tool-Face Contract (PLAN-0328)
+
+- `GET /api/v1/policy/tool-faces?scope=instance|workspace` returns a deterministic effective catalog sorted by `tool`.
+- Built-in catalog entries use `scope: builtin`, `id: null`, and `ownerId: null`; persisted instance/workspace entries retain their UUID and owner identity and override entries for the same tool at lower precedence.
+- `scope=builtin` is response metadata only and is not accepted by the write route. Role and tenant authorization remain server-side through `TenantContext`.
+- Unknown third-party tools are absent from the catalog until their first approval request. Before explicit owner/admin classification, their policy face is `actionClass: unclassified`, `shape: opaque`, and the verdict is `ask` even under automatic modes; one-shot approval remains available while session/saved rule grants are rejected.
+
+## Policy Rules Contract (PLAN-0328)
+
+- `GET /api/v1/policy/domains` returns `actionClass`, `effectiveLayer` (`builtin` when no persisted layer configures the domain), `configuredLayers`, and `ruleCounts` (only layers holding at least one rule). This is the UI's "domain and effective layer" source; clients never infer the effective layer locally.
+- `GET /api/v1/policy/rules?layer=` returns `RuleView` rows whose `effective` flag reports whether the rule's layer is the domain's effective layer — it does not mean the rule matched at runtime. `conflict` carries the server's static shadowing note (for example an allow covered by a more specific deny) or `null`.
+- `GET /api/v1/policy/rules/conflicts?layer=` is the filtered conflict view of the same rows; conflict detection stays server-side (`PolicyRuleService.conflicts`) and must not be reimplemented in the UI.
+- `POST /api/v1/policy/rules` creates `{layer, actionClass, resource, effect, priority, locked}`. Instance writes require ADMIN, workspace writes require workspace OWNER/ADMIN, and `locked` requires ADMIN and only accepts deny/ask (DB CHECK V15). `DELETE /api/v1/policy/rules/{id}?layer=` is layer/owner scoped and returns 404 for foreign rows.
+- Every response is camelCase with UUID rule ids and RFC 9457 Problem Details (`401`/`403`/`404`). The UI relies on the server `403` for write authority and never equates `effective=true` with a runtime match.
 
 ## Chat SSE Contract (PLAN-230)
 

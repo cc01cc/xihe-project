@@ -54,6 +54,43 @@ describe('useOperationStore', () => {
     expect(store.selectedTrace).toBeNull()
   })
 
+  it('exposes the safe policy projection carried by trace items', async () => {
+    const trace = {
+      operation: { id: 'op-1', kind: 'chat', source: 'ui', actorType: 'user', status: 'completed' },
+      items: [{
+        id: 'item-1',
+        operationId: 'op-1',
+        toolCallId: 'call-bypass-1',
+        sequence: 1,
+        kind: 'tool_call',
+        toolName: 'write_file',
+        source: 'mcp',
+        policyDecision: 'allow',
+        status: 'completed',
+        policy: {
+          // A bypass verdict is an allow with a non-null allowedBy (CP PolicyVerdict.allowedByMode).
+          effect: 'allow' as const,
+          sourceLayer: 'builtin' as const,
+          matchedRule: '{ write, "*", ask }',
+          reason: 'requires approval for domain write',
+          mode: 'bypass' as const,
+          allowedBy: 'bypass@session',
+          actionClass: 'write',
+          shape: 'structured' as const,
+        },
+      }],
+      attempts: [],
+      events: [],
+    }
+    getOperationTrace.mockResolvedValue(trace)
+
+    const store = useOperationStore()
+    await store.loadTrace('op-1')
+
+    expect(store.selectedTrace?.items[0]?.policy).toEqual(trace.items[0]?.policy)
+    expect(store.selectedTrace?.items[0]?.policy?.allowedBy).toBe('bypass@session')
+  })
+
   it('stores the error and rethrows failed loads', async () => {
     const failure = new Error('audit unavailable')
     listOperations.mockRejectedValue(failure)

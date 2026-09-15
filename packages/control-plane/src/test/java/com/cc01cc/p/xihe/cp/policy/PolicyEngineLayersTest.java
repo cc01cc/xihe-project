@@ -107,6 +107,6 @@ class PolicyEngineLayersTest {
 
         assertEquals(PolicyEffect.ALLOW, engine.evaluateVerdict("read_file", "{}", "s1", null, null, null).effect());
         assertEquals(PolicyEffect.ASK, engine.evaluateVerdict("write_file", "{}", "s1", null, null, null).effect());
-        assertEquals(PolicyEffect.DENY, engine.evaluateVerdict("made_up_tool", "{}", "s1", null, null, null).effect());
+        assertEquals(PolicyEffect.ASK, engine.evaluateVerdict("made_up_tool", "{}", "s1", null, null, null).effect());
     }
 }

@@ -17,7 +17,8 @@ import static org.mockito.Mockito.mock;
  * <p>The Gateway MCP tool surface (packages/runtime/src/main.rs #[tool_router]
  * fn names) is the canonical public LLM tool set. Every Gateway-public tool
  * must be classified by CP PolicyEngine as ALLOW or REQUIRE_APPROVAL;
- * unregistered tools fall through to fail-closed DENY and are contract bugs.
+ * unregistered tools fall through to the explicit-classification ASK path and
+ * are not part of this Gateway contract.
  *
  * <p>The Gateway set below is intentionally hardcoded (extracted from
  * #[tool] function names) rather than parsed at test time: a drift in the
@@ -84,8 +85,8 @@ class GatewayToolRegistryContractTest {
             .filter(t -> !union.contains(t))
             .collect(Collectors.toCollection(TreeSet::new));
         assertTrue(missing.isEmpty(),
-            "Gateway-public tools missing from PolicyEngine "
-                + "AUTO_ALLOW ∪ REQUIRE_APPROVAL (fail-closed deny): " + missing);
+             "Gateway-public tools missing from PolicyEngine "
+                 + "AUTO_ALLOW ∪ REQUIRE_APPROVAL: " + missing);
     }
 
     @Test

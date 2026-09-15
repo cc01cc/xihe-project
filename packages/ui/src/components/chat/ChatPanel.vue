@@ -2,9 +2,10 @@
 import { computed, onMounted, ref } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
+import { useAuthStore } from '../../stores/auth'
 import { ApiError, api } from '../../composables/api'
 import { logger } from '../../lib/logger'
-import type { ApprovalDecision, AttachmentFile, Message } from '../../types'
+import type { ApprovalDecisionEnvelope, AttachmentFile, Message } from '../../types'
 import MessageList from './MessageList.vue'
 import InputArea from './InputArea.vue'
 import SSEStream from './SSEStream.vue'
@@ -20,6 +21,7 @@ const props = withDefaults(defineProps<{
 
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
+const authStore = useAuthStore()
 
 const suggestions = computed(() => props.toolMode === 'workspace'
   ? ['列出文件', '打开 README', '解释选中的文件', '查看工作区环境']
@@ -35,6 +37,8 @@ const pendingApproval = computed(() => agentStore.agentState.pendingApprovals.fi
 const approvalSubmitting = ref(false)
 const approvalError = ref<string | null>(null)
 const showApproval = computed(() => pendingApproval.value !== null)
+/** Classification authority hint (server still enforces): workspace OWNER / instance ADMIN. */
+const canClassifyApproval = computed(() => authStore.canClassifyTools)
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null)
 const inputComponent = ref<InstanceType<typeof InputArea> | null>(null)
@@ -96,14 +100,23 @@ function rejectTool(toolId: string) {
   agentStore.rejectTool(toolId)
 }
 
-async function decideApproval(decision: ApprovalDecision) {
+async function decideApproval(submission: ApprovalDecisionEnvelope) {
   const approval = pendingApproval.value
   if (!approval || approvalSubmitting.value) return
+  // Drop a stale continuation: a classification write can resolve after the pending request
+  // changed, and only the currently actionable request may be decided.
+  if (submission.requestId !== approval.requestId) return
 
   approvalSubmitting.value = true
   approvalError.value = null
   try {
-    const response = await agentStore.decideApproval(approval.requestId, decision)
+    const { decision, feedback, layer, rule } = submission
+    const response = await agentStore.decideApproval(approval.requestId, {
+      decision,
+      ...(feedback === undefined ? {} : { feedback }),
+      ...(layer === undefined ? {} : { layer }),
+      ...(rule === undefined ? {} : { rule }),
+    })
     if (response.status === 'accepted' || response.status === 'already_decided') {
       chatStore.invalidateRunRecovery(approval.sessionId, approval.runId)
     }
@@ -211,6 +224,7 @@ const recoveryBannerClass = computed(() => {
       :show="showApproval"
       :busy="approvalSubmitting"
       :error="approvalError"
+      :can-classify="canClassifyApproval"
       @approve="decideApproval"
       @reject="decideApproval"
     />

@@ -2,22 +2,27 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseModal from '../shared/BaseModal.vue'
-import type { ApprovalDecision, ApprovalPolicyMode, ApprovalPolicyShape, ApprovalPolicySourceLayer, ApprovalRequest } from '../../types'
-import { Bot, LoaderCircle } from '@lucide/vue'
+import { ApiError, api } from '../../composables/api'
+import { logger } from '../../lib/logger'
+import type { ApprovalDecisionEnvelope, ApprovalPolicyMode, ApprovalPolicyShape, ApprovalPolicySourceLayer, ApprovalRequest } from '../../types'
+import { Bot, LoaderCircle, ShieldCheck } from '@lucide/vue'
 
 const props = withDefaults(defineProps<{
   approval: ApprovalRequest | null
   show: boolean
   busy?: boolean
   error?: string | null
+  /** Workspace OWNER / instance ADMIN only; the server still rejects unauthorized writes. */
+  canClassify?: boolean
 }>(), {
   busy: false,
   error: null,
+  canClassify: false,
 })
 
 const emit = defineEmits<{
-  approve: [decision: ApprovalDecision]
-  reject: [decision: ApprovalDecision]
+  approve: [decision: ApprovalDecisionEnvelope]
+  reject: [decision: ApprovalDecisionEnvelope]
 }>()
 
 const { t } = useI18n()
@@ -36,6 +41,20 @@ const saveConfirmButton = ref<HTMLButtonElement | null>(null)
 const approvalContent = ref<HTMLDivElement | null>(null)
 let previouslyFocused: HTMLElement | null = null
 const maxDecisionTextLength = 512
+
+// Classification workflow (PLAN-0328 T1.14 / spec/ui-ux §3.4): unclassified tools may only be
+// allowed once, and only after an explicit classification. Never auto-approve.
+const classifyConfirming = ref(false)
+const classifyActionClass = ref('')
+const classifyShape = ref<ApprovalPolicyShape>('opaque')
+const classifySubmitting = ref(false)
+const classifyError = ref<string | null>(null)
+// Monotonic token for the classify step: reset/cancel/request-change bumps it so a write that
+// resolves later can never emit a decision for a request (or form state) that no longer applies.
+let classifyGeneration = 0
+const classifyEntryButton = ref<HTMLButtonElement | null>(null)
+const classifyInput = ref<HTMLInputElement | null>(null)
+const classifyActionClassSuggestions = ['read', 'write', 'delete', 'exec', 'network', 'credential']
 
 const sourceLayerLabels: Record<ApprovalPolicySourceLayer, string> = {
   builtin: 'chat.approvalLayerBuiltin',
@@ -69,6 +88,14 @@ const shapeWarning = computed(() => {
 
 const canSubmit = computed(() => Boolean(props.approval) && !props.busy && !submitted.value)
 const isStructuredPolicy = computed(() => props.approval?.policy?.shape === 'structured')
+/** O-face: the tool has no registered action class, so reuse rules cannot be granted. */
+const isUnclassifiedPolicy = computed(() => props.approval?.policy?.actionClass === 'unclassified')
+const showClassifyEntry = computed(() => isUnclassifiedPolicy.value && props.canClassify)
+const canSubmitClassify = computed(() => Boolean(props.approval)
+  && !props.busy
+  && !submitted.value
+  && !classifySubmitting.value
+  && classifyActionClass.value.trim().length > 0)
 const modeAtGrant = computed(() => props.approval?.modeAtGrant !== undefined
   ? props.approval.modeAtGrant
   : props.approval?.policy?.modeAtGrant)
@@ -88,6 +115,7 @@ const canSubmitSaved = computed(() => canSubmit.value && isStructuredPolicy.valu
 const canSubmitReject = computed(() => canSubmit.value && !feedbackTooLong.value)
 
 function resetForm() {
+  classifyGeneration += 1
   saveConfirming.value = false
   savedLayer.value = 'workspace'
   resource.value = ''
@@ -95,6 +123,11 @@ function resetForm() {
   feedback.value = ''
   submitted.value = false
   saveValidationError.value = null
+  classifyConfirming.value = false
+  classifyActionClass.value = ''
+  classifyShape.value = 'opaque'
+  classifySubmitting.value = false
+  classifyError.value = null
 }
 
 function focusMainAction() {
@@ -145,9 +178,10 @@ watch([resource, wildcardConfirmed], () => {
 })
 
 function submitAllow(decision: 'once' | 'session') {
-  if (!canSubmit.value) return
+  const approval = props.approval
+  if (!approval || !canSubmit.value) return
   submitted.value = true
-  emit('approve', { decision })
+  emit('approve', { decision, requestId: approval.requestId })
 }
 
 function openSaveConfirmation() {
@@ -163,7 +197,8 @@ function cancelSaveConfirmation() {
 }
 
 function submitSaved() {
-  if (!canSubmitSaved.value) {
+  const approval = props.approval
+  if (!approval || !canSubmitSaved.value) {
     saveValidationError.value = savedRuleValidationMessage.value || null
     return
   }
@@ -174,16 +209,72 @@ function submitSaved() {
     // The server derives actionClass from the tool registry. The UI only
     // narrows the resource selected by the user.
     rule: { resource: normalizedResource.value },
+    requestId: approval.requestId,
   })
 }
 
 function submitReject() {
-  if (!canSubmitReject.value) return
+  const approval = props.approval
+  if (!approval || !canSubmitReject.value) return
   submitted.value = true
   const trimmedFeedback = normalizedFeedback.value
   emit('reject', trimmedFeedback
-    ? { decision: 'reject', feedback: trimmedFeedback.slice(0, maxDecisionTextLength) }
-    : { decision: 'reject' })
+    ? { decision: 'reject', feedback: trimmedFeedback.slice(0, maxDecisionTextLength), requestId: approval.requestId }
+    : { decision: 'reject', requestId: approval.requestId })
+}
+
+function openClassifyConfirmation() {
+  if (!canSubmit.value || !showClassifyEntry.value) return
+  classifyConfirming.value = true
+  classifyError.value = null
+  classifyActionClass.value = ''
+  classifyShape.value = 'opaque'
+  void nextTick(() => classifyInput.value?.focus())
+}
+
+function cancelClassifyConfirmation() {
+  // Escape/back invalidates any in-flight write and releases the submit guard so a cancelled
+  // classification can never leave the step (or the next request) stuck busy.
+  classifyGeneration += 1
+  classifyConfirming.value = false
+  classifySubmitting.value = false
+  classifyError.value = null
+  void nextTick(() => classifyEntryButton.value?.focus())
+}
+
+async function submitClassification() {
+  const approval = props.approval
+  if (!approval || !canSubmitClassify.value) return
+  const requestId = approval.requestId
+  const generation = ++classifyGeneration
+  classifySubmitting.value = true
+  classifyError.value = null
+  try {
+    // Explicit classification is persisted first; only then the original decision is emitted,
+    // and it is always a one-shot `once`. The server enforces OWNER/ADMIN and may return 403.
+    await api.upsertPolicyToolFace({
+      scope: 'workspace',
+      tool: approval.tool,
+      actionClass: classifyActionClass.value.trim(),
+      shape: classifyShape.value,
+    })
+    // The write may resolve after the request changed, the modal was reset, or Escape cancelled
+    // the step: abort the continuation instead of emitting a decision for a different request.
+    if (classifyGeneration !== generation || props.approval?.requestId !== requestId) return
+    submitted.value = true
+    emit('approve', { decision: 'once', requestId })
+  } catch (cause) {
+    if (classifyGeneration !== generation) {
+      logger.warn('Discarded a stale failed tool classification', cause)
+      return
+    }
+    classifyError.value = cause instanceof ApiError
+      ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+      : t('chat.approvalClassifyFailed')
+    logger.warn('Failed to classify tool before approval', cause)
+  } finally {
+    if (classifyGeneration === generation) classifySubmitting.value = false
+  }
 }
 
 function handleClose() {
@@ -196,10 +287,17 @@ function handleContentKeydown(event: KeyboardEvent) {
     event.preventDefault()
     event.stopPropagation()
     cancelSaveConfirmation()
+    return
+  }
+  if (event.key === 'Escape' && classifyConfirming.value) {
+    event.preventDefault()
+    event.stopPropagation()
+    cancelClassifyConfirmation()
+    return
   }
   // The once button is the default focus. This also supports keyboard users
   // whose focus is on the modal surface rather than on a control.
-  if (event.key === 'Enter' && event.target === event.currentTarget && !saveConfirming.value) {
+  if (event.key === 'Enter' && event.target === event.currentTarget && !saveConfirming.value && !classifyConfirming.value) {
     event.preventDefault()
     submitAllow('once')
   }
@@ -304,7 +402,16 @@ onBeforeUnmount(() => {
           </p>
         </section>
 
-        <template v-if="!saveConfirming">
+        <template v-if="!saveConfirming && !classifyConfirming">
+          <p
+            v-if="isUnclassifiedPolicy"
+            data-testid="approval-unclassified-notice"
+            class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+            role="status"
+          >
+            {{ t('chat.approvalUnclassifiedNotice') }}
+          </p>
+
           <div class="mb-4 space-y-1.5">
             <label for="approval-feedback" class="text-sm font-medium">{{ t('chat.approvalRejectFeedbackLabel') }}</label>
             <p class="text-xs text-muted-foreground">{{ t('chat.approvalRejectFeedbackOptional') }}</p>
@@ -339,6 +446,7 @@ onBeforeUnmount(() => {
             </button>
             <button
               ref="sessionButton"
+              v-if="!isUnclassifiedPolicy"
               data-testid="approval-allow-session"
               type="button"
               class="inline-flex min-h-10 items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
@@ -348,7 +456,7 @@ onBeforeUnmount(() => {
               {{ t('chat.approvalAllowSession') }}
             </button>
             <button
-              v-if="isStructuredPolicy"
+              v-if="isStructuredPolicy && !isUnclassifiedPolicy"
               ref="saveButton"
               data-testid="approval-save-rule"
               type="button"
@@ -357,6 +465,18 @@ onBeforeUnmount(() => {
               @click="openSaveConfirmation"
             >
               {{ t('chat.approvalSaveRule') }}
+            </button>
+            <button
+              v-if="showClassifyEntry"
+              ref="classifyEntryButton"
+              data-testid="approval-classify-entry"
+              type="button"
+              class="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 px-3 py-2 text-sm font-medium transition hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="!canSubmit"
+              @click="openClassifyConfirmation"
+            >
+              <ShieldCheck class="size-4" aria-hidden="true" />
+              {{ t('chat.approvalClassifyAndAllow') }}
             </button>
             <button
               data-testid="approval-reject"
@@ -368,6 +488,89 @@ onBeforeUnmount(() => {
               {{ t('chat.reject') }}
             </button>
           </div>
+        </template>
+
+        <template v-else-if="classifyConfirming">
+          <section data-testid="approval-classify-confirm" class="space-y-4">
+            <div>
+              <h3 class="text-base font-semibold">{{ t('chat.approvalClassifyTitle') }}</h3>
+              <p class="mt-1 text-sm text-muted-foreground">{{ t('chat.approvalClassifyDescription') }}</p>
+            </div>
+
+            <div class="space-y-1.5">
+              <label for="approval-classify-action-class" class="text-sm font-medium">
+                {{ t('chat.approvalClassifyActionClass') }}
+              </label>
+              <input
+                id="approval-classify-action-class"
+                ref="classifyInput"
+                v-model="classifyActionClass"
+                data-testid="approval-classify-action-class"
+                type="text"
+                list="approval-classify-action-classes"
+                autocomplete="off"
+                maxlength="64"
+                class="w-full rounded-lg border bg-background px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                :placeholder="t('chat.approvalClassifyActionClassPlaceholder')"
+                :disabled="busy || submitted || classifySubmitting"
+              />
+              <datalist id="approval-classify-action-classes">
+                <option v-for="item in classifyActionClassSuggestions" :key="item" :value="item" />
+              </datalist>
+              <p v-if="!classifyActionClass.trim()" class="text-xs text-muted-foreground">
+                {{ t('chat.approvalClassifyActionClassRequired') }}
+              </p>
+            </div>
+
+            <div class="space-y-1.5">
+              <label for="approval-classify-shape" class="text-sm font-medium">{{ t('chat.approvalClassifyShape') }}</label>
+              <select
+                id="approval-classify-shape"
+                v-model="classifyShape"
+                data-testid="approval-classify-shape"
+                class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                :disabled="busy || submitted || classifySubmitting"
+              >
+                <option value="structured">{{ t('chat.approvalShapeStructured') }}</option>
+                <option value="interpreter">{{ t('chat.approvalShapeInterpreter') }}</option>
+                <option value="opaque">{{ t('chat.approvalShapeOpaque') }}</option>
+              </select>
+            </div>
+
+            <p data-testid="approval-classify-authority" class="rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+              {{ t('chat.approvalClassifyAuthorityHint') }}
+            </p>
+            <p data-testid="approval-classify-once-note" class="text-xs text-muted-foreground">
+              {{ t('chat.approvalClassifyRequiresOnce') }}
+            </p>
+
+            <p v-if="classifyError" data-testid="approval-classify-error" class="text-sm text-destructive" role="alert">
+              {{ classifyError }}
+            </p>
+            <p v-if="error" data-testid="approval-error" class="text-sm text-destructive" role="alert">{{ error }}</p>
+
+            <div class="flex flex-wrap justify-end gap-2 border-t pt-3">
+              <button
+                type="button"
+                data-testid="approval-classify-back"
+                class="inline-flex min-h-10 items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                :disabled="busy || classifySubmitting"
+                @click="cancelClassifyConfirmation"
+              >
+                {{ t('chat.approvalClassifyBack') }}
+              </button>
+              <button
+                type="button"
+                data-testid="approval-classify-submit"
+                class="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="!canSubmitClassify"
+                @click="submitClassification"
+              >
+                <LoaderCircle v-if="classifySubmitting" class="mr-1.5 size-4 animate-spin" aria-hidden="true" />
+                {{ t('chat.approvalClassifySubmit') }}
+              </button>
+            </div>
+          </section>
         </template>
 
         <template v-else>

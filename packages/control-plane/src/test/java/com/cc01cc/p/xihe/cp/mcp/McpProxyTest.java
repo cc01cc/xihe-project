@@ -3,29 +3,37 @@ package com.cc01cc.p.xihe.cp.mcp;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
+import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
+import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -78,8 +86,12 @@ class McpProxyTest {
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
-        when(policyEngine.evaluateVerdict(anyString(), anyString(), anyString(), any(), any(), any()))
+        when(policyEngine.loadContext(any(), any(), any())).thenReturn(PolicyContext.EMPTY);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), anyString(), anyString(),
+                anyString(), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "default", "auto_allow"));
+        when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
+                .thenReturn(new ToolFaceRegistry.Face("read", ToolShape.STRUCTURED));
     }
 
     @Test
@@ -291,7 +303,7 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":7}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluateVerdict(eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
                         "default", "mutation requires approval"));
 
@@ -316,6 +328,8 @@ class McpProxyTest {
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertTrue(response.getBody().contains("\"code\":\"APPROVAL_REQUIRED\""));
         verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
+        // PLAN-0328 T1.15: an undecided ASK dispatch must not invent a verdict snapshot.
+        verify(operationService, never()).attachPolicySummary(any(), anyString());
         verifyNoInteractions(mcpServerRepository);
     }
 
@@ -328,7 +342,7 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":9}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluateVerdict(eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
                         "default", "mutation requires approval"));
 
@@ -351,11 +365,250 @@ class McpProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void handleToolsCall_allowPath_attachesExactSafePolicySummaryToExistingItem() throws Exception {
+        // PLAN-0328 T1.15: the final verdict descriptor is attached to the dispatch ledger item
+        // with exactly the safe keys — never the MCP body / arguments.
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":11}";
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("read_file"), eq(body), eq("sess-1"),
+                any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, "{ read, \"*\", allow }",
+                        PolicyLayer.BUILTIN, "default", "allowed by read rules"));
+        seedToolCache("read_file", "__system__");
+
+        OperationItem item = new OperationItem();
+        item.setId(java.util.UUID.randomUUID());
+        item.setStatus("pending");
+        OperationAttempt attempt = new OperationAttempt();
+        attempt.setId(java.util.UUID.randomUUID());
+        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
+                .thenReturn(item);
+        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(attempt);
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":11}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+            headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
+            verify(operationService).attachPolicySummary(eq(item.getId()), summary.capture());
+            // Identity rule: the verdict rides on the single dispatch item, no second item.
+            verify(operationService, times(1)).appendItem(
+                    any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
+
+            JsonNode root = objectMapper.readTree(summary.getValue());
+            Set<String> keys = new HashSet<>();
+            root.fieldNames().forEachRemaining(keys::add);
+            assertEquals(OperationPolicySummary.POLICY_KEYS, keys);
+            assertEquals(Set.of("effect", "sourceLayer", "matchedRule", "reason", "mode",
+                    "allowedBy", "actionClass", "shape"), keys);
+            assertEquals("allow", root.get("effect").asText());
+            assertEquals("builtin", root.get("sourceLayer").asText());
+            assertEquals("{ read, \"*\", allow }", root.get("matchedRule").asText());
+            assertEquals("default", root.get("mode").asText());
+            assertEquals("read", root.get("actionClass").asText());
+            assertEquals("structured", root.get("shape").asText());
+            assertTrue(root.get("allowedBy").isNull());
+            assertFalse(summary.getValue().contains("secret-body-marker"),
+                    "raw request content must never reach the verdict snapshot");
+            assertFalse(summary.getValue().contains("arguments"));
+            assertFalse(summary.getValue().contains("details"));
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_bypassAllow_recordsAllowedByMarker() throws Exception {
+        // PLAN-0328 决策 #32: bypass-mode allows carry `allowed_by` (bypass@<layer>) for audit.
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":13}";
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"),
+                any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }",
+                        PolicyLayer.SESSION, "bypass", "requires approval for domain write")
+                        .allowedByMode("bypass@SESSION"));
+        when(policyEngine.faceOf(any(PolicyContext.class), eq("write_file")))
+                .thenReturn(new ToolFaceRegistry.Face("write", ToolShape.STRUCTURED));
+        seedToolCache("write_file", "__system__");
+
+        OperationItem item = new OperationItem();
+        item.setId(java.util.UUID.randomUUID());
+        item.setStatus("pending");
+        OperationAttempt attempt = new OperationAttempt();
+        attempt.setId(java.util.UUID.randomUUID());
+        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
+                .thenReturn(item);
+        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(attempt);
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":13}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+            headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
+            verify(operationService).attachPolicySummary(eq(item.getId()), summary.capture());
+            JsonNode root = objectMapper.readTree(summary.getValue());
+            assertEquals("allow", root.get("effect").asText());
+            assertEquals("session", root.get("sourceLayer").asText());
+            assertEquals("bypass", root.get("mode").asText());
+            assertEquals("bypass@session", root.get("allowedBy").asText());
+            assertEquals("write", root.get("actionClass").asText());
+            assertFalse(summary.getValue().contains("secret-body-marker"));
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_denyPath_createsNoItemAndNoVerdictSnapshot() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":12}";
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"),
+                any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.DENY, "{ write, \"**\", deny }",
+                        PolicyLayer.INSTANCE, "default", "denied by { write, \"**\", deny } (write)"));
+        seedToolCache("write_file", "__system__");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+        headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+        headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                accessContext(TEST_WS_UUID, "u-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        // A blocked call has no dispatch, so it must not create a ledger item or invent a verdict.
+        verify(operationService, never()).appendItem(
+                any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
+        verify(operationService, never()).attachPolicySummary(any(), anyString());
+        verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_denied"), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_approvalGrantFailure_neverDispatchesOrAttaches() throws Exception {
+        // PLAN-0328 T1.15: an approval-path failure must not fabricate a dispatch, an item,
+        // or a verdict snapshot.
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":15}";
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"),
+                any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }",
+                        PolicyLayer.BUILTIN, "default", "mutation requires approval"));
+        when(approvalService.consumeApprovedGrant(anyString(), any(), any(), any(), anyString(), anyString()))
+                .thenThrow(new IllegalStateException("approval store unavailable"));
+        seedToolCache("write_file", "__system__");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+        headers.set("X-Xihe-Approval-Request-Id", "grant-1");
+        headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+        headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+
+        assertThrows(RuntimeException.class, () -> ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                accessContext(TEST_WS_UUID, "u-1")));
+        verify(operationService, never()).appendItem(
+                any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
+        verify(operationService, never()).attachPolicySummary(any(), anyString());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_missingLedgerItem_skipsSummaryAndStillDispatches() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("read_file", "__system__");
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":14}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            // No X-Operation-Id → no ledger item exists for this dispatch: skip safely.
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":14}";
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(operationService, never()).appendItem(
+                    any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
+            verify(operationService, never()).attachPolicySummary(any(), anyString());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void handleToolsCall_matchingApprovalGrant_forwardsToRuntimeOnce() throws Exception {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluateVerdict(eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
                         "default", "mutation requires approval"));
         when(approvalService.consumeApprovedGrant(
@@ -418,7 +671,7 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
-        when(policyEngine.evaluateVerdict(eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
                         "default", "mutation requires approval"));
         when(approvalService.consumeApprovedGrant(

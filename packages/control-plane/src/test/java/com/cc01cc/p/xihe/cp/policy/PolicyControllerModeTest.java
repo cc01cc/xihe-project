@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -90,5 +91,31 @@ class PolicyControllerModeTest {
         assertEquals("AUTHORIZATION_REQUIRED", ((Map<?, ?>) set.getBody()).get("code"));
 
         verify(sessionService, never()).requireCurrent(any(), any(), any());
+    }
+
+    @Test
+    void listFacesUsesTenantContextAndExistingRouteService() {
+        TenantContext.setUserId("u1");
+        TenantContext.setWorkspaceId("ws1");
+        List<ToolFaceService.FaceView> expected = List.of(
+                new ToolFaceService.FaceView(null, "builtin", null, "read_file", "read", "structured"));
+        when(faceService.list("workspace", "u1", "ws1", false)).thenReturn(expected);
+
+        ResponseEntity<?> response = controller.listFaces("workspace");
+
+        assertEquals(200, response.getStatusCode().value());
+        assertSame(expected, response.getBody());
+        verify(faceService).list("workspace", "u1", "ws1", false);
+    }
+
+    @Test
+    void listFacesMapsServiceValidationErrors() {
+        when(faceService.list("invalid", null, null, false))
+                .thenThrow(new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "bad scope"));
+
+        ResponseEntity<?> response = controller.listFaces("invalid");
+
+        assertEquals(400, response.getStatusCode().value());
+        assertEquals("INVALID_REQUEST", ((Map<?, ?>) response.getBody()).get("code"));
     }
 }

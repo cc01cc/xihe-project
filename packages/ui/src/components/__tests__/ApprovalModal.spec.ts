@@ -1,9 +1,21 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ApprovalModal from '../chat/ApprovalModal.vue'
+import { ApiError, api } from '../../composables/api'
 import type { ApprovalRequest } from '../../types'
+
+vi.mock('../../composables/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../composables/api')>()
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      upsertPolicyToolFace: vi.fn(),
+    },
+  }
+})
 
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
 const SECOND_REQUEST_ID = '22222222-2222-4222-8222-222222222222'
@@ -72,6 +84,19 @@ const i18n = createI18n({
         approvalSaveBack: 'Back',
         approvalSaveConfirm: 'Confirm save',
         reject: 'Reject',
+        approvalUnclassifiedNotice: 'Unclassified tool defaults to ask; only an owner or admin can classify it.',
+        approvalClassifyAndAllow: 'Classify and allow',
+        approvalClassifyTitle: 'Classify the tool and allow this call',
+        approvalClassifyDescription: 'Classification is persisted and this approval applies once.',
+        approvalClassifyActionClass: 'Action class',
+        approvalClassifyActionClassPlaceholder: 'e.g. read',
+        approvalClassifyActionClassRequired: 'Enter an action class.',
+        approvalClassifyShape: 'Tool shape',
+        approvalClassifyAuthorityHint: 'Classification authority: workspace OWNER / ADMIN.',
+        approvalClassifyBack: 'Back',
+        approvalClassifySubmit: 'Confirm classification and allow once',
+        approvalClassifyFailed: 'Classification failed',
+        approvalClassifyRequiresOnce: 'Unclassified tools can only be allowed once.',
       },
       common: { saving: 'Saving...' },
     },
@@ -98,8 +123,45 @@ const policy = {
   shape: 'structured' as const,
 }
 
-function mountModal(props: { approval: ApprovalRequest | null; show: boolean; busy?: boolean; error?: string | null }) {
+function mountModal(props: {
+  approval: ApprovalRequest | null
+  show: boolean
+  busy?: boolean
+  error?: string | null
+  canClassify?: boolean
+}) {
   return mount(ApprovalModal, { props, global: { plugins: [i18n] } })
+}
+
+const unclassifiedPolicy = {
+  ...policy,
+  actionClass: 'unclassified',
+  shape: 'opaque' as const,
+}
+
+type ToolFaceWriteResult = Awaited<ReturnType<typeof api.upsertPolicyToolFace>>
+
+function classifiedFace(overrides: Partial<ToolFaceWriteResult> = {}): ToolFaceWriteResult {
+  return {
+    id: 'face-1',
+    scope: 'workspace',
+    ownerId: 'workspace-1',
+    tool: 'mcp__third_party__do',
+    actionClass: 'read',
+    shape: 'opaque',
+    ...overrides,
+  }
+}
+
+function deferredToolFaceWrite() {
+  let resolveWrite!: (value: ToolFaceWriteResult) => void
+  const promise = new Promise<ToolFaceWriteResult>((resolve) => {
+    resolveWrite = resolve
+  })
+  return {
+    promise,
+    resolve: (value: ToolFaceWriteResult) => resolveWrite(value),
+  }
 }
 
 beforeEach(() => {
@@ -150,14 +212,14 @@ describe('ApprovalModal', () => {
     expect(onceButton.exists()).toBe(true)
     await onceButton.trigger('click')
 
-    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once' }]])
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: REQUEST_ID }]])
   })
 
   it('emits a session-scoped decision', async () => {
     const wrapper = mountModal({ approval: baseApproval, show: true })
     await wrapper.find('[data-testid="approval-allow-session"]').trigger('click')
 
-    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'session' }]])
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'session', requestId: REQUEST_ID }]])
   })
 
   it('keeps saved-rule confirmation inside the same modal and sends only the edited resource', async () => {
@@ -173,7 +235,7 @@ describe('ApprovalModal', () => {
     await wrapper.find('[data-testid="approval-save-confirm-button"]').trigger('click')
 
     expect(wrapper.emitted('approve')).toEqual([[
-      { decision: 'saved', layer: 'user', rule: { resource: 'src/**/*.ts' } },
+      { decision: 'saved', layer: 'user', rule: { resource: 'src/**/*.ts' }, requestId: REQUEST_ID },
     ]])
   })
 
@@ -183,7 +245,7 @@ describe('ApprovalModal', () => {
     await wrapper.find('[data-testid="approval-reject"]').trigger('click')
 
     expect(wrapper.emitted('reject')).toEqual([[
-      { decision: 'reject', feedback: 'I need a narrower path' },
+      { decision: 'reject', feedback: 'I need a narrower path', requestId: REQUEST_ID },
     ]])
   })
 
@@ -202,7 +264,7 @@ describe('ApprovalModal', () => {
 
     await wrapper.find('button[aria-label="Close"]').trigger('click')
 
-    expect(wrapper.emitted('reject')).toEqual([[{ decision: 'reject' }]])
+    expect(wrapper.emitted('reject')).toEqual([[{ decision: 'reject', requestId: REQUEST_ID }]])
   })
 
   it('rejects on Escape without granting the approval', async () => {
@@ -211,7 +273,7 @@ describe('ApprovalModal', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await nextTick()
 
-    expect(wrapper.emitted('reject')).toEqual([[{ decision: 'reject' }]])
+    expect(wrapper.emitted('reject')).toEqual([[{ decision: 'reject', requestId: REQUEST_ID }]])
     expect(wrapper.emitted('approve')).toBeUndefined()
   })
 
@@ -243,7 +305,7 @@ describe('ApprovalModal', () => {
     await wrapper.find('[data-testid="approval-rule-wildcard-confirm"]').setValue(true)
     await confirm.trigger('click')
     expect(wrapper.emitted('approve')).toEqual([[
-      { decision: 'saved', layer: 'workspace', rule: { resource: '*' } },
+      { decision: 'saved', layer: 'workspace', rule: { resource: '*' }, requestId: REQUEST_ID },
     ]])
   })
 
@@ -294,5 +356,242 @@ describe('ApprovalModal', () => {
   it('does not render when show is false', () => {
     const wrapper = mountModal({ approval: baseApproval, show: false })
     expect(wrapper.find('[class*="fixed"]').exists()).toBe(false)
+  })
+})
+
+describe('ApprovalModal unclassified classification (PLAN-0328 T1.14)', () => {
+  beforeEach(() => {
+    vi.mocked(api.upsertPolicyToolFace).mockReset()
+  })
+
+  it('offers the classify entry only to authorized users and never auto-approves', async () => {
+    const wrapper = mountModal({
+      approval: { ...baseApproval, policy: unclassifiedPolicy },
+      show: true,
+      canClassify: true,
+    })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="approval-unclassified-notice"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-classify-entry"]').exists()).toBe(true)
+    // Unclassified tools can never materialize session or saved rules.
+    expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(false)
+    expect(wrapper.emitted('approve')).toBeUndefined()
+    expect(wrapper.emitted('reject')).toBeUndefined()
+
+    await wrapper.setProps({ canClassify: false })
+    expect(wrapper.find('[data-testid="approval-classify-entry"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-unclassified-notice"]').exists()).toBe(true)
+  })
+
+  it('classifies the tool first and only then emits a one-shot approve', async () => {
+    vi.mocked(api.upsertPolicyToolFace).mockResolvedValue({
+      id: 'face-1',
+      scope: 'workspace',
+      ownerId: 'workspace-1',
+      tool: 'mcp__third_party__do',
+      actionClass: 'read',
+      shape: 'structured',
+    })
+    const wrapper = mountModal({
+      approval: { ...baseApproval, tool: 'mcp__third_party__do', policy: unclassifiedPolicy },
+      show: true,
+      canClassify: true,
+    })
+
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(true)
+    expect(api.upsertPolicyToolFace).not.toHaveBeenCalled()
+    expect(wrapper.emitted('approve')).toBeUndefined()
+
+    expect(wrapper.find('[data-testid="approval-classify-submit"]').attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-testid="approval-classify-action-class"]').setValue('read')
+    await wrapper.find('[data-testid="approval-classify-shape"]').setValue('structured')
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.upsertPolicyToolFace).toHaveBeenCalledWith({
+      scope: 'workspace',
+      tool: 'mcp__third_party__do',
+      actionClass: 'read',
+      shape: 'structured',
+    })
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: REQUEST_ID }]])
+    expect(wrapper.emitted('reject')).toBeUndefined()
+  })
+
+  it('does not approve when classification fails and keeps the step usable', async () => {
+    vi.mocked(api.upsertPolicyToolFace).mockRejectedValueOnce(new ApiError({
+      status: 403,
+      code: 'FORBIDDEN',
+      detail: 'classification requires workspace OWNER or ADMIN',
+      requestId: 'test',
+    }))
+    const wrapper = mountModal({
+      approval: { ...baseApproval, tool: 'mcp__third_party__do', policy: unclassifiedPolicy },
+      show: true,
+      canClassify: true,
+    })
+
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    await wrapper.find('[data-testid="approval-classify-action-class"]').setValue('read')
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-classify-error"]').text()).toContain('FORBIDDEN')
+    expect(wrapper.emitted('approve')).toBeUndefined()
+
+    // The failure releases the submit guard and the same request can be classified again.
+    expect(wrapper.find('[data-testid="approval-classify-submit"]').attributes('disabled')).toBeUndefined()
+    vi.mocked(api.upsertPolicyToolFace).mockResolvedValueOnce({
+      id: 'face-1',
+      scope: 'workspace',
+      ownerId: 'workspace-1',
+      tool: 'mcp__third_party__do',
+      actionClass: 'read',
+      shape: 'structured',
+    })
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: REQUEST_ID }]])
+  })
+
+  it('does not freeze the next request after a failed classification', async () => {
+    vi.mocked(api.upsertPolicyToolFace).mockRejectedValueOnce(new ApiError({
+      status: 403,
+      code: 'FORBIDDEN',
+      detail: 'classification requires workspace OWNER or ADMIN',
+      requestId: 'test',
+    }))
+    const wrapper = mountModal({
+      approval: { ...baseApproval, tool: 'mcp__third_party__do', policy: unclassifiedPolicy },
+      show: true,
+      canClassify: true,
+    })
+
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    await wrapper.find('[data-testid="approval-classify-action-class"]').setValue('read')
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="approval-classify-error"]').exists()).toBe(true)
+
+    await wrapper.setProps({
+      approval: { ...baseApproval, requestId: SECOND_REQUEST_ID, tool: 'mcp__third_party__do', policy: unclassifiedPolicy },
+    })
+    vi.mocked(api.upsertPolicyToolFace).mockResolvedValueOnce({
+      id: 'face-2',
+      scope: 'workspace',
+      ownerId: 'workspace-1',
+      tool: 'mcp__third_party__do',
+      actionClass: 'read',
+      shape: 'opaque',
+    })
+
+    expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-classify-error"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    await wrapper.find('[data-testid="approval-classify-action-class"]').setValue('read')
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: SECOND_REQUEST_ID }]])
+  })
+
+  it('aborts a classification whose request changed while the write was in flight', async () => {
+    const pendingWrite = deferredToolFaceWrite()
+    vi.mocked(api.upsertPolicyToolFace).mockReturnValueOnce(pendingWrite.promise)
+    const wrapper = mountModal({
+      approval: { ...baseApproval, tool: 'mcp__third_party__do', policy: unclassifiedPolicy },
+      show: true,
+      canClassify: true,
+    })
+
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    await wrapper.find('[data-testid="approval-classify-action-class"]').setValue('read')
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    expect(wrapper.find('[data-testid="approval-classify-submit"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.setProps({
+      approval: { ...baseApproval, requestId: SECOND_REQUEST_ID, tool: 'mcp__third_party__do', policy: unclassifiedPolicy },
+    })
+    pendingWrite.resolve(classifiedFace())
+    await flushPromises()
+
+    expect(wrapper.emitted('approve')).toBeUndefined()
+    expect(wrapper.emitted('reject')).toBeUndefined()
+    // No state leak: the stale write neither keeps the step busy nor blocks the new request.
+    expect(wrapper.find('[data-testid="approval-classify-entry"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="approval-approve"]').attributes('disabled')).toBeUndefined()
+
+    vi.mocked(api.upsertPolicyToolFace).mockResolvedValueOnce(classifiedFace())
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    await wrapper.find('[data-testid="approval-classify-action-class"]').setValue('read')
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: SECOND_REQUEST_ID }]])
+  })
+
+  it('cancels an in-flight classification with Escape without emitting or sticking', async () => {
+    const pendingWrite = deferredToolFaceWrite()
+    vi.mocked(api.upsertPolicyToolFace).mockReturnValueOnce(pendingWrite.promise)
+    const wrapper = mountModal({
+      approval: { ...baseApproval, tool: 'mcp__third_party__do', policy: unclassifiedPolicy },
+      show: true,
+      canClassify: true,
+    })
+
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    await wrapper.find('[data-testid="approval-classify-action-class"]').setValue('read')
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    expect(wrapper.find('[data-testid="approval-classify-submit"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.find('.approval-content').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(false)
+
+    pendingWrite.resolve(classifiedFace())
+    await flushPromises()
+
+    expect(wrapper.emitted('approve')).toBeUndefined()
+    expect(wrapper.emitted('reject')).toBeUndefined()
+
+    // The cancelled step is fully released: a fresh classify can still allow once.
+    vi.mocked(api.upsertPolicyToolFace).mockResolvedValueOnce(classifiedFace())
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    await wrapper.find('[data-testid="approval-classify-action-class"]').setValue('read')
+    await wrapper.find('[data-testid="approval-classify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: REQUEST_ID }]])
+  })
+
+  it('returns to the decision view on Escape without rejecting', async () => {
+    const wrapper = mountModal({
+      approval: { ...baseApproval, policy: unclassifiedPolicy },
+      show: true,
+      canClassify: true,
+    })
+
+    await wrapper.find('[data-testid="approval-classify-entry"]').trigger('click')
+    await wrapper.find('[data-testid="approval-classify-action-class"]').trigger('keydown', { key: 'Escape' })
+
+    expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-classify-entry"]').exists()).toBe(true)
+    expect(wrapper.emitted('reject')).toBeUndefined()
+    expect(wrapper.emitted('approve')).toBeUndefined()
+  })
+
+  it('keeps the plain once/reject flow for unclassified tools without authority', async () => {
+    const wrapper = mountModal({
+      approval: { ...baseApproval, policy: unclassifiedPolicy },
+      show: true,
+      canClassify: false,
+    })
+    await wrapper.find('[data-testid="approval-approve"]').trigger('click')
+
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: REQUEST_ID }]])
   })
 })

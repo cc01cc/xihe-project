@@ -26,6 +26,7 @@ import org.springframework.http.ResponseEntity;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -49,6 +50,9 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatApprovalRepository approvalRepository;
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private String authToken;
     private String userId;
@@ -444,6 +448,120 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
                 baseUrl + "/internal/v1/operations/" + operationId + "/trace", HttpMethod.GET,
                 new HttpEntity<>(new HttpHeaders()), Map.class);
         assertEquals(HttpStatus.UNAUTHORIZED, anonymous.getStatusCode());
+    }
+
+    @Test
+    void attachPolicySummary_isProjectedOnOwnerAndInternalTraces() {
+        UUID operationId = start(null).operationId();
+        com.cc01cc.p.xihe.cp.entity.OperationItem item =
+                operationService.appendItem(operationId, UUID.randomUUID().toString(), null,
+                        "tool_call", "write_file", "mcp", null, null, null);
+        operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
+        String snapshot = "{\"effect\":\"ask\",\"sourceLayer\":\"builtin\","
+                + "\"matchedRule\":\"{ write, \\\"*\\\", ask }\",\"reason\":\"requires approval for domain write\","
+                + "\"mode\":\"bypass\",\"allowedBy\":\"bypass@session\",\"actionClass\":\"write\","
+                + "\"shape\":\"structured\"}";
+        assertTrue(operationService.attachPolicySummary(item.getId(), snapshot));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Map> owner = restTemplate.exchange(
+                baseUrl + "/api/v1/operations/" + operationId, HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, owner.getStatusCode());
+        List<Map<String, Object>> ownerItems =
+                (List<Map<String, Object>>) (Object) owner.getBody().get("items");
+        assertEquals(1, ownerItems.size());
+        Map<String, Object> ownerPolicy = (Map<String, Object>) ownerItems.get(0).get("policy");
+        assertNotNull(ownerPolicy);
+        assertEquals(Set.of("effect", "sourceLayer", "matchedRule", "reason", "mode",
+                "allowedBy", "actionClass", "shape"), ownerPolicy.keySet());
+        assertEquals("ask", ownerPolicy.get("effect"));
+        assertEquals("bypass@session", ownerPolicy.get("allowedBy"));
+        assertEquals("allow", ownerItems.get(0).get("policyDecision"));
+        assertFalse(ownerPolicy.containsKey("arguments"));
+        assertFalse(ownerPolicy.containsKey("details"));
+
+        HttpHeaders serviceHeaders = new HttpHeaders();
+        serviceHeaders.setBearerAuth("dev-token-not-secure");
+        ResponseEntity<Map> internal = restTemplate.exchange(
+                baseUrl + "/internal/v1/operations/" + operationId + "/trace", HttpMethod.GET,
+                new HttpEntity<>(serviceHeaders), Map.class);
+        assertEquals(HttpStatus.OK, internal.getStatusCode());
+        List<Map<String, Object>> internalItems =
+                (List<Map<String, Object>>) (Object) internal.getBody().get("items");
+        assertEquals(1, internalItems.size());
+        assertEquals(ownerPolicy, internalItems.get(0).get("policy"));
+    }
+
+    @Test
+    void attachPolicySummary_legacyRowAndRepeatAttachAreSafe() {
+        // pre-V19 rows (no snapshot) must omit `policy` while keeping the legacy marker.
+        UUID operationId = start(null).operationId();
+        com.cc01cc.p.xihe.cp.entity.OperationItem legacy =
+                operationService.appendItem(operationId, UUID.randomUUID().toString(), null,
+                        "tool_call", "read_file", "mcp", null, null, null);
+        operationService.transitionItem(legacy.getId(), "running", "allow", null, null, null);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Map> owner = restTemplate.exchange(
+                baseUrl + "/api/v1/operations/" + operationId, HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        List<Map<String, Object>> items =
+                (List<Map<String, Object>>) (Object) owner.getBody().get("items");
+        assertFalse(items.get(0).containsKey("policy"));
+        assertEquals("allow", items.get(0).get("policyDecision"));
+
+        // Missing item: skip safely, never create a second item.
+        assertFalse(operationService.attachPolicySummary(UUID.randomUUID(),
+                "{\"effect\":\"allow\",\"sourceLayer\":\"builtin\",\"matchedRule\":null,"
+                        + "\"reason\":\"allowed by read rules\",\"mode\":\"default\",\"allowedBy\":null,"
+                        + "\"actionClass\":\"read\",\"shape\":\"structured\"}"));
+        // Unsafe / malformed payloads are rejected instead of persisted.
+        assertFalse(operationService.attachPolicySummary(legacy.getId(), "{\"effect\":\"ask\"}"));
+        assertFalse(operationService.attachPolicySummary(legacy.getId(),
+                "{\"arguments\":{\"path\":\"/etc/passwd\"}}"));
+        assertNull(operationService.findItem(legacy.getId().toString()).getPolicySummary());
+    }
+
+    @Test
+    void attachPolicySummary_firstWriteWinsOnReplay() {
+        UUID operationId = start(null).operationId();
+        com.cc01cc.p.xihe.cp.entity.OperationItem item =
+                operationService.appendItem(operationId, UUID.randomUUID().toString(), null,
+                        "tool_call", "read_file", "mcp", null, null, null);
+        String first = "{\"effect\":\"allow\",\"sourceLayer\":\"builtin\",\"matchedRule\":null,"
+                + "\"reason\":\"allowed by read rules\",\"mode\":\"default\",\"allowedBy\":null,"
+                + "\"actionClass\":\"read\",\"shape\":\"structured\"}";
+        String replay = "{\"effect\":\"deny\",\"sourceLayer\":\"instance\",\"matchedRule\":null,"
+                + "\"reason\":\"denied later\",\"mode\":\"managed\",\"allowedBy\":null,"
+                + "\"actionClass\":\"read\",\"shape\":\"structured\"}";
+
+        assertTrue(operationService.attachPolicySummary(item.getId(), first));
+        assertFalse(operationService.attachPolicySummary(item.getId(), replay));
+
+        Map<String, Object> trace = operationService.getOperationTrace(operationId);
+        @SuppressWarnings("unchecked")
+        List<com.cc01cc.p.xihe.cp.entity.OperationItem> items =
+                (List<com.cc01cc.p.xihe.cp.entity.OperationItem>) (Object) trace.get("items");
+        assertEquals(first, items.get(0).getPolicySummary());
+    }
+
+    @Test
+    void v19PolicySummaryColumnAppliedByFlyway() {
+        // PLAN-0328 T1.15: the Flyway-managed integration schema carries the new column
+        // (ddl-auto=validate only; Flyway is the sole schema manager).
+        String dataType = jdbcTemplate.queryForObject(
+                "SELECT data_type FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'operation_items' "
+                        + "AND column_name = 'policy_summary'",
+                String.class);
+        assertEquals("text", dataType);
+        Integer applied = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '19' AND success = true",
+                Integer.class);
+        assertEquals(1, applied);
     }
 
     @Test

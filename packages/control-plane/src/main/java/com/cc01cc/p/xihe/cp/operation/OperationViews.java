@@ -79,7 +79,10 @@ final class OperationViews {
         view.put("kind", item.getKind());
         view.put("toolName", item.getToolName());
         view.put("source", item.getSource());
+        // Legacy coarse decision marker (allow/deny/...); the safe verdict snapshot is `policy`.
         view.put("policyDecision", item.getPolicyDecision());
+        OperationPolicySummary.parse(item.getPolicySummary())
+                .ifPresent(policy -> view.put("policy", policy));
         view.put("approvalRequestId", item.getApprovalRequestId());
         view.put("status", item.getStatus());
         view.put("errorCode", item.getErrorCode());
@@ -98,7 +101,10 @@ final class OperationViews {
         view.put("kind", item.getKind());
         view.put("toolName", item.getToolName());
         view.put("source", item.getSource());
+        // Legacy coarse decision marker (allow/deny/...); the safe verdict snapshot is `policy`.
         view.put("policyDecision", item.getPolicyDecision());
+        OperationPolicySummary.parse(item.getPolicySummary())
+                .ifPresent(policy -> view.put("policy", policy));
         view.put("approvalRequestId", item.getApprovalRequestId());
         view.put("status", item.getStatus());
         view.put("resultRef", item.getResultRef());

@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -90,6 +91,43 @@ class PolicyRuleServiceTest {
 
         assertEquals(1, views.size());
         assertFalse(views.get(0).effective(), "workspace configures exec → the user rule is not effective");
+    }
+
+    @Test
+    void createdUserRuleIsIneffectiveWhenWorkspaceConfiguresSameDomain() {
+        List<PolicyRuleEntity> userRules = new ArrayList<>();
+        when(repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance")).thenReturn(List.of());
+        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("user", "u1")).thenReturn(userRules);
+        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1"))
+                .thenReturn(List.of(rule("workspace", "ws1", "exec", "pnpm test *", "ask", false)));
+        when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> {
+            PolicyRuleEntity entity = inv.getArgument(0);
+            userRules.add(entity);
+            return entity;
+        });
+
+        PolicyRuleService.RuleView view = service.create("user", "u1", "ws1", false,
+                input("exec", "*", "allow", false));
+
+        assertFalse(view.effective(), "workspace configures exec → the created user rule is not effective");
+    }
+
+    @Test
+    void createdUserRuleIsEffectiveWhenNoHigherLayerConfiguresTheDomain() {
+        List<PolicyRuleEntity> userRules = new ArrayList<>();
+        when(repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance")).thenReturn(List.of());
+        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("user", "u1")).thenReturn(userRules);
+        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1")).thenReturn(List.of());
+        when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> {
+            PolicyRuleEntity entity = inv.getArgument(0);
+            userRules.add(entity);
+            return entity;
+        });
+
+        PolicyRuleService.RuleView view = service.create("user", "u1", "ws1", false,
+                input("exec", "*", "allow", false));
+
+        assertTrue(view.effective(), "no higher layer configures exec → the created user rule is effective");
     }
 
     @Test

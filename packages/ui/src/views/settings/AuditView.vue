@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { TriangleAlert } from '@lucide/vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import { useOperationStore } from '../../stores/operations'
-import type { OperationStatus } from '../../types'
+import type {
+  ApprovalPolicyEffect,
+  ApprovalPolicyMode,
+  ApprovalPolicyShape,
+  ApprovalPolicySourceLayer,
+  OperationItemView,
+  OperationStatus,
+} from '../../types'
 
 const { t } = useI18n()
 const operationStore = useOperationStore()
@@ -12,6 +20,59 @@ const statusFilter = ref<OperationStatus | ''>('')
 const selectedOperationId = ref<string | null>(null)
 
 const selectedTrace = computed(() => operationStore.selectedTrace)
+
+const sourceLayerLabels: Record<ApprovalPolicySourceLayer, string> = {
+  builtin: 'chat.approvalLayerBuiltin',
+  instance: 'chat.approvalLayerInstance',
+  user: 'chat.approvalLayerUser',
+  workspace: 'chat.approvalLayerWorkspace',
+  session: 'chat.approvalLayerSession',
+  per_call: 'chat.approvalLayerPerCall',
+}
+
+const modeLabels: Record<Exclude<ApprovalPolicyMode, null>, string> = {
+  default: 'chat.approvalModeDefault',
+  bypass: 'chat.approvalModeBypass',
+  managed: 'chat.approvalModeManaged',
+  'accept-edits': 'chat.approvalModeAcceptEdits',
+  plan: 'chat.approvalModePlan',
+}
+
+const shapeLabels: Record<ApprovalPolicyShape, string> = {
+  structured: 'chat.approvalShapeStructured',
+  interpreter: 'chat.approvalShapeInterpreter',
+  opaque: 'chat.approvalShapeOpaque',
+}
+
+const effectLabels: Record<ApprovalPolicyEffect, string> = {
+  allow: 'settings.policyEffectAllow',
+  ask: 'settings.policyEffectAsk',
+  deny: 'settings.policyEffectDeny',
+}
+
+function effectClass(effect: ApprovalPolicyEffect): string {
+  if (effect === 'deny') return 'border-destructive/40 bg-destructive/10 text-destructive'
+  if (effect === 'ask') return 'border-amber-500/40 bg-amber-500/10 text-foreground'
+  return 'border-emerald-500/40 bg-emerald-500/10 text-foreground'
+}
+
+function layerLabel(layer: ApprovalPolicySourceLayer): string {
+  return t(sourceLayerLabels[layer])
+}
+
+function modeLabel(mode: ApprovalPolicyMode): string {
+  return mode === null ? t('chat.approvalModeUnavailable') : t(modeLabels[mode])
+}
+
+function allowedByLabel(allowedBy: string): string {
+  if (allowedBy.startsWith('bypass')) return t('settings.auditPolicyAllowedByBypass')
+  if (allowedBy.startsWith('accept-edits')) return t('settings.auditPolicyAllowedByAcceptEdits')
+  return t('settings.auditPolicyAllowedByOther')
+}
+
+function policyTestId(item: OperationItemView): string {
+  return `settings-audit-policy-${item.toolCallId || item.id}`
+}
 
 async function loadOperations(page = 0) {
   await operationStore.load({
@@ -159,8 +220,13 @@ onMounted(() => {
           <div>
             <h3 class="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{{ t('settings.auditItems') }}</h3>
             <div v-if="selectedTrace.items.length === 0" class="text-sm text-muted-foreground">{{ t('settings.auditNoItems') }}</div>
-            <ul v-else class="space-y-2">
-              <li v-for="item in selectedTrace.items" :key="item.id" class="rounded-md border border-border/70 px-3 py-2">
+            <ul v-else data-testid="settings-audit-items" class="space-y-2">
+              <li
+                v-for="item in selectedTrace.items"
+                :key="item.id"
+                :data-testid="`settings-audit-item-${item.id}`"
+                class="rounded-md border border-border/70 px-3 py-2"
+              >
                 <div class="flex items-center justify-between gap-3 text-sm">
                   <span>{{ item.toolName || item.kind }}</span>
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
@@ -170,6 +236,75 @@ onMounted(() => {
                   <span v-if="item.approvalRequestId">{{ t('settings.auditApprovalLinked') }}</span>
                   <span v-if="item.errorCode">{{ item.errorCode }}</span>
                 </div>
+
+                <div
+                  v-if="item.policy"
+                  :data-testid="policyTestId(item)"
+                  class="mt-2 rounded-md border border-border/70 bg-muted/30 px-2.5 py-2 text-xs"
+                >
+                  <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span class="font-medium">{{ t('settings.auditPolicy') }}</span>
+                    <span
+                      :data-testid="`${policyTestId(item)}-effect`"
+                      class="rounded-full border px-2 py-0.5 font-medium"
+                      :class="effectClass(item.policy.effect)"
+                    >
+                      {{ t(effectLabels[item.policy.effect]) }}
+                    </span>
+                    <span v-if="item.toolCallId" class="font-mono text-muted-foreground" :title="item.toolCallId">
+                      {{ t('settings.auditPolicyToolCallId') }}: {{ item.toolCallId }}
+                    </span>
+                  </div>
+                  <dl class="mt-1.5 grid gap-x-4 gap-y-1 sm:grid-cols-2">
+                    <div class="flex min-w-0 gap-1.5">
+                      <dt class="shrink-0 text-muted-foreground">{{ t('chat.approvalEvidenceMatchedRule') }}</dt>
+                      <dd :data-testid="`${policyTestId(item)}-matched-rule`" class="min-w-0 break-all font-mono">
+                        {{ item.policy.matchedRule ?? t('chat.approvalNoMatchedRule') }}
+                      </dd>
+                    </div>
+                    <div class="flex min-w-0 gap-1.5">
+                      <dt class="shrink-0 text-muted-foreground">{{ t('chat.approvalEvidenceSourceLayer') }}</dt>
+                      <dd :data-testid="`${policyTestId(item)}-source-layer`">{{ layerLabel(item.policy.sourceLayer) }}</dd>
+                    </div>
+                    <div class="flex min-w-0 gap-1.5">
+                      <dt class="shrink-0 text-muted-foreground">{{ t('chat.approvalEvidenceMode') }}</dt>
+                      <dd :data-testid="`${policyTestId(item)}-mode`">{{ modeLabel(item.policy.mode) }}</dd>
+                    </div>
+                  </dl>
+                  <p
+                    v-if="item.policy.allowedBy"
+                    :data-testid="`${policyTestId(item)}-allowed-by`"
+                    class="mt-1.5 flex flex-wrap items-center gap-x-1.5 rounded border border-amber-600/50 bg-amber-500/15 px-2 py-1 font-medium"
+                  >
+                    <TriangleAlert class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>{{ allowedByLabel(item.policy.allowedBy) }}</span>
+                    <code class="font-mono">{{ item.policy.allowedBy }}</code>
+                  </p>
+                  <details class="mt-1.5">
+                    <summary class="cursor-pointer text-muted-foreground hover:text-foreground">{{ t('settings.auditPolicyDetail') }}</summary>
+                    <dl class="mt-1 space-y-1">
+                      <div class="flex min-w-0 gap-1.5">
+                        <dt class="shrink-0 text-muted-foreground">{{ t('chat.approvalEvidenceReason') }}</dt>
+                        <dd :data-testid="`${policyTestId(item)}-reason`" class="min-w-0 whitespace-pre-wrap break-words">{{ item.policy.reason }}</dd>
+                      </div>
+                      <div class="flex min-w-0 gap-1.5">
+                        <dt class="shrink-0 text-muted-foreground">{{ t('chat.approvalEvidenceActionClass') }}</dt>
+                        <dd :data-testid="`${policyTestId(item)}-action-class`" class="min-w-0 break-all font-mono">{{ item.policy.actionClass }}</dd>
+                      </div>
+                      <div class="flex min-w-0 gap-1.5">
+                        <dt class="shrink-0 text-muted-foreground">{{ t('chat.approvalEvidenceShape') }}</dt>
+                        <dd :data-testid="`${policyTestId(item)}-shape`">{{ t(shapeLabels[item.policy.shape]) }}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                </div>
+                <p
+                  v-else
+                  :data-testid="`settings-audit-policy-absent-${item.id}`"
+                  class="mt-2 text-xs text-muted-foreground"
+                >
+                  {{ t('settings.auditPolicyAbsent') }}
+                </p>
               </li>
             </ul>
           </div>

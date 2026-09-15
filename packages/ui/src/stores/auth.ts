@@ -41,6 +41,16 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!token.value)
   const userName = computed(() => user.value?.name ?? user.value?.email ?? 'User')
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
+  /**
+   * PLAN-0328 decision #56: tool classification is limited to workspace OWNER / instance ADMIN.
+   * The client only uses this to decide whether to offer the affordance — the CP enforces the
+   * rule and returns 403, which stays visible to the user. Fails closed when ownership is unknown.
+   */
+  const canClassifyTools = computed(() => {
+    if (user.value?.role === 'ADMIN') return true
+    const ownerId = workspace.value?.ownerId
+    return Boolean(ownerId && user.value?.id && ownerId === user.value.id)
+  })
 
   function _saveToken(t: string, u: User, ws: ApiWorkspace | null) {
     token.value = t
@@ -133,11 +143,27 @@ export const useAuthStore = defineStore('auth', () => {
     clearSessionCaches()
   }
 
+  /**
+   * Fetches the current workspace once so `ownerId` is available for owner-only affordances
+   * (the login response carries only the workspace id). Failures are non-fatal: the server
+   * remains the authority and unauthorized writes surface as 403.
+   */
+  async function hydrateWorkspace(): Promise<void> {
+    if (!token.value || workspace.value?.ownerId) return
+    try {
+      const current = await api.getCurrentWorkspace()
+      workspace.value = current
+      localStorage.setItem('xihe-workspace', JSON.stringify(current))
+    } catch (cause) {
+      logger.warn('Failed to hydrate current workspace', cause)
+    }
+  }
+
   const currentWorkspaceId = computed(() => workspace.value?.id ?? null)
 
   return {
     token, user, workspace, loading, error, isAuthenticated, userName, isAdmin,
-    currentWorkspaceId,
-    login, register, logout,
+    canClassifyTools, currentWorkspaceId,
+    login, register, logout, hydrateWorkspace,
   }
 })

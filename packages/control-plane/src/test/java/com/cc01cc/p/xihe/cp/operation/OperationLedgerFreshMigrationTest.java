@@ -169,6 +169,23 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
+    void v19OperationPolicySummaryColumnApplied() throws SQLException {
+        // PLAN-0328 T1.15: the safe verdict snapshot column must exist on a fresh chain.
+        assertNotNull(scalarString(
+                "SELECT column_name FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'operation_items' "
+                        + "AND column_name = 'policy_summary'"),
+                "operation_items.policy_summary must exist for the durable verdict snapshot");
+        assertEquals("text", scalarString(
+                "SELECT data_type FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'operation_items' "
+                        + "AND column_name = 'policy_summary'"));
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '19' AND success = true"),
+                "V19 must be recorded as applied");
+    }
+
+    @Test
     void v8SchemaGateFixesApplied() throws SQLException {
         for (String fk : new String[]{
                 "fk_workspaces_owner", "fk_sessions_user", "fk_chat_runs_user",

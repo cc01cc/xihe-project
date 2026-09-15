@@ -16,20 +16,91 @@ const completedOperation = {
   createdAt: '2026-09-09T01:00:00.000Z',
 }
 
+// Item policy snapshots mirror the exact wire shape of CP OperationPolicySummary
+// (PLAN-0328 T1.15): lower-case enums, nullable matchedRule/mode/allowedBy.
 const trace = {
   operation: completedOperation,
-  items: [{
-    id: 'item-1',
-    operationId: 'op-1',
-    sequence: 1,
-    kind: 'tool_call',
-    toolName: 'read_file',
-    source: 'agent',
-    status: 'completed',
-  }],
+  items: [
+    {
+      id: 'item-bypass',
+      operationId: 'op-1',
+      toolCallId: 'call-bypass-1',
+      sequence: 1,
+      kind: 'tool_call',
+      toolName: 'write_file',
+      source: 'mcp',
+      policyDecision: 'allow',
+      status: 'completed',
+      // A bypass verdict is always an allow with a non-null allowedBy (PolicyVerdict
+      // .allowedByMode); the underlying ask rule stays visible as matchedRule.
+      policy: {
+        effect: 'allow',
+        sourceLayer: 'builtin',
+        matchedRule: '{ write, "*", ask }',
+        reason: 'requires approval for domain write',
+        mode: 'bypass',
+        allowedBy: 'bypass@session',
+        actionClass: 'write',
+        shape: 'structured',
+      },
+    },
+    {
+      id: 'item-allow',
+      operationId: 'op-1',
+      toolCallId: 'call-allow-2',
+      sequence: 2,
+      kind: 'tool_call',
+      toolName: 'read_file',
+      source: 'mcp',
+      policyDecision: 'allow',
+      status: 'completed',
+      policy: {
+        effect: 'allow',
+        sourceLayer: 'workspace',
+        matchedRule: '{ read, "src/**", allow }',
+        reason: 'workspace rule allows reads under src',
+        mode: 'default',
+        allowedBy: null,
+        actionClass: 'read',
+        shape: 'structured',
+      },
+    },
+    {
+      id: 'item-ask',
+      operationId: 'op-1',
+      toolCallId: 'call-ask-3',
+      sequence: 3,
+      kind: 'tool_call',
+      toolName: 'execute_command',
+      source: 'mcp',
+      policyDecision: 'allow',
+      status: 'completed',
+      policy: {
+        effect: 'ask',
+        sourceLayer: 'builtin',
+        matchedRule: '{ exec, "*", ask }',
+        reason: 'exec requires approval',
+        mode: 'default',
+        allowedBy: null,
+        actionClass: 'exec',
+        shape: 'structured',
+      },
+    },
+    {
+      id: 'item-legacy',
+      operationId: 'op-1',
+      toolCallId: 'call-legacy-3',
+      sequence: 4,
+      kind: 'tool_call',
+      toolName: 'list_directory',
+      source: 'agent',
+      policyDecision: 'allow',
+      status: 'completed',
+    },
+  ],
   attempts: [{
     id: 'attempt-1',
-    itemId: 'item-1',
+    itemId: 'item-bypass',
     stage: 'agent_dispatch',
     retryNo: 0,
     module: 'agent',
@@ -125,6 +196,53 @@ test.describe('Operation audit (PLAN-281 N3)', () => {
     expect(requests.traceRequests).toHaveLength(1)
   })
 
+  test('shows per-toolCallId verdicts, the bypass highlight and the legacy no-verdict state', async ({ page }) => {
+    await installAuditRoutes(page, 'normal')
+    await page.goto('/settings/audit')
+
+    const traceResponse = page.waitForResponse((response) => response.url().endsWith('/api/v1/operations/op-1') && response.status() === 200)
+    await page.getByTestId('settings-audit-operation-op-1').click()
+    await traceResponse
+
+    const bypassItem = page.getByTestId('settings-audit-item-item-bypass')
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1')).toBeVisible()
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-effect')).toHaveText('允许')
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-matched-rule')).toHaveText('{ write, "*", ask }')
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-source-layer')).toHaveText('内置层')
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-mode')).toHaveText('免批')
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toContainText('由 bypass 放行')
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toContainText('bypass@session')
+    await expect(bypassItem.getByText('工具调用: call-bypass-1')).toBeVisible()
+
+    const allowItem = page.getByTestId('settings-audit-item-item-allow')
+    await expect(allowItem.getByTestId('settings-audit-policy-call-allow-2-effect')).toHaveText('允许')
+    await expect(allowItem.getByTestId('settings-audit-policy-call-allow-2-matched-rule')).toHaveText('{ read, "src/**", allow }')
+    await expect(allowItem.getByTestId('settings-audit-policy-call-allow-2-source-layer')).toHaveText('工作区层')
+    await expect(allowItem.getByTestId('settings-audit-policy-call-allow-2-mode')).toHaveText('默认')
+    await expect(allowItem.getByTestId('settings-audit-policy-call-allow-2-allowed-by')).toHaveCount(0)
+
+    // A plain ask verdict has no allowedBy and must keep rendering the ask label.
+    const askItem = page.getByTestId('settings-audit-item-item-ask')
+    await expect(askItem.getByTestId('settings-audit-policy-call-ask-3-effect')).toHaveText('询问')
+    await expect(askItem.getByTestId('settings-audit-policy-call-ask-3-matched-rule')).toHaveText('{ exec, "*", ask }')
+    await expect(askItem.getByTestId('settings-audit-policy-call-ask-3-source-layer')).toHaveText('内置层')
+    await expect(askItem.getByTestId('settings-audit-policy-call-ask-3-mode')).toHaveText('默认')
+    await expect(askItem.getByTestId('settings-audit-policy-call-ask-3-allowed-by')).toHaveCount(0)
+
+    const legacyItem = page.getByTestId('settings-audit-item-item-legacy')
+    await expect(legacyItem.getByTestId('settings-audit-policy-absent-item-legacy')).toHaveText('无判定记录（旧记录或非 MCP 路径）')
+    await expect(legacyItem.getByTestId('settings-audit-policy-call-legacy-3')).toHaveCount(0)
+
+    await bypassItem.getByText('判定详情').click()
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-reason')).toBeVisible()
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-reason')).toHaveText('requires approval for domain write')
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-action-class')).toHaveText('write')
+    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-shape')).toHaveText('结构化')
+
+    // Reuse-hit annotation and answerer stay unimplemented (T1.7/T1.9): the view must not invent them.
+    await expect(page.getByTestId('settings-audit-items').getByText(/复用|回答者/)).toHaveCount(0)
+  })
+
   test('renders an explicit empty state', async ({ page }) => {
     await installAuditRoutes(page, 'empty')
     await page.goto('/settings/audit')
@@ -139,5 +257,34 @@ test.describe('Operation audit (PLAN-281 N3)', () => {
 
     await expect(page.getByText('Audit backend unavailable')).toBeVisible()
     await expect(page.getByTestId('settings-audit-no-selection')).toBeVisible()
+  })
+})
+
+test.describe('Operation audit policy verdict on mobile (PLAN-0328 T1.15)', () => {
+  test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+
+  test.beforeEach(async ({ page }) => {
+    await setupMockAuth(page)
+    await setupMockSessions(page, { sessions: [{ id: 'session-1', title: 'Audit Session' }] })
+  })
+
+  test('renders the verdict block, bypass highlight and legacy state at 390x844', async ({ page }, testInfo) => {
+    await installAuditRoutes(page, 'normal')
+    await page.goto('/settings/audit')
+
+    const traceResponse = page.waitForResponse((response) => response.url().endsWith('/api/v1/operations/op-1') && response.status() === 200)
+    await page.getByTestId('settings-audit-operation-op-1').click()
+    await traceResponse
+
+    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-effect')).toHaveText('允许')
+    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toContainText('由 bypass 放行')
+    await expect(page.getByTestId('settings-audit-policy-call-ask-3-effect')).toHaveText('询问')
+    await expect(page.getByTestId('settings-audit-policy-absent-item-legacy')).toHaveText('无判定记录（旧记录或非 MCP 路径）')
+
+    await page.getByText('判定详情').first().click()
+    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-reason')).toBeVisible()
+
+    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath('audit-policy-mobile-390x844.png'), fullPage: true })
   })
 })

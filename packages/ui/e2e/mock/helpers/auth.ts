@@ -38,7 +38,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     )
     localStorage.setItem(
       'xihe-workspace',
-      JSON.stringify({ id: 'workspace-1', name: 'Mock Workspace' }),
+      JSON.stringify({ id: 'workspace-1', name: 'Mock Workspace', ownerId: 'user-1' }),
     )
   })
 
