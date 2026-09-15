@@ -1,18 +1,79 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { logger } from '../../lib/logger'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 import ImportPreview, { type ImportData } from '../../components/settings/ImportPreview.vue'
-import { apiRaw } from '../../composables/api'
+import { apiRaw, api, ApiError } from '../../composables/api'
+import { useAuthStore } from '../../stores/auth'
+import type { CheckpointRetention } from '../../types'
 
 const { t } = useI18n()
+const authStore = useAuthStore()
 const exporting = ref(false)
 const importing = ref(false)
 const importFile = ref<File | null>(null)
 const showImportPreview = ref(false)
 const result = ref<string | null>(null)
+
+// PLAN-0328 M3 (decision #10 / spec/ui-ux §4.5): informational retention view + manual sweep.
+// Constants are server-reported (N=50 / TTL 30d); the UI never invents them.
+const workspaceId = computed(() => authStore.currentWorkspaceId)
+const retention = ref<CheckpointRetention | null>(null)
+const retentionLoading = ref(false)
+const retentionError = ref<string | null>(null)
+const gcConfirming = ref(false)
+const gcBusy = ref(false)
+const gcResult = ref<string | null>(null)
+
+function errorText(cause: unknown, fallback: string): string {
+  return cause instanceof ApiError ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}` : fallback
+}
+
+async function loadRetention() {
+  const wsId = workspaceId.value
+  if (!wsId) {
+    retention.value = null
+    return
+  }
+  retentionLoading.value = true
+  retentionError.value = null
+  try {
+    retention.value = await api.getWorkspaceCheckpointRetention(wsId)
+  } catch (cause) {
+    retentionError.value = errorText(cause, t('settings.checkpointLoadFailed'))
+    logger.warn('Failed to load checkpoint retention', cause)
+  } finally {
+    retentionLoading.value = false
+  }
+}
+
+async function runGc() {
+  const wsId = workspaceId.value
+  if (!wsId || gcBusy.value) return
+  gcBusy.value = true
+  gcResult.value = null
+  try {
+    const counts = await api.runWorkspaceCheckpointGc(wsId)
+    const total = Object.values(counts).reduce((sum, value) => sum + value, 0)
+    gcResult.value = `${t('settings.checkpointGcDone')} (${total})`
+    gcConfirming.value = false
+    await loadRetention()
+  } catch (cause) {
+    gcResult.value = `${t('settings.checkpointGcFailed')}: ${errorText(cause, '')}`
+    logger.warn('Failed to run checkpoint gc', cause)
+  } finally {
+    gcBusy.value = false
+  }
+}
+
+onMounted(loadRetention)
+watch(workspaceId, () => {
+  gcConfirming.value = false
+  gcResult.value = null
+  void loadRetention()
+})
 
 async function exportSettings() {
   exporting.value = true
@@ -122,6 +183,88 @@ function downloadBlob(blob: Blob, filename: string) {
         @confirm="handleConfirmImport"
         @cancel="handleCancelImport"
       />
+    </div>
+
+    <div class="border-t pt-3 space-y-2" data-testid="settings-checkpoint-retention">
+      <h4 class="text-xs font-medium">{{ t('settings.checkpointRetention') }}</h4>
+      <p class="text-xs text-muted-foreground">{{ t('settings.checkpointRetentionDesc') }}</p>
+
+      <p v-if="retentionLoading" data-testid="settings-checkpoint-loading" class="text-xs text-muted-foreground">
+        {{ t('common.loading') }}
+      </p>
+      <div v-else-if="retentionError" data-testid="settings-checkpoint-error" class="space-y-1">
+        <p class="text-xs text-destructive" role="alert">{{ retentionError }}</p>
+        <button
+          type="button"
+          data-testid="settings-checkpoint-retry"
+          class="px-2 py-1 rounded text-xs border bg-background hover:bg-muted transition-colors"
+          @click="loadRetention"
+        >
+          {{ t('common.retry') }}
+        </button>
+      </div>
+      <p v-else-if="!workspaceId" data-testid="settings-checkpoint-no-workspace" class="text-xs text-muted-foreground">
+        {{ t('settings.checkpointNoWorkspace') }}
+      </p>
+      <template v-else-if="retention">
+        <dl data-testid="settings-checkpoint-constants" class="grid grid-cols-2 gap-2 text-xs">
+          <div class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1">
+            <dt class="text-muted-foreground">{{ t('settings.checkpointMaxRuns') }}</dt>
+            <dd data-testid="settings-checkpoint-max-runs" class="font-medium">{{ retention.maxRuns }}</dd>
+          </div>
+          <div class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1">
+            <dt class="text-muted-foreground">{{ t('settings.checkpointTtlDays') }}</dt>
+            <dd data-testid="settings-checkpoint-ttl-days" class="font-medium">{{ retention.ttlDays }}</dd>
+          </div>
+          <div class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1">
+            <dt class="text-muted-foreground">{{ t('settings.checkpointCurrentRuns') }}</dt>
+            <dd data-testid="settings-checkpoint-current-runs" class="font-medium">{{ retention.currentRuns }}</dd>
+          </div>
+          <div class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1">
+            <dt class="text-muted-foreground">{{ t('settings.checkpointCurrentRefs') }}</dt>
+            <dd data-testid="settings-checkpoint-current-refs" class="font-medium">{{ retention.currentRefs }}</dd>
+          </div>
+        </dl>
+        <p v-if="retention.unsealedNeverDeleted" data-testid="settings-checkpoint-unsealed-note" class="text-[10px] text-muted-foreground">
+          {{ t('settings.checkpointUnsealedNeverDeleted') }}
+        </p>
+      </template>
+
+      <div v-if="!gcConfirming">
+        <button
+          type="button"
+          data-testid="settings-checkpoint-gc"
+          class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors disabled:opacity-50"
+          :disabled="!workspaceId || gcBusy"
+          @click="gcConfirming = true"
+        >
+          {{ t('settings.checkpointGc') }}
+        </button>
+      </div>
+      <div v-else data-testid="settings-checkpoint-gc-confirm-box" class="space-y-2 rounded border border-amber-500/40 bg-amber-500/10 p-2">
+        <p class="text-xs">{{ t('settings.checkpointGcWarning') }}</p>
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            data-testid="settings-checkpoint-gc-cancel"
+            class="px-2 py-1 rounded text-xs border bg-background hover:bg-muted transition-colors"
+            :disabled="gcBusy"
+            @click="gcConfirming = false"
+          >
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            data-testid="settings-checkpoint-gc-confirm"
+            class="px-2 py-1 rounded text-xs border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50"
+            :disabled="gcBusy"
+            @click="runGc"
+          >
+            {{ t('settings.checkpointGcConfirm') }}
+          </button>
+        </div>
+      </div>
+      <p v-if="gcResult" data-testid="settings-checkpoint-gc-result" class="text-xs text-muted-foreground">{{ gcResult }}</p>
     </div>
 
     <p v-if="result" class="text-xs text-muted-foreground">{{ result }}</p>

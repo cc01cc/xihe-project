@@ -6,6 +6,7 @@ import ReasoningPart from './parts/ReasoningPart.vue'
 import ArtifactPart from './parts/ArtifactPart.vue'
 import CitationPart from './parts/CitationPart.vue'
 import ToolCallCard from './ToolCallCard.vue'
+import RunCheckpointMarker from './RunCheckpointMarker.vue'
 import VoiceOutput from '../multimodal/VoiceOutput.vue'
 import {
   Attachment,
@@ -43,6 +44,7 @@ const emit = defineEmits<{
   reject: [id: string]
   delete: [id: string]
   retry: [id: string]
+  revert: [runId: string]
 }>()
 
 const isUser = computed(() => props.message.role === 'user')
@@ -228,6 +230,14 @@ onUnmounted(() => {
           @reject="emit('reject', $event)"
         />
       </div>
+
+      <!-- PLAN-0328 M3: Run snapshot status + revert entry, beside the run (not in a toolbar). -->
+      <RunCheckpointMarker
+        v-if="!isUser && !isSystem && message.runId"
+        :run-id="message.runId"
+        :session-id="message.sessionId"
+        @revert="emit('revert', $event)"
+      />
 
       <div
         class="invisible mt-0.5 flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"

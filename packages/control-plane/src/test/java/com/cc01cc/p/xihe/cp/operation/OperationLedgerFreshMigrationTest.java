@@ -278,6 +278,77 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
+    void v23RunCheckpointRevertBookkeepingApplied() throws SQLException {
+        // PLAN-0328 M3 W2: the revert bookkeeping projection must exist on a fresh
+        // chain with its state allowlist and safe defaults.
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '23' AND success = true"),
+                "V23 must be recorded as applied");
+        for (String column : new String[]{"revert_state", "revert_ref", "revert_summary", "reverted_at",
+                "revert_attempt_count"}) {
+            assertNotNull(scalarString(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' "
+                            + "AND table_name = 'run_checkpoints' AND column_name = '" + column + "'"),
+                    "missing run_checkpoints column: " + column);
+        }
+        assertEquals("NO", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'run_checkpoints' AND column_name = 'revert_state'"));
+        assertTrue(String.valueOf(scalarString(
+                "SELECT column_default FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'run_checkpoints' AND column_name = 'revert_state'"))
+                .contains("none"), "revert_state must default to none");
+        String stateDef = scalarString(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        + "WHERE conname = 'ck_run_checkpoints_revert_state'");
+        assertNotNull(stateDef, "ck_run_checkpoints_revert_state must exist");
+        for (String state : new String[]{"none", "rolled_back", "partial", "failed"}) {
+            assertTrue(stateDef.contains(state),
+                    "revert_state allowlist must include " + state + ": " + stateDef);
+        }
+    }
+
+    @Test
+    void v23RevertBookkeepingInsertAndCheckConstraint() throws SQLException {
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                + "'::uuid, 'rv-" + userId + "@test.local', 'hash')");
+        executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                + "'::uuid, 'rv-ws', '" + userId + "'::uuid)");
+
+        UUID checkpointId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state, revert_state, "
+                + "revert_ref, revert_summary, reverted_at, revert_attempt_count) VALUES ('"
+                + checkpointId + "'::uuid, '" + runId + "'::uuid, '" + workspaceId + "'::uuid, "
+                + "'sealed', 'rolled_back', 'refs/xihe/" + runId + "/rollback/1', "
+                + "'revert-summary', NOW(), 1)");
+        assertEquals("rolled_back", scalarString(
+                "SELECT revert_state FROM run_checkpoints WHERE id = '" + checkpointId + "'::uuid"));
+        assertEquals(1, scalarInt(
+                "SELECT revert_attempt_count FROM run_checkpoints WHERE id = '" + checkpointId + "'::uuid"));
+        assertNotNull(scalarString(
+                "SELECT reverted_at::text FROM run_checkpoints WHERE id = '" + checkpointId + "'::uuid"));
+
+        // Defaults apply to every pre-V23-style insert.
+        UUID defaultedId = UUID.randomUUID();
+        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) VALUES ('"
+                + defaultedId + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '" + workspaceId
+                + "'::uuid, 'base')");
+        assertEquals("none", scalarString(
+                "SELECT revert_state FROM run_checkpoints WHERE id = '" + defaultedId + "'::uuid"));
+        assertEquals(0, scalarInt(
+                "SELECT revert_attempt_count FROM run_checkpoints WHERE id = '" + defaultedId + "'::uuid"));
+
+        SQLException badState = assertThrows(SQLException.class,
+                () -> executeUpdate("UPDATE run_checkpoints SET revert_state = 'bogus' WHERE id = '"
+                        + checkpointId + "'::uuid"));
+        assertTrue(badState.getMessage().contains("ck_run_checkpoints_revert_state"),
+                badState.getMessage());
+    }
+
+    @Test
     void v8SchemaGateFixesApplied() throws SQLException {
         for (String fk : new String[]{
                 "fk_workspaces_owner", "fk_sessions_user", "fk_chat_runs_user",

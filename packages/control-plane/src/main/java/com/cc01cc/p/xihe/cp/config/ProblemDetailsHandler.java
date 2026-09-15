@@ -33,6 +33,22 @@ public class ProblemDetailsHandler {
         return ResponseEntity.status(status).contentType(MediaType.parseMediaType("application/problem+json"))
                 .header("X-Request-Id", requestId).body(body);
     }
+
+    /**
+     * Problem response with additional contract fields (for example the conflict
+     * paths or head-fingerprint triple of a rejected revert). Values must be
+     * JSON-serializable plain types.
+     */
+    public static ResponseEntity<Map<String, Object>> problemResponse(
+            HttpStatus status, String code, String detail, Map<String, Object> extra) {
+        ResponseEntity<Map<String, Object>> response = problemResponse(status, code, detail);
+        Map<String, Object> body = response.getBody();
+        if (body != null && extra != null && !extra.isEmpty()) {
+            body.putAll(extra);
+        }
+        return response;
+    }
+
     @ExceptionHandler({IllegalArgumentException.class, HttpMessageNotReadableException.class,
             MethodArgumentNotValidException.class})
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception, HttpServletRequest request) {

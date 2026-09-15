@@ -5,6 +5,7 @@ import { chatTransport } from '@/services/chatTransport'
 import { useSSE } from '../useSSE'
 import { useAgentStore } from '../../stores/agent'
 import { useAuthStore } from '../../stores/auth'
+import { useCheckpointStore } from '../../stores/checkpoint'
 
 const SESSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const RUN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -185,6 +186,42 @@ describe('useSSE', () => {
       replayed: true,
       policy,
     })
+  })
+
+  it('merges run_checkpoint events into the checkpoint store', async () => {
+    const transport = createTransportController()
+    const { connect } = useSSE(SESSION_ID)
+    connect()
+    await flushPromises()
+
+    await transport.simulateMessage('run_checkpoint', JSON.stringify({
+      runId: RUN_ID,
+      sessionId: SESSION_ID,
+      state: 'sealed',
+      changedCount: 5,
+      revert: null,
+    }))
+
+    const record = useCheckpointStore().get(RUN_ID)
+    expect(record?.state).toBe('sealed')
+    expect(record?.changedCount).toBe(5)
+    expect(record?.sessionId).toBe(SESSION_ID)
+  })
+
+  it('drops run_checkpoint events that belong to another session', async () => {
+    const transport = createTransportController()
+    const { connect } = useSSE(SESSION_ID)
+    connect()
+    await flushPromises()
+
+    await transport.simulateMessage('run_checkpoint', JSON.stringify({
+      runId: RUN_ID,
+      sessionId: 'some-other-session',
+      state: 'sealed',
+      changedCount: 5,
+    }))
+
+    expect(useCheckpointStore().get(RUN_ID)).toBeUndefined()
   })
 
   it('drops late approval events after the agent store epoch changes', async () => {

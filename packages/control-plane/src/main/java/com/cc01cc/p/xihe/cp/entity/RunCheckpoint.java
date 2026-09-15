@@ -38,6 +38,15 @@ public class RunCheckpoint {
     /** Retention removed the refs; the row remains for audit. */
     public static final String STATE_EXPIRED = "expired";
 
+    /** PLAN-0328 M3 (V23): no revert attempted yet. */
+    public static final String REVERT_NONE = "none";
+    /** Every listed item restored/deleted; no conflict and no failure. */
+    public static final String REVERT_ROLLED_BACK = "rolled_back";
+    /** Revert executed but conflicts were skipped and/or items failed. */
+    public static final String REVERT_PARTIAL = "partial";
+    /** Reserved: a revert attempt that restored nothing (currently unwritten). */
+    public static final String REVERT_FAILED = "failed";
+
     @Id
     @Column(name = "id", columnDefinition = "uuid")
     private UUID id;
@@ -76,6 +85,24 @@ public class RunCheckpoint {
 
     @Column(name = "sealed_at")
     private Instant sealedAt;
+
+    /** PLAN-0328 M3 W2: last revert outcome ({@link #REVERT_NONE} when never reverted). */
+    @Column(name = "revert_state", nullable = false, length = 16)
+    private String revertState = REVERT_NONE;
+
+    /** Runtime audit ref written by the last revert; null when the write failed. */
+    @Column(name = "revert_ref", columnDefinition = "TEXT")
+    private String revertRef;
+
+    /** JSON text: ledger summary of the last revert ({marker, counts, conflicts, ...}). */
+    @Column(name = "revert_summary", columnDefinition = "TEXT")
+    private String revertSummary;
+
+    @Column(name = "reverted_at")
+    private Instant revertedAt;
+
+    @Column(name = "revert_attempt_count", nullable = false)
+    private int revertAttemptCount;
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
@@ -122,6 +149,16 @@ public class RunCheckpoint {
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getSealedAt() { return sealedAt; }
     public void setSealedAt(Instant sealedAt) { this.sealedAt = sealedAt; }
+    public String getRevertState() { return revertState; }
+    public void setRevertState(String revertState) { this.revertState = revertState; }
+    public String getRevertRef() { return revertRef; }
+    public void setRevertRef(String revertRef) { this.revertRef = revertRef; }
+    public String getRevertSummary() { return revertSummary; }
+    public void setRevertSummary(String revertSummary) { this.revertSummary = revertSummary; }
+    public Instant getRevertedAt() { return revertedAt; }
+    public void setRevertedAt(Instant revertedAt) { this.revertedAt = revertedAt; }
+    public int getRevertAttemptCount() { return revertAttemptCount; }
+    public void setRevertAttemptCount(int revertAttemptCount) { this.revertAttemptCount = revertAttemptCount; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
 }

@@ -133,7 +133,8 @@ class ChatRunRecoveryServiceTest {
         when(chatRunRepository.findById(java.util.UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(terminal));
         RunCheckpointService realService = new RunCheckpointService(checkpointRepository, client,
-                operationService, chatRunRepository, new ObjectMapper());
+                operationService, chatRunRepository, new ObjectMapper(),
+                mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
                 approvalRepository, chatController, operationService, realService);
         try {

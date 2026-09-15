@@ -23,6 +23,7 @@ const emit = defineEmits<{
   reject: [id: string]
   delete: [id: string]
   retry: [id: string]
+  revert: [runId: string]
 }>()
 
 const showSearch = ref(false)
@@ -104,6 +105,7 @@ const entries = computed(() => {
                   @reject="emit('reject', $event)"
                   @delete="emit('delete', $event)"
                   @retry="emit('retry', $event)"
+                  @revert="emit('revert', $event)"
                 />
               </MessageScrollerItem>
 

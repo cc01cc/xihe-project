@@ -13,8 +13,9 @@
 //!   `refs/xihe/<runId>/{base,end}`; worktree, user index and user branches stay
 //!   untouched.
 //!
-//! Rollback itself (M3) is out of scope for this module; it consumes the refs and
-//! change lists produced here.
+//! Rollback execution (M3) lives in [`crate::checkpoint_revert`]; this module owns the
+//! engine primitives it consumes: the head fingerprint recorded in the base commit
+//! message, the scratch-index git plumbing and the rollback-ref retention rules.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -161,6 +162,76 @@ pub struct RetentionReport {
     pub gc_ran: bool,
 }
 
+/// User-repository HEAD fingerprint recorded in the base commit message (decision #41).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeadFingerprint {
+    /// `false` when the workspace root has no user `.git` (non-Git workspaces work).
+    pub is_repo: bool,
+    /// Symbolic HEAD ref (e.g. `refs/heads/main`); `None` when detached or unborn.
+    pub head_ref: Option<String>,
+    /// Commit id of HEAD; `None` when the branch has no commits yet.
+    pub head_commit: Option<String>,
+}
+
+/// Comparison result of a recorded fingerprint against the current workspace state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadFingerprintStatus {
+    /// Recorded and current fingerprint are identical.
+    Ok,
+    /// HEAD ref, HEAD commit or repository presence changed since the base snapshot.
+    Changed,
+    /// The base commit carries no fingerprint (legacy run); nothing can be compared.
+    Unknown,
+    /// Workspace has no user `.git`; there is no HEAD to protect.
+    NotRepo,
+}
+
+/// Compare the fingerprint recorded at base creation with the current one.
+///
+/// `unknown` is returned only for legacy bases (no recorded fingerprint); a
+/// repository that appeared or disappeared since the base counts as `changed`.
+pub fn compare_head_fingerprint(
+    recorded: Option<&HeadFingerprint>,
+    current: &HeadFingerprint,
+) -> HeadFingerprintStatus {
+    let Some(recorded) = recorded else {
+        return HeadFingerprintStatus::Unknown;
+    };
+    if !recorded.is_repo && !current.is_repo {
+        return HeadFingerprintStatus::NotRepo;
+    }
+    if recorded == current {
+        HeadFingerprintStatus::Ok
+    } else {
+        HeadFingerprintStatus::Changed
+    }
+}
+
+/// One entry of the user repository's porcelain status (`GET .../git-status`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusEntry {
+    /// Raw two-character porcelain code (`" M"`, `"??"`, `"R "`), unmodified.
+    pub status: String,
+    /// Workspace-relative path with forward slashes.
+    pub path: String,
+}
+
+/// `GET .../git-status` body: the user repository's own pending changes.
+///
+/// This is the "待提交" side of the dual-diff separation (spec §6.4 / S4): the
+/// shadow change set of a run and the user repository status are two independent
+/// projections and must never be mixed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitStatus {
+    /// `false` when the workspace root has no user `.git` (non-Git workspaces work).
+    pub is_repository: bool,
+    pub entries: Vec<GitStatusEntry>,
+}
+
 struct GitOutput {
     status: ExitStatus,
     stdout: Vec<u8>,
@@ -175,6 +246,7 @@ struct ProbeCache {
 
 #[derive(Debug, Clone)]
 struct ShadowRef {
+    name: String,
     run_id: String,
     kind: String,
     epoch: i64,
@@ -191,7 +263,7 @@ pub struct ShadowGit {
     locks: StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     probe_cache: StdMutex<ProbeCache>,
     max_untracked_file_bytes: u64,
-    call_timeout: Duration,
+    pub(crate) call_timeout: Duration,
 }
 
 impl ShadowGit {
@@ -307,7 +379,8 @@ impl ShadowGit {
             .await?;
         let index_env = self.isolated_env(&shadow, &work_tree, Some(&index));
         let tree = self.write_tree(&index_env).await?;
-        let message = base_message(run_id, actor, call_id);
+        let head = self.read_workspace_head(&work_tree).await;
+        let message = base_message(run_id, actor, call_id, head.as_ref());
         let base_commit = self.commit_tree(&env, &tree, None, &message).await?;
         self.update_ref(&env, &base_ref, &base_commit).await?;
         info!(
@@ -447,7 +520,8 @@ impl ShadowGit {
             .await
     }
 
-    /// Delete the refs and scratch files of one run. Returns the ref names removed.
+    /// Delete the refs and scratch files of one run. Returns the ref names removed,
+    /// including any `rollback/<epochMs>` audit refs of that run.
     pub async fn drop_refs(&self, workspace_id: &str, run_id: &str) -> Result<Vec<String>> {
         validate_run_id(run_id)?;
         let shadow = self.shadow_git_dir(workspace_id)?;
@@ -458,16 +532,36 @@ impl ShadowGit {
             return Ok(Vec::new());
         }
         let env = self.isolated_env(&shadow, &work_tree, None);
-        let mut dropped = Vec::new();
-        for suffix in ["base", "end"] {
-            let name = format!("refs/xihe/{run_id}/{suffix}");
-            if self.rev_parse(&env, &name).await?.is_some() {
-                self.run_git_checked(&["update-ref", "-d", &name], &env, None, self.call_timeout)
-                    .await?;
-                dropped.push(name);
-            }
-        }
+        let dropped = self.delete_run_refs(&env, run_id).await?;
         self.cleanup_run_scratch(&shadow, run_id).await;
+        Ok(dropped)
+    }
+
+    /// Delete every `refs/xihe/<runId>/*` ref (base, end and rollback history).
+    pub(crate) async fn delete_run_refs(
+        &self,
+        env: &[(String, String)],
+        run_id: &str,
+    ) -> Result<Vec<String>> {
+        let prefix = format!("refs/xihe/{run_id}/");
+        let stdout = self
+            .run_git_checked(
+                &["for-each-ref", "--format=%(refname)", &prefix],
+                env,
+                None,
+                self.call_timeout,
+            )
+            .await?;
+        let mut dropped = Vec::new();
+        for line in String::from_utf8_lossy(&stdout).lines() {
+            let name = line.trim();
+            if name.is_empty() {
+                continue;
+            }
+            self.run_git_checked(&["update-ref", "-d", name], env, None, self.call_timeout)
+                .await?;
+            dropped.push(name.to_string());
+        }
         Ok(dropped)
     }
 
@@ -542,8 +636,12 @@ impl ShadowGit {
             .count();
 
         for run_id in &report.deleted_runs {
-            for suffix in ["base", "end"] {
-                let name = format!("refs/xihe/{run_id}/{suffix}");
+            let names: Vec<String> = refs
+                .iter()
+                .filter(|row| row.run_id == *run_id)
+                .map(|row| row.name.clone())
+                .collect();
+            for name in names {
                 self.run_git_checked(&["update-ref", "-d", &name], &env, None, self.call_timeout)
                     .await?;
             }
@@ -580,18 +678,31 @@ impl ShadowGit {
     ///
     /// PLAN-0328 M2 W2 replaces the body with the workspace mutation lease; every
     /// engine operation already acquires this lock for its full duration.
-    async fn lock_workspace(&self, workspace_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
-        let lock = {
-            let mut locks = self.locks.lock().unwrap_or_else(PoisonError::into_inner);
-            if locks.len() > LOCK_MAP_PRUNE_THRESHOLD {
-                locks.retain(|_, value| Arc::strong_count(value) > 1);
-            }
-            locks
-                .entry(workspace_id.to_string())
-                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-                .clone()
-        };
-        lock.lock_owned().await
+    pub(crate) async fn lock_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        self.workspace_lock(workspace_id).lock_owned().await
+    }
+
+    /// Fail-fast variant used by revert execution: `None` means another engine
+    /// operation currently owns the workspace (the caller reports `LeaseHeld`).
+    pub(crate) fn try_lock_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        self.workspace_lock(workspace_id).try_lock_owned().ok()
+    }
+
+    fn workspace_lock(&self, workspace_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.locks.lock().unwrap_or_else(PoisonError::into_inner);
+        if locks.len() > LOCK_MAP_PRUNE_THRESHOLD {
+            locks.retain(|_, value| Arc::strong_count(value) > 1);
+        }
+        locks
+            .entry(workspace_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     async fn require_git(&self) -> Result<()> {
@@ -808,7 +919,7 @@ impl ShadowGit {
         Ok(String::from_utf8_lossy(&stdout).trim().to_string())
     }
 
-    async fn commit_tree(
+    pub(crate) async fn commit_tree(
         &self,
         env: &[(String, String)],
         tree: &str,
@@ -828,13 +939,22 @@ impl ShadowGit {
         Ok(String::from_utf8_lossy(&stdout).trim().to_string())
     }
 
-    async fn update_ref(&self, env: &[(String, String)], name: &str, commit: &str) -> Result<()> {
+    pub(crate) async fn update_ref(
+        &self,
+        env: &[(String, String)],
+        name: &str,
+        commit: &str,
+    ) -> Result<()> {
         self.run_git_checked(&["update-ref", name, commit], env, None, self.call_timeout)
             .await?;
         Ok(())
     }
 
-    async fn rev_parse(&self, env: &[(String, String)], reference: &str) -> Result<Option<String>> {
+    pub(crate) async fn rev_parse(
+        &self,
+        env: &[(String, String)],
+        reference: &str,
+    ) -> Result<Option<String>> {
         let output = self
             .run_git(
                 &["rev-parse", "--verify", "--quiet", reference],
@@ -850,7 +970,7 @@ impl ShadowGit {
         Ok((!value.is_empty()).then_some(value))
     }
 
-    async fn changed_files_for(
+    pub(crate) async fn changed_files_for(
         &self,
         env: &[(String, String)],
         base_commit: &str,
@@ -865,6 +985,145 @@ impl ShadowGit {
             )
             .await?;
         parse_name_status_z(&stdout)
+    }
+
+    /// HEAD fingerprint recorded in a base commit message (decision #41 / S2).
+    ///
+    /// `Ok(None)` for legacy bases whose message predates the fingerprint lines.
+    pub(crate) async fn base_head_fingerprint(
+        &self,
+        env: &[(String, String)],
+        base_commit: &str,
+    ) -> Result<Option<HeadFingerprint>> {
+        let stdout = self
+            .run_git_checked(
+                &["cat-file", "commit", base_commit],
+                env,
+                None,
+                self.call_timeout,
+            )
+            .await?;
+        let raw = String::from_utf8_lossy(&stdout);
+        let body = raw.split_once("\n\n").map(|(_, body)| body).unwrap_or(&raw);
+        Ok(parse_head_fingerprint(body))
+    }
+
+    /// Read the user repository HEAD fingerprint without touching that repository.
+    ///
+    /// `Some(HeadFingerprint { is_repo: false, .. })` for a workspace without a
+    /// user `.git`; `None` when a repository exists but its HEAD is unreadable, so
+    /// the base message omits the fingerprint and later comparisons report `unknown`
+    /// instead of a silent "ok".
+    pub(crate) async fn read_workspace_head(&self, work_tree: &Path) -> Option<HeadFingerprint> {
+        let Some(git_dir) = resolve_user_git_dir(work_tree).await else {
+            return Some(HeadFingerprint {
+                is_repo: false,
+                head_ref: None,
+                head_commit: None,
+            });
+        };
+        let mut env = self.null_config_env();
+        env.push(("GIT_DIR".to_string(), normalize_path_for_git(&git_dir)));
+        env.push((
+            "GIT_WORK_TREE".to_string(),
+            normalize_path_for_git(work_tree),
+        ));
+        env.push(("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()));
+        env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
+        // `symbolic-ref` fails for a detached HEAD (exit 1) and for a corrupt repo;
+        // `rev-parse` fails while the branch is unborn.
+        let head_ref = match self
+            .run_git(
+                &["symbolic-ref", "-q", "HEAD"],
+                &env,
+                None,
+                self.call_timeout,
+            )
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                (!value.is_empty()).then_some(value)
+            }
+            Ok(_) => None,
+            Err(error) => {
+                debug!(
+                    work_tree = %work_tree.display(),
+                    %error,
+                    "user repository HEAD ref is unreadable"
+                );
+                return None;
+            }
+        };
+        let head_commit = match self.rev_parse(&env, "HEAD").await {
+            Ok(commit) => commit,
+            Err(error) => {
+                debug!(
+                    work_tree = %work_tree.display(),
+                    %error,
+                    "user repository HEAD commit is unreadable"
+                );
+                return None;
+            }
+        };
+        Some(HeadFingerprint {
+            is_repo: true,
+            head_ref,
+            head_commit,
+        })
+    }
+
+    /// Read-only porcelain status of the user repository (dual-diff "待提交" side).
+    ///
+    /// Never mutates the user repository: global/system config is nulled,
+    /// `--no-optional-locks` / `GIT_OPTIONAL_LOCKS=0` suppress index refreshes and
+    /// `core.hooksPath` points at the shadow's empty hooks directory, so no user or
+    /// global hook can execute. A workspace without `.git` reports
+    /// `is_repository: false` without spawning git; a missing workspace directory is
+    /// an explicit [`CheckpointError::WorkspaceMissing`] (no silent degradation).
+    pub async fn workspace_git_status(&self, workspace_id: &str) -> Result<WorkspaceGitStatus> {
+        let work_tree = self.work_tree(workspace_id)?;
+        if !work_tree.is_dir() {
+            return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
+                &work_tree,
+            )));
+        }
+        let Some(git_dir) = resolve_user_git_dir(&work_tree).await else {
+            return Ok(WorkspaceGitStatus {
+                is_repository: false,
+                entries: Vec::new(),
+            });
+        };
+        self.require_git().await?;
+        let mut env = self.null_config_env();
+        env.push(("GIT_DIR".to_string(), normalize_path_for_git(&git_dir)));
+        env.push((
+            "GIT_WORK_TREE".to_string(),
+            normalize_path_for_git(&work_tree),
+        ));
+        env.push(("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()));
+        env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
+        let hooks = self.shadow_git_dir(workspace_id)?.join("empty-hooks");
+        let hooks_config = format!("core.hooksPath={}", normalize_path_for_git(&hooks));
+        let stdout = self
+            .run_git_checked(
+                &[
+                    "-c",
+                    &hooks_config,
+                    "status",
+                    "--porcelain=v1",
+                    "-z",
+                    "--untracked-files=all",
+                ],
+                &env,
+                None,
+                self.call_timeout,
+            )
+            .await?;
+        Ok(WorkspaceGitStatus {
+            is_repository: true,
+            entries: parse_porcelain_status_z(&stdout),
+        })
     }
 
     async fn cleanup_run_scratch(&self, shadow: &Path, run_id: &str) {
@@ -893,7 +1152,7 @@ impl ShadowGit {
         env
     }
 
-    fn isolated_env(
+    pub(crate) fn isolated_env(
         &self,
         shadow: &Path,
         work_tree: &Path,
@@ -957,7 +1216,7 @@ impl ShadowGit {
         })
     }
 
-    async fn run_git_checked(
+    pub(crate) async fn run_git_checked(
         &self,
         args: &[&str],
         envs: &[(String, String)],
@@ -1082,6 +1341,32 @@ fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
     Ok(changed)
 }
 
+/// Parse `git status --porcelain=v1 -z` output into wire entries.
+///
+/// Records are `XY <path>\0`; rename/copy records (`R`/`C` in either column) carry
+/// the original path as the next NUL field, which is consumed but not reported
+/// (the wire entry is `{status, path}` only). Malformed trailing fragments are
+/// skipped rather than failing the whole status read.
+fn parse_porcelain_status_z(bytes: &[u8]) -> Vec<GitStatusEntry> {
+    let mut entries = Vec::new();
+    let mut fields = bytes
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    while let Some(field) = fields.next() {
+        if field.len() < 3 || field[2] != b' ' {
+            continue;
+        }
+        let status = String::from_utf8_lossy(&field[..2]).into_owned();
+        let path = String::from_utf8_lossy(&field[3..]).into_owned();
+        let class = |index: usize| status.as_bytes().get(index).copied().map(char::from);
+        if matches!(class(0), Some('R' | 'C')) || matches!(class(1), Some('R' | 'C')) {
+            let _ = fields.next();
+        }
+        entries.push(GitStatusEntry { status, path });
+    }
+    entries
+}
+
 fn parse_xihe_refs(stdout: &[u8]) -> Vec<ShadowRef> {
     let mut refs = Vec::new();
     for line in String::from_utf8_lossy(stdout).lines() {
@@ -1089,10 +1374,13 @@ fn parse_xihe_refs(stdout: &[u8]) -> Vec<ShadowRef> {
         let Some(rest) = name.strip_prefix("refs/xihe/") else {
             continue;
         };
-        let Some((run_id, kind)) = rest.rsplit_once('/') else {
-            continue;
+        let segments: Vec<&str> = rest.split('/').collect();
+        let (run_id, kind) = match segments.as_slice() {
+            [run_id, kind] => (*run_id, *kind),
+            [run_id, "rollback", leaf] if !leaf.is_empty() => (*run_id, "rollback"),
+            _ => continue,
         };
-        if run_id.is_empty() || run_id.contains('/') || kind.is_empty() {
+        if run_id.is_empty() || kind.is_empty() {
             continue;
         }
         let epoch = date
@@ -1101,6 +1389,7 @@ fn parse_xihe_refs(stdout: &[u8]) -> Vec<ShadowRef> {
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(i64::MAX);
         refs.push(ShadowRef {
+            name: name.to_string(),
             run_id: run_id.to_string(),
             kind: kind.to_string(),
             epoch,
@@ -1109,15 +1398,86 @@ fn parse_xihe_refs(stdout: &[u8]) -> Vec<ShadowRef> {
     refs
 }
 
-fn base_message(run_id: &str, actor: &str, call_id: &str) -> String {
-    format!(
+fn base_message(
+    run_id: &str,
+    actor: &str,
+    call_id: &str,
+    head: Option<&HeadFingerprint>,
+) -> String {
+    let mut message = format!(
         "run/{run_id} base\n\nactor: {}\ncallId: {}\n",
         sanitize_message_field(actor),
         sanitize_message_field(call_id)
-    )
+    );
+    if let Some(head) = head {
+        message.push_str(&format!(
+            "headRepo: {}\nheadRef: {}\nheadCommit: {}\n",
+            if head.is_repo { "yes" } else { "no" },
+            sanitize_message_field(head.head_ref.as_deref().unwrap_or("none")),
+            sanitize_message_field(head.head_commit.as_deref().unwrap_or("none")),
+        ));
+    }
+    message
 }
 
-fn sanitize_message_field(value: &str) -> String {
+/// Parse the optional HEAD fingerprint out of a base commit message body.
+///
+/// `None` means the message predates the fingerprint (legacy base): the run then
+/// reports `HeadFingerprintStatus::Unknown` instead of a silent "ok".
+pub(crate) fn parse_head_fingerprint(message: &str) -> Option<HeadFingerprint> {
+    let mut is_repo = None;
+    let mut head_ref = None;
+    let mut head_commit = None;
+    for line in message.lines() {
+        if let Some(value) = line.strip_prefix("headRepo: ") {
+            is_repo = Some(value.trim() == "yes");
+        } else if let Some(value) = line.strip_prefix("headRef: ") {
+            head_ref = parse_optional_message_value(value);
+        } else if let Some(value) = line.strip_prefix("headCommit: ") {
+            head_commit = parse_optional_message_value(value);
+        }
+    }
+    Some(HeadFingerprint {
+        is_repo: is_repo?,
+        head_ref,
+        head_commit,
+    })
+}
+
+fn parse_optional_message_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value == "none" {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+/// Resolve `<workTree>/.git` (directory or `gitdir:` pointer file) for read-only
+/// HEAD introspection; `None` when the workspace is not a repository.
+async fn resolve_user_git_dir(work_tree: &Path) -> Option<PathBuf> {
+    let dot_git = work_tree.join(".git");
+    let metadata = tokio::fs::symlink_metadata(&dot_git).await.ok()?;
+    if metadata.is_dir() {
+        return Some(dot_git);
+    }
+    if metadata.is_file() {
+        let content = tokio::fs::read_to_string(&dot_git).await.ok()?;
+        let target = content.lines().next()?.strip_prefix("gitdir:")?.trim();
+        if target.is_empty() {
+            return None;
+        }
+        let path = Path::new(target);
+        return Some(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            work_tree.join(path)
+        });
+    }
+    None
+}
+
+pub(crate) fn sanitize_message_field(value: &str) -> String {
     let sanitized: String = value
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
@@ -1252,11 +1612,13 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_parse_xihe_refs_skips_unknown_kinds_and_handles_bad_dates() {
+    fn checkpoint_parse_xihe_refs_parses_rollback_and_skips_unknown_kinds() {
         let raw = b"refs/xihe/run-1/base\t1700000000 +0000\n\
                     refs/xihe/run-1/rollback/1700000001\t1700000001 +0000\n\
                     refs/xihe/run-1/end\t1700000002 +0000\n\
                     refs/xihe/run-2/end\tnonsense\n\
+                    refs/xihe/run-2/rollback/\t1700000004 +0000\n\
+                    refs/xihe/run-3/unknown/kind\t1700000005 +0000\n\
                     refs/heads/main\t1700000003 +0000\n";
         let refs = parse_xihe_refs(raw);
         let rows: Vec<(&str, &str, i64)> = refs
@@ -1267,9 +1629,110 @@ mod tests {
             rows,
             vec![
                 ("run-1", "base", 1_700_000_000),
+                ("run-1", "rollback", 1_700_000_001),
                 ("run-1", "end", 1_700_000_002),
                 ("run-2", "end", i64::MAX),
-            ]
+            ],
+            "rollback refs are parsed for retention; empty leaves and nested kinds are skipped"
+        );
+        assert_eq!(refs[1].name, "refs/xihe/run-1/rollback/1700000001");
+    }
+
+    #[test]
+    fn checkpoint_base_message_round_trips_the_head_fingerprint_and_legacy_bases_stay_unknown() {
+        let head = HeadFingerprint {
+            is_repo: true,
+            head_ref: Some("refs/heads/main".to_string()),
+            head_commit: Some("0123456789abcdef".to_string()),
+        };
+        let message = base_message("run-1", "actor", "call-1", Some(&head));
+        let parsed = parse_head_fingerprint(&message).expect("fingerprint");
+        assert_eq!(parsed, head);
+        assert_eq!(
+            compare_head_fingerprint(Some(&parsed), &head),
+            HeadFingerprintStatus::Ok
+        );
+
+        let detached = HeadFingerprint {
+            is_repo: true,
+            head_ref: None,
+            head_commit: Some("0123456789abcdef".to_string()),
+        };
+        let message = base_message("run-1", "actor", "call-1", Some(&detached));
+        assert_eq!(parse_head_fingerprint(&message), Some(detached));
+
+        let not_repo = HeadFingerprint::default();
+        let message = base_message("run-1", "actor", "call-1", Some(&not_repo));
+        assert_eq!(parse_head_fingerprint(&message), Some(not_repo));
+
+        let legacy = base_message("run-1", "actor", "call-1", None);
+        assert_eq!(parse_head_fingerprint(&legacy), None);
+        assert_eq!(
+            compare_head_fingerprint(None, &head),
+            HeadFingerprintStatus::Unknown,
+            "legacy bases without the message lines are unknown, never a silent ok"
+        );
+    }
+
+    #[test]
+    fn checkpoint_head_fingerprint_comparer_covers_all_statuses() {
+        let repo_main = HeadFingerprint {
+            is_repo: true,
+            head_ref: Some("refs/heads/main".to_string()),
+            head_commit: Some("aaaa".to_string()),
+        };
+        let repo_feature = HeadFingerprint {
+            is_repo: true,
+            head_ref: Some("refs/heads/feature".to_string()),
+            head_commit: Some("aaaa".to_string()),
+        };
+        let repo_moved = HeadFingerprint {
+            is_repo: true,
+            head_ref: Some("refs/heads/main".to_string()),
+            head_commit: Some("bbbb".to_string()),
+        };
+        let detached = HeadFingerprint {
+            is_repo: true,
+            head_ref: None,
+            head_commit: Some("aaaa".to_string()),
+        };
+        let not_repo = HeadFingerprint::default();
+
+        assert_eq!(
+            compare_head_fingerprint(Some(&repo_main), &repo_main),
+            HeadFingerprintStatus::Ok
+        );
+        assert_eq!(
+            compare_head_fingerprint(Some(&repo_main), &repo_feature),
+            HeadFingerprintStatus::Changed,
+            "a branch switch invalidates the checkpoint"
+        );
+        assert_eq!(
+            compare_head_fingerprint(Some(&repo_main), &repo_moved),
+            HeadFingerprintStatus::Changed,
+            "a new commit invalidates the checkpoint"
+        );
+        assert_eq!(
+            compare_head_fingerprint(Some(&repo_main), &detached),
+            HeadFingerprintStatus::Changed
+        );
+        assert_eq!(
+            compare_head_fingerprint(Some(&repo_main), &not_repo),
+            HeadFingerprintStatus::Changed,
+            "a repository that disappeared is a change"
+        );
+        assert_eq!(
+            compare_head_fingerprint(Some(&not_repo), &repo_main),
+            HeadFingerprintStatus::Changed,
+            "a repository that appeared is a change"
+        );
+        assert_eq!(
+            compare_head_fingerprint(Some(&not_repo), &not_repo),
+            HeadFingerprintStatus::NotRepo
+        );
+        assert_eq!(
+            compare_head_fingerprint(None, &not_repo),
+            HeadFingerprintStatus::Unknown
         );
     }
 
@@ -1391,5 +1854,57 @@ mod tests {
             .await
             .expect_err("unknown run must fail");
         assert!(matches!(unsealed, CheckpointError::RunNotFound(_)));
+    }
+
+    #[test]
+    fn checkpoint_porcelain_status_parser_handles_renames_and_malformed_tails() {
+        let entries = parse_porcelain_status_z(b" M tracked.txt\0?? new.txt\0R  b.txt\0a.txt\0");
+        assert_eq!(
+            entries,
+            vec![
+                GitStatusEntry {
+                    status: " M".to_string(),
+                    path: "tracked.txt".to_string(),
+                },
+                GitStatusEntry {
+                    status: "??".to_string(),
+                    path: "new.txt".to_string(),
+                },
+                GitStatusEntry {
+                    status: "R ".to_string(),
+                    path: "b.txt".to_string(),
+                },
+            ],
+            "rename records consume the original-path field without reporting it"
+        );
+        assert!(parse_porcelain_status_z(b"").is_empty());
+        assert!(parse_porcelain_status_z(b"X\0").is_empty());
+    }
+
+    #[tokio::test]
+    async fn checkpoint_workspace_git_status_reports_repo_non_repo_and_missing_dir() {
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let engine = ShadowGit::new(temp.path());
+        let capability = engine.probe().await;
+        assert!(
+            capability.available,
+            "git-status requires a real host git: {capability:?}"
+        );
+
+        let non_repo = engine
+            .workspace_git_status("ws1")
+            .await
+            .expect("non-repo status");
+        assert!(!non_repo.is_repository);
+        assert!(non_repo.entries.is_empty());
+
+        let missing = TempDir::new().expect("tempdir");
+        let error = ShadowGit::new(missing.path())
+            .workspace_git_status("ws1")
+            .await
+            .expect_err("missing workspace must fail explicitly");
+        assert!(matches!(error, CheckpointError::WorkspaceMissing(_)));
     }
 }

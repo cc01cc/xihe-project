@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { toast } from 'vue-sonner'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
 import { useAuthStore } from '../../stores/auth'
+import { useCheckpointStore } from '../../stores/checkpoint'
 import { ApiError, api } from '../../composables/api'
 import { logger } from '../../lib/logger'
-import type { ApprovalDecisionEnvelope, AttachmentFile, Message } from '../../types'
+import type { ApprovalDecisionEnvelope, AttachmentFile, Message, RevertAcknowledge, RevertResult } from '../../types'
 import MessageList from './MessageList.vue'
 import InputArea from './InputArea.vue'
 import SSEStream from './SSEStream.vue'
 import ApprovalModal from './ApprovalModal.vue'
 import SessionPolicyControls from './SessionPolicyControls.vue'
+import RevertPreviewDialog from './RevertPreviewDialog.vue'
+import RevertResultDialog from './RevertResultDialog.vue'
 
 const props = withDefaults(defineProps<{
   sessionId: string
@@ -19,9 +24,11 @@ const props = withDefaults(defineProps<{
   toolMode: 'none',
 })
 
+const { t } = useI18n()
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
 const authStore = useAuthStore()
+const checkpointStore = useCheckpointStore()
 
 const suggestions = computed(() => props.toolMode === 'workspace'
   ? ['列出文件', '打开 README', '解释选中的文件', '查看工作区环境']
@@ -166,6 +173,75 @@ const recoveryBannerClass = computed(() => {
       return 'border-destructive/40 bg-destructive/10 text-foreground'
   }
 })
+
+// ── PLAN-0328 M3: checkpoint revert flow (preview → execute → result) ────────
+// The entry lives beside the message (RunCheckpointMarker); the dialogs are hosted here so
+// every chat surface (chat view, workspace chat, mobile sheet) gets the same flow.
+const revertPreviewRunId = ref<string | null>(null)
+const revertBusy = ref(false)
+const revertError = ref<string | null>(null)
+const revertResult = ref<RevertResult | null>(null)
+
+function openRevertPreview(runId: string) {
+  revertResult.value = null
+  revertError.value = null
+  revertPreviewRunId.value = runId
+}
+
+function closeRevertPreview() {
+  if (revertBusy.value) return
+  revertPreviewRunId.value = null
+  revertError.value = null
+}
+
+async function confirmRevert(payload: RevertAcknowledge) {
+  const runId = revertPreviewRunId.value
+  const sessionId = props.sessionId
+  if (!runId || revertBusy.value) return
+  revertBusy.value = true
+  revertError.value = null
+  try {
+    const result = await api.executeRunCheckpointRevert(runId, payload)
+    // A session switch while the request was in flight drops the continuation: the result
+    // dialog must not open over a different session.
+    if (props.sessionId !== sessionId) return
+    // Refresh the durable projection: the SSE annotation may arrive later or not at all.
+    void checkpointStore.fetchCheckpoint(runId, { force: true })
+    revertPreviewRunId.value = null
+    revertResult.value = result
+    const counts = result.counts
+    if (counts && (counts.failed > 0 || counts.skippedConflict > 0)) {
+      toast.warning(t('chat.checkpointRevertPartial'))
+    } else {
+      toast.success(t('chat.checkpointRevertDone'))
+    }
+  } catch (cause) {
+    if (props.sessionId !== sessionId) return
+    revertError.value = cause instanceof ApiError
+      ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+      : t('chat.checkpointRevertFailed')
+    logger.warn('Failed to execute run checkpoint revert', cause)
+  } finally {
+    revertBusy.value = false
+  }
+}
+
+function retryRevert(runId: string) {
+  revertResult.value = null
+  revertError.value = null
+  revertPreviewRunId.value = runId
+}
+
+function closeRevertResult() {
+  revertResult.value = null
+}
+
+watch(() => props.sessionId, () => {
+  revertPreviewRunId.value = null
+  revertResult.value = null
+  revertError.value = null
+  revertBusy.value = false
+})
 </script>
 
 <template>
@@ -194,6 +270,7 @@ const recoveryBannerClass = computed(() => {
       @reject="rejectTool"
       @delete="handleDeleteMessage"
       @retry="handleRetry"
+      @revert="openRevertPreview"
     />
 
     <div v-else class="flex-1 flex flex-col items-center justify-center gap-4 px-4">
@@ -227,6 +304,22 @@ const recoveryBannerClass = computed(() => {
       :can-classify="canClassifyApproval"
       @approve="decideApproval"
       @reject="decideApproval"
+    />
+
+    <RevertPreviewDialog
+      :show="revertPreviewRunId !== null"
+      :run-id="revertPreviewRunId ?? ''"
+      :busy="revertBusy"
+      :error="revertError"
+      @confirm="confirmRevert"
+      @close="closeRevertPreview"
+    />
+
+    <RevertResultDialog
+      :show="revertResult !== null"
+      :result="revertResult"
+      @retry="retryRevert"
+      @close="closeRevertResult"
     />
 
     <SSEStream

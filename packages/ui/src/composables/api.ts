@@ -7,6 +7,10 @@ import type {
   ApprovalPolicyShape,
   ApprovalPolicySourceLayer,
   ApprovalRequest,
+  CheckpointGcCounts,
+  CheckpointRetention,
+  HeadFingerprint,
+  HeadFingerprintStatus,
   OperationItemView,
   OperationListResponse,
   OperationPolicyView,
@@ -19,8 +23,25 @@ import type {
   PolicyToolFaceQueryScope,
   PolicyToolFaceView,
   PendingApprovalSummary,
+  RevertAcknowledge,
+  RevertEntryResult,
+  RevertPreview,
+  RevertPreviewAction,
+  RevertPreviewCounts,
+  RevertPreviewEntry,
+  RevertResult,
+  RevertResultCounts,
+  RevertResultEntry,
+  RunCheckpointChangedFile,
+  RunCheckpointEvent,
+  RunCheckpointRevertCounts,
+  RunCheckpointRevertState,
+  RunCheckpointRevertView,
+  RunCheckpointState,
+  RunCheckpointView,
   SessionPolicyMode,
   SessionPolicyModeState,
+  WorkspaceGitStatus,
 } from '../types'
 
 const API_BASE = '/api/v1'
@@ -238,6 +259,251 @@ export function normalizeApprovalRequest(value: unknown, fallbackSessionId = '')
     ...(record.modeAtGrant !== undefined ? { modeAtGrant: record.modeAtGrant as ApprovalPolicyMode } : {}),
     ...(policy ? { policy } : {}),
   }
+}
+
+// ── PLAN-0328 M3: Run checkpoint normalizers ────────────────────────────────
+// Strict, nullable/absent tolerant: unknown enum members fall back to a UI-only
+// `unknown` (never to a claim such as `sealed`), malformed entries are skipped,
+// incomplete count objects come back as `null` instead of fabricated zeros.
+
+const runCheckpointStates = ['none', 'base', 'sealed', 'unsealed', 'degraded', 'expired'] as const
+const runCheckpointRevertStates = ['none', 'rolled_back', 'partial', 'failed'] as const
+const revertPreviewActions = ['restore', 'delete'] as const
+const revertEntryResults = ['restored', 'deleted', 'skippedConflict', 'failed', 'noop'] as const
+const headFingerprintStatuses = ['ok', 'changed', 'unknown', 'not_repo'] as const
+
+function asNonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
+}
+
+function asNullableNonEmptyString(value: unknown): string | null {
+  return isNonEmptyString(value) ? value : null
+}
+
+function normalizeRunCheckpointRevertView(value: unknown): RunCheckpointRevertView | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const state: RunCheckpointRevertState = isEnumValue(record.state, runCheckpointRevertStates)
+    ? record.state
+    : 'unknown'
+  const countsRecord = asRecord(record.counts)
+  const counts: RunCheckpointRevertCounts = {}
+  if (countsRecord) {
+    for (const key of ['restored', 'deleted', 'skippedConflict', 'failed', 'noop'] as const) {
+      const parsed = asNonNegativeInteger(countsRecord[key])
+      if (parsed !== null) counts[key] = parsed
+    }
+  }
+  return {
+    state,
+    at: asNullableNonEmptyString(record.at),
+    counts: Object.keys(counts).length > 0 ? counts : null,
+    // `revertRef` is accepted as an alias so a future rename cannot silently drop the ref.
+    ref: asNullableNonEmptyString(record.ref) ?? asNullableNonEmptyString(record.revertRef),
+  }
+}
+
+/** `GET /chat/runs/{runId}/checkpoint`; `null` when the payload is unusable. */
+export function normalizeRunCheckpoint(value: unknown, fallbackRunId = ''): RunCheckpointView | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const runId = isNonEmptyString(record.runId) ? record.runId : fallbackRunId
+  if (!runId) return null
+
+  const files: RunCheckpointChangedFile[] = []
+  if (Array.isArray(record.changedFiles)) {
+    for (const raw of record.changedFiles) {
+      const entry = asRecord(raw)
+      if (!entry || !isNonEmptyString(entry.path)) continue
+      files.push({ status: typeof entry.status === 'string' ? entry.status : '', path: entry.path })
+    }
+  }
+  const state: RunCheckpointState = isEnumValue(record.state, runCheckpointStates)
+    ? record.state
+    : 'unknown'
+
+  return {
+    runId,
+    ...(isNonEmptyString(record.checkpointId) ? { checkpointId: record.checkpointId } : {}),
+    state,
+    ...(isNonEmptyString(record.unrollableReason) ? { unrollableReason: record.unrollableReason } : {}),
+    changedCount: asNonNegativeInteger(record.changedCount) ?? 0,
+    changedFiles: files,
+    sealedAt: asNullableNonEmptyString(record.sealedAt),
+    revert: normalizeRunCheckpointRevertView(record.revert),
+  }
+}
+
+/** SSE `run_checkpoint` payload; drops events of another session when one is known. */
+export function normalizeRunCheckpointEvent(value: unknown, fallbackSessionId = ''): RunCheckpointEvent | null {
+  const record = asRecord(value)
+  if (!record) return null
+  if (fallbackSessionId && isNonEmptyString(record.sessionId) && record.sessionId !== fallbackSessionId) return null
+  const runId = isNonEmptyString(record.runId) ? record.runId : ''
+  const sessionId = isNonEmptyString(record.sessionId) ? record.sessionId : fallbackSessionId
+  if (!runId || !sessionId) return null
+
+  const revert = record.revert === undefined || record.revert === null
+    ? null
+    : normalizeRunCheckpointRevertView(record.revert)
+  return {
+    runId,
+    sessionId,
+    state: isEnumValue(record.state, runCheckpointStates) ? record.state : 'unknown',
+    changedCount: asNonNegativeInteger(record.changedCount) ?? 0,
+    ...(isNonEmptyString(record.unrollableReason) ? { unrollableReason: record.unrollableReason } : {}),
+    ...(revert ? { revert } : {}),
+  }
+}
+
+function normalizeRevertPreviewCounts(value: unknown): RevertPreviewCounts | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const restore = asNonNegativeInteger(record.restore)
+  const deleted = asNonNegativeInteger(record.delete)
+  const skipConflicts = asNonNegativeInteger(record.skipConflicts)
+  const noop = asNonNegativeInteger(record.noop)
+  if (restore === null || deleted === null || skipConflicts === null || noop === null) return null
+  return { restore, delete: deleted, skipConflicts, noop }
+}
+
+function normalizeRevertPreviewEntry(value: unknown): RevertPreviewEntry | null {
+  const record = asRecord(value)
+  if (!record || !isNonEmptyString(record.path)) return null
+  const action: RevertPreviewAction = isEnumValue(record.action, revertPreviewActions) ? record.action : 'unknown'
+  return {
+    path: record.path,
+    ...(isNonEmptyString(record.oldPath) ? { oldPath: record.oldPath } : {}),
+    action,
+    ...(isNonEmptyString(record.conflictReason) ? { conflictReason: record.conflictReason } : {}),
+  }
+}
+
+function normalizeHeadFingerprint(value: unknown): HeadFingerprint {
+  const record = asRecord(value)
+  if (!record) return { recorded: null, current: null, status: 'unknown' }
+  const status: HeadFingerprintStatus = isEnumValue(record.status, headFingerprintStatuses)
+    ? record.status
+    : 'unknown'
+  return {
+    recorded: asNullableNonEmptyString(record.recorded),
+    current: asNullableNonEmptyString(record.current),
+    status,
+  }
+}
+
+/** `POST .../checkpoint/revert/preview`; `null` when the payload is unusable. */
+export function normalizeRevertPreview(value: unknown): RevertPreview | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const entries: RevertPreviewEntry[] = []
+  if (Array.isArray(record.entries)) {
+    for (const raw of record.entries) {
+      const entry = normalizeRevertPreviewEntry(raw)
+      if (entry) entries.push(entry)
+    }
+  }
+  return {
+    runId: typeof record.runId === 'string' ? record.runId : '',
+    state: typeof record.state === 'string' ? record.state : '',
+    counts: normalizeRevertPreviewCounts(record.counts),
+    entries,
+    headFingerprint: normalizeHeadFingerprint(record.headFingerprint),
+    sealedWithLiveJobs: record.sealedWithLiveJobs === true,
+    truncated: record.truncated === true,
+  }
+}
+
+function normalizeRevertResultCounts(value: unknown): RevertResultCounts | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const restored = asNonNegativeInteger(record.restored)
+  const deleted = asNonNegativeInteger(record.deleted)
+  const skippedConflict = asNonNegativeInteger(record.skippedConflict)
+  const failed = asNonNegativeInteger(record.failed)
+  const noop = asNonNegativeInteger(record.noop)
+  if (restored === null || deleted === null || skippedConflict === null || failed === null || noop === null) {
+    return null
+  }
+  return { restored, deleted, skippedConflict, failed, noop }
+}
+
+function normalizeRevertResultEntry(value: unknown): RevertResultEntry | null {
+  const record = asRecord(value)
+  if (!record || !isNonEmptyString(record.path)) return null
+  const result: RevertEntryResult = isEnumValue(record.result, revertEntryResults) ? record.result : 'unknown'
+  return {
+    path: record.path,
+    result,
+    ...(isNonEmptyString(record.reason) ? { reason: record.reason } : {}),
+  }
+}
+
+/** `POST .../checkpoint/revert`; `null` when the payload is unusable. */
+export function normalizeRevertResult(value: unknown): RevertResult | null {
+  const record = asRecord(value)
+  if (!record || !isNonEmptyString(record.runId)) return null
+  const entries: RevertResultEntry[] = []
+  if (Array.isArray(record.entries)) {
+    for (const raw of record.entries) {
+      const entry = normalizeRevertResultEntry(raw)
+      if (entry) entries.push(entry)
+    }
+  }
+  return {
+    runId: record.runId,
+    revertRef: asNullableNonEmptyString(record.revertRef),
+    counts: normalizeRevertResultCounts(record.counts),
+    entries,
+    durationMs: asNonNegativeInteger(record.durationMs) ?? 0,
+  }
+}
+
+/** `GET /workspaces/{id}/git-status` (dual-diff "待提交" side). */
+export function normalizeWorkspaceGitStatus(value: unknown): WorkspaceGitStatus {
+  const record = asRecord(value)
+  const entries: WorkspaceGitStatus['entries'] = []
+  if (record && Array.isArray(record.entries)) {
+    for (const raw of record.entries) {
+      const entry = asRecord(raw)
+      if (!entry || !isNonEmptyString(entry.path)) continue
+      entries.push({ status: typeof entry.status === 'string' ? entry.status : '', path: entry.path })
+    }
+  }
+  return { isRepository: record?.isRepository === true, entries }
+}
+
+/** `GET .../checkpoints/retention`; malformed payloads throw for the caller to surface. */
+export function normalizeCheckpointRetention(value: unknown): CheckpointRetention {
+  const record = asRecord(value)
+  const maxRuns = record ? asNonNegativeInteger(record.maxRuns) : null
+  const ttlDays = record ? asNonNegativeInteger(record.ttlDays) : null
+  const currentRuns = record ? asNonNegativeInteger(record.currentRuns) : null
+  const currentRefs = record ? asNonNegativeInteger(record.currentRefs) : null
+  if (!record || maxRuns === null || ttlDays === null || currentRuns === null || currentRefs === null) {
+    throw new Error('Invalid checkpoint retention response')
+  }
+  return {
+    maxRuns,
+    ttlDays,
+    unsealedNeverDeleted: record.unsealedNeverDeleted === true,
+    currentRuns,
+    currentRefs,
+  }
+}
+
+/** `POST .../checkpoints/gc`; keeps the numeric counts the Runtime reported. */
+export function normalizeCheckpointGcResult(value: unknown): CheckpointGcCounts {
+  const record = asRecord(value)
+  const source = asRecord(record?.counts) ?? record
+  const counts: CheckpointGcCounts = {}
+  if (source) {
+    for (const [key, raw] of Object.entries(source)) {
+      const parsed = asNonNegativeInteger(raw)
+      if (parsed !== null) counts[key] = parsed
+    }
+  }
+  return counts
 }
 
 function normalizePendingApprovalSummary(value: unknown): PendingApprovalSummary | null {
@@ -937,5 +1203,70 @@ export const api = {
       leaseExpired: record.leaseExpired === true,
       pendingApprovals,
     }
+  },
+  /**
+   * PLAN-0328 M3: checkpoint projection of one Run. Readable while the run is active so the
+   * timeline can render live state and the "不可回滚" reason.
+   */
+  async getRunCheckpoint(runId: string): Promise<RunCheckpointView> {
+    const payload = await request<unknown>(`/chat/runs/${encodeURIComponent(runId)}/checkpoint`)
+    const view = normalizeRunCheckpoint(payload, runId)
+    if (!view) throw new Error('Invalid run checkpoint response')
+    return view
+  },
+  /** Dry-run revert plan for a terminal Run; takes no lease. */
+  async previewRunCheckpointRevert(runId: string): Promise<RevertPreview> {
+    const payload = await request<unknown>(`/chat/runs/${encodeURIComponent(runId)}/checkpoint/revert/preview`, {
+      method: 'POST',
+    })
+    const preview = normalizeRevertPreview(payload)
+    if (!preview) throw new Error('Invalid revert preview response')
+    return preview
+  },
+  /**
+   * Executes the revert (user-initiated only; the Agent never reaches this route). Acks are
+   * required for head changes and for every conflicting path reported by the preview.
+   */
+  async executeRunCheckpointRevert(runId: string, acknowledge: RevertAcknowledge): Promise<RevertResult> {
+    const body: Record<string, unknown> = { acknowledgeHeadChange: acknowledge.acknowledgeHeadChange }
+    if (acknowledge.acknowledgeConflicts.length > 0) {
+      body.acknowledgeConflicts = acknowledge.acknowledgeConflicts
+    }
+    const payload = await request<unknown>(`/chat/runs/${encodeURIComponent(runId)}/checkpoint/revert`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    const result = normalizeRevertResult(payload)
+    if (!result) throw new Error('Invalid revert result response')
+    return result
+  },
+  /** One plain-text file (≤ 1MiB) of the run's `base|end` tree; used by the rollback diff. */
+  async getRunCheckpointFile(runId: string, path: string, ref: 'base' | 'end'): Promise<string> {
+    const params = new URLSearchParams({ path, ref })
+    const res = await apiRaw(`/chat/runs/${encodeURIComponent(runId)}/checkpoint/file?${params.toString()}`, {
+      headers: apiAuthHeaders(undefined, false),
+    })
+    return res.text()
+  },
+  /** User-repository git status (dual-diff "待提交" side; independent of the shadow diff). */
+  async getWorkspaceGitStatus(workspaceId: string): Promise<WorkspaceGitStatus> {
+    return normalizeWorkspaceGitStatus(await request<unknown>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/git-status`,
+      { headers: workspaceHeaders(workspaceId) },
+    ))
+  },
+  /** Informational retention view (fixed N=50 / TTL 30d constants + current counts). */
+  async getWorkspaceCheckpointRetention(workspaceId: string): Promise<CheckpointRetention> {
+    return normalizeCheckpointRetention(await request<unknown>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/retention`,
+      { headers: workspaceHeaders(workspaceId) },
+    ))
+  },
+  /** Manual retention sweep; best-effort, returns the Runtime counts. */
+  async runWorkspaceCheckpointGc(workspaceId: string): Promise<CheckpointGcCounts> {
+    return normalizeCheckpointGcResult(await request<unknown>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/gc`,
+      { method: 'POST', headers: workspaceHeaders(workspaceId) },
+    ))
   },
 }

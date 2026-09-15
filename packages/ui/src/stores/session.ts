@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { api, type ApiSession } from '../composables/api'
 import type { Session, SessionContext, RAGContext, MCPContext, FileContext, AttachmentFile } from '../types'
 import { useAgentStore } from './agent'
+import { useCheckpointStore } from './checkpoint'
 
 function getTimeGroup(dateStr: string): 'today' | 'yesterday' | 'earlier' {
   const date = new Date(dateStr)
@@ -114,6 +115,7 @@ export const useSessionStore = defineStore('session', () => {
     error.value = null
     attachments.value = {}
     fileContexts.value = {}
+    useCheckpointStore().clearForUserSwitch()
   }
 
   async function loadSessions(): Promise<Session[]> {
@@ -192,6 +194,8 @@ export const useSessionStore = defineStore('session', () => {
   async function deleteSession(id: string): Promise<void> {
     await api.deleteSession(id)
     useAgentStore().clearSession(id)
+    // PLAN-0328 M3: drop the deleted session's checkpoint records with the other per-session state.
+    useCheckpointStore().clearSession(id)
     const index = sessions.value.findIndex((s) => s.id === id)
     if (index >= 0) {
       sessions.value.splice(index, 1)
@@ -215,6 +219,12 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function selectSession(id: string) {
+    const previous = currentSessionId.value
+    if (previous && previous !== id) {
+      // PLAN-0328 M3: per-run checkpoint records are session-scoped; drop the previous
+      // session's map on switch (re-entering fetches the durable projection again).
+      useCheckpointStore().clearSession(previous)
+    }
     currentSessionId.value = id
   }
 

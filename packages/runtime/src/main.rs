@@ -5,12 +5,13 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use axum::Json as AxumJson;
 use axum::extract::State;
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Path, Query};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post};
 use axum::{
     Router,
-    extract::Path,
     http::{HeaderMap, Request, StatusCode},
 };
 use rmcp::handler::server::wrapper::Json;
@@ -33,6 +34,8 @@ use tokio::sync::Mutex;
 use xihe_runtime::checkpoint_api::{
     CheckpointService, CreateBaseFailure, GcFailure, SealFailure, StatusFailure,
 };
+use xihe_runtime::checkpoint_revert::RevertAcks;
+use xihe_runtime::checkpoint_revert_api::{BlobFailure, BlobRef, GitStatusFailure, RevertFailure};
 use xihe_runtime::device;
 use xihe_runtime::dotenv_loader;
 use xihe_runtime::error::RuntimeError;
@@ -1739,6 +1742,18 @@ fn checkpoint_problem_response(
     reason: Option<&str>,
     detail: &str,
 ) -> Response {
+    checkpoint_problem_response_with(status, code, reason, detail, serde_json::Map::new())
+}
+
+/// Same frozen Problem+JSON shape with additional contract fields (e.g. the
+/// revert lease holder or the unacknowledged conflict paths).
+fn checkpoint_problem_response_with(
+    status: StatusCode,
+    code: &'static str,
+    reason: Option<&str>,
+    detail: &str,
+    extra: serde_json::Map<String, serde_json::Value>,
+) -> Response {
     let mut body = serde_json::json!({
         "type": format!("https://xihe.dev/problems/{}", code.to_ascii_lowercase()),
         "title": status.canonical_reason().unwrap_or("Run checkpoint request failed"),
@@ -1749,6 +1764,11 @@ fn checkpoint_problem_response(
     });
     if let Some(reason) = reason {
         body["reason"] = serde_json::Value::String(reason.to_string());
+    }
+    if let Some(object) = body.as_object_mut() {
+        for (key, value) in extra {
+            object.insert(key, value);
+        }
     }
     (
         status,
@@ -1874,6 +1894,244 @@ async fn checkpoint_gc_handler(
     }
 }
 
+/// PLAN-0328 M3 W1b: revert + workspace-diff host API.
+///
+/// `revert/preview` is read-only (no lease); `revert` takes the synthetic
+/// workspace mutation lease before executing; `blob` serves one plain-text file
+/// from the run's base/end tree; `git-status` is the read-only user-repository
+/// status for the dual-diff separation.
+fn revert_failure_response(failure: RevertFailure) -> Response {
+    match failure {
+        RevertFailure::NotFound { run_id } => checkpoint_problem_response(
+            StatusCode::NOT_FOUND,
+            "CHECKPOINT_NOT_FOUND",
+            None,
+            &format!("no checkpoint refs for run {run_id}"),
+        ),
+        RevertFailure::NotSealed { run_id } => checkpoint_problem_response(
+            StatusCode::CONFLICT,
+            "CHECKPOINT_NOT_SEALED",
+            None,
+            &format!("run {run_id} is not sealed; revert requires a sealed run"),
+        ),
+        RevertFailure::LeaseHeld {
+            holder,
+            expires_at_ms,
+        } => {
+            let mut extra = serde_json::Map::new();
+            if let Some(holder) = holder {
+                extra.insert("heldByRunId".to_string(), serde_json::json!(holder));
+            }
+            if let Some(expires) = expires_at_ms {
+                extra.insert("expiresAtMs".to_string(), serde_json::json!(expires));
+            }
+            checkpoint_problem_response_with(
+                StatusCode::CONFLICT,
+                "CHECKPOINT_LEASE_HELD",
+                Some("LEASE_HELD"),
+                "another run holds the workspace mutation lease",
+                extra,
+            )
+        }
+        RevertFailure::HeadChanged { recorded, observed } => {
+            let mut extra = serde_json::Map::new();
+            extra.insert("recorded".to_string(), serde_json::json!(recorded));
+            extra.insert("observed".to_string(), serde_json::json!(observed));
+            checkpoint_problem_response_with(
+                StatusCode::CONFLICT,
+                "CHECKPOINT_HEAD_CHANGED",
+                None,
+                "the workspace HEAD/branch fingerprint changed since the checkpoint base; acknowledge it to revert anyway",
+                extra,
+            )
+        }
+        RevertFailure::ConflictsUnacknowledged { paths } => {
+            let mut extra = serde_json::Map::new();
+            extra.insert("paths".to_string(), serde_json::json!(paths));
+            checkpoint_problem_response_with(
+                StatusCode::CONFLICT,
+                "CHECKPOINT_CONFLICTS_UNACKNOWLEDGED",
+                None,
+                "conflict paths must be acknowledged from the preview before reverting",
+                extra,
+            )
+        }
+        RevertFailure::Unavailable { reason, detail } => checkpoint_problem_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "CHECKPOINT_UNAVAILABLE",
+            Some(reason),
+            &detail,
+        ),
+    }
+}
+
+async fn revert_preview_handler(
+    Path((ws_id, run_id)): Path<(String, String)>,
+    State(app): State<Arc<AppState>>,
+) -> Response {
+    match app.checkpoints.revert_preview(&ws_id, &run_id).await {
+        Ok(outcome) => AxumJson(outcome).into_response(),
+        Err(failure) => revert_failure_response(failure),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RevertExecuteRequest {
+    #[serde(rename = "acknowledgeConflicts", default)]
+    acknowledge_conflicts: Vec<String>,
+    #[serde(rename = "acknowledgeHeadChange", default)]
+    acknowledge_head_change: bool,
+}
+
+async fn revert_execute_handler(
+    Path((ws_id, run_id)): Path<(String, String)>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(request): AxumJson<RevertExecuteRequest>,
+) -> Response {
+    let acks = RevertAcks {
+        head_changed: request.acknowledge_head_change,
+        conflicts: request.acknowledge_conflicts,
+    };
+    match app.checkpoints.revert_execute(&ws_id, &run_id, &acks).await {
+        Ok(outcome) => AxumJson(outcome).into_response(),
+        Err(failure) => revert_failure_response(failure),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CheckpointBlobQuery {
+    path: String,
+    #[serde(rename = "ref")]
+    reference: String,
+}
+
+fn blob_failure_response(failure: BlobFailure) -> Response {
+    match failure {
+        BlobFailure::NotFound { detail } => checkpoint_problem_response(
+            StatusCode::NOT_FOUND,
+            "CHECKPOINT_NOT_FOUND",
+            None,
+            &detail,
+        ),
+        BlobFailure::NotSealed { run_id } => checkpoint_problem_response(
+            StatusCode::CONFLICT,
+            "CHECKPOINT_NOT_SEALED",
+            None,
+            &format!("run {run_id} has no end ref; the blob endpoint cannot read it"),
+        ),
+        BlobFailure::Invalid { detail } => checkpoint_problem_response(
+            StatusCode::BAD_REQUEST,
+            "CHECKPOINT_INVALID_REQUEST",
+            None,
+            &detail,
+        ),
+        BlobFailure::TooLarge { path, size, max } => {
+            let mut extra = serde_json::Map::new();
+            extra.insert("path".to_string(), serde_json::json!(path));
+            extra.insert("size".to_string(), serde_json::json!(size));
+            extra.insert("max".to_string(), serde_json::json!(max));
+            checkpoint_problem_response_with(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "CHECKPOINT_BLOB_TOO_LARGE",
+                None,
+                &format!("blob {path} exceeds the {max}-byte preview cap"),
+                extra,
+            )
+        }
+        BlobFailure::Unavailable { reason, detail } => checkpoint_problem_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "CHECKPOINT_UNAVAILABLE",
+            Some(reason),
+            &detail,
+        ),
+    }
+}
+
+async fn checkpoint_blob_handler(
+    Path((ws_id, run_id)): Path<(String, String)>,
+    State(app): State<Arc<AppState>>,
+    query: Result<Query<CheckpointBlobQuery>, QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return checkpoint_problem_response(
+            StatusCode::BAD_REQUEST,
+            "CHECKPOINT_INVALID_REQUEST",
+            None,
+            "blob query requires path and ref=base|end",
+        );
+    };
+    let reference = match query.reference.as_str() {
+        "base" => BlobRef::Base,
+        "end" => BlobRef::End,
+        other => {
+            return checkpoint_problem_response(
+                StatusCode::BAD_REQUEST,
+                "CHECKPOINT_INVALID_REQUEST",
+                None,
+                &format!("unsupported ref {other:?}; expected base or end"),
+            );
+        }
+    };
+    match app
+        .checkpoints
+        .revert_blob(&ws_id, &run_id, reference, &query.path)
+        .await
+    {
+        Ok(blob) => {
+            // Only regular text previews are served: binaries are rejected here so
+            // the response is always a valid plain-text document.
+            match std::str::from_utf8(&blob.content) {
+                Ok(text) if !text.as_bytes().contains(&0) => (
+                    StatusCode::OK,
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/plain; charset=utf-8",
+                    )],
+                    text.to_string(),
+                )
+                    .into_response(),
+                _ => checkpoint_problem_response(
+                    StatusCode::BAD_REQUEST,
+                    "CHECKPOINT_INVALID_REQUEST",
+                    None,
+                    &format!(
+                        "blob {} ({}) is not valid plain text",
+                        blob.path, blob.reference
+                    ),
+                ),
+            }
+        }
+        Err(failure) => blob_failure_response(failure),
+    }
+}
+
+fn git_status_failure_response(failure: GitStatusFailure) -> Response {
+    match failure {
+        GitStatusFailure::Validation { detail } => checkpoint_problem_response(
+            StatusCode::BAD_REQUEST,
+            "CHECKPOINT_INVALID_REQUEST",
+            None,
+            &detail,
+        ),
+        GitStatusFailure::Unavailable { reason, detail } => checkpoint_problem_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "CHECKPOINT_UNAVAILABLE",
+            Some(reason),
+            &detail,
+        ),
+    }
+}
+
+async fn workspace_git_status_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+) -> Response {
+    match app.checkpoints.git_status(&ws_id).await {
+        Ok(status) => AxumJson(status).into_response(),
+        Err(failure) => git_status_failure_response(failure),
+    }
+}
+
 /// `GET /internal/v1/runtime/diagnostics` — ops projection; carries no secrets
 /// and never workspace contents.
 async fn runtime_diagnostics_handler(State(app): State<Arc<AppState>>) -> Response {
@@ -1970,6 +2228,22 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}/seal",
             post(seal_run_checkpoint_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}/revert/preview",
+            post(revert_preview_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}/revert",
+            post(revert_execute_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}/blob",
+            get(checkpoint_blob_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/git-status",
+            get(workspace_git_status_handler),
         )
         .route(
             "/internal/v1/runtime/diagnostics",
@@ -3502,6 +3776,13 @@ mod checkpoint_handler_tests {
         let (status, sealed) = seal_checkpoint(&state, WS, "run-1").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(sealed["sealedWithLiveJobs"], true);
+
+        let (preview_status, preview) = revert_preview(&state, WS, "run-1").await;
+        assert_eq!(preview_status, StatusCode::OK, "{preview}");
+        assert_eq!(
+            preview["sealedWithLiveJobs"], true,
+            "the preview must carry the seal marker: {preview}"
+        );
     }
 
     /// Malformed identifiers → 400 before any git work.
@@ -3547,6 +3828,773 @@ mod checkpoint_handler_tests {
         let (diag_status, _) =
             send_with_auth(&state, Method::GET, DIAGNOSTICS_URI, None, None).await;
         assert_eq!(diag_status, StatusCode::UNAUTHORIZED);
+    }
+
+    // ---- PLAN-0328 M3 W1b: revert / blob / git-status handler tests ----
+
+    async fn send_text(state: &Arc<AppState>, uri: &str) -> (StatusCode, Option<String>, String) {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(axum::http::header::AUTHORIZATION, AUTH)
+            .body(Body::empty())
+            .expect("request");
+        let response = tower::ServiceExt::oneshot(build_app_router(state), request)
+            .await
+            .expect("infallible router");
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        (
+            status,
+            content_type,
+            String::from_utf8_lossy(&bytes).into_owned(),
+        )
+    }
+
+    async fn revert_preview(
+        state: &Arc<AppState>,
+        workspace: &str,
+        run_id: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        send(
+            state,
+            Method::POST,
+            &format!(
+                "/internal/v1/runtime/workspaces/{workspace}/checkpoints/{run_id}/revert/preview"
+            ),
+            None,
+        )
+        .await
+    }
+
+    async fn revert_execute(
+        state: &Arc<AppState>,
+        workspace: &str,
+        run_id: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        send(
+            state,
+            Method::POST,
+            &format!("/internal/v1/runtime/workspaces/{workspace}/checkpoints/{run_id}/revert"),
+            Some(body),
+        )
+        .await
+    }
+
+    fn null_device() -> &'static str {
+        #[cfg(windows)]
+        {
+            "NUL"
+        }
+        #[cfg(not(windows))]
+        {
+            "/dev/null"
+        }
+    }
+
+    fn git_in(dir: &std::path::Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", null_device())
+            .env("GIT_CONFIG_SYSTEM", null_device())
+            .env("GIT_AUTHOR_NAME", "handler-test")
+            .env("GIT_AUTHOR_EMAIL", "handler-test@example.com")
+            .env("GIT_COMMITTER_NAME", "handler-test")
+            .env("GIT_COMMITTER_EMAIL", "handler-test@example.com")
+            .output()
+            .expect("spawn fixture git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed in {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// Happy path: create → write → seal → preview → execute deletes the run-created
+    /// file and restores the modified one; a repeated execute is all-noop.
+    #[tokio::test]
+    async fn revert_preview_and_execute_revert_the_run_and_replay_all_noop() {
+        let temp = workspace_root();
+        std::fs::write(temp.path().join(WS).join("notes.md"), "before\n").expect("fixture notes");
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        assert_eq!(
+            create_checkpoint(&state, WS, "run-revert").await.0,
+            StatusCode::OK
+        );
+        std::fs::create_dir_all(temp.path().join(WS).join("src")).expect("fixture dirs");
+        std::fs::write(
+            temp.path().join(WS).join("src/new.txt"),
+            "created during the run\n",
+        )
+        .expect("fixture write");
+        std::fs::write(temp.path().join(WS).join("notes.md"), "after\n").expect("fixture modify");
+        assert_eq!(
+            seal_checkpoint(&state, WS, "run-revert").await.0,
+            StatusCode::OK
+        );
+
+        let (status, preview) = revert_preview(&state, WS, "run-revert").await;
+        assert_eq!(status, StatusCode::OK, "preview must return 200: {preview}");
+        assert_eq!(preview["runId"], "run-revert");
+        assert_eq!(preview["state"], "sealed");
+        assert_eq!(
+            preview["counts"],
+            serde_json::json!({"restore": 1, "delete": 1, "skipConflicts": 0, "noop": 0}),
+            "preview counts must match the sealed change set: {preview}"
+        );
+        let entries = preview["entries"].as_array().expect("entries array");
+        assert_eq!(
+            entries.len(),
+            2,
+            "pending entries only (noop items are counted, not listed): {preview}"
+        );
+        assert_eq!(entries[0]["path"], "notes.md");
+        assert_eq!(entries[0]["action"], "restore");
+        assert!(entries[0]["conflictReason"].is_null());
+        assert_eq!(entries[1]["path"], "src/new.txt");
+        assert_eq!(entries[1]["action"], "delete");
+        assert_eq!(
+            preview["headFingerprint"]["status"], "not_repo",
+            "a non-Git workspace has no HEAD to protect: {preview}"
+        );
+        assert_eq!(preview["sealedWithLiveJobs"], false);
+        assert_eq!(preview["truncated"], false);
+
+        let (status, executed) = revert_execute(
+            &state,
+            WS,
+            "run-revert",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "execute must return 200: {executed}"
+        );
+        assert_eq!(
+            executed["counts"],
+            serde_json::json!({
+                "restored": 1, "deleted": 1, "skippedConflict": 0, "failed": 0, "noop": 0
+            }),
+            "execute counts must match the preview: {executed}"
+        );
+        let revert_ref = executed["revertRef"].as_str().expect("revertRef string");
+        assert!(
+            revert_ref.starts_with("refs/xihe/run-revert/rollback/"),
+            "revert must append its audit ref: {revert_ref}"
+        );
+        assert!(executed["durationMs"].as_u64().is_some());
+        let results: Vec<(&str, &str)> = executed["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .map(|entry| {
+                (
+                    entry["path"].as_str().expect("path"),
+                    entry["result"].as_str().expect("result"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            results,
+            vec![("notes.md", "restored"), ("src/new.txt", "deleted")]
+        );
+
+        let ws_root = temp.path().join(WS);
+        assert_eq!(
+            std::fs::read_to_string(ws_root.join("notes.md")).expect("notes read"),
+            "before\n",
+            "the modified file must be restored to the base content"
+        );
+        assert!(
+            !ws_root.join("src/new.txt").exists(),
+            "the run-created file must be deleted"
+        );
+        assert!(
+            !ws_root.join("src").exists(),
+            "empty directories left by the revert must be pruned"
+        );
+
+        let (replay_status, replayed) = revert_execute(
+            &state,
+            WS,
+            "run-revert",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(replay_status, StatusCode::OK, "{replayed}");
+        assert_eq!(
+            replayed["counts"],
+            serde_json::json!({
+                "restored": 0, "deleted": 0, "skippedConflict": 0, "failed": 0, "noop": 2
+            }),
+            "a repeated execute must be idempotent: {replayed}"
+        );
+        assert!(
+            replayed["entries"]
+                .as_array()
+                .expect("entries")
+                .iter()
+                .all(|entry| entry["result"] == "noop"),
+            "every item of a repeated execute is noop: {replayed}"
+        );
+        assert_ne!(
+            replayed["revertRef"], executed["revertRef"],
+            "each execution appends its own rollback ref"
+        );
+    }
+
+    /// Unknown runs → 404; an existing but unsealed run → 409 CHECKPOINT_NOT_SEALED.
+    #[tokio::test]
+    async fn revert_unknown_and_unsealed_runs_map_404_and_409() {
+        let temp = workspace_root();
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+
+        let (preview_status, preview) = revert_preview(&state, WS, "run-missing").await;
+        assert_eq!(preview_status, StatusCode::NOT_FOUND);
+        assert_eq!(preview["code"], "CHECKPOINT_NOT_FOUND");
+        let (execute_status, execute) = revert_execute(
+            &state,
+            WS,
+            "run-missing",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(execute_status, StatusCode::NOT_FOUND);
+        assert_eq!(execute["code"], "CHECKPOINT_NOT_FOUND");
+
+        assert_eq!(
+            create_checkpoint(&state, WS, "run-open").await.0,
+            StatusCode::OK
+        );
+        let (open_preview, open_body) = revert_preview(&state, WS, "run-open").await;
+        assert_eq!(open_preview, StatusCode::CONFLICT, "{open_body}");
+        assert_eq!(open_body["code"], "CHECKPOINT_NOT_SEALED");
+        // Executing while the run itself is still live is rejected by the mutation
+        // lease first (a running run may not be reverted).
+        let (open_execute, open_execute_body) = revert_execute(
+            &state,
+            WS,
+            "run-open",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(open_execute, StatusCode::CONFLICT, "{open_execute_body}");
+        assert_eq!(open_execute_body["code"], "CHECKPOINT_LEASE_HELD");
+        assert_eq!(open_execute_body["heldByRunId"], "run-open");
+
+        // Unsealed with an expired lease (Runtime-restart recovery window): the
+        // execution reaches the engine and reports the missing seal.
+        let stale_temp = workspace_root();
+        let stale_service =
+            CheckpointService::new(stale_temp.path()).with_lease_ttl(Duration::from_millis(500));
+        if !require_git(&stale_service).await {
+            return;
+        }
+        let stale_state = state_with(stale_service).await;
+        assert_eq!(
+            create_checkpoint(&stale_state, WS, "run-stale").await.0,
+            StatusCode::OK
+        );
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let (stale_status, stale_body) = revert_execute(
+            &stale_state,
+            WS,
+            "run-stale",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(stale_status, StatusCode::CONFLICT, "{stale_body}");
+        assert_eq!(stale_body["code"], "CHECKPOINT_NOT_SEALED");
+
+        let (invalid, invalid_body) = revert_preview(&state, WS, "run.").await;
+        assert_eq!(invalid, StatusCode::NOT_FOUND, "{invalid_body}");
+        let (invalid_execute, invalid_execute_body) = revert_execute(
+            &state,
+            WS,
+            "run.",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(
+            invalid_execute,
+            StatusCode::NOT_FOUND,
+            "{invalid_execute_body}"
+        );
+    }
+
+    /// Probe failure (no host git) and a missing workspace directory → 503 with the
+    /// frozen reason codes.
+    #[tokio::test]
+    async fn revert_probe_and_workspace_failures_map_503() {
+        let temp = workspace_root();
+        let service =
+            CheckpointService::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
+        let state = state_with(service).await;
+
+        let (status, body) = revert_preview(&state, WS, "run-1").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["code"], "CHECKPOINT_UNAVAILABLE");
+        assert_eq!(body["reason"], "GIT_UNAVAILABLE");
+
+        let missing = TempDir::new().expect("fixture tempdir");
+        let missing_state = state_with(CheckpointService::new(missing.path())).await;
+        let (ws_status, ws_body) = revert_preview(&missing_state, WS, "run-1").await;
+        assert_eq!(ws_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(ws_body["code"], "CHECKPOINT_UNAVAILABLE");
+        assert_eq!(ws_body["reason"], "WORKSPACE_UNKNOWN");
+    }
+
+    /// A live (unsealed) run holds the workspace mutation lease: the revert is
+    /// rejected with 409 CHECKPOINT_LEASE_HELD and the synthetic owner is released
+    /// on every path (the workspace becomes acquirable again).
+    #[tokio::test]
+    async fn revert_execute_is_rejected_while_a_live_run_holds_the_workspace_lease() {
+        let temp = workspace_root();
+        std::fs::write(temp.path().join(WS).join("notes.md"), "before\n").expect("fixture notes");
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        assert_eq!(
+            create_checkpoint(&state, WS, "run-1").await.0,
+            StatusCode::OK
+        );
+        std::fs::write(temp.path().join(WS).join("notes.md"), "after\n").expect("fixture modify");
+        assert_eq!(seal_checkpoint(&state, WS, "run-1").await.0, StatusCode::OK);
+
+        // A second run holds the workspace mutation lease while it is live.
+        assert_eq!(
+            create_checkpoint(&state, WS, "run-2").await.0,
+            StatusCode::OK
+        );
+        let (status, body) = revert_execute(
+            &state,
+            WS,
+            "run-1",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["code"], "CHECKPOINT_LEASE_HELD");
+        assert_eq!(body["reason"], "LEASE_HELD");
+        assert_eq!(body["heldByRunId"], "run-2");
+        assert!(body["expiresAtMs"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(WS).join("notes.md")).expect("notes"),
+            "after\n",
+            "a lease-rejected revert must not mutate the workspace"
+        );
+
+        // Sealing the live run releases its lease; the revert then succeeds and the
+        // synthetic lease is released again (diagnostics show no active leases).
+        assert_eq!(seal_checkpoint(&state, WS, "run-2").await.0, StatusCode::OK);
+        let (retry_status, retried) = revert_execute(
+            &state,
+            WS,
+            "run-1",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(retry_status, StatusCode::OK, "{retried}");
+        assert_eq!(retried["counts"]["restored"], 1);
+        let (_, diagnostics) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
+        assert_eq!(
+            diagnostics["checkpoint"]["activeLeaseWorkspaces"],
+            serde_json::json!([]),
+            "the synthetic revert lease must be released on success: {diagnostics}"
+        );
+    }
+
+    /// Conflicts (paths changed after the run) are gated by an exact path list;
+    /// acknowledged conflicts are skipped and their content is preserved.
+    #[tokio::test]
+    async fn revert_conflicts_require_acknowledgement_and_are_skipped() {
+        let temp = workspace_root();
+        std::fs::write(temp.path().join(WS).join("notes.md"), "before\n").expect("fixture notes");
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        assert_eq!(
+            create_checkpoint(&state, WS, "run-conflict").await.0,
+            StatusCode::OK
+        );
+        std::fs::write(temp.path().join(WS).join("notes.md"), "after\n").expect("fixture modify");
+        assert_eq!(
+            seal_checkpoint(&state, WS, "run-conflict").await.0,
+            StatusCode::OK
+        );
+        // Post-seal user/editor edit: neither base nor end any more.
+        std::fs::write(temp.path().join(WS).join("notes.md"), "user edit\n")
+            .expect("post-seal edit");
+
+        let (preview_status, preview) = revert_preview(&state, WS, "run-conflict").await;
+        assert_eq!(preview_status, StatusCode::OK, "{preview}");
+        assert_eq!(
+            preview["counts"],
+            serde_json::json!({"restore": 0, "delete": 0, "skipConflicts": 1, "noop": 0})
+        );
+        assert_eq!(preview["entries"][0]["path"], "notes.md");
+        assert_eq!(preview["entries"][0]["action"], "restore");
+        assert_eq!(
+            preview["entries"][0]["conflictReason"], "CONTENT_CHANGED",
+            "the frozen conflict code must be exposed: {preview}"
+        );
+
+        let (unacked_status, unacked) = revert_execute(
+            &state,
+            WS,
+            "run-conflict",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(unacked_status, StatusCode::CONFLICT, "{unacked}");
+        assert_eq!(unacked["code"], "CHECKPOINT_CONFLICTS_UNACKNOWLEDGED");
+        assert_eq!(unacked["paths"], serde_json::json!(["notes.md"]));
+
+        let (acked_status, acked) = revert_execute(
+            &state,
+            WS,
+            "run-conflict",
+            serde_json::json!({"acknowledgeConflicts": ["notes.md"], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(acked_status, StatusCode::OK, "{acked}");
+        assert_eq!(
+            acked["counts"],
+            serde_json::json!({
+                "restored": 0, "deleted": 0, "skippedConflict": 1, "failed": 0, "noop": 0
+            })
+        );
+        assert_eq!(acked["entries"][0]["result"], "skippedConflict");
+        assert_eq!(acked["entries"][0]["reason"], "CONTENT_CHANGED");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(WS).join("notes.md")).expect("notes"),
+            "user edit\n",
+            "acknowledged conflicts are skipped, never overwritten"
+        );
+    }
+
+    /// A user-repository HEAD move after base creation requires an explicit
+    /// acknowledgement; the preview exposes recorded/current fingerprints.
+    #[tokio::test]
+    async fn revert_head_change_requires_acknowledgement() {
+        let temp = workspace_root();
+        let ws_root = temp.path().join(WS);
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        std::fs::write(ws_root.join("app.txt"), "v1\n").expect("fixture file");
+        git_in(&ws_root, &["init", "-q"]);
+        git_in(&ws_root, &["add", "-A"]);
+        git_in(&ws_root, &["commit", "-qm", "one"]);
+
+        assert_eq!(
+            create_checkpoint(&state, WS, "run-head").await.0,
+            StatusCode::OK
+        );
+        std::fs::write(ws_root.join("app.txt"), "v2\n").expect("fixture modify");
+        assert_eq!(
+            seal_checkpoint(&state, WS, "run-head").await.0,
+            StatusCode::OK
+        );
+        // The user moves HEAD while the worktree stays at the run's end state.
+        git_in(&ws_root, &["commit", "-q", "--allow-empty", "-m", "bump"]);
+
+        let (preview_status, preview) = revert_preview(&state, WS, "run-head").await;
+        assert_eq!(preview_status, StatusCode::OK, "{preview}");
+        assert_eq!(preview["headFingerprint"]["status"], "changed");
+        let recorded = preview["headFingerprint"]["recorded"].clone();
+        let current = preview["headFingerprint"]["current"].clone();
+        assert_eq!(recorded["isRepo"], true);
+        assert!(
+            recorded["headCommit"].as_str().is_some(),
+            "recorded fingerprint must carry the commit: {preview}"
+        );
+        assert_ne!(
+            recorded["headCommit"], current["headCommit"],
+            "the user commit must be visible as a HEAD change: {preview}"
+        );
+
+        let (blocked_status, blocked) = revert_execute(
+            &state,
+            WS,
+            "run-head",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+        )
+        .await;
+        assert_eq!(blocked_status, StatusCode::CONFLICT, "{blocked}");
+        assert_eq!(blocked["code"], "CHECKPOINT_HEAD_CHANGED");
+        assert_eq!(blocked["recorded"]["headCommit"], recorded["headCommit"]);
+        assert_eq!(
+            std::fs::read_to_string(ws_root.join("app.txt")).expect("app"),
+            "v2\n",
+            "a head-change-rejected revert must not mutate the workspace"
+        );
+
+        let (acked_status, acked) = revert_execute(
+            &state,
+            WS,
+            "run-head",
+            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": true}),
+        )
+        .await;
+        assert_eq!(acked_status, StatusCode::OK, "{acked}");
+        assert_eq!(acked["counts"]["restored"], 1);
+        assert_eq!(
+            std::fs::read_to_string(ws_root.join("app.txt")).expect("app"),
+            "v1\n"
+        );
+    }
+
+    /// Blob endpoint: base/end text content, 400 for unsupported ref/traversal/
+    /// non-file/binary, 404 for absent paths, 413 above the 1 MiB cap.
+    #[tokio::test]
+    async fn checkpoint_blob_serves_text_and_rejects_caps_paths_and_binary() {
+        let temp = workspace_root();
+        let ws_root = temp.path().join(WS);
+        std::fs::write(ws_root.join("notes.md"), "before\n").expect("fixture notes");
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        assert_eq!(
+            create_checkpoint(&state, WS, "run-blob").await.0,
+            StatusCode::OK
+        );
+        std::fs::write(ws_root.join("notes.md"), "after\n").expect("fixture modify");
+        std::fs::create_dir_all(ws_root.join("src")).expect("fixture dirs");
+        std::fs::write(ws_root.join("src/new.txt"), "created during the run\n")
+            .expect("fixture write");
+        std::fs::write(ws_root.join("big.txt"), vec![b'a'; 1024 * 1024 + 1])
+            .expect("fixture big file");
+        std::fs::write(ws_root.join("bin.dat"), [0x62_u8, 0x69, 0x6e, 0x00, 0xff])
+            .expect("fixture binary");
+        assert_eq!(
+            seal_checkpoint(&state, WS, "run-blob").await.0,
+            StatusCode::OK
+        );
+
+        let blob_uri = |path: &str, reference: &str| {
+            format!(
+                "/internal/v1/runtime/workspaces/{WS}/checkpoints/run-blob/blob?path={path}&ref={reference}"
+            )
+        };
+
+        let (status, content_type, body) = send_text(&state, &blob_uri("notes.md", "end")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(content_type.as_deref(), Some("text/plain; charset=utf-8"));
+        assert_eq!(body, "after\n");
+        let (_, _, base_body) = send_text(&state, &blob_uri("notes.md", "base")).await;
+        assert_eq!(base_body, "before\n");
+        let (_, _, created_body) = send_text(&state, &blob_uri("src%2Fnew.txt", "end")).await;
+        assert_eq!(created_body, "created during the run\n");
+
+        // A run-created path has no base blob.
+        let (missing_base, _, _) = send_text(&state, &blob_uri("src%2Fnew.txt", "base")).await;
+        assert_eq!(missing_base, StatusCode::NOT_FOUND);
+        let (missing_path, _, _) = send_text(&state, &blob_uri("missing.txt", "end")).await;
+        assert_eq!(missing_path, StatusCode::NOT_FOUND);
+
+        for uri in [
+            blob_uri("notes.md", "head"),
+            blob_uri("..%2Fevil.txt", "end"),
+            blob_uri("%2Fetc%2Fpasswd", "end"),
+            blob_uri("src", "end"),
+            blob_uri("bin.dat", "end"),
+        ] {
+            let (bad, _, body) = send_text(&state, &uri).await;
+            assert_eq!(bad, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        }
+        let (too_large, _, large_body) = send_text(&state, &blob_uri("big.txt", "end")).await;
+        assert_eq!(too_large, StatusCode::PAYLOAD_TOO_LARGE, "{large_body}");
+        assert!(large_body.contains("CHECKPOINT_BLOB_TOO_LARGE"));
+
+        let (no_query, _, _) = send_text(
+            &state,
+            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/run-blob/blob"),
+        )
+        .await;
+        assert_eq!(no_query, StatusCode::BAD_REQUEST);
+
+        let (invalid_run, _, _) = send_text(
+            &state,
+            &format!(
+                "/internal/v1/runtime/workspaces/{WS}/checkpoints/run./blob?path=notes.md&ref=end"
+            ),
+        )
+        .await;
+        assert_eq!(
+            invalid_run,
+            StatusCode::BAD_REQUEST,
+            "malformed run ids are rejected"
+        );
+    }
+
+    /// git-status: a non-Git workspace reports `isRepository: false`; a Git workspace
+    /// reports porcelain entries read-only; missing/invalid workspaces fail closed.
+    #[tokio::test]
+    async fn workspace_git_status_reports_repo_and_non_repo_workspaces() {
+        let temp = workspace_root();
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        let uri = format!("/internal/v1/runtime/workspaces/{WS}/git-status");
+        let (status, body) = send(&state, Method::GET, &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["isRepository"], false);
+        assert_eq!(body["entries"], serde_json::json!([]));
+
+        // A real user repository: one modified tracked file plus one untracked file.
+        let repo_temp = workspace_root();
+        let repo_root = repo_temp.path().join(WS);
+        let repo_service = CheckpointService::new(repo_temp.path());
+        if !require_git(&repo_service).await {
+            return;
+        }
+        let repo_state = state_with(repo_service).await;
+        std::fs::write(repo_root.join("tracked.txt"), "v1\n").expect("fixture tracked");
+        git_in(&repo_root, &["init", "-q"]);
+        git_in(&repo_root, &["add", "-A"]);
+        git_in(&repo_root, &["commit", "-qm", "one"]);
+        std::fs::write(repo_root.join("tracked.txt"), "v2\n").expect("fixture modify");
+        std::fs::write(repo_root.join("new.txt"), "n\n").expect("fixture untracked");
+
+        let (repo_status, repo_body) = send(&repo_state, Method::GET, &uri, None).await;
+        assert_eq!(repo_status, StatusCode::OK, "{repo_body}");
+        assert_eq!(repo_body["isRepository"], true);
+        let mut entries: Vec<(String, String)> = repo_body["entries"]
+            .as_array()
+            .expect("entries array")
+            .iter()
+            .map(|entry| {
+                (
+                    entry["status"].as_str().expect("status").to_string(),
+                    entry["path"].as_str().expect("path").to_string(),
+                )
+            })
+            .collect();
+        entries.sort();
+        assert_eq!(
+            entries,
+            vec![
+                (" M".to_string(), "tracked.txt".to_string()),
+                ("??".to_string(), "new.txt".to_string()),
+            ],
+            "porcelain codes and paths must be reported verbatim: {repo_body}"
+        );
+        assert!(
+            !repo_root.join(".git/index.lock").exists(),
+            "git-status must not leave an index lock behind (read-only)"
+        );
+
+        // Missing workspace directory → 503 WORKSPACE_UNKNOWN; invalid id → 400.
+        let missing = TempDir::new().expect("fixture tempdir");
+        let missing_state = state_with(CheckpointService::new(missing.path())).await;
+        let (missing_status, missing_body) = send(
+            &missing_state,
+            Method::GET,
+            &format!("/internal/v1/runtime/workspaces/{WS}/git-status"),
+            None,
+        )
+        .await;
+        assert_eq!(missing_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(missing_body["code"], "CHECKPOINT_UNAVAILABLE");
+        assert_eq!(missing_body["reason"], "WORKSPACE_UNKNOWN");
+
+        let (invalid_status, invalid_body) = send(
+            &state,
+            Method::GET,
+            "/internal/v1/runtime/workspaces/bad.id/git-status",
+            None,
+        )
+        .await;
+        assert_eq!(invalid_status, StatusCode::BAD_REQUEST, "{invalid_body}");
+        assert_eq!(invalid_body["code"], "CHECKPOINT_INVALID_REQUEST");
+    }
+
+    /// The W1b routes stay behind the internal service bearer filter.
+    #[tokio::test]
+    async fn revert_and_git_status_routes_require_service_auth() {
+        let temp = workspace_root();
+        let state = state_with(CheckpointService::new(temp.path())).await;
+
+        let (status, body) = send_with_auth(
+            &state,
+            Method::POST,
+            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints"),
+            Some(serde_json::json!({"runId": "run-1"})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["code"], "AUTHORIZATION_REQUIRED");
+
+        let (diag_status, _) =
+            send_with_auth(&state, Method::GET, DIAGNOSTICS_URI, None, None).await;
+        assert_eq!(diag_status, StatusCode::UNAUTHORIZED);
+
+        let (preview_status, preview_body) = send_with_auth(
+            &state,
+            Method::POST,
+            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/run-1/revert/preview"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(preview_status, StatusCode::UNAUTHORIZED);
+        assert_eq!(preview_body["code"], "AUTHORIZATION_REQUIRED");
+
+        let (blob_status, blob_body) = send_with_auth(
+            &state,
+            Method::GET,
+            &format!(
+                "/internal/v1/runtime/workspaces/{WS}/checkpoints/run-1/blob?path=a.txt&ref=base"
+            ),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(blob_status, StatusCode::UNAUTHORIZED);
+        assert_eq!(blob_body["code"], "AUTHORIZATION_REQUIRED");
+
+        let (git_status, git_body) = send_with_auth(
+            &state,
+            Method::GET,
+            &format!("/internal/v1/runtime/workspaces/{WS}/git-status"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(git_status, StatusCode::UNAUTHORIZED);
+        assert_eq!(git_body["code"], "AUTHORIZATION_REQUIRED");
     }
 }
 

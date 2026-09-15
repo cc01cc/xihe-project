@@ -1,9 +1,10 @@
 import { ref, onUnmounted, getCurrentInstance, toValue, type MaybeRefOrGetter } from 'vue'
 import { getActivePinia } from 'pinia'
 import { useAgentStore } from '../stores/agent'
+import { useCheckpointStore } from '../stores/checkpoint'
 import { logger } from '../lib/logger'
 import { chatTransport } from '../services/chatTransport'
-import { ApiError, apiAuthHeaders, apiRaw, normalizeApprovalRequest } from './api'
+import { ApiError, apiAuthHeaders, apiRaw, normalizeApprovalRequest, normalizeRunCheckpointEvent } from './api'
 import type { EventSourceMessage } from '@microsoft/fetch-event-source'
 import type { ChatRunResponse } from '../types'
 
@@ -66,6 +67,11 @@ const STREAM_TIMEOUT_MS = 30000
 function getAgentStoreOrNull() {
   const pinia = getActivePinia()
   return pinia ? useAgentStore(pinia) : null
+}
+
+function getCheckpointStoreOrNull() {
+  const pinia = getActivePinia()
+  return pinia ? useCheckpointStore(pinia) : null
 }
 
 export function useSSE(sessionId: MaybeRefOrGetter<string>) {
@@ -222,6 +228,19 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
           }
         } catch {
           logger.warn('Failed to parse SSE status event')
+        }
+        break
+
+      // PLAN-0328 M3: checkpoint lifecycle annotation (seal / degradation / revert).
+      // The GET projection stays the durable source; this only merges into the timeline map.
+      case 'run_checkpoint':
+        resetStreamTimeout()
+        try {
+          const data = JSON.parse(msg.data) as Record<string, unknown>
+          const event = normalizeRunCheckpointEvent(data, activeSessionId ?? '')
+          if (event) getCheckpointStoreOrNull()?.mergeEvent(event)
+        } catch {
+          logger.warn('Failed to parse SSE run_checkpoint event')
         }
         break
 

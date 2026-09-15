@@ -657,6 +657,18 @@ impl CheckpointService {
         })
     }
 
+    /// In-memory `sealedWithLiveJobs` marker of one run (revert preview contract).
+    ///
+    /// `false` when the run has no in-memory seal record (after a Runtime restart
+    /// the CP row remains the durable projection of the seal markers).
+    pub fn sealed_with_live_jobs(&self, workspace_id: &str, run_id: &str) -> bool {
+        self.seals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&run_key(workspace_id, run_id))
+            .is_some_and(|record| record.sealed_with_live_jobs)
+    }
+
     /// Diagnostics projection used by `GET /internal/v1/runtime/diagnostics`.
     pub async fn diagnostics(&self) -> CheckpointDiagnostics {
         let capability = self.engine.probe().await;
@@ -741,7 +753,7 @@ fn new_create_record() -> CreateRecord {
 
 /// `GIT_TOO_OLD` when a version string was reported but rejected (below 2.20 or
 /// unparseable), `GIT_UNAVAILABLE` when the binary itself could not be probed.
-fn unavailable_reason(version: &Option<String>) -> &'static str {
+pub(crate) fn unavailable_reason(version: &Option<String>) -> &'static str {
     if version.is_some() {
         REASON_GIT_TOO_OLD
     } else {

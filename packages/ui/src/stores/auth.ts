@@ -7,6 +7,7 @@ import { useChatStore } from './chat'
 import { useConfigStore } from './config'
 import { useAgentStore } from './agent'
 import { usePolicyStore } from './policy'
+import { useCheckpointStore } from './checkpoint'
 import type { User } from '../types'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -127,6 +128,11 @@ export const useAuthStore = defineStore('auth', () => {
     }
     try {
       usePolicyStore().reset()
+    } catch {
+      // Pinia not yet initialised — store will start fresh on next access.
+    }
+    try {
+      useCheckpointStore().clearForUserSwitch()
     } catch {
       // Pinia not yet initialised — store will start fresh on next access.
     }

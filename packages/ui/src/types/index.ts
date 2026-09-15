@@ -390,6 +390,156 @@ export interface ChatSessionRunState {
   status: AgentState['status']
 }
 
+// ── PLAN-0328 M2/M3: Run checkpoint (shadow-git snapshot) ────────────────────
+// Wire shapes follow the CP RunCheckpointController / OpenAPI contract. `unknown`
+// members are UI-only fallbacks for out-of-contract values: a marker must never
+// claim "rollbackable" or "no snapshot" from a value it does not understand.
+
+/** Public checkpoint projection states; `unknown` = out-of-contract fallback. */
+export type RunCheckpointState = 'none' | 'base' | 'sealed' | 'unsealed' | 'degraded' | 'expired' | 'unknown'
+
+/** Last revert outcome; `unknown` = out-of-contract fallback. */
+export type RunCheckpointRevertState = 'none' | 'rolled_back' | 'partial' | 'failed' | 'unknown'
+
+export interface RunCheckpointChangedFile {
+  status: string
+  path: string
+}
+
+/** Projection revert counts; individual keys may be absent in legacy summaries. */
+export interface RunCheckpointRevertCounts {
+  restored?: number
+  deleted?: number
+  skippedConflict?: number
+  failed?: number
+  noop?: number
+}
+
+/** Last revert attempt view (`revert` object of the projection and the SSE event). */
+export interface RunCheckpointRevertView {
+  state: RunCheckpointRevertState
+  at: string | null
+  counts: RunCheckpointRevertCounts | null
+  ref: string | null
+}
+
+/** `GET /api/v1/chat/runs/{runId}/checkpoint` projection. */
+export interface RunCheckpointView {
+  runId: string
+  checkpointId?: string
+  state: RunCheckpointState
+  unrollableReason?: string
+  changedCount: number
+  /** Capped at 20 by the CP; `changedCount` always covers the full set. */
+  changedFiles: RunCheckpointChangedFile[]
+  sealedAt: string | null
+  revert: RunCheckpointRevertView | null
+}
+
+/** SSE `run_checkpoint` payload (seal / degradation / completed revert). */
+export interface RunCheckpointEvent {
+  runId: string
+  sessionId: string
+  state: RunCheckpointState
+  changedCount: number
+  unrollableReason?: string
+  revert?: RunCheckpointRevertView
+}
+
+/** Dry-run action; `unknown` = out-of-contract fallback. */
+export type RevertPreviewAction = 'restore' | 'delete' | 'unknown'
+
+export interface RevertPreviewEntry {
+  path: string
+  oldPath?: string
+  action: RevertPreviewAction
+  /** Frozen conflict reason code when this entry will be skipped. */
+  conflictReason?: string
+}
+
+export interface RevertPreviewCounts {
+  restore: number
+  delete: number
+  skipConflicts: number
+  noop: number
+}
+
+export type HeadFingerprintStatus = 'ok' | 'changed' | 'unknown' | 'not_repo'
+
+export interface HeadFingerprint {
+  recorded: string | null
+  current: string | null
+  status: HeadFingerprintStatus
+}
+
+/** `POST .../checkpoint/revert/preview` response. */
+export interface RevertPreview {
+  runId: string
+  state: string
+  /** `null` when the server projection is incomplete; the UI must not guess. */
+  counts: RevertPreviewCounts | null
+  entries: RevertPreviewEntry[]
+  headFingerprint: HeadFingerprint
+  sealedWithLiveJobs: boolean
+  truncated: boolean
+}
+
+/** Per-entry execution outcome; `unknown` = out-of-contract fallback. */
+export type RevertEntryResult = 'restored' | 'deleted' | 'skippedConflict' | 'failed' | 'noop' | 'unknown'
+
+export interface RevertResultEntry {
+  path: string
+  result: RevertEntryResult
+  reason?: string
+}
+
+export interface RevertResultCounts {
+  restored: number
+  deleted: number
+  skippedConflict: number
+  failed: number
+  noop: number
+}
+
+/** `POST .../checkpoint/revert` response. */
+export interface RevertResult {
+  runId: string
+  /** Runtime audit ref; `null` when it could not be written. */
+  revertRef: string | null
+  counts: RevertResultCounts | null
+  entries: RevertResultEntry[]
+  durationMs: number
+}
+
+/** Acknowledge payload of the revert execute call. */
+export interface RevertAcknowledge {
+  acknowledgeConflicts: string[]
+  acknowledgeHeadChange: boolean
+}
+
+export interface WorkspaceGitStatusEntry {
+  status: string
+  path: string
+}
+
+/** `GET /api/v1/workspaces/{id}/git-status` (dual-diff "待提交" side). */
+export interface WorkspaceGitStatus {
+  isRepository: boolean
+  entries: WorkspaceGitStatusEntry[]
+}
+
+/** `GET .../checkpoints/retention` response (decision #10 constants + counts). */
+export interface CheckpointRetention {
+  maxRuns: number
+  ttlDays: number
+  unsealedNeverDeleted: boolean
+  currentRuns: number
+  currentRefs: number
+}
+
+/** `POST .../checkpoints/gc` counts; keys are Runtime-defined. */
+export type CheckpointGcCounts = Record<string, number>
+
 export type LangChainEventType =
   | 'on_chat_model_start'
   | 'on_chat_model_stream'

@@ -1,22 +1,25 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
-import { FolderTree } from '@lucide/vue'
+import { FolderTree, X } from '@lucide/vue'
 import { useMediaQuery } from '@vueuse/core'
 import WorkspaceToolbar from './WorkspaceToolbar.vue'
 import WorkspaceCreateDialog from './WorkspaceCreateDialog.vue'
 import WorkspaceSettingsDialog from './WorkspaceSettingsDialog.vue'
 import MobileWorkspaceSheet from './MobileWorkspaceSheet.vue'
 import MobileChatSheet from './MobileChatSheet.vue'
+import MobileChangesSheet from './MobileChangesSheet.vue'
 import FileTreePanel from './FileTreePanel.vue'
 import FileEditor from './FileEditor.vue'
 import FileImportDialog from './FileImportDialog.vue'
+import WorkspaceChangesPanel from './WorkspaceChangesPanel.vue'
 import ChatPanel from '../chat/ChatPanel.vue'
 
 const route = useRoute()
@@ -24,6 +27,7 @@ const router = useRouter()
 const ws = useWorkspaceStore()
 const sessionStore = useSessionStore()
 const auth = useAuthStore()
+const { t } = useI18n()
 const isMobileViewport = useMediaQuery('(max-width: 767px)')
 
 const routeWorkspaceId = computed(() => (route.params.workspaceId as string | undefined) ?? '')
@@ -31,6 +35,36 @@ const routeWorkspaceId = computed(() => (route.params.workspaceId as string | un
 const showCreateDialog = ref(false)
 const showSettingsDialog = ref(false)
 const showMobileFiles = ref(false)
+const showMobileChanges = ref(false)
+
+// ── PLAN-0328 M3 T3.7 (spec/ui-ux §1.3): conversation-first workspace layout ──────────────
+// The chat timeline is the main column; the file tree collapses into a narrow rail and the
+// editor / dual-diff live in one collapsible auxiliary panel (default collapsed). Panel state
+// is remembered per session in-component only (never persisted).
+type AuxPanel = 'closed' | 'code' | 'changes'
+const treeCollapsed = ref(false)
+const auxPanel = ref<AuxPanel>('closed')
+const layoutBySession = new Map<string, { treeCollapsed: boolean; auxPanel: AuxPanel }>()
+
+function layoutKey(id: string | null): string {
+  return id ?? '__none__'
+}
+
+function toggleTree() {
+  treeCollapsed.value = !treeCollapsed.value
+}
+
+function toggleAux(panel: Exclude<AuxPanel, 'closed'>) {
+  auxPanel.value = auxPanel.value === panel ? 'closed' : panel
+}
+
+function handleToggleChanges() {
+  if (isMobileViewport.value) {
+    showMobileChanges.value = !showMobileChanges.value
+    return
+  }
+  toggleAux('changes')
+}
 
 function handleWorkspaceCreated(id: string) {
   router.push(`/workspace/${id}`)
@@ -82,6 +116,21 @@ watch(
   { immediate: true },
 )
 
+// Remember the layout toggles per session (in-component only): switching sessions restores the
+// state the user left that session in, without persisting anything across reloads.
+watch(
+  () => sessionId.value,
+  (id, previous) => {
+    layoutBySession.set(layoutKey(previous ?? null), {
+      treeCollapsed: treeCollapsed.value,
+      auxPanel: auxPanel.value,
+    })
+    const restored = layoutBySession.get(layoutKey(id ?? null))
+    treeCollapsed.value = restored?.treeCollapsed ?? false
+    auxPanel.value = restored?.auxPanel ?? 'closed'
+  },
+)
+
 watch(
   () => ws.activeFilePath,
   () => {
@@ -124,40 +173,108 @@ onMounted(() => {
       @created="handleWorkspaceCreated"
     />
   </div>
-  <div v-else class="flex h-full">
-    <div class="w-60 shrink-0 border-r bg-muted/10 flex flex-col max-md:hidden">
-      <FileTreePanel />
+  <div v-else class="flex h-full min-w-0">
+    <!-- File tree: 240px tree ⇄ narrow rail (desktop; mobile keeps the Files sheet). -->
+    <div
+      class="flex shrink-0 flex-col border-r bg-muted/10 max-md:hidden"
+      :class="treeCollapsed ? 'w-10' : 'w-60'"
+      data-testid="workspace-file-rail"
+    >
+      <div v-if="treeCollapsed" class="flex flex-col items-center gap-1 py-2">
+        <button
+          type="button"
+          data-testid="workspace-tree-expand"
+          class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          :title="t('workspace.expandFiles')"
+          :aria-label="t('workspace.expandFiles')"
+          @click="treeCollapsed = false"
+        >
+          <FolderTree class="size-4" aria-hidden="true" />
+        </button>
+      </div>
+      <div v-else class="flex h-full min-h-0 flex-1 flex-col" data-testid="workspace-file-tree">
+        <FileTreePanel />
+      </div>
     </div>
 
-    <div class="flex-1 flex flex-col min-w-0">
-      <WorkspaceToolbar :workspace-id="workspaceId" @upload="handleUpload" @settings="showSettingsDialog = true" @files="showMobileFiles = true" />
-      <FileEditor />
-    </div>
+    <div class="flex min-w-0 flex-1 flex-col">
+      <WorkspaceToolbar
+        :workspace-id="workspaceId"
+        :tree-collapsed="treeCollapsed"
+        :code-open="!isMobileViewport && auxPanel === 'code'"
+        :changes-open="isMobileViewport ? showMobileChanges : auxPanel === 'changes'"
+        @upload="handleUpload"
+        @settings="showSettingsDialog = true"
+        @files="showMobileFiles = true"
+        @toggle-tree="toggleTree"
+        @toggle-code="toggleAux('code')"
+        @toggle-changes="handleToggleChanges"
+      />
 
-    <div
-      v-if="sessionId && !isMobileViewport"
-      class="w-96 border-l bg-muted/5 flex-col shrink-0 hidden md:flex"
-    >
-       <div
-         class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground"
-         :title="`workspace=${workspaceId} session=${sessionId}`"
-       >
-         <span class="font-medium text-foreground/80">{{ auth.workspace?.name ?? '工作区对话' }}</span>
-         <span class="text-muted-foreground/60">工作区对话</span>
-       </div>
-       <ChatPanel :session-id="sessionId" tool-mode="workspace" />
-    </div>
-    <div
-      v-else
-      class="w-96 border-l bg-muted/5 flex-col items-center justify-center gap-2 shrink-0 hidden md:flex"
-    >
-       <p class="text-sm text-muted-foreground">暂无活动会话</p>
-      <button
-        class="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90"
-        @click="ensureSessionForWorkspace()"
-      >
-         新建对话
-      </button>
+      <div class="flex min-h-0 min-w-0 flex-1">
+        <!-- Conversation is the main column (desktop). -->
+        <div
+          v-if="!isMobileViewport"
+          class="flex min-w-0 flex-1 flex-col"
+          data-testid="workspace-conversation"
+        >
+          <div
+            class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
+            :title="`workspace=${workspaceId}`"
+          >
+            <span class="font-medium text-foreground/80">{{ auth.workspace?.name ?? t('workspace.chatHeader') }}</span>
+            <span class="text-muted-foreground/60">{{ t('workspace.chatHeader') }}</span>
+          </div>
+          <ChatPanel v-if="sessionId" :session-id="sessionId" tool-mode="workspace" />
+          <div v-else class="flex flex-1 flex-col items-center justify-center gap-2">
+            <p class="text-sm text-muted-foreground">{{ t('workspace.noSession') }}</p>
+            <button
+              class="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90"
+              data-testid="workspace-create-session"
+              @click="ensureSessionForWorkspace()"
+            >
+              {{ t('workspace.createSession') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Mobile keeps the existing editor-first body with files/chat as sheets. -->
+        <div v-else class="flex min-w-0 flex-1 flex-col">
+          <FileEditor />
+        </div>
+
+        <!-- Collapsible auxiliary panel (desktop): code editor or the dual-diff panel. -->
+        <div
+          v-if="!isMobileViewport && auxPanel !== 'closed'"
+          data-testid="workspace-aux-panel"
+          class="flex w-[30rem] max-w-[60%] shrink-0 flex-col border-l bg-background"
+        >
+          <div class="flex h-9 shrink-0 items-center justify-between gap-2 border-b px-3 text-xs">
+            <span class="font-medium text-foreground/80">
+              {{ auxPanel === 'code' ? t('workspace.panelCode') : t('workspace.panelChanges') }}
+            </span>
+            <button
+              type="button"
+              data-testid="workspace-aux-close"
+              class="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              :title="t('workspace.closePanel')"
+              :aria-label="t('workspace.closePanel')"
+              @click="auxPanel = 'closed'"
+            >
+              <X class="size-3.5" aria-hidden="true" />
+            </button>
+          </div>
+          <div class="flex min-h-0 flex-1 flex-col">
+            <FileEditor v-if="auxPanel === 'code'" />
+            <WorkspaceChangesPanel
+              v-else
+              :session-id="sessionId"
+              :workspace-id="workspaceId"
+              @close="auxPanel = 'closed'"
+            />
+          </div>
+        </div>
+      </div>
     </div>
 
     <FileImportDialog v-if="ws.showImportDialog" />
@@ -171,6 +288,13 @@ onMounted(() => {
     <MobileWorkspaceSheet
       :open="showMobileFiles"
       @close="showMobileFiles = false"
+    />
+
+    <MobileChangesSheet
+      :open="showMobileChanges"
+      :session-id="sessionId"
+      :workspace-id="workspaceId"
+      @close="showMobileChanges = false"
     />
 
     <MobileChatSheet v-if="sessionId" :session-id="sessionId" />
