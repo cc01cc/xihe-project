@@ -4,14 +4,18 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.policy.LayeredPolicyResolver;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
+import com.cc01cc.p.xihe.cp.policy.PolicyRevision;
+import com.cc01cc.p.xihe.cp.policy.ReusePolicy;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import org.slf4j.Logger;
@@ -24,11 +28,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Service
@@ -57,6 +63,9 @@ public class ApprovalService {
     private final ApprovalPolicySummary policySummary;
     private final ApprovalPendingStore pendingStore;
     private final SessionPolicyState sessionPolicyState;
+    private final PolicyRevision policyRevision;
+    private final WorkspaceRepository workspaceRepository;
+    private final AnswererChain answererChain;
 
     public ApprovalService(ChatApprovalRepository approvalRepository,
                            ChatRunRepository chatRunRepository,
@@ -67,7 +76,10 @@ public class ApprovalService {
                            AuditLogger audit,
                            ApprovalPolicySummary policySummary,
                            ApprovalPendingStore pendingStore,
-                           SessionPolicyState sessionPolicyState) {
+                           SessionPolicyState sessionPolicyState,
+                           PolicyRevision policyRevision,
+                           WorkspaceRepository workspaceRepository,
+                           AnswererChain answererChain) {
         this.approvalRepository = approvalRepository;
         this.chatRunRepository = chatRunRepository;
         this.agentClient = agentClient;
@@ -80,6 +92,9 @@ public class ApprovalService {
         this.policySummary = policySummary;
         this.pendingStore = pendingStore;
         this.sessionPolicyState = sessionPolicyState;
+        this.policyRevision = policyRevision;
+        this.workspaceRepository = workspaceRepository;
+        this.answererChain = answererChain;
     }
 
     @Transactional
@@ -135,11 +150,39 @@ public class ApprovalService {
                 snapshotId,
                 policyClass,
                 argumentsHash);
+        return applyAnswererChain(approval, payload, runId, requestId);
+    }
+
+    /**
+     * T1.9 answerer seam (spec §3 ⑦/⑧, §12): every newly created ask goes through the chain
+     * before it can become a durable row. {@code DEFER} keeps the human path — a pending row the
+     * user can answer. Every other resolution (an all-UNAVAILABLE chain, an answerer DENY, or an
+     * ALLOW this batch cannot dispatch) is recorded as an immediate fail-closed reject instead of
+     * parking a pending row nobody can answer (decision #18).
+     *
+     * <p>Both creation paths converge here: the Agent-relay {@code recordPending} and the
+     * gate-created {@code recordGatePending} (which delegates to it). Row identity, decision state
+     * machine and audit semantics stay untouched; the chain only chooses between the existing
+     * pending state and the existing rejected terminal state.</p>
+     */
+    private ChatApproval applyAnswererChain(ChatApproval approval, Map<?, ?> payload, String runId,
+                                            String requestId) {
+        AnswererChain.Resolution resolution = answererChain.resolve(new ApprovalAnswerer.Ask(
+                approval.getSessionId(), approval.getTool(), approval.getAction(), approval.getDetails()));
+        if (resolution.outcome() == ApprovalAnswerer.Outcome.DEFER) {
+            return storePending(approval, payload, runId, requestId, resolution);
+        }
+        return storeAnswererRejected(approval, payload, runId, requestId, resolution);
+    }
+
+    private ChatApproval storePending(ChatApproval approval, Map<?, ?> payload, String runId,
+                                      String requestId, AnswererChain.Resolution resolution) {
         ChatApproval saved = pendingStore.save(approval);
         String storedPolicy = null;
         try {
             storedPolicy = pendingStore.capturePolicySummary(
-                    approval.getRequestId(), tool, sessionId, userId, workspaceId);
+                    approval.getRequestId(), approval.getTool(), approval.getSessionId(),
+                    approval.getUserId(), approval.getWorkspaceId());
         } catch (RuntimeException e) {
             logger.warn("[POLICY] approval_summary_failed failureType={}", e.getClass().getName());
         }
@@ -148,9 +191,72 @@ public class ApprovalService {
             saved.setPolicySummary(storedPolicy);
         }
         recordLedgerApprovalItem(payload, runId, requestId);
-        logger.info("[LIFECYCLE] service=cp event=chat_approval_pending requestId={} sessionId={} runId={}",
-                requestId, sessionId, runId);
+        recordAnswererAudit(approval, resolution, null);
+        logger.info("[LIFECYCLE] service=cp event=chat_approval_pending requestId={} sessionId={} runId={} answerer={}",
+                requestId, approval.getSessionId(), runId, resolution.answerer());
         return saved == null ? approval : saved;
+    }
+
+    /**
+     * Immediate fail-closed reject of a chain resolution that cannot keep waiting. The row is
+     * terminal from creation ({@code rejected} + {@code decisionKind=reject}) so no replay,
+     * summary or decision path can ever surface it as actionable, and the operation ledger item
+     * is resolved as rejected instead of dangling.
+     *
+     * <p>An {@code ALLOW} is intentionally not honoured yet: auto-allow needs its Agent dispatch
+     * wiring, which is not part of this seam. Until that exists it fails closed loudly rather
+     * than parking the request.</p>
+     */
+    private ChatApproval storeAnswererRejected(ChatApproval approval, Map<?, ?> payload, String runId,
+                                               String requestId, AnswererChain.Resolution resolution) {
+        approval.setState("rejected");
+        approval.setApproved(false);
+        approval.setDecisionKind(ApprovalDecision.Kind.REJECT.wireName());
+        approval.setDecidedAt(Instant.now());
+        ChatApproval saved = pendingStore.save(approval);
+        recordLedgerApprovalItem(payload, runId, requestId);
+        operationService.resolveApprovalItem(requestId, false);
+        recordAnswererAudit(approval, resolution, "reject");
+        notifyAnswererRejection(requestId, runId, resolution);
+        if (resolution.outcome() == ApprovalAnswerer.Outcome.ALLOW) {
+            logger.error("[LIFECYCLE] service=cp event=approval_answerer_allow_unwired requestId={}"
+                            + " sessionId={} runId={} answerer={}",
+                    requestId, approval.getSessionId(), runId, resolution.answerer());
+        }
+        logger.info("[LIFECYCLE] service=cp event=chat_approval_answerer_rejected requestId={}"
+                        + " sessionId={} runId={} answerer={} outcome={}",
+                requestId, approval.getSessionId(), runId, resolution.answerer(),
+                resolution.outcome().name().toLowerCase(Locale.ROOT));
+        return saved == null ? approval : saved;
+    }
+
+    /** Audit trail of the ask resolution: {@code answerer=user|auto_review|none} (spec §15). */
+    private void recordAnswererAudit(ChatApproval approval, AnswererChain.Resolution resolution,
+                                     String decision) {
+        String detail = "answerer=" + resolution.answerer()
+                + " outcome=" + resolution.outcome().name().toLowerCase(Locale.ROOT);
+        if (decision != null) {
+            detail = detail + " decision=" + decision;
+        }
+        audit.record(approval.getSessionId(), approval.getTool(), "approval_answerer", detail);
+    }
+
+    /**
+     * Best-effort push of an immediate answerer rejection to a blocked Agent waiter. The relay
+     * path registers its waiter keyed by this requestId, so without the notification the Agent
+     * would block until TTL and report "expired". A failed notification must never corrupt the
+     * terminal row: the rejection stays durable and only the lifecycle log records the failure.
+     */
+    private void notifyAnswererRejection(String requestId, String runId,
+                                         AnswererChain.Resolution resolution) {
+        try {
+            agentClient.respond(requestId, false, ApprovalDecision.Kind.REJECT.wireName(),
+                    resolution.reason());
+        } catch (RuntimeException e) {
+            logger.warn("[LIFECYCLE] service=cp event=approval_answerer_respond_failed requestId={}"
+                            + " runId={} answerer={} failureType={}",
+                    requestId, runId, resolution.answerer(), e.getClass().getName(), e);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -221,16 +327,25 @@ public class ApprovalService {
                 ? grantWriter.prepare(decision, approval.getTool(), userId, workspaceId)
                 : null;
         String modeAtGrant = effectiveModeAtGrant(approval);
+        long policyRevisionAtGrant = policyRevision.current();
+        Integer sandboxGeneration = currentSandboxGeneration(workspaceId);
+        String reuseScope = reuseScopeOf(decision);
         int claimed = approvalRepository.markDispatching(
-                approval.getRequestId(), approved, modeAtGrant, now);
+                approval.getRequestId(), approved, modeAtGrant, reuseScope,
+                policyRevisionAtGrant, sandboxGeneration, now);
         if (claimed == 0) {
             throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
                     "Approval decision is already being dispatched");
         }
         approval.setModeAtGrant(modeAtGrant);
+        approval.setReuseScope(reuseScope);
+        approval.setPolicyRevision(policyRevisionAtGrant);
+        approval.setSandboxGeneration(sandboxGeneration);
         try {
             if (plan != null) {
-                grantWriter.commit(plan, approval.getSessionId(), userId, workspaceId);
+                grantWriter.commit(plan, approval.getSessionId(), userId, workspaceId,
+                        new ApprovalGrantWriter.GrantContext(approval.getTool(), approval.getArgumentsHash(),
+                                modeAtGrant, policyRevisionAtGrant, sandboxGeneration));
             }
         } catch (CpApiException e) {
             // 领域错误（如 workspace OWNER 校验 403）不是写入故障：行标记 dispatch_unknown 可重试，
@@ -342,8 +457,10 @@ public class ApprovalService {
         String requestId = row.getRequestId().toString();
         String kind = approved ? "propagated_allow" : "propagated_reject";
         String modeAtGrant = effectiveModeAtGrant(row);
+        // A propagated release is still a one-shot grant: it must be consumable exactly once.
         int claimed = approvalRepository.markDispatching(
-                row.getRequestId(), approved, modeAtGrant, Instant.now());
+                row.getRequestId(), approved, modeAtGrant, approved ? "once" : null,
+                policyRevision.current(), currentSandboxGeneration(row.getWorkspaceId()), Instant.now());
         if (claimed == 0) {
             return false;
         }
@@ -425,6 +542,11 @@ public class ApprovalService {
      * Atomically consumes a policy approval for one exact MCP tool invocation.
      * The approval row remains terminally approved; grant_consumed_at records
      * whether this particular downstream dispatch already used it.
+     *
+     * <p>T1.7 consume checks are all fail-closed: expiry, mode rank (a grant issued under a
+     * stricter mode never survives a looser-to-stricter switch), durable policy revision and
+     * sandbox generation. Legacy rows without the V20 columns are rejected. The audit record
+     * shares the consume success boundary (R7).</p>
      */
     @Transactional
     public boolean consumeApprovedGrant(String requestId, String userId, String workspaceId,
@@ -446,9 +568,13 @@ public class ApprovalService {
         if (approval == null || !matchesInvocation(approval, tool, mcpBody)) {
             return false;
         }
+        if (!consumeStillValid(approval, sessionId, workspaceId)) {
+            return false;
+        }
         int consumed = approvalRepository.consumeApprovedGrant(
                 requestUuid, userId, workspaceId, sessionId, tool, Instant.now());
         if (consumed == 1) {
+            audit.record(sessionId, tool, "approval_grant_consumed", requestId);
             logger.info("[LIFECYCLE] service=cp event=approval_grant_consumed requestId={} sessionId={} tool={}",
                     requestId, sessionId, tool);
             return true;
@@ -456,6 +582,216 @@ public class ApprovalService {
         logger.info("[LIFECYCLE] service=cp event=approval_grant_replay_rejected requestId={} sessionId={} tool={}",
                 requestId, sessionId, tool);
         return false;
+    }
+
+    /** All T1.7 consume-time invalidations; a single failure rejects the grant. */
+    private boolean consumeStillValid(ChatApproval approval, String sessionId, String workspaceId) {
+        Instant now = Instant.now();
+        if (approval.getExpiresAt() == null || !approval.getExpiresAt().isAfter(now)) {
+            return rejectGrant(approval, "expired");
+        }
+        Long rowRevision = approval.getPolicyRevision();
+        if (rowRevision == null || rowRevision != policyRevision.current()) {
+            return rejectGrant(approval, "policy_revision");
+        }
+        Integer rowGeneration = approval.getSandboxGeneration();
+        Integer currentGeneration = currentSandboxGeneration(workspaceId);
+        if (rowGeneration == null || currentGeneration == null || !rowGeneration.equals(currentGeneration)) {
+            return rejectGrant(approval, "sandbox_generation");
+        }
+        if (ReusePolicy.modeRank(approval.getModeAtGrant())
+                < ReusePolicy.modeRank(currentSessionMode(sessionId))) {
+            return rejectGrant(approval, "mode_rank");
+        }
+        return true;
+    }
+
+    private boolean rejectGrant(ChatApproval approval, String reason) {
+        logger.info("[LIFECYCLE] service=cp event=approval_grant_rejected requestId={} reason={}",
+                approval.getRequestId(), reason);
+        return false;
+    }
+
+    /**
+     * T1.7 session-tier reuse: an exact (sessionId, tool, canonical arguments hash) grant whose
+     * mode rank, policy revision and sandbox generation still hold dispatches without a pending
+     * approval. A hit is audited ({@code grant_reused scope=session}); every miss stays fail-closed.
+     */
+    @Transactional(readOnly = true)
+    public boolean tryReuseSessionGrant(String sessionId, String workspaceId, String tool, String mcpBody) {
+        String argumentsHash = canonicalInvocationHash(tool, mcpBody);
+        if (argumentsHash == null) {
+            return false;
+        }
+        SessionPolicyState.Grant grant = sessionPolicyState.grantOf(sessionId, tool, argumentsHash)
+                .orElse(null);
+        if (grant == null) {
+            return false;
+        }
+        if (grant.policyRevision() != policyRevision.current()) {
+            return rejectGrant(grant, "policy_revision");
+        }
+        Integer currentGeneration = currentSandboxGeneration(workspaceId);
+        if (currentGeneration == null || grant.sandboxGeneration() != currentGeneration) {
+            return rejectGrant(grant, "sandbox_generation");
+        }
+        if (ReusePolicy.modeRank(grant.modeAtGrant()) < ReusePolicy.modeRank(currentSessionMode(sessionId))) {
+            return rejectGrant(grant, "mode_rank");
+        }
+        audit.record(sessionId, tool, "grant_reused", "scope=session");
+        logger.info("[LIFECYCLE] service=cp event=grant_reused scope=session sessionId={} tool={}",
+                sessionId, tool);
+        return true;
+    }
+
+    private boolean rejectGrant(SessionPolicyState.Grant grant, String reason) {
+        logger.info("[LIFECYCLE] service=cp event=grant_reuse_rejected tool={} reason={}", grant.tool(), reason);
+        return false;
+    }
+
+    /**
+     * T1.7 gate-side idempotency: the live non-terminal row for one exact invocation, if any.
+     * The gate must reuse this row instead of archiving a duplicate approval request.
+     */
+    @Transactional(readOnly = true)
+    public Optional<ChatApproval> findLivePendingForInvocation(String sessionId, String tool,
+                                                               String argumentsHash) {
+        String normalized = ReusePolicy.normalizeArgumentsHash(argumentsHash);
+        if (sessionId == null || sessionId.isBlank() || tool == null || tool.isBlank() || normalized == null) {
+            return Optional.empty();
+        }
+        Instant now = Instant.now();
+        return approvalRepository
+                .findBySessionIdAndToolAndArgumentsHashAndStateInOrderByCreatedAtAsc(
+                        sessionId, tool, normalized, REPLAYABLE_STATES)
+                .stream()
+                .filter(row -> row.getExpiresAt() != null && row.getExpiresAt().isAfter(now))
+                .findFirst();
+    }
+
+    /**
+     * Gate-side creation outcome (T1.9): {@link #parked()} marks a live row that is waiting for an
+     * external answer (push a card / register the Agent waiter); a non-parked outcome is a
+     * terminal answerer rejection — the gate must answer with a normal fail-closed denial instead
+     * of an approval signal, because no card/waiter can ever resolve it.
+     */
+    public record GateApprovalOutcome(ChatApproval row, boolean parked) {
+
+        public static GateApprovalOutcome parked(ChatApproval row) {
+            return new GateApprovalOutcome(row, true);
+        }
+
+        public static GateApprovalOutcome rejected(ChatApproval row) {
+            return new GateApprovalOutcome(row, false);
+        }
+    }
+
+    /** True when the row is live and waiting for an answer (never for a terminal answerer reject). */
+    public boolean isAwaitingAnswer(ChatApproval approval) {
+        return approval != null && REPLAYABLE_STATES.contains(approval.getState());
+    }
+
+    /**
+     * Post-gate approval creation (T1.7/T1.9): reuse the live row for the same exact invocation or
+     * persist a new pending request owned by the authenticated run. The canonical hash and the
+     * bounded redacted preview are derived from the same MCP body the gate evaluated. The run is
+     * moved to {@code awaiting_approval} exactly like the Agent-relay path. Empty means the caller
+     * must fall back to the legacy fail-closed 409 (missing or foreign run context).
+     */
+    @Transactional
+    public Optional<GateApprovalOutcome> recordGatePending(String sessionId, String runId, String userId,
+                                                           String workspaceId, String tool, String mcpBody,
+                                                           Instant expiresAt) {
+        if (runId == null || runId.isBlank() || sessionId == null || sessionId.isBlank()
+                || tool == null || tool.isBlank() || mcpBody == null || mcpBody.isBlank()
+                || expiresAt == null) {
+            return Optional.empty();
+        }
+        String argumentsHash = canonicalInvocationHash(tool, mcpBody);
+        Optional<ChatApproval> existing = findLivePendingForInvocation(sessionId, tool, argumentsHash);
+        boolean reused = existing.isPresent();
+        if (!reused) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("requestId", UUID.randomUUID().toString());
+            payload.put("runId", runId);
+            payload.put("sessionId", sessionId);
+            payload.put("tool", tool);
+            payload.put("action", "Execute " + tool);
+            payload.put("details", gateDetailsPreview(tool, mcpBody));
+            payload.put("argumentsHash", argumentsHash);
+            payload.put("expiresAt", expiresAt.toString());
+            existing = Optional.of(recordPending(payload, sessionId, runId, userId, workspaceId));
+        }
+        ChatApproval row = existing.get();
+        // T1.9: an answerer-rejected row is terminal from creation; parking the run on
+        // awaiting_approval would make it wait for an answer that can never come.
+        if (isAwaitingAnswer(row)) {
+            chatRunRepository.transition(UUID.fromString(runId), List.of("running", "streaming"),
+                    "awaiting_approval", null, null, null, 0, 0);
+            operationService.transitionOperationForRun(runId, "waiting_for_approval", null, null);
+            logger.info("[LIFECYCLE] service=cp event=chat_approval_gate_pending requestId={}"
+                            + " sessionId={} runId={} reused={}",
+                    row.getRequestId(), sessionId, runId, reused);
+            return Optional.of(GateApprovalOutcome.parked(row));
+        }
+        logger.info("[LIFECYCLE] service=cp event=chat_approval_gate_answerer_rejected requestId={}"
+                        + " sessionId={} runId={} state={}",
+                row.getRequestId(), sessionId, runId, row.getState());
+        return Optional.of(GateApprovalOutcome.rejected(row));
+    }
+
+    /** Bounded, redacted preview for a gate-created approval; raw arguments never persist. */
+    private String gateDetailsPreview(String tool, String mcpBody) {
+        try {
+            JsonNode arguments = objectMapper.readTree(mcpBody).path("params").path("arguments");
+            Map<String, Object> wrapper = new LinkedHashMap<>();
+            wrapper.put("tool", tool);
+            wrapper.put("arguments", arguments.isMissingNode()
+                    ? Map.of() : objectMapper.convertValue(arguments, Object.class));
+            String redacted = LogRedactor.redact(objectMapper.writeValueAsString(wrapper));
+            return redacted.length() <= MAX_DETAILS_LENGTH
+                    ? redacted : redacted.substring(0, MAX_DETAILS_LENGTH);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=gate_approval_preview_failed tool={}", tool);
+            return "{\"tool\":\"" + tool + "\",\"arguments\":\"[REDACTED]\"}";
+        }
+    }
+
+    /** Canonical live payload for the SSE approval card (same shape as replay, replayed=false). */
+    public Map<String, Object> livePayload(ChatApproval approval) {
+        return payloadFor(approval, false);
+    }
+
+    /** Safe display-only policy summary of one durable row (used by the gate 409 extension). */
+    public Optional<Map<String, Object>> displayPolicy(ChatApproval approval) {
+        return policySummary.readStored(approval.getPolicySummary());
+    }
+
+    private String currentSessionMode(String sessionId) {
+        return sessionPolicyState.snapshot(sessionId)
+                .map(SessionPolicyState.Entry::mode)
+                .filter(mode -> mode != null && !mode.isBlank())
+                .orElse(LayeredPolicyResolver.MODE_DEFAULT);
+    }
+
+    /** Workspace sandbox generation; null when the workspace cannot be read (fail-closed). */
+    private Integer currentSandboxGeneration(String workspaceId) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            return null;
+        }
+        try {
+            return workspaceRepository.findById(UUID.fromString(workspaceId))
+                    .map(Workspace::getGeneration)
+                    .map(generation -> generation == null ? 0 : generation)
+                    .orElse(null);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** Reuse tier recorded on the row; rejected decisions have no reusable scope. */
+    private static String reuseScopeOf(ApprovalDecision decision) {
+        return decision.kind().isApproved() ? decision.kind().wireName() : null;
     }
 
     // PLAN-292 M1 (H1): match by canonical arguments hash first so a truncated
@@ -475,31 +811,34 @@ public class ApprovalService {
     // sorted keys, compact separators and raw UTF-8 (Python json.dumps
     // ensure_ascii=False, sort_keys=True, separators=(",", ":")).
     private boolean matchesArgumentsHash(String storedHash, String tool, String mcpBody) {
+        String computed = canonicalInvocationHash(tool, mcpBody);
+        if (computed == null || !computed.equals(ReusePolicy.normalizeArgumentsHash(storedHash))) {
+            logger.info("[LIFECYCLE] service=cp event=approval_grant_hash_mismatch tool={}", tool);
+            return false;
+        }
+        return true;
+    }
+
+    /** Canonical invocation hash ({@code sha256:...}) or null when the body cannot be matched. */
+    private String canonicalInvocationHash(String tool, String mcpBody) {
+        if (tool == null || tool.isBlank() || mcpBody == null || mcpBody.isBlank()) {
+            return null;
+        }
         try {
             JsonNode arguments = objectMapper.readTree(mcpBody).path("params").path("arguments");
             if (arguments.isMissingNode()) {
                 logger.warn("[LIFECYCLE] service=cp event=approval_grant_hash_mismatch tool={} reason=missing_arguments", tool);
-                return false;
+                return null;
             }
             Map<String, Object> invocation = new LinkedHashMap<>();
             invocation.put("tool", tool);
             invocation.put("arguments", objectMapper.convertValue(arguments, Object.class));
-            String computed = "sha256:" + hexSha256(canonicalMapper.writeValueAsString(invocation));
-            if (!computed.equals(normalizeStoredHash(storedHash))) {
-                logger.info("[LIFECYCLE] service=cp event=approval_grant_hash_mismatch tool={}", tool);
-                return false;
-            }
-            return true;
+            return "sha256:" + hexSha256(canonicalMapper.writeValueAsString(invocation));
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=approval_grant_payload_invalid tool={} reason={}",
                     tool, e.getMessage());
-            return false;
+            return null;
         }
-    }
-
-    private static String normalizeStoredHash(String storedHash) {
-        String normalized = storedHash.trim();
-        return normalized.startsWith("sha256:") ? normalized : "sha256:" + normalized;
     }
 
     private static String hexSha256(String canonical) {
@@ -566,10 +905,7 @@ public class ApprovalService {
         if (storedMode != null && !storedMode.isBlank()) {
             return storedMode;
         }
-        return sessionPolicyState.snapshot(approval.getSessionId())
-                .map(SessionPolicyState.Entry::mode)
-                .filter(mode -> mode != null && !mode.isBlank())
-                .orElse(LayeredPolicyResolver.MODE_DEFAULT);
+        return currentSessionMode(approval.getSessionId());
     }
 
     private Map<String, Object> decisionResponse(String requestId, String status, boolean approved,

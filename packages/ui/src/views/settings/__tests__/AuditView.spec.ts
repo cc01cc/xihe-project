@@ -166,6 +166,31 @@ describe('AuditView policy verdict (PLAN-0328 T1.15)', () => {
     expect(wrapper.find('[data-testid="settings-audit-policy-call-legacy-3"]').exists()).toBe(false)
   })
 
+  it('marks a session-reuse dispatch with an icon and text, and never for null/absent/false', async () => {
+    vi.mocked(api.getOperationTrace).mockResolvedValue(traceWith([
+      policyItem({
+        id: 'item-reuse',
+        toolCallId: 'call-reuse-4',
+        policy: { ...POLICY, effect: 'ask', mode: 'default', allowedBy: null, reused: true },
+      }),
+      policyItem({ id: 'item-reuse-null', toolCallId: 'call-reuse-null-5', policy: { ...POLICY, reused: null } }),
+      policyItem({ id: 'item-reuse-false', toolCallId: 'call-reuse-false-6', policy: { ...POLICY, reused: false } }),
+      policyItem({ id: 'item-reuse-absent', toolCallId: 'call-reuse-absent-7', policy: { ...POLICY } }),
+    ]))
+    const wrapper = await mountView()
+
+    const reuse = wrapper.find('[data-testid="settings-audit-policy-call-reuse-4-reused"]')
+    expect(reuse.exists()).toBe(true)
+    expect(reuse.text()).toBe('由复用放行')
+    // Not color-only: the marker carries an icon and the reuse text next to the verdict.
+    expect(reuse.find('svg').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-reuse-4-effect"]').text()).toBe('询问')
+
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-reuse-null-5-reused"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-reuse-false-6-reused"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-reuse-absent-7-reused"]').exists()).toBe(false)
+  })
+
   it('keeps reason, actionClass and shape inside the expandable detail', async () => {
     vi.mocked(api.getOperationTrace).mockResolvedValue(traceWith([policyItem()]))
     const wrapper = await mountView()

@@ -17,7 +17,8 @@ const completedOperation = {
 }
 
 // Item policy snapshots mirror the exact wire shape of CP OperationPolicySummary
-// (PLAN-0328 T1.15): lower-case enums, nullable matchedRule/mode/allowedBy.
+// (PLAN-0328 T1.15/T1.7): lower-case enums, nullable matchedRule/mode/allowedBy, and the
+// nullable `reused` session-reuse annotation (null = not applicable).
 const trace = {
   operation: completedOperation,
   items: [
@@ -42,6 +43,7 @@ const trace = {
         allowedBy: 'bypass@session',
         actionClass: 'write',
         shape: 'structured',
+        reused: null,
       },
     },
     {
@@ -63,13 +65,38 @@ const trace = {
         allowedBy: null,
         actionClass: 'read',
         shape: 'structured',
+        reused: null,
+      },
+    },
+    {
+      id: 'item-reuse',
+      operationId: 'op-1',
+      toolCallId: 'call-reuse-4',
+      sequence: 3,
+      kind: 'tool_call',
+      toolName: 'write_file',
+      source: 'mcp',
+      policyDecision: 'allow',
+      status: 'completed',
+      // T1.7: the engine verdict stayed `ask`; the dispatch was then authorized by an exact
+      // session fingerprint reuse, which the projection annotates with reused=true.
+      policy: {
+        effect: 'ask',
+        sourceLayer: 'builtin',
+        matchedRule: '{ write, "*", ask }',
+        reason: 'write requires approval',
+        mode: 'default',
+        allowedBy: null,
+        actionClass: 'write',
+        shape: 'structured',
+        reused: true,
       },
     },
     {
       id: 'item-ask',
       operationId: 'op-1',
       toolCallId: 'call-ask-3',
-      sequence: 3,
+      sequence: 4,
       kind: 'tool_call',
       toolName: 'execute_command',
       source: 'mcp',
@@ -84,13 +111,14 @@ const trace = {
         allowedBy: null,
         actionClass: 'exec',
         shape: 'structured',
+        reused: null,
       },
     },
     {
       id: 'item-legacy',
       operationId: 'op-1',
       toolCallId: 'call-legacy-3',
-      sequence: 4,
+      sequence: 5,
       kind: 'tool_call',
       toolName: 'list_directory',
       source: 'agent',
@@ -239,8 +267,19 @@ test.describe('Operation audit (PLAN-281 N3)', () => {
     await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-action-class')).toHaveText('write')
     await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-shape')).toHaveText('结构化')
 
-    // Reuse-hit annotation and answerer stay unimplemented (T1.7/T1.9): the view must not invent them.
-    await expect(page.getByTestId('settings-audit-items').getByText(/复用|回答者/)).toHaveCount(0)
+    // T1.7: only the reused=true row carries the reuse marker (icon + text); the null rows and
+    // the legacy row must not have reuse invented for them.
+    const reuseItem = page.getByTestId('settings-audit-item-item-reuse')
+    await expect(reuseItem.getByTestId('settings-audit-policy-call-reuse-4-effect')).toHaveText('询问')
+    await expect(reuseItem.getByTestId('settings-audit-policy-call-reuse-4-reused')).toHaveText('由复用放行')
+    await expect(reuseItem.getByTestId('settings-audit-policy-call-reuse-4-reused').locator('svg')).toHaveCount(1)
+    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-reused')).toHaveCount(0)
+    await expect(page.getByTestId('settings-audit-policy-call-allow-2-reused')).toHaveCount(0)
+    await expect(page.getByTestId('settings-audit-policy-call-ask-3-reused')).toHaveCount(0)
+    await expect(page.getByTestId('settings-audit-policy-absent-item-legacy')).toBeVisible()
+
+    // The answerer annotation stays unimplemented (T1.9): the view must not invent it.
+    await expect(page.getByTestId('settings-audit-items').getByText(/回答者/)).toHaveCount(0)
   })
 
   test('renders an explicit empty state', async ({ page }) => {
@@ -278,6 +317,7 @@ test.describe('Operation audit policy verdict on mobile (PLAN-0328 T1.15)', () =
 
     await expect(page.getByTestId('settings-audit-policy-call-bypass-1-effect')).toHaveText('允许')
     await expect(page.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toContainText('由 bypass 放行')
+    await expect(page.getByTestId('settings-audit-policy-call-reuse-4-reused')).toHaveText('由复用放行')
     await expect(page.getByTestId('settings-audit-policy-call-ask-3-effect')).toHaveText('询问')
     await expect(page.getByTestId('settings-audit-policy-absent-item-legacy')).toHaveText('无判定记录（旧记录或非 MCP 路径）')
 

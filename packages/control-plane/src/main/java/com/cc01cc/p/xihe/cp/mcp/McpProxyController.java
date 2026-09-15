@@ -17,6 +17,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.McpServer;
 import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
 import com.cc01cc.p.xihe.cp.entity.McpToolAlias;
+import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
@@ -59,6 +60,16 @@ public class McpProxyController {
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String HMAC_SECRET = "xihe-mcp-session-hmac-key-2026";
     private static final String REMOTE_SCOPE = "mcp:tools";
+    /** T1.7/T1.9 post-gate approval lifetime: the durable row expires after five minutes. */
+    private static final long APPROVAL_REQUEST_TTL_SECONDS = 300;
+    /**
+     * T1.9 answerer rejection: implementation-defined JSON-RPC error code (never {@code -32003}).
+     * The Agent's gate classifier keys on {@code APPROVAL_REQUIRED}, so this denial follows the
+     * normal fail-closed tool-error path instead of registering a waiter.
+     */
+    private static final int APPROVAL_REJECTED_JSONRPC_CODE = -32004;
+    /** Safe wire code of an immediate answerer rejection (Agent audit/log correlation). */
+    private static final String APPROVAL_REJECTED_CODE = "APPROVAL_REJECTED";
     /**
      * PLAN-0308 M2（决策 #34）：逻辑 MCP 的协议版本与语义固定为无会话世代——
      * 不透传调用方声明的版本（Agent 侧 SDK 目前只能声明 2025-11-25，会导致
@@ -412,11 +423,16 @@ public class McpProxyController {
             return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
         }
 
+        boolean reusedSessionGrant = false;
         if (verdict.effect() == PolicyEffect.ASK) {
             String grantId = headers.getFirst("X-Xihe-Approval-Request-Id");
             if (grantId != null && approvalService.consumeApprovedGrant(
                     grantId, access.userId(), wsId, sessionId, toolName, body)) {
-                audit.record(sessionId, toolName, "approval_grant_consumed", grantId);
+                // T1.7 R7: approval_grant_consumed is audited inside the consume transaction.
+            } else if (approvalService.tryReuseSessionGrant(sessionId, wsId, toolName, body)) {
+                // T1.7: an exact session fingerprint authorizes this dispatch without a new
+                // pending approval (audited as grant_reused scope=session by the service).
+                reusedSessionGrant = true;
             } else if (isUserDirectMutation(headers) && isWorkspaceUserMutationTool(toolName)) {
                 // PLAN-290 B2: user file-panel mutations are UI-confirmed, not Agent-gated.
                 audit.record(sessionId, toolName, "user_direct_allow", "no agent grant required");
@@ -424,15 +440,16 @@ public class McpProxyController {
                 sse.send(sessionId, "tool_exec_approval_required",
                     Map.of("tool", toolName, "reason", verdict.reason()));
                 audit.record(sessionId, toolName, "approval_required", verdict.reason());
-                return problem(HttpStatus.CONFLICT, "APPROVAL_REQUIRED",
-                        "Tool execution requires approval before dispatch");
+                return approvalRequired(wsId, sessionId, toolName, body, headers, access);
             }
         }
         // ALLOW：引擎已记 policy_check / policy_verdict；模式放行另有 policy_allowed_by_mode。
         // PLAN-0328 T1.15：只为**实际派发**的调用构建安全 Verdict 快照（deny/未获批不落账本，
         // 也不得凭空造 Verdict）；快照随后挂到该次派发的既有账本条目上。
+        // T1.7：会话指纹命中判为 reused=true（可审计），其余为 null（不适用）。
         String policySummary = OperationPolicySummary.buildSnapshot(
-                verdict, policy.faceOf(policyContext, toolName), policyContext).orElse(null);
+                verdict, policy.faceOf(policyContext, toolName), policyContext,
+                reusedSessionGrant ? Boolean.TRUE : null).orElse(null);
 
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
         // 且先剥离上游同名头（信任边界）。此块位于 __system__ 分支之前——系统工具同样受管。
@@ -868,6 +885,111 @@ public class McpProxyController {
                  "delete_directory", "move_file", "copy_file", "mkdir" -> true;
             default -> false;
         };
+    }
+
+    /**
+     * T1.7/T1.9 post-gate approval: create or reuse the durable pending row for this exact
+     * invocation, push the approval card to the session SSE, and answer with the JSON-RPC error
+     * frame the MCP SDK can actually surface ({@code error.data}). Without a run-scoped context
+     * the gate keeps the legacy fail-closed problem response (no extension, no Agent waiter).
+     *
+     * <p>An answerer-rejected ask is terminal from creation: there is no card to push and no
+     * waiter anybody could answer, so the gate answers with a plain JSON-RPC denial the Agent
+     * maps to a normal fail-closed tool error — never the {@code -32003} approval signal.</p>
+     */
+    private ResponseEntity<String> approvalRequired(
+            String wsId, String sessionId, String toolName, String body,
+            HttpHeaders headers, AccessContext access) {
+        String runId = headers.getFirst("X-Chat-Run-Id");
+        String applicationSessionId = access.applicationSessionId();
+        ApprovalService.GateApprovalOutcome outcome = null;
+        if (runId != null && !runId.isBlank() && applicationSessionId != null
+                && !applicationSessionId.isBlank()) {
+            try {
+                outcome = approvalService.recordGatePending(applicationSessionId, runId, access.userId(),
+                        wsId, toolName, body,
+                        Instant.now().plusSeconds(APPROVAL_REQUEST_TTL_SECONDS)).orElse(null);
+            } catch (RuntimeException e) {
+                logger.warn("[LIFECYCLE] service=cp event=gate_approval_create_failed tool={} failureType={}",
+                        toolName, e.getClass().getName());
+            }
+        }
+        if (outcome == null) {
+            return problem(HttpStatus.CONFLICT, "APPROVAL_REQUIRED",
+                    "Tool execution requires approval before dispatch");
+        }
+        ChatApproval row = outcome.row();
+        if (!outcome.parked()) {
+            return approvalRejectedFrame(body, toolName, row);
+        }
+        sse.send(applicationSessionId, "approval_request", approvalService.livePayload(row));
+        return approvalRequiredFrame(body, toolName, runId, row);
+    }
+
+    /**
+     * JSON-RPC error frame carrying the safe approval extension (HTTP 409). A problem+json body is
+     * discarded by the MCP client transport, so the extension travels as {@code error.data}.
+     */
+    private ResponseEntity<String> approvalRequiredFrame(String body, String toolName,
+                                                         String runId, ChatApproval row) {
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("jsonrpc", "2.0");
+        root.set("id", readJsonRpcId(body));
+        ObjectNode error = root.putObject("error");
+        error.put("code", -32003);
+        error.put("message", "APPROVAL_REQUIRED");
+        ObjectNode data = error.putObject("data");
+        data.put("status", HttpStatus.CONFLICT.value());
+        data.put("code", "APPROVAL_REQUIRED");
+        data.put("approvalRequestId", row.getRequestId().toString());
+        data.put("tool", toolName);
+        data.put("expiresAt", row.getExpiresAt().toString());
+        data.put("retryHeader", "X-Xihe-Approval-Request-Id");
+        if (runId != null && !runId.isBlank()) {
+            data.put("statusUrl", "/api/v1/chat/runs/" + runId);
+        }
+        approvalService.displayPolicy(row)
+                .ifPresent(policy -> data.set("policy", objectMapper.valueToTree(policy)));
+        try {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header("X-Request-Id", row.getRequestId().toString())
+                    .body(objectMapper.writeValueAsString(root));
+        } catch (Exception e) {
+            logger.error("[LIFECYCLE] service=cp event=approval_required_frame_failed tool={}", toolName, e);
+            return problem(HttpStatus.CONFLICT, "APPROVAL_REQUIRED",
+                    "Tool execution requires approval before dispatch");
+        }
+    }
+
+    /**
+     * JSON-RPC error frame for an answerer-rejected ask (HTTP 403): a terminal denial, not an
+     * approval signal. The MCP transport discards problem+json bodies, so the code travels as
+     * {@code error.message}/{@code error.data}; the Agent only treats {@code APPROVAL_REQUIRED}
+     * frames as gate signals and surfaces this one as an ordinary failed tool call.
+     */
+    private ResponseEntity<String> approvalRejectedFrame(String body, String toolName, ChatApproval row) {
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("jsonrpc", "2.0");
+        root.set("id", readJsonRpcId(body));
+        ObjectNode error = root.putObject("error");
+        error.put("code", APPROVAL_REJECTED_JSONRPC_CODE);
+        error.put("message", APPROVAL_REJECTED_CODE);
+        ObjectNode data = error.putObject("data");
+        data.put("status", HttpStatus.FORBIDDEN.value());
+        data.put("code", APPROVAL_REJECTED_CODE);
+        data.put("approvalRequestId", row.getRequestId().toString());
+        data.put("tool", toolName);
+        try {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header("X-Request-Id", row.getRequestId().toString())
+                    .body(objectMapper.writeValueAsString(root));
+        } catch (Exception e) {
+            logger.error("[LIFECYCLE] service=cp event=approval_rejected_frame_failed tool={}", toolName, e);
+            return problem(HttpStatus.FORBIDDEN, APPROVAL_REJECTED_CODE,
+                    "Tool execution was rejected by the approval chain");
+        }
     }
 
     private LedgerAttempt startUserMutationLedger(String toolName, String body, HttpHeaders headers, String sessionId) {

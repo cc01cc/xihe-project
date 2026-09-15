@@ -37,8 +37,35 @@ class ApprovalExecutorUnsupportedError(ApprovalTerminalError):
     code = "APPROVAL_EXECUTOR_UNSUPPORTED"
 
 
+class ApprovalProtocolError(ApprovalTerminalError):
+    """Terminal: the CP gate approval signal violated the frozen contract.
+
+    Fail-closed companion for malformed/mismatched 409 APPROVAL_REQUIRED
+    extensions (PLAN-0328 T1.9): no waiter may be registered from them and the
+    call must not be retried.
+    """
+
+    code = "APPROVAL_FAILED"
+
+
+class ApprovalRetryFailedError(ApprovalTerminalError):
+    """Terminal: the single post-grant retry did not succeed (fail closed).
+
+    A second 409/403 or any other retry-side MCP failure ends the approval flow
+    for this call; the Agent never retries a third time.
+    """
+
+    code = "APPROVAL_FAILED"
+
+
 APPROVAL_DETAILS_PREVIEW_LIMIT = 500
 APPROVAL_FEEDBACK_LIMIT = 512
+# Mirrors CP's own request-id validation (ApprovalAgentClient.status): the CP
+# gate owns the id shape; anything else is a contract violation.
+APPROVAL_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,128}$")
+# Fail-closed ceiling for a pushed approval wait: a bogus far-future expiresAt
+# must not produce an unbounded waiter.
+EXTERNAL_WAIT_CEILING_S = 3600.0
 
 _SECRET_PATTERNS = (
     re.compile(r'(?i)(bearer\s+[A-Za-z0-9\-._~+/=]+)'),
@@ -86,6 +113,27 @@ def _configured_timeout_seconds() -> float:
     except ValueError:
         logger.warning("Invalid XIHE_APPROVAL_TIMEOUT_SECONDS value: {}", raw)
         return 300.0
+
+
+def is_valid_approval_request_id(request_id: Any) -> bool:
+    """PLAN-0328 T1.9: the CP gate provides the request id; validate before keying state."""
+    return isinstance(request_id, str) and bool(APPROVAL_REQUEST_ID_PATTERN.fullmatch(request_id))
+
+
+def parse_approval_expiry(value: Any) -> datetime:
+    """Parse the CP gate expiresAt; malformed values fail closed (never wait unbounded)."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise ApprovalProtocolError("CP gate approval expiresAt is malformed") from None
+    else:
+        raise ApprovalProtocolError("CP gate approval expiresAt is missing")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 class ApprovalInput(BaseModel):
@@ -191,6 +239,109 @@ class ApprovalCoordinator:
     def resolve(self, request_id: str, approved: bool) -> bool:
         status, _ = self.resolve_status(request_id, approved)
         return status in {"accepted", "already_decided"}
+
+    async def await_external(
+        self,
+        request_id: str,
+        tool: str,
+        expires_at: datetime,
+        context: AgentContext | None = None,
+    ) -> bool:
+        """Wait for a CP-gate approval decision pushed through the respond route.
+
+        PLAN-0328 T1.9 (post-gate): CP owns the durable approval row created when
+        the MCP gate answered the first call with 409 APPROVAL_REQUIRED; the Agent
+        only registers a local waiter keyed by the CP-provided request id. The
+        waiter is registered before any other check or await, so a decision that
+        arrives while the 409 is still being processed is never lost.
+
+        Returns True once approved; raises ApprovalRejectedError (carrying
+        feedback) on rejection and ApprovalExpiredError on expiry/deadline.
+        """
+        if not is_valid_approval_request_id(request_id):
+            raise ApprovalProtocolError("CP gate approval request id is invalid")
+        if request_id in self.pending_requests or request_id in self.completed_statuses:
+            raise ApprovalProtocolError(f"CP gate approval request id is already known: {request_id}")
+        event = asyncio.Event()
+        payload = self._external_payload(request_id, tool, expires_at, context)
+        self.pending_requests[request_id] = event
+        self.pending_payloads[request_id] = payload
+
+        try:
+            deadline = parse_approval_expiry(expires_at)
+        except ApprovalProtocolError:
+            self._discard_pending(request_id)
+            raise
+
+        remaining = (deadline - datetime.now(UTC)).total_seconds()
+        if remaining <= 0:
+            self._discard_pending(request_id)
+            self._complete(request_id, payload, "expired", None)
+            raise ApprovalExpiredError(f"Approval request expired: {request_id}")
+        if remaining > EXTERNAL_WAIT_CEILING_S:
+            logger.warning(
+                "CP gate approval wait clamped to local ceiling: requestId={} expiresAt={}",
+                request_id,
+                deadline.isoformat(),
+            )
+        try:
+            await asyncio.wait_for(event.wait(), timeout=min(remaining, EXTERNAL_WAIT_CEILING_S))
+        except TimeoutError:
+            logger.warning("CP gate approval request expired while waiting: requestId={}", request_id)
+            self._discard_pending(request_id)
+            self._complete(request_id, payload, "expired", None)
+            raise ApprovalExpiredError(f"Approval request expired: {request_id}")
+        except asyncio.CancelledError:
+            # Task cancellation must not leave a pending waiter that the respond
+            # route could later resolve for a cancelled run.
+            logger.warning("CP gate approval request cancelled: requestId={}", request_id)
+            self._discard_pending(request_id)
+            raise
+        except Exception:
+            logger.warning("CP gate approval wait failed: requestId={}", request_id, exc_info=True)
+            self._discard_pending(request_id)
+            raise
+
+        approved = self.approval_results.pop(request_id, False)
+        feedback = self.approval_feedback.pop(request_id, None)
+        self._discard_pending(request_id)
+        self._complete(request_id, payload, "approved" if approved else "rejected", approved)
+        if not approved:
+            message = f"Approval request rejected: {request_id}"
+            if feedback:
+                message = f"{message}. User feedback: {feedback}"
+            raise ApprovalRejectedError(message)
+        return True
+
+    def _external_payload(
+        self,
+        request_id: str,
+        tool: str,
+        expires_at: Any,
+        context: AgentContext | None,
+    ) -> dict[str, Any]:
+        """Safe pending payload for a CP-owned approval (no raw arguments ever)."""
+        metadata = context.metadata if context is not None else {}
+        expires = ""
+        if isinstance(expires_at, datetime):
+            normalized = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
+            expires = normalized.isoformat().replace("+00:00", "Z")
+        return {
+            "requestId": request_id,
+            "runId": str(metadata.get("runId", "")),
+            "operationId": str(metadata.get("operationId") or ""),
+            "sessionId": str(metadata.get("sessionId", context.aggregate_id if context is not None else "")),
+            "workspaceId": str(metadata.get("workspaceId", "")),
+            "tool": tool,
+            "action": f"Execute {tool}",
+            "expiresAt": expires,
+            "source": "cp_gate",
+        }
+
+    def _discard_pending(self, request_id: str) -> None:
+        self.pending_requests.pop(request_id, None)
+        self.pending_payloads.pop(request_id, None)
+        self.approval_feedback.pop(request_id, None)
 
     def resolve_status(
         self, request_id: str, approved: bool, feedback: str | None = None
@@ -298,6 +449,16 @@ class ApprovalAgentTool(BaseAgentTool):
 
     def resolve_approval(self, request_id: str, approved: bool) -> bool:
         return self.coordinator.resolve(request_id, approved)
+
+    async def await_external_approval(
+        self,
+        request_id: str,
+        tool: str,
+        expires_at: datetime,
+        context: AgentContext | None = None,
+    ) -> bool:
+        """PLAN-0328 T1.9: wait for a CP-gate decision pushed through the respond route."""
+        return await self.coordinator.await_external(request_id, tool, expires_at, context)
 
     def get_pending(self) -> list[dict[str, Any]]:
         return self.coordinator.get_pending()

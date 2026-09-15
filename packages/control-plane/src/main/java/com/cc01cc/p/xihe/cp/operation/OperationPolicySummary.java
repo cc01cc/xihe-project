@@ -32,6 +32,11 @@ public final class OperationPolicySummary {
     /** The exact safe key set; any extra key makes a stored snapshot unreadable. */
     public static final Set<String> POLICY_KEYS = Set.of(
             "effect", "sourceLayer", "matchedRule", "reason", "mode", "allowedBy",
+            "actionClass", "shape", "reused");
+
+    /** V19 snapshots predate `reused`; it stays an optional known key so legacy rows still parse. */
+    private static final Set<String> LEGACY_KEYS = Set.of(
+            "effect", "sourceLayer", "matchedRule", "reason", "mode", "allowedBy",
             "actionClass", "shape");
 
     private static final Set<String> EFFECTS = Set.of("allow", "ask", "deny");
@@ -48,6 +53,15 @@ public final class OperationPolicySummary {
      */
     public static Optional<String> buildSnapshot(PolicyVerdict verdict, ToolFaceRegistry.Face face,
                                                  PolicyContext context) {
+        return buildSnapshot(verdict, face, context, null);
+    }
+
+    /**
+     * Same snapshot with the T1.7 reuse annotation: {@code true} when the dispatch reused an exact
+     * session grant, {@code null} when reuse is not applicable (never fabricated).
+     */
+    public static Optional<String> buildSnapshot(PolicyVerdict verdict, ToolFaceRegistry.Face face,
+                                                 PolicyContext context, Boolean reused) {
         if (verdict == null || verdict.effect() == null || verdict.sourceLayer() == null
                 || verdict.reason() == null || verdict.reason().isBlank()
                 || face == null || face.actionClass() == null || face.actionClass().isBlank()
@@ -63,6 +77,7 @@ public final class OperationPolicySummary {
         summary.put("allowedBy", lowercaseOrNull(verdict.allowedBy()));
         summary.put("actionClass", face.actionClass());
         summary.put("shape", face.shape().name().toLowerCase(Locale.ROOT));
+        summary.put("reused", reused);
         try {
             return Optional.of(MAPPER.writeValueAsString(summary));
         } catch (Exception e) {
@@ -82,7 +97,11 @@ public final class OperationPolicySummary {
             JsonNode root = MAPPER.reader()
                     .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                     .readTree(serialized);
-            if (root == null || !root.isObject() || !keysOf(root).equals(POLICY_KEYS)) {
+            if (root == null || !root.isObject()) {
+                return Optional.empty();
+            }
+            Set<String> keys = keysOf(root);
+            if (!keys.equals(POLICY_KEYS) && !keys.equals(LEGACY_KEYS)) {
                 return Optional.empty();
             }
 
@@ -94,6 +113,7 @@ public final class OperationPolicySummary {
             String matchedRule = optionalText(root, "matchedRule");
             String mode = optionalLowerCase(root, "mode");
             String allowedBy = optionalLowerCase(root, "allowedBy");
+            Boolean reused = optionalBoolean(root, "reused");
             if (effect == null || sourceLayer == null || reason == null || actionClass == null
                     || shape == null) {
                 return Optional.empty();
@@ -108,6 +128,7 @@ public final class OperationPolicySummary {
             summary.put("allowedBy", allowedBy);
             summary.put("actionClass", actionClass);
             summary.put("shape", shape);
+            summary.put("reused", reused);
             return Optional.of(summary);
         } catch (Exception e) {
             return Optional.empty();
@@ -167,5 +188,17 @@ public final class OperationPolicySummary {
             throw new IllegalArgumentException("policy field is not lower-case");
         }
         return value;
+    }
+
+    /** `reused` is nullable; any non-boolean value makes the snapshot unreadable. */
+    private static Boolean optionalBoolean(JsonNode root, String key) {
+        JsonNode value = root.get(key);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (!value.isBoolean()) {
+            throw new IllegalArgumentException("policy field is not a boolean");
+        }
+        return value.asBoolean();
     }
 }

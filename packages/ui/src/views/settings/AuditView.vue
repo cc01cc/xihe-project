@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { TriangleAlert } from '@lucide/vue'
+import { TriangleAlert, Repeat2 } from '@lucide/vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import { useOperationStore } from '../../stores/operations'
@@ -250,6 +250,14 @@ onMounted(() => {
                       :class="effectClass(item.policy.effect)"
                     >
                       {{ t(effectLabels[item.policy.effect]) }}
+                    </span>
+                    <span
+                      v-if="item.policy.reused === true"
+                      :data-testid="`${policyTestId(item)}-reused`"
+                      class="inline-flex items-center gap-1 rounded-full border border-sky-600/50 bg-sky-500/15 px-2 py-0.5 font-medium"
+                    >
+                      <Repeat2 class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      {{ t('settings.auditPolicyReused') }}
                     </span>
                     <span v-if="item.toolCallId" class="font-mono text-muted-foreground" :title="item.toolCallId">
                       {{ t('settings.auditPolicyToolCallId') }}: {{ item.toolCallId }}

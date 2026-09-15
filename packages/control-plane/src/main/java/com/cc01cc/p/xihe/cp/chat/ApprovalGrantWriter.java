@@ -8,20 +8,24 @@ import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
 import com.cc01cc.p.xihe.cp.policy.PolicyRule;
 import com.cc01cc.p.xihe.cp.policy.PolicyRuleService;
+import com.cc01cc.p.xihe.cp.policy.ReusePolicy;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.Objects;
 
 /**
  * Materializes the grant behind an approval decision (PLAN-0328 M1, spec/approval.md §6.2/§14).
  *
  * <ul>
- *   <li>{@code session} → one ALLOW rule in the in-memory L4 set ("本会话允许", never persisted);</li>
+ *   <li>{@code session} → one exact-invocation reuse fingerprint in the in-memory L4 state
+ *       ("本会话允许", never persisted; T1.7);</li>
  *   <li>{@code saved} → one ALLOW rule at L3 workspace (default) or L2 user;</li>
  *   <li>{@code reject_always} → the persistent DENY counterpart (decision #25).</li>
  * </ul>
@@ -29,7 +33,8 @@ import java.util.Objects;
  * <p>The action class is always taken from the tool-face registry: classification authority stays
  * with the classification workflow (owner/admin, decision #56), so a decision may only narrow the
  * {@code resource} and never introduce an action class of its own. An unclassified tool is refused
- * (default ask + no reuse, spec §8) — classify first, then grant.</p>
+ * (default ask + no reuse, spec §8) — classify first, then grant. Reuse tiers beyond the face
+ * shape's ceiling (opaque/interpreter/delete) are refused with 400 REUSE_NOT_ALLOWED_FOR_SHAPE.</p>
  */
 @Component
 public class ApprovalGrantWriter {
@@ -39,6 +44,10 @@ public class ApprovalGrantWriter {
     /** Validated grant target derived from the decision plus the tool registry. */
     public record RulePlan(String kind, String layer, String tool, String actionClass,
                            String resource, PolicyEffect effect) {}
+
+    /** Decision-time binding recorded on the row and (for session) in the reuse fingerprint. */
+    public record GrantContext(String tool, String argumentsHash, String modeAtGrant,
+                               long policyRevision, Integer sandboxGeneration) {}
 
     private final PolicyEngine policyEngine;
     private final SessionPolicyState sessionState;
@@ -61,7 +70,8 @@ public class ApprovalGrantWriter {
         if (decision == null || !decision.kind().grantsRule()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "decision does not grant a rule");
         }
-        String actionClass = policyEngine.actionClassOf(tool, userId, workspaceId);
+        ToolFaceRegistry.Face face = policyEngine.faceOf(tool, userId, workspaceId);
+        String actionClass = face.actionClass();
         if (PolicyLayer.UNCLASSIFIED_ACTION.equals(actionClass)) {
             throw new CpApiException(HttpStatus.CONFLICT, "TOOL_UNCLASSIFIED",
                     "Tool is not classified; classify it before granting a rule: " + tool);
@@ -69,6 +79,11 @@ public class ApprovalGrantWriter {
         if (decision.actionClass() != null && !actionClass.equals(decision.actionClass())) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "actionClass is derived from the tool registry and cannot be overridden");
+        }
+        ReusePolicy.Tier tier = ReusePolicy.tierOf(decision.kind().wireName());
+        if (!ReusePolicy.allows(tier, face.shape(), actionClass)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "REUSE_NOT_ALLOWED_FOR_SHAPE",
+                    "The " + decision.kind().wireName() + " reuse tier is not allowed for this tool shape");
         }
         // Only session/saved/reject_always reach this point (grantsRule guard above); a switch
         // expression over the 5-constant enum would still need an unreachable default arm.
@@ -82,12 +97,22 @@ public class ApprovalGrantWriter {
     }
 
     /** Commits the grant; a duplicate persistent rule is an idempotent success (unique scope index). */
-    public void commit(RulePlan plan, String sessionId, String userId, String workspaceId) {
+    public void commit(RulePlan plan, String sessionId, String userId, String workspaceId,
+                       GrantContext context) {
         Objects.requireNonNull(plan, "plan");
         if ("session".equals(plan.layer())) {
-            sessionState.addRule(sessionId, PolicyRule.of(plan.actionClass(), plan.resource(), plan.effect()));
-            audit.record(sessionId, plan.tool(), "policy_rule_granted",
-                    "session " + plan.actionClass() + " \"" + plan.resource() + "\" " + plan.effect().name().toLowerCase());
+            SessionPolicyState.Grant grant = sessionGrant(plan, context);
+            if (grant == null) {
+                logger.warn("[POLICY] event=session_grant_unavailable tool={} reason=missing_binding",
+                        plan.tool());
+                audit.record(sessionId, plan.tool(), "policy_grant_session_unavailable",
+                        "session exact-reuse entry not written (missing arguments hash or sandbox generation)");
+                return;
+            }
+            sessionState.addGrant(sessionId, grant);
+            audit.record(sessionId, plan.tool(), "policy_grant_session",
+                    "session exact-reuse mode=" + grant.modeAtGrant()
+                            + " policyRevision=" + grant.policyRevision());
             return;
         }
         try {
@@ -102,6 +127,19 @@ public class ApprovalGrantWriter {
         audit.record(sessionId, plan.tool(), "policy_rule_granted",
                 plan.layer() + " " + plan.actionClass() + " \"" + plan.resource() + "\" "
                         + plan.effect().name().toLowerCase());
+    }
+
+    /** Fail-closed fingerprint: a session grant needs both the canonical hash and the generation. */
+    private static SessionPolicyState.Grant sessionGrant(RulePlan plan, GrantContext context) {
+        if (context == null) {
+            return null;
+        }
+        String hash = ReusePolicy.normalizeArgumentsHash(context.argumentsHash());
+        if (hash == null || context.sandboxGeneration() == null) {
+            return null;
+        }
+        return new SessionPolicyState.Grant(hash, plan.tool(), context.modeAtGrant(),
+                context.policyRevision(), context.sandboxGeneration(), Instant.now());
     }
 
     /**

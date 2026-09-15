@@ -475,9 +475,11 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         Map<String, Object> ownerPolicy = (Map<String, Object>) ownerItems.get(0).get("policy");
         assertNotNull(ownerPolicy);
         assertEquals(Set.of("effect", "sourceLayer", "matchedRule", "reason", "mode",
-                "allowedBy", "actionClass", "shape"), ownerPolicy.keySet());
+                "allowedBy", "actionClass", "shape", "reused"), ownerPolicy.keySet());
         assertEquals("ask", ownerPolicy.get("effect"));
         assertEquals("bypass@session", ownerPolicy.get("allowedBy"));
+        // V19 snapshot predates the T1.7 reuse annotation: it parses, with `reused` explicitly null.
+        assertNull(ownerPolicy.get("reused"));
         assertEquals("allow", ownerItems.get(0).get("policyDecision"));
         assertFalse(ownerPolicy.containsKey("arguments"));
         assertFalse(ownerPolicy.containsKey("details"));

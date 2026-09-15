@@ -26,8 +26,9 @@ import org.springframework.http.HttpStatus;
 class ToolFaceServiceTest {
 
     private final ToolFaceRepository repository = mock(ToolFaceRepository.class);
+    private final PolicyRevision policyRevision = mock(PolicyRevision.class);
     private final AuditLogger audit = mock(AuditLogger.class);
-    private final ToolFaceService service = new ToolFaceService(repository, new PolicyVersion(), audit);
+    private final ToolFaceService service = new ToolFaceService(repository, policyRevision, audit);
 
     @AfterEach
     void clearTenant() {

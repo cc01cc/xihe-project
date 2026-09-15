@@ -76,7 +76,27 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OAuthTokenRequest' } } } }
       responses: { '200': { description: OAuth token response }, '401': { $ref: '#/components/responses/Problem' } }
   /api/v1/mcp:
-    post: { operationId: mcpPost, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP JSON-RPC response } } }
+    post:
+      operationId: mcpPost
+      summary: MCP JSON-RPC endpoint (tools/list, tools/call, discovery)
+      description: |
+        Agent-facing MCP gateway. `tools/call` is policy-gated: ALLOW dispatches, ASK requires an
+        exact approval grant or session fingerprint. A run-scoped ASK without either creates (or
+        reuses) the durable pending approval and answers `409` with a JSON-RPC error frame carrying
+        the safe extension in `error.data`; a call without run context falls back to the legacy
+        `application/problem+json` body (no extension — the Agent registers no waiter and fails
+        closed).
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: MCP JSON-RPC response }
+        '409':
+          description: APPROVAL_REQUIRED — no valid approval grant / session fingerprint
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McpApprovalRequiredError' }
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example: { type: "https://xihe.dev/problems/approval-required", title: "Approval required", status: 409, code: "APPROVAL_REQUIRED", detail: "Tool execution requires approval before dispatch", requestId: "req-..." }
     get: { operationId: mcpStream, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP SSE stream, content: { text/event-stream: {} } } } }
     delete: { operationId: mcpDisconnect, security: [{ bearerAuth: [] }], responses: { '204': { description: Disconnected } } }
   /internal/v1/config/effective/{domain}:
@@ -1304,8 +1324,10 @@ components:
       description: >-
         Safe verdict snapshot attached to the dispatch ledger item (PLAN-0328 T1.15): why the call
         was allowed or blocked. Raw tool arguments, MCP request bodies and free-form exception text
-        are never included; legacy V19-absent rows omit the whole `policy` object.
-      required: [effect, sourceLayer, matchedRule, reason, mode, allowedBy, actionClass, shape]
+        are never included; legacy V19-absent rows omit the whole `policy` object. `reused` is the
+        T1.7 reuse annotation: true when the dispatch reused an exact session grant, null when reuse
+        is not applicable (legacy V19 snapshots parse as null).
+      required: [effect, sourceLayer, matchedRule, reason, mode, allowedBy, actionClass, shape, reused]
       properties:
         effect: { type: string, enum: [allow, ask, deny] }
         sourceLayer: { type: string, enum: [builtin, instance, user, workspace, session, per_call] }
@@ -1317,6 +1339,46 @@ components:
           description: Lower-cased mode-bypass marker (e.g. `bypass@session`, `accept-edits@workspace`) when the allow came from a mode rather than a rule.
         actionClass: { type: string, minLength: 1 }
         shape: { type: string, enum: [structured, interpreter, opaque] }
+        reused:
+          type: [boolean, 'null']
+          description: T1.7 reuse annotation — `true` only for an exact session-fingerprint dispatch; `null` when reuse is not applicable; never fabricated.
+    McpApprovalRequiredError:
+      type: object
+      additionalProperties: false
+      description: >-
+        JSON-RPC 2.0 error frame returned with HTTP 409 by the MCP gate when no valid approval grant
+        or session fingerprint exists (PLAN-0328 T1.7/T1.9). The safe extension travels as
+        `error.data` because MCP transports discard non-JSON-RPC response bodies. The durable pending
+        approval referenced by `approvalRequestId` is created or reused (same session + tool +
+        canonical arguments hash) before this response is emitted.
+      required: [jsonrpc, id, error]
+      properties:
+        jsonrpc: { type: string, enum: ['2.0'] }
+        id: { type: [integer, string, 'null'], description: Echoes the JSON-RPC request id; null when the request carried none. }
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, data]
+          properties:
+            code: { type: integer, enum: [-32003] }
+            message: { type: string, enum: [APPROVAL_REQUIRED] }
+            data: { $ref: '#/components/schemas/McpApprovalRequiredData' }
+    McpApprovalRequiredData:
+      type: object
+      additionalProperties: false
+      description: Safe approval extension (never contains tool arguments).
+      required: [status, code, approvalRequestId, tool, expiresAt, retryHeader]
+      properties:
+        status: { type: integer, enum: [409] }
+        code: { type: string, enum: [APPROVAL_REQUIRED] }
+        approvalRequestId: { type: string, minLength: 1, maxLength: 128, description: Durable ChatApproval request id; the Agent keys its waiter on it and retries with the grant header. }
+        tool: { type: string, minLength: 1 }
+        expiresAt: { type: string, format: date-time }
+        retryHeader: { type: string, enum: ['X-Xihe-Approval-Request-Id'] }
+        statusUrl:
+          type: [string, 'null']
+          description: Run recovery route (`/api/v1/chat/runs/{runId}`) for the originating run; present only when the call carried a run context. Informational for the Agent (user auth required).
+        policy: { $ref: '#/components/schemas/ApprovalPolicySummary' }
     OperationAttemptView:
       type: object
       required: [id, itemId, stage, retryNo, module, status]

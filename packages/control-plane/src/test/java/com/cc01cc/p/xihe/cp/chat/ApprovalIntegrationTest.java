@@ -54,6 +54,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -102,6 +103,9 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PolicyRuleRepository policyRuleRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.policy.PolicyRevision policyRevision;
 
     private String authToken;
     private String userId;
@@ -459,6 +463,11 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
                 "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}}",
                 "approved", Instant.now().plusSeconds(300), null, "require_approval");
         approval.setApproved(true);
+        // PLAN-0328 T1.7: the V20 columns decide whether the grant is still consumable.
+        approval.setPolicyRevision(policyRevision.current());
+        Workspace workspace = workspaceRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
+        approval.setSandboxGeneration(workspace.getGeneration() == null ? 0 : workspace.getGeneration());
+        approval.setReuseScope("once");
         approvalRepository.save(approval);
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}},\"id\":1}";
@@ -469,6 +478,24 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         assertNotNull(consumed.getGrantConsumedAt());
         assertFalse(approvalService.consumeApprovedGrant(
                 requestId, userId, workspaceId, sessionId, "write_file", body));
+    }
+
+    @Test
+    void consumeRejectsLegacyRowWithoutV20GrantColumns() {
+        activeRun("running");
+        ChatApproval legacy = new ChatApproval(
+                requestId, runId, sessionId, userId, workspaceId,
+                "write_file", "Execute write_file",
+                "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}}",
+                "approved", Instant.now().plusSeconds(300), null, "require_approval");
+        legacy.setApproved(true);
+        approvalRepository.save(legacy);
+
+        assertFalse(approvalService.consumeApprovedGrant(
+                requestId, userId, workspaceId, sessionId, "write_file",
+                "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                        + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}},\"id\":1}"));
+        assertNull(approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getGrantConsumedAt());
     }
 
     @Test
@@ -498,6 +525,86 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         ChatApproval saved = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
         assertEquals("approved", saved.getState());
         assertNull(saved.getDispatchErrorCode());
+    }
+
+    // ------------------------------------------------------------------
+    // T1.7 retry window: a re-claim after dispatch_unknown must re-stamp the
+    // decision-time revision/generation/scope, or consumeStillValid would
+    // reject the freshly re-approved grant forever.
+    // ------------------------------------------------------------------
+
+    @Test
+    void retryClaimRefreshesRevisionGenerationAndScopeButKeepsTheFirstMode() {
+        activeRun("running");
+        pendingApproval(requestId, Instant.now().plusSeconds(300));
+        UUID id = UUID.fromString(requestId);
+        Instant now = Instant.now();
+
+        assertEquals(1, approvalRepository.markDispatching(id, true, "managed", "once", 11L, 1, now));
+        assertEquals(1, approvalRepository.markDispatchUnknown(id, "AGENT_APPROVAL_FAILED", now));
+        assertEquals(1, approvalRepository.markDispatching(id, true, "bypass", "session", 22L, 2, now));
+
+        ChatApproval claimed = approvalRepository.findById(id).orElseThrow();
+        assertEquals("dispatching", claimed.getState());
+        assertEquals(Long.valueOf(22L), claimed.getPolicyRevision(),
+                "a retry must re-stamp the decision-time revision");
+        assertEquals(Integer.valueOf(2), claimed.getSandboxGeneration(),
+                "a retry must re-stamp the decision-time generation");
+        assertEquals("session", claimed.getReuseScope(),
+                "a retry must re-stamp the decision-time reuse scope");
+        assertEquals("managed", claimed.getModeAtGrant(),
+                "the first grant's mode must stay conservative across the retry");
+    }
+
+    @Test
+    void retryAfterDispatchUnknownRefreshesTheGrantWindowAndStaysConsumable() {
+        activeRun("running");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"retry.txt\"}},\"id\":1}";
+        ChatApproval pending = approvalService.recordGatePending(sessionId, runId, userId, workspaceId,
+                "write_file", body, Instant.now().plusSeconds(300)).orElseThrow().row();
+
+        // The first claim landed in dispatch_unknown stamped with the revision of that moment
+        // and an unset generation. Any rule/face write between claim and retry moves the durable
+        // revision, so the retry must re-stamp both instead of coalescing the stale values.
+        sessionPolicyState.setMode(sessionId, "managed");
+        long staleRevision = policyRevision.current() - 1;
+        ChatApproval claimed = approvalRepository.findById(pending.getRequestId()).orElseThrow();
+        claimed.setState("dispatch_unknown");
+        claimed.setApproved(true);
+        claimed.setDecisionKind("once");
+        claimed.setModeAtGrant("managed");
+        claimed.setReuseScope("saved");
+        claimed.setPolicyRevision(staleRevision);
+        claimed.setSandboxGeneration(null);
+        approvalRepository.save(claimed);
+
+        sessionPolicyState.setMode(sessionId, "bypass");
+        AGENT_DECISION_STATUS.set(200);
+        ResponseEntity<Map> retry = decideWithoutErrorHandling(
+                pending.getRequestId().toString(), Map.of("decision", "once"));
+
+        assertEquals(HttpStatus.OK, retry.getStatusCode());
+        ChatApproval approved = approvalRepository.findById(pending.getRequestId()).orElseThrow();
+        assertEquals("approved", approved.getState());
+        assertNotEquals(staleRevision, policyRevision.current());
+        assertEquals(Long.valueOf(policyRevision.current()), approved.getPolicyRevision(),
+                "the retry must re-stamp the decision-time revision, not keep the stale claim value");
+        assertNotNull(approved.getSandboxGeneration(),
+                "the retry must re-stamp the decision-time sandbox generation");
+        assertEquals("once", approved.getReuseScope(),
+                "the retry must re-stamp the decision-time reuse scope");
+        assertEquals("managed", approved.getModeAtGrant(),
+                "the retry must not rewrite the first grant's mode");
+        assertTrue(approvalService.consumeApprovedGrant(pending.getRequestId().toString(), userId,
+                        workspaceId, sessionId, "write_file", body),
+                "the retried grant must stay consumable under the decision-time revision");
+    }
+
+    private ResponseEntity<Map> decideWithoutErrorHandling(String reqId, Map<String, Object> body) {
+        return noErrorClient().exchange(
+                baseUrl + "/api/v1/chat/approvals/" + reqId + "/decision",
+                HttpMethod.POST, new HttpEntity<>(body, authorizedHeaders()), Map.class);
     }
 
     @Test
@@ -556,19 +663,55 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void sessionTierApprovesRowAndAddsL4Rule() {
+    void sessionTierRecordsAnExactInvocationFingerprintInsteadOfACoarseRule() {
         activeRun("running");
-        pendingToolApproval(requestId, "write_file", runId, sessionId, userId, workspaceId,
-                Instant.now().plusSeconds(300));
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}},\"id\":1}";
+        ChatApproval pending = approvalService.recordGatePending(sessionId, runId, userId, workspaceId,
+                "write_file", body, Instant.now().plusSeconds(300)).orElseThrow().row();
 
-        ResponseEntity<Map> response = decideWithBody(requestId, Map.of("decision", "session"));
+        ResponseEntity<Map> response = decideWithBody(pending.getRequestId().toString(),
+                Map.of("decision", "session"));
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("session", response.getBody().get("decision"));
-        assertEquals("approved", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
-        assertTrue(sessionPolicyState.rulesOf(sessionId).stream()
-                        .anyMatch(rule -> "write".equals(rule.actionClass())),
-                "session tier must add the L4 allow rule");
+        ChatApproval decided = approvalRepository.findById(pending.getRequestId()).orElseThrow();
+        assertEquals("approved", decided.getState());
+        // T1.7: the decision records the reuse scope, the durable revision and the sandbox generation.
+        assertEquals("session", decided.getReuseScope());
+        assertNotNull(decided.getPolicyRevision());
+        assertNotNull(decided.getSandboxGeneration());
+        assertNotNull(decided.getArgumentsHash());
+        assertTrue(sessionPolicyState
+                        .grantOf(sessionId, "write_file", decided.getArgumentsHash()).isPresent(),
+                "session tier must record the exact-invocation fingerprint");
+        assertTrue(sessionPolicyState.rulesOf(sessionId).isEmpty(),
+                "session tier must not write a coarse L4 rule anymore");
+        assertTrue(approvalService.tryReuseSessionGrant(sessionId, workspaceId, "write_file", body),
+                "the recorded fingerprint must authorize the same invocation at the gate");
+    }
+
+    @Test
+    void gatePendingLookupIsIdempotentForTheSameInvocation() {
+        activeRun("running");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}},\"id\":1}";
+
+        ChatApproval first = approvalService.recordGatePending(sessionId, runId, userId, workspaceId,
+                "write_file", body, Instant.now().plusSeconds(300)).orElseThrow().row();
+        ChatApproval second = approvalService.recordGatePending(sessionId, runId, userId, workspaceId,
+                "write_file", body, Instant.now().plusSeconds(300)).orElseThrow().row();
+
+        assertEquals(first.getRequestId(), second.getRequestId(),
+                "the gate must reuse the live row instead of creating a duplicate");
+        assertEquals(1, approvalRepository
+                .findBySessionIdAndToolAndArgumentsHashAndStateInOrderByCreatedAtAsc(
+                        sessionId, "write_file", first.getArgumentsHash(),
+                        List.of("pending", "dispatching", "dispatch_unknown")).size());
+        assertEquals("awaiting_approval",
+                chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
+        assertFalse(approvalService.tryReuseSessionGrant(sessionId, workspaceId, "write_file", body),
+                "a pending row without a session decision is not reusable");
     }
 
     @Test
@@ -581,7 +724,12 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("saved", response.getBody().get("decision"));
-        assertEquals("approved", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow().getState());
+        ChatApproval decided = approvalRepository.findById(UUID.fromString(requestId)).orElseThrow();
+        assertEquals("approved", decided.getState());
+        // T1.7: persistent grants keep writing rules, but also record their reuse scope + revisions.
+        assertEquals("saved", decided.getReuseScope());
+        assertNotNull(decided.getPolicyRevision());
+        assertNotNull(decided.getSandboxGeneration());
         assertTrue(policyRuleRepository
                         .findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", workspaceId).stream()
                         .anyMatch(rule -> "write".equals(rule.getActionClass()) && "allow".equals(rule.getEffect())),

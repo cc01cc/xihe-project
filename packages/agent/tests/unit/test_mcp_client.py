@@ -1,16 +1,30 @@
 """Tests for adapters/mcp_client.py - MCP client manager."""
 import asyncio
+import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from loguru import logger
+from mcp.shared.exceptions import MCPError
 from mcp.types import TextContent
 
 from xihe_agent import main
 from xihe_agent.adapters import mcp_client as mcp_client_module
-from xihe_agent.adapters.approval_tool import ApprovalAgentTool
-from xihe_agent.adapters.mcp_client import MCPAgentTool, MCPClientManager
+from xihe_agent.adapters.approval_tool import (
+    ApprovalAgentTool,
+    ApprovalExpiredError,
+    ApprovalProtocolError,
+    ApprovalRejectedError,
+    ApprovalRetryFailedError,
+)
+from xihe_agent.adapters.mcp_client import (
+    APPROVAL_GRANT_HEADER,
+    MCPAgentTool,
+    MCPClientManager,
+    classify_approval_gate_failure,
+)
 from xihe_agent.interfaces.context import AgentContext
 
 
@@ -403,3 +417,398 @@ class TestMCPAgentToolTimeout:
         # Not "timed out" — approval-class tools are bounded post-grant only.
         assert "ok" in result["content"]
         assert "timed out" not in result["content"]
+
+
+# ---------------------------------------------------------------------------
+# PLAN-0328 T1.9 post-gate protocol: CP MCP gate 409 APPROVAL_REQUIRED
+# ---------------------------------------------------------------------------
+
+
+def _future_iso(seconds: float = 30.0) -> str:
+    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+
+
+def _gate_problem(tool: str, **overrides) -> dict:
+    problem = {
+        "type": "https://xihe.dev/problems/approval_required",
+        "title": "Request failed",
+        "status": 409,
+        "code": "APPROVAL_REQUIRED",
+        "detail": "Tool execution requires approval before dispatch",
+        "requestId": "cp-request-1",
+        "approvalRequestId": "apr-00000001",
+        "tool": tool,
+        "expiresAt": _future_iso(),
+        "retryHeader": "X-Xihe-Approval-Request-Id",
+        "statusUrl": "/api/v1/approvals/apr-00000001",
+        "policy": {
+            "effect": "ask",
+            "sourceLayer": "builtin",
+            "matchedRule": "{ write, *, ask }",
+            "reason": "mutation requires approval",
+            "mode": "default",
+            "actionClass": "write",
+            "shape": "A",
+        },
+    }
+    problem.update(overrides)
+    return problem
+
+
+def _gate_error(tool: str, **overrides) -> MCPError:
+    # Frozen CP frame (W1, 2026-09-15): code -32003, message APPROVAL_REQUIRED,
+    # unwrapped problem extensions under JSON-RPC error.data.
+    return MCPError(-32003, "APPROVAL_REQUIRED", data=_gate_problem(tool, **overrides))
+
+
+async def _await_pending(
+    approval_tool: ApprovalAgentTool, exclude: set[str] | None = None, attempts: int = 1000
+) -> str:
+    excluded = exclude or set()
+    for _ in range(attempts):
+        pending = [rid for rid in approval_tool.coordinator.pending_requests if rid not in excluded]
+        if pending:
+            return pending[0]
+        await asyncio.sleep(0)
+    raise AssertionError("CP gate approval waiter was never registered")
+
+
+def _publishing_context(session_id: str = "session-gate") -> tuple[AgentContext, list[dict]]:
+    context = AgentContext.empty(session_id)
+    context.metadata.update({
+        "sessionId": session_id,
+        "workspaceId": "workspace-1",
+        "runId": "run-1",
+        "operationId": "operation-1",
+        "operationItemId": "item-1",
+    })
+    published: list[dict] = []
+
+    async def publish(payload):
+        published.append(payload)
+
+    context.metadata["_approval_event_sink"] = publish
+    return context, published
+
+
+class TestMCPAgentToolPostGateApproval:
+    @pytest.fixture
+    def context(self):
+        context = AgentContext.empty("session-gate")
+        context.metadata.update({
+            "sessionId": "session-gate",
+            "workspaceId": "workspace-1",
+            "runId": "run-1",
+            "operationId": "operation-1",
+            "operationItemId": "item-1",
+        })
+        return context
+
+    @pytest.fixture
+    def log_sink(self):
+        messages = []
+        sink_id = logger.add(messages.append, level="DEBUG")
+        yield messages
+        logger.remove(sink_id)
+
+    @pytest.mark.asyncio
+    async def test_gate_409_approve_retries_once_with_grant_header(self, context):
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        calls: list[dict[str, str]] = []
+
+        async def _call(name, arguments, headers):
+            calls.append(headers)
+            if len(calls) == 1:
+                raise _gate_error("read_file")
+            return _tool_result("gate-ok")
+
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(side_effect=_call)
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        task = asyncio.create_task(tool.execute({"path": "notes/a.md"}, context))
+        request_id = await _await_pending(approval_tool)
+        assert request_id == "apr-00000001"
+        assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
+
+        result = await asyncio.wait_for(task, timeout=5)
+
+        assert "gate-ok" in result["content"]
+        assert len(calls) == 2
+        assert APPROVAL_GRANT_HEADER not in calls[0]
+        assert calls[1][APPROVAL_GRANT_HEADER] == request_id
+        # The retry must be the identical MCP call (same JSON-RPC bound payload).
+        assert manager.call_tool.await_args_list[0].args[1] == manager.call_tool.await_args_list[1].args[1]
+        assert approval_tool.get_pending() == []
+
+    @pytest.mark.asyncio
+    async def test_gate_409_rejection_is_terminal_with_feedback_and_no_retry(self, context):
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        manager = _fake_manager(approval_tool=approval_tool, side_effect=[_gate_error("read_file")])
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        task = asyncio.create_task(tool.execute({"path": "notes/a.md"}, context))
+        request_id = await _await_pending(approval_tool)
+        assert approval_tool.resolve_approval_status(request_id, False, "policy says no") == (
+            "accepted",
+            False,
+        )
+
+        with pytest.raises(ApprovalRejectedError, match="policy says no"):
+            await asyncio.wait_for(task, timeout=5)
+
+        assert manager.call_tool.await_count == 1
+        assert approval_tool.get_pending() == []
+        assert approval_tool.get_approval_status(request_id)["status"] == "rejected"
+
+    @pytest.mark.asyncio
+    async def test_gate_409_expiry_is_terminal_and_queryable(self, context):
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+
+        async def _call(name, arguments, headers):
+            raise _gate_error("read_file", expiresAt=_future_iso(0.15))
+
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(side_effect=_call)
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        with pytest.raises(ApprovalExpiredError):
+            await asyncio.wait_for(tool.execute({}, context), timeout=5)
+
+        assert manager.call_tool.await_count == 1
+        assert approval_tool.get_pending() == []
+        status = approval_tool.get_approval_status("apr-00000001")
+        assert status is not None
+        assert status["status"] == "expired"
+        # A late decision cannot revive an expired CP gate request.
+        assert approval_tool.resolve_approval_status("apr-00000001", True) == ("expired", None)
+
+    @pytest.mark.asyncio
+    async def test_second_gate_409_fails_closed_without_third_call(self, context):
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        manager = _fake_manager(
+            approval_tool=approval_tool,
+            side_effect=[_gate_error("read_file"), _gate_error("read_file")],
+        )
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        task = asyncio.create_task(tool.execute({}, context))
+        request_id = await _await_pending(approval_tool)
+        assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
+
+        with pytest.raises(ApprovalRetryFailedError):
+            await asyncio.wait_for(task, timeout=5)
+
+        assert manager.call_tool.await_count == 2
+        assert approval_tool.get_pending() == []
+
+    @pytest.mark.asyncio
+    async def test_retry_side_generic_mcp_error_fails_closed(self, context):
+        """403/grant-mismatch surface as non-approval MCP errors; the retry must not loop."""
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        manager = _fake_manager(
+            approval_tool=approval_tool,
+            side_effect=[
+                _gate_error("read_file"),
+                MCPError(-32603, "Server returned an error response", data=None),
+            ],
+        )
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        task = asyncio.create_task(tool.execute({}, context))
+        request_id = await _await_pending(approval_tool)
+        assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
+
+        with pytest.raises(ApprovalRetryFailedError):
+            await asyncio.wait_for(task, timeout=5)
+
+        assert manager.call_tool.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_legacy_preflight_grant_is_consumed_by_gate_retry_without_double_request(self):
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        context, published = _publishing_context("session-legacy-gate")
+        calls: list[dict[str, str]] = []
+
+        async def _call(name, arguments, headers):
+            calls.append(headers)
+            if len(calls) == 1:
+                raise _gate_error("write_file")
+            return _tool_result("write-ok")
+
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(side_effect=_call)
+        tool = MCPAgentTool(_stub_tool("write_file"), manager)
+
+        task = asyncio.create_task(tool.execute({"path": "a.md", "content": "x"}, context))
+        for _ in range(1000):
+            if published:
+                break
+            await asyncio.sleep(0)
+        assert len(published) == 1
+        local_grant = published[0]["requestId"]
+        assert approval_tool.resolve_approval_status(local_grant, True) == ("accepted", True)
+
+        cp_request_id = await _await_pending(approval_tool, exclude={local_grant})
+        assert cp_request_id == "apr-00000001"
+        assert approval_tool.resolve_approval_status(cp_request_id, True) == ("accepted", True)
+
+        result = await asyncio.wait_for(task, timeout=5)
+
+        assert "write-ok" in result["content"]
+        assert len(calls) == 2
+        assert calls[0][APPROVAL_GRANT_HEADER] == local_grant
+        assert calls[1][APPROVAL_GRANT_HEADER] == cp_request_id
+        # The post-gate path must not publish a second pre-flight approval.
+        assert len(published) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"approvalRequestId": None},
+            {"approvalRequestId": "bad id!"},
+            {"approvalRequestId": "x" * 200},
+            {"expiresAt": None},
+            {"expiresAt": "not-a-timestamp"},
+            {"tool": "write_file"},
+            {"retryHeader": "X-Other-Header"},
+            {"status": 403},
+        ],
+    )
+    async def test_gate_409_malformed_signal_fails_closed_without_state(self, context, overrides):
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        manager = _fake_manager(approval_tool=approval_tool)
+        problem_overrides = dict(overrides)
+        signal_tool = problem_overrides.pop("tool", "read_file")
+        manager.call_tool = AsyncMock(side_effect=_gate_error(signal_tool, **problem_overrides))
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        with pytest.raises(ApprovalProtocolError):
+            await asyncio.wait_for(tool.execute({}, context), timeout=5)
+
+        assert manager.call_tool.await_count == 1
+        assert approval_tool.coordinator.pending_requests == {}
+        assert approval_tool.coordinator.pending_payloads == {}
+
+    @pytest.mark.asyncio
+    async def test_gate_409_without_structured_payload_fails_closed(self, context):
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(
+            side_effect=MCPError(-32003, "APPROVAL_REQUIRED", data=None)
+        )
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        with pytest.raises(ApprovalProtocolError):
+            await asyncio.wait_for(tool.execute({}, context), timeout=5)
+
+        assert manager.call_tool.await_count == 1
+        assert approval_tool.coordinator.pending_requests == {}
+
+    @pytest.mark.asyncio
+    async def test_unknown_mcp_error_keeps_legacy_tool_error(self, context):
+        """W1 note: when CP keeps the legacy problem+json 409 (no durable row), the SDK
+        synthesizes a generic -32603 with no data; the Agent must not wait or retry."""
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(
+            side_effect=MCPError(-32603, "Server returned an error response", data=None)
+        )
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        result = await asyncio.wait_for(tool.execute({}, context), timeout=5)
+
+        assert result["content"].startswith("Tool error:")
+        assert manager.call_tool.await_count == 1
+        assert approval_tool.coordinator.pending_requests == {}
+
+    @pytest.mark.asyncio
+    async def test_gate_wait_cancellation_cleans_pending(self, context):
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(side_effect=_gate_error("read_file"))
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        task = asyncio.create_task(tool.execute({}, context))
+        request_id = await _await_pending(approval_tool)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert approval_tool.coordinator.pending_requests == {}
+        assert approval_tool.coordinator.pending_payloads == {}
+        assert approval_tool.resolve_approval_status(request_id, True) == ("not_found", None)
+
+    @pytest.mark.asyncio
+    async def test_gate_paths_never_log_raw_arguments_or_bodies(self, context, log_sink):
+        secret = "TOP-SECRET-MARKER"
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        calls: list[dict[str, str]] = []
+
+        async def _call(name, arguments, headers):
+            calls.append(headers)
+            if len(calls) == 1:
+                raise _gate_error("read_file", rawArguments={"content": secret})
+            return _tool_result("gate-ok")
+
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(side_effect=_call)
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        task = asyncio.create_task(
+            tool.execute({"path": "a.md", "content": secret}, context)
+        )
+        request_id = await _await_pending(approval_tool)
+        assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
+        await asyncio.wait_for(task, timeout=5)
+
+        text = "\n".join(log_sink)
+        assert secret not in text
+        # Positive control: the safe identifier is logged for cross-hop tracing.
+        assert "approvalRequestId=apr-00000001" in text
+
+    @pytest.mark.asyncio
+    async def test_malformed_signal_error_message_never_echoes_payload(self, context, log_sink):
+        secret = "TOP-SECRET-MARKER"
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(
+            side_effect=_gate_error("read_file", approvalRequestId=None, rawArguments={"content": secret})
+        )
+        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+
+        with pytest.raises(ApprovalProtocolError) as error:
+            await asyncio.wait_for(tool.execute({}, context), timeout=5)
+
+        assert secret not in str(error.value)
+        assert secret not in "\n".join(log_sink)
+
+
+class TestApprovalGateClassifier:
+    def test_returns_none_for_unrelated_failures(self):
+        assert classify_approval_gate_failure(RuntimeError("boom"), "read_file") is None
+        assert classify_approval_gate_failure(TimeoutError("slow"), "read_file") is None
+        other_code = MCPError(
+            -32002, "FORBIDDEN", data={"status": 403, "code": "FORBIDDEN"}
+        )
+        assert classify_approval_gate_failure(other_code, "read_file") is None
+        generic = MCPError(-32603, "Server returned an error response", data=None)
+        assert classify_approval_gate_failure(generic, "read_file") is None
+
+    def test_parses_nested_and_string_payloads(self):
+        problem = _gate_problem("read_file")
+        wrapped = MCPError(-32001, "APPROVAL_REQUIRED", data={"error": {"data": problem}})
+        signal = classify_approval_gate_failure(wrapped, "read_file")
+        assert signal is not None
+        assert signal.request_id == "apr-00000001"
+        assert signal.tool == "read_file"
+        assert signal.expires_at.tzinfo is not None
+
+        as_string = MCPError(-32001, "APPROVAL_REQUIRED", data=json.dumps(problem))
+        assert classify_approval_gate_failure(as_string, "read_file").request_id == "apr-00000001"
+
+    def test_missing_request_id_fails_closed(self):
+        exc = _gate_error("read_file", approvalRequestId="")
+        with pytest.raises(ApprovalProtocolError, match="approvalRequestId"):
+            classify_approval_gate_failure(exc, "read_file")

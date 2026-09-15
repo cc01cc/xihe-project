@@ -34,12 +34,12 @@ public class ToolFaceService {
     private static final int MAX_ACTION_CLASS = 64;
 
     private final ToolFaceRepository repository;
-    private final PolicyVersion policyVersion;
+    private final PolicyRevision policyRevision;
     private final AuditLogger audit;
 
-    public ToolFaceService(ToolFaceRepository repository, PolicyVersion policyVersion, AuditLogger audit) {
+    public ToolFaceService(ToolFaceRepository repository, PolicyRevision policyRevision, AuditLogger audit) {
         this.repository = repository;
-        this.policyVersion = policyVersion;
+        this.policyRevision = policyRevision;
         this.audit = audit;
     }
 
@@ -116,7 +116,7 @@ public class ToolFaceService {
         entity.setActionClass(actionClass);
         entity.setShape(shape);
         repository.save(entity);
-        policyVersion.bump();
+        policyRevision.bump();
         audit.record(null, tool, "tool_face_classified",
                 classifyDetail(created, scope, tool, actionClass, shape, previousActionClass, previousShape));
         return new FaceView(entity.getId(), scope, owner, tool, actionClass, shape);

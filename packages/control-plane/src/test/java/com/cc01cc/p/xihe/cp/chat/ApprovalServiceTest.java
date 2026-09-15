@@ -4,15 +4,20 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.policy.BuiltinPolicyContextProvider;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
+import com.cc01cc.p.xihe.cp.policy.PolicyRevision;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -25,6 +30,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -39,13 +46,18 @@ class ApprovalServiceTest {
     private final OperationService operationService = mock(OperationService.class);
     private final ApprovalGrantWriter grantWriter = mock(ApprovalGrantWriter.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final PolicyRevision policyRevision = mock(PolicyRevision.class);
+    private final WorkspaceRepository workspaceRepository = mock(WorkspaceRepository.class);
     private final ApprovalPolicySummary policySummary = new ApprovalPolicySummary(
             new PolicyEngine(mock(AuditLogger.class), new BuiltinPolicyContextProvider()));
     private final ApprovalPendingStore pendingStore = new ApprovalPendingStore(
             approvals, new ObjectMapper(), policySummary);
     private final SessionPolicyState sessionPolicyState = new SessionPolicyState();
+    private final AnswererChain answererChain = new AnswererChain(
+            List.of(new UserAnswerer(), new AutoReviewAnswerer()));
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
-            operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState);
+            operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
+            policyRevision, workspaceRepository, answererChain);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
@@ -56,6 +68,20 @@ class ApprovalServiceTest {
             + "\"matchedRule\":\"{ write, \\\"*\\\", ask }\","
             + "\"reason\":\"requires approval for domain write\",\"mode\":\"default\","
             + "\"actionClass\":\"write\",\"shape\":\"structured\"}";
+
+    @BeforeEach
+    void stubGrantInputs() {
+        when(policyRevision.current()).thenReturn(0L);
+        stubWorkspaceGeneration(0);
+    }
+
+    private void stubWorkspaceGeneration(int generation) {
+        Workspace workspace = new Workspace();
+        workspace.setId(UUID.fromString(TEST_WORKSPACE));
+        workspace.setGeneration(generation);
+        when(workspaceRepository.findById(UUID.fromString(TEST_WORKSPACE)))
+                .thenReturn(Optional.of(workspace));
+    }
 
     private Map<String, Object> approvalPayload(String sessionId) {
         return Map.of(
@@ -77,7 +103,14 @@ class ApprovalServiceTest {
     private ApprovalService serviceWith(ApprovalPolicySummary summary) {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
                 operationService, grantWriter, audit, summary,
-                new ApprovalPendingStore(approvals, new ObjectMapper(), summary), sessionPolicyState);
+                new ApprovalPendingStore(approvals, new ObjectMapper(), summary), sessionPolicyState,
+                policyRevision, workspaceRepository, answererChain);
+    }
+
+    private ApprovalService serviceWithAnswerers(ApprovalAnswerer... answerers) {
+        return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
+                operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
+                policyRevision, workspaceRepository, new AnswererChain(List.of(answerers)));
     }
 
     @Test
@@ -169,7 +202,8 @@ class ApprovalServiceTest {
     void decidePersistsApprovedOnlyAfterAgentAccepts() {
         ChatApproval approval = pending(Instant.now().plusSeconds(60));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
-        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(), any(Instant.class)))
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
+                any(), any(), any(), any(Instant.class)))
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
@@ -204,7 +238,8 @@ class ApprovalServiceTest {
     void decideCapturesModeAtGrantInTheAtomicClaim() {
         ChatApproval approval = pending(Instant.now().plusSeconds(60));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
-        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), eq("managed"), any(Instant.class)))
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), eq("managed"),
+                any(), any(), any(), any(Instant.class)))
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
@@ -217,7 +252,7 @@ class ApprovalServiceTest {
         assertEquals("managed", response.get("modeAtGrant"));
         assertEquals("managed", approval.getModeAtGrant());
         verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true),
-                eq("managed"), any(Instant.class));
+                eq("managed"), any(), any(), any(), any(Instant.class));
     }
 
     @Test
@@ -306,6 +341,9 @@ class ApprovalServiceTest {
                 "{\"tool\":\"write_file\",\"arguments\":{}}",
                 "approved", Instant.now().plusSeconds(60), null, "require_approval");
         approval.setApproved(true);
+        approval.setPolicyRevision(0L);
+        approval.setSandboxGeneration(0);
+        approval.setReuseScope("once");
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
         when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
                 eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(1);
@@ -317,6 +355,9 @@ class ApprovalServiceTest {
         assertTrue(consumed);
         verify(approvals).consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
                 eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class));
+        // T1.7 R7: the consumption audit shares the consume success boundary.
+        verify(audit).record(eq(TEST_SESSION), eq("write_file"), eq("approval_grant_consumed"),
+                eq(TEST_REQUEST_ID));
     }
 
     @Test
@@ -327,6 +368,9 @@ class ApprovalServiceTest {
                 "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"a\"}}",
                 "approved", Instant.now().plusSeconds(60), null, "require_approval");
         approval.setApproved(true);
+        approval.setPolicyRevision(0L);
+        approval.setSandboxGeneration(0);
+        approval.setReuseScope("once");
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
 
         assertFalse(service.consumeApprovedGrant(
@@ -363,6 +407,9 @@ class ApprovalServiceTest {
                 "x".repeat(500) + "…[truncated]",
                 "approved", Instant.now().plusSeconds(60), null, "require_approval", argumentsHash);
         approval.setApproved(true);
+        approval.setPolicyRevision(0L);
+        approval.setSandboxGeneration(0);
+        approval.setReuseScope("once");
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
         return approval;
     }
@@ -410,6 +457,182 @@ class ApprovalServiceTest {
                 TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
     }
 
+    private ChatApproval approvedRow(String argumentsHash, Instant expiresAt) {
+        ChatApproval approval = new ChatApproval(
+                TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
+                "write_file", "Execute write_file",
+                "{\"tool\":\"write_file\",\"arguments\":{}}",
+                "approved", expiresAt, null, "require_approval", argumentsHash);
+        approval.setApproved(true);
+        approval.setPolicyRevision(0L);
+        approval.setSandboxGeneration(0);
+        approval.setReuseScope("once");
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        return approval;
+    }
+
+    @Test
+    void consumeRejectsExpiredGrantBeforeTheAtomicUpdate() {
+        approvedRow(CANONICAL_VECTOR_HASH, Instant.now().minusSeconds(1));
+
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+
+        verify(approvals, never()).consumeApprovedGrant(any(), any(), any(), any(), any(), any());
+        verify(audit, never()).record(any(), any(), eq("approval_grant_consumed"), any());
+    }
+
+    @Test
+    void consumeRejectsLegacyRowsWithoutRevisionOrGeneration() {
+        ChatApproval approval = approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
+        approval.setPolicyRevision(null);
+
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+
+        approval.setPolicyRevision(0L);
+        approval.setSandboxGeneration(null);
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+
+        verify(approvals, never()).consumeApprovedGrant(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void consumeRejectsPolicyRevisionMismatch() {
+        approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
+        when(policyRevision.current()).thenReturn(9L);
+
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+
+        verify(approvals, never()).consumeApprovedGrant(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void consumeRejectsSandboxGenerationMismatch() {
+        approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
+        stubWorkspaceGeneration(5);
+
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+
+        verify(approvals, never()).consumeApprovedGrant(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void consumeRejectsModeRankDowngrade() {
+        ChatApproval approval = approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
+        approval.setModeAtGrant("bypass");
+        sessionPolicyState.setMode(TEST_SESSION, "managed");
+
+        assertFalse(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+
+        verify(approvals, never()).consumeApprovedGrant(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void consumeAllowsAModeRelaxationAfterTheGrant() {
+        ChatApproval approval = approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
+        approval.setModeAtGrant("managed");
+        sessionPolicyState.setMode(TEST_SESSION, "bypass");
+        when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
+                eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(1);
+
+        assertTrue(service.consumeApprovedGrant(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
+    }
+
+    private void grant(String tool, String hash, String modeAtGrant, long revision, int generation) {
+        sessionPolicyState.addGrant(TEST_SESSION, new SessionPolicyState.Grant(
+                hash, tool, modeAtGrant, revision, generation, Instant.now()));
+    }
+
+    @Test
+    void sessionGrantReuseHitsForTheExactInvocationAndAudits() {
+        grant("write_file", CANONICAL_VECTOR_HASH, "default", 0L, 0);
+
+        assertTrue(service.tryReuseSessionGrant(
+                TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
+        verify(audit).record(eq(TEST_SESSION), eq("write_file"), eq("grant_reused"), eq("scope=session"));
+    }
+
+    @Test
+    void sessionGrantReuseMissesForAnotherToolOrArguments() {
+        grant("write_file", CANONICAL_VECTOR_HASH, "default", 0L, 0);
+
+        assertFalse(service.tryReuseSessionGrant(
+                TEST_SESSION, TEST_WORKSPACE, "edit_file", vectorMcpBody()));
+        assertFalse(service.tryReuseSessionGrant(TEST_SESSION, TEST_WORKSPACE, "write_file",
+                "{\"params\":{\"arguments\":{\"path\":\"other.md\"}}}"));
+
+        verify(audit, never()).record(any(), any(), eq("grant_reused"), any());
+    }
+
+    @Test
+    void sessionGrantReuseIsInvalidatedByRevisionGenerationAndMode() {
+        grant("write_file", CANONICAL_VECTOR_HASH, "default", 5L, 0);
+        assertFalse(service.tryReuseSessionGrant(
+                TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
+
+        sessionPolicyState.clear(TEST_SESSION);
+        grant("write_file", CANONICAL_VECTOR_HASH, "default", 0L, 5);
+        assertFalse(service.tryReuseSessionGrant(
+                TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
+
+        sessionPolicyState.clear(TEST_SESSION);
+        grant("write_file", CANONICAL_VECTOR_HASH, "bypass", 0L, 0);
+        sessionPolicyState.setMode(TEST_SESSION, "managed");
+        assertFalse(service.tryReuseSessionGrant(
+                TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
+
+        verify(audit, never()).record(any(), any(), eq("grant_reused"), any());
+    }
+
+    @Test
+    void gateLookupReturnsTheLiveRowAndSkipsCreation() {
+        ChatApproval live = pending(Instant.now().plusSeconds(60));
+        when(approvals.findBySessionIdAndToolAndArgumentsHashAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, "write_file", CANONICAL_VECTOR_HASH,
+                List.of("pending", "dispatching", "dispatch_unknown"))).thenReturn(List.of(live));
+
+        Optional<ChatApproval> found = service.findLivePendingForInvocation(
+                TEST_SESSION, "write_file", CANONICAL_VECTOR_HASH);
+        Optional<ApprovalService.GateApprovalOutcome> gateRow = service.recordGatePending(
+                TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE, "write_file", vectorMcpBody(),
+                Instant.now().plusSeconds(300));
+
+        assertSame(live, found.orElse(null));
+        assertSame(live, gateRow.orElseThrow().row());
+        assertTrue(gateRow.orElseThrow().parked());
+        verify(approvals, never()).save(any());
+        verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), any(), eq("awaiting_approval"),
+                any(), any(), any(), eq(0), eq(0));
+        verify(operationService).transitionOperationForRun(TEST_RUN_ID, "waiting_for_approval", null, null);
+    }
+
+    @Test
+    void gateCreatesThePendingRowWithTheCanonicalFingerprintWhenNoneIsLive() {
+        when(approvals.findBySessionIdAndToolAndArgumentsHashAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, "write_file", CANONICAL_VECTOR_HASH,
+                List.of("pending", "dispatching", "dispatch_unknown"))).thenReturn(List.of());
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
+
+        Optional<ApprovalService.GateApprovalOutcome> outcome = service.recordGatePending(
+                TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE, "write_file", vectorMcpBody(),
+                Instant.now().plusSeconds(300));
+
+        ArgumentCaptor<ChatApproval> captor = ArgumentCaptor.forClass(ChatApproval.class);
+        verify(approvals).save(captor.capture());
+        assertTrue(outcome.isPresent());
+        assertTrue(outcome.orElseThrow().parked());
+        assertEquals(CANONICAL_VECTOR_HASH, captor.getValue().getArgumentsHash());
+        assertEquals("pending", captor.getValue().getState());
+        assertEquals(TEST_RUN_ID, captor.getValue().getRunId());
+    }
+
     @Test
     void recordPendingStoresAgentArgumentsHash() {
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
@@ -441,7 +664,8 @@ class ApprovalServiceTest {
                 "request_approval", "delete file", "README.md", "dispatch_unknown",
                 Instant.now().plusSeconds(60), null, null);
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
-        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(), any(Instant.class)))
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
+                any(), any(), any(), any(Instant.class)))
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
@@ -452,7 +676,8 @@ class ApprovalServiceTest {
                 ApprovalDecision.once());
 
         assertEquals("accepted", response.get("status"));
-        verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(), any());
+        verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
+                any(), any(), any(), any(Instant.class));
         verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any());
         verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, true);
     }
@@ -554,5 +779,130 @@ class ApprovalServiceTest {
 
         assertTrue(service.findActiveForRun(TEST_RUN_ID, "99999999-9999-9999-9999-999999999999", TEST_WORKSPACE).isEmpty());
         assertTrue(service.findActiveForRun(TEST_RUN_ID, TEST_USER, "99999999-9999-9999-9999-999999999999").isEmpty());
+    }
+
+    // T1.9 answerer seam: both creation paths (Agent relay + gate) converge on one chain.
+
+    @Test
+    void recordPendingKeepsTheHumanPathAndAuditsTheUserAnswerer() {
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
+
+        ChatApproval row = service.recordPending(approvalPayload(TEST_SESSION),
+                TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
+
+        assertEquals("pending", row.getState());
+        assertNull(row.getDecisionKind());
+        verify(audit).record(eq(TEST_SESSION), eq("request_approval"), eq("approval_answerer"),
+                eq("answerer=user outcome=defer"));
+    }
+
+    @Test
+    void recordPendingRejectsImmediatelyWhenNoAnswererIsAvailable() {
+        ApprovalService noAnswererService = serviceWithAnswerers(new AutoReviewAnswerer());
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
+
+        ChatApproval row = noAnswererService.recordPending(approvalPayload(TEST_SESSION),
+                TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
+
+        assertEquals("rejected", row.getState());
+        assertEquals("reject", row.getDecisionKind());
+        assertEquals(Boolean.FALSE, row.getApproved());
+        assertNotNull(row.getDecidedAt());
+        ArgumentCaptor<ChatApproval> captor = ArgumentCaptor.forClass(ChatApproval.class);
+        verify(approvals).save(captor.capture());
+        assertEquals("rejected", captor.getValue().getState());
+        verify(audit).record(eq(TEST_SESSION), eq("request_approval"), eq("approval_answerer"),
+                eq("answerer=none outcome=unavailable decision=reject"));
+        verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, false);
+        // T1.9: the blocked Agent waiter is notified exactly like a user rejection.
+        verify(agent).respond(TEST_REQUEST_ID, false, "reject", "no answerer is available");
+
+        // Not actionable: no later decision can turn the terminal row into a live approval.
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(row));
+        CpApiException conflict = assertThrows(CpApiException.class, () -> noAnswererService.decide(
+                TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, ApprovalDecision.once()));
+        assertEquals("APPROVAL_DECISION_CONFLICT", conflict.getCode());
+    }
+
+    @Test
+    void recordPendingKeepsTheTerminalRejectWhenTheAnswererNotificationFails() {
+        ApprovalService noAnswererService = serviceWithAnswerers(new AutoReviewAnswerer());
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
+        when(agent.respond(TEST_REQUEST_ID, false, "reject", "no answerer is available"))
+                .thenThrow(new CpApiException(HttpStatus.BAD_GATEWAY, "AGENT_UNAVAILABLE",
+                        "Agent approval service is unavailable"));
+
+        org.slf4j.Logger serviceLogger = org.slf4j.LoggerFactory.getLogger(ApprovalService.class);
+        ch.qos.logback.classic.Logger logbackLogger = (ch.qos.logback.classic.Logger) serviceLogger;
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logbackLogger.addAppender(appender);
+        ChatApproval row;
+        try {
+            row = noAnswererService.recordPending(approvalPayload(TEST_SESSION),
+                    TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE);
+        } finally {
+            logbackLogger.detachAppender(appender);
+        }
+
+        assertEquals("rejected", row.getState());
+        assertEquals("reject", row.getDecisionKind());
+        assertEquals(Boolean.FALSE, row.getApproved());
+        verify(operationService).resolveApprovalItem(TEST_REQUEST_ID, false);
+        assertTrue(appender.list.stream()
+                        .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                        .anyMatch(message -> message.contains("approval_answerer_respond_failed")),
+                "a failed notification must be logged, not swallowed");
+    }
+
+    @Test
+    void recordGatePendingConsultsTheChainAndParksTheRunForTheUser() {
+        when(approvals.findBySessionIdAndToolAndArgumentsHashAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, "write_file", CANONICAL_VECTOR_HASH,
+                List.of("pending", "dispatching", "dispatch_unknown"))).thenReturn(List.of());
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
+
+        Optional<ApprovalService.GateApprovalOutcome> outcome = service.recordGatePending(
+                TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE, "write_file", vectorMcpBody(),
+                Instant.now().plusSeconds(300));
+
+        assertTrue(outcome.orElseThrow().parked());
+        assertEquals("pending", outcome.orElseThrow().row().getState());
+        verify(audit).record(eq(TEST_SESSION), eq("write_file"), eq("approval_answerer"),
+                eq("answerer=user outcome=defer"));
+        verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), any(), eq("awaiting_approval"),
+                any(), any(), any(), eq(0), eq(0));
+    }
+
+    @Test
+    void recordGatePendingFailsClosedWithoutParkingTheRunWhenNoAnswererIsAvailable() {
+        ApprovalService noAnswererService = serviceWithAnswerers(new AutoReviewAnswerer());
+        when(approvals.findBySessionIdAndToolAndArgumentsHashAndStateInOrderByCreatedAtAsc(
+                TEST_SESSION, "write_file", CANONICAL_VECTOR_HASH,
+                List.of("pending", "dispatching", "dispatch_unknown"))).thenReturn(List.of());
+        when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
+        when(operationService.findOperationIdByRunId(TEST_RUN_ID)).thenReturn(null);
+
+        Optional<ApprovalService.GateApprovalOutcome> outcome = noAnswererService.recordGatePending(
+                TEST_SESSION, TEST_RUN_ID, TEST_USER, TEST_WORKSPACE, "write_file", vectorMcpBody(),
+                Instant.now().plusSeconds(300));
+
+        assertFalse(outcome.orElseThrow().parked());
+        assertEquals("rejected", outcome.orElseThrow().row().getState());
+        assertEquals("reject", outcome.orElseThrow().row().getDecisionKind());
+        verify(runs, never()).transition(any(), any(), any(), any(), any(), any(), anyInt(), anyInt());
+        verify(operationService, never()).transitionOperationForRun(any(), any(), any(), any());
+        verify(audit).record(eq(TEST_SESSION), eq("write_file"), eq("approval_answerer"),
+                eq("answerer=none outcome=unavailable decision=reject"));
+        // T1.9: no card can ever be answered, so the gate reports a terminal rejection instead.
+        verify(agent).respond(any(), eq(false), eq("reject"), any());
     }
 }

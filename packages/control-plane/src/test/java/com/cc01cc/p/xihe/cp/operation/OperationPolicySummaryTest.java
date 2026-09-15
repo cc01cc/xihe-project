@@ -45,7 +45,7 @@ class OperationPolicySummaryTest {
         root.fieldNames().forEachRemaining(keys::add);
         assertEquals(OperationPolicySummary.POLICY_KEYS, keys);
         assertEquals(Set.of("effect", "sourceLayer", "matchedRule", "reason", "mode",
-                "allowedBy", "actionClass", "shape"), keys);
+                "allowedBy", "actionClass", "shape", "reused"), keys);
         assertEquals("allow", root.get("effect").asText());
         assertEquals("builtin", root.get("sourceLayer").asText());
         assertEquals("{ read, \"*\", allow }", root.get("matchedRule").asText());
@@ -54,6 +54,7 @@ class OperationPolicySummaryTest {
         assertTrue(root.get("allowedBy").isNull());
         assertEquals("read", root.get("actionClass").asText());
         assertEquals("structured", root.get("shape").asText());
+        assertTrue(root.get("reused").isNull());
 
         // No raw input surface may appear in the persisted snapshot.
         assertFalse(snapshot.contains("arguments"));
@@ -167,7 +168,30 @@ class OperationPolicySummaryTest {
         assertNull(policy.get("allowedBy"));
         assertEquals("exec", policy.get("actionClass"));
         assertEquals("interpreter", policy.get("shape"));
+        // T1.7: legacy V19 snapshots stay readable and report reuse as not applicable.
+        assertNull(policy.get("reused"));
         assertFalse(policy.containsKey("arguments"));
         assertFalse(policy.containsKey("details"));
+    }
+
+    @Test
+    void reuseAnnotationIsNullableAndStrictlyTyped() {
+        PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ALLOW,
+                null, PolicyLayer.BUILTIN, "default", "allowed");
+
+        String hit = OperationPolicySummary
+                .buildSnapshot(verdict, readFace(), PolicyContext.EMPTY, Boolean.TRUE).orElseThrow();
+        assertEquals(Boolean.TRUE,
+                OperationPolicySummary.parse(hit).orElseThrow().get("reused"));
+
+        String notApplicable = OperationPolicySummary
+                .buildSnapshot(verdict, readFace(), PolicyContext.EMPTY, null).orElseThrow();
+        Map<String, Object> parsed = OperationPolicySummary.parse(notApplicable).orElseThrow();
+        assertNull(parsed.get("reused"));
+
+        // A non-boolean reuse annotation makes the snapshot unreadable, never guessed.
+        assertTrue(OperationPolicySummary.parse("{\"effect\":\"allow\",\"sourceLayer\":\"builtin\","
+                + "\"matchedRule\":null,\"reason\":\"ok\",\"mode\":null,\"allowedBy\":null,"
+                + "\"actionClass\":\"read\",\"shape\":\"structured\",\"reused\":\"yes\"}").isEmpty());
     }
 }

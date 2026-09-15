@@ -138,7 +138,8 @@ function isNonEmptyString(value: unknown): value is string {
  * Strict normalizer for the optional operation item `policy` projection (PLAN-0328 T1.15).
  * Returns `undefined` when the projection is absent or malformed so the view can show the
  * explicit no-verdict state; it never fabricates defaults (e.g. `mode: 'default'`) and
- * ignores unknown keys.
+ * ignores unknown keys. `reused` (T1.7) is optional and nullable: a legacy snapshot without
+ * the key stays keyless, and a non-boolean value makes the whole projection unreadable.
  */
 export function normalizeOperationPolicy(value: unknown): OperationPolicyView | undefined {
   const record = asRecord(value)
@@ -150,7 +151,8 @@ export function normalizeOperationPolicy(value: unknown): OperationPolicyView | 
     || !isEnumValue(record.shape, approvalPolicyShapes)
     || !(record.matchedRule === null || isNonEmptyString(record.matchedRule))
     || !(record.mode === null || isEnumValue(record.mode, approvalPolicyModes))
-    || !(record.allowedBy === null || isNonEmptyString(record.allowedBy))) {
+    || !(record.allowedBy === null || isNonEmptyString(record.allowedBy))
+    || !(record.reused === undefined || record.reused === null || typeof record.reused === 'boolean')) {
     return undefined
   }
 
@@ -163,6 +165,7 @@ export function normalizeOperationPolicy(value: unknown): OperationPolicyView | 
     allowedBy: record.allowedBy,
     actionClass: record.actionClass,
     shape: record.shape,
+    ...(record.reused !== undefined ? { reused: record.reused } : {}),
   }
 }
 

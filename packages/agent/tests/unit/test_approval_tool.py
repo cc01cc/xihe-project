@@ -12,8 +12,11 @@ from xihe_agent.adapters.approval_tool import (
     ApprovalCoordinator,
     ApprovalExpiredError,
     ApprovalInput,
+    ApprovalProtocolError,
     ApprovalRejectedError,
     ApprovalTool,
+    is_valid_approval_request_id,
+    parse_approval_expiry,
     redact_approval_details,
 )
 from xihe_agent.interfaces.context import AgentContext
@@ -710,3 +713,204 @@ async def test_cancellation_during_publish_cleans_pending_state():
     assert coordinator.get_pending() == []
     assert coordinator.pending_requests == {}
     assert coordinator.pending_payloads == {}
+
+
+# ---------------------------------------------------------------------------
+# PLAN-0328 T1.9: external (CP-gate) waiter registered via await_external
+# ---------------------------------------------------------------------------
+
+
+def _external_deadline(seconds: float = 30.0) -> datetime:
+    return datetime.now(UTC) + timedelta(seconds=seconds)
+
+
+@pytest.mark.asyncio
+async def test_await_external_registers_waiter_before_resolving_and_approves():
+    coordinator = ApprovalCoordinator(timeout_seconds=5)
+    context = _make_context(
+        "session-external",
+        {"runId": "run-9", "operationId": "op-9", "workspaceId": "ws-9"},
+    )
+
+    task = asyncio.create_task(
+        coordinator.await_external("apr-ext-1", "read_file", _external_deadline(), context)
+    )
+    await asyncio.sleep(0)
+
+    pending = coordinator.get_status("apr-ext-1")
+    assert pending is not None
+    assert pending["status"] == "pending"
+    assert pending["tool"] == "read_file"
+    assert pending["source"] == "cp_gate"
+    assert pending["runId"] == "run-9"
+    assert pending["operationId"] == "op-9"
+    assert pending["workspaceId"] == "ws-9"
+    assert pending["expiresAt"].endswith("Z")
+    # The external waiter payload never carries raw arguments/details.
+    assert "arguments" not in pending
+    assert "details" not in pending
+    assert len(coordinator.get_pending()) == 1
+
+    assert coordinator.resolve_status("apr-ext-1", True) == ("accepted", True)
+    assert await asyncio.wait_for(task, timeout=5) is True
+
+    assert coordinator.get_pending() == []
+    completed = coordinator.get_status("apr-ext-1")
+    assert completed is not None
+    assert completed["status"] == "approved"
+    assert completed["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_await_external_rejection_carries_feedback_and_clears_state():
+    coordinator = ApprovalCoordinator(timeout_seconds=5)
+
+    task = asyncio.create_task(
+        coordinator.await_external("apr-ext-2", "delete_file", _external_deadline())
+    )
+    await asyncio.sleep(0)
+
+    assert coordinator.resolve_status("apr-ext-2", False, "not this file") == ("accepted", False)
+    with pytest.raises(ApprovalRejectedError, match="not this file"):
+        await asyncio.wait_for(task, timeout=5)
+
+    assert coordinator.approval_feedback == {}
+    assert coordinator.pending_requests == {}
+    assert coordinator.get_status("apr-ext-2")["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_await_external_expires_at_deadline_and_late_decision_is_expired():
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+
+    with pytest.raises(ApprovalExpiredError):
+        await coordinator.await_external("apr-ext-3", "read_file", _external_deadline(0.05))
+
+    assert coordinator.get_pending() == []
+    assert coordinator.pending_requests == {}
+    assert coordinator.pending_payloads == {}
+    assert coordinator.get_status("apr-ext-3")["status"] == "expired"
+    # Late decisions cannot revive an expired external request.
+    assert coordinator.resolve_status("apr-ext-3", True) == ("expired", None)
+
+
+@pytest.mark.asyncio
+async def test_await_external_already_expired_deadline_waits_for_nothing():
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+    started = asyncio.get_running_loop().time()
+
+    with pytest.raises(ApprovalExpiredError):
+        await coordinator.await_external("apr-ext-4", "read_file", _external_deadline(-5))
+
+    assert asyncio.get_running_loop().time() - started < 1.0
+    assert coordinator.pending_requests == {}
+    assert coordinator.get_status("apr-ext-4")["status"] == "expired"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_id", ["", None, "bad id!", "x" * 200, 123])
+async def test_await_external_malformed_request_id_fails_closed(request_id):
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+
+    with pytest.raises(ApprovalProtocolError):
+        await coordinator.await_external(request_id, "read_file", _external_deadline())
+
+    assert coordinator.pending_requests == {}
+    assert coordinator.pending_payloads == {}
+
+
+@pytest.mark.asyncio
+async def test_await_external_malformed_expiry_leaves_no_partial_state():
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+
+    with pytest.raises(ApprovalProtocolError):
+        await coordinator.await_external("apr-ext-5", "read_file", "not-a-timestamp")
+
+    assert coordinator.pending_requests == {}
+    assert coordinator.pending_payloads == {}
+    assert coordinator.get_status("apr-ext-5") is None
+
+
+@pytest.mark.asyncio
+async def test_await_external_duplicate_request_id_fails_closed_without_clobbering():
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+
+    task = asyncio.create_task(
+        coordinator.await_external("apr-ext-6", "read_file", _external_deadline())
+    )
+    await asyncio.sleep(0)
+
+    with pytest.raises(ApprovalProtocolError):
+        await asyncio.wait_for(
+            coordinator.await_external("apr-ext-6", "read_file", _external_deadline()), timeout=2
+        )
+
+    assert "apr-ext-6" in coordinator.pending_requests
+    coordinator.resolve_status("apr-ext-6", True)
+    assert await asyncio.wait_for(task, timeout=5) is True
+
+
+@pytest.mark.asyncio
+async def test_await_external_cancellation_cleans_pending():
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+
+    task = asyncio.create_task(
+        coordinator.await_external("apr-ext-7", "read_file", _external_deadline())
+    )
+    await asyncio.sleep(0)
+    assert "apr-ext-7" in coordinator.pending_requests
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert coordinator.get_pending() == []
+    assert coordinator.pending_requests == {}
+    assert coordinator.pending_payloads == {}
+    assert coordinator.resolve_status("apr-ext-7", True) == ("not_found", None)
+
+
+@pytest.mark.asyncio
+async def test_await_external_far_future_deadline_is_clamped_fail_closed(monkeypatch):
+    import xihe_agent.adapters.approval_tool as approval_module
+
+    monkeypatch.setattr(approval_module, "EXTERNAL_WAIT_CEILING_S", 0.05)
+    coordinator = ApprovalCoordinator(timeout_seconds=60)
+
+    with pytest.raises(ApprovalExpiredError):
+        await coordinator.await_external("apr-ext-8", "read_file", _external_deadline(3600))
+
+    assert coordinator.get_status("apr-ext-8")["status"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_await_external_approval_delegates_to_coordinator():
+    tool = ApprovalAgentTool(timeout_seconds=5)
+
+    task = asyncio.create_task(
+        tool.await_external_approval("apr-facade-1", "write_file", _external_deadline())
+    )
+    await asyncio.sleep(0)
+
+    assert tool.resolve_approval_status("apr-facade-1", True) == ("accepted", True)
+    assert await asyncio.wait_for(task, timeout=5) is True
+
+
+def test_parse_approval_expiry_normalizes_and_validates():
+    parsed = parse_approval_expiry("2026-09-15T15:00:00Z")
+    assert parsed == datetime(2026, 9, 15, 15, 0, tzinfo=UTC)
+    assert parse_approval_expiry("2026-09-15T15:00:00").tzinfo == UTC
+    assert parse_approval_expiry(parsed) == parsed
+    with pytest.raises(ApprovalProtocolError):
+        parse_approval_expiry("not-a-timestamp")
+    with pytest.raises(ApprovalProtocolError):
+        parse_approval_expiry(None)
+
+
+def test_is_valid_approval_request_id_matches_cp_shape():
+    assert is_valid_approval_request_id("3b1c9f6e-1f2a-4b3c-8d4e-5f6a7b8c9d0e")
+    assert is_valid_approval_request_id("apr-0001")
+    assert not is_valid_approval_request_id("")
+    assert not is_valid_approval_request_id("has space")
+    assert not is_valid_approval_request_id("x" * 129)
+    assert not is_valid_approval_request_id(None)

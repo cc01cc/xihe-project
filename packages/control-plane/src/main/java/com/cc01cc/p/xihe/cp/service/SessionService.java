@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
+import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
@@ -28,6 +29,7 @@ public class SessionService {
     private final WorkspaceService workspaceService;
     private final ChatAttachmentService chatAttachmentService;
     private final ProviderConnectionService providerConnectionService;
+    private final SessionPolicyState sessionPolicyState;
 
     public SessionService(SessionRepository sessionRepository,
                           MessageRepository messageRepository,
@@ -36,7 +38,8 @@ public class SessionService {
                           ContextProjectionRepository contextProjectionRepository,
                           WorkspaceService workspaceService,
                           ChatAttachmentService chatAttachmentService,
-                          ProviderConnectionService providerConnectionService) {
+                          ProviderConnectionService providerConnectionService,
+                          SessionPolicyState sessionPolicyState) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -45,6 +48,7 @@ public class SessionService {
         this.workspaceService = workspaceService;
         this.chatAttachmentService = chatAttachmentService;
         this.providerConnectionService = providerConnectionService;
+        this.sessionPolicyState = sessionPolicyState;
     }
 
     @Transactional(readOnly = true)
@@ -169,6 +173,8 @@ public class SessionService {
         contextProjectionRepository.deleteBySessionId(sessionId);
         eventStoreRepository.deleteBySessionId(sessionId);
         sessionRepository.delete(session);
+        // T1.7: session mode, L4 rules and reuse fingerprints must not outlive the session.
+        sessionPolicyState.clear(sessionId);
     }
 
     @Transactional(readOnly = true)

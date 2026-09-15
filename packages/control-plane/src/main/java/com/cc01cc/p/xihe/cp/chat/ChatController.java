@@ -1342,6 +1342,15 @@ public class ChatController {
         if ("approval_request".equals(eventName)) {
             ChatApproval storedApproval = approvalService.recordPending(
                     asMap(parsedPayload), sessionId, runId, userId, workspaceId);
+            // T1.9: an answerer-rejected row is terminal from creation — never park the run or
+            // push an approval card for it. The blocked Agent waiter is notified inside the
+            // service (best-effort respond), so the run just continues on the failed tool call.
+            if (!approvalService.isAwaitingAnswer(storedApproval)) {
+                logger.info("[LIFECYCLE] service=cp event=chat_approval_relay_answerer_rejected requestId={}"
+                                + " sessionId={} runId={} state={}",
+                        storedApproval.getRequestId(), sessionId, runId, storedApproval.getState());
+                return;
+            }
             transitionRun(runId, List.of("running", "streaming"), "awaiting_approval", null, null, null, 0, 0);
 
             // Keep ledger/audit input unchanged; relay only the durable canonical row.

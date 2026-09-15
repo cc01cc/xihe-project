@@ -43,20 +43,41 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
 
     List<ChatApproval> findByRunIdAndStateIn(String runId, Collection<String> states);
 
+    /**
+     * T1.7 gate-side idempotency: live (non-terminal) rows for one exact invocation, oldest first.
+     * The gate must reuse an existing row instead of archiving a duplicate approval request.
+     */
+    List<ChatApproval> findBySessionIdAndToolAndArgumentsHashAndStateInOrderByCreatedAtAsc(
+            String sessionId, String tool, String argumentsHash, Collection<String> states);
+
     @Transactional
     @Modifying
     @Query("update ChatApproval a set a.state = 'expired', a.decidedAt = :at, a.updatedAt = :at "
             + "where a.requestId = :requestId and a.state in ('pending', 'dispatching', 'dispatch_unknown')")
     int markExpired(@Param("requestId") UUID requestId, @Param("at") Instant at);
 
+    /**
+     * Claims a pending/dispatch_unknown row for dispatch.
+     *
+     * <p>{@code modeAtGrant} stays coalesced: the first grant's mode is conservative and must not
+     * be rewritten by a retry. The revision, generation and reuse scope are re-stamped on every
+     * claim with the decision-time values, so a retry after a rule/face write (which moves the
+     * durable revision) does not fail {@code consumeStillValid} forever with the stale revision
+     * captured before the {@code dispatch_unknown} window.</p>
+     */
     @Transactional
     @Modifying
     @Query("update ChatApproval a set a.state = 'dispatching', a.approved = :approved, "
             + "a.dispatchErrorCode = null, a.modeAtGrant = coalesce(a.modeAtGrant, :modeAtGrant), "
+            + "a.reuseScope = :reuseScope, "
+            + "a.policyRevision = :policyRevision, "
+            + "a.sandboxGeneration = :sandboxGeneration, "
             + "a.updatedAt = :at "
             + "where a.requestId = :requestId and a.state in ('pending', 'dispatch_unknown')")
     int markDispatching(@Param("requestId") UUID requestId, @Param("approved") boolean approved,
-            @Param("modeAtGrant") String modeAtGrant, @Param("at") Instant at);
+            @Param("modeAtGrant") String modeAtGrant, @Param("reuseScope") String reuseScope,
+            @Param("policyRevision") Long policyRevision,
+            @Param("sandboxGeneration") Integer sandboxGeneration, @Param("at") Instant at);
 
     @Transactional
     @Modifying

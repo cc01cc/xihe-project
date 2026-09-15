@@ -16,6 +16,7 @@ import org.springframework.http.*;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.client.RestTemplate;
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
@@ -54,8 +55,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -111,6 +116,12 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Autowired
     private HealthMonitor healthMonitor;
+
+    @MockitoSpyBean
+    private AnswererChain answererChain;
+
+    @MockitoSpyBean
+    private ApprovalAgentClient approvalAgentClient;
 
     @LocalServerPort
     private int serverPort;
@@ -694,6 +705,61 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(Boolean.FALSE, event.get("replayed"));
         assertEquals(Boolean.TRUE, replay.get("replayed"));
         assertFalse(event.containsKey("agentOnly"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void chat_answererRejectDoesNotParkTheRunOrPushACard() throws IOException {
+        String requestId = UUID.randomUUID().toString();
+        String sseBody = "event: approval_request\n"
+                + "data: {\"requestId\":\"" + requestId + "\",\"tool\":\"write_file\","
+                + "\"action\":\"Execute write_file\",\"details\":\"preview\","
+                + "\"expiresAt\":\"2099-01-01T00:00:00Z\"}\n\n"
+                + "event: probe\ndata: {\"marker\":true}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, sseBody.getBytes(StandardCharsets.UTF_8).length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(sseBody.getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+        doReturn(Map.of("status", "accepted")).when(approvalAgentClient)
+                .respond(anyString(), anyBoolean(), anyString(), any());
+        doReturn(new AnswererChain.Resolution(AutoReviewAnswerer.ID,
+                ApprovalAnswerer.Outcome.DENY, "denied by review"))
+                .when(answererChain).resolve(any());
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Please write the file",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+
+        // T1.9: the blocked Agent waiter is notified exactly like a user rejection...
+        verify(approvalAgentClient, timeout(5000)).respond(
+                eq(requestId), eq(false), eq("reject"), eq("denied by review"));
+        // ...and the relay keeps going: the probe event is processed after the approval
+        // event on the same relay thread, so the park decision has already been made.
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("probe"), any());
+        verify(sseEmitterManager, never()).send(eq(sessionId), eq("approval_request"), any());
+
+        ChatRun run = chatRunRepository.findById(UUID.fromString((String) response.getBody().get("runId")))
+                .orElseThrow();
+        assertNotEquals("awaiting_approval", run.getStatus(),
+                "an answerer-rejected ask must not park the run");
     }
 
     @TestConfiguration

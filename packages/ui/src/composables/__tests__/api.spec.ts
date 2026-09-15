@@ -713,6 +713,8 @@ const OPERATION_ID = '99999999-9999-4999-8999-999999999999'
 
 // Exact shape produced by CP OperationPolicySummary (PLAN-0328 T1.15). A bypass verdict is
 // `effect: 'allow'` with a non-null allowedBy; the ask rule it upgraded stays in matchedRule.
+// `reused` is the T1.7 annotation and is nullable (null = reuse not applicable; V19 snapshots
+// omit the key entirely).
 const OPERATION_POLICY = {
   effect: 'allow',
   sourceLayer: 'builtin',
@@ -722,6 +724,7 @@ const OPERATION_POLICY = {
   allowedBy: 'bypass@session',
   actionClass: 'write',
   shape: 'structured',
+  reused: null,
 }
 
 // A plain non-bypass ask verdict: the same key set with no allowedBy.
@@ -734,6 +737,7 @@ const OPERATION_ASK_POLICY = {
   allowedBy: null,
   actionClass: 'exec',
   shape: 'structured',
+  reused: null,
 }
 
 const OPERATION_ITEM = {
@@ -794,6 +798,21 @@ describe('api operation policy projection (PLAN-0328 T1.15)', () => {
       mode: null,
       allowedBy: null,
     })
+  })
+
+  it('carries the nullable T1.7 reused annotation without inventing it', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(operationTrace([
+        { ...OPERATION_ITEM, policy: { ...OPERATION_POLICY, reused: true } },
+        { ...OPERATION_ITEM, id: 'item-2', toolCallId: 'call-ask-2', policy: OPERATION_ASK_POLICY },
+      ])),
+    } as Response)
+
+    const trace = await api.getOperationTrace(OPERATION_ID)
+
+    expect(trace.items[0]?.policy?.reused).toBe(true)
+    expect(trace.items[1]?.policy?.reused).toBeNull()
   })
 
   it('omits the policy entirely for legacy rows instead of deriving one from policyDecision', async () => {
@@ -861,5 +880,22 @@ describe('normalizeOperationPolicy', () => {
     delete withoutNullables.mode
     delete withoutNullables.allowedBy
     expect(normalizeOperationPolicy(withoutNullables)).toBeUndefined()
+  })
+
+  it('keeps the optional nullable reused annotation and never invents it', () => {
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: true })?.reused).toBe(true)
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: null })?.reused).toBeNull()
+
+    // V19 snapshots predate `reused`: the key stays absent instead of becoming `false`.
+    const legacySnapshot: Record<string, unknown> = { ...OPERATION_POLICY }
+    delete legacySnapshot.reused
+    const legacy = normalizeOperationPolicy(legacySnapshot)
+    expect(legacy).toEqual(legacySnapshot)
+    expect(legacy).not.toHaveProperty('reused')
+  })
+
+  it('rejects a non-boolean reused value instead of guessing the annotation', () => {
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: 'yes' })).toBeUndefined()
+    expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: 1 })).toBeUndefined()
   })
 })

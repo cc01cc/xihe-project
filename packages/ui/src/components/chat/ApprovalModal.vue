@@ -79,6 +79,14 @@ const shapeLabels: Record<ApprovalPolicyShape, string> = {
   opaque: 'chat.approvalShapeOpaque',
 }
 
+/** Shape label that tolerates values outside the contract instead of failing the i18n lookup. */
+const shapeLabel = computed(() => {
+  const shape = props.approval?.policy?.shape
+  if (!shape) return ''
+  const labelKey = (shapeLabels as Record<string, string | undefined>)[shape]
+  return labelKey ? t(labelKey) : shape
+})
+
 const shapeWarning = computed(() => {
   const shape = props.approval?.policy?.shape
   if (shape === 'interpreter') return t('chat.approvalShapeInterpreterWarning')
@@ -90,6 +98,40 @@ const canSubmit = computed(() => Boolean(props.approval) && !props.busy && !subm
 const isStructuredPolicy = computed(() => props.approval?.policy?.shape === 'structured')
 /** O-face: the tool has no registered action class, so reuse rules cannot be granted. */
 const isUnclassifiedPolicy = computed(() => props.approval?.policy?.actionClass === 'unclassified')
+const policyShape = computed(() => props.approval?.policy?.shape)
+/** Delete action class is the one structured domain the server caps at `once`. */
+const isDeleteActionClass = computed(() => props.approval?.policy?.actionClass === 'delete')
+/**
+ * Decision tiers the server accepts for this tool shape (CP ReusePolicy.allowedTiers):
+ * structured → once/session/saved; structured+delete and opaque/unclassified → once only;
+ * interpreter → once/session. Offering a tier outside the ceiling would only produce a
+ * 400 REUSE_NOT_ALLOWED_FOR_SHAPE, so the buttons mirror the contract exactly. When the
+ * `policy` projection is absent (legacy payload) or carries a shape outside the contract,
+ * there is no shape evidence to derive a ceiling from, so the UI fails closed to `once`
+ * only and explains the missing evidence instead of offering a tier the server would reject.
+ */
+const hasKnownShape = computed(() => policyShape.value === 'structured'
+  || policyShape.value === 'interpreter'
+  || policyShape.value === 'opaque')
+const canOfferSessionTier = computed(() => {
+  if (!props.approval || !hasKnownShape.value || isUnclassifiedPolicy.value) return false
+  if (policyShape.value === 'opaque') return false
+  if (policyShape.value === 'structured') return !isDeleteActionClass.value
+  return true
+})
+const canOfferSavedTier = computed(() => policyShape.value === 'structured'
+  && !isDeleteActionClass.value
+  && !isUnclassifiedPolicy.value)
+/** Inline explanation shown when a tier is unavailable for the current shape. */
+const tierGateReason = computed(() => {
+  if (!props.approval || isUnclassifiedPolicy.value) return ''
+  // No shape evidence: only the once tier is derivable, never a reuse or saved tier.
+  if (!hasKnownShape.value) return t('chat.approvalTierGateShapeUnavailable')
+  if (policyShape.value === 'interpreter') return t('chat.approvalTierGateInterpreter')
+  if (policyShape.value === 'opaque') return t('chat.approvalTierGateOpaque')
+  if (policyShape.value === 'structured' && isDeleteActionClass.value) return t('chat.approvalTierGateDelete')
+  return ''
+})
 const showClassifyEntry = computed(() => isUnclassifiedPolicy.value && props.canClassify)
 const canSubmitClassify = computed(() => Boolean(props.approval)
   && !props.busy
@@ -374,7 +416,7 @@ onBeforeUnmount(() => {
                 <dt class="text-muted-foreground">{{ t('chat.approvalEvidenceActionClass') }}</dt>
                 <dd data-testid="approval-evidence-action-class" class="break-all font-mono">{{ approval.policy.actionClass }}</dd>
                 <dt class="text-muted-foreground">{{ t('chat.approvalEvidenceShape') }}</dt>
-                <dd data-testid="approval-evidence-shape">{{ t(shapeLabels[approval.policy.shape]) }}</dd>
+                <dd data-testid="approval-evidence-shape">{{ shapeLabel }}</dd>
                 <dt class="text-muted-foreground">{{ t('chat.approvalEvidenceMatchedRule') }}</dt>
                 <dd data-testid="approval-evidence-matched-rule" class="break-all font-mono">{{ approval.policy.matchedRule ?? t('chat.approvalNoMatchedRule') }}</dd>
                 <dt class="text-muted-foreground">{{ t('chat.approvalEvidenceSourceLayer') }}</dt>
@@ -431,6 +473,9 @@ onBeforeUnmount(() => {
           </div>
 
           <p v-if="error" id="approval-error" data-testid="approval-error" class="mb-3 text-sm text-destructive" role="alert">{{ error }}</p>
+          <p v-if="tierGateReason" data-testid="approval-tier-gate-reason" class="mb-3 text-xs text-muted-foreground">
+            {{ tierGateReason }}
+          </p>
 
           <div class="flex flex-wrap justify-end gap-2 border-t pt-3">
             <button
@@ -446,7 +491,7 @@ onBeforeUnmount(() => {
             </button>
             <button
               ref="sessionButton"
-              v-if="!isUnclassifiedPolicy"
+              v-if="canOfferSessionTier"
               data-testid="approval-allow-session"
               type="button"
               class="inline-flex min-h-10 items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
@@ -456,7 +501,7 @@ onBeforeUnmount(() => {
               {{ t('chat.approvalAllowSession') }}
             </button>
             <button
-              v-if="isStructuredPolicy && !isUnclassifiedPolicy"
+              v-if="canOfferSavedTier"
               ref="saveButton"
               data-testid="approval-save-rule"
               type="button"

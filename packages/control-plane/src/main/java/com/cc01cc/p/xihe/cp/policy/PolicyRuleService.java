@@ -39,11 +39,11 @@ public class PolicyRuleService {
     private static final int MAX_RESOURCE = 512;
 
     private final PolicyRuleRepository repository;
-    private final PolicyVersion policyVersion;
+    private final PolicyRevision policyRevision;
 
-    public PolicyRuleService(PolicyRuleRepository repository, PolicyVersion policyVersion) {
+    public PolicyRuleService(PolicyRuleRepository repository, PolicyRevision policyRevision) {
         this.repository = repository;
-        this.policyVersion = policyVersion;
+        this.policyRevision = policyRevision;
     }
 
     public record RuleInput(String actionClass, String resource, String effect, Integer priority, Boolean locked) {}
@@ -98,7 +98,7 @@ public class PolicyRuleService {
         PolicyRuleEntity entity = new PolicyRuleEntity(UUID.randomUUID(), layer, owner, actionClass,
                 resource, effect, priority, locked, userId == null ? "system" : userId);
         repository.save(entity);
-        policyVersion.bump();
+        policyRevision.bump();
         boolean effective = effectiveDomains(layer, userId, workspaceId).contains(actionClass);
         return new RuleView(entity.getId(), layer, owner, actionClass, resource, effect, priority, locked,
                 effective, conflictOf(layer, owner, entity));
@@ -117,7 +117,7 @@ public class PolicyRuleService {
             throw new CpApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Rule not found");
         }
         repository.delete(entity);
-        policyVersion.bump();
+        policyRevision.bump();
     }
 
     /** Per-domain view: which layer is effective and how many rules each layer holds. */

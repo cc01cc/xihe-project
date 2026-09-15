@@ -7,7 +7,12 @@ const WORKSPACE_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 const RUN_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
 
-const approvalEvent = (requestId: string, replayed = false, shape: 'structured' | 'interpreter' | 'opaque' = 'structured') => ({
+const approvalEvent = (
+  requestId: string,
+  replayed = false,
+  shape: 'structured' | 'interpreter' | 'opaque' = 'structured',
+  actionClass = 'delete',
+) => ({
   requestId,
   runId: RUN_ID,
   sessionId: SESSION_ID,
@@ -27,7 +32,7 @@ const approvalEvent = (requestId: string, replayed = false, shape: 'structured' 
     matchedRule: null,
     reason: 'No matching allow rule',
     mode: 'default',
-    actionClass: 'delete',
+    actionClass,
     shape,
   },
 })
@@ -178,6 +183,34 @@ test.describe('Chat approval flow', () => {
     await expect(page).toHaveScreenshot('approval-modal-request.png')
   })
 
+  test('delete-shaped approvals offer only once and explain the narrowed ceiling', async ({ page }) => {
+    await openApprovalChat(page)
+    await pushApproval(page, approvalEvent(REQUEST_ID))
+
+    const dialog = page.locator('[data-testid="modal-content"]')
+    await expect(dialog).toBeVisible({ timeout: 5000 })
+    await expect(dialog.locator('[data-testid="approval-approve"]')).toBeEnabled()
+    // CP ReusePolicy.allowedTiers: structured+delete is once-only, so no reuse tier is offered.
+    await expect(dialog.locator('[data-testid="approval-allow-session"]')).toHaveCount(0)
+    await expect(dialog.locator('[data-testid="approval-save-rule"]')).toHaveCount(0)
+    await expect(dialog.locator('[data-testid="approval-tier-gate-reason"]')).toContainText('删除类动作')
+  })
+
+  test('legacy approvals without a policy projection offer only once with the evidence explanation', async ({ page }) => {
+    await openApprovalChat(page)
+    const legacyEvent = approvalEvent(REQUEST_ID) as Record<string, unknown>
+    delete legacyEvent.policy
+    await pushApproval(page, legacyEvent)
+
+    const dialog = page.locator('[data-testid="modal-content"]')
+    await expect(dialog).toBeVisible({ timeout: 5000 })
+    await expect(dialog.locator('[data-testid="approval-approve"]')).toBeEnabled()
+    // Absent shape evidence cannot derive a reuse ceiling, so only the once tier is offered.
+    await expect(dialog.locator('[data-testid="approval-allow-session"]')).toHaveCount(0)
+    await expect(dialog.locator('[data-testid="approval-save-rule"]')).toHaveCount(0)
+    await expect(dialog.locator('[data-testid="approval-tier-gate-reason"]')).toContainText('工具形态依据不可用')
+  })
+
   test('renders dispatch_unknown recovery as an explicit retry without auto-deciding', async ({ page }) => {
     const calls = await installDecisionRoute(page, 200, {
       status: 'accepted',
@@ -246,7 +279,7 @@ test.describe('Chat approval flow', () => {
       decision: 'session',
     })
     await openApprovalChat(page)
-    await pushApproval(page, approvalEvent(REQUEST_ID))
+    await pushApproval(page, approvalEvent(REQUEST_ID, false, 'structured', 'write'))
 
     const dialog = page.locator('[data-testid="modal-content"]')
     await expect(dialog).toBeVisible({ timeout: 5000 })
@@ -265,7 +298,7 @@ test.describe('Chat approval flow', () => {
       rule: { layer: 'user', actionClass: 'delete', resource: 'workspace/**', effect: 'allow' },
     })
     await openApprovalChat(page)
-    await pushApproval(page, approvalEvent(REQUEST_ID))
+    await pushApproval(page, approvalEvent(REQUEST_ID, false, 'structured', 'write'))
 
     const dialog = page.locator('[data-testid="modal-content"]')
     await expect(dialog).toBeVisible({ timeout: 5000 })
@@ -292,11 +325,14 @@ test.describe('Chat approval flow', () => {
 
   test('does not offer persistent rules for interpreter-shaped approvals', async ({ page }) => {
     await openApprovalChat(page)
-    await pushApproval(page, approvalEvent(REQUEST_ID, false, 'interpreter'))
+    await pushApproval(page, approvalEvent(REQUEST_ID, false, 'interpreter', 'exec'))
 
     const dialog = page.locator('[data-testid="modal-content"]')
     await expect(dialog).toBeVisible({ timeout: 5000 })
     await expect(dialog.locator('[data-testid="approval-save-rule"]')).toHaveCount(0)
+    // Interpreter keeps the session tier, so the reason line explains only the saved-rule ceiling.
+    await expect(dialog.locator('[data-testid="approval-allow-session"]')).toBeEnabled()
+    await expect(dialog.locator('[data-testid="approval-tier-gate-reason"]')).toContainText('解释器形态')
     await expect(dialog.locator('[data-testid="approval-shape-warning"]')).toContainText('解释器')
   })
 
@@ -308,7 +344,7 @@ test.describe('Chat approval flow', () => {
       decision: 'saved',
     })
     await openApprovalChat(page)
-    await pushApproval(page, approvalEvent(REQUEST_ID))
+    await pushApproval(page, approvalEvent(REQUEST_ID, false, 'structured', 'write'))
 
     const dialog = page.locator('[data-testid="modal-content"]')
     await expect(dialog).toBeVisible({ timeout: 5000 })

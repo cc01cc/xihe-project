@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import warnings
+from datetime import datetime
 from typing import Any, NamedTuple
 
 import mcp.types as _mcp_types
@@ -10,8 +11,16 @@ from fastmcp.client.transports import StreamableHttpTransport
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.tools import BaseTool
 from loguru import logger
+from mcp.shared.exceptions import MCPError
 
-from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTerminalError
+from xihe_agent.adapters.approval_tool import (
+    ApprovalAgentTool,
+    ApprovalProtocolError,
+    ApprovalRetryFailedError,
+    ApprovalTerminalError,
+    is_valid_approval_request_id,
+    parse_approval_expiry,
+)
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 
@@ -201,6 +210,98 @@ REQUIRE_APPROVAL_TOOLS = frozenset({
 })
 
 
+# PLAN-0328 T1.9（post-gate）：CP MCP 闸门对无有效 grant 的 ASK 返回 HTTP 409，
+# 其 RFC 9457 扩展必须以 JSON-RPC error.data 形态到达本模块（fastmcp 4.x/mcp 2.x
+# 传输层会丢弃非 JSON-RPC 错误体并合成为通用 -32603；这不是本模块可调整的）。
+# 本模块只消费安全扩展（requestId/tool/expiresAt），永不记录错误体或工具参数原文。
+APPROVAL_REQUIRED_CODE = "APPROVAL_REQUIRED"
+_APPROVAL_PROBLEM_WRAPPER_KEYS = ("problem", "error", "data")
+
+
+class ApprovalGateSignal(NamedTuple):
+    """CP 闸门 409 的安全扩展：post-gate 等待与一次性重试所需字段。"""
+
+    request_id: str
+    tool: str
+    expires_at: datetime
+
+
+def _mcp_error_from(exc: BaseException) -> MCPError | None:
+    """在异常链（最多 4 层、防环）上寻找 MCPError。"""
+    candidate: BaseException | None = exc
+    seen: set[int] = set()
+    depth = 0
+    while candidate is not None and depth < 4 and id(candidate) not in seen:
+        if isinstance(candidate, MCPError):
+            return candidate
+        seen.add(id(candidate))
+        candidate = candidate.__cause__ or candidate.__context__
+        depth += 1
+    return None
+
+
+def _approval_problem_from_data(data: Any) -> dict[str, Any] | None:
+    """从 JSON-RPC error.data 提取 problem 字典（容忍 JSON 字符串与多层包裹键）。"""
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except ValueError:
+            return None
+    if not isinstance(data, dict):
+        return None
+    problem: dict[str, Any] = data
+    for _ in range(4):
+        if problem.get("code"):
+            return problem
+        nested: dict[str, Any] | None = None
+        for key in _APPROVAL_PROBLEM_WRAPPER_KEYS:
+            candidate = problem.get(key)
+            if isinstance(candidate, dict):
+                nested = candidate
+                break
+        if nested is None:
+            return problem
+        problem = nested
+    return problem
+
+
+def classify_approval_gate_failure(exc: BaseException, tool_name: str) -> ApprovalGateSignal | None:
+    """识别 CP MCP 闸门的 409 APPROVAL_REQUIRED 并解析其安全扩展。
+
+    返回 None 表示该失败不是审批闸门信号（调用方维持既有 downstream 错误路径）。
+    识别为审批信号但扩展缺失/畸形/不匹配时抛 ApprovalProtocolError：调用方必须
+    fail-closed——不得注册等待者、不得重试、不得把原始错误体写入日志。
+    """
+    mcp_error = _mcp_error_from(exc)
+    if mcp_error is None:
+        return None
+    problem = _approval_problem_from_data(mcp_error.data)
+    code = problem.get("code") if problem is not None else None
+    message = str(getattr(mcp_error, "message", "") or "")
+    if code != APPROVAL_REQUIRED_CODE and message != APPROVAL_REQUIRED_CODE:
+        return None
+    if problem is None:
+        raise ApprovalProtocolError("CP gate approval signal carried no usable payload")
+    if code != APPROVAL_REQUIRED_CODE:
+        raise ApprovalProtocolError("CP gate approval signal code mismatch")
+    if problem.get("status") not in (None, 409):
+        raise ApprovalProtocolError("CP gate approval signal status is not 409")
+    request_id = problem.get("approvalRequestId")
+    if not is_valid_approval_request_id(request_id):
+        raise ApprovalProtocolError("CP gate approval signal approvalRequestId is invalid")
+    signal_tool = problem.get("tool")
+    if isinstance(signal_tool, str) and signal_tool and signal_tool != tool_name:
+        raise ApprovalProtocolError("CP gate approval signal tool does not match the call")
+    retry_header = problem.get("retryHeader")
+    if isinstance(retry_header, str) and retry_header and retry_header != APPROVAL_GRANT_HEADER:
+        raise ApprovalProtocolError("CP gate approval signal retry header does not match")
+    return ApprovalGateSignal(
+        request_id=request_id,
+        tool=tool_name,
+        expires_at=parse_approval_expiry(problem.get("expiresAt")),
+    )
+
+
 def _result_text(result: Any) -> str:
     """fastmcp CallToolResult → LLM 可见文本（文本块拼接；无文本时退结构化内容/原始内容）。
 
@@ -276,10 +377,7 @@ class MCPAgentTool(BaseAgentTool):
                     post_wait.source,
                     post_wait.value_origin or "",
                 )
-                result = await asyncio.wait_for(
-                    self._manager.call_tool(self._tool.name, payload, headers),
-                    timeout=post_wait.seconds,
-                )
+                result = await self._dispatch(payload, headers, context, post_wait)
             else:
                 # PLAN-0308 M1：等待值由 CP 计算（含余量与冷启动增量），本模块只执行；
                 # T1.8：toolCallId 与 CP/Runtime 共用，超时可跨三层串时间线（spec S5.1）。
@@ -293,10 +391,7 @@ class MCPAgentTool(BaseAgentTool):
                     wait.source,
                     wait.value_origin or "",
                 )
-                result = await asyncio.wait_for(
-                    self._manager.call_tool(self._tool.name, payload, headers),
-                    timeout=wait.seconds,
-                )
+                result = await self._dispatch(payload, headers, context, wait)
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
             content = _result_text(result)
             wait = _resolve_tool_wait(self._tool.name, context)
@@ -332,6 +427,94 @@ class MCPAgentTool(BaseAgentTool):
         except Exception as e:
             logger.warning("MCP tool {} failed: {}", self._tool.name, e)
             return {"content": f"Tool error: {e}"}
+
+    async def _dispatch(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        context: AgentContext,
+        wait: ToolWait,
+    ) -> Any:
+        """执行一次 MCP 调用，并在 CP 闸门 409 时进入 post-gate 等待（T1.9）。
+
+        正常路径与既有行为完全一致（单次调用 + 授权等待值界）；仅当异常被识别为
+        CP 闸门批准信号时才转为「等待推送决定 → 恰好重试一次」。
+        """
+        try:
+            return await asyncio.wait_for(
+                self._manager.call_tool(self._tool.name, payload, headers),
+                timeout=wait.seconds,
+            )
+        except Exception as exc:
+            signal = classify_approval_gate_failure(exc, self._tool.name)
+            if signal is None:
+                raise
+            return await self._retry_after_gate(signal, payload, headers, context, wait)
+
+    async def _retry_after_gate(
+        self,
+        signal: ApprovalGateSignal,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        context: AgentContext,
+        wait: ToolWait,
+    ) -> Any:
+        """等待 CP 推送的用户决定，然后携 grant 头重试同一次 MCP 调用（仅一次）。
+
+        - 不重新触发 pre-flight 审批（REQUIRE_APPROVAL_TOOLS 的本地 grant 不重复申请）；
+        - 拒绝/过期按既有终态错误上抛；
+        - 重试侧任何失败（第二次 409/403、grant 不匹配、传输错误）一律 fail-closed，
+          绝不成环。
+        """
+        approval_tool = self._manager.approval_tool
+        if approval_tool is None:
+            raise ApprovalProtocolError("CP gate approval requires a local approval coordinator")
+        tool_call_id = ""
+        raw_id = context.metadata.get("operationItemId") if context is not None else None
+        if raw_id:
+            tool_call_id = str(raw_id)
+        logger.info(
+            "[LIFECYCLE] service=agent event=mcp_tool_gate_wait tool={} toolCallId={}"
+            + " approvalRequestId={} expiresAt={}",
+            self._tool.name,
+            tool_call_id or "-",
+            signal.request_id,
+            signal.expires_at.isoformat(),
+        )
+        approved = await approval_tool.await_external_approval(
+            signal.request_id, self._tool.name, signal.expires_at, context
+        )
+        if approved is not True:
+            raise ApprovalTerminalError(f"Approval gate did not release: {signal.request_id}")
+        retry_headers = {**headers, APPROVAL_GRANT_HEADER: signal.request_id}
+        try:
+            result = await asyncio.wait_for(
+                self._manager.call_tool(self._tool.name, payload, retry_headers),
+                timeout=wait.seconds,
+            )
+        except ApprovalTerminalError:
+            raise
+        except Exception as exc:
+            # 只记录异常类型：错误体/参数原文不得入日志。
+            logger.error(
+                "[LIFECYCLE] service=agent event=mcp_tool_gate_retry_failed tool={} toolCallId={}"
+                + " approvalRequestId={} errorType={}",
+                self._tool.name,
+                tool_call_id or "-",
+                signal.request_id,
+                type(exc).__name__,
+            )
+            raise ApprovalRetryFailedError(
+                f"Approval gate retry failed after grant {signal.request_id}"
+            ) from exc
+        logger.info(
+            "[LIFECYCLE] service=agent event=mcp_tool_gate_retry_ok tool={} toolCallId={}"
+            + " approvalRequestId={}",
+            self._tool.name,
+            tool_call_id or "-",
+            signal.request_id,
+        )
+        return result
 
     async def _request_approval(self, payload: dict[str, Any], context: AgentContext) -> str | None:
         """审批门控工具：请求一次性 grant 并返回 requestId（无审批工具/上下文时跳过）。"""

@@ -25,6 +25,7 @@ import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -218,6 +219,15 @@ class McpProxyTest {
         return constructor.newInstance(wsId, userId, null, null);
     }
 
+    private static Object accessContextWithSession(String wsId, String userId, String sessionId) throws Exception {
+        Class<?> accessClass = Class.forName(
+                "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
+        var constructor = accessClass.getDeclaredConstructor(
+                String.class, String.class, String.class, String.class);
+        constructor.setAccessible(true);
+        return constructor.newInstance(wsId, userId, sessionId, null);
+    }
+
     // PLAN-242 M2.5 (CP 侧 Fake 门): tools/list 合并 remote 工具并落别名，
     // tools/call 按别名以后端名直达 Fake。Runtime 由 JDK 内置 HttpServer 桩承担。
     @Test
@@ -335,6 +345,120 @@ class McpProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void handleToolsCall_sessionFingerprintHitSkipsTheApprovalGate() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
+                        "default", "mutation requires approval"));
+        seedToolCache("write_file", "__system__");
+        when(approvalService.tryReuseSessionGrant(eq("sess-1"), eq(TEST_WS_UUID),
+                eq("write_file"), anyString())).thenReturn(true);
+
+        HttpHeaders agentHeaders = new HttpHeaders();
+        agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                agentHeaders, "sess-1", accessContext(TEST_WS_UUID, "u-1"));
+
+        // The hit dispatches (runtime is unreachable in a unit test, but not the 409 gate).
+        assertNotEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        verify(approvalService).tryReuseSessionGrant(eq("sess-1"), eq(TEST_WS_UUID),
+                eq("write_file"), anyString());
+        verify(approvalService, never()).recordGatePending(any(), any(), any(), any(), any(), any(), any());
+        verify(sseEmitterManager, never()).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_gateCreatesPendingRowAndReturnsJsonRpcApprovalFrame() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":7}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
+                        "default", "mutation requires approval"));
+        seedToolCache("write_file", "__system__");
+        ChatApproval row = new ChatApproval("77000000-0000-0000-0000-000000000001", TEST_WS_UUID,
+                "sess-1", "u-1", TEST_WS_UUID, "write_file", "Execute write_file", "preview",
+                "pending", Instant.now().plusSeconds(300), null, null);
+        when(approvalService.recordGatePending(eq("sess-1"), eq(TEST_WS_UUID), eq("u-1"),
+                eq(TEST_WS_UUID), eq("write_file"), eq(body), any(Instant.class)))
+                .thenReturn(java.util.Optional.of(ApprovalService.GateApprovalOutcome.parked(row)));
+        when(approvalService.livePayload(row))
+                .thenReturn(Map.of("requestId", row.getRequestId().toString(), "state", "pending"));
+
+        HttpHeaders agentHeaders = new HttpHeaders();
+        agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                agentHeaders, "sess-1", accessContextWithSession(TEST_WS_UUID, "u-1", "sess-1"));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals(org.springframework.http.MediaType.APPLICATION_JSON,
+                response.getHeaders().getContentType());
+        JsonNode frame = objectMapper.readTree(response.getBody());
+        assertEquals("2.0", frame.get("jsonrpc").asText());
+        assertEquals(7, frame.get("id").asInt());
+        assertEquals("APPROVAL_REQUIRED", frame.get("error").get("message").asText());
+        JsonNode data = frame.get("error").get("data");
+        assertEquals("APPROVAL_REQUIRED", data.get("code").asText());
+        assertEquals(row.getRequestId().toString(), data.get("approvalRequestId").asText());
+        assertEquals("write_file", data.get("tool").asText());
+        assertEquals(row.getExpiresAt().toString(), data.get("expiresAt").asText());
+        assertEquals("X-Xihe-Approval-Request-Id", data.get("retryHeader").asText());
+        assertEquals("/api/v1/chat/runs/" + TEST_WS_UUID, data.get("statusUrl").asText());
+        verify(sseEmitterManager).send(eq("sess-1"), eq("approval_request"), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_gateAnswererRejectReturnsTerminalJsonRpcDenialWithoutCard() throws Exception {
+        // T1.9: a row the chain rejected at creation can never be answered — the gate must not
+        // emit the -32003 approval signal (Agent would register a waiter nobody can answer),
+        // must not push a card, and must answer with a plain fail-closed JSON-RPC denial.
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":7}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
+                        "default", "mutation requires approval"));
+        seedToolCache("write_file", "__system__");
+        ChatApproval rejected = new ChatApproval("77000000-0000-0000-0000-000000000002", TEST_WS_UUID,
+                "sess-1", "u-1", TEST_WS_UUID, "write_file", "Execute write_file", "preview",
+                "rejected", Instant.now().plusSeconds(300), null, null);
+        rejected.setApproved(false);
+        rejected.setDecisionKind("reject");
+        when(approvalService.recordGatePending(eq("sess-1"), eq(TEST_WS_UUID), eq("u-1"),
+                eq(TEST_WS_UUID), eq("write_file"), eq(body), any(Instant.class)))
+                .thenReturn(java.util.Optional.of(ApprovalService.GateApprovalOutcome.rejected(rejected)));
+
+        HttpHeaders agentHeaders = new HttpHeaders();
+        agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                agentHeaders, "sess-1", accessContextWithSession(TEST_WS_UUID, "u-1", "sess-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertEquals(org.springframework.http.MediaType.APPLICATION_JSON,
+                response.getHeaders().getContentType());
+        JsonNode frame = objectMapper.readTree(response.getBody());
+        assertEquals("2.0", frame.get("jsonrpc").asText());
+        assertEquals(7, frame.get("id").asInt());
+        assertNotEquals(-32003, frame.get("error").get("code").asInt(), "never the approval signal code");
+        assertEquals("APPROVAL_REJECTED", frame.get("error").get("message").asText());
+        JsonNode data = frame.get("error").get("data");
+        assertEquals("APPROVAL_REJECTED", data.get("code").asText());
+        assertEquals(rejected.getRequestId().toString(), data.get("approvalRequestId").asText());
+        assertFalse(data.has("retryHeader"));
+        assertFalse(data.has("statusUrl"));
+        verify(sseEmitterManager, never()).send(eq("sess-1"), eq("approval_request"), any());
+        verify(approvalService, never()).livePayload(any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void handleToolsCall_userDirectWorkspaceMutation_bypassesApprovalGate() throws Exception {
         // PLAN-290 B2 / Decision 17: a workspace user mutation without any agent
         // headers is UI-confirmed, not Agent-gated — the gate must let it pass
@@ -422,7 +546,7 @@ class McpProxyTest {
             root.fieldNames().forEachRemaining(keys::add);
             assertEquals(OperationPolicySummary.POLICY_KEYS, keys);
             assertEquals(Set.of("effect", "sourceLayer", "matchedRule", "reason", "mode",
-                    "allowedBy", "actionClass", "shape"), keys);
+                    "allowedBy", "actionClass", "shape", "reused"), keys);
             assertEquals("allow", root.get("effect").asText());
             assertEquals("builtin", root.get("sourceLayer").asText());
             assertEquals("{ read, \"*\", allow }", root.get("matchedRule").asText());
@@ -430,6 +554,7 @@ class McpProxyTest {
             assertEquals("read", root.get("actionClass").asText());
             assertEquals("structured", root.get("shape").asText());
             assertTrue(root.get("allowedBy").isNull());
+            assertTrue(root.get("reused").isNull(), "reuse is not applicable to a rule allow");
             assertFalse(summary.getValue().contains("secret-body-marker"),
                     "raw request content must never reach the verdict snapshot");
             assertFalse(summary.getValue().contains("arguments"));

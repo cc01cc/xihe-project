@@ -304,6 +304,10 @@ export interface OperationSummary {
  * Safe policy verdict snapshot carried by operation items (PLAN-0328 T1.15, spec ui-ux §3.5).
  * Exactly the server-projected fields; `matchedRule` / `mode` / `allowedBy` are nullable and
  * absent for legacy rows or non-MCP paths. The projection never contains raw arguments.
+ *
+ * `reused` is the T1.7 session-fingerprint annotation: `true` means this dispatch was authorized
+ * by an exact session reuse (never a verdict effect of its own); `null` (or an absent key on
+ * legacy V19 snapshots) means reuse was not applicable. The view must not infer reuse otherwise.
  */
 export interface OperationPolicyView {
   effect: ApprovalPolicyEffect
@@ -314,6 +318,7 @@ export interface OperationPolicyView {
   allowedBy: string | null
   actionClass: string
   shape: ApprovalPolicyShape
+  reused?: boolean | null
 }
 
 export interface OperationItemView {

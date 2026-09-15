@@ -4,7 +4,7 @@ import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ApprovalModal from '../chat/ApprovalModal.vue'
 import { ApiError, api } from '../../composables/api'
-import type { ApprovalRequest } from '../../types'
+import type { ApprovalPolicyShape, ApprovalRequest } from '../../types'
 
 vi.mock('../../composables/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../composables/api')>()
@@ -59,6 +59,10 @@ const i18n = createI18n({
         approvalShapeOpaque: 'Opaque',
         approvalShapeInterpreterWarning: 'Interpreter warning',
         approvalShapeOpaqueWarning: 'Opaque warning',
+        approvalTierGateDelete: 'Delete actions only allow once',
+        approvalTierGateOpaque: 'Opaque tools only allow once',
+        approvalTierGateInterpreter: 'Interpreter tools cannot save persistent rules',
+        approvalTierGateShapeUnavailable: 'Shape evidence unavailable; only allow once is offered',
         approvalAllowOnce: 'Allow once',
         approvalAllowSession: 'Allow in this session',
         approvalSaveRule: 'Save as rule',
@@ -216,7 +220,7 @@ describe('ApprovalModal', () => {
   })
 
   it('emits a session-scoped decision', async () => {
-    const wrapper = mountModal({ approval: baseApproval, show: true })
+    const wrapper = mountModal({ approval: { ...baseApproval, policy }, show: true })
     await wrapper.find('[data-testid="approval-allow-session"]').trigger('click')
 
     expect(wrapper.emitted('approve')).toEqual([[{ decision: 'session', requestId: REQUEST_ID }]])
@@ -356,6 +360,91 @@ describe('ApprovalModal', () => {
   it('does not render when show is false', () => {
     const wrapper = mountModal({ approval: baseApproval, show: false })
     expect(wrapper.find('[class*="fixed"]').exists()).toBe(false)
+  })
+})
+
+describe('ApprovalModal reuse-tier gating (PLAN-0328 T1.7)', () => {
+  it('offers once, session and saved for structured non-delete tools with no gate reason', () => {
+    const wrapper = mountModal({ approval: { ...baseApproval, policy }, show: true })
+
+    expect(wrapper.find('[data-testid="approval-approve"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-tier-gate-reason"]').exists()).toBe(false)
+  })
+
+  it('offers only once and explains the missing shape evidence when policy is absent', async () => {
+    const wrapper = mountModal({ approval: baseApproval, show: true })
+
+    expect(wrapper.find('[data-testid="approval-approve"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-tier-gate-reason"]').text()).toBe('Shape evidence unavailable; only allow once is offered')
+
+    await wrapper.find('[data-testid="approval-approve"]').trigger('click')
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: REQUEST_ID }]])
+  })
+
+  it('fails closed to once only for a shape outside the contract', () => {
+    const wrapper = mountModal({
+      approval: { ...baseApproval, policy: { ...policy, shape: 'legacy' as ApprovalPolicyShape } },
+      show: true,
+    })
+
+    expect(wrapper.find('[data-testid="approval-approve"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-tier-gate-reason"]').text()).toBe('Shape evidence unavailable; only allow once is offered')
+    // The out-of-contract value renders verbatim instead of failing the label lookup.
+    expect(wrapper.find('[data-testid="approval-evidence-shape"]').text()).toBe('legacy')
+  })
+
+  it('keeps once and session, hides saved, and explains the ceiling for interpreter shapes', () => {
+    const wrapper = mountModal({
+      approval: { ...baseApproval, policy: { ...policy, shape: 'interpreter' } },
+      show: true,
+    })
+
+    expect(wrapper.find('[data-testid="approval-approve"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-tier-gate-reason"]').text()).toBe('Interpreter tools cannot save persistent rules')
+  })
+
+  it('offers only once and explains the ceiling for opaque shapes', () => {
+    const wrapper = mountModal({
+      approval: { ...baseApproval, policy: { ...policy, shape: 'opaque' } },
+      show: true,
+    })
+
+    expect(wrapper.find('[data-testid="approval-approve"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-tier-gate-reason"]').text()).toBe('Opaque tools only allow once')
+  })
+
+  it('offers only once and explains the ceiling for structured delete actions', async () => {
+    const wrapper = mountModal({
+      approval: { ...baseApproval, policy: { ...policy, actionClass: 'delete' } },
+      show: true,
+    })
+
+    expect(wrapper.find('[data-testid="approval-approve"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-tier-gate-reason"]').text()).toBe('Delete actions only allow once')
+
+    await wrapper.find('[data-testid="approval-approve"]').trigger('click')
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: REQUEST_ID }]])
+  })
+
+  it('keeps unclassified tools on the existing notice without duplicating the gate reason', () => {
+    const wrapper = mountModal({ approval: { ...baseApproval, policy: unclassifiedPolicy }, show: true })
+
+    expect(wrapper.find('[data-testid="approval-unclassified-notice"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-tier-gate-reason"]').exists()).toBe(false)
   })
 })
 

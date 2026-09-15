@@ -93,6 +93,18 @@ public class ChatApproval {
     @Column(name = "mode_at_grant", length = 32)
     private String modeAtGrant;
 
+    /** T1.7: durable policy revision (V21 monotonic counter, bumped by rule/face mutations; null = legacy). */
+    @Column(name = "policy_revision")
+    private Long policyRevision;
+
+    /** T1.7: workspace.generation captured by the atomic decision claim; null = legacy. */
+    @Column(name = "sandbox_generation")
+    private Integer sandboxGeneration;
+
+    /** T1.7: granted reuse tier (once|session|saved); null legacy rows are treated as once. */
+    @Column(name = "reuse_scope", length = 16)
+    private String reuseScope;
+
     public ChatApproval() {}
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
@@ -161,9 +173,15 @@ public class ChatApproval {
     public String getDecisionKind() { return decisionKind; }
     public String getPolicySummary() { return policySummary; }
     public String getModeAtGrant() { return modeAtGrant; }
+    public Long getPolicyRevision() { return policyRevision; }
+    public Integer getSandboxGeneration() { return sandboxGeneration; }
+    public String getReuseScope() { return reuseScope; }
     public void setSnapshotId(String snapshotId) { this.snapshotId = snapshotId; }
     public void setPolicyClass(String policyClass) { this.policyClass = policyClass; }
     public void setGrantConsumedAt(Instant grantConsumedAt) { this.grantConsumedAt = grantConsumedAt; }
     public void setPolicySummary(String policySummary) { this.policySummary = policySummary; }
     public void setModeAtGrant(String modeAtGrant) { this.modeAtGrant = modeAtGrant; }
+    public void setPolicyRevision(Long policyRevision) { this.policyRevision = policyRevision; }
+    public void setSandboxGeneration(Integer sandboxGeneration) { this.sandboxGeneration = sandboxGeneration; }
+    public void setReuseScope(String reuseScope) { this.reuseScope = reuseScope; }
 }

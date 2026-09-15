@@ -26,7 +26,8 @@ import org.springframework.http.HttpStatus;
 class PolicyRuleServiceTest {
 
     private final PolicyRuleRepository repository = mock(PolicyRuleRepository.class);
-    private final PolicyRuleService service = new PolicyRuleService(repository, new PolicyVersion());
+    private final PolicyRevision policyRevision = mock(PolicyRevision.class);
+    private final PolicyRuleService service = new PolicyRuleService(repository, policyRevision);
 
     @AfterEach
     void clearTenant() {

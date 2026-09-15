@@ -34,6 +34,15 @@ const approval: ApprovalRequest = {
   action: 'write file',
   details: '/test.txt',
   state: 'pending',
+  policy: {
+    effect: 'ask',
+    sourceLayer: 'workspace',
+    matchedRule: null,
+    reason: 'No matching allow rule',
+    mode: 'default',
+    actionClass: 'write',
+    shape: 'structured',
+  },
 }
 
 function mountPanel() {
