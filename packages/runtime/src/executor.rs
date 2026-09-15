@@ -163,6 +163,19 @@ impl InFlightExecutions {
         self.len() == 0
     }
 
+    /// PLAN-0328 M2 W2: executions currently registered for one workspace
+    /// (cancel-retained entries included). The checkpoint seal records
+    /// `sealedWithLiveJobs` from this counter — no container probe, so a seal can
+    /// never resurrect a stopped sandbox.
+    pub fn count_for_workspace(&self, workspace_id: &str) -> usize {
+        self.inner
+            .lock()
+            .expect("in-flight registry poisoned")
+            .values()
+            .filter(|entry| entry.workspace_id == workspace_id)
+            .count()
+    }
+
     /// PLAN-0317 T2.9（决策 #14）：对未确认终止的保留条目做追偿——通过
     /// `inspect_exec` 判定原执行是否仍在运行：
     ///   * 已结束（或 exec 已消失）→ 视为迟到终止成功，回调 CP；
@@ -998,6 +1011,28 @@ mod in_flight_tests {
         registry.unregister("item-1");
 
         assert!(registry.is_empty());
+    }
+
+    /// PLAN-0328 M2 W2：`sealedWithLiveJobs` 探针只统计本 workspace，
+    /// 不跨 workspace、不触发容器探测。
+    #[test]
+    fn count_for_workspace_is_scoped_and_tracks_unregister() {
+        let registry = InFlightExecutions::new();
+        let first = registry.register("ws-1", "item-1");
+        let second = registry.register("ws-1", "item-2");
+        let _other = registry.register("ws-2", "item-3");
+
+        assert_eq!(registry.count_for_workspace("ws-1"), 2);
+        assert_eq!(registry.count_for_workspace("ws-2"), 1);
+        assert_eq!(registry.count_for_workspace("ws-3"), 0);
+
+        registry.unregister("item-1");
+        assert_eq!(registry.count_for_workspace("ws-1"), 1);
+        // Cancel-retained entries still count as live jobs.
+        registry.retain_for_retry("item-2");
+        registry.unregister("item-2");
+        assert_eq!(registry.count_for_workspace("ws-1"), 1);
+        drop((first, second));
     }
 }
 

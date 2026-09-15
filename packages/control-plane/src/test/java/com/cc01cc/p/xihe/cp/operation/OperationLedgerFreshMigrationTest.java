@@ -186,6 +186,98 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
+    void v22RunCheckpointsTableApplied() throws SQLException {
+        // PLAN-0328 M2 W3: the CP-side Run checkpoint projection must exist on a
+        // fresh chain with its unique key, workspace index and state allowlist.
+        assertNotNull(scalarString("SELECT to_regclass('public.run_checkpoints')"),
+                "run_checkpoints must exist after V22");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '22' AND success = true"),
+                "V22 must be recorded as applied");
+        assertEquals("uuid", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'run_checkpoints' AND column_name = 'run_id'"));
+        assertEquals("uuid", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'run_checkpoints' AND column_name = 'workspace_id'"));
+        assertNotNull(scalarString(
+                "SELECT conname FROM pg_constraint WHERE conname = 'uq_run_checkpoints_run_workspace'"),
+                "unique (run_id, workspace_id) must exist");
+        assertNotNull(scalarString(
+                "SELECT indexname FROM pg_indexes WHERE indexname = 'idx_run_checkpoints_workspace_state'"),
+                "(workspace_id, state) index must exist");
+        String stateDef = scalarString(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        + "WHERE conname = 'ck_run_checkpoints_state'");
+        for (String state : new String[]{"base", "sealed", "unsealed", "degraded", "expired"}) {
+            assertTrue(stateDef.contains(state), "state allowlist must include " + state + ": " + stateDef);
+        }
+        // Ledger checkpoint markers (kind='checkpoint') must be allowed by V22;
+        // the V10 llm_usage kind must survive the constraint rebuild.
+        String kindDef = scalarString(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        + "WHERE conname = 'ck_operation_items_kind'");
+        assertTrue(kindDef.contains("checkpoint"),
+                "operation_items.kind allowlist must include checkpoint: " + kindDef);
+        assertTrue(kindDef.contains("llm_usage"),
+                "V22 must not drop the V10 llm_usage kind: " + kindDef);
+    }
+
+    @Test
+    void v22RunCheckpointConstraintsAndCheckpointKindInsert() throws SQLException {
+        UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                + "'::uuid, 'cp-" + userId + "@test.local', 'hash')");
+        executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                + "'::uuid, 'cp-ws', '" + userId + "'::uuid)");
+
+        UUID runId = UUID.randomUUID();
+        UUID checkpointId = UUID.randomUUID();
+        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) VALUES ('"
+                + checkpointId + "'::uuid, '" + runId + "'::uuid, '" + workspaceId + "'::uuid, 'base')");
+        assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE run_id = '"
+                + runId + "'::uuid"));
+
+        SQLException duplicate = assertThrows(SQLException.class,
+                () -> executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + runId + "'::uuid, '"
+                        + workspaceId + "'::uuid, 'base')"));
+        assertTrue(duplicate.getMessage().contains("uq_run_checkpoints_run_workspace"),
+                duplicate.getMessage());
+
+        SQLException badState = assertThrows(SQLException.class,
+                () -> executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID()
+                        + "'::uuid, '" + workspaceId + "'::uuid, 'bogus')"));
+        assertTrue(badState.getMessage().contains("ck_run_checkpoints_state"), badState.getMessage());
+
+        // degraded rows carry the frozen unrollable reasons.
+        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state, unrollable_reason) "
+                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '"
+                + workspaceId + "'::uuid, 'degraded', 'LEASE_HELD')");
+        assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
+                + workspaceId + "'::uuid AND state = 'degraded' AND unrollable_reason = 'LEASE_HELD'"));
+
+        // A ledger checkpoint marker row is accepted by the extended kind allowlist.
+        UUID operationId = UUID.randomUUID();
+        insertOperation(operationId, userId, null, null);
+        UUID itemId = UUID.randomUUID();
+        executeUpdate("INSERT INTO operation_items (id, operation_id, sequence, kind, source, status, tool_name) "
+                + "VALUES ('" + itemId + "'::uuid, '" + operationId + "'::uuid, 1, 'checkpoint', "
+                + "'runtime', 'pending', 'run_checkpoint')");
+        assertEquals(1, scalarInt("SELECT count(*) FROM operation_items WHERE id = '"
+                + itemId + "'::uuid AND kind = 'checkpoint'"));
+
+        // V10's llm_usage kind must still be accepted after the V22 rebuild.
+        executeUpdate("INSERT INTO operation_items (id, operation_id, sequence, kind, source, status) "
+                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + operationId
+                + "'::uuid, 2, 'llm_usage', 'agent', 'completed')");
+        assertEquals(1, scalarInt("SELECT count(*) FROM operation_items WHERE operation_id = '"
+                + operationId + "'::uuid AND kind = 'llm_usage'"));
+    }
+
+    @Test
     void v8SchemaGateFixesApplied() throws SQLException {
         for (String fk : new String[]{
                 "fk_workspaces_owner", "fk_sessions_user", "fk_chat_runs_user",

@@ -732,6 +732,40 @@ paths:
     post: { operationId: cancelRuntimeExecution, description: 'PLAN-0317 T2.3: cancels an in-flight execution identified by operationItemId and waits (bounded) for termination confirmation; scope is limited to the workspace in the path.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: itemId, required: true, schema: { type: string } }], responses: { '200': { description: 'Cancellation outcome (cancelled | unconfirmed | already_finished)', content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [cancelled, unconfirmed, already_finished] }, confirmed: { type: boolean } }, required: [status, confirmed] } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/operations/items/{itemId}/late-termination:
     post: { operationId: recordLateTermination, description: 'PLAN-0317 T2.9: records a late (retried) termination reported by the Runtime after an unconfirmed cancel; appends an item.terminated.late event without rewriting the item terminal state.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: itemId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirmed: { type: boolean } }, required: [confirmed] } } } }, responses: { '200': { description: Recorded }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+  # PLAN-0328 M2: Runtime Run checkpoints (shadow git). The CP row `run_checkpoints`
+  # mirrors this contract with state ∈ {base, sealed, unsealed, degraded, expired};
+  # CP calls these routes before the first mutation-capable dispatch (create) and on
+  # every terminal transition (seal). 409/503 are degradations the CP records and
+  # continues dispatching.
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints:
+    post:
+      operationId: runtimeCreateRunCheckpoint
+      description: 'PLAN-0328 M2: establishes the Run base checkpoint before the first mutation-capable dispatch. Idempotent per run. 409 CHECKPOINT_LEASE_HELD = another Run holds the workspace mutation lease; 503 CHECKPOINT_UNAVAILABLE {reason} = Runtime cannot establish it. Both are recorded by CP as `run_checkpoints.state=degraded` with `unrollableReason` LEASE_HELD / UNAVAILABLE, then the dispatch continues (frozen non-strict default).'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [runId], properties: { runId: { type: string }, actor: { type: string }, callId: { type: string } } } } } }
+      responses: { '200': { description: 'Base checkpoint established (idempotent replay returns the existing base)', content: { application/json: { schema: { type: object, required: [checkpointId, runId, state], properties: { checkpointId: { type: string, format: uuid }, runId: { type: string }, state: { type: string, enum: [base] }, baseRef: { type: string }, createdAt: { type: string } } } } }, '409': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/gc:
+    post:
+      operationId: runtimeRunCheckpointGc
+      description: 'PLAN-0328 M2: retention sweep (decision #10: newest N=50 + TTL 30 days per workspace; unsealed runs are never deleted). Returns the sweep counts.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Retention counts', content: { application/json: { schema: { type: object, properties: { counts: { type: object, additionalProperties: true } }, additionalProperties: true } } } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/{runId}:
+    get:
+      operationId: runtimeRunCheckpointStatus
+      description: 'PLAN-0328 M2: Runtime-side checkpoint status for one Run (authoritative refs; the CP `run_checkpoints` row is the durable projection with the same state set).'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Checkpoint status', content: { application/json: { schema: { type: object, properties: { runId: { type: string }, state: { type: string, enum: [base, sealed, unsealed, degraded, expired] }, baseRef: { type: string }, endRef: { type: string }, changedFiles: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } } }, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/{runId}/seal:
+    post:
+      operationId: runtimeSealRunCheckpoint
+      description: 'PLAN-0328 M2: seals the Run (end ref + change set). Idempotent: an existing end ref is returned. CP requests it on every terminal transition and leaves a failed seal in state=base for the Runtime sweep / next startup reconcile.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Sealed outcome', content: { application/json: { schema: { type: object, required: [runId, state], properties: { runId: { type: string }, state: { type: string, enum: [sealed] }, changedFiles: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } }, sealedWithLiveJobs: { type: boolean }, sealedAfterAbnormal: { type: boolean } }, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/{workspaceId}/files/read:
     post: { operationId: runtimeReadFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: File content } } }
   /internal/v1/runtime/workspaces/{workspaceId}/files/list:

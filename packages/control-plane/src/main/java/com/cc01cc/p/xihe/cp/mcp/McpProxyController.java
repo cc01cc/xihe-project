@@ -23,11 +23,14 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
+import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
@@ -117,6 +120,7 @@ public class McpProxyController {
     private final WorkspaceService workspaceService;
     private final SessionRepository sessionRepository;
     private final OperationService operationService;
+    private final RunCheckpointService runCheckpointService;
 
     public McpProxyController(
             RequestRewriter rewriter,
@@ -133,7 +137,8 @@ public class McpProxyController {
             OperationService operationService,
             ConfigService configService,
             ToolTimeoutPolicy toolTimeoutPolicy,
-            org.springframework.core.env.Environment environment) {
+            org.springframework.core.env.Environment environment,
+            RunCheckpointService runCheckpointService) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -149,6 +154,7 @@ public class McpProxyController {
         this.workspaceService = workspaceService;
         this.sessionRepository = sessionRepository;
         this.operationService = operationService;
+        this.runCheckpointService = runCheckpointService;
         this.configService = configService;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.environment = environment;
@@ -447,8 +453,11 @@ public class McpProxyController {
         // PLAN-0328 T1.15：只为**实际派发**的调用构建安全 Verdict 快照（deny/未获批不落账本，
         // 也不得凭空造 Verdict）；快照随后挂到该次派发的既有账本条目上。
         // T1.7：会话指纹命中判为 reused=true（可审计），其余为 null（不适用）。
+        ToolFaceRegistry.Face face = policy.faceOf(policyContext, toolName);
+        // PLAN-0328 M2 W3：可变调用派发前确保 Run checkpoint 存在（失败降级继续，绝不阻断）。
+        ensureRunCheckpoint(wsId, body, headers, access, face, serverId);
         String policySummary = OperationPolicySummary.buildSnapshot(
-                verdict, policy.faceOf(policyContext, toolName), policyContext,
+                verdict, face, policyContext,
                 reusedSessionGrant ? Boolean.TRUE : null).orElse(null);
 
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
@@ -504,6 +513,42 @@ public class McpProxyController {
 
         body = rewritten;
         return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardWait, policySummary);
+    }
+
+    /**
+     * PLAN-0328 M2 W3（frozen 契约 §T2.1–T2.4）：派发前的 Run checkpoint 确保。
+     *
+     * <p>只在三件事同时成立时触发：① 调用携带 {@code X-Chat-Run-Id}（Agent run 上下文）；
+     * ② 调用是**可变**的——工具面 {@code actionClass ∈ {write, delete, exec}}，或目标不是内置
+     * {@code __system__} server（stdio/remote MCP 一律视为不透明可变面）；③ 该 run 尚无行
+     * （服务侧按 run 幂等跳过）。失败/409/503 由服务降级记录，**绝不阻断派发**。</p>
+     */
+    private void ensureRunCheckpoint(String wsId, String body, HttpHeaders headers, AccessContext access,
+                                     ToolFaceRegistry.Face face, String serverId) {
+        String runId = headers.getFirst("X-Chat-Run-Id");
+        if (runId == null || runId.isBlank()) {
+            return;
+        }
+        String actionClass = face == null ? PolicyLayer.UNCLASSIFIED_ACTION : face.actionClass();
+        if (!isMutationCapable(actionClass, serverId)) {
+            return;
+        }
+        String callId = canonicalOperationItemId(headers.getFirst("X-Operation-Item-Id"), body);
+        try {
+            runCheckpointService.ensureCheckpoint(runId, wsId, access.userId(), callId);
+        } catch (RuntimeException e) {
+            // 二次保险：降级政策（spec §3.1）——建立失败继续派发并常驻标注"本轮不可回滚"。
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ensure_unhandled runId={} tool={} failureType={}",
+                    runId, face == null ? "-" : actionClass, e.getClass().getName());
+        }
+    }
+
+    /** 可变调用判据：写/删/执行域，或任何非内置（stdio/remote）MCP server 目标。 */
+    static boolean isMutationCapable(String actionClass, String serverId) {
+        boolean mutationClass = ToolFaceRegistry.ACTION_WRITE.equals(actionClass)
+                || ToolFaceRegistry.ACTION_DELETE.equals(actionClass)
+                || ToolFaceRegistry.ACTION_EXEC.equals(actionClass);
+        return mutationClass || (serverId != null && !"__system__".equals(serverId));
     }
 
     /**

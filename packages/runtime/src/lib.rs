@@ -1,6 +1,8 @@
 pub mod capability;
 pub mod channel;
 pub mod channel_proto;
+pub mod checkpoint;
+pub mod checkpoint_api;
 pub mod device;
 pub mod dotenv_loader;
 pub mod environment;

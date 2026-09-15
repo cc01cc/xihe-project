@@ -286,6 +286,9 @@ mod tests {
             ready: Arc::new(AtomicBool::new(true)),
             workspace_ensurer,
             router,
+            checkpoints: Arc::new(xihe_runtime::checkpoint_api::CheckpointService::new(
+                dir.path(),
+            )),
         });
         (app, ws_id, dir, TestCp { task })
     }

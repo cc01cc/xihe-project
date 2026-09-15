@@ -250,7 +250,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     private ChatRunRecoveryService reconciliationService() {
         return new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
-                operationService);
+                operationService, runCheckpointService);
     }
 
     // ── PLAN-0317 T2.7：周期对账（grace=-1 让所有测试 run 立即进入候选） ──────
@@ -542,6 +542,9 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private com.cc01cc.p.xihe.cp.operation.OperationService operationService;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.RunCheckpointService runCheckpointService;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.OperationEventRepository operationEventRepository;

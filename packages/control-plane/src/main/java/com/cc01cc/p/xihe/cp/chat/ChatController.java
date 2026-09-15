@@ -13,6 +13,7 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
@@ -77,10 +78,19 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
     private final com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient;
+    private final RunCheckpointService runCheckpointService;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
     private static final String INSTANCE_ID = UUID.randomUUID().toString();
+
+    /**
+     * PLAN-0328 M2 W3: statuses whose transition ends the Run and therefore must
+     * request a checkpoint seal (cancelled does not pass through {@code transitionRun}
+     * and is sealed by {@code settleRunCancellation}).
+     */
+    private static final List<String> TERMINAL_RUN_STATUSES = List.of(
+            "succeeded", "failed", "partial", "ambiguous", "cancelled");
 
     /**
      * PLAN-0307 T2.7 (decision #3): domains with per-run Agent consumers, delivered
@@ -115,7 +125,8 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder,
             com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
-            com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient) {
+            com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient,
+            RunCheckpointService runCheckpointService) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -138,6 +149,7 @@ public class ChatController {
         this.mcpProxyController = mcpProxyController;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.runtimeExecutionClient = runtimeExecutionClient;
+        this.runCheckpointService = runCheckpointService;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -559,6 +571,8 @@ public class ChatController {
             logger.warn("[LIFECYCLE] service=cp event=run_cancel_transition_ignored runId={}", runId);
         }
         operationService.transitionOperationForRun(runId, "cancelled", null, null);
+        // PLAN-0328 M2 W3: cancellation bypasses transitionRun; seal explicitly.
+        runCheckpointService.requestSeal(runId);
         logger.info("[LIFECYCLE] service=cp event=run_cancelled runId={}", runId);
     }
 
@@ -802,8 +816,14 @@ public class ChatController {
             return;
         }
         String terminalStatus = "ambiguous".equals(outcome) ? "ambiguous" : "failed";
-        transitionRun(runId, List.of("accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching"),
+        boolean transitioned = transitionRun(runId,
+                List.of("accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching"),
                 terminalStatus, outcome, errorCode, detail, 0, 0);
+        if (!transitioned) {
+            // The run was already terminal through another path: the seal request
+            // must still happen (transitionRun could not issue it).
+            runCheckpointService.requestSeal(runId);
+        }
         sseManager.send(sessionId, "error", Map.of(
                 "code", errorCode,
                 "requestId", requestId,
@@ -821,11 +841,15 @@ public class ChatController {
                 "synthetic", true));
     }
 
-    private void transitionRun(String runId, List<String> expectedStatuses, String status,
-                               String outcome, String errorCode, String errorDetail,
-                               int tokenCount, int assistantChars) {
+    /**
+     * @return true when this call performed the transition; false when it was
+     *         ignored (already terminal / expected-status mismatch)
+     */
+    private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
+                                  String outcome, String errorCode, String errorDetail,
+                                  int tokenCount, int assistantChars) {
         if (runId == null || runId.isBlank()) {
-            return;
+            return false;
         }
         int updated = chatRunRepository.transition(
                 UUID.fromString(runId), expectedStatuses, status, outcome, errorCode, errorDetail,
@@ -833,7 +857,7 @@ public class ChatController {
         if (updated == 0) {
             logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={}",
                     runId, status);
-            return;
+            return false;
         }
         String operationStatus = switch (status) {
             case "running" -> "running";
@@ -849,6 +873,13 @@ public class ChatController {
                     errorCode == null && "partial".equals(status) ? "PARTIAL_RESULT" : errorCode,
                     errorDetail);
         }
+        // PLAN-0328 M2 W3: terminal transition → seal the run checkpoint. The
+        // request is asynchronous and never fails the transition; a failed seal
+        // stays in `base` for the Runtime sweep / startup reconcile.
+        if (TERMINAL_RUN_STATUSES.contains(status)) {
+            runCheckpointService.requestSeal(runId);
+        }
+        return true;
     }
 
     private String safeErrorCode(String code) {

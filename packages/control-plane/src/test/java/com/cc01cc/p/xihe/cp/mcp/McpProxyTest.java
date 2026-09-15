@@ -19,6 +19,7 @@ import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
 import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
@@ -57,6 +58,7 @@ class McpProxyTest {
     private WorkspaceService workspaceService;
     private SessionRepository sessionRepository;
     private OperationService operationService;
+    private RunCheckpointService runCheckpointService;
     private McpProxyController controller;
     private org.springframework.mock.env.MockEnvironment environment;
 
@@ -74,6 +76,7 @@ class McpProxyTest {
         workspaceService = mock(WorkspaceService.class);
         sessionRepository = mock(SessionRepository.class);
         operationService = mock(OperationService.class);
+        runCheckpointService = mock(RunCheckpointService.class);
         environment = new org.springframework.mock.env.MockEnvironment();
 
         controller = new McpProxyController(
@@ -83,7 +86,8 @@ class McpProxyTest {
                 workspaceService, sessionRepository, operationService,
                 mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
                 new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy(),
-                environment
+                environment,
+                runCheckpointService
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -1288,4 +1292,210 @@ class McpProxyTest {
         }
     }
 
+    // ── PLAN-0328 M2 W3：可变调用派发前的 Run checkpoint 确保 ─────────────────────
+
+    @Test
+    void mutationCapable_requiresWriteDeleteExecOrThirdPartyServer() {
+        assertTrue(McpProxyController.isMutationCapable("write", "__system__"));
+        assertTrue(McpProxyController.isMutationCapable("delete", "__system__"));
+        assertTrue(McpProxyController.isMutationCapable("exec", "__system__"));
+        assertTrue(McpProxyController.isMutationCapable("read", "some-server"),
+                "any non-__system__ MCP server target is opaque/mutation-capable");
+        assertTrue(McpProxyController.isMutationCapable("unclassified", "some-server"));
+        assertFalse(McpProxyController.isMutationCapable("read", "__system__"));
+        assertFalse(McpProxyController.isMutationCapable("network", "__system__"));
+        assertFalse(McpProxyController.isMutationCapable("unclassified", "__system__"));
+        assertFalse(McpProxyController.isMutationCapable("read", null));
+        assertFalse(McpProxyController.isMutationCapable(null, "__system__"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_writeDispatchEnsuresRunCheckpointBeforeForward() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
+                .thenReturn(new ToolFaceRegistry.Face("write", ToolShape.STRUCTURED));
+        seedToolCache("write_file", "__system__");
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":12}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String callId = java.util.UUID.randomUUID().toString();
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":12}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+            headers.set("X-Operation-Item-Id", callId);
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(runCheckpointService).ensureCheckpoint(TEST_WS_UUID, TEST_WS_UUID, "u-1", callId);
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_checkpointFailureNeverBlocksDispatch() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
+                .thenReturn(new ToolFaceRegistry.Face("exec", ToolShape.INTERPRETER));
+        seedToolCache("execute_command", "__system__");
+        doThrow(new IllegalStateException("checkpoint store exploded"))
+                .when(runCheckpointService).ensureCheckpoint(anyString(), anyString(), any(), any());
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":13}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"execute_command\",\"arguments\":{\"cmd\":\"ls\"}},\"id\":13}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode(),
+                    "degraded checkpoint establishment must never block the dispatch");
+            assertTrue(response.getBody().contains("result"));
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_readOnlySystemCallDoesNotTouchCheckpoint() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("read_file", "__system__");
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":14}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":14}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(runCheckpointService, never()).ensureCheckpoint(any(), any(), any(), any());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_noRunHeaderDoesNotTouchCheckpoint() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
+                .thenReturn(new ToolFaceRegistry.Face("write", ToolShape.STRUCTURED));
+        seedToolCache("write_file", "__system__");
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":15}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":15}";
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, new HttpHeaders(), "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(runCheckpointService, never()).ensureCheckpoint(any(), any(), any(), any());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_stdioServerDispatchEnsuresCheckpointEvenForReadFace() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        seedToolCache("stdio_read_tool", "some-stdio-server");
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp/stdio/some-stdio-server",
+                exchange -> {
+                    byte[] response = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[]},\"id\":16}"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, response.length);
+                    exchange.getResponseBody().write(response);
+                    exchange.close();
+                });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"stdio_read_tool\",\"arguments\":{}},\"id\":16}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                    accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(runCheckpointService).ensureCheckpoint(eq(TEST_WS_UUID), eq(TEST_WS_UUID), eq("u-1"), any());
+        } finally {
+            stub.stop(0);
+        }
+    }
 }

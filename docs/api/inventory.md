@@ -113,6 +113,14 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 - Terminal outcomes are `success`, `error`, `partial`, and `ambiguous`. A provider disconnect with uncertain execution is `ambiguous` and must not be automatically retried. Manual retry uses a new key.
 - `/api/v1/exec` is intentionally absent; callers use `/api/v1/chat`.
 
+## Run Checkpoint Contract (PLAN-0328 M2)
+
+- **Runtime routes (internal, CP is the caller)**: `POST /internal/v1/runtime/workspaces/{ws}/checkpoints` (`{runId, actor, callId}` → `{checkpointId, runId, state: base, baseRef, createdAt}`; idempotent per run), `POST .../checkpoints/{runId}/seal` (`{runId, state: sealed, changedFiles: [{status, path}], sealedWithLiveJobs, sealedAfterAbnormal}`; idempotent), `GET .../checkpoints/{runId}` (status), `POST .../checkpoints/gc` (retention counts; N=50 + TTL 30 days, unsealed never deleted).
+- **CP projection (`run_checkpoints`, V22)**: one row per `(run_id, workspace_id)`; `state` ∈ `base | sealed | unsealed | degraded | expired`; `changed_files` is JSON text; `unrollable_reason` records the frozen degradation reasons `LEASE_HELD` (409 `CHECKPOINT_LEASE_HELD`) and `UNAVAILABLE` (503 `CHECKPOINT_UNAVAILABLE {reason}`).
+- **Trigger**: before dispatching a mutation-capable `tools/call` with a run context (`X-Chat-Run-Id`), where mutation-capable = tool face `actionClass ∈ {write, delete, exec}` or the target server is not the built-in `__system__` (stdio/remote MCP are opaque). Establishment failure never blocks the dispatch — the row degrades and the run is visibly "not rollbackable". The managed **strict** mode (refuse to start a write Run when establishment fails) is an explicit deferral: no config key exists and the frozen default stays non-strict.
+- **Seal**: every terminal Run transition (success/partial/failed/ambiguous via `transitionRun`, the synthetic error path, cancellation settlement, and startup recovery) requests an async, idempotent seal; a failed seal stays `base` for the Runtime sweep or the next startup reconcile (which seals terminal runs with an unsealed checkpoint).
+- **Ledger**: checkpoint creation/seal appends an operation-ledger marker (`kind=checkpoint`, `source=runtime`, `tool_name=run_checkpoint`); when the run has no durable operation the marker is skipped and logged (never fabricated).
+
 ## Tool Timeout Budget (PLAN-0308 M1)
 
 - **per-call request**: `POST /api/v1/chat` accepts an optional `toolTimeouts` object (`{toolName: seconds}`) — the highest-priority input to the tool budget. Values are positive integer seconds, max 600 (code constant); invalid or oversized values return `400 INVALID_REQUEST` naming the offending key (never silently clamped). The map participates in the idempotency request hash, so replaying a key with different timeouts is `409 IDEMPOTENCY_KEY_CONFLICT`, not a silent reuse.

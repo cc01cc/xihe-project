@@ -154,3 +154,11 @@ path = "tests/cp_real_integration_test.rs"
 [[test]]
 name = "rmcp_protocol_test"
 path = "tests/rmcp_protocol_test.rs"
+
+[[test]]
+name = "checkpoint_shadow_git_test"
+path = "tests/checkpoint_shadow_git_test.rs"
+
+[[test]]
+name = "checkpoint_api_flow_test"
+path = "tests/checkpoint_api_flow_test.rs"

@@ -5,10 +5,13 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,17 +36,21 @@ public class ChatRunRecoveryService {
     private final ChatApprovalRepository approvalRepository;
     private final ChatController chatController;
     private final OperationService operationService;
+    private final RunCheckpointService runCheckpointService;
 
     public ChatRunRecoveryService(ChatRunRepository chatRunRepository,
                                   ChatApprovalRepository approvalRepository,
                                   ChatController chatController,
-                                  OperationService operationService) {
+                                  OperationService operationService,
+                                  RunCheckpointService runCheckpointService) {
         this.chatRunRepository = chatRunRepository;
         this.approvalRepository = approvalRepository;
         this.chatController = chatController;
         this.operationService = operationService;
+        this.runCheckpointService = runCheckpointService;
     }
 
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     @EventListener(ApplicationReadyEvent.class)
     @Transactional
     public void reconcileOnStartup() {
@@ -82,6 +89,22 @@ public class ChatRunRecoveryService {
         }
         logger.info("[LIFECYCLE] service=cp event=chat_run_recovery_completed recovered={} ambiguous={} cancelled={}",
                 restored, ambiguous, cancelled);
+    }
+
+    /**
+     * PLAN-0328 M2 W3（spec §3.1 补 seal）：恢复事务提交后，封存"已终态但未 seal"
+     * 的 Run checkpoint。放在独立的低优先级监听器里，保证：(a) 先看到恢复写下的终态；
+     * (b) 不在恢复事务内做 Runtime HTTP 调用。幂等——每次启动重复执行安全。
+     */
+    @Order(Ordered.LOWEST_PRECEDENCE)
+    @EventListener(ApplicationReadyEvent.class)
+    public void sealRecoveredCheckpoints() {
+        try {
+            int sealed = runCheckpointService.sealTerminalCheckpoints();
+            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_recovery_seal_completed sealed={}", sealed);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_recovery_seal_failed", e);
+        }
     }
 
     /**

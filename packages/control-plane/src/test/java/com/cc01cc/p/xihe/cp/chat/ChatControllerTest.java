@@ -123,6 +123,10 @@ class ChatControllerTest extends AbstractH2Test {
     @MockitoSpyBean
     private ApprovalAgentClient approvalAgentClient;
 
+    /** PLAN-0328 M2 W3: terminal transitions must request a checkpoint seal. */
+    @MockitoSpyBean
+    private com.cc01cc.p.xihe.cp.service.RunCheckpointService runCheckpointService;
+
     @LocalServerPort
     private int serverPort;
 
@@ -844,5 +848,91 @@ class ChatControllerTest extends AbstractH2Test {
             // 2026-09-13 E2E（V11）：usage 条目写完即 completed，不得残留 pending。
             assertEquals("completed", usageItem.getStatus());
         });
+    }
+
+    // ── PLAN-0328 M2 W3：终态路径的 checkpoint seal 触发 ─────────────────────────
+
+    @Test
+    void chat_terminalSuccessRequestsCheckpointSeal() throws IOException {
+        String sseBody = "event: token\ndata: {\"content\":\"ok\"}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, sseBody.getBytes(StandardCharsets.UTF_8).length);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(sseBody.getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "seal on success",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+            assertEquals("succeeded", run.getStatus());
+        });
+        verify(runCheckpointService, timeout(5000)).requestSeal(runId);
+    }
+
+    @Test
+    void chat_agentErrorTerminalPathRequestsCheckpointSeal() throws IOException {
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            byte[] body = "{\"code\":\"LLM_PROVIDER_UNREACHABLE\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+            exchange.sendResponseHeaders(502, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "seal on agent error",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+
+        verify(runCheckpointService, timeout(5000)).requestSeal(runId);
+    }
+
+    @Test
+    void cancelRunTerminalPathRequestsCheckpointSeal() {
+        ChatRun run = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,
+                "cancel-idem-" + UUID.randomUUID(), "hash", "openai", "gpt-test", "none", "running");
+        chatRunRepository.save(run);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + run.getId() + "/cancel", HttpMethod.POST,
+                new HttpEntity<>(Map.of("reason", "user_requested"), headers), Map.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("cancel_accepted", response.getBody().get("status"));
+        assertEquals("cancelled", chatRunRepository.findById(run.getId()).orElseThrow().getStatus());
+        verify(runCheckpointService, timeout(5000)).requestSeal(run.getId().toString());
     }
 }
