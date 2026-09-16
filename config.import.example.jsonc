@@ -1,6 +1,7 @@
 {
   // =========================================================================
-  // xihe 配置导入模板 — instance 层（PLAN-0307 九域模型，approval-policy 由 PLAN-0337 新增）
+  // xihe 配置导入模板 — instance 层（PLAN-0307 域模型；approval-policy 由 PLAN-0337 新增，
+  // 但**仅 workspace 层可写**，故本 instance 模板不包含该域）
   // =========================================================================
   // 用法:
   //   PowerShell: Copy-Item config.import.example.jsonc config.import.local.jsonc
@@ -31,9 +32,10 @@
   // context-policy — 上下文压缩策略（defaults/models 结构见 schema）
   "context-policy": {},
 
-  // approval-policy — 审批模式（仅 workspace 层可写；instance 层留空即不施加约束）
-  // mode: manual（ask 交人确认）| auto（ask 自动放行，deny 与能力边界仍生效）
-  "approval-policy": {},
+  // approval-policy — 审批模式：**仅 workspace 层可写**，instance 层不提供该域
+  // （写入会被 403 拒绝；平台管控改用 locked deny/ask 规则）。
+  // workspace 配置通过 UI Settings → 工作区 → 审批策略，或
+  // PUT /api/v1/config/workspace/approval-policy {"mode":"manual|auto"} 设置。
 
   // embedding — 检索嵌入
   "embedding": {

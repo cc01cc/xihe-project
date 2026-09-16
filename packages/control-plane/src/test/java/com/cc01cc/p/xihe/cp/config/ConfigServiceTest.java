@@ -142,6 +142,14 @@ class ConfigServiceTest {
     }
 
     @Test
+    void putLayer_approvalPolicyAtInstanceLayer_isRejected() {
+        // PLAN-0337 Audit 2 C8（选项①）：该域是 workspace-only，instance 层必须显式拒绝，
+        // 否则平台写入会被当成 workspace 默认并在审计里错标来源层。
+        assertThrows(ConfigService.ConfigAccessException.class, () ->
+            configService.putLayer("instance", "approval-policy", Map.of("mode", "auto"), "admin", null, null));
+    }
+
+    @Test
     void putLayer_unknownApprovalMode_isRejectedBySchema() {
         assertThrows(IllegalArgumentException.class, () ->
             configService.putLayer("workspace", "approval-policy", Map.of("mode", "yolo"), "user", null, wsA));
