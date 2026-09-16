@@ -854,6 +854,9 @@ async function main() {
       ports: { ui: uiPort, cp: cpPort, agent: agentPort, runtime: runtimePort, pg: pgPort },
       pgProjectName,
       pids,
+      // The service token is otherwise unknowable to the operator; checkpoint-budget.mjs
+      // (documented --token=<XIHE_CP_API_TOKEN>) reads it from here against a persistent stack.
+      serviceToken,
     }, null, 2))
     console.log(`[e2e-host] persistent stack ready; state written to ${stateFile}`)
     console.log('[e2e-host] run specs with: XIHE_E2E_EXTERNAL_SERVER=1 node scripts/e2e-host.mjs --llm-mode=<mode> <specs...>')

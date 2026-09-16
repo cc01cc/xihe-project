@@ -248,8 +248,11 @@ async function executeRevert(runId) {
 
 async function report() {
   // ── health + diagnostics cross-check ──────────────────────────────────────
+  // The Runtime liveness endpoint answers plain text `OK` (main.rs `async fn health`),
+  // not a JSON body; accept both so the probe works against the real contract.
   const health = await requestChecked('GET', '/health')
-  if (health.payload?.status !== 'ok') {
+  const healthOk = health.payload?.status === 'ok' || String(health.text ?? '').trim() === 'OK'
+  if (!healthOk) {
     throw new Error(`Runtime /health is not ok: ${health.text}`)
   }
   const diagnostics = await requestChecked('GET', '/internal/v1/runtime/diagnostics')
@@ -485,17 +488,20 @@ function markdown(report) {
 }
 
 try {
-  const report = await report()
-  const json = JSON.stringify(report, null, 2)
+  // `report` (the function) is shadowed in this block by the const binding; name the
+  // result differently or the initializer hits the TDZ ("Cannot access 'report' before
+  // initialization") before the probe ever runs.
+  const result = await report()
+  const json = JSON.stringify(result, null, 2)
   console.log(json)
-  console.log(markdown(report))
+  console.log(markdown(result))
   if (outPath) {
     const absolute = resolve(outPath)
     await mkdir(dirname(absolute), { recursive: true })
-    await writeFile(absolute, outPath.endsWith('.md') ? markdown(report) : json)
+    await writeFile(absolute, outPath.endsWith('.md') ? markdown(result) : json)
     console.log(`[budget] report written: ${absolute}`)
   }
-  process.exitCode = report.thresholds.allPassed ? 0 : 1
+  process.exitCode = result.thresholds.allPassed ? 0 : 1
 } catch (error) {
   console.error(`[budget] failed: ${error instanceof Error ? error.message : String(error)}`)
   process.exitCode = 2
