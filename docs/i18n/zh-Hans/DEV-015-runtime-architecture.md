@@ -77,11 +77,12 @@ sequenceDiagram
 - **Job 运行时限**：`start_background_process` 的 `timeout`（payload `timeoutSecs`）默认 60 分钟、显式 0 不限；到点由宿主清理通道（`cleanup_jobs` op）终止进程组并落 `timeout` 终态。job 参数/描述统一 `jobId`，清理先判活（`/bin/kill -0`）、以**文件** mtime 判过期（禁用目录 mtime，防误清运行中 job）。
 - 容器侧改动必须先 `mise run image:workspace:build` 才生效（否则测到的是旧二进制）。
 
-## 6. 当前事实：Run checkpoint 与回滚（PLAN-0328）
+## 6. 当前事实：Run checkpoint 与回滚（切片模型，PLAN-0338）
 
-- Runtime 在 `<hostRoot>/.xihe-shadow/<workspaceId>.git` 维护独立影子 Git；它位于 workspace 外、不 bind 进 Sandbox，不写用户 `.git`、index、branch。每个 Run 使用 `refs/xihe/<runId>/{base,end}`，只记录工作区变更集。
+- Runtime 在 `<hostRoot>/.xihe-shadow/<workspaceId>.git` 维护独立影子 Git；它位于 workspace 外、不 bind 进 Sandbox，不写用户 `.git`、index、branch。每个 Run 的写入经**单次捕获**成为切片（`refs/xihe/slices/<capturedAt>-<commitHash>`，一个切片一 ref，无序号），只记录工作区变更集。
 - `hostRoot` 是 workspace 物理根；Runtime 先按 workspace 派生目录并执行路径/归属校验，影子库与工作区均限于该根下，未知 workspace、Git 不可用或版本不足均显式返回不可回滚，不回退到宿主任意目录。
-- Runtime 内部契约为 `POST /internal/v1/runtime/workspaces/{workspaceId}/checkpoints`、`GET .../checkpoints/{runId}`、`POST .../{runId}/seal`、`POST .../checkpoints/gc`，以及 revert preview/execute、blob、`GET .../git-status`；CP 是调用方，公共 `/api/v1/chat/runs/{runId}/checkpoint...` 与 workspace 路由由 CP 投影/代理。
-- workspace mutation lease 为单写者、TTL 30 分钟；并发建立或回滚返回 `CHECKPOINT_LEASE_HELD`。保留策略固定为每 workspace 最新 50 个 Run、TTL 30 天；unsealed checkpoint 永不由 GC 删除。
-- `apply_patch` 是 Gateway-public 的 23 工具之一，走正常 Agent/CP 审批并触发 checkpoint；`create_snapshot`、`revert_snapshot` 是 Runtime/container internal-only，不进入 `tools/list`，Agent 不可发现或调用。UI 回滚只走 CP public revert 路由。
-- 端点和字段以 [OpenAPI](../../api/openapi.yaml) / [API inventory](../../api/inventory.md) 为准；实现与真实验证证据见 [PLAN-0328 M2/M3 evidence](../../../../plans/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md)。
+- Runtime 内部契约为 `POST .../checkpoints/capture`、`POST .../checkpoints/gc`、`POST .../checkpoints/cleanup`、revert preview/execute（入参=切片 ref）、blob、`GET .../git-status`；CP 是调用方，公共 `/api/v1/chat/runs/{runId}/checkpoint...` 与 workspace 路由由 CP 投影/代理。
+- 捕获锁与恢复锁为短锁（fail-fast，不排队），**无 run 长租约**；恢复期间**不锁写**，与目标切片不符的路径在结果中标注 `suspects`。保留策略按**切片数**（最新 50 个切片 + TTL 30 天）；清理为方案 B（删除整个影子库，幂等，忙时 409 `CHECKPOINT_BUSY`）。
+- `apply_patch` 是 Gateway-public 的 23 工具之一，走正常 Agent/CP 审批；捕获不再由派发触发，只发生在 Run 终止（无变化不落片）。`create_snapshot`、`revert_snapshot` 是 Runtime/container internal-only，不进入 `tools/list`，Agent 不可发现或调用。UI 回滚只走 CP public revert 路由。
+- 嵌套仓库按不透明 gitlink 声明（`opaqueNestedRepos[]`）；可选硬限制开关 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS`（默认关闭，开启时捕获以 `NESTED_REPO_LIMIT` 显式降级）。
+- 端点和字段以 [OpenAPI](../../api/openapi.yaml) / [API inventory](../../api/inventory.md) 为准；实现与真实验证证据见 `plans/PLAN-0338-XH-checkpoint-core-closure/evidence/`（`t1.0-*`、`t1.2-*`、`host-matrix/`）。

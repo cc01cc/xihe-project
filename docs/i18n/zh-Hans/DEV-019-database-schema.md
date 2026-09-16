@@ -38,7 +38,7 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V23__run_checkpoint_revert.sql`（当前 active chain；V1 基线，V2–V23 增量迁移） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V26__run_checkpoint_slice_state_vocabulary.sql`（当前 active chain；V1 基线，V2–V26 增量迁移） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（30 个）+ `context/entity/`（3 个） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
@@ -676,6 +676,7 @@ erDiagram
 | V21 | `V21__policy_revision_counter.sql` | 持久化单调策略 revision counter | `policy_revision` |
 | V22 | `V22__run_checkpoints.sql` | Run checkpoint CP 投影、状态与账本 kind 约束扩展 | `run_checkpoints/operation_items` |
 | V23 | `V23__run_checkpoint_revert.sql` | checkpoint revert 状态、引用、摘要与尝试计数 | `run_checkpoints` |
+| V26 | `V26__run_checkpoint_slice_state_vocabulary.sql` | checkpoint 切片状态词表（`captured`/`abnormal-captured`）；切片表重建归 PLAN-0339 | `run_checkpoints` |
 
 ## 5. 本地查看与运维
 
@@ -691,7 +692,7 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22 建立 `run_checkpoints` CP projection；V23 为 UI 触发 revert 的追加列（不新建表）。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22 建立 `run_checkpoints` CP projection；V23 为 UI 触发 revert 的追加列（不新建表）；V26 放宽 checkpoint 状态词表（切片模型，PLAN-0338），切片表重建与旧行清空归 PLAN-0339。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 

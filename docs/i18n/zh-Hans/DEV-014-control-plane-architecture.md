@@ -77,6 +77,6 @@ flowchart LR
 ## 8. 当前事实：PLAN-0328 审批与 Run checkpoint
 
 - **审批策略**：策略面（tool face、规则、mode、grant reuse）与既有 UI 人工审批并行；post-gate 的 run-scoped ASK 以 HTTP `409` 携带 JSON-RPC `error.code=-32003`、`error.message=APPROVAL_REQUIRED` 和 `error.data`（含 `approvalRequestId` 等安全字段）。无 run context 仍使用 legacy Problem Details 409。
-- **Checkpoint 投影**：Runtime 负责影子 Git；CP 以 `run_checkpoints`（V22）投影 base/sealed/unsealed/degraded/expired 状态，V23 追加 revert 状态与摘要。公共 Run/workspace checkpoint、preview、revert、file、git-status、retention、GC 路由以 [OpenAPI](../../api/openapi.yaml) 和 [API inventory](../../api/inventory.md) 为准。
+- **Checkpoint 投影（切片模型，PLAN-0338）**：Runtime 负责影子 Git；CP 以 `run_checkpoints`（V22）投影 `captured`/`abnormal-captured`/`degraded`/`expired` 状态（V23 追加 revert 状态与摘要，V26 放宽状态词表；切片表重建与旧行清空归 PLAN-0339）。捕获在 Run 终止单次触发（无变化不落片）；回退入参为切片 ref。公共 Run/workspace checkpoint、preview、revert、file、git-status、retention、GC 路由以 [OpenAPI](../../api/openapi.yaml) 和 [API inventory](../../api/inventory.md) 为准。
 - **回滚账本**：UI 触发的 `revert_snapshot` 记录为 `kind=checkpoint`、`source=ui`；checkpoint 建立/封存仍记录 `source=runtime`。摘要只含计数、结果与安全原因，不含原始参数或文件内容。
 - **规范入口**：完整策略与 checkpoint 设计、测试和剩余证据见 [PLAN-0328 evidence](../../../../plans/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md)。本文只保留当前边界，不复制设计。
