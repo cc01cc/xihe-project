@@ -153,8 +153,8 @@ describe('useSSE', () => {
       sourceLayer: 'workspace',
       matchedRule: null,
       reason: 'No matching allow rule',
-      mode: 'default',
-      modeAtGrant: 'managed',
+      mode: 'manual',
+      modeAtGrant: 'manual',
       actionClass: 'write',
       shape: 'structured',
     }

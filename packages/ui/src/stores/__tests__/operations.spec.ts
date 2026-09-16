@@ -60,7 +60,7 @@ describe('useOperationStore', () => {
       items: [{
         id: 'item-1',
         operationId: 'op-1',
-        toolCallId: 'call-bypass-1',
+        toolCallId: 'call-auto-1',
         sequence: 1,
         kind: 'tool_call',
         toolName: 'write_file',
@@ -68,13 +68,13 @@ describe('useOperationStore', () => {
         policyDecision: 'allow',
         status: 'completed',
         policy: {
-          // A bypass verdict is an allow with a non-null allowedBy (CP PolicyVerdict.allowedByMode).
+          // An auto verdict is an allow with a non-null allowedBy (CP PolicyVerdict.allowedByMode).
           effect: 'allow' as const,
           sourceLayer: 'builtin' as const,
           matchedRule: '{ write, "*", ask }',
           reason: 'requires approval for domain write',
-          mode: 'bypass' as const,
-          allowedBy: 'bypass@session',
+          mode: 'auto' as const,
+          allowedBy: 'auto@session',
           actionClass: 'write',
           shape: 'structured' as const,
         },
@@ -88,7 +88,7 @@ describe('useOperationStore', () => {
     await store.loadTrace('op-1')
 
     expect(store.selectedTrace?.items[0]?.policy).toEqual(trace.items[0]?.policy)
-    expect(store.selectedTrace?.items[0]?.policy?.allowedBy).toBe('bypass@session')
+    expect(store.selectedTrace?.items[0]?.policy?.allowedBy).toBe('auto@session')
   })
 
   it('stores the error and rethrows failed loads', async () => {

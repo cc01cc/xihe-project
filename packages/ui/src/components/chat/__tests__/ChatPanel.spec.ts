@@ -39,7 +39,7 @@ const approval: ApprovalRequest = {
     sourceLayer: 'workspace',
     matchedRule: null,
     reason: 'No matching allow rule',
-    mode: 'default',
+    mode: 'manual',
     actionClass: 'write',
     shape: 'structured',
   },

@@ -31,7 +31,7 @@ const approvalEvent = (
     sourceLayer: 'workspace',
     matchedRule: null,
     reason: 'No matching allow rule',
-    mode: 'default',
+    mode: 'manual',
     actionClass,
     shape,
   },
@@ -138,8 +138,8 @@ async function installPolicyModeRoute(page: import('@playwright/test').Page) {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(isPost
-        ? { sessionId, mode: 'default', scope: 'session' }
-        : { sessionId, mode: 'default', sessionRules: 0 }),
+        ? { sessionId, mode: 'manual', scope: 'session' }
+        : { sessionId, mode: 'manual', sessionRules: 0 }),
     })
   })
 }
@@ -375,14 +375,14 @@ test.describe('Chat approval flow', () => {
     await expect(page).toHaveURL(new RegExp(`/chat/${SECOND_SESSION_ID}$`))
   })
 
-  test('shows bypass mode warning and closes it through the mode control', async ({ page }) => {
+  test('shows auto mode warning and closes it through the mode control', async ({ page }) => {
     await page.unroute('**/api/v1/policy/mode*')
-    let mode: 'bypass' | 'default' = 'bypass'
+    let mode: 'auto' | 'manual' = 'auto'
     let postResponse: Record<string, unknown> | null = null
     await page.route('**/api/v1/policy/mode*', async (route) => {
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON() as { mode?: string } | null
-        if (body?.mode === 'default') mode = 'default'
+        if (body?.mode === 'manual') mode = 'manual'
         postResponse = { sessionId: SESSION_ID, mode, scope: 'session' }
       }
       const response = route.request().method() === 'POST'
@@ -396,13 +396,13 @@ test.describe('Chat approval flow', () => {
     })
     await openApprovalChat(page)
 
-    await expect(page.locator('[data-testid="session-policy-mode-badge"]')).toContainText('免批')
-    const bypassBanner = page.locator('[data-testid="session-policy-bypass-banner"]')
-    await expect(bypassBanner).toBeVisible()
-    await bypassBanner.locator('[data-testid="session-policy-bypass-close"]').click()
-    await expect(bypassBanner).toBeHidden()
-    await expect(page.locator('[data-testid="session-policy-mode"]')).toHaveValue('default')
-    expect(postResponse).toEqual({ sessionId: SESSION_ID, mode: 'default', scope: 'session' })
+    await expect(page.locator('[data-testid="session-policy-mode-badge"]')).toContainText('自动放行')
+    const autoBanner = page.locator('[data-testid="session-policy-auto-banner"]')
+    await expect(autoBanner).toBeVisible()
+    await autoBanner.locator('[data-testid="session-policy-auto-close"]').click()
+    await expect(autoBanner).toBeHidden()
+    await expect(page.locator('[data-testid="session-policy-mode"]')).toHaveValue('manual')
+    expect(postResponse).toEqual({ sessionId: SESSION_ID, mode: 'manual', scope: 'session' })
   })
 
   test('busy guard prevents duplicate submissions', async ({ page }) => {
@@ -487,13 +487,13 @@ test.describe('Chat approval flow', () => {
     expect(calls).toEqual([{ requestId: REQUEST_ID, body: { decision: 'reject' } }])
   })
 
-  test('workspace chat keeps the bypass warning and close action visible', async ({ page }) => {
+  test('workspace chat keeps the auto warning and close action visible', async ({ page }) => {
     await page.unroute('**/api/v1/policy/mode*')
     await page.route('**/api/v1/policy/mode*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ sessionId: SESSION_ID, mode: 'bypass', sessionRules: 0 }),
+        body: JSON.stringify({ sessionId: SESSION_ID, mode: 'auto', sessionRules: 0 }),
       })
     })
 
@@ -502,9 +502,9 @@ test.describe('Chat approval flow', () => {
       await page.locator('[aria-label="Open chat"]:visible').click()
     }
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 })
-    const banner = page.locator('[data-testid="session-policy-bypass-banner"]:visible')
+    const banner = page.locator('[data-testid="session-policy-auto-banner"]:visible')
     await expect(banner).toBeVisible({ timeout: 5000 })
-    await expect(banner.locator('[data-testid="session-policy-bypass-close"]')).toBeVisible()
+    await expect(banner.locator('[data-testid="session-policy-auto-close"]')).toBeVisible()
   })
 
   test('switching away from an awaiting session cannot expose or cancel its run', async ({ page }) => {

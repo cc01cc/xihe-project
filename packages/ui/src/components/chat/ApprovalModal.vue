@@ -66,11 +66,8 @@ const sourceLayerLabels: Record<ApprovalPolicySourceLayer, string> = {
 }
 
 const modeLabels: Record<Exclude<ApprovalPolicyMode, null>, string> = {
-  default: 'chat.approvalModeDefault',
-  bypass: 'chat.approvalModeBypass',
-  managed: 'chat.approvalModeManaged',
-  'accept-edits': 'chat.approvalModeAcceptEdits',
-  plan: 'chat.approvalModePlan',
+  manual: 'chat.approvalModeManual',
+  auto: 'chat.approvalModeAuto',
 }
 
 const shapeLabels: Record<ApprovalPolicyShape, string> = {

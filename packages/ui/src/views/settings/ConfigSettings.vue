@@ -168,7 +168,7 @@ const builtInTools = [
   'glob', 'grep', 'edit_file', 'delete_file', 'delete_directory',
   'read_file_range', 'mkdir', 'move_file', 'copy_file',
   'get_file_info', 'watch_directory', 'extract_pdf_text',
-  'apply_patch', 'create_snapshot', 'revert_snapshot',
+  'apply_patch',
   'start_background_process', 'list_background_processes',
   'get_background_process', 'cancel_background_process',
   'read_command_output',

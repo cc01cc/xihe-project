@@ -48,7 +48,7 @@ export interface ToolCall {
 
 export type ApprovalPolicyEffect = 'allow' | 'ask' | 'deny'
 export type ApprovalPolicySourceLayer = 'builtin' | 'instance' | 'user' | 'workspace' | 'session' | 'per_call'
-export type ApprovalPolicyMode = 'default' | 'bypass' | 'managed' | 'accept-edits' | 'plan' | null
+export type ApprovalPolicyMode = 'manual' | 'auto' | null
 export type SessionPolicyMode = Exclude<ApprovalPolicyMode, null>
 export type ApprovalPolicyShape = 'structured' | 'interpreter' | 'opaque'
 

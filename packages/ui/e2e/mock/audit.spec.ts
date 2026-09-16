@@ -23,24 +23,24 @@ const trace = {
   operation: completedOperation,
   items: [
     {
-      id: 'item-bypass',
+      id: 'item-auto',
       operationId: 'op-1',
-      toolCallId: 'call-bypass-1',
+      toolCallId: 'call-auto-1',
       sequence: 1,
       kind: 'tool_call',
       toolName: 'write_file',
       source: 'mcp',
       policyDecision: 'allow',
       status: 'completed',
-      // A bypass verdict is always an allow with a non-null allowedBy (PolicyVerdict
+      // An auto verdict is always an allow with a non-null allowedBy (PolicyVerdict
       // .allowedByMode); the underlying ask rule stays visible as matchedRule.
       policy: {
         effect: 'allow',
         sourceLayer: 'builtin',
         matchedRule: '{ write, "*", ask }',
         reason: 'requires approval for domain write',
-        mode: 'bypass',
-        allowedBy: 'bypass@session',
+        mode: 'auto',
+        allowedBy: 'auto@session',
         actionClass: 'write',
         shape: 'structured',
         reused: null,
@@ -61,7 +61,7 @@ const trace = {
         sourceLayer: 'workspace',
         matchedRule: '{ read, "src/**", allow }',
         reason: 'workspace rule allows reads under src',
-        mode: 'default',
+        mode: 'manual',
         allowedBy: null,
         actionClass: 'read',
         shape: 'structured',
@@ -85,7 +85,7 @@ const trace = {
         sourceLayer: 'builtin',
         matchedRule: '{ write, "*", ask }',
         reason: 'write requires approval',
-        mode: 'default',
+        mode: 'manual',
         allowedBy: null,
         actionClass: 'write',
         shape: 'structured',
@@ -107,7 +107,7 @@ const trace = {
         sourceLayer: 'builtin',
         matchedRule: '{ exec, "*", ask }',
         reason: 'exec requires approval',
-        mode: 'default',
+        mode: 'manual',
         allowedBy: null,
         actionClass: 'exec',
         shape: 'structured',
@@ -128,7 +128,7 @@ const trace = {
   ],
   attempts: [{
     id: 'attempt-1',
-    itemId: 'item-bypass',
+    itemId: 'item-auto',
     stage: 'agent_dispatch',
     retryNo: 0,
     module: 'agent',
@@ -224,7 +224,7 @@ test.describe('Operation audit (PLAN-281 N3)', () => {
     expect(requests.traceRequests).toHaveLength(1)
   })
 
-  test('shows per-toolCallId verdicts, the bypass highlight and the legacy no-verdict state', async ({ page }) => {
+  test('shows per-toolCallId verdicts, the auto highlight and the legacy no-verdict state', async ({ page }) => {
     await installAuditRoutes(page, 'normal')
     await page.goto('/settings/audit')
 
@@ -232,15 +232,15 @@ test.describe('Operation audit (PLAN-281 N3)', () => {
     await page.getByTestId('settings-audit-operation-op-1').click()
     await traceResponse
 
-    const bypassItem = page.getByTestId('settings-audit-item-item-bypass')
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1')).toBeVisible()
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-effect')).toHaveText('允许')
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-matched-rule')).toHaveText('{ write, "*", ask }')
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-source-layer')).toHaveText('内置层')
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-mode')).toHaveText('免批')
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toContainText('由 bypass 放行')
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toContainText('bypass@session')
-    await expect(bypassItem.getByText('工具调用: call-bypass-1')).toBeVisible()
+    const autoItem = page.getByTestId('settings-audit-item-item-auto')
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1')).toBeVisible()
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-effect')).toHaveText('允许')
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-matched-rule')).toHaveText('{ write, "*", ask }')
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-source-layer')).toHaveText('内置层')
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-mode')).toHaveText('自动放行')
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-allowed-by')).toContainText('由 auto 放行')
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-allowed-by')).toContainText('auto@session')
+    await expect(autoItem.getByText('工具调用: call-auto-1')).toBeVisible()
 
     const allowItem = page.getByTestId('settings-audit-item-item-allow')
     await expect(allowItem.getByTestId('settings-audit-policy-call-allow-2-effect')).toHaveText('允许')
@@ -261,11 +261,11 @@ test.describe('Operation audit (PLAN-281 N3)', () => {
     await expect(legacyItem.getByTestId('settings-audit-policy-absent-item-legacy')).toHaveText('无判定记录（旧记录或非 MCP 路径）')
     await expect(legacyItem.getByTestId('settings-audit-policy-call-legacy-3')).toHaveCount(0)
 
-    await bypassItem.getByText('判定详情').click()
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-reason')).toBeVisible()
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-reason')).toHaveText('requires approval for domain write')
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-action-class')).toHaveText('write')
-    await expect(bypassItem.getByTestId('settings-audit-policy-call-bypass-1-shape')).toHaveText('结构化')
+    await autoItem.getByText('判定详情').click()
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-reason')).toBeVisible()
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-reason')).toHaveText('requires approval for domain write')
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-action-class')).toHaveText('write')
+    await expect(autoItem.getByTestId('settings-audit-policy-call-auto-1-shape')).toHaveText('结构化')
 
     // T1.7: only the reused=true row carries the reuse marker (icon + text); the null rows and
     // the legacy row must not have reuse invented for them.
@@ -273,7 +273,7 @@ test.describe('Operation audit (PLAN-281 N3)', () => {
     await expect(reuseItem.getByTestId('settings-audit-policy-call-reuse-4-effect')).toHaveText('询问')
     await expect(reuseItem.getByTestId('settings-audit-policy-call-reuse-4-reused')).toHaveText('由复用放行')
     await expect(reuseItem.getByTestId('settings-audit-policy-call-reuse-4-reused').locator('svg')).toHaveCount(1)
-    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-reused')).toHaveCount(0)
+    await expect(page.getByTestId('settings-audit-policy-call-auto-1-reused')).toHaveCount(0)
     await expect(page.getByTestId('settings-audit-policy-call-allow-2-reused')).toHaveCount(0)
     await expect(page.getByTestId('settings-audit-policy-call-ask-3-reused')).toHaveCount(0)
     await expect(page.getByTestId('settings-audit-policy-absent-item-legacy')).toBeVisible()
@@ -315,16 +315,16 @@ test.describe('Operation audit policy verdict on mobile (PLAN-0328 T1.15)', () =
     await page.getByTestId('settings-audit-operation-op-1').click()
     await traceResponse
 
-    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-effect')).toHaveText('允许')
-    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toContainText('由 bypass 放行')
+    await expect(page.getByTestId('settings-audit-policy-call-auto-1-effect')).toHaveText('允许')
+    await expect(page.getByTestId('settings-audit-policy-call-auto-1-allowed-by')).toContainText('由 auto 放行')
     await expect(page.getByTestId('settings-audit-policy-call-reuse-4-reused')).toHaveText('由复用放行')
     await expect(page.getByTestId('settings-audit-policy-call-ask-3-effect')).toHaveText('询问')
     await expect(page.getByTestId('settings-audit-policy-absent-item-legacy')).toHaveText('无判定记录（旧记录或非 MCP 路径）')
 
     await page.getByText('判定详情').first().click()
-    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-reason')).toBeVisible()
+    await expect(page.getByTestId('settings-audit-policy-call-auto-1-reason')).toBeVisible()
 
-    await expect(page.getByTestId('settings-audit-policy-call-bypass-1-allowed-by')).toBeInViewport()
+    await expect(page.getByTestId('settings-audit-policy-call-auto-1-allowed-by')).toBeInViewport()
     await page.screenshot({ path: testInfo.outputPath('audit-policy-mobile-390x844.png'), fullPage: true })
   })
 })

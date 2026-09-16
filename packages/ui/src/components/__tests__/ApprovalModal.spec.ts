@@ -48,11 +48,11 @@ const i18n = createI18n({
         approvalLayerWorkspace: 'Workspace layer',
         approvalLayerSession: 'Session layer',
         approvalLayerPerCall: 'Per-call layer',
-        approvalModeDefault: 'Default',
-        approvalModeBypass: 'Bypass',
-        approvalModeManaged: 'Managed',
-        approvalModeAcceptEdits: 'Accept edits',
-        approvalModePlan: 'Plan',
+        approvalModeManual: 'Manual approval',
+        approvalModeAuto: 'Auto allow',
+        
+        
+        
         approvalModeUnavailable: 'Not provided',
         approvalShapeStructured: 'Structured',
         approvalShapeInterpreter: 'Interpreter',
@@ -122,7 +122,7 @@ const policy = {
   sourceLayer: 'workspace' as const,
   matchedRule: 'write:/test.txt',
   reason: 'No allow rule matched',
-  mode: 'default' as const,
+  mode: 'manual' as const,
   actionClass: 'write',
   shape: 'structured' as const,
 }
@@ -174,7 +174,7 @@ beforeEach(() => {
 
 describe('ApprovalModal', () => {
   it('renders the tool, action, details, and policy evidence fields', () => {
-    const wrapper = mountModal({ approval: { ...baseApproval, policy: { ...policy, modeAtGrant: 'managed' } }, show: true })
+    const wrapper = mountModal({ approval: { ...baseApproval, policy: { ...policy, modeAtGrant: 'manual' } }, show: true })
 
     expect(wrapper.find('[data-testid="approval-tool"]').text()).toBe('write_file')
     expect(wrapper.find('[data-testid="approval-action"]').text()).toContain('write file')
@@ -185,7 +185,7 @@ describe('ApprovalModal', () => {
     expect(wrapper.find('[data-testid="approval-evidence-source-layer"]').text()).toBe('Workspace layer')
     expect(wrapper.find('[data-testid="approval-evidence-reason"]').text()).toContain('No allow rule matched')
     expect(wrapper.find('[data-testid="approval-evidence-mode"]').text()).toBe('Default')
-    expect(wrapper.find('[data-testid="approval-evidence-mode-at-grant"]').text()).toBe('Managed')
+    expect(wrapper.find('[data-testid="approval-evidence-mode-at-grant"]').text()).toBe('Manual approval')
   })
 
   it('states explicitly when policy evidence is missing', () => {
@@ -204,9 +204,9 @@ describe('ApprovalModal', () => {
   })
 
   it('shows top-level mode-at-grant evidence without relabeling ask-time mode', () => {
-    const wrapper = mountModal({ approval: { ...baseApproval, modeAtGrant: 'managed' }, show: true })
+    const wrapper = mountModal({ approval: { ...baseApproval, modeAtGrant: 'manual' }, show: true })
 
-    expect(wrapper.find('[data-testid="approval-evidence-mode-at-grant"]').text()).toBe('Managed')
+    expect(wrapper.find('[data-testid="approval-evidence-mode-at-grant"]').text()).toBe('Manual approval')
     expect(wrapper.find('[data-testid="approval-evidence-unavailable"]').exists()).toBe(false)
   })
 

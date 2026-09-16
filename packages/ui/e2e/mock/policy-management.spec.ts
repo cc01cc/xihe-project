@@ -213,7 +213,7 @@ function unclassifiedApprovalEvent() {
       sourceLayer: 'builtin',
       matchedRule: null,
       reason: 'unclassified tool requires explicit classification',
-      mode: 'default',
+      mode: 'manual',
       actionClass: 'unclassified',
       shape: 'opaque',
     },

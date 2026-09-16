@@ -233,7 +233,7 @@ describe('api.decideChatApproval', () => {
         approved: true,
         decision: 'saved',
         propagated: 2,
-        modeAtGrant: 'managed',
+        modeAtGrant: 'manual',
         rule: { layer: 'workspace', actionClass: 'write', resource: 'src/**', effect: 'allow' },
       }),
     } as Response)
@@ -256,7 +256,7 @@ describe('api.decideChatApproval', () => {
       }),
     )
     expect(result.propagated).toBe(2)
-    expect(result.modeAtGrant).toBe('managed')
+    expect(result.modeAtGrant).toBe('manual')
     expect(result.rule?.resource).toBe('src/**')
   })
 
@@ -339,37 +339,37 @@ describe('api policy mode', () => {
   it('reads a session mode with its server-derived rule count', async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'bypass', sessionRules: 3 }),
+      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'auto', sessionRules: 3 }),
     } as Response)
 
     const result = await api.getPolicyMode(SESSION_ID)
 
     expect(fetchSpy).toHaveBeenCalledWith(`/api/v1/policy/mode?sessionId=${SESSION_ID}`, expect.any(Object))
-    expect(result).toEqual({ sessionId: SESSION_ID, mode: 'bypass', sessionRules: 3 })
+    expect(result).toEqual({ sessionId: SESSION_ID, mode: 'auto', sessionRules: 3 })
   })
 
   it('writes only the selected session mode', async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'default', scope: 'session' }),
+      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'manual', scope: 'session' }),
     } as Response)
 
-    const result = await api.setPolicyMode(SESSION_ID, 'default')
+    const result = await api.setPolicyMode(SESSION_ID, 'manual')
 
     expect(fetchSpy).toHaveBeenCalledWith('/api/v1/policy/mode', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ sessionId: SESSION_ID, mode: 'default' }),
+      body: JSON.stringify({ sessionId: SESSION_ID, mode: 'manual' }),
     }))
-    expect(result).toEqual({ sessionId: SESSION_ID, mode: 'default', scope: 'session' })
+    expect(result).toEqual({ sessionId: SESSION_ID, mode: 'manual', scope: 'session' })
   })
 
   it('rejects a POST response without the session scope marker', async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'default' }),
+      json: () => Promise.resolve({ sessionId: SESSION_ID, mode: 'manual' }),
     } as Response)
 
-    await expect(api.setPolicyMode(SESSION_ID, 'default')).rejects.toThrow('Invalid policy mode update response')
+    await expect(api.setPolicyMode(SESSION_ID, 'manual')).rejects.toThrow('Invalid policy mode update response')
   })
 })
 
@@ -444,8 +444,8 @@ describe('api.getChatRunStatus approval recovery', () => {
             sourceLayer: 'workspace',
             matchedRule: null,
             reason: 'No rule matched',
-            mode: 'default',
-            modeAtGrant: 'managed',
+            mode: 'manual',
+            modeAtGrant: 'manual',
             actionClass: 'write',
             shape: 'structured',
           },
@@ -466,7 +466,7 @@ describe('api.getChatRunStatus approval recovery', () => {
           policyClass: null,
           argumentsHash: null,
           state: 'pending',
-          modeAtGrant: 'plan',
+          modeAtGrant: 'auto',
         }],
       }),
     } as Response)
@@ -474,8 +474,8 @@ describe('api.getChatRunStatus approval recovery', () => {
     const nested = await api.getChatRunStatus(RUN_ID)
     const topLevel = await api.getChatRunStatus(RUN_ID_2)
 
-    expect(nested.pendingApprovals[0]?.policy).toMatchObject({ mode: 'default', modeAtGrant: 'managed' })
-    expect(topLevel.pendingApprovals[0]?.modeAtGrant).toBe('plan')
+    expect(nested.pendingApprovals[0]?.policy).toMatchObject({ mode: 'manual', modeAtGrant: 'manual' })
+    expect(topLevel.pendingApprovals[0]?.modeAtGrant).toBe('auto')
     expect(normalizeApprovalRequest({ requestId: APPROVAL_ID, sessionId: SESSION_ID, modeAtGrant: 'future-mode' })).toBeNull()
   })
 
@@ -488,7 +488,7 @@ describe('api.getChatRunStatus approval recovery', () => {
         sourceLayer: 'workspace',
         matchedRule: null,
         reason: 'No rule matched',
-        mode: 'default',
+        mode: 'manual',
         modeAtGrant: null,
         actionClass: 'write',
         shape: 'structured',
@@ -711,7 +711,7 @@ describe('api policy admin (PLAN-0328)', () => {
 
 const OPERATION_ID = '99999999-9999-4999-8999-999999999999'
 
-// Exact shape produced by CP OperationPolicySummary (PLAN-0328 T1.15). A bypass verdict is
+// Exact shape produced by CP OperationPolicySummary (PLAN-0328 T1.15). An auto verdict is
 // `effect: 'allow'` with a non-null allowedBy; the ask rule it upgraded stays in matchedRule.
 // `reused` is the T1.7 annotation and is nullable (null = reuse not applicable; V19 snapshots
 // omit the key entirely).
@@ -720,20 +720,20 @@ const OPERATION_POLICY = {
   sourceLayer: 'builtin',
   matchedRule: '{ write, "*", ask }',
   reason: 'requires approval for domain write',
-  mode: 'bypass',
-  allowedBy: 'bypass@session',
+  mode: 'auto',
+  allowedBy: 'auto@session',
   actionClass: 'write',
   shape: 'structured',
   reused: null,
 }
 
-// A plain non-bypass ask verdict: the same key set with no allowedBy.
+// A plain non-auto ask verdict: the same key set with no allowedBy.
 const OPERATION_ASK_POLICY = {
   effect: 'ask',
   sourceLayer: 'builtin',
   matchedRule: null,
   reason: 'exec requires approval',
-  mode: 'default',
+  mode: 'manual',
   allowedBy: null,
   actionClass: 'exec',
   shape: 'structured',
@@ -743,7 +743,7 @@ const OPERATION_ASK_POLICY = {
 const OPERATION_ITEM = {
   id: 'item-1',
   operationId: OPERATION_ID,
-  toolCallId: 'call-bypass-1',
+  toolCallId: 'call-auto-1',
   sequence: 1,
   kind: 'tool_call',
   toolName: 'write_file',

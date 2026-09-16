@@ -16,9 +16,9 @@ const i18n = createI18n({
   locale: 'en',
   messages: { en: { chat: {
     placeholder: 'Type...', image: 'Image', voice: 'Voice', approvalModeLabel: 'Approval mode',
-    approvalModeUnavailable: 'Not provided', approvalModeDefault: 'Default', approvalModeAcceptEdits: 'Accept edits',
-    approvalModeBypass: 'Bypass', approvalModePlan: 'Plan', approvalModeManaged: 'Managed',
-    approvalBypassWarning: 'Bypass warning', approvalBypassClose: 'Turn off bypass',
+    approvalModeUnavailable: 'Not provided', approvalModeManual: 'Manual approval',
+    approvalModeAuto: 'Auto allow',
+    approvalAutoWarning: 'Auto warning', approvalAutoClose: 'Turn off auto',
     approvalModeChanged: 'Approval mode changed', approvalModeLoadFailed: 'Mode load failed',
     approvalModeChangeFailed: 'Mode change failed',
   }, multimodal: { captureScreen: 'Screenshot' } } },
@@ -86,9 +86,9 @@ describe('ChatView', () => {
     expect(wrapper.find('textarea').exists()).toBe(true)
   })
 
-  it('shows the session mode and provides a one-click bypass close', async () => {
-    vi.spyOn(api, 'getPolicyMode').mockResolvedValue({ sessionId: TEST_SESSION_ID, mode: 'bypass', sessionRules: 0 })
-    const setMode = vi.spyOn(api, 'setPolicyMode').mockResolvedValue({ sessionId: TEST_SESSION_ID, mode: 'default', scope: 'session' })
+  it('shows the session mode and provides a one-click auto close', async () => {
+    vi.spyOn(api, 'getPolicyMode').mockResolvedValue({ sessionId: TEST_SESSION_ID, mode: 'auto', sessionRules: 0 })
+    const setMode = vi.spyOn(api, 'setPolicyMode').mockResolvedValue({ sessionId: TEST_SESSION_ID, mode: 'manual', scope: 'session' })
     await router.push(`/chat/${TEST_SESSION_ID}`)
     await router.isReady()
     const wrapper = mountChat()
@@ -97,11 +97,11 @@ describe('ChatView', () => {
     await nextTick()
     await nextTick()
     expect(api.getPolicyMode).toHaveBeenCalledWith(TEST_SESSION_ID)
-    expect(usePolicyStore().getState(TEST_SESSION_ID)?.mode).toBe('bypass')
-    expect(wrapper.find('[data-testid="session-policy-mode-badge"]').text()).toContain('Bypass')
-    expect(wrapper.find('[data-testid="session-policy-bypass-banner"]').exists()).toBe(true)
-    await wrapper.find('[data-testid="session-policy-bypass-close"]').trigger('click')
+    expect(usePolicyStore().getState(TEST_SESSION_ID)?.mode).toBe('auto')
+    expect(wrapper.find('[data-testid="session-policy-mode-badge"]').text()).toContain('Auto allow')
+    expect(wrapper.find('[data-testid="session-policy-auto-banner"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="session-policy-auto-close"]').trigger('click')
 
-    expect(setMode).toHaveBeenCalledWith(TEST_SESSION_ID, 'default')
+    expect(setMode).toHaveBeenCalledWith(TEST_SESSION_ID, 'manual')
   })
 })

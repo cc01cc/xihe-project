@@ -15,11 +15,8 @@ const { t } = useI18n()
 const policyStore = usePolicyStore()
 
 const modeLabelKeys: Record<SessionPolicyMode, string> = {
-  default: 'chat.approvalModeDefault',
-  'accept-edits': 'chat.approvalModeAcceptEdits',
-  bypass: 'chat.approvalModeBypass',
-  plan: 'chat.approvalModePlan',
-  managed: 'chat.approvalModeManaged',
+  manual: 'chat.approvalModeManual',
+  auto: 'chat.approvalModeAuto',
 }
 const policyModes = Object.keys(modeLabelKeys) as SessionPolicyMode[]
 
@@ -78,23 +75,23 @@ function handleModeChange(event: Event) {
   </div>
 
   <div
-    v-if="mode === 'bypass'"
-    data-testid="session-policy-bypass-banner"
+    v-if="mode === 'auto'"
+    data-testid="session-policy-auto-banner"
     class="flex items-center justify-between gap-3 border-b border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
     role="alert"
   >
     <div class="flex min-w-0 items-center gap-2">
       <CircleAlert class="size-4 shrink-0" aria-hidden="true" />
-      <span>{{ t('chat.approvalBypassWarning') }}</span>
+      <span>{{ t('chat.approvalAutoWarning') }}</span>
     </div>
     <button
       type="button"
-      data-testid="session-policy-bypass-close"
+      data-testid="session-policy-auto-close"
       class="shrink-0 rounded-md border border-amber-500/40 px-2 py-1 text-xs font-medium transition hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       :disabled="busy"
-      @click="changeMode('default')"
+      @click="changeMode('manual')"
     >
-      {{ t('chat.approvalBypassClose') }}
+      {{ t('chat.approvalAutoClose') }}
     </button>
   </div>
   <p v-if="state?.error" data-testid="session-policy-mode-error" class="border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">{{ state.error }}</p>

@@ -112,7 +112,7 @@ type JsonRecord = Record<string, unknown>
 
 const approvalPolicyEffects = ['allow', 'ask', 'deny'] as const
 const approvalPolicySourceLayers = ['builtin', 'instance', 'user', 'workspace', 'session', 'per_call'] as const
-const approvalPolicyModes = ['default', 'bypass', 'managed', 'accept-edits', 'plan'] as const
+const approvalPolicyModes = ['manual', 'auto'] as const
 const approvalPolicyShapes = ['structured', 'interpreter', 'opaque'] as const
 const policyRuleLayers = ['instance', 'user', 'workspace'] as const
 const policyToolFaceScopes = ['builtin', 'instance', 'workspace'] as const
@@ -158,7 +158,7 @@ function isNonEmptyString(value: unknown): value is string {
 /**
  * Strict normalizer for the optional operation item `policy` projection (PLAN-0328 T1.15).
  * Returns `undefined` when the projection is absent or malformed so the view can show the
- * explicit no-verdict state; it never fabricates defaults (e.g. `mode: 'default'`) and
+ * explicit no-verdict state; it never fabricates defaults (e.g. `mode: 'manual'`) and
  * ignores unknown keys. `reused` (T1.7) is optional and nullable: a legacy snapshot without
  * the key stays keyless, and a non-boolean value makes the whole projection unreadable.
  */

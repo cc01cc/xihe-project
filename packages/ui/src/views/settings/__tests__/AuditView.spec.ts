@@ -31,8 +31,8 @@ const POLICY: OperationPolicyView = {
   sourceLayer: 'builtin',
   matchedRule: '{ write, "*", ask }',
   reason: 'requires approval for domain write',
-  mode: 'bypass',
-  allowedBy: 'bypass@session',
+  mode: 'auto',
+  allowedBy: 'auto@session',
   actionClass: 'write',
   shape: 'structured',
 }
@@ -65,7 +65,7 @@ function policyItem(overrides: Partial<OperationItemView> = {}): OperationItemVi
   return {
     id: 'item-1',
     operationId: 'op-1',
-    toolCallId: 'call-bypass-1',
+    toolCallId: 'call-auto-1',
     sequence: 1,
     kind: 'tool_call',
     toolName: 'write_file',
@@ -105,19 +105,19 @@ describe('AuditView policy verdict (PLAN-0328 T1.15)', () => {
       policyItem({
         id: 'item-ask',
         toolCallId: 'call-ask-2',
-        policy: { ...POLICY, effect: 'ask', mode: 'default', allowedBy: null, matchedRule: '{ exec, "*", ask }' },
+        policy: { ...POLICY, effect: 'ask', mode: 'manual', allowedBy: null, matchedRule: '{ exec, "*", ask }' },
       }),
     ]))
     const wrapper = await mountView()
 
-    const block = wrapper.find('[data-testid="settings-audit-policy-call-bypass-1"]')
+    const block = wrapper.find('[data-testid="settings-audit-policy-call-auto-1"]')
     expect(block.exists()).toBe(true)
     expect(block.text()).toContain('策略判定')
-    expect(wrapper.find('[data-testid="settings-audit-policy-call-bypass-1-effect"]').text()).toBe('允许')
-    expect(wrapper.find('[data-testid="settings-audit-policy-call-bypass-1-matched-rule"]').text()).toBe('{ write, "*", ask }')
-    expect(wrapper.find('[data-testid="settings-audit-policy-call-bypass-1-source-layer"]').text()).toBe('内置层')
-    expect(wrapper.find('[data-testid="settings-audit-policy-call-bypass-1-mode"]').text()).toBe('免批')
-    expect(block.text()).toContain('工具调用: call-bypass-1')
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-auto-1-effect"]').text()).toBe('允许')
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-auto-1-matched-rule"]').text()).toBe('{ write, "*", ask }')
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-auto-1-source-layer"]').text()).toBe('内置层')
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-auto-1-mode"]').text()).toBe('自动放行')
+    expect(block.text()).toContain('工具调用: call-auto-1')
 
     // A plain ask verdict (no allowedBy) keeps the ask rendering.
     const ask = wrapper.find('[data-testid="settings-audit-policy-call-ask-2"]')
@@ -133,10 +133,10 @@ describe('AuditView policy verdict (PLAN-0328 T1.15)', () => {
     vi.mocked(api.getOperationTrace).mockResolvedValue(traceWith([policyItem()]))
     const wrapper = await mountView()
 
-    const allowedBy = wrapper.find('[data-testid="settings-audit-policy-call-bypass-1-allowed-by"]')
+    const allowedBy = wrapper.find('[data-testid="settings-audit-policy-call-auto-1-allowed-by"]')
     expect(allowedBy.exists()).toBe(true)
-    expect(allowedBy.text()).toContain('由 bypass 放行')
-    expect(allowedBy.text()).toContain('bypass@session')
+    expect(allowedBy.text()).toContain('由 auto 放行')
+    expect(allowedBy.text()).toContain('auto@session')
   })
 
   it('preserves nullable matchedRule, mode and allowedBy without fabricating verdict defaults', async () => {
@@ -171,7 +171,7 @@ describe('AuditView policy verdict (PLAN-0328 T1.15)', () => {
       policyItem({
         id: 'item-reuse',
         toolCallId: 'call-reuse-4',
-        policy: { ...POLICY, effect: 'ask', mode: 'default', allowedBy: null, reused: true },
+        policy: { ...POLICY, effect: 'ask', mode: 'manual', allowedBy: null, reused: true },
       }),
       policyItem({ id: 'item-reuse-null', toolCallId: 'call-reuse-null-5', policy: { ...POLICY, reused: null } }),
       policyItem({ id: 'item-reuse-false', toolCallId: 'call-reuse-false-6', policy: { ...POLICY, reused: false } }),
@@ -195,12 +195,12 @@ describe('AuditView policy verdict (PLAN-0328 T1.15)', () => {
     vi.mocked(api.getOperationTrace).mockResolvedValue(traceWith([policyItem()]))
     const wrapper = await mountView()
 
-    const block = wrapper.find('[data-testid="settings-audit-policy-call-bypass-1"]')
+    const block = wrapper.find('[data-testid="settings-audit-policy-call-auto-1"]')
     expect(block.find('details').exists()).toBe(true)
     expect(block.find('summary').text()).toBe('判定详情')
-    expect(wrapper.find('[data-testid="settings-audit-policy-call-bypass-1-reason"]').text()).toBe('requires approval for domain write')
-    expect(wrapper.find('[data-testid="settings-audit-policy-call-bypass-1-action-class"]').text()).toBe('write')
-    expect(wrapper.find('[data-testid="settings-audit-policy-call-bypass-1-shape"]').text()).toBe('结构化')
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-auto-1-reason"]').text()).toBe('requires approval for domain write')
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-auto-1-action-class"]').text()).toBe('write')
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-auto-1-shape"]').text()).toBe('结构化')
   })
 
   it('keeps the existing attempts and events sections unchanged', async () => {

@@ -31,11 +31,8 @@ const sourceLayerLabels: Record<ApprovalPolicySourceLayer, string> = {
 }
 
 const modeLabels: Record<Exclude<ApprovalPolicyMode, null>, string> = {
-  default: 'chat.approvalModeDefault',
-  bypass: 'chat.approvalModeBypass',
-  managed: 'chat.approvalModeManaged',
-  'accept-edits': 'chat.approvalModeAcceptEdits',
-  plan: 'chat.approvalModePlan',
+  manual: 'chat.approvalModeManual',
+  auto: 'chat.approvalModeAuto',
 }
 
 const shapeLabels: Record<ApprovalPolicyShape, string> = {
@@ -65,8 +62,7 @@ function modeLabel(mode: ApprovalPolicyMode): string {
 }
 
 function allowedByLabel(allowedBy: string): string {
-  if (allowedBy.startsWith('bypass')) return t('settings.auditPolicyAllowedByBypass')
-  if (allowedBy.startsWith('accept-edits')) return t('settings.auditPolicyAllowedByAcceptEdits')
+  if (allowedBy.startsWith('auto')) return t('settings.auditPolicyAllowedByAuto')
   return t('settings.auditPolicyAllowedByOther')
 }
 
