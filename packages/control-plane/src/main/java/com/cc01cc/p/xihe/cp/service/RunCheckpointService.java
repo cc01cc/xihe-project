@@ -46,9 +46,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *       without a sealed checkpoint (spec §3.1 "base 存在而 end 缺失").</li>
  * </ul>
  *
- * <p>Ledger markers use the existing operation ledger ({@code kind=checkpoint},
- * {@code source=runtime}); when the run has no durable operation the marker is
- * skipped with a lifecycle log — the ledger is never fabricated.</p>
+ * <p>Checkpoint lifecycle markers use the existing operation ledger
+ * ({@code kind=checkpoint}, {@code source=runtime}); user-triggered revert
+ * markers use {@code source=ui}. When the run has no durable operation the
+ * marker is skipped with a lifecycle log — the ledger is never fabricated.</p>
  */
 @Service
 public class RunCheckpointService {
@@ -82,7 +83,7 @@ public class RunCheckpointService {
     static final String LEDGER_TOOL_NAME = "run_checkpoint";
     static final String LEDGER_TOOL_NAME_REVERT = "revert_snapshot";
     static final String LEDGER_SOURCE = "runtime";
-    static final String LEDGER_SOURCE_CP = "cp";
+    static final String LEDGER_SOURCE_UI = "ui";
 
     /** SSE event announcing checkpoint lifecycle changes on the session channel. */
     static final String SSE_EVENT_RUN_CHECKPOINT = "run_checkpoint";
@@ -553,7 +554,7 @@ public class RunCheckpointService {
             String toolCallId = UUID.nameUUIDFromBytes(("run-checkpoint:revert:" + row.getId() + ":"
                     + (row.getRevertAttemptCount() + 1)).getBytes(StandardCharsets.UTF_8)).toString();
             OperationItem item = operationService.appendItem(operationId, toolCallId, null, LEDGER_KIND,
-                    LEDGER_TOOL_NAME_REVERT, LEDGER_SOURCE_CP, summary, null, null);
+                    LEDGER_TOOL_NAME_REVERT, LEDGER_SOURCE_UI, summary, null, null);
             if ("pending".equals(item.getStatus())) {
                 operationService.transitionItem(item.getId(), "completed", null, null, summary, null);
             }

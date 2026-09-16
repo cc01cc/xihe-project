@@ -46,6 +46,7 @@ class RunCheckpointServiceTest {
     private static final String RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String WORKSPACE_ID = "22222222-2222-2222-2222-222222222222";
     private static final String CHECKPOINT_ID = "33333333-3333-3333-3333-333333333333";
+    private static final String RAW_REQUEST_MARKER = "secret-revert-request-marker";
 
     private RunCheckpointRepository repository;
     private RuntimeCheckpointClient client;
@@ -517,10 +518,12 @@ class RunCheckpointServiceTest {
         item.setId(UUID.randomUUID());
         item.setStatus("pending");
         when(operationService.appendItem(eq(operationId), any(), any(), eq("checkpoint"),
-                eq("revert_snapshot"), eq("cp"), any(), any(), any())).thenReturn(item);
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of(), false)).thenReturn(revertOk(2, 0, 0));
+                eq("revert_snapshot"), eq("ui"), any(), any(), any())).thenReturn(item);
+        when(client.revert(WORKSPACE_ID, RUN_ID, List.of(RAW_REQUEST_MARKER), false))
+                .thenReturn(revertOk(2, 0, 0));
 
-        RunCheckpointService.RevertOutcome outcome = service.revert(RUN_ID, WORKSPACE_ID, List.of(), false);
+        RunCheckpointService.RevertOutcome outcome = service.revert(
+                RUN_ID, WORKSPACE_ID, List.of(RAW_REQUEST_MARKER), false);
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
@@ -533,12 +536,15 @@ class RunCheckpointServiceTest {
 
         ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
         verify(operationService).appendItem(eq(operationId), any(), any(), eq("checkpoint"),
-                eq("revert_snapshot"), eq("cp"), summary.capture(), isNull(), isNull());
+                eq("revert_snapshot"), eq("ui"), summary.capture(), isNull(), isNull());
         assertTrue(summary.getValue().contains("\"marker\":\"revert\""));
         assertTrue(summary.getValue().contains("\"checkpointId\":\"" + row.getId() + "\""));
         assertTrue(summary.getValue().contains("\"allowedBy\":\"user_ui\""));
         assertTrue(summary.getValue().contains("\"restored\":2"));
         assertTrue(summary.getValue().contains("\"reason\":null"));
+        assertFalse(summary.getValue().contains(RAW_REQUEST_MARKER));
+        assertFalse(summary.getValue().contains("arguments"));
+        assertFalse(summary.getValue().contains("details"));
         verify(operationService).transitionItem(eq(item.getId()), eq("completed"), isNull(), isNull(),
                 any(), isNull());
 
@@ -562,20 +568,24 @@ class RunCheckpointServiceTest {
         item.setStatus("completed");
         when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(),
                 any(), any(), any())).thenReturn(item);
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of("c0.txt"), true)).thenReturn(revertOk(1, 25, 0));
+        when(client.revert(WORKSPACE_ID, RUN_ID, List.of("c0.txt", RAW_REQUEST_MARKER), true))
+                .thenReturn(revertOk(1, 25, 0));
 
         RunCheckpointService.RevertOutcome outcome =
-                service.revert(RUN_ID, WORKSPACE_ID, List.of("c0.txt"), true);
+                service.revert(RUN_ID, WORKSPACE_ID, List.of("c0.txt", RAW_REQUEST_MARKER), true);
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
         assertEquals(RunCheckpoint.REVERT_PARTIAL, row.getRevertState());
         ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
         verify(operationService).appendItem(any(), any(), any(), eq("checkpoint"), eq("revert_snapshot"),
-                eq("cp"), summary.capture(), any(), any());
+                eq("ui"), summary.capture(), any(), any());
         assertTrue(summary.getValue().contains("\"reason\":\"CONFLICTS\""));
         long conflictCount = summary.getValue().split("\"path\":\"c", -1).length - 1;
         assertEquals(20, conflictCount, "conflicts are capped at 20 in the ledger summary");
+        assertFalse(summary.getValue().contains(RAW_REQUEST_MARKER));
+        assertFalse(summary.getValue().contains("arguments"));
+        assertFalse(summary.getValue().contains("details"));
         verify(operationService, never()).transitionItem(any(), any(), any(), any(), any(), any());
     }
 

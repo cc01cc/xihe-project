@@ -269,10 +269,26 @@ class OperationLedgerFreshMigrationTest {
         assertEquals(1, scalarInt("SELECT count(*) FROM operation_items WHERE id = '"
                 + itemId + "'::uuid AND kind = 'checkpoint'"));
 
+        // Revert markers are UI/user-triggered facts; V2 accepts ui and rejects
+        // the old cp source without widening ck_operation_items_source.
+        UUID revertItemId = UUID.randomUUID();
+        executeUpdate("INSERT INTO operation_items (id, operation_id, sequence, kind, source, status, tool_name) "
+                + "VALUES ('" + revertItemId + "'::uuid, '" + operationId
+                + "'::uuid, 3, 'checkpoint', 'ui', 'completed', 'revert_snapshot')");
+        assertEquals("ui", scalarString("SELECT source FROM operation_items WHERE id = '"
+                + revertItemId + "'::uuid"));
+
+        SQLException legacyCpSource = assertThrows(SQLException.class,
+                () -> executeUpdate("INSERT INTO operation_items (id, operation_id, sequence, kind, source, status, tool_name) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + operationId
+                        + "'::uuid, 4, 'checkpoint', 'cp', 'completed', 'revert_snapshot')"));
+        assertTrue(legacyCpSource.getMessage().contains("ck_operation_items_source"),
+                legacyCpSource.getMessage());
+
         // V10's llm_usage kind must still be accepted after the V22 rebuild.
         executeUpdate("INSERT INTO operation_items (id, operation_id, sequence, kind, source, status) "
                 + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + operationId
-                + "'::uuid, 2, 'llm_usage', 'agent', 'completed')");
+                + "'::uuid, 5, 'llm_usage', 'agent', 'completed')");
         assertEquals(1, scalarInt("SELECT count(*) FROM operation_items WHERE operation_id = '"
                 + operationId + "'::uuid AND kind = 'llm_usage'"));
     }

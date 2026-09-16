@@ -99,6 +99,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     private static HttpServer runtimeServer;
     private static final Map<String, AtomicReference<StubResponse>> RESPONSES = new ConcurrentHashMap<>();
     private static final Map<String, AtomicInteger> CALLS = new ConcurrentHashMap<>();
+    private static final String RAW_REQUEST_MARKER = "secret-revert-request-marker";
 
     private record StubResponse(int status, String body, String contentType) {}
 
@@ -409,7 +410,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         RESPONSES.put("revert", new AtomicReference<>(json(200, revertBody())));
 
         ResponseEntity<Map> response = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert",
-                Map.of("acknowledgeConflicts", List.of("b.txt"), "acknowledgeHeadChange", true));
+                Map.of("acknowledgeConflicts", List.of(RAW_REQUEST_MARKER), "acknowledgeHeadChange", true));
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("refs/xihe/run/rollback/9", response.getBody().get("revertRef"));
@@ -426,6 +427,9 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         assertNotNull(row.getRevertedAt());
         assertTrue(row.getRevertSummary().contains("\"marker\":\"revert\""));
         assertTrue(row.getRevertSummary().contains("\"allowedBy\":\"user_ui\""));
+        assertFalse(row.getRevertSummary().contains(RAW_REQUEST_MARKER));
+        assertFalse(row.getRevertSummary().contains("arguments"));
+        assertFalse(row.getRevertSummary().contains("details"));
 
         List<OperationItem> items = operationItemRepository
                 .findByOperationIdOrderBySequenceAsc(operation.operationId().toString());
@@ -433,9 +437,12 @@ class RunCheckpointControllerTest extends AbstractH2Test {
                 .filter(item -> "revert_snapshot".equals(item.getToolName()))
                 .findFirst().orElseThrow();
         assertEquals("checkpoint", revertItem.getKind());
-        assertEquals("cp", revertItem.getSource());
+        assertEquals("ui", revertItem.getSource());
         assertEquals("completed", revertItem.getStatus());
         assertTrue(revertItem.getArgumentsPreview().contains("\"marker\":\"revert\""));
+        assertFalse(revertItem.getArgumentsPreview().contains(RAW_REQUEST_MARKER));
+        assertFalse(revertItem.getArgumentsPreview().contains("arguments"));
+        assertFalse(revertItem.getArgumentsPreview().contains("details"));
     }
 
     @Test
