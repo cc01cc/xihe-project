@@ -1,19 +1,18 @@
-//! PLAN-0328 M2 W2 — Run-checkpoint service integration flow against real host git.
+//! PLAN-0338 T1.0 — slice-model checkpoint service integration flow (real host git).
 //!
 //! One end-to-end host flow at the service boundary the HTTP handlers call:
-//! create base (mutation lease acquired) → sandbox-side write → seal (lease
-//! released) reports the changed files; a reseal is idempotent; a following run
-//! sees a clean base (cross-run isolation). Complements the endpoint-level
-//! handler tests in `src/main.rs`.
+//! capture C1 → workspace write → capture C2 reports the changed files; an
+//! unchanged capture writes no slice (`noChange`); a same-run replay within the
+//! process is idempotent; slice GC counts what is left. Complements the
+//! endpoint-level handler tests in `src/main.rs`.
 
 use tempfile::TempDir;
-use xihe_runtime::checkpoint_api::{CheckpointService, SealOutcome, StatusFailure};
+use xihe_runtime::checkpoint_api::{C0_RUN_ID, CheckpointService};
 
 const WS: &str = "ws-flow";
 
-fn changed(sealed: &SealOutcome) -> Vec<(String, String)> {
-    let mut rows: Vec<(String, String)> = sealed
-        .changed_files
+fn sorted(changed: &[xihe_runtime::checkpoint::ChangedFile]) -> Vec<(String, String)> {
+    let mut rows: Vec<(String, String)> = changed
         .iter()
         .map(|file| (file.status.clone(), file.path.clone()))
         .collect();
@@ -22,7 +21,7 @@ fn changed(sealed: &SealOutcome) -> Vec<(String, String)> {
 }
 
 #[tokio::test]
-async fn w2_flow_create_write_seal_reports_changed_files_and_releases_the_lease() {
+async fn slice_flow_capture_write_capture_reports_changes_and_no_change() {
     let temp = TempDir::new().expect("fixture tempdir");
     std::fs::create_dir_all(temp.path().join(WS)).expect("fixture workspace");
     let ws = temp.path().join(WS);
@@ -31,25 +30,25 @@ async fn w2_flow_create_write_seal_reports_changed_files_and_releases_the_lease(
     let diagnostics = service.diagnostics().await;
     assert!(
         diagnostics.capable,
-        "W2 integration flow requires a real host git >= 2.20: {diagnostics:?}"
+        "slice integration flow requires a real host git >= 2.20: {diagnostics:?}"
     );
 
-    let created = service
-        .create_base(WS, "run-flow", Some("integration"), Some("call-flow"))
+    // C0 (workspace materialization baseline) uses the reserved run id.
+    let c0 = service
+        .capture(WS, C0_RUN_ID, "materialize", "materialize", false)
         .await
-        .expect("create base");
-    assert_eq!(created.state, "base");
-    assert_eq!(created.run_id, "run-flow");
-    assert_eq!(created.base_ref, "refs/xihe/run-flow/base");
+        .expect("C0 capture");
+    assert!(!c0.no_change);
+    assert_eq!(c0.state, "captured");
+    let c0_ref = c0.slice_ref.clone().expect("C0 slice ref");
+    assert!(c0_ref.starts_with("refs/xihe/slices/"));
+    assert!(c0.predecessor.is_none());
     assert!(
-        uuid::Uuid::parse_str(&created.checkpoint_id).is_ok(),
-        "checkpointId must be a UUID: {}",
-        created.checkpoint_id
-    );
-    assert_eq!(
-        service.leases().active_workspaces(),
-        vec![WS.to_string()],
-        "create must acquire the workspace mutation lease"
+        c0.captured_at
+            .as_deref()
+            .is_some_and(|value| value.ends_with('Z')),
+        "capturedAt must be RFC3339 UTC: {:?}",
+        c0.captured_at
     );
 
     // Sandbox-side writes land directly in the workspace bind mount.
@@ -57,62 +56,83 @@ async fn w2_flow_create_write_seal_reports_changed_files_and_releases_the_lease(
     std::fs::write(ws.join("src/new.txt"), "created during the run\n").expect("write new file");
     std::fs::write(ws.join("notes.md"), "after\n").expect("modify notes");
 
-    let sealed = service
-        .seal(WS, "run-flow", false)
+    let captured = service
+        .capture(WS, "run-flow", "integration", "call-flow", false)
         .await
-        .expect("seal the run");
-    assert_eq!(sealed.state, "sealed");
-    assert_eq!(sealed.end_ref, "refs/xihe/run-flow/end");
+        .expect("capture the run");
+    assert!(!captured.no_change);
+    assert_eq!(captured.state, "captured");
+    assert_eq!(captured.predecessor.as_deref(), Some(c0_ref.as_str()));
     assert_eq!(
-        changed(&sealed),
+        sorted(&captured.changed_files),
         vec![
             ("A".to_string(), "src/new.txt".to_string()),
             ("M".to_string(), "notes.md".to_string()),
         ],
-        "the seal change set must contain exactly the files the run touched"
+        "the change set is the diff against the previous slice"
     );
-    assert!(!sealed.sealed_with_live_jobs);
-    assert!(
-        !sealed.sealed_after_abnormal,
-        "a seal under the run's own live lease is the normal path"
-    );
-    assert!(
-        service.leases().active_workspaces().is_empty(),
-        "seal must release the mutation lease"
-    );
+    let slice_ref = captured.slice_ref.clone().expect("run slice ref");
 
-    let resealed = service
-        .seal(WS, "run-flow", false)
+    // Same-run replay within this process is idempotent.
+    let replay = service
+        .capture(WS, "run-flow", "integration", "call-flow", false)
         .await
-        .expect("idempotent reseal");
+        .expect("idempotent replay");
     assert_eq!(
-        resealed, sealed,
-        "idempotent reseal returns the same result"
+        replay, captured,
+        "the replayed capture returns the same body"
     );
 
-    let status = service.status(WS, "run-flow").await.expect("status");
-    assert_eq!(status.state, "sealed");
-    assert_eq!(status.changed_files, sealed.changed_files);
-    assert!(status.base_commit.is_some());
-    assert!(status.end_commit.is_some());
-
-    let missing = service
-        .status(WS, "run-missing")
+    // An unchanged workspace captured under another run writes no slice.
+    let no_change = service
+        .capture(WS, "run-clean", "integration", "call-clean", false)
         .await
-        .expect_err("unknown run must be reported as not found");
-    assert!(matches!(missing, StatusFailure::NotFound { .. }));
+        .expect("no-change capture");
+    assert!(no_change.no_change);
+    assert!(no_change.slice_ref.is_none());
+    assert_eq!(no_change.changed_files, Vec::new());
+    assert_eq!(no_change.predecessor.as_deref(), Some(slice_ref.as_str()));
 
-    // Cross-run isolation: the next run starts from the sealed tree, so a clean
-    // run reports an empty change set.
-    let second = service
-        .create_base(WS, "run-2", None, None)
+    // Abnormal captures are ordinary slices with a different state marker.
+    std::fs::write(ws.join("notes.md"), "abnormal\n").expect("modify notes");
+    let abnormal = service
+        .capture(WS, "run-abnormal", "integration", "call-abnormal", true)
         .await
-        .expect("second run base");
-    assert!(second.base_ref.ends_with("run-2/base"));
-    let second_sealed = service.seal(WS, "run-2", false).await.expect("second seal");
+        .expect("abnormal capture");
+    assert_eq!(abnormal.state, "abnormal-captured");
+    assert!(!abnormal.no_change);
+
+    // GC counts slices: keep the newest two, delete the older ones.
+    let gc = service.gc(WS).await.expect("gc");
+    assert_eq!(gc.counts.kept + gc.counts.deleted, 3);
+    assert_eq!(
+        gc.counts.deleted, 0,
+        "the default retention keeps 50 slices"
+    );
     assert!(
-        second_sealed.changed_files.is_empty(),
-        "a clean second run must not inherit the previous run's change set: {:?}",
-        second_sealed.changed_files
+        service
+            .engine()
+            .slice_commit(WS, &slice_ref)
+            .await
+            .expect("slice lookup")
+            .is_some(),
+        "the captured slice stays resolvable"
     );
+}
+
+#[tokio::test]
+async fn slice_flow_capture_without_git_reports_unavailable() {
+    let temp = TempDir::new().expect("fixture tempdir");
+    std::fs::create_dir_all(temp.path().join(WS)).expect("fixture workspace");
+    let service =
+        CheckpointService::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
+    match service
+        .capture(WS, "run-1", "integration", "call-1", false)
+        .await
+    {
+        Err(xihe_runtime::checkpoint_api::CaptureFailure::Unavailable { reason, .. }) => {
+            assert_eq!(reason, "GIT_UNAVAILABLE");
+        }
+        other => panic!("expected GIT_UNAVAILABLE, got {other:?}"),
+    }
 }

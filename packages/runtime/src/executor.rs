@@ -163,10 +163,9 @@ impl InFlightExecutions {
         self.len() == 0
     }
 
-    /// PLAN-0328 M2 W2: executions currently registered for one workspace
-    /// (cancel-retained entries included). The checkpoint seal records
-    /// `sealedWithLiveJobs` from this counter — no container probe, so a seal can
-    /// never resurrect a stopped sandbox.
+    /// Executions currently registered for one workspace (cancel-retained entries
+    /// included). A pure registry read: no container probe, so counting can never
+    /// resurrect a stopped sandbox.
     pub fn count_for_workspace(&self, workspace_id: &str) -> usize {
         self.inner
             .lock()
@@ -1027,8 +1026,7 @@ mod in_flight_tests {
         assert!(registry.is_empty());
     }
 
-    /// PLAN-0328 M2 W2：`sealedWithLiveJobs` 探针只统计本 workspace，
-    /// 不跨 workspace、不触发容器探测。
+    /// 在途执行探针只统计本 workspace，不跨 workspace、不触发容器探测。
     #[test]
     fn count_for_workspace_is_scoped_and_tracks_unregister() {
         let registry = InFlightExecutions::new();

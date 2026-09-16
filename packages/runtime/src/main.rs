@@ -31,11 +31,11 @@ use tracing_subscriber::prelude::*;
 
 mod ws_file_handler;
 use tokio::sync::Mutex;
+use xihe_runtime::checkpoint::NestedRepoPolicy;
 use xihe_runtime::checkpoint_api::{
-    CheckpointService, CreateBaseFailure, GcFailure, SealFailure, StatusFailure,
+    C0_RUN_ID, CaptureFailure, CheckpointService, CleanupFailure, GcFailure,
 };
-use xihe_runtime::checkpoint_revert::RevertAcks;
-use xihe_runtime::checkpoint_revert_api::{BlobFailure, BlobRef, GitStatusFailure, RevertFailure};
+use xihe_runtime::checkpoint_revert_api::{BlobFailure, GitStatusFailure, RestoreFailure};
 use xihe_runtime::device;
 use xihe_runtime::dotenv_loader;
 use xihe_runtime::error::RuntimeError;
@@ -70,7 +70,7 @@ pub struct AppState {
     pub device_id: String,
     pub workspace_ensurer: Arc<WorkspaceEnsurer>,
     pub router: Arc<WorkspaceExecutionRouter>,
-    /// PLAN-0328 M2 W2: Run checkpoints (shadow git engine + mutation lease).
+    /// PLAN-0338: Run checkpoint slices (shadow git engine, capture/restore locks).
     pub checkpoints: Arc<CheckpointService>,
     /// Readiness describes the Runtime process, not any particular Workspace.
     pub ready: Arc<AtomicBool>,
@@ -1678,6 +1678,28 @@ async fn workspace_materialize_handler(
         match app_clone.ensure_workspace(&ws_id_clone).await {
             Ok(_) => {
                 tracing::info!("Explicit materialization completed: ws_id={}", ws_id_clone);
+                // PLAN-0338 T0.5 ⑧: C0 initial slice, best-effort. A capture
+                // failure (host git missing or below the minimum version, git
+                // error, ...) only logs and never blocks or fails
+                // materialization; the reserved run id `c0` passes the regular
+                // run-id validation unchanged.
+                match app_clone
+                    .checkpoints
+                    .capture(&ws_id_clone, C0_RUN_ID, "materialize", "materialize", false)
+                    .await
+                {
+                    Ok(outcome) => tracing::info!(
+                        "C0 checkpoint capture completed: ws_id={} noChange={} sliceRef={}",
+                        ws_id_clone,
+                        outcome.no_change,
+                        outcome.slice_ref.as_deref().unwrap_or("none")
+                    ),
+                    Err(error) => tracing::warn!(
+                        "C0 checkpoint capture skipped (materialization unaffected): ws_id={} error={:?}",
+                        ws_id_clone,
+                        error
+                    ),
+                }
             }
             Err(error) => {
                 tracing::warn!(
@@ -1769,18 +1791,20 @@ async fn delete_workspace_handler(
     }))
 }
 
-/// PLAN-0328 M2 W2: Run-checkpoint host API (shadow git + workspace mutation lease).
+/// PLAN-0338: Run-checkpoint slice host API (capture / preview / restore / blob / gc).
 ///
-/// The service lives in `xihe_runtime::checkpoint_api`; these handlers only map
-/// its outcomes to the frozen contract (200 / 400 / 404 / 409 / 503 Problem+JSON).
+/// The service lives in `xihe_runtime::checkpoint_api` and
+/// `xihe_runtime::checkpoint_revert_api`; these handlers only map its outcomes to
+/// the frozen contract (200 / 400 / 404 / 409 / 413 / 503 Problem+JSON).
 #[derive(Debug, Deserialize)]
-struct CreateRunCheckpointRequest {
+struct CaptureCheckpointRequest {
     #[serde(rename = "runId")]
     run_id: String,
+    actor: String,
+    #[serde(rename = "callId")]
+    call_id: String,
     #[serde(default)]
-    actor: Option<String>,
-    #[serde(rename = "callId", default)]
-    call_id: Option<String>,
+    abnormal: bool,
 }
 
 fn checkpoint_problem_response(
@@ -1793,7 +1817,7 @@ fn checkpoint_problem_response(
 }
 
 /// Same frozen Problem+JSON shape with additional contract fields (e.g. the
-/// revert lease holder or the unacknowledged conflict paths).
+/// unacknowledged type-change paths).
 fn checkpoint_problem_response_with(
     status: StatusCode,
     code: &'static str,
@@ -1825,93 +1849,32 @@ fn checkpoint_problem_response_with(
         .into_response()
 }
 
-async fn create_run_checkpoint_handler(
+/// `POST .../checkpoints/capture` — the single capture point (Run terminal,
+/// abnormal re-capture and the C0 baseline). `noChange` responses carry no ref.
+async fn capture_checkpoint_handler(
     Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
-    AxumJson(request): AxumJson<CreateRunCheckpointRequest>,
+    AxumJson(request): AxumJson<CaptureCheckpointRequest>,
 ) -> Response {
     match app
         .checkpoints
-        .create_base(
+        .capture(
             &ws_id,
             &request.run_id,
-            request.actor.as_deref(),
-            request.call_id.as_deref(),
+            &request.actor,
+            &request.call_id,
+            request.abnormal,
         )
         .await
     {
         Ok(outcome) => AxumJson(outcome).into_response(),
-        Err(CreateBaseFailure::Validation { detail }) => checkpoint_problem_response(
+        Err(CaptureFailure::Validation { detail }) => checkpoint_problem_response(
             StatusCode::BAD_REQUEST,
             "CHECKPOINT_INVALID_REQUEST",
             None,
             &detail,
         ),
-        Err(CreateBaseFailure::LeaseHeld {
-            run_id,
-            expires_at_ms,
-        }) => (
-            StatusCode::CONFLICT,
-            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
-            AxumJson(serde_json::json!({
-                "type": "https://xihe.dev/problems/checkpoint_lease_held",
-                "title": "Workspace mutation lease held",
-                "status": 409,
-                "code": "CHECKPOINT_LEASE_HELD",
-                "reason": "LEASE_HELD",
-                "heldByRunId": run_id,
-                "expiresAtMs": expires_at_ms,
-                "detail": "another run holds the workspace mutation lease",
-                "requestId": uuid::Uuid::new_v4().to_string(),
-            })),
-        )
-            .into_response(),
-        Err(CreateBaseFailure::Unavailable { reason, detail }) => checkpoint_problem_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "CHECKPOINT_UNAVAILABLE",
-            Some(reason),
-            &detail,
-        ),
-    }
-}
-
-async fn seal_run_checkpoint_handler(
-    Path((ws_id, run_id)): Path<(String, String)>,
-    State(app): State<Arc<AppState>>,
-) -> Response {
-    // `sealedWithLiveJobs` reads the host in-flight registry only: a seal must
-    // never materialize or probe the sandbox just to answer this flag.
-    let with_live_jobs = app.router.in_flight().count_for_workspace(&ws_id) > 0;
-    match app.checkpoints.seal(&ws_id, &run_id, with_live_jobs).await {
-        Ok(outcome) => AxumJson(outcome).into_response(),
-        Err(SealFailure::NotFound { run_id }) => checkpoint_problem_response(
-            StatusCode::NOT_FOUND,
-            "CHECKPOINT_NOT_FOUND",
-            None,
-            &format!("no checkpoint refs for run {run_id}"),
-        ),
-        Err(SealFailure::Unavailable { reason, detail }) => checkpoint_problem_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "CHECKPOINT_UNAVAILABLE",
-            Some(reason),
-            &detail,
-        ),
-    }
-}
-
-async fn checkpoint_status_handler(
-    Path((ws_id, run_id)): Path<(String, String)>,
-    State(app): State<Arc<AppState>>,
-) -> Response {
-    match app.checkpoints.status(&ws_id, &run_id).await {
-        Ok(status) => AxumJson(status).into_response(),
-        Err(StatusFailure::NotFound { run_id }) => checkpoint_problem_response(
-            StatusCode::NOT_FOUND,
-            "CHECKPOINT_NOT_FOUND",
-            None,
-            &format!("no checkpoint refs for run {run_id}"),
-        ),
-        Err(StatusFailure::Unavailable { reason, detail }) => checkpoint_problem_response(
+        Err(CaptureFailure::Unavailable { reason, detail }) => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
             Some(reason),
@@ -1941,69 +1904,25 @@ async fn checkpoint_gc_handler(
     }
 }
 
-/// PLAN-0328 M3 W1b: revert + workspace-diff host API.
-///
-/// `revert/preview` is read-only (no lease); `revert` takes the synthetic
-/// workspace mutation lease before executing; `blob` serves one plain-text file
-/// from the run's base/end tree; `git-status` is the read-only user-repository
-/// status for the dual-diff separation.
-fn revert_failure_response(failure: RevertFailure) -> Response {
+/// `POST .../checkpoints/cleanup` — explicit plan-B cleanup (Runtime side):
+/// removes the whole shadow repository of one workspace; a capture or restore
+/// in progress answers 409 `CHECKPOINT_BUSY` (no queueing). CP-side projection
+/// invalidation and the user confirmation flow are PLAN-0339.
+fn checkpoint_cleanup_failure_response(failure: CleanupFailure) -> Response {
     match failure {
-        RevertFailure::NotFound { run_id } => checkpoint_problem_response(
-            StatusCode::NOT_FOUND,
-            "CHECKPOINT_NOT_FOUND",
+        CleanupFailure::Validation { detail } => checkpoint_problem_response(
+            StatusCode::BAD_REQUEST,
+            "CHECKPOINT_INVALID_REQUEST",
             None,
-            &format!("no checkpoint refs for run {run_id}"),
+            &detail,
         ),
-        RevertFailure::NotSealed { run_id } => checkpoint_problem_response(
+        CleanupFailure::Busy => checkpoint_problem_response(
             StatusCode::CONFLICT,
-            "CHECKPOINT_NOT_SEALED",
+            "CHECKPOINT_BUSY",
             None,
-            &format!("run {run_id} is not sealed; revert requires a sealed run"),
+            "a checkpoint capture or restore currently owns this workspace",
         ),
-        RevertFailure::LeaseHeld {
-            holder,
-            expires_at_ms,
-        } => {
-            let mut extra = serde_json::Map::new();
-            if let Some(holder) = holder {
-                extra.insert("heldByRunId".to_string(), serde_json::json!(holder));
-            }
-            if let Some(expires) = expires_at_ms {
-                extra.insert("expiresAtMs".to_string(), serde_json::json!(expires));
-            }
-            checkpoint_problem_response_with(
-                StatusCode::CONFLICT,
-                "CHECKPOINT_LEASE_HELD",
-                Some("LEASE_HELD"),
-                "another run holds the workspace mutation lease",
-                extra,
-            )
-        }
-        RevertFailure::HeadChanged { recorded, observed } => {
-            let mut extra = serde_json::Map::new();
-            extra.insert("recorded".to_string(), serde_json::json!(recorded));
-            extra.insert("observed".to_string(), serde_json::json!(observed));
-            checkpoint_problem_response_with(
-                StatusCode::CONFLICT,
-                "CHECKPOINT_HEAD_CHANGED",
-                None,
-                "the workspace HEAD/branch fingerprint changed since the checkpoint base; acknowledge it to revert anyway",
-                extra,
-            )
-        }
-        RevertFailure::ConflictsUnacknowledged { paths } => {
-            let mut extra = serde_json::Map::new();
-            extra.insert("paths".to_string(), serde_json::json!(paths));
-            checkpoint_problem_response_with(
-                StatusCode::CONFLICT,
-                "CHECKPOINT_CONFLICTS_UNACKNOWLEDGED",
-                None,
-                "conflict paths must be acknowledged from the preview before reverting",
-                extra,
-            )
-        }
-        RevertFailure::Unavailable { reason, detail } => checkpoint_problem_response(
+        CleanupFailure::Unavailable { reason, detail } => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
             Some(reason),
@@ -2012,44 +1931,109 @@ fn revert_failure_response(failure: RevertFailure) -> Response {
     }
 }
 
-async fn revert_preview_handler(
-    Path((ws_id, run_id)): Path<(String, String)>,
+async fn checkpoint_cleanup_handler(
+    Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
 ) -> Response {
-    match app.checkpoints.revert_preview(&ws_id, &run_id).await {
+    match app.checkpoints.cleanup(&ws_id).await {
         Ok(outcome) => AxumJson(outcome).into_response(),
-        Err(failure) => revert_failure_response(failure),
+        Err(failure) => checkpoint_cleanup_failure_response(failure),
+    }
+}
+
+/// PLAN-0338: restore + slice-blob host API.
+///
+/// `revert/preview` is read-only; `revert` executes per path after an explicit
+/// acknowledgement of every type change and fails fast while another restore
+/// runs; `blob` serves one plain-text file from the slice tree; `git-status` is
+/// the read-only user-repository status for the dual-diff separation.
+fn restore_failure_response(failure: RestoreFailure) -> Response {
+    match failure {
+        RestoreFailure::NotFound { detail } => checkpoint_problem_response(
+            StatusCode::NOT_FOUND,
+            "CHECKPOINT_NOT_FOUND",
+            None,
+            &detail,
+        ),
+        RestoreFailure::TypeChangesUnacknowledged { paths } => {
+            let mut extra = serde_json::Map::new();
+            extra.insert("paths".to_string(), serde_json::json!(paths));
+            checkpoint_problem_response_with(
+                StatusCode::CONFLICT,
+                "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED",
+                None,
+                "type-change paths must be acknowledged from the preview before restoring",
+                extra,
+            )
+        }
+        RestoreFailure::RestoreLocked => checkpoint_problem_response(
+            StatusCode::CONFLICT,
+            "CHECKPOINT_RESTORE_LOCKED",
+            None,
+            "another checkpoint restore is already running for this workspace",
+        ),
+        RestoreFailure::Unavailable { reason, detail } => checkpoint_problem_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "CHECKPOINT_UNAVAILABLE",
+            Some(reason),
+            &detail,
+        ),
     }
 }
 
 #[derive(Debug, Deserialize)]
-struct RevertExecuteRequest {
-    #[serde(rename = "acknowledgeConflicts", default)]
-    acknowledge_conflicts: Vec<String>,
-    #[serde(rename = "acknowledgeHeadChange", default)]
-    acknowledge_head_change: bool,
+struct RestorePreviewRequest {
+    #[serde(rename = "sliceRef")]
+    slice_ref: String,
 }
 
-async fn revert_execute_handler(
-    Path((ws_id, run_id)): Path<(String, String)>,
+async fn restore_preview_handler(
+    Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
-    AxumJson(request): AxumJson<RevertExecuteRequest>,
+    AxumJson(request): AxumJson<RestorePreviewRequest>,
 ) -> Response {
-    let acks = RevertAcks {
-        head_changed: request.acknowledge_head_change,
-        conflicts: request.acknowledge_conflicts,
-    };
-    match app.checkpoints.revert_execute(&ws_id, &run_id, &acks).await {
+    match app
+        .checkpoints
+        .restore_preview(&ws_id, &request.slice_ref)
+        .await
+    {
         Ok(outcome) => AxumJson(outcome).into_response(),
-        Err(failure) => revert_failure_response(failure),
+        Err(failure) => restore_failure_response(failure),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RestoreExecuteRequest {
+    #[serde(rename = "sliceRef")]
+    slice_ref: String,
+    #[serde(rename = "acknowledgeTypeChanges", default)]
+    acknowledge_type_changes: Vec<String>,
+}
+
+async fn restore_execute_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(request): AxumJson<RestoreExecuteRequest>,
+) -> Response {
+    match app
+        .checkpoints
+        .restore_execute(
+            &ws_id,
+            &request.slice_ref,
+            &request.acknowledge_type_changes,
+        )
+        .await
+    {
+        Ok(outcome) => AxumJson(outcome).into_response(),
+        Err(failure) => restore_failure_response(failure),
     }
 }
 
 #[derive(Debug, Deserialize)]
 struct CheckpointBlobQuery {
+    #[serde(rename = "sliceRef")]
+    slice_ref: String,
     path: String,
-    #[serde(rename = "ref")]
-    reference: String,
 }
 
 fn blob_failure_response(failure: BlobFailure) -> Response {
@@ -2059,12 +2043,6 @@ fn blob_failure_response(failure: BlobFailure) -> Response {
             "CHECKPOINT_NOT_FOUND",
             None,
             &detail,
-        ),
-        BlobFailure::NotSealed { run_id } => checkpoint_problem_response(
-            StatusCode::CONFLICT,
-            "CHECKPOINT_NOT_SEALED",
-            None,
-            &format!("run {run_id} has no end ref; the blob endpoint cannot read it"),
         ),
         BlobFailure::Invalid { detail } => checkpoint_problem_response(
             StatusCode::BAD_REQUEST,
@@ -2095,7 +2073,7 @@ fn blob_failure_response(failure: BlobFailure) -> Response {
 }
 
 async fn checkpoint_blob_handler(
-    Path((ws_id, run_id)): Path<(String, String)>,
+    Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
     query: Result<Query<CheckpointBlobQuery>, QueryRejection>,
 ) -> Response {
@@ -2104,24 +2082,12 @@ async fn checkpoint_blob_handler(
             StatusCode::BAD_REQUEST,
             "CHECKPOINT_INVALID_REQUEST",
             None,
-            "blob query requires path and ref=base|end",
+            "blob query requires sliceRef and path",
         );
-    };
-    let reference = match query.reference.as_str() {
-        "base" => BlobRef::Base,
-        "end" => BlobRef::End,
-        other => {
-            return checkpoint_problem_response(
-                StatusCode::BAD_REQUEST,
-                "CHECKPOINT_INVALID_REQUEST",
-                None,
-                &format!("unsupported ref {other:?}; expected base or end"),
-            );
-        }
     };
     match app
         .checkpoints
-        .revert_blob(&ws_id, &run_id, reference, &query.path)
+        .slice_blob(&ws_id, &query.slice_ref, &query.path)
         .await
     {
         Ok(blob) => {
@@ -2141,10 +2107,7 @@ async fn checkpoint_blob_handler(
                     StatusCode::BAD_REQUEST,
                     "CHECKPOINT_INVALID_REQUEST",
                     None,
-                    &format!(
-                        "blob {} ({}) is not valid plain text",
-                        blob.path, blob.reference
-                    ),
+                    &format!("blob {} is not valid plain text", blob.path),
                 ),
             }
         }
@@ -2205,6 +2168,20 @@ fn runtime_checkpoint_host_root() -> PathBuf {
         })
 }
 
+/// Opt-in nested-repository hard limit (`XIHE_CHECKPOINT_REJECT_NESTED_REPOS`,
+/// default off). When enabled, captures refuse workspaces containing nested
+/// repositories with an explicit `NESTED_REPO_LIMIT` degraded reason; the
+/// default policy records them as opaque gitlinks (PLAN-0338 T1.2 / V2).
+fn runtime_checkpoint_nested_repo_policy() -> NestedRepoPolicy {
+    let enabled = std::env::var("XIHE_CHECKPOINT_REJECT_NESTED_REPOS")
+        .is_ok_and(|value| value.eq_ignore_ascii_case("true") || value == "1");
+    if enabled {
+        NestedRepoPolicy::Reject
+    } else {
+        NestedRepoPolicy::Opaque
+    }
+}
+
 /// Internal HTTP surface (frozen routes). Kept as one function so the route
 /// table is exercised by handler tests without starting a listener.
 fn build_app_router(app_state: &Arc<AppState>) -> Router {
@@ -2261,31 +2238,27 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
             post(mcp_stdio_handler),
         )
         .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints",
-            post(create_run_checkpoint_handler),
+            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/capture",
+            post(capture_checkpoint_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/gc",
             post(checkpoint_gc_handler),
         )
         .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}",
-            get(checkpoint_status_handler),
+            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/cleanup",
+            post(checkpoint_cleanup_handler),
         )
         .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}/seal",
-            post(seal_run_checkpoint_handler),
+            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/revert/preview",
+            post(restore_preview_handler),
         )
         .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}/revert/preview",
-            post(revert_preview_handler),
+            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/revert",
+            post(restore_execute_handler),
         )
         .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}/revert",
-            post(revert_execute_handler),
-        )
-        .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/{run_id}/blob",
+            "/internal/v1/runtime/workspaces/{ws_id}/checkpoints/blob",
             get(checkpoint_blob_handler),
         )
         .route(
@@ -2425,7 +2398,10 @@ async fn run() -> anyhow::Result<()> {
         device_id: device_id.clone(),
         workspace_ensurer: workspace_ensurer.clone(),
         router: router.clone(),
-        checkpoints: Arc::new(CheckpointService::new(runtime_checkpoint_host_root())),
+        checkpoints: Arc::new(
+            CheckpointService::new(runtime_checkpoint_host_root())
+                .with_nested_repo_policy(runtime_checkpoint_nested_repo_policy()),
+        ),
         ready: readiness.clone(),
     });
     // `readiness` and `workspace_ensurer` are consumed by `app_state`; clone first
@@ -3356,6 +3332,7 @@ mod checkpoint_handler_tests {
     const WS: &str = "ws-checkpoint";
     const AUTH: &str = "Bearer dev-token-not-secure";
     const DIAGNOSTICS_URI: &str = "/internal/v1/runtime/diagnostics";
+    const CAPTURE_URI: &str = "/internal/v1/runtime/workspaces/ws-checkpoint/checkpoints/capture";
 
     async fn state_with(service: CheckpointService) -> Arc<AppState> {
         let base = super::remote_handler_tests::test_state("http://127.0.0.1:1").await;
@@ -3412,528 +3389,66 @@ mod checkpoint_handler_tests {
         send_with_auth(state, method, uri, body, Some(AUTH)).await
     }
 
-    async fn create_checkpoint(
+    async fn capture_checkpoint(
         state: &Arc<AppState>,
         workspace: &str,
         run_id: &str,
+        abnormal: bool,
     ) -> (StatusCode, serde_json::Value) {
         send(
             state,
             Method::POST,
-            &format!("/internal/v1/runtime/workspaces/{workspace}/checkpoints"),
-            Some(serde_json::json!({"runId": run_id, "actor": "tester", "callId": "call-1"})),
+            &format!("/internal/v1/runtime/workspaces/{workspace}/checkpoints/capture"),
+            Some(serde_json::json!({
+                "runId": run_id,
+                "actor": "tester",
+                "callId": "call-1",
+                "abnormal": abnormal,
+            })),
         )
         .await
     }
 
-    async fn seal_checkpoint(
+    async fn restore_preview(
         state: &Arc<AppState>,
         workspace: &str,
-        run_id: &str,
+        slice_ref: &str,
     ) -> (StatusCode, serde_json::Value) {
         send(
             state,
             Method::POST,
-            &format!("/internal/v1/runtime/workspaces/{workspace}/checkpoints/{run_id}/seal"),
-            None,
+            &format!("/internal/v1/runtime/workspaces/{workspace}/checkpoints/revert/preview"),
+            Some(serde_json::json!({"sliceRef": slice_ref})),
+        )
+        .await
+    }
+
+    async fn restore_execute(
+        state: &Arc<AppState>,
+        workspace: &str,
+        slice_ref: &str,
+        acknowledge_type_changes: Vec<String>,
+    ) -> (StatusCode, serde_json::Value) {
+        send(
+            state,
+            Method::POST,
+            &format!("/internal/v1/runtime/workspaces/{workspace}/checkpoints/revert"),
+            Some(serde_json::json!({
+                "sliceRef": slice_ref,
+                "acknowledgeTypeChanges": acknowledge_type_changes,
+            })),
         )
         .await
     }
 
     async fn require_git(service: &CheckpointService) -> bool {
         let diagnostics = service.diagnostics().await;
-        if !diagnostics.capable {
-            eprintln!(
-                "checkpoint handler test skipped: host git unavailable ({:?})",
-                diagnostics.git_version
-            );
-        }
-        diagnostics.capable
-    }
-
-    /// Frozen create contract: 200 `{checkpointId, runId, state: base, baseRef,
-    /// createdAt}` and an idempotent replay per runId.
-    #[tokio::test]
-    async fn checkpoint_create_returns_base_shape_and_is_idempotent() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-
-        let (status, body) = create_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(status, StatusCode::OK, "create must return 200: {body}");
-        assert_eq!(body["state"], "base");
-        assert_eq!(body["runId"], "run-1");
-        assert_eq!(body["baseRef"], "refs/xihe/run-1/base");
-        let checkpoint_id = body["checkpointId"]
-            .as_str()
-            .expect("checkpointId is a string")
-            .to_string();
         assert!(
-            uuid::Uuid::parse_str(&checkpoint_id).is_ok(),
-            "checkpointId must be a UUID (CP parses it): {checkpoint_id}"
+            diagnostics.capable,
+            "checkpoint handler tests require a real host git >= 2.20 (spec/test-migration §8): {:?}",
+            diagnostics.git_version
         );
-        let created_at = body["createdAt"].as_str().expect("createdAt is a string");
-        assert!(
-            created_at.ends_with('Z') && chrono::DateTime::parse_from_rfc3339(created_at).is_ok(),
-            "createdAt must be RFC3339 UTC (CP Instant.parse): {created_at}"
-        );
-
-        let (replay_status, replay) = create_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(replay_status, StatusCode::OK);
-        assert_eq!(
-            replay["checkpointId"], checkpoint_id,
-            "idempotent replay must return the same checkpointId"
-        );
-        assert_eq!(replay["baseRef"], body["baseRef"]);
-        assert_eq!(replay["createdAt"], body["createdAt"]);
-    }
-
-    /// Another run holding the workspace lease → 409 CHECKPOINT_LEASE_HELD;
-    /// the owning run may re-enter idempotently.
-    #[tokio::test]
-    async fn checkpoint_create_conflicts_with_a_held_lease() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        let (first, _) = create_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(first, StatusCode::OK);
-
-        let (status, body) = create_checkpoint(&state, WS, "run-2").await;
-        assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(body["code"], "CHECKPOINT_LEASE_HELD");
-        assert_eq!(body["reason"], "LEASE_HELD");
-        assert_eq!(body["heldByRunId"], "run-1");
-        assert!(body["expiresAtMs"].as_u64().unwrap_or(0) > 0);
-        assert!(!body["requestId"].as_str().unwrap_or("").is_empty());
-
-        let (owner, _) = create_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(
-            owner,
-            StatusCode::OK,
-            "the owning run re-enters idempotently"
-        );
-    }
-
-    /// An expired lease is reclaimable; the reclaimed workspace then rejects the
-    /// previous run.
-    #[tokio::test]
-    async fn checkpoint_lease_is_reclaimable_after_ttl() {
-        let temp = workspace_root();
-        // Real TTL seconds (not milliseconds): the reclaiming create does real git
-        // work, so the new lease must not expire while the test runs.
-        let service = CheckpointService::new(temp.path()).with_lease_ttl(Duration::from_secs(2));
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        let (first, _) = create_checkpoint(&state, WS, "run-old").await;
-        assert_eq!(first, StatusCode::OK);
-
-        tokio::time::sleep(Duration::from_millis(2300)).await;
-        let (reclaimed, body) = create_checkpoint(&state, WS, "run-new").await;
-        assert_eq!(
-            reclaimed,
-            StatusCode::OK,
-            "expired lease must be reclaimable: {body}"
-        );
-
-        let (blocked, conflict) = create_checkpoint(&state, WS, "run-old").await;
-        assert_eq!(blocked, StatusCode::CONFLICT);
-        assert_eq!(conflict["heldByRunId"], "run-new");
-    }
-
-    /// Seal releases the lease (for that run only) and an idempotent reseal
-    /// returns the identical body.
-    #[tokio::test]
-    async fn checkpoint_seal_releases_the_lease_and_reseals_identically() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-1").await.0,
-            StatusCode::OK
-        );
-
-        let (status, sealed) = seal_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(status, StatusCode::OK, "seal must return 200: {sealed}");
-        assert_eq!(sealed["runId"], "run-1");
-        assert_eq!(sealed["state"], "sealed");
-        assert_eq!(sealed["endRef"], "refs/xihe/run-1/end");
-        assert_eq!(sealed["sealedWithLiveJobs"], false);
-        assert_eq!(sealed["sealedAfterAbnormal"], false);
-
-        let (reseal_status, resealed) = seal_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(reseal_status, StatusCode::OK);
-        assert_eq!(
-            resealed, sealed,
-            "idempotent reseal must return the same result"
-        );
-
-        let (next, body) = create_checkpoint(&state, WS, "run-2").await;
-        assert_eq!(next, StatusCode::OK, "seal must release the lease: {body}");
-    }
-
-    /// The W2 integration flow through the real HTTP surface: create → write →
-    /// seal returns the changed file; status reports it afterwards.
-    #[tokio::test]
-    async fn checkpoint_seal_reports_the_changed_file_after_write() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-write").await.0,
-            StatusCode::OK
-        );
-
-        let target = temp.path().join(WS).join("src").join("new.txt");
-        std::fs::create_dir_all(target.parent().expect("parent")).expect("fixture dirs");
-        std::fs::write(&target, "created during the run\n").expect("fixture write");
-
-        let (status, sealed) = seal_checkpoint(&state, WS, "run-write").await;
-        assert_eq!(status, StatusCode::OK, "seal must return 200: {sealed}");
-        assert_eq!(
-            sealed["changedFiles"],
-            serde_json::json!([{"status": "A", "path": "src/new.txt"}]),
-            "the sealed change set must contain exactly the written file"
-        );
-
-        let (status_status, status_body) = send(
-            &state,
-            Method::GET,
-            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/run-write"),
-            None,
-        )
-        .await;
-        assert_eq!(status_status, StatusCode::OK);
-        assert_eq!(status_body["state"], "sealed");
-        assert_eq!(
-            status_body["changedFiles"],
-            serde_json::json!([{"status": "A", "path": "src/new.txt"}])
-        );
-        assert!(status_body["endCommit"].as_str().is_some());
-    }
-
-    /// Status contract: `base` before seal, `sealed` after, 404 for an unknown run.
-    #[tokio::test]
-    async fn checkpoint_status_reports_base_then_sealed_and_404() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        let uri = format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/run-status");
-        let missing = format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/run-missing");
-
-        let (not_found, body) = send(&state, Method::GET, &missing, None).await;
-        assert_eq!(not_found, StatusCode::NOT_FOUND);
-        assert_eq!(body["code"], "CHECKPOINT_NOT_FOUND");
-
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-status").await.0,
-            StatusCode::OK
-        );
-        let (base_status, base_body) = send(&state, Method::GET, &uri, None).await;
-        assert_eq!(base_status, StatusCode::OK);
-        assert_eq!(base_body["state"], "base");
-        assert!(base_body["baseRef"].as_str().is_some());
-        assert!(base_body["endRef"].is_null());
-        assert_eq!(base_body["changedFiles"], serde_json::json!([]));
-
-        assert_eq!(
-            seal_checkpoint(&state, WS, "run-status").await.0,
-            StatusCode::OK
-        );
-        let (sealed_status, sealed_body) = send(&state, Method::GET, &uri, None).await;
-        assert_eq!(sealed_status, StatusCode::OK);
-        assert_eq!(sealed_body["state"], "sealed");
-        assert!(sealed_body["endRef"].as_str().is_some());
-        assert_eq!(sealed_body["changedFiles"], serde_json::json!([]));
-    }
-
-    /// Seal of an unknown run → 404; malformed run ids never reach git.
-    #[tokio::test]
-    async fn checkpoint_seal_unknown_or_invalid_run_returns_404() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-
-        let (status, body) = seal_checkpoint(&state, WS, "run-missing").await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body["code"], "CHECKPOINT_NOT_FOUND");
-
-        let (invalid_status, invalid) = seal_checkpoint(&state, WS, "run.").await;
-        assert_eq!(invalid_status, StatusCode::NOT_FOUND, "{invalid}");
-    }
-
-    /// Probe failure (no host git) → 503 CHECKPOINT_UNAVAILABLE / GIT_UNAVAILABLE,
-    /// and diagnostics exposes the degradation.
-    #[tokio::test]
-    async fn checkpoint_probe_failure_returns_503_git_unavailable() {
-        let temp = workspace_root();
-        let service =
-            CheckpointService::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
-        let state = state_with(service).await;
-
-        let (status, body) = create_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(body["code"], "CHECKPOINT_UNAVAILABLE");
-        assert_eq!(body["reason"], "GIT_UNAVAILABLE");
-        assert!(!body["detail"].as_str().unwrap_or("").is_empty());
-
-        let (diag_status, diagnostics) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
-        assert_eq!(diag_status, StatusCode::OK);
-        assert_eq!(diagnostics["checkpoint"]["capable"], false);
-        assert!(diagnostics["checkpoint"]["gitVersion"].is_null());
-    }
-
-    /// A workspace directory that does not exist → 503 WORKSPACE_UNKNOWN.
-    #[tokio::test]
-    async fn checkpoint_create_unknown_workspace_returns_503_workspace_unknown() {
-        let temp = TempDir::new().expect("fixture tempdir");
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-
-        let (status, body) = create_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(body["code"], "CHECKPOINT_UNAVAILABLE");
-        assert_eq!(body["reason"], "WORKSPACE_UNKNOWN");
-    }
-
-    /// GC contract: retention config is honored, unsealed runs survive, and the
-    /// response carries both the frozen top-level names and the CP `counts`.
-    #[tokio::test]
-    async fn checkpoint_gc_endpoint_returns_retention_counts() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path())
-            .with_retention(1, 30)
-            .with_auto_gc(false);
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        for run_id in ["run-01", "run-02", "run-03"] {
-            assert_eq!(
-                create_checkpoint(&state, WS, run_id).await.0,
-                StatusCode::OK
-            );
-            assert_eq!(seal_checkpoint(&state, WS, run_id).await.0, StatusCode::OK);
-        }
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-unsealed").await.0,
-            StatusCode::OK
-        );
-
-        let (status, body) = send(
-            &state,
-            Method::POST,
-            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/gc"),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "gc must return 200: {body}");
-        assert_eq!(
-            body["deletedRuns"],
-            serde_json::json!(["run-01", "run-02"]),
-            "count-based retention deletes sealed runs oldest-first"
-        );
-        assert_eq!(body["keptRuns"], 2, "one sealed + one unsealed run survive");
-        assert_eq!(body["counts"]["deletedRuns"], 2);
-        assert_eq!(body["counts"]["keptSealed"], 1);
-        assert_eq!(body["counts"]["keptUnsealed"], 1);
-        assert_eq!(body["counts"]["gcRan"], true);
-    }
-
-    /// Diagnostics shape: git capability, shadow root and the active lease set,
-    /// all without secrets.
-    #[tokio::test]
-    async fn checkpoint_diagnostics_reports_git_leases_and_shadow_root() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-1").await.0,
-            StatusCode::OK
-        );
-
-        let (status, body) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["status"], "ok");
-        let checkpoint = &body["checkpoint"];
-        assert_eq!(checkpoint["capable"], true);
-        assert!(
-            checkpoint["gitVersion"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("git version")),
-            "gitVersion must be the probed version string: {checkpoint}"
-        );
-        assert!(
-            checkpoint["shadowRoot"]
-                .as_str()
-                .is_some_and(|value| value.ends_with("/.xihe-shadow")),
-            "shadowRoot must point at the shadow directory: {checkpoint}"
-        );
-        assert_eq!(checkpoint["activeLeaseWorkspaces"], serde_json::json!([WS]));
-
-        assert_eq!(seal_checkpoint(&state, WS, "run-1").await.0, StatusCode::OK);
-        let (_, after_seal) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
-        assert_eq!(
-            after_seal["checkpoint"]["activeLeaseWorkspaces"],
-            serde_json::json!([]),
-            "seal must release the lease"
-        );
-    }
-
-    /// In-flight executions of the workspace are recorded as live jobs at seal.
-    #[tokio::test]
-    async fn checkpoint_seal_records_live_jobs() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-1").await.0,
-            StatusCode::OK
-        );
-        let _registration = state.router.in_flight().register(WS, "item-live");
-
-        let (status, sealed) = seal_checkpoint(&state, WS, "run-1").await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(sealed["sealedWithLiveJobs"], true);
-
-        let (preview_status, preview) = revert_preview(&state, WS, "run-1").await;
-        assert_eq!(preview_status, StatusCode::OK, "{preview}");
-        assert_eq!(
-            preview["sealedWithLiveJobs"], true,
-            "the preview must carry the seal marker: {preview}"
-        );
-    }
-
-    /// Malformed identifiers → 400 before any git work.
-    #[tokio::test]
-    async fn checkpoint_validation_rejects_unsafe_identifiers() {
-        let temp = workspace_root();
-        let state = state_with(CheckpointService::new(temp.path())).await;
-
-        let (status, body) = create_checkpoint(&state, WS, "../evil").await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["code"], "CHECKPOINT_INVALID_REQUEST");
-
-        let (ws_status, ws_body) = create_checkpoint(&state, "bad.id", "run-1").await;
-        assert_eq!(ws_status, StatusCode::BAD_REQUEST, "{ws_body}");
-
-        let (gc_status, gc_body) = send(
-            &state,
-            Method::POST,
-            "/internal/v1/runtime/workspaces/bad.id/checkpoints/gc",
-            None,
-        )
-        .await;
-        assert_eq!(gc_status, StatusCode::BAD_REQUEST, "{gc_body}");
-    }
-
-    /// The checkpoint routes stay behind the internal service bearer filter.
-    #[tokio::test]
-    async fn checkpoint_routes_require_service_auth() {
-        let temp = workspace_root();
-        let state = state_with(CheckpointService::new(temp.path())).await;
-
-        let (status, body) = send_with_auth(
-            &state,
-            Method::POST,
-            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints"),
-            Some(serde_json::json!({"runId": "run-1"})),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body["code"], "AUTHORIZATION_REQUIRED");
-
-        let (diag_status, _) =
-            send_with_auth(&state, Method::GET, DIAGNOSTICS_URI, None, None).await;
-        assert_eq!(diag_status, StatusCode::UNAUTHORIZED);
-    }
-
-    // ---- PLAN-0328 M3 W1b: revert / blob / git-status handler tests ----
-
-    async fn send_text(state: &Arc<AppState>, uri: &str) -> (StatusCode, Option<String>, String) {
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri(uri)
-            .header(axum::http::header::AUTHORIZATION, AUTH)
-            .body(Body::empty())
-            .expect("request");
-        let response = tower::ServiceExt::oneshot(build_app_router(state), request)
-            .await
-            .expect("infallible router");
-        let status = response.status();
-        let content_type = response
-            .headers()
-            .get(axum::http::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("response body");
-        (
-            status,
-            content_type,
-            String::from_utf8_lossy(&bytes).into_owned(),
-        )
-    }
-
-    async fn revert_preview(
-        state: &Arc<AppState>,
-        workspace: &str,
-        run_id: &str,
-    ) -> (StatusCode, serde_json::Value) {
-        send(
-            state,
-            Method::POST,
-            &format!(
-                "/internal/v1/runtime/workspaces/{workspace}/checkpoints/{run_id}/revert/preview"
-            ),
-            None,
-        )
-        .await
-    }
-
-    async fn revert_execute(
-        state: &Arc<AppState>,
-        workspace: &str,
-        run_id: &str,
-        body: serde_json::Value,
-    ) -> (StatusCode, serde_json::Value) {
-        send(
-            state,
-            Method::POST,
-            &format!("/internal/v1/runtime/workspaces/{workspace}/checkpoints/{run_id}/revert"),
-            Some(body),
-        )
-        .await
+        true
     }
 
     fn null_device() -> &'static str {
@@ -3967,461 +3482,392 @@ mod checkpoint_handler_tests {
         );
     }
 
-    /// Happy path: create → write → seal → preview → execute deletes the run-created
-    /// file and restores the modified one; a repeated execute is all-noop.
+    /// Frozen capture contract: 200 with `{runId, noChange, sliceRef, commit,
+    /// capturedAt, state, changedFiles, opaqueNestedRepos, predecessor}`, a
+    /// same-process replay that is idempotent, and a `noChange` body that carries
+    /// no ref.
     #[tokio::test]
-    async fn revert_preview_and_execute_revert_the_run_and_replay_all_noop() {
+    async fn checkpoint_capture_returns_slice_shape_no_change_and_replays_idempotently() {
         let temp = workspace_root();
-        std::fs::write(temp.path().join(WS).join("notes.md"), "before\n").expect("fixture notes");
         let service = CheckpointService::new(temp.path());
         if !require_git(&service).await {
             return;
         }
         let state = state_with(service).await;
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-revert").await.0,
-            StatusCode::OK
-        );
-        std::fs::create_dir_all(temp.path().join(WS).join("src")).expect("fixture dirs");
-        std::fs::write(
-            temp.path().join(WS).join("src/new.txt"),
-            "created during the run\n",
-        )
-        .expect("fixture write");
-        std::fs::write(temp.path().join(WS).join("notes.md"), "after\n").expect("fixture modify");
-        assert_eq!(
-            seal_checkpoint(&state, WS, "run-revert").await.0,
-            StatusCode::OK
-        );
 
-        let (status, preview) = revert_preview(&state, WS, "run-revert").await;
-        assert_eq!(status, StatusCode::OK, "preview must return 200: {preview}");
-        assert_eq!(preview["runId"], "run-revert");
-        assert_eq!(preview["state"], "sealed");
-        assert_eq!(
-            preview["counts"],
-            serde_json::json!({"restore": 1, "delete": 1, "skipConflicts": 0, "noop": 0}),
-            "preview counts must match the sealed change set: {preview}"
-        );
-        let entries = preview["entries"].as_array().expect("entries array");
-        assert_eq!(
-            entries.len(),
-            2,
-            "pending entries only (noop items are counted, not listed): {preview}"
-        );
-        assert_eq!(entries[0]["path"], "notes.md");
-        assert_eq!(entries[0]["action"], "restore");
-        assert!(entries[0]["conflictReason"].is_null());
-        assert_eq!(entries[1]["path"], "src/new.txt");
-        assert_eq!(entries[1]["action"], "delete");
-        assert_eq!(
-            preview["headFingerprint"]["status"], "not_repo",
-            "a non-Git workspace has no HEAD to protect: {preview}"
-        );
-        assert_eq!(preview["sealedWithLiveJobs"], false);
-        assert_eq!(preview["truncated"], false);
-
-        let (status, executed) = revert_execute(
-            &state,
-            WS,
-            "run-revert",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "execute must return 200: {executed}"
-        );
-        assert_eq!(
-            executed["counts"],
-            serde_json::json!({
-                "restored": 1, "deleted": 1, "skippedConflict": 0, "failed": 0, "noop": 0
-            }),
-            "execute counts must match the preview: {executed}"
-        );
-        let revert_ref = executed["revertRef"].as_str().expect("revertRef string");
+        let (status, body) = capture_checkpoint(&state, WS, "run-1", false).await;
+        assert_eq!(status, StatusCode::OK, "capture must return 200: {body}");
+        assert_eq!(body["runId"], "run-1");
+        assert_eq!(body["noChange"], false);
+        assert_eq!(body["state"], "captured");
+        assert_eq!(body["changedFiles"], serde_json::json!([]));
+        assert_eq!(body["opaqueNestedRepos"], serde_json::json!([]));
+        assert!(body["predecessor"].is_null());
+        let slice_ref = body["sliceRef"].as_str().expect("sliceRef is a string");
         assert!(
-            revert_ref.starts_with("refs/xihe/run-revert/rollback/"),
-            "revert must append its audit ref: {revert_ref}"
+            slice_ref.starts_with("refs/xihe/slices/"),
+            "slice ref namespace: {slice_ref}"
         );
-        assert!(executed["durationMs"].as_u64().is_some());
-        let results: Vec<(&str, &str)> = executed["entries"]
-            .as_array()
-            .expect("entries")
-            .iter()
-            .map(|entry| {
-                (
-                    entry["path"].as_str().expect("path"),
-                    entry["result"].as_str().expect("result"),
-                )
-            })
-            .collect();
-        assert_eq!(
-            results,
-            vec![("notes.md", "restored"), ("src/new.txt", "deleted")]
+        let leaf = slice_ref.trim_start_matches("refs/xihe/slices/");
+        let (epoch, hash) = leaf.split_once('-').expect("epochMs-hash leaf");
+        assert!(
+            epoch.chars().all(|c| c.is_ascii_digit()) && !epoch.is_empty(),
+            "epochMs leaf: {leaf}"
+        );
+        assert_eq!(hash.len(), 40, "full commit hash: {leaf}");
+        assert_eq!(body["commit"].as_str().expect("commit"), hash);
+        let captured_at = body["capturedAt"].as_str().expect("capturedAt");
+        assert!(
+            captured_at.ends_with('Z') && chrono::DateTime::parse_from_rfc3339(captured_at).is_ok(),
+            "capturedAt must be RFC3339 UTC (CP Instant.parse): {captured_at}"
         );
 
+        // Same-run replay within this process returns the identical slice.
+        let (replay_status, replay) = capture_checkpoint(&state, WS, "run-1", false).await;
+        assert_eq!(replay_status, StatusCode::OK);
+        assert_eq!(replay["sliceRef"], body["sliceRef"]);
+        assert_eq!(replay["commit"], body["commit"]);
+        assert_eq!(replay["capturedAt"], body["capturedAt"]);
+
+        // An unchanged workspace captured under another run id writes no ref.
+        let (no_change_status, no_change) = capture_checkpoint(&state, WS, "run-2", false).await;
+        assert_eq!(no_change_status, StatusCode::OK, "{no_change}");
+        assert_eq!(no_change["noChange"], true);
+        assert!(no_change["sliceRef"].is_null());
+        assert!(no_change["commit"].is_null());
+        assert!(no_change["capturedAt"].is_null());
+        assert_eq!(no_change["state"], "captured");
+        assert_eq!(no_change["changedFiles"], serde_json::json!([]));
+        assert_eq!(no_change["predecessor"], body["sliceRef"]);
+    }
+
+    /// Writes are reported against the chain tail and abnormal captures carry the
+    /// `abnormal-captured` state; the reserved C0 id is accepted verbatim.
+    #[tokio::test]
+    async fn checkpoint_capture_reports_changes_abnormal_state_and_accepts_c0() {
+        let temp = workspace_root();
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
         let ws_root = temp.path().join(WS);
-        assert_eq!(
-            std::fs::read_to_string(ws_root.join("notes.md")).expect("notes read"),
-            "before\n",
-            "the modified file must be restored to the base content"
-        );
-        assert!(
-            !ws_root.join("src/new.txt").exists(),
-            "the run-created file must be deleted"
-        );
-        assert!(
-            !ws_root.join("src").exists(),
-            "empty directories left by the revert must be pruned"
-        );
 
-        let (replay_status, replayed) = revert_execute(
-            &state,
-            WS,
-            "run-revert",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(replay_status, StatusCode::OK, "{replayed}");
+        let (_, first) = capture_checkpoint(&state, WS, "c0", false).await;
+        assert_eq!(first["runId"], "c0");
+        let first_ref = first["sliceRef"].as_str().expect("slice ref").to_string();
+
+        std::fs::create_dir_all(ws_root.join("src")).expect("fixture dirs");
+        std::fs::write(ws_root.join("src/new.txt"), "created during the run\n")
+            .expect("fixture write");
+        let (status, second) = capture_checkpoint(&state, WS, "run-write", true).await;
+        assert_eq!(status, StatusCode::OK, "{second}");
+        assert_eq!(second["noChange"], false);
+        assert_eq!(second["state"], "abnormal-captured");
+        assert_eq!(second["predecessor"], first_ref);
         assert_eq!(
-            replayed["counts"],
-            serde_json::json!({
-                "restored": 0, "deleted": 0, "skippedConflict": 0, "failed": 0, "noop": 2
-            }),
-            "a repeated execute must be idempotent: {replayed}"
-        );
-        assert!(
-            replayed["entries"]
-                .as_array()
-                .expect("entries")
-                .iter()
-                .all(|entry| entry["result"] == "noop"),
-            "every item of a repeated execute is noop: {replayed}"
-        );
-        assert_ne!(
-            replayed["revertRef"], executed["revertRef"],
-            "each execution appends its own rollback ref"
+            second["changedFiles"],
+            serde_json::json!([{"status": "A", "path": "src/new.txt"}]),
+            "the change set is the diff against the chain tail"
         );
     }
 
-    /// Unknown runs → 404; an existing but unsealed run → 409 CHECKPOINT_NOT_SEALED.
+    /// Probe failure (no host git) → 503 GIT_UNAVAILABLE and degraded diagnostics.
     #[tokio::test]
-    async fn revert_unknown_and_unsealed_runs_map_404_and_409() {
-        let temp = workspace_root();
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-
-        let (preview_status, preview) = revert_preview(&state, WS, "run-missing").await;
-        assert_eq!(preview_status, StatusCode::NOT_FOUND);
-        assert_eq!(preview["code"], "CHECKPOINT_NOT_FOUND");
-        let (execute_status, execute) = revert_execute(
-            &state,
-            WS,
-            "run-missing",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(execute_status, StatusCode::NOT_FOUND);
-        assert_eq!(execute["code"], "CHECKPOINT_NOT_FOUND");
-
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-open").await.0,
-            StatusCode::OK
-        );
-        let (open_preview, open_body) = revert_preview(&state, WS, "run-open").await;
-        assert_eq!(open_preview, StatusCode::CONFLICT, "{open_body}");
-        assert_eq!(open_body["code"], "CHECKPOINT_NOT_SEALED");
-        // Executing while the run itself is still live is rejected by the mutation
-        // lease first (a running run may not be reverted).
-        let (open_execute, open_execute_body) = revert_execute(
-            &state,
-            WS,
-            "run-open",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(open_execute, StatusCode::CONFLICT, "{open_execute_body}");
-        assert_eq!(open_execute_body["code"], "CHECKPOINT_LEASE_HELD");
-        assert_eq!(open_execute_body["heldByRunId"], "run-open");
-
-        // Unsealed with an expired lease (Runtime-restart recovery window): the
-        // execution reaches the engine and reports the missing seal.
-        let stale_temp = workspace_root();
-        let stale_service =
-            CheckpointService::new(stale_temp.path()).with_lease_ttl(Duration::from_millis(500));
-        if !require_git(&stale_service).await {
-            return;
-        }
-        let stale_state = state_with(stale_service).await;
-        assert_eq!(
-            create_checkpoint(&stale_state, WS, "run-stale").await.0,
-            StatusCode::OK
-        );
-        tokio::time::sleep(Duration::from_millis(700)).await;
-        let (stale_status, stale_body) = revert_execute(
-            &stale_state,
-            WS,
-            "run-stale",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(stale_status, StatusCode::CONFLICT, "{stale_body}");
-        assert_eq!(stale_body["code"], "CHECKPOINT_NOT_SEALED");
-
-        let (invalid, invalid_body) = revert_preview(&state, WS, "run.").await;
-        assert_eq!(invalid, StatusCode::NOT_FOUND, "{invalid_body}");
-        let (invalid_execute, invalid_execute_body) = revert_execute(
-            &state,
-            WS,
-            "run.",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(
-            invalid_execute,
-            StatusCode::NOT_FOUND,
-            "{invalid_execute_body}"
-        );
-    }
-
-    /// Probe failure (no host git) and a missing workspace directory → 503 with the
-    /// frozen reason codes.
-    #[tokio::test]
-    async fn revert_probe_and_workspace_failures_map_503() {
+    async fn checkpoint_capture_probe_failure_returns_503_git_unavailable() {
         let temp = workspace_root();
         let service =
             CheckpointService::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
         let state = state_with(service).await;
 
-        let (status, body) = revert_preview(&state, WS, "run-1").await;
+        let (status, body) = capture_checkpoint(&state, WS, "run-1", false).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["code"], "CHECKPOINT_UNAVAILABLE");
         assert_eq!(body["reason"], "GIT_UNAVAILABLE");
+        assert!(!body["detail"].as_str().unwrap_or("").is_empty());
 
-        let missing = TempDir::new().expect("fixture tempdir");
-        let missing_state = state_with(CheckpointService::new(missing.path())).await;
-        let (ws_status, ws_body) = revert_preview(&missing_state, WS, "run-1").await;
-        assert_eq!(ws_status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(ws_body["code"], "CHECKPOINT_UNAVAILABLE");
-        assert_eq!(ws_body["reason"], "WORKSPACE_UNKNOWN");
+        let (diag_status, diagnostics) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
+        assert_eq!(diag_status, StatusCode::OK);
+        assert_eq!(diagnostics["checkpoint"]["capable"], false);
+        assert!(diagnostics["checkpoint"]["gitVersion"].is_null());
+        assert_eq!(diagnostics["checkpoint"]["activeCaptureLocks"], 0);
+        assert_eq!(diagnostics["checkpoint"]["activeRestoreLocks"], 0);
     }
 
-    /// A live (unsealed) run holds the workspace mutation lease: the revert is
-    /// rejected with 409 CHECKPOINT_LEASE_HELD and the synthetic owner is released
-    /// on every path (the workspace becomes acquirable again).
+    /// A workspace directory that does not exist → 503 WORKSPACE_UNKNOWN.
     #[tokio::test]
-    async fn revert_execute_is_rejected_while_a_live_run_holds_the_workspace_lease() {
-        let temp = workspace_root();
-        std::fs::write(temp.path().join(WS).join("notes.md"), "before\n").expect("fixture notes");
+    async fn checkpoint_capture_unknown_workspace_returns_503_workspace_unknown() {
+        let temp = TempDir::new().expect("fixture tempdir");
         let service = CheckpointService::new(temp.path());
         if !require_git(&service).await {
             return;
         }
         let state = state_with(service).await;
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-1").await.0,
-            StatusCode::OK
-        );
-        std::fs::write(temp.path().join(WS).join("notes.md"), "after\n").expect("fixture modify");
-        assert_eq!(seal_checkpoint(&state, WS, "run-1").await.0, StatusCode::OK);
 
-        // A second run holds the workspace mutation lease while it is live.
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-2").await.0,
-            StatusCode::OK
-        );
-        let (status, body) = revert_execute(
-            &state,
-            WS,
-            "run-1",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        assert_eq!(body["code"], "CHECKPOINT_LEASE_HELD");
-        assert_eq!(body["reason"], "LEASE_HELD");
-        assert_eq!(body["heldByRunId"], "run-2");
-        assert!(body["expiresAtMs"].as_u64().unwrap_or(0) > 0);
-        assert_eq!(
-            std::fs::read_to_string(temp.path().join(WS).join("notes.md")).expect("notes"),
-            "after\n",
-            "a lease-rejected revert must not mutate the workspace"
-        );
-
-        // Sealing the live run releases its lease; the revert then succeeds and the
-        // synthetic lease is released again (diagnostics show no active leases).
-        assert_eq!(seal_checkpoint(&state, WS, "run-2").await.0, StatusCode::OK);
-        let (retry_status, retried) = revert_execute(
-            &state,
-            WS,
-            "run-1",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(retry_status, StatusCode::OK, "{retried}");
-        assert_eq!(retried["counts"]["restored"], 1);
-        let (_, diagnostics) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
-        assert_eq!(
-            diagnostics["checkpoint"]["activeLeaseWorkspaces"],
-            serde_json::json!([]),
-            "the synthetic revert lease must be released on success: {diagnostics}"
-        );
+        let (status, body) = capture_checkpoint(&state, WS, "run-1", false).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["code"], "CHECKPOINT_UNAVAILABLE");
+        assert_eq!(body["reason"], "WORKSPACE_UNKNOWN");
     }
 
-    /// Conflicts (paths changed after the run) are gated by an exact path list;
-    /// acknowledged conflicts are skipped and their content is preserved.
+    /// Malformed identifiers → 400 before any git work.
     #[tokio::test]
-    async fn revert_conflicts_require_acknowledgement_and_are_skipped() {
+    async fn checkpoint_validation_rejects_unsafe_identifiers() {
         let temp = workspace_root();
-        std::fs::write(temp.path().join(WS).join("notes.md"), "before\n").expect("fixture notes");
-        let service = CheckpointService::new(temp.path());
-        if !require_git(&service).await {
-            return;
-        }
-        let state = state_with(service).await;
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-conflict").await.0,
-            StatusCode::OK
-        );
-        std::fs::write(temp.path().join(WS).join("notes.md"), "after\n").expect("fixture modify");
-        assert_eq!(
-            seal_checkpoint(&state, WS, "run-conflict").await.0,
-            StatusCode::OK
-        );
-        // Post-seal user/editor edit: neither base nor end any more.
-        std::fs::write(temp.path().join(WS).join("notes.md"), "user edit\n")
-            .expect("post-seal edit");
+        let state = state_with(CheckpointService::new(temp.path())).await;
 
-        let (preview_status, preview) = revert_preview(&state, WS, "run-conflict").await;
-        assert_eq!(preview_status, StatusCode::OK, "{preview}");
-        assert_eq!(
-            preview["counts"],
-            serde_json::json!({"restore": 0, "delete": 0, "skipConflicts": 1, "noop": 0})
-        );
-        assert_eq!(preview["entries"][0]["path"], "notes.md");
-        assert_eq!(preview["entries"][0]["action"], "restore");
-        assert_eq!(
-            preview["entries"][0]["conflictReason"], "CONTENT_CHANGED",
-            "the frozen conflict code must be exposed: {preview}"
-        );
+        let (status, body) = capture_checkpoint(&state, WS, "../evil", false).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], "CHECKPOINT_INVALID_REQUEST");
 
-        let (unacked_status, unacked) = revert_execute(
+        let (ws_status, ws_body) = capture_checkpoint(&state, "bad.id", "run-1", false).await;
+        assert_eq!(ws_status, StatusCode::BAD_REQUEST, "{ws_body}");
+
+        let (gc_status, gc_body) = send(
             &state,
-            WS,
-            "run-conflict",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
+            Method::POST,
+            "/internal/v1/runtime/workspaces/bad.id/checkpoints/gc",
+            None,
         )
         .await;
-        assert_eq!(unacked_status, StatusCode::CONFLICT, "{unacked}");
-        assert_eq!(unacked["code"], "CHECKPOINT_CONFLICTS_UNACKNOWLEDGED");
-        assert_eq!(unacked["paths"], serde_json::json!(["notes.md"]));
+        assert_eq!(gc_status, StatusCode::BAD_REQUEST, "{gc_body}");
 
-        let (acked_status, acked) = revert_execute(
+        let (cleanup_status, cleanup_body) = send(
             &state,
-            WS,
-            "run-conflict",
-            serde_json::json!({"acknowledgeConflicts": ["notes.md"], "acknowledgeHeadChange": false}),
+            Method::POST,
+            "/internal/v1/runtime/workspaces/bad.id/checkpoints/cleanup",
+            None,
         )
         .await;
-        assert_eq!(acked_status, StatusCode::OK, "{acked}");
-        assert_eq!(
-            acked["counts"],
-            serde_json::json!({
-                "restored": 0, "deleted": 0, "skippedConflict": 1, "failed": 0, "noop": 0
-            })
-        );
-        assert_eq!(acked["entries"][0]["result"], "skippedConflict");
-        assert_eq!(acked["entries"][0]["reason"], "CONTENT_CHANGED");
-        assert_eq!(
-            std::fs::read_to_string(temp.path().join(WS).join("notes.md")).expect("notes"),
-            "user edit\n",
-            "acknowledged conflicts are skipped, never overwritten"
-        );
+        assert_eq!(cleanup_status, StatusCode::BAD_REQUEST, "{cleanup_body}");
     }
 
-    /// A user-repository HEAD move after base creation requires an explicit
-    /// acknowledgement; the preview exposes recorded/current fingerprints.
+    /// Plan-B cleanup: removes the whole shadow repo, is idempotent, never
+    /// touches the workspace files, and the next capture bootstraps afresh.
     #[tokio::test]
-    async fn revert_head_change_requires_acknowledgement() {
+    async fn checkpoint_cleanup_removes_shadow_repo_and_next_capture_bootstraps() {
         let temp = workspace_root();
         let ws_root = temp.path().join(WS);
+        std::fs::write(ws_root.join("a.txt"), "one").expect("seed workspace file");
+        let service = CheckpointService::new(temp.path()).with_auto_gc(false);
+        if !require_git(&service).await {
+            return;
+        }
+        let shadow = service.engine().shadow_git_dir(WS).expect("shadow path");
+        let state = state_with(service).await;
+
+        let (status, body) = capture_checkpoint(&state, WS, "run-1", false).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(shadow.is_dir(), "capture bootstraps the shadow repository");
+
+        let cleanup_uri = format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/cleanup");
+        let (cleanup_status, cleanup_body) = send(&state, Method::POST, &cleanup_uri, None).await;
+        assert_eq!(cleanup_status, StatusCode::OK, "{cleanup_body}");
+        assert_eq!(cleanup_body["removed"], true);
+        assert!(
+            !shadow.exists(),
+            "cleanup removes the whole shadow repository"
+        );
+
+        let (again_status, again_body) = send(&state, Method::POST, &cleanup_uri, None).await;
+        assert_eq!(again_status, StatusCode::OK, "{again_body}");
+        assert_eq!(again_body["removed"], false, "cleanup is idempotent");
+        assert!(
+            ws_root.join("a.txt").exists(),
+            "workspace files are untouched"
+        );
+
+        let (recapture_status, recapture_body) =
+            capture_checkpoint(&state, WS, "run-2", false).await;
+        assert_eq!(recapture_status, StatusCode::OK, "{recapture_body}");
+        assert_eq!(recapture_body["noChange"], false);
+        assert!(
+            recapture_body["sliceRef"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("refs/xihe/slices/"),
+            "{recapture_body}"
+        );
+    }
+
+    /// Cleanup fails fast with 409 CHECKPOINT_BUSY while a capture holds the
+    /// workspace lock, and succeeds once the lock is released.
+    #[tokio::test]
+    async fn checkpoint_cleanup_is_rejected_while_a_lock_is_held() {
+        let temp = workspace_root();
+        let service = CheckpointService::new(temp.path()).with_auto_gc(false);
+        require_git(&service).await;
+        let state = state_with(service).await;
+
+        let guard = state.checkpoints.engine().lock_capture(WS).await;
+        let uri = format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/cleanup");
+        let (status, body) = send(&state, Method::POST, &uri, None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["code"], "CHECKPOINT_BUSY");
+        drop(guard);
+
+        let (released_status, released_body) = send(&state, Method::POST, &uri, None).await;
+        assert_eq!(released_status, StatusCode::OK, "{released_body}");
+        assert_eq!(released_body["removed"], false);
+    }
+
+    /// Opt-in nested-repo hard limit: `Reject` answers 503 NESTED_REPO_LIMIT,
+    /// the default `Opaque` policy captures the same workspace and declares the
+    /// nested repository instead.
+    #[tokio::test]
+    async fn checkpoint_capture_nested_repo_policy_is_explicit() {
+        let temp = workspace_root();
+        let ws_root = temp.path().join(WS);
+        let nested = ws_root.join("sub-repo");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let initialized = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.email=fixture@xihe.local",
+                "-c",
+                "user.name=fixture",
+                "init",
+                "-q",
+            ])
+            .current_dir(&nested)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !initialized {
+            return;
+        }
+        // A real nested repository has a commit; without one `git add -A` refuses
+        // the gitlink with exit 128 (documented edge, explicit GIT_FAILED).
+        let committed = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.email=fixture@xihe.local",
+                "-c",
+                "user.name=fixture",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "nested baseline",
+            ])
+            .current_dir(&nested)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !committed {
+            return;
+        }
+        std::fs::write(nested.join("inner.txt"), "inner").expect("nested file");
+
+        let rejecting = CheckpointService::new(temp.path())
+            .with_nested_repo_policy(NestedRepoPolicy::Reject)
+            .with_auto_gc(false);
+        if !require_git(&rejecting).await {
+            return;
+        }
+        let reject_state = state_with(rejecting).await;
+        let (status, body) = capture_checkpoint(&reject_state, WS, "run-1", false).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["code"], "CHECKPOINT_UNAVAILABLE");
+        assert_eq!(body["reason"], "NESTED_REPO_LIMIT", "{body}");
+        assert!(
+            body["detail"].as_str().unwrap_or("").contains("sub-repo"),
+            "{body}"
+        );
+
+        let opaque_state =
+            state_with(CheckpointService::new(temp.path()).with_auto_gc(false)).await;
+        let (ok_status, ok_body) = capture_checkpoint(&opaque_state, WS, "run-1", false).await;
+        assert_eq!(ok_status, StatusCode::OK, "{ok_body}");
+        assert_eq!(
+            ok_body["opaqueNestedRepos"],
+            serde_json::json!(["sub-repo"])
+        );
+
+        let (diag_status, diagnostics) =
+            send(&opaque_state, Method::GET, DIAGNOSTICS_URI, None).await;
+        assert_eq!(diag_status, StatusCode::OK);
+        assert_eq!(diagnostics["checkpoint"]["nestedRepoPolicy"], "opaque");
+    }
+
+    /// GC contract: retention counts slices (oldest first) and returns only
+    /// `{counts: {deleted, kept}}`.
+    #[tokio::test]
+    async fn checkpoint_gc_counts_slices_and_keeps_the_newest() {
+        let temp = workspace_root();
+        let ws_root = temp.path().join(WS);
+        let service = CheckpointService::new(temp.path())
+            .with_retention(1, 30)
+            .with_auto_gc(false);
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        for index in 1..=3 {
+            std::fs::write(ws_root.join("file.txt"), format!("version {index}\n"))
+                .expect("fixture write");
+            let (status, body) =
+                capture_checkpoint(&state, WS, &format!("run-{index:02}"), false).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+
+        let (status, body) = send(
+            &state,
+            Method::POST,
+            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/gc"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "gc must return 200: {body}");
+        assert_eq!(body["counts"]["deleted"], 2, "{body}");
+        assert_eq!(body["counts"]["kept"], 1, "{body}");
+        assert_eq!(body.as_object().expect("object").len(), 1, "counts only");
+    }
+
+    /// Diagnostics shape: git capability, shadow root and the lock counters.
+    #[tokio::test]
+    async fn checkpoint_diagnostics_reports_locks_and_shadow_root() {
+        let temp = workspace_root();
         let service = CheckpointService::new(temp.path());
         if !require_git(&service).await {
             return;
         }
         let state = state_with(service).await;
-        std::fs::write(ws_root.join("app.txt"), "v1\n").expect("fixture file");
-        git_in(&ws_root, &["init", "-q"]);
-        git_in(&ws_root, &["add", "-A"]);
-        git_in(&ws_root, &["commit", "-qm", "one"]);
 
-        assert_eq!(
-            create_checkpoint(&state, WS, "run-head").await.0,
-            StatusCode::OK
-        );
-        std::fs::write(ws_root.join("app.txt"), "v2\n").expect("fixture modify");
-        assert_eq!(
-            seal_checkpoint(&state, WS, "run-head").await.0,
-            StatusCode::OK
-        );
-        // The user moves HEAD while the worktree stays at the run's end state.
-        git_in(&ws_root, &["commit", "-q", "--allow-empty", "-m", "bump"]);
-
-        let (preview_status, preview) = revert_preview(&state, WS, "run-head").await;
-        assert_eq!(preview_status, StatusCode::OK, "{preview}");
-        assert_eq!(preview["headFingerprint"]["status"], "changed");
-        let recorded = preview["headFingerprint"]["recorded"].clone();
-        let current = preview["headFingerprint"]["current"].clone();
-        assert_eq!(recorded["isRepo"], true);
+        let (status, body) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "ok");
+        let checkpoint = &body["checkpoint"];
+        assert_eq!(checkpoint["capable"], true);
         assert!(
-            recorded["headCommit"].as_str().is_some(),
-            "recorded fingerprint must carry the commit: {preview}"
+            checkpoint["gitVersion"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("git version")),
+            "gitVersion must be the probed version string: {checkpoint}"
         );
-        assert_ne!(
-            recorded["headCommit"], current["headCommit"],
-            "the user commit must be visible as a HEAD change: {preview}"
+        assert!(
+            checkpoint["shadowRoot"]
+                .as_str()
+                .is_some_and(|value| value.ends_with("/.xihe-shadow")),
+            "shadowRoot must point at the shadow directory: {checkpoint}"
         );
+        assert_eq!(checkpoint["activeCaptureLocks"], 0);
+        assert_eq!(checkpoint["activeRestoreLocks"], 0);
+        assert!(checkpoint.get("activeLeaseWorkspaces").is_none());
 
-        let (blocked_status, blocked) = revert_execute(
-            &state,
-            WS,
-            "run-head",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": false}),
-        )
-        .await;
-        assert_eq!(blocked_status, StatusCode::CONFLICT, "{blocked}");
-        assert_eq!(blocked["code"], "CHECKPOINT_HEAD_CHANGED");
-        assert_eq!(blocked["recorded"]["headCommit"], recorded["headCommit"]);
-        assert_eq!(
-            std::fs::read_to_string(ws_root.join("app.txt")).expect("app"),
-            "v2\n",
-            "a head-change-rejected revert must not mutate the workspace"
-        );
-
-        let (acked_status, acked) = revert_execute(
-            &state,
-            WS,
-            "run-head",
-            serde_json::json!({"acknowledgeConflicts": [], "acknowledgeHeadChange": true}),
-        )
-        .await;
-        assert_eq!(acked_status, StatusCode::OK, "{acked}");
-        assert_eq!(acked["counts"]["restored"], 1);
-        assert_eq!(
-            std::fs::read_to_string(ws_root.join("app.txt")).expect("app"),
-            "v1\n"
-        );
+        // A held capture lock shows up and is released with its guard.
+        let capture = state.checkpoints.engine().lock_capture(WS).await;
+        let (_, held) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
+        assert_eq!(held["checkpoint"]["activeCaptureLocks"], 1);
+        drop(capture);
+        let (_, released) = send(&state, Method::GET, DIAGNOSTICS_URI, None).await;
+        assert_eq!(released["checkpoint"]["activeCaptureLocks"], 0);
     }
 
-    /// Blob endpoint: base/end text content, 400 for unsupported ref/traversal/
-    /// non-file/binary, 404 for absent paths, 413 above the 1 MiB cap.
+    /// Happy path: capture C1 → write → capture C2 → preview C1 → restore C1;
+    /// a replay finds the workspace already at the slice.
     #[tokio::test]
-    async fn checkpoint_blob_serves_text_and_rejects_caps_paths_and_binary() {
+    async fn restore_preview_and_execute_round_trip() {
         let temp = workspace_root();
         let ws_root = temp.path().join(WS);
         std::fs::write(ws_root.join("notes.md"), "before\n").expect("fixture notes");
@@ -4430,10 +3876,221 @@ mod checkpoint_handler_tests {
             return;
         }
         let state = state_with(service).await;
+
+        let (_, first) = capture_checkpoint(&state, WS, "run-1", false).await;
+        let slice = first["sliceRef"].as_str().expect("slice ref").to_string();
+        std::fs::create_dir_all(ws_root.join("src")).expect("fixture dirs");
+        std::fs::write(ws_root.join("src/new.txt"), "created during the run\n")
+            .expect("fixture write");
+        std::fs::write(ws_root.join("notes.md"), "after\n").expect("fixture modify");
+        let (_, second) = capture_checkpoint(&state, WS, "run-2", false).await;
+        assert_eq!(second["noChange"], false);
+
+        let (status, preview) = restore_preview(&state, WS, &slice).await;
+        assert_eq!(status, StatusCode::OK, "preview must return 200: {preview}");
+        assert_eq!(preview["sliceRef"], slice);
         assert_eq!(
-            create_checkpoint(&state, WS, "run-blob").await.0,
-            StatusCode::OK
+            preview["counts"],
+            serde_json::json!({"restore": 1, "delete": 1, "typeConflict": 0}),
+            "preview counts must match the target slice diff: {preview}"
         );
+        assert_eq!(preview["truncated"], false);
+        let entries = preview["entries"].as_array().expect("entries array");
+        assert_eq!(entries.len(), 2, "{preview}");
+        let restore_entry = entries
+            .iter()
+            .find(|entry| entry["action"] == "restore")
+            .expect("restore entry");
+        assert_eq!(restore_entry["path"], "notes.md");
+        assert_eq!(restore_entry["state"], "execute");
+        assert!(restore_entry["reason"].is_null());
+        let delete_entry = entries
+            .iter()
+            .find(|entry| entry["action"] == "delete")
+            .expect("delete entry");
+        assert_eq!(delete_entry["path"], "src/new.txt");
+
+        let (status, executed) = restore_execute(&state, WS, &slice, Vec::new()).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "restore must return 200: {executed}"
+        );
+        assert_eq!(executed["sliceRef"], slice);
+        assert_eq!(
+            executed["counts"],
+            serde_json::json!({"restored": 1, "deleted": 1, "failed": 0}),
+            "{executed}"
+        );
+        assert_eq!(executed["suspects"], serde_json::json!([]));
+        assert!(executed["durationMs"].as_u64().is_some());
+        let results: Vec<(&str, &str)> = executed["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .map(|entry| {
+                (
+                    entry["path"].as_str().expect("path"),
+                    entry["outcome"].as_str().expect("outcome"),
+                )
+            })
+            .collect();
+        assert!(results.contains(&("notes.md", "restored")), "{results:?}");
+        assert!(results.contains(&("src/new.txt", "deleted")), "{results:?}");
+        assert_eq!(
+            std::fs::read_to_string(ws_root.join("notes.md")).expect("notes read"),
+            "before\n"
+        );
+        assert!(!ws_root.join("src/new.txt").exists());
+        assert!(
+            !ws_root.join("src").exists(),
+            "empty directories left by the restore are pruned"
+        );
+
+        // Replaying the restore finds an empty plan (already at the slice).
+        let (replay_status, replayed) = restore_execute(&state, WS, &slice, Vec::new()).await;
+        assert_eq!(replay_status, StatusCode::OK, "{replayed}");
+        assert_eq!(
+            replayed["counts"],
+            serde_json::json!({"restored": 0, "deleted": 0, "failed": 0})
+        );
+        assert_eq!(replayed["entries"], serde_json::json!([]));
+        assert_eq!(replayed["suspects"], serde_json::json!([]));
+    }
+
+    /// Unknown slice refs → 404; probe failure / missing workspace → 503.
+    #[tokio::test]
+    async fn restore_unknown_slice_maps_404_and_unavailable_maps_503() {
+        let temp = workspace_root();
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        let unknown = "refs/xihe/slices/1700000000000-0123456789abcdef0123456789abcdef01234567";
+
+        let (preview_status, preview) = restore_preview(&state, WS, unknown).await;
+        assert_eq!(preview_status, StatusCode::NOT_FOUND);
+        assert_eq!(preview["code"], "CHECKPOINT_NOT_FOUND");
+        let (execute_status, execute) = restore_execute(&state, WS, unknown, Vec::new()).await;
+        assert_eq!(execute_status, StatusCode::NOT_FOUND);
+        assert_eq!(execute["code"], "CHECKPOINT_NOT_FOUND");
+
+        let broken =
+            CheckpointService::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
+        let broken_state = state_with(broken).await;
+        let (broken_status, broken_body) = restore_preview(&broken_state, WS, unknown).await;
+        assert_eq!(broken_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(broken_body["code"], "CHECKPOINT_UNAVAILABLE");
+        assert_eq!(broken_body["reason"], "GIT_UNAVAILABLE");
+
+        let missing = TempDir::new().expect("fixture tempdir");
+        let missing_state = state_with(CheckpointService::new(missing.path())).await;
+        let (missing_status, missing_body) = restore_preview(&missing_state, WS, unknown).await;
+        assert_eq!(missing_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(missing_body["code"], "CHECKPOINT_UNAVAILABLE");
+        assert_eq!(missing_body["reason"], "WORKSPACE_UNKNOWN");
+    }
+
+    /// Type changes are gated by an exact acknowledgement list.
+    #[tokio::test]
+    async fn restore_type_change_requires_acknowledgement() {
+        let temp = workspace_root();
+        let ws_root = temp.path().join(WS);
+        std::fs::write(ws_root.join("p"), "p-base").expect("fixture file");
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        let (_, first) = capture_checkpoint(&state, WS, "run-1", false).await;
+        let slice = first["sliceRef"].as_str().expect("slice ref").to_string();
+
+        // The file became a directory containing a file (file → directory).
+        std::fs::remove_file(ws_root.join("p")).expect("remove file");
+        std::fs::create_dir_all(ws_root.join("p")).expect("create dir");
+        std::fs::write(ws_root.join("p/child.txt"), "child").expect("write child");
+
+        let (preview_status, preview) = restore_preview(&state, WS, &slice).await;
+        assert_eq!(preview_status, StatusCode::OK, "{preview}");
+        assert_eq!(
+            preview["counts"],
+            serde_json::json!({"restore": 1, "delete": 1, "typeConflict": 1})
+        );
+        let conflict = preview["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .find(|entry| entry["state"] == "type_conflict")
+            .expect("type conflict entry");
+        assert_eq!(conflict["path"], "p");
+        assert_eq!(conflict["reason"], "TYPE_CHANGE");
+
+        let (blocked_status, blocked) = restore_execute(&state, WS, &slice, Vec::new()).await;
+        assert_eq!(blocked_status, StatusCode::CONFLICT, "{blocked}");
+        assert_eq!(blocked["code"], "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED");
+        assert_eq!(blocked["paths"], serde_json::json!(["p"]));
+        assert_eq!(
+            std::fs::read_to_string(ws_root.join("p/child.txt")).expect("child"),
+            "child",
+            "the gate must precede mutation"
+        );
+
+        let (status, executed) = restore_execute(&state, WS, &slice, vec!["p".to_string()]).await;
+        assert_eq!(status, StatusCode::OK, "{executed}");
+        assert_eq!(
+            executed["counts"],
+            serde_json::json!({"restored": 1, "deleted": 1, "failed": 0})
+        );
+        assert!(!ws_root.join("p/child.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(ws_root.join("p")).expect("restored file"),
+            "p-base"
+        );
+    }
+
+    /// A second concurrent restore → 409 CHECKPOINT_RESTORE_LOCKED (no queueing).
+    #[tokio::test]
+    async fn restore_lock_maps_409_checkpoint_restore_locked() {
+        let temp = workspace_root();
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        let (_, first) = capture_checkpoint(&state, WS, "run-1", false).await;
+        let slice = first["sliceRef"].as_str().expect("slice ref").to_string();
+
+        let guard = state
+            .checkpoints
+            .engine()
+            .try_lock_restore(WS)
+            .expect("fixture restore lock");
+        let (status, body) = restore_execute(&state, WS, &slice, Vec::new()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["code"], "CHECKPOINT_RESTORE_LOCKED");
+        drop(guard);
+
+        // With the restore lock free the same request succeeds.
+        let (status, body) = restore_execute(&state, WS, &slice, Vec::new()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    /// Blob endpoint: slice text content, 400 for traversal/non-file/binary, 404
+    /// for absent paths and unknown slices, 413 above the 1 MiB cap.
+    #[tokio::test]
+    async fn checkpoint_blob_serves_slice_text_and_rejects_caps_paths_and_binary() {
+        let temp = workspace_root();
+        let ws_root = temp.path().join(WS);
+        std::fs::write(ws_root.join("notes.md"), "before\n").expect("fixture notes");
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        let (_, first) = capture_checkpoint(&state, WS, "run-1", false).await;
+        let first_slice = first["sliceRef"].as_str().expect("slice ref").to_string();
+
         std::fs::write(ws_root.join("notes.md"), "after\n").expect("fixture modify");
         std::fs::create_dir_all(ws_root.join("src")).expect("fixture dirs");
         std::fs::write(ws_root.join("src/new.txt"), "created during the run\n")
@@ -4442,65 +4099,90 @@ mod checkpoint_handler_tests {
             .expect("fixture big file");
         std::fs::write(ws_root.join("bin.dat"), [0x62_u8, 0x69, 0x6e, 0x00, 0xff])
             .expect("fixture binary");
-        assert_eq!(
-            seal_checkpoint(&state, WS, "run-blob").await.0,
-            StatusCode::OK
-        );
+        let (_, second) = capture_checkpoint(&state, WS, "run-2", false).await;
+        let second_slice = second["sliceRef"].as_str().expect("slice ref").to_string();
 
-        let blob_uri = |path: &str, reference: &str| {
+        let blob_uri = |slice: &str, path: &str| {
             format!(
-                "/internal/v1/runtime/workspaces/{WS}/checkpoints/run-blob/blob?path={path}&ref={reference}"
+                "/internal/v1/runtime/workspaces/{WS}/checkpoints/blob?sliceRef={slice}&path={path}"
+            )
+        };
+        let blob_uri_encoded = |slice: &str, path: &str| {
+            let encoded = slice.replace('/', "%2F");
+            format!(
+                "/internal/v1/runtime/workspaces/{WS}/checkpoints/blob?sliceRef={encoded}&path={path}"
             )
         };
 
-        let (status, content_type, body) = send_text(&state, &blob_uri("notes.md", "end")).await;
-        assert_eq!(status, StatusCode::OK);
+        let (status, content_type, body) =
+            send_text(&state, &blob_uri_encoded(&first_slice, "notes.md")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(content_type.as_deref(), Some("text/plain; charset=utf-8"));
-        assert_eq!(body, "after\n");
-        let (_, _, base_body) = send_text(&state, &blob_uri("notes.md", "base")).await;
-        assert_eq!(base_body, "before\n");
-        let (_, _, created_body) = send_text(&state, &blob_uri("src%2Fnew.txt", "end")).await;
+        assert_eq!(body, "before\n");
+        let (_, _, after_body) =
+            send_text(&state, &blob_uri_encoded(&second_slice, "notes.md")).await;
+        assert_eq!(after_body, "after\n");
+        let (_, _, created_body) =
+            send_text(&state, &blob_uri_encoded(&second_slice, "src%2Fnew.txt")).await;
         assert_eq!(created_body, "created during the run\n");
 
-        // A run-created path has no base blob.
-        let (missing_base, _, _) = send_text(&state, &blob_uri("src%2Fnew.txt", "base")).await;
-        assert_eq!(missing_base, StatusCode::NOT_FOUND);
-        let (missing_path, _, _) = send_text(&state, &blob_uri("missing.txt", "end")).await;
+        // A path absent from that slice and an unknown slice are 404s.
+        let (missing_path, _, _) =
+            send_text(&state, &blob_uri_encoded(&first_slice, "missing.txt")).await;
         assert_eq!(missing_path, StatusCode::NOT_FOUND);
+        let unknown = "refs/xihe/slices/1700000000000-0123456789abcdef0123456789abcdef01234567";
+        let (missing_slice, _, _) = send_text(&state, &blob_uri_encoded(unknown, "notes.md")).await;
+        assert_eq!(missing_slice, StatusCode::NOT_FOUND);
 
-        for uri in [
-            blob_uri("notes.md", "head"),
-            blob_uri("..%2Fevil.txt", "end"),
-            blob_uri("%2Fetc%2Fpasswd", "end"),
-            blob_uri("src", "end"),
-            blob_uri("bin.dat", "end"),
-        ] {
-            let (bad, _, body) = send_text(&state, &uri).await;
-            assert_eq!(bad, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        for path in ["..%2Fevil.txt", "%2Fetc%2Fpasswd", "src", "bin.dat"] {
+            let (bad, _, body) = send_text(&state, &blob_uri_encoded(&second_slice, path)).await;
+            assert_eq!(bad, StatusCode::BAD_REQUEST, "{path}: {body}");
         }
-        let (too_large, _, large_body) = send_text(&state, &blob_uri("big.txt", "end")).await;
+        let (too_large, _, large_body) =
+            send_text(&state, &blob_uri_encoded(&second_slice, "big.txt")).await;
         assert_eq!(too_large, StatusCode::PAYLOAD_TOO_LARGE, "{large_body}");
         assert!(large_body.contains("CHECKPOINT_BLOB_TOO_LARGE"));
 
         let (no_query, _, _) = send_text(
             &state,
-            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/run-blob/blob"),
+            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/blob"),
         )
         .await;
         assert_eq!(no_query, StatusCode::BAD_REQUEST);
 
-        let (invalid_run, _, _) = send_text(
-            &state,
-            &format!(
-                "/internal/v1/runtime/workspaces/{WS}/checkpoints/run./blob?path=notes.md&ref=end"
-            ),
-        )
-        .await;
+        let (invalid_slice, _, _) =
+            send_text(&state, &blob_uri("refs%2Fxihe%2Frun-1%2Fend", "notes.md")).await;
         assert_eq!(
-            invalid_run,
-            StatusCode::BAD_REQUEST,
-            "malformed run ids are rejected"
+            invalid_slice,
+            StatusCode::NOT_FOUND,
+            "malformed slice refs are rejected as not found"
         );
+    }
+
+    async fn send_text(state: &Arc<AppState>, uri: &str) -> (StatusCode, Option<String>, String) {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(axum::http::header::AUTHORIZATION, AUTH)
+            .body(Body::empty())
+            .expect("request");
+        let response = tower::ServiceExt::oneshot(build_app_router(state), request)
+            .await
+            .expect("infallible router");
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        (
+            status,
+            content_type,
+            String::from_utf8_lossy(&bytes).into_owned(),
+        )
     }
 
     /// git-status: a non-Git workspace reports `isRepository: false`; a Git workspace
@@ -4587,61 +4269,53 @@ mod checkpoint_handler_tests {
         assert_eq!(invalid_body["code"], "CHECKPOINT_INVALID_REQUEST");
     }
 
-    /// The W1b routes stay behind the internal service bearer filter.
+    /// Every checkpoint route stays behind the internal service bearer filter.
     #[tokio::test]
-    async fn revert_and_git_status_routes_require_service_auth() {
+    async fn checkpoint_routes_require_service_auth() {
         let temp = workspace_root();
         let state = state_with(CheckpointService::new(temp.path())).await;
 
-        let (status, body) = send_with_auth(
-            &state,
-            Method::POST,
-            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints"),
-            Some(serde_json::json!({"runId": "run-1"})),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body["code"], "AUTHORIZATION_REQUIRED");
-
-        let (diag_status, _) =
-            send_with_auth(&state, Method::GET, DIAGNOSTICS_URI, None, None).await;
-        assert_eq!(diag_status, StatusCode::UNAUTHORIZED);
-
-        let (preview_status, preview_body) = send_with_auth(
-            &state,
-            Method::POST,
-            &format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/run-1/revert/preview"),
-            None,
-            None,
-        )
-        .await;
-        assert_eq!(preview_status, StatusCode::UNAUTHORIZED);
-        assert_eq!(preview_body["code"], "AUTHORIZATION_REQUIRED");
-
-        let (blob_status, blob_body) = send_with_auth(
-            &state,
-            Method::GET,
-            &format!(
-                "/internal/v1/runtime/workspaces/{WS}/checkpoints/run-1/blob?path=a.txt&ref=base"
+        for (method, uri, body) in [
+            (
+                Method::POST,
+                CAPTURE_URI.to_string(),
+                Some(serde_json::json!({"runId": "run-1", "actor": "a", "callId": "c"})),
             ),
-            None,
-            None,
-        )
-        .await;
-        assert_eq!(blob_status, StatusCode::UNAUTHORIZED);
-        assert_eq!(blob_body["code"], "AUTHORIZATION_REQUIRED");
-
-        let (git_status, git_body) = send_with_auth(
-            &state,
-            Method::GET,
-            &format!("/internal/v1/runtime/workspaces/{WS}/git-status"),
-            None,
-            None,
-        )
-        .await;
-        assert_eq!(git_status, StatusCode::UNAUTHORIZED);
-        assert_eq!(git_body["code"], "AUTHORIZATION_REQUIRED");
+            (
+                Method::POST,
+                format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/revert/preview"),
+                Some(serde_json::json!({"sliceRef": "refs/xihe/slices/1-x"})),
+            ),
+            (
+                Method::POST,
+                format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/revert"),
+                Some(serde_json::json!({"sliceRef": "refs/xihe/slices/1-x"})),
+            ),
+            (
+                Method::POST,
+                format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/gc"),
+                None,
+            ),
+            (
+                Method::GET,
+                format!("/internal/v1/runtime/workspaces/{WS}/checkpoints/blob"),
+                None,
+            ),
+            (
+                Method::GET,
+                format!("/internal/v1/runtime/workspaces/{WS}/git-status"),
+                None,
+            ),
+            (Method::GET, DIAGNOSTICS_URI.to_string(), None),
+        ] {
+            let (status, body) = send_with_auth(&state, method.clone(), &uri, body, None).await;
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri} must require service auth: {body}"
+            );
+            assert_eq!(body["code"], "AUTHORIZATION_REQUIRED", "{method} {uri}");
+        }
     }
 }
 

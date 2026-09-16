@@ -1,6 +1,6 @@
-//! Host-side shadow-git checkpoint engine (PLAN-0328 M2 W1).
+//! Host-side shadow-git checkpoint engine (PLAN-0338 slice model).
 //!
-//! Operating model (spec `snapshot-rollback.md` §6, decisions #13/#14/#40/#43):
+//! Operating model (spec `slice-model.md`):
 //!
 //! - the shadow repository lives at `<hostRoot>/.xihe-shadow/<workspaceId>.git`,
 //!   outside the workspace and never bind-mounted into the sandbox;
@@ -8,18 +8,22 @@
 //!   so the user's own `.git` is never read or written;
 //! - every git call runs with an isolated environment (`GIT_CONFIG_GLOBAL` /
 //!   `GIT_CONFIG_SYSTEM` pointed at the OS null device, `--no-optional-locks`) and a
-//!   per-run `GIT_INDEX_FILE`, so no user config, hook or lock is involved;
-//! - checkpoints are plumbing only: `add -A` → `write-tree` → `commit-tree` →
-//!   `refs/xihe/<runId>/{base,end}`; worktree, user index and user branches stay
-//!   untouched.
+//!   short-lived `GIT_INDEX_FILE`, so no user config, hook or lock is involved;
+//! - one slice per capture: `add -A` → `write-tree` → `commit-tree` (no parent) →
+//!   `refs/xihe/slices/<capturedAtEpochMs>-<commitHash>`; a capture whose tree equals
+//!   the chain tail writes no ref at all (`noChange`); the predecessor of a slice is
+//!   the lexicographically newest pre-existing slice ref;
+//! - captures serialize per workspace through a short capture lock
+//!   ([`ShadowGit::lock_capture`]); restore execution uses a separate restore lock
+//!   ([`ShadowGit::try_lock_restore`]), so concurrent workspace writes stay allowed.
 //!
-//! Rollback execution (M3) lives in [`crate::checkpoint_revert`]; this module owns the
-//! engine primitives it consumes: the head fingerprint recorded in the base commit
-//! message, the scratch-index git plumbing and the rollback-ref retention rules.
+//! Restore execution lives in [`crate::checkpoint_revert`]; this module owns the
+//! primitives it consumes (isolated env, scratch index/excludes, git plumbing).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,10 +41,13 @@ pub const SHADOW_DIR_NAME: &str = ".xihe-shadow";
 /// Minimum usable host git version (spec §6.0).
 pub const MIN_GIT_VERSION: (u32, u32) = (2, 20);
 
-/// Default retention: keep the newest N sealed runs per workspace (decision #10).
-pub const DEFAULT_RETENTION_MAX_RUNS: usize = 50;
+/// Ref namespace of checkpoint slices: `refs/xihe/slices/<epochMs>-<hash>`.
+pub const SLICE_REF_PREFIX: &str = "refs/xihe/slices/";
 
-/// Default retention: delete sealed runs older than this (decision #10).
+/// Default retention: keep the newest N slices per workspace (decision #10).
+pub const DEFAULT_RETENTION_MAX_SLICES: usize = 50;
+
+/// Default retention: delete slices older than this (decision #10).
 pub const DEFAULT_RETENTION_TTL_DAYS: u64 = 30;
 
 /// Default size cap for untracked files entering the snapshot (decision #14).
@@ -80,6 +87,27 @@ const MAX_RUN_ID_LEN: usize = 128;
 const MAX_DYNAMIC_EXCLUDES: usize = 4096;
 const LOCK_MAP_PRUNE_THRESHOLD: usize = 1024;
 
+/// Nested-repository capture policy (PLAN-0338 T1.2; default `Opaque`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NestedRepoPolicy {
+    /// Record nested repositories as opaque gitlinks: their contents are not
+    /// captured and cannot be restored (default; full support is PLAN-0361).
+    Opaque,
+    /// Opt-in hard limit: refuse the capture when any nested repository is
+    /// present, with an explicit degraded reason (never silent).
+    Reject,
+}
+
+impl NestedRepoPolicy {
+    /// Wire/diagnostics token (`opaque` / `reject`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NestedRepoPolicy::Opaque => "opaque",
+            NestedRepoPolicy::Reject => "reject",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum CheckpointError {
     #[error("host git is unavailable for checkpointing: {0}")]
@@ -95,17 +123,17 @@ pub enum CheckpointError {
     #[error("workspace directory does not exist: {0}")]
     WorkspaceMissing(String),
 
-    #[error("shadow checkpoint run not found: {0}")]
-    RunNotFound(String),
-
-    #[error("shadow checkpoint run is not sealed: {0}")]
-    NotSealed(String),
-
     #[error("git command failed [{command}]: {detail}")]
     GitCommand { command: String, detail: String },
 
     #[error("checkpoint io error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("nested repositories present and the hard limit is enabled: {paths:?}")]
+    NestedRepoLimit { paths: Vec<String> },
+
+    #[error("checkpoint cleanup rejected: a capture or restore owns workspace {0}")]
+    CleanupBusy(String),
 }
 
 impl From<CheckpointError> for RuntimeError {
@@ -130,83 +158,67 @@ pub struct GitCapability {
 /// One entry of a checkpoint change set (`git diff --name-status`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChangedFile {
-    /// Raw git status, e.g. `M`, `A`, `D`, `R100`; the first character is the class.
+    /// Raw git status, e.g. `M`, `A`, `D`; the first character is the class.
     pub status: String,
-    /// Workspace-relative path with forward slashes (destination for renames).
+    /// Workspace-relative path with forward slashes.
     pub path: String,
-    /// Source path for renames/copies.
+    /// Source path of a rename/copy; rename detection is disabled on the wire
+    /// path, so this stays `None` for captures and is omitted from the JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub old_path: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct BaseOutcome {
-    pub base_commit: String,
-    /// `false` when an existing `refs/xihe/<runId>/base` was returned (idempotent hit).
-    pub created: bool,
+/// One checkpoint slice ref: `refs/xihe/slices/<epochMs>-<hash>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SliceRef {
+    /// Full ref name.
+    pub name: String,
+    /// Capture time in Unix milliseconds (parsed out of the leaf).
+    pub epoch_ms: i64,
+    /// Full commit hash of the slice.
+    pub commit: String,
 }
 
+/// Result of one capture. Serialized verbatim as the frozen HTTP body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SealOutcome {
-    pub base_commit: String,
-    pub end_commit: String,
+#[serde(rename_all = "camelCase")]
+pub struct CaptureOutcome {
+    pub run_id: String,
+    /// `true` when the captured tree equals the chain tail: no ref was written.
+    pub no_change: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slice_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured_at: Option<String>,
+    /// `captured` or `abnormal-captured`.
+    pub state: String,
     pub changed_files: Vec<ChangedFile>,
+    /// Sub-directories recorded as opaque gitlinks (mode 160000); their contents
+    /// are not captured and cannot be restored.
+    pub opaque_nested_repos: Vec<String>,
+    /// Slice ref this capture was compared against / created on top of.
+    pub predecessor: Option<String>,
 }
 
+/// Retention result (counts slices; abnormal slices participate equally).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RetentionReport {
-    /// Sealed runs deleted oldest-first.
-    pub deleted_runs: Vec<String>,
-    pub kept_sealed: usize,
-    /// Unsealed runs are never deleted by retention.
-    pub kept_unsealed: usize,
+    /// Slice ref names deleted oldest-first.
+    pub deleted_slices: Vec<String>,
+    /// Slices kept by this sweep.
+    pub kept: usize,
     pub gc_ran: bool,
 }
 
-/// User-repository HEAD fingerprint recorded in the base commit message (decision #41).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// Result of one explicit shadow-repository cleanup (frozen plan B).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HeadFingerprint {
-    /// `false` when the workspace root has no user `.git` (non-Git workspaces work).
-    pub is_repo: bool,
-    /// Symbolic HEAD ref (e.g. `refs/heads/main`); `None` when detached or unborn.
-    pub head_ref: Option<String>,
-    /// Commit id of HEAD; `None` when the branch has no commits yet.
-    pub head_commit: Option<String>,
-}
-
-/// Comparison result of a recorded fingerprint against the current workspace state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HeadFingerprintStatus {
-    /// Recorded and current fingerprint are identical.
-    Ok,
-    /// HEAD ref, HEAD commit or repository presence changed since the base snapshot.
-    Changed,
-    /// The base commit carries no fingerprint (legacy run); nothing can be compared.
-    Unknown,
-    /// Workspace has no user `.git`; there is no HEAD to protect.
-    NotRepo,
-}
-
-/// Compare the fingerprint recorded at base creation with the current one.
-///
-/// `unknown` is returned only for legacy bases (no recorded fingerprint); a
-/// repository that appeared or disappeared since the base counts as `changed`.
-pub fn compare_head_fingerprint(
-    recorded: Option<&HeadFingerprint>,
-    current: &HeadFingerprint,
-) -> HeadFingerprintStatus {
-    let Some(recorded) = recorded else {
-        return HeadFingerprintStatus::Unknown;
-    };
-    if !recorded.is_repo && !current.is_repo {
-        return HeadFingerprintStatus::NotRepo;
-    }
-    if recorded == current {
-        HeadFingerprintStatus::Ok
-    } else {
-        HeadFingerprintStatus::Changed
-    }
+pub struct CleanupOutcome {
+    /// `true` when a shadow repository existed and was removed.
+    pub removed: bool,
 }
 
 /// One entry of the user repository's porcelain status (`GET .../git-status`).
@@ -222,7 +234,7 @@ pub struct GitStatusEntry {
 /// `GET .../git-status` body: the user repository's own pending changes.
 ///
 /// This is the "待提交" side of the dual-diff separation (spec §6.4 / S4): the
-/// shadow change set of a run and the user repository status are two independent
+/// shadow slice change set and the user repository status are two independent
 /// projections and must never be mixed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -244,25 +256,60 @@ struct ProbeCache {
     checked_at: Option<Instant>,
 }
 
-#[derive(Debug, Clone)]
-struct ShadowRef {
-    name: String,
-    run_id: String,
-    kind: String,
-    epoch: i64,
+/// Guard for one short engine lock (capture or restore); keeps the diagnostics
+/// counters accurate on every exit path, panics included.
+pub struct LockGuard {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Short-lived scratch files (temp index / dynamic excludes) removed on drop.
+pub(crate) struct ScratchFiles {
+    paths: Vec<PathBuf>,
+}
+
+impl ScratchFiles {
+    pub(crate) fn new(paths: Vec<PathBuf>) -> Self {
+        Self { paths }
+    }
+}
+
+impl Drop for ScratchFiles {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            if let Err(error) = std::fs::remove_file(path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                debug!(
+                    path = %path.display(),
+                    %error,
+                    "failed to remove shadow checkpoint scratch file"
+                );
+            }
+        }
+    }
 }
 
 /// Shadow-git checkpoint engine for one host root.
 ///
-/// All operations serialize per workspace through an in-process mutex map. PLAN-0328
-/// M2 W2 replaces/augments that seam with the workspace mutation lease (decision #8);
-/// see `lock_workspace`.
+/// All operations serialize per workspace through an in-process mutex map:
+/// capture locks use the plain workspace key, restore locks a `#restore` suffix
+/// so a restore never blocks workspace writes (and vice versa).
 pub struct ShadowGit {
     host_root: PathBuf,
     git_binary: String,
     locks: StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    active_capture_locks: Arc<AtomicUsize>,
+    active_restore_locks: Arc<AtomicUsize>,
     probe_cache: StdMutex<ProbeCache>,
     max_untracked_file_bytes: u64,
+    nested_repo_policy: NestedRepoPolicy,
     pub(crate) call_timeout: Duration,
 }
 
@@ -272,8 +319,11 @@ impl ShadowGit {
             host_root: host_root.into(),
             git_binary: "git".to_string(),
             locks: StdMutex::new(HashMap::new()),
+            active_capture_locks: Arc::new(AtomicUsize::new(0)),
+            active_restore_locks: Arc::new(AtomicUsize::new(0)),
             probe_cache: StdMutex::new(ProbeCache::default()),
             max_untracked_file_bytes: DEFAULT_MAX_UNTRACKED_FILE_BYTES,
+            nested_repo_policy: NestedRepoPolicy::Opaque,
             call_timeout: GIT_CALL_TIMEOUT,
         }
     }
@@ -286,6 +336,15 @@ impl ShadowGit {
     pub fn with_max_untracked_file_bytes(mut self, max_bytes: u64) -> Self {
         self.max_untracked_file_bytes = max_bytes;
         self
+    }
+
+    pub fn with_nested_repo_policy(mut self, policy: NestedRepoPolicy) -> Self {
+        self.nested_repo_policy = policy;
+        self
+    }
+
+    pub fn nested_repo_policy(&self) -> NestedRepoPolicy {
+        self.nested_repo_policy
     }
 
     pub fn with_call_timeout(mut self, timeout: Duration) -> Self {
@@ -343,19 +402,25 @@ impl ShadowGit {
         capability
     }
 
-    /// Create the run base checkpoint. Idempotent per run: an existing
-    /// `refs/xihe/<runId>/base` is returned unchanged.
-    pub async fn create_base(
+    /// Capture the workspace as one checkpoint slice.
+    ///
+    /// A single short-lived temp index (`GIT_INDEX_FILE`) stages the whole
+    /// workspace with the usual exclusions (`add -A`), `write-tree` produces the
+    /// tree hash, and — only when it differs from the chain tail — a root commit
+    /// is written as `refs/xihe/slices/<epochMs>-<hash>`. A capture that detects
+    /// no change writes no commit and no ref.
+    pub async fn capture(
         &self,
         workspace_id: &str,
         run_id: &str,
         actor: &str,
         call_id: &str,
-    ) -> Result<BaseOutcome> {
+        abnormal: bool,
+    ) -> Result<CaptureOutcome> {
         validate_run_id(run_id)?;
         let shadow = self.shadow_git_dir(workspace_id)?;
         let work_tree = self.work_tree(workspace_id)?;
-        let _guard = self.lock_workspace(workspace_id).await;
+        let _guard = self.lock_capture(workspace_id).await;
         self.require_git().await?;
         if !work_tree.is_dir() {
             return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
@@ -364,216 +429,147 @@ impl ShadowGit {
         }
         self.ensure_initialized(&shadow, &work_tree).await?;
 
+        let index = scratch_index_path(&shadow, run_id);
+        let excludes = scratch_excludes_path(&shadow, run_id);
+        let _scratch = ScratchFiles::new(vec![index.clone(), excludes.clone()]);
         let env = self.isolated_env(&shadow, &work_tree, None);
-        let base_ref = format!("refs/xihe/{run_id}/base");
-        if let Some(existing) = self.rev_parse(&env, &base_ref).await? {
-            return Ok(BaseOutcome {
-                base_commit: existing,
-                created: false,
-            });
-        }
-
-        let index = phase_index_path(&shadow, run_id, "base");
-        remove_file_if_exists(&index).await?;
-        self.stage_phase(&shadow, &work_tree, run_id, "base", &index, None)
+        let state = if abnormal {
+            "abnormal-captured"
+        } else {
+            "captured"
+        };
+        let tail = self.slice_tail(&env).await?;
+        let (tail_tree, predecessor) = match &tail {
+            Some(row) => (
+                Some(self.tree_of(&env, &row.commit).await?),
+                Some(row.name.clone()),
+            ),
+            None => (None, None),
+        };
+        // The temp index starts from the chain tail so the size cap and the
+        // exclusion rules only judge genuinely new (untracked) paths: paths the
+        // previous slice already indexed stay included even when they grew.
+        self.stage_index(&shadow, &work_tree, &index, &excludes, tail_tree.as_deref())
             .await?;
         let index_env = self.isolated_env(&shadow, &work_tree, Some(&index));
         let tree = self.write_tree(&index_env).await?;
-        let head = self.read_workspace_head(&work_tree).await;
-        let message = base_message(run_id, actor, call_id, head.as_ref());
-        let base_commit = self.commit_tree(&env, &tree, None, &message).await?;
-        self.update_ref(&env, &base_ref, &base_commit).await?;
-        info!(
-            workspace_id,
-            run_id,
-            base_commit = %base_commit,
-            "shadow checkpoint base created"
-        );
-        Ok(BaseOutcome {
-            base_commit,
-            created: true,
-        })
-    }
-
-    /// Seal the run: snapshot the end tree, commit it on top of the base and record
-    /// `refs/xihe/<runId>/end`. Idempotent: an existing `end` ref is returned with its
-    /// recomputed change set.
-    pub async fn seal(&self, workspace_id: &str, run_id: &str) -> Result<SealOutcome> {
-        validate_run_id(run_id)?;
-        let shadow = self.shadow_git_dir(workspace_id)?;
-        let work_tree = self.work_tree(workspace_id)?;
-        let _guard = self.lock_workspace(workspace_id).await;
-        self.require_git().await?;
-        if !shadow.is_dir() {
-            return Err(CheckpointError::RunNotFound(run_id.to_string()));
-        }
-
-        let env = self.isolated_env(&shadow, &work_tree, None);
-        let base_ref = format!("refs/xihe/{run_id}/base");
-        let end_ref = format!("refs/xihe/{run_id}/end");
-        let base_commit = self
-            .rev_parse(&env, &base_ref)
-            .await?
-            .ok_or_else(|| CheckpointError::RunNotFound(run_id.to_string()))?;
-        if let Some(end_commit) = self.rev_parse(&env, &end_ref).await? {
-            let changed_files = self
-                .changed_files_for(&env, &base_commit, &end_commit)
-                .await?;
-            return Ok(SealOutcome {
-                base_commit,
-                end_commit,
-                changed_files,
+        let opaque_nested_repos = self.staged_gitlinks(&index_env).await?;
+        if self.nested_repo_policy == NestedRepoPolicy::Reject && !opaque_nested_repos.is_empty() {
+            return Err(CheckpointError::NestedRepoLimit {
+                paths: opaque_nested_repos,
             });
         }
 
-        let base_index = phase_index_path(&shadow, run_id, "base");
-        let reference_index = base_index.is_file().then_some(base_index.as_path());
-        let end_index = phase_index_path(&shadow, run_id, "end");
-        remove_file_if_exists(&end_index).await?;
-        self.stage_phase(
-            &shadow,
-            &work_tree,
-            run_id,
-            "end",
-            &end_index,
-            reference_index,
-        )
-        .await?;
-        let end_env = self.isolated_env(&shadow, &work_tree, Some(&end_index));
-        let tree = self.write_tree(&end_env).await?;
-        let message = format!("run/{run_id} end\n");
-        let end_commit = self
-            .commit_tree(&env, &tree, Some(&base_commit), &message)
-            .await?;
-        self.update_ref(&env, &end_ref, &end_commit).await?;
-        let changed_files = self
-            .changed_files_for(&env, &base_commit, &end_commit)
-            .await?;
-        self.cleanup_run_scratch(&shadow, run_id).await;
+        if tail_tree.as_deref() == Some(tree.as_str()) {
+            debug!(
+                workspace_id,
+                run_id,
+                predecessor = predecessor.as_deref().unwrap_or("none"),
+                "shadow checkpoint capture found no change; no slice written"
+            );
+            return Ok(CaptureOutcome {
+                run_id: run_id.to_string(),
+                no_change: true,
+                slice_ref: None,
+                commit: None,
+                captured_at: None,
+                state: state.to_string(),
+                changed_files: Vec::new(),
+                opaque_nested_repos: Vec::new(),
+                predecessor,
+            });
+        }
+
+        let epoch_ms = wall_clock_ms();
+        let message = slice_message(run_id, actor, call_id);
+        let commit = self.commit_tree(&env, &tree, None, &message).await?;
+        let slice_ref = format!("{SLICE_REF_PREFIX}{epoch_ms}-{commit}");
+        self.update_ref(&env, &slice_ref, &commit).await?;
+        let changed_files = match &tail_tree {
+            Some(tail_tree) => self.changed_files_for(&env, tail_tree, &tree).await?,
+            None => Vec::new(),
+        };
         info!(
             workspace_id,
             run_id,
-            base_commit = %base_commit,
-            end_commit = %end_commit,
+            slice_ref = %slice_ref,
             changed = changed_files.len(),
-            "shadow checkpoint sealed"
+            state,
+            "shadow checkpoint slice captured"
         );
-        Ok(SealOutcome {
-            base_commit,
-            end_commit,
+        Ok(CaptureOutcome {
+            run_id: run_id.to_string(),
+            no_change: false,
+            slice_ref: Some(slice_ref),
+            commit: Some(commit),
+            captured_at: Some(rfc3339_ms(epoch_ms)),
+            state: state.to_string(),
             changed_files,
+            opaque_nested_repos,
+            predecessor,
         })
     }
 
-    /// Current `(base, end)` commit ids of one run; `None` when the ref is absent.
-    ///
-    /// PLAN-0328 M2 W2: read-only projection for the status endpoint. The engine
-    /// stays the only writer of these refs.
-    pub async fn run_refs(
+    /// Resolve a slice ref to its commit; `None` when the ref does not exist.
+    pub async fn slice_commit(
         &self,
         workspace_id: &str,
-        run_id: &str,
-    ) -> Result<(Option<String>, Option<String>)> {
-        validate_run_id(run_id)?;
+        slice_ref: &str,
+    ) -> Result<Option<String>> {
         let shadow = self.shadow_git_dir(workspace_id)?;
         let work_tree = self.work_tree(workspace_id)?;
-        let _guard = self.lock_workspace(workspace_id).await;
         if !shadow.is_dir() {
-            return Ok((None, None));
+            return Ok(None);
         }
         self.require_git().await?;
-        let env = self.isolated_env(&shadow, &work_tree, None);
-        let base = self
-            .rev_parse(&env, &format!("refs/xihe/{run_id}/base"))
-            .await?;
-        let end = self
-            .rev_parse(&env, &format!("refs/xihe/{run_id}/end"))
-            .await?;
-        Ok((base, end))
-    }
-
-    /// Change set of a sealed run. Unsealed runs are reported explicitly instead of
-    /// pretending to have an empty diff.
-    pub async fn changed_files(
-        &self,
-        workspace_id: &str,
-        run_id: &str,
-    ) -> Result<Vec<ChangedFile>> {
-        validate_run_id(run_id)?;
-        let shadow = self.shadow_git_dir(workspace_id)?;
-        let work_tree = self.work_tree(workspace_id)?;
-        let _guard = self.lock_workspace(workspace_id).await;
-        self.require_git().await?;
-        if !shadow.is_dir() {
-            return Err(CheckpointError::RunNotFound(run_id.to_string()));
+        if parse_slice_ref(slice_ref).is_none() {
+            return Ok(None);
         }
         let env = self.isolated_env(&shadow, &work_tree, None);
-        let base_commit = self
-            .rev_parse(&env, &format!("refs/xihe/{run_id}/base"))
-            .await?
-            .ok_or_else(|| CheckpointError::RunNotFound(run_id.to_string()))?;
-        let end_commit = self
-            .rev_parse(&env, &format!("refs/xihe/{run_id}/end"))
-            .await?
-            .ok_or_else(|| CheckpointError::NotSealed(run_id.to_string()))?;
-        self.changed_files_for(&env, &base_commit, &end_commit)
-            .await
+        self.rev_parse(&env, slice_ref).await
     }
 
-    /// Delete the refs and scratch files of one run. Returns the ref names removed,
-    /// including any `rollback/<epochMs>` audit refs of that run.
-    pub async fn drop_refs(&self, workspace_id: &str, run_id: &str) -> Result<Vec<String>> {
-        validate_run_id(run_id)?;
-        let shadow = self.shadow_git_dir(workspace_id)?;
-        let work_tree = self.work_tree(workspace_id)?;
-        let _guard = self.lock_workspace(workspace_id).await;
-        self.require_git().await?;
-        if !shadow.is_dir() {
-            return Ok(Vec::new());
-        }
-        let env = self.isolated_env(&shadow, &work_tree, None);
-        let dropped = self.delete_run_refs(&env, run_id).await?;
-        self.cleanup_run_scratch(&shadow, run_id).await;
-        Ok(dropped)
+    /// The lexicographically newest slice ref (chain tail), if any.
+    pub(crate) async fn slice_tail(&self, env: &[(String, String)]) -> Result<Option<SliceRef>> {
+        let rows = self.list_slices(env).await?;
+        Ok(rows
+            .into_iter()
+            .max_by(|left, right| left.name.cmp(&right.name)))
     }
 
-    /// Delete every `refs/xihe/<runId>/*` ref (base, end and rollback history).
-    pub(crate) async fn delete_run_refs(
-        &self,
-        env: &[(String, String)],
-        run_id: &str,
-    ) -> Result<Vec<String>> {
-        let prefix = format!("refs/xihe/{run_id}/");
+    async fn list_slices(&self, env: &[(String, String)]) -> Result<Vec<SliceRef>> {
         let stdout = self
             .run_git_checked(
-                &["for-each-ref", "--format=%(refname)", &prefix],
+                &["for-each-ref", "--format=%(refname)", SLICE_REF_PREFIX],
                 env,
                 None,
                 self.call_timeout,
             )
             .await?;
-        let mut dropped = Vec::new();
-        for line in String::from_utf8_lossy(&stdout).lines() {
-            let name = line.trim();
-            if name.is_empty() {
-                continue;
-            }
-            self.run_git_checked(&["update-ref", "-d", name], env, None, self.call_timeout)
-                .await?;
-            dropped.push(name.to_string());
-        }
-        Ok(dropped)
+        Ok(parse_slice_refs(&stdout))
     }
 
-    /// Retention (decision #10): delete sealed runs oldest-first beyond `max_runs` or
-    /// older than `ttl_days`, then `reflog expire` + `gc --prune=now`.
+    pub(crate) async fn tree_of(&self, env: &[(String, String)], commit: &str) -> Result<String> {
+        let expression = format!("{commit}^{{tree}}");
+        self.rev_parse(env, &expression)
+            .await?
+            .ok_or_else(|| CheckpointError::GitCommand {
+                command: "rev-parse".to_string(),
+                detail: format!("slice commit {commit} has no resolvable tree"),
+            })
+    }
+
+    /// Retention (decision #10, slice model): delete slices oldest-first beyond
+    /// `max_slices` or older than `ttl_days`, then `reflog expire` + `gc --prune=now`.
     ///
-    /// Unsealed runs (`base` without `end`) are never deleted. Runs with identical
-    /// timestamps are ordered by run id so oldest-first deletion stays deterministic.
+    /// Slice age is parsed out of the ref leaf (`<epochMs>-<hash>`), so abnormal
+    /// slices participate exactly like normal ones. Slices with identical
+    /// timestamps are ordered by ref name so oldest-first deletion stays
+    /// deterministic.
     pub async fn retention_gc(
         &self,
         workspace_id: &str,
-        max_runs: usize,
+        max_slices: usize,
         ttl_days: u64,
     ) -> Result<RetentionReport> {
         let shadow = self.shadow_git_dir(workspace_id)?;
@@ -584,70 +580,40 @@ impl ShadowGit {
         if !shadow.is_dir() {
             return Ok(report);
         }
+        // A restore owns the workspace only for its execution; retention never
+        // queues behind it (and never prunes the slice it is restoring from).
+        let Some(_restore_guard) = self.try_lock_restore(workspace_id) else {
+            debug!(
+                workspace_id,
+                "checkpoint retention skipped: a restore currently owns the workspace"
+            );
+            return Ok(report);
+        };
         let env = self.isolated_env(&shadow, &work_tree, None);
-        let stdout = self
-            .run_git_checked(
-                &[
-                    "for-each-ref",
-                    "--format=%(refname)\t%(creatordate:raw)",
-                    "refs/xihe/",
-                ],
-                &env,
-                None,
-                self.call_timeout,
-            )
-            .await?;
-        let refs = parse_xihe_refs(&stdout);
+        let mut slices = self.list_slices(&env).await?;
+        slices.sort_by(|left, right| {
+            left.epoch_ms
+                .cmp(&right.epoch_ms)
+                .then_with(|| left.name.cmp(&right.name))
+        });
 
-        let base_runs: HashSet<&str> = refs
-            .iter()
-            .filter(|row| row.kind == "base")
-            .map(|row| row.run_id.as_str())
-            .collect();
-        let mut sealed: Vec<(String, i64)> = refs
-            .iter()
-            .filter(|row| row.kind == "end" && base_runs.contains(row.run_id.as_str()))
-            .map(|row| (row.run_id.clone(), row.epoch))
-            .collect();
-        sealed.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs() as i64)
-            .unwrap_or(0);
-        let ttl_seconds = i64::try_from(ttl_days.saturating_mul(86_400)).unwrap_or(i64::MAX);
-        let expired_before = now.saturating_sub(ttl_seconds);
-        let excess = sealed.len().saturating_sub(max_runs);
-
-        for (index, (run_id, epoch)) in sealed.iter().enumerate() {
-            if index < excess || *epoch <= expired_before {
-                report.deleted_runs.push(run_id.clone());
+        let now = wall_clock_ms();
+        let ttl_ms = i64::try_from(ttl_days.saturating_mul(86_400_000)).unwrap_or(i64::MAX);
+        let expired_before = now.saturating_sub(ttl_ms);
+        let excess = slices.len().saturating_sub(max_slices);
+        for (index, row) in slices.iter().enumerate() {
+            if index < excess || row.epoch_ms <= expired_before {
+                report.deleted_slices.push(row.name.clone());
             } else {
-                report.kept_sealed += 1;
+                report.kept += 1;
             }
         }
-        report.kept_unsealed = base_runs
-            .iter()
-            .filter(|run_id| {
-                !refs
-                    .iter()
-                    .any(|row| row.kind == "end" && row.run_id == **run_id)
-            })
-            .count();
 
-        for run_id in &report.deleted_runs {
-            let names: Vec<String> = refs
-                .iter()
-                .filter(|row| row.run_id == *run_id)
-                .map(|row| row.name.clone())
-                .collect();
-            for name in names {
-                self.run_git_checked(&["update-ref", "-d", &name], &env, None, self.call_timeout)
-                    .await?;
-            }
-            self.cleanup_run_scratch(&shadow, run_id).await;
+        for name in &report.deleted_slices {
+            self.run_git_checked(&["update-ref", "-d", name], &env, None, self.call_timeout)
+                .await?;
         }
-        if !report.deleted_runs.is_empty() {
+        if !report.deleted_slices.is_empty() {
             self.run_git_checked(
                 &["reflog", "expire", "--expire=now", "--all"],
                 &env,
@@ -666,32 +632,89 @@ impl ShadowGit {
         }
         info!(
             workspace_id,
-            deleted = report.deleted_runs.len(),
-            kept_sealed = report.kept_sealed,
-            kept_unsealed = report.kept_unsealed,
+            deleted = report.deleted_slices.len(),
+            kept = report.kept,
             "shadow checkpoint retention completed"
         );
         Ok(report)
     }
 
-    /// Per-workspace serialization seam: one writer per workspace (decision #8).
-    ///
-    /// PLAN-0328 M2 W2 replaces the body with the workspace mutation lease; every
-    /// engine operation already acquires this lock for its full duration.
+    /// Short capture lock: blocks concurrent captures of the same workspace for
+    /// the duration of the scan + ref write, then releases.
+    pub async fn lock_capture(&self, workspace_id: &str) -> LockGuard {
+        let guard = self.workspace_lock(workspace_id).lock_owned().await;
+        self.active_capture_locks.fetch_add(1, Ordering::SeqCst);
+        LockGuard {
+            _guard: guard,
+            counter: self.active_capture_locks.clone(),
+        }
+    }
+
+    /// Fail-fast restore lock: `None` means another restore currently owns the
+    /// workspace (the caller reports `CHECKPOINT_RESTORE_LOCKED`; no queueing).
+    pub fn try_lock_restore(&self, workspace_id: &str) -> Option<LockGuard> {
+        let guard = self
+            .workspace_lock(&restore_lock_key(workspace_id))
+            .try_lock_owned()
+            .ok()?;
+        self.active_restore_locks.fetch_add(1, Ordering::SeqCst);
+        Some(LockGuard {
+            _guard: guard,
+            counter: self.active_restore_locks.clone(),
+        })
+    }
+
+    /// Fail-fast capture lock (used by cleanup): `None` means a capture
+    /// currently owns the workspace.
+    pub fn try_lock_capture(&self, workspace_id: &str) -> Option<LockGuard> {
+        let guard = self.workspace_lock(workspace_id).try_lock_owned().ok()?;
+        self.active_capture_locks.fetch_add(1, Ordering::SeqCst);
+        Some(LockGuard {
+            _guard: guard,
+            counter: self.active_capture_locks.clone(),
+        })
+    }
+
+    pub fn active_capture_locks(&self) -> usize {
+        self.active_capture_locks.load(Ordering::SeqCst)
+    }
+
+    pub fn active_restore_locks(&self) -> usize {
+        self.active_restore_locks.load(Ordering::SeqCst)
+    }
+
+    /// Explicit cleanup (frozen plan B): delete the whole shadow repository of
+    /// one workspace. Serialized against capture and restore with fail-fast
+    /// locks (a busy workspace is rejected, never queued). Idempotent: a missing
+    /// shadow repo reports `removed=false`, and the next capture bootstraps a
+    /// fresh repository through the normal path.
+    pub async fn cleanup_workspace(&self, workspace_id: &str) -> Result<CleanupOutcome> {
+        let shadow = self.shadow_git_dir(workspace_id)?;
+        let Some(_capture_guard) = self.try_lock_capture(workspace_id) else {
+            return Err(CheckpointError::CleanupBusy(workspace_id.to_string()));
+        };
+        let Some(_restore_guard) = self.try_lock_restore(workspace_id) else {
+            return Err(CheckpointError::CleanupBusy(workspace_id.to_string()));
+        };
+        let removed = match tokio::fs::remove_dir_all(&shadow).await {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(CheckpointError::Io(error)),
+        };
+        info!(
+            workspace_id,
+            removed, "shadow checkpoint repository cleaned"
+        );
+        Ok(CleanupOutcome { removed })
+    }
+
+    /// Per-workspace serialization seam for engine operations that are not
+    /// captures (retention sweep).
     pub(crate) async fn lock_workspace(
         &self,
         workspace_id: &str,
     ) -> tokio::sync::OwnedMutexGuard<()> {
         self.workspace_lock(workspace_id).lock_owned().await
-    }
-
-    /// Fail-fast variant used by revert execution: `None` means another engine
-    /// operation currently owns the workspace (the caller reports `LeaseHeld`).
-    pub(crate) fn try_lock_workspace(
-        &self,
-        workspace_id: &str,
-    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
-        self.workspace_lock(workspace_id).try_lock_owned().ok()
     }
 
     fn workspace_lock(&self, workspace_id: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -713,7 +736,6 @@ impl ShadowGit {
             Err(CheckpointError::GitUnavailable(capability.detail))
         }
     }
-
     async fn run_probe(&self) -> GitCapability {
         let env = self.null_config_env();
         match self
@@ -821,14 +843,8 @@ impl ShadowGit {
         Ok(())
     }
 
-    async fn write_phase_excludes(
-        &self,
-        shadow: &Path,
-        run_id: &str,
-        phase: &str,
-        dynamic: &[String],
-    ) -> Result<PathBuf> {
-        let mut content = String::from("# Xihe shadow checkpoint excludes (static + per-run)\n");
+    pub(crate) async fn write_excludes_file(&self, path: &Path, dynamic: &[String]) -> Result<()> {
+        let mut content = String::from("# Xihe shadow checkpoint excludes (static + dynamic)\n");
         for pattern in STATIC_EXCLUDE_PATTERNS {
             content.push_str(pattern);
             content.push('\n');
@@ -837,12 +853,11 @@ impl ShadowGit {
             content.push_str(&gitignore_literal(relative));
             content.push('\n');
         }
-        let path = phase_excludes_path(shadow, run_id, phase);
-        tokio::fs::write(&path, content).await?;
-        Ok(path)
+        tokio::fs::write(path, content).await?;
+        Ok(())
     }
 
-    async fn collect_oversized_untracked(
+    pub(crate) async fn collect_oversized_untracked(
         &self,
         shadow: &Path,
         work_tree: &Path,
@@ -885,23 +900,30 @@ impl ShadowGit {
         Ok(oversized)
     }
 
-    async fn stage_phase(
+    /// Stage the whole workspace into `index` with the static + dynamic excludes
+    /// (`git add -A`); the caller owns the temp index lifetime.
+    ///
+    /// When `reference_tree` is given (the chain tail), the index is seeded from
+    /// that tree first, so `git ls-files --others` — and therefore the dynamic
+    /// size cap — only sees genuinely new paths.
+    pub(crate) async fn stage_index(
         &self,
         shadow: &Path,
         work_tree: &Path,
-        run_id: &str,
-        phase: &str,
         index: &Path,
-        reference_index: Option<&Path>,
+        excludes: &Path,
+        reference_tree: Option<&str>,
     ) -> Result<()> {
-        let dynamic = self
-            .collect_oversized_untracked(shadow, work_tree, reference_index)
-            .await?;
-        let excludes = self
-            .write_phase_excludes(shadow, run_id, phase, &dynamic)
-            .await?;
         let env = self.isolated_env(shadow, work_tree, Some(index));
-        let config = format!("core.excludesFile={}", normalize_path_for_git(&excludes));
+        if let Some(tree) = reference_tree {
+            self.run_git_checked(&["read-tree", tree], &env, None, self.call_timeout)
+                .await?;
+        }
+        let dynamic = self
+            .collect_oversized_untracked(shadow, work_tree, Some(index))
+            .await?;
+        self.write_excludes_file(excludes, &dynamic).await?;
+        let config = format!("core.excludesFile={}", normalize_path_for_git(excludes));
         self.run_git_checked(
             &["-c", &config, "add", "-A"],
             &env,
@@ -912,11 +934,18 @@ impl ShadowGit {
         Ok(())
     }
 
-    async fn write_tree(&self, env: &[(String, String)]) -> Result<String> {
+    pub(crate) async fn write_tree(&self, env: &[(String, String)]) -> Result<String> {
         let stdout = self
             .run_git_checked(&["write-tree"], env, None, self.call_timeout)
             .await?;
         Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+    }
+
+    async fn staged_gitlinks(&self, env: &[(String, String)]) -> Result<Vec<String>> {
+        let stdout = self
+            .run_git_checked(&["ls-files", "--stage", "-z"], env, None, self.call_timeout)
+            .await?;
+        Ok(parse_staged_gitlinks(&stdout))
     }
 
     pub(crate) async fn commit_tree(
@@ -970,107 +999,29 @@ impl ShadowGit {
         Ok((!value.is_empty()).then_some(value))
     }
 
+    /// Change set between two trees (`--no-renames`, so statuses stay M/A/D).
     pub(crate) async fn changed_files_for(
         &self,
         env: &[(String, String)],
-        base_commit: &str,
-        end_commit: &str,
+        from_tree: &str,
+        to_tree: &str,
     ) -> Result<Vec<ChangedFile>> {
         let stdout = self
             .run_git_checked(
-                &["diff", "--name-status", "-z", "-M", base_commit, end_commit],
+                &[
+                    "diff",
+                    "--name-status",
+                    "--no-renames",
+                    "-z",
+                    from_tree,
+                    to_tree,
+                ],
                 env,
                 None,
                 self.call_timeout,
             )
             .await?;
         parse_name_status_z(&stdout)
-    }
-
-    /// HEAD fingerprint recorded in a base commit message (decision #41 / S2).
-    ///
-    /// `Ok(None)` for legacy bases whose message predates the fingerprint lines.
-    pub(crate) async fn base_head_fingerprint(
-        &self,
-        env: &[(String, String)],
-        base_commit: &str,
-    ) -> Result<Option<HeadFingerprint>> {
-        let stdout = self
-            .run_git_checked(
-                &["cat-file", "commit", base_commit],
-                env,
-                None,
-                self.call_timeout,
-            )
-            .await?;
-        let raw = String::from_utf8_lossy(&stdout);
-        let body = raw.split_once("\n\n").map(|(_, body)| body).unwrap_or(&raw);
-        Ok(parse_head_fingerprint(body))
-    }
-
-    /// Read the user repository HEAD fingerprint without touching that repository.
-    ///
-    /// `Some(HeadFingerprint { is_repo: false, .. })` for a workspace without a
-    /// user `.git`; `None` when a repository exists but its HEAD is unreadable, so
-    /// the base message omits the fingerprint and later comparisons report `unknown`
-    /// instead of a silent "ok".
-    pub(crate) async fn read_workspace_head(&self, work_tree: &Path) -> Option<HeadFingerprint> {
-        let Some(git_dir) = resolve_user_git_dir(work_tree).await else {
-            return Some(HeadFingerprint {
-                is_repo: false,
-                head_ref: None,
-                head_commit: None,
-            });
-        };
-        let mut env = self.null_config_env();
-        env.push(("GIT_DIR".to_string(), normalize_path_for_git(&git_dir)));
-        env.push((
-            "GIT_WORK_TREE".to_string(),
-            normalize_path_for_git(work_tree),
-        ));
-        env.push(("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()));
-        env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
-        // `symbolic-ref` fails for a detached HEAD (exit 1) and for a corrupt repo;
-        // `rev-parse` fails while the branch is unborn.
-        let head_ref = match self
-            .run_git(
-                &["symbolic-ref", "-q", "HEAD"],
-                &env,
-                None,
-                self.call_timeout,
-            )
-            .await
-        {
-            Ok(output) if output.status.success() => {
-                let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                (!value.is_empty()).then_some(value)
-            }
-            Ok(_) => None,
-            Err(error) => {
-                debug!(
-                    work_tree = %work_tree.display(),
-                    %error,
-                    "user repository HEAD ref is unreadable"
-                );
-                return None;
-            }
-        };
-        let head_commit = match self.rev_parse(&env, "HEAD").await {
-            Ok(commit) => commit,
-            Err(error) => {
-                debug!(
-                    work_tree = %work_tree.display(),
-                    %error,
-                    "user repository HEAD commit is unreadable"
-                );
-                return None;
-            }
-        };
-        Some(HeadFingerprint {
-            is_repo: true,
-            head_ref,
-            head_commit,
-        })
     }
 
     /// Read-only porcelain status of the user repository (dual-diff "待提交" side).
@@ -1124,25 +1075,6 @@ impl ShadowGit {
             is_repository: true,
             entries: parse_porcelain_status_z(&stdout),
         })
-    }
-
-    async fn cleanup_run_scratch(&self, shadow: &Path, run_id: &str) {
-        for phase in ["base", "end"] {
-            for path in [
-                phase_index_path(shadow, run_id, phase),
-                phase_excludes_path(shadow, run_id, phase),
-            ] {
-                if let Err(error) = tokio::fs::remove_file(&path).await
-                    && error.kind() != std::io::ErrorKind::NotFound
-                {
-                    debug!(
-                        path = %path.display(),
-                        %error,
-                        "failed to remove shadow checkpoint scratch file"
-                    );
-                }
-            }
-        }
     }
 
     fn null_config_env(&self) -> Vec<(String, String)> {
@@ -1260,7 +1192,10 @@ pub fn validate_workspace_id(workspace_id: &str) -> Result<()> {
     }
 }
 
-/// Validate a run id as a safe single git ref component (W2 API surface).
+/// Validate a run id as a safe single ref/file component (W2 API surface).
+///
+/// The reserved C0 capture id `"c0"` (workspace materialization baseline) is a
+/// plain 2-character id and passes this validation unchanged.
 pub fn validate_run_id(run_id: &str) -> Result<()> {
     let safe = !run_id.is_empty()
         && run_id.len() <= MAX_RUN_ID_LEN
@@ -1288,6 +1223,43 @@ fn parse_git_version(output: &str) -> Option<(u32, u32)> {
     let major = numbers.first()?.parse::<u32>().ok()?;
     let minor = numbers.get(1)?.parse::<u32>().ok()?;
     Some((major, minor))
+}
+
+/// Parse `refs/xihe/slices/<epochMs>-<sha1>`; only canonical leaves are accepted.
+pub(crate) fn parse_slice_ref(name: &str) -> Option<SliceRef> {
+    let leaf = name.strip_prefix(SLICE_REF_PREFIX)?;
+    let (epoch, hash) = leaf.split_once('-')?;
+    if hash.len() != 40
+        || !hash
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, 'a'..='f'))
+    {
+        return None;
+    }
+    if epoch.is_empty() || !epoch.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let epoch_ms = epoch.parse::<i64>().ok()?;
+    Some(SliceRef {
+        name: name.to_string(),
+        epoch_ms,
+        commit: hash.to_string(),
+    })
+}
+
+fn parse_slice_refs(stdout: &[u8]) -> Vec<SliceRef> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            let parsed = parse_slice_ref(line);
+            if parsed.is_none() {
+                debug!(refname = line, "unrecognized ref under the slice namespace");
+            }
+            parsed
+        })
+        .collect()
 }
 
 fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
@@ -1341,6 +1313,30 @@ fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
     Ok(changed)
 }
 
+/// Parse `git ls-files --stage -z` output for mode 160000 (gitlink) entries.
+///
+/// Records look like `160000 <oid> 0\t<path>\0`; nested repository directories
+/// are recorded as opaque gitlinks whose contents are neither captured nor
+/// restorable (PLAN-0338 §1 / PLAN-0361).
+fn parse_staged_gitlinks(bytes: &[u8]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for field in bytes.split(|byte| *byte == 0) {
+        if field.is_empty() {
+            continue;
+        }
+        let Some(tab) = field.iter().position(|byte| *byte == b'\t') else {
+            continue;
+        };
+        let header = String::from_utf8_lossy(&field[..tab]);
+        let mut parts = header.split_whitespace();
+        let mode = parts.next().unwrap_or_default();
+        if mode == "160000" {
+            paths.push(String::from_utf8_lossy(&field[tab + 1..]).into_owned());
+        }
+    }
+    paths
+}
+
 /// Parse `git status --porcelain=v1 -z` output into wire entries.
 ///
 /// Records are `XY <path>\0`; rename/copy records (`R`/`C` in either column) carry
@@ -1367,114 +1363,14 @@ fn parse_porcelain_status_z(bytes: &[u8]) -> Vec<GitStatusEntry> {
     entries
 }
 
-fn parse_xihe_refs(stdout: &[u8]) -> Vec<ShadowRef> {
-    let mut refs = Vec::new();
-    for line in String::from_utf8_lossy(stdout).lines() {
-        let (name, date) = line.split_once('\t').unwrap_or((line, ""));
-        let Some(rest) = name.strip_prefix("refs/xihe/") else {
-            continue;
-        };
-        let segments: Vec<&str> = rest.split('/').collect();
-        let (run_id, kind) = match segments.as_slice() {
-            [run_id, kind] => (*run_id, *kind),
-            [run_id, "rollback", leaf] if !leaf.is_empty() => (*run_id, "rollback"),
-            _ => continue,
-        };
-        if run_id.is_empty() || kind.is_empty() {
-            continue;
-        }
-        let epoch = date
-            .split_whitespace()
-            .next()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(i64::MAX);
-        refs.push(ShadowRef {
-            name: name.to_string(),
-            run_id: run_id.to_string(),
-            kind: kind.to_string(),
-            epoch,
-        });
-    }
-    refs
-}
-
-fn base_message(
-    run_id: &str,
-    actor: &str,
-    call_id: &str,
-    head: Option<&HeadFingerprint>,
-) -> String {
-    let mut message = format!(
-        "run/{run_id} base\n\nactor: {}\ncallId: {}\n",
+/// Commit message of one slice: provenance only, never file contents.
+fn slice_message(run_id: &str, actor: &str, call_id: &str) -> String {
+    format!(
+        "slice\n\nrunId: {}\nactor: {}\ncallId: {}\n",
+        sanitize_message_field(run_id),
         sanitize_message_field(actor),
         sanitize_message_field(call_id)
-    );
-    if let Some(head) = head {
-        message.push_str(&format!(
-            "headRepo: {}\nheadRef: {}\nheadCommit: {}\n",
-            if head.is_repo { "yes" } else { "no" },
-            sanitize_message_field(head.head_ref.as_deref().unwrap_or("none")),
-            sanitize_message_field(head.head_commit.as_deref().unwrap_or("none")),
-        ));
-    }
-    message
-}
-
-/// Parse the optional HEAD fingerprint out of a base commit message body.
-///
-/// `None` means the message predates the fingerprint (legacy base): the run then
-/// reports `HeadFingerprintStatus::Unknown` instead of a silent "ok".
-pub(crate) fn parse_head_fingerprint(message: &str) -> Option<HeadFingerprint> {
-    let mut is_repo = None;
-    let mut head_ref = None;
-    let mut head_commit = None;
-    for line in message.lines() {
-        if let Some(value) = line.strip_prefix("headRepo: ") {
-            is_repo = Some(value.trim() == "yes");
-        } else if let Some(value) = line.strip_prefix("headRef: ") {
-            head_ref = parse_optional_message_value(value);
-        } else if let Some(value) = line.strip_prefix("headCommit: ") {
-            head_commit = parse_optional_message_value(value);
-        }
-    }
-    Some(HeadFingerprint {
-        is_repo: is_repo?,
-        head_ref,
-        head_commit,
-    })
-}
-
-fn parse_optional_message_value(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() || value == "none" {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-/// Resolve `<workTree>/.git` (directory or `gitdir:` pointer file) for read-only
-/// HEAD introspection; `None` when the workspace is not a repository.
-async fn resolve_user_git_dir(work_tree: &Path) -> Option<PathBuf> {
-    let dot_git = work_tree.join(".git");
-    let metadata = tokio::fs::symlink_metadata(&dot_git).await.ok()?;
-    if metadata.is_dir() {
-        return Some(dot_git);
-    }
-    if metadata.is_file() {
-        let content = tokio::fs::read_to_string(&dot_git).await.ok()?;
-        let target = content.lines().next()?.strip_prefix("gitdir:")?.trim();
-        if target.is_empty() {
-            return None;
-        }
-        let path = Path::new(target);
-        return Some(if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            work_tree.join(path)
-        });
-    }
-    None
+    )
 }
 
 pub(crate) fn sanitize_message_field(value: &str) -> String {
@@ -1485,16 +1381,22 @@ pub(crate) fn sanitize_message_field(value: &str) -> String {
     sanitized.chars().take(200).collect()
 }
 
-fn phase_index_path(shadow: &Path, run_id: &str, phase: &str) -> PathBuf {
-    shadow.join(format!("index.{run_id}.{phase}"))
+pub(crate) fn scratch_index_path(shadow: &Path, token: &str) -> PathBuf {
+    shadow.join(format!("index.{token}.capture"))
 }
 
-fn phase_excludes_path(shadow: &Path, run_id: &str, phase: &str) -> PathBuf {
-    shadow.join(format!("exclude.{run_id}.{phase}"))
+pub(crate) fn scratch_excludes_path(shadow: &Path, token: &str) -> PathBuf {
+    shadow.join(format!("exclude.{token}.capture"))
+}
+
+fn restore_lock_key(workspace_id: &str) -> String {
+    // Workspace ids cannot contain `#` (storage-ref contract), so the key is
+    // unambiguous and distinct from the capture lock key.
+    format!("{workspace_id}#restore")
 }
 
 /// gitignore line that matches exactly one workspace-relative path.
-fn gitignore_literal(relative: &str) -> String {
+pub(crate) fn gitignore_literal(relative: &str) -> String {
     let mut pattern = String::from("/");
     for c in relative.chars() {
         match c {
@@ -1550,18 +1452,56 @@ fn platform_env() -> Vec<(String, String)> {
         .collect()
 }
 
-async fn remove_file_if_exists(path: &Path) -> Result<()> {
-    match tokio::fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
+/// Resolve `<workTree>/.git` (directory or `gitdir:` pointer file) for read-only
+/// HEAD introspection in `git-status`; `None` when the workspace is not a repo.
+async fn resolve_user_git_dir(work_tree: &Path) -> Option<PathBuf> {
+    let dot_git = work_tree.join(".git");
+    let metadata = tokio::fs::symlink_metadata(&dot_git).await.ok()?;
+    if metadata.is_dir() {
+        return Some(dot_git);
     }
+    if metadata.is_file() {
+        let content = tokio::fs::read_to_string(&dot_git).await.ok()?;
+        let target = content.lines().next()?.strip_prefix("gitdir:")?.trim();
+        if target.is_empty() {
+            return None;
+        }
+        let path = Path::new(target);
+        return Some(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            work_tree.join(path)
+        });
+    }
+    None
+}
+
+fn wall_clock_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+fn rfc3339_ms(epoch_ms: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(epoch_ms)
+        .map(|value| value.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .unwrap_or_else(|| format!("epoch-ms:{epoch_ms}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    async fn require_git(engine: &ShadowGit) -> bool {
+        let capability = engine.probe().await;
+        assert!(
+            capability.available,
+            "checkpoint shadow-git tests require a real host git >= 2.20 (spec/test-migration §8): {capability:?}"
+        );
+        true
+    }
 
     #[test]
     fn checkpoint_parse_git_version_accepts_platform_suffixes() {
@@ -1606,140 +1546,67 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_parse_slice_ref_accepts_only_canonical_leaves() {
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        let name = format!("refs/xihe/slices/1700000000000-{hash}");
+        let parsed = parse_slice_ref(&name).expect("canonical slice ref");
+        assert_eq!(parsed.epoch_ms, 1_700_000_000_000);
+        assert_eq!(parsed.commit, hash);
+        assert_eq!(parsed.name, name);
+
+        for rejected in [
+            format!("refs/xihe/slices/{hash}-1700000000000"),
+            format!("refs/xihe/slices/1700000000000-{}", hash.to_uppercase()),
+            format!("refs/xihe/slices/1700000000000-{}", &hash[..39]),
+            "refs/xihe/slices/1700000000000-".to_string(),
+            "refs/xihe/slices/-0123456789abcdef0123456789abcdef01234567".to_string(),
+            "refs/xihe/slices/not-a-slice".to_string(),
+            "refs/xihe/run-1/base".to_string(),
+            "refs/heads/main".to_string(),
+        ] {
+            assert!(
+                parse_slice_ref(&rejected).is_none(),
+                "{rejected:?} must not parse as a slice ref"
+            );
+        }
+        // A short epoch is still a valid, if unusual, capture instant.
+        let short = format!("refs/xihe/slices/1-{hash}");
+        assert_eq!(parse_slice_ref(&short).expect("short epoch").epoch_ms, 1);
+    }
+
+    #[test]
+    fn checkpoint_parse_slice_refs_skips_unknown_namespace_entries() {
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        let raw = format!(
+            "refs/xihe/slices/1700000000001-{hash}\nrefs/xihe/slices/not-a-slice\nrefs/heads/main\nrefs/xihe/slices/1700000000002-{hash}\n"
+        );
+        let rows = parse_slice_refs(raw.as_bytes());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].epoch_ms, 1_700_000_000_001);
+        assert_eq!(rows[1].epoch_ms, 1_700_000_000_002);
+    }
+
+    #[test]
+    fn checkpoint_parse_staged_gitlinks_extracts_only_mode_160000() {
+        let raw = b"100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tfile.txt\0\
+160000 0123456789abcdef0123456789abcdef01234567 0\tsub/nested\0\
+120000 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tlink\0";
+        assert_eq!(parse_staged_gitlinks(raw), vec!["sub/nested".to_string()]);
+        assert!(parse_staged_gitlinks(b"").is_empty());
+    }
+
+    #[test]
     fn checkpoint_gitignore_literal_is_anchored_and_escaped() {
         assert_eq!(gitignore_literal("dir/file.bin"), "/dir/file.bin");
         assert_eq!(gitignore_literal("a[1]*?.txt"), "/a\\[1\\]\\*\\?.txt");
     }
 
     #[test]
-    fn checkpoint_parse_xihe_refs_parses_rollback_and_skips_unknown_kinds() {
-        let raw = b"refs/xihe/run-1/base\t1700000000 +0000\n\
-                    refs/xihe/run-1/rollback/1700000001\t1700000001 +0000\n\
-                    refs/xihe/run-1/end\t1700000002 +0000\n\
-                    refs/xihe/run-2/end\tnonsense\n\
-                    refs/xihe/run-2/rollback/\t1700000004 +0000\n\
-                    refs/xihe/run-3/unknown/kind\t1700000005 +0000\n\
-                    refs/heads/main\t1700000003 +0000\n";
-        let refs = parse_xihe_refs(raw);
-        let rows: Vec<(&str, &str, i64)> = refs
-            .iter()
-            .map(|row| (row.run_id.as_str(), row.kind.as_str(), row.epoch))
-            .collect();
-        assert_eq!(
-            rows,
-            vec![
-                ("run-1", "base", 1_700_000_000),
-                ("run-1", "rollback", 1_700_000_001),
-                ("run-1", "end", 1_700_000_002),
-                ("run-2", "end", i64::MAX),
-            ],
-            "rollback refs are parsed for retention; empty leaves and nested kinds are skipped"
-        );
-        assert_eq!(refs[1].name, "refs/xihe/run-1/rollback/1700000001");
-    }
-
-    #[test]
-    fn checkpoint_base_message_round_trips_the_head_fingerprint_and_legacy_bases_stay_unknown() {
-        let head = HeadFingerprint {
-            is_repo: true,
-            head_ref: Some("refs/heads/main".to_string()),
-            head_commit: Some("0123456789abcdef".to_string()),
-        };
-        let message = base_message("run-1", "actor", "call-1", Some(&head));
-        let parsed = parse_head_fingerprint(&message).expect("fingerprint");
-        assert_eq!(parsed, head);
-        assert_eq!(
-            compare_head_fingerprint(Some(&parsed), &head),
-            HeadFingerprintStatus::Ok
-        );
-
-        let detached = HeadFingerprint {
-            is_repo: true,
-            head_ref: None,
-            head_commit: Some("0123456789abcdef".to_string()),
-        };
-        let message = base_message("run-1", "actor", "call-1", Some(&detached));
-        assert_eq!(parse_head_fingerprint(&message), Some(detached));
-
-        let not_repo = HeadFingerprint::default();
-        let message = base_message("run-1", "actor", "call-1", Some(&not_repo));
-        assert_eq!(parse_head_fingerprint(&message), Some(not_repo));
-
-        let legacy = base_message("run-1", "actor", "call-1", None);
-        assert_eq!(parse_head_fingerprint(&legacy), None);
-        assert_eq!(
-            compare_head_fingerprint(None, &head),
-            HeadFingerprintStatus::Unknown,
-            "legacy bases without the message lines are unknown, never a silent ok"
-        );
-    }
-
-    #[test]
-    fn checkpoint_head_fingerprint_comparer_covers_all_statuses() {
-        let repo_main = HeadFingerprint {
-            is_repo: true,
-            head_ref: Some("refs/heads/main".to_string()),
-            head_commit: Some("aaaa".to_string()),
-        };
-        let repo_feature = HeadFingerprint {
-            is_repo: true,
-            head_ref: Some("refs/heads/feature".to_string()),
-            head_commit: Some("aaaa".to_string()),
-        };
-        let repo_moved = HeadFingerprint {
-            is_repo: true,
-            head_ref: Some("refs/heads/main".to_string()),
-            head_commit: Some("bbbb".to_string()),
-        };
-        let detached = HeadFingerprint {
-            is_repo: true,
-            head_ref: None,
-            head_commit: Some("aaaa".to_string()),
-        };
-        let not_repo = HeadFingerprint::default();
-
-        assert_eq!(
-            compare_head_fingerprint(Some(&repo_main), &repo_main),
-            HeadFingerprintStatus::Ok
-        );
-        assert_eq!(
-            compare_head_fingerprint(Some(&repo_main), &repo_feature),
-            HeadFingerprintStatus::Changed,
-            "a branch switch invalidates the checkpoint"
-        );
-        assert_eq!(
-            compare_head_fingerprint(Some(&repo_main), &repo_moved),
-            HeadFingerprintStatus::Changed,
-            "a new commit invalidates the checkpoint"
-        );
-        assert_eq!(
-            compare_head_fingerprint(Some(&repo_main), &detached),
-            HeadFingerprintStatus::Changed
-        );
-        assert_eq!(
-            compare_head_fingerprint(Some(&repo_main), &not_repo),
-            HeadFingerprintStatus::Changed,
-            "a repository that disappeared is a change"
-        );
-        assert_eq!(
-            compare_head_fingerprint(Some(&not_repo), &repo_main),
-            HeadFingerprintStatus::Changed,
-            "a repository that appeared is a change"
-        );
-        assert_eq!(
-            compare_head_fingerprint(Some(&not_repo), &not_repo),
-            HeadFingerprintStatus::NotRepo
-        );
-        assert_eq!(
-            compare_head_fingerprint(None, &not_repo),
-            HeadFingerprintStatus::Unknown
-        );
-    }
-
-    #[test]
     fn checkpoint_rejects_invalid_identifiers() {
         assert!(validate_run_id("0192abcd-1234-7abc-9def-0123456789ab").is_ok());
         assert!(validate_run_id("run.2026-09-15_01").is_ok());
+        // The reserved C0 capture id must pass unchanged.
+        assert!(validate_run_id("c0").is_ok());
         let mut bad_run_ids = vec![
             String::new(),
             "../evil".to_string(),
@@ -1782,19 +1649,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn checkpoint_ops_fail_explicitly_without_git() {
+    async fn checkpoint_capture_fails_explicitly_without_git() {
         let temp = TempDir::new().expect("tempdir");
         std::fs::create_dir_all(temp.path().join("ws1")).expect("workspace");
         let engine = ShadowGit::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
         let error = engine
-            .create_base("ws1", "run-1", "tester", "call-1")
+            .capture("ws1", "run-1", "tester", "call-1", false)
             .await
-            .expect_err("create_base must fail without git");
+            .expect_err("capture must fail without git");
         assert!(matches!(error, CheckpointError::GitUnavailable(_)));
         let error = engine
-            .seal("ws1", "run-1")
+            .retention_gc("ws1", 50, 30)
             .await
-            .expect_err("seal must fail without git");
+            .expect_err("retention must fail without git");
         assert!(matches!(error, CheckpointError::GitUnavailable(_)));
     }
 
@@ -1803,7 +1670,7 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let engine = ShadowGit::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
         let error = engine
-            .create_base("ws1", "../escape", "tester", "call")
+            .capture("ws1", "../escape", "tester", "call", false)
             .await
             .expect_err("invalid run id must fail");
         assert!(matches!(
@@ -1813,47 +1680,165 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn checkpoint_smoke_creates_idempotent_base_and_seals_clean_run() {
+    async fn checkpoint_lock_counters_track_capture_and_restore_guards() {
         let temp = TempDir::new().expect("tempdir");
         let engine = ShadowGit::new(temp.path());
-        let capability = engine.probe().await;
-        if !capability.available {
-            eprintln!("checkpoint smoke skipped: {}", capability.detail);
-            return;
-        }
+        assert_eq!(engine.active_capture_locks(), 0);
+        assert_eq!(engine.active_restore_locks(), 0);
+
+        let capture = engine.lock_capture("ws1").await;
+        assert_eq!(engine.active_capture_locks(), 1);
+        assert_eq!(engine.active_restore_locks(), 0);
+
+        let restore = engine.try_lock_restore("ws1").expect("restore lock");
+        assert_eq!(engine.active_restore_locks(), 1);
+        assert!(
+            engine.try_lock_restore("ws1").is_none(),
+            "a second restore lock must fail fast"
+        );
+        drop(restore);
+        assert_eq!(engine.active_restore_locks(), 0);
+        assert!(engine.try_lock_restore("ws1").is_some());
+        drop(capture);
+        assert_eq!(engine.active_capture_locks(), 0);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_capture_no_change_writes_no_ref_and_change_writes_a_slice() {
+        let temp = TempDir::new().expect("tempdir");
         let workspace = temp.path().join("ws1");
         std::fs::create_dir_all(workspace.join("src")).expect("workspace");
         std::fs::write(workspace.join("src/main.txt"), "hello\n").expect("fixture file");
+        let engine = ShadowGit::new(temp.path());
+        if !require_git(&engine).await {
+            return;
+        }
 
         let first = engine
-            .create_base("ws1", "run-smoke", "tester", "call-1")
+            .capture("ws1", "run-smoke", "tester", "call-1", false)
             .await
-            .expect("create base");
-        assert!(first.created);
-        let second = engine
-            .create_base("ws1", "run-smoke", "tester", "call-1")
-            .await
-            .expect("idempotent create base");
-        assert!(!second.created);
-        assert_eq!(first.base_commit, second.base_commit);
-
-        let sealed = engine.seal("ws1", "run-smoke").await.expect("seal");
+            .expect("first capture");
+        assert!(!first.no_change);
+        assert_eq!(first.state, "captured");
+        let slice_ref = first.slice_ref.clone().expect("slice ref");
+        assert!(slice_ref.starts_with(SLICE_REF_PREFIX));
+        let parsed = parse_slice_ref(&slice_ref).expect("canonical slice ref");
+        assert_eq!(parsed.commit, first.commit.clone().expect("commit"));
+        assert_eq!(first.changed_files, Vec::new(), "no tail means no diff");
+        assert_eq!(first.predecessor, None);
         assert!(
-            sealed.changed_files.is_empty(),
-            "clean run must not report changes: {:?}",
-            sealed.changed_files
+            first
+                .captured_at
+                .as_deref()
+                .is_some_and(|value| value.ends_with('Z')),
+            "capturedAt must be RFC3339 UTC: {:?}",
+            first.captured_at
         );
-        let files = engine
-            .changed_files("ws1", "run-smoke")
-            .await
-            .expect("changed files");
-        assert!(files.is_empty());
 
-        let unsealed = engine
-            .changed_files("ws1", "run-other")
+        // A second capture of the same tree: no change, no ref.
+        let second = engine
+            .capture("ws1", "run-second", "tester", "call-2", false)
             .await
-            .expect_err("unknown run must fail");
-        assert!(matches!(unsealed, CheckpointError::RunNotFound(_)));
+            .expect("second capture");
+        assert!(second.no_change, "identical tree must not write a slice");
+        assert_eq!(second.slice_ref, None);
+        assert_eq!(second.commit, None);
+        assert_eq!(second.changed_files, Vec::new());
+        assert_eq!(second.predecessor.as_deref(), Some(slice_ref.as_str()));
+
+        // A real change: new slice with the changed file and the tail as predecessor.
+        std::fs::write(workspace.join("src/main.txt"), "hello again\n").expect("write");
+        std::fs::write(workspace.join("added.txt"), "added\n").expect("write");
+        let third = engine
+            .capture("ws1", "run-third", "tester", "call-3", true)
+            .await
+            .expect("third capture");
+        assert!(!third.no_change);
+        assert_eq!(third.state, "abnormal-captured");
+        assert_eq!(third.predecessor.as_deref(), Some(slice_ref.as_str()));
+        let mut changed: Vec<(String, String)> = third
+            .changed_files
+            .iter()
+            .map(|file| (file.status.clone(), file.path.clone()))
+            .collect();
+        changed.sort();
+        assert_eq!(
+            changed,
+            vec![
+                ("A".to_string(), "added.txt".to_string()),
+                ("M".to_string(), "src/main.txt".to_string()),
+            ]
+        );
+
+        // The slice commit is a root commit (no parent).
+        let shadow = engine.shadow_git_dir("ws1").expect("shadow dir");
+        let env = engine.isolated_env(&shadow, &workspace, None);
+        let commit = third.commit.clone().expect("commit");
+        let parents = engine
+            .run_git_checked(
+                &["rev-list", "--parents", "-n", "1", &commit],
+                &env,
+                None,
+                engine.call_timeout,
+            )
+            .await
+            .expect("rev-list");
+        let parents = String::from_utf8_lossy(&parents);
+        assert_eq!(
+            parents.split_whitespace().count(),
+            1,
+            "slice commits have no parent: {parents}"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_retention_counts_slices_and_keeps_the_newest() {
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let engine = ShadowGit::new(temp.path());
+        if !require_git(&engine).await {
+            return;
+        }
+
+        let mut slice_refs = Vec::new();
+        for index in 1..=4 {
+            std::fs::write(workspace.join("file.txt"), format!("version {index}\n"))
+                .expect("fixture write");
+            let outcome = engine
+                .capture("ws1", &format!("run-{index:02}"), "tester", "call", false)
+                .await
+                .expect("capture");
+            slice_refs.push(outcome.slice_ref.expect("slice written"));
+        }
+
+        let report = engine.retention_gc("ws1", 2, 30).await.expect("retention");
+        assert_eq!(report.deleted_slices.len(), 2);
+        assert_eq!(report.deleted_slices[0], slice_refs[0], "oldest first");
+        assert_eq!(report.kept, 2);
+        assert!(report.gc_ran);
+
+        let shadow = engine.shadow_git_dir("ws1").expect("shadow dir");
+        let env = engine.isolated_env(&shadow, &workspace, None);
+        let remaining = String::from_utf8_lossy(
+            &engine
+                .run_git_checked(
+                    &["for-each-ref", "--format=%(refname)", SLICE_REF_PREFIX],
+                    &env,
+                    None,
+                    engine.call_timeout,
+                )
+                .await
+                .expect("for-each-ref"),
+        )
+        .to_string();
+        assert!(!remaining.contains(&slice_refs[0]));
+        assert!(remaining.contains(&slice_refs[3]));
+
+        // TTL-only sweep deletes every slice older than the cutoff.
+        let ttl_report = engine.retention_gc("ws1", 50, 0).await.expect("ttl sweep");
+        assert_eq!(ttl_report.deleted_slices.len(), 2);
+        assert_eq!(ttl_report.kept, 0);
     }
 
     #[test]

@@ -1,192 +1,133 @@
-//! PLAN-0328 M3 W1b: revert + workspace-diff host API surface.
+//! PLAN-0338 slice model: restore + slice-blob + workspace-diff host API surface.
 //!
-//! Wires the M3 revert engine ([`crate::checkpoint_revert`]) and the M2 mutation
-//! lease registry ([`crate::checkpoint_api`]) into the frozen Runtime HTTP contract:
+//! Wires the restore engine ([`crate::checkpoint_revert`]) into the frozen Runtime
+//! HTTP contract:
 //!
-//! - `revert/preview` is read-only: engine dry-run plus the recorded/current HEAD
-//!   fingerprint triple, a bounded entry list with `truncated`, no lease taken;
-//! - `revert` consults the workspace mutation lease first (synthetic owner
-//!   `revert-<uuid>`, owner-scoped release on every path) in addition to the engine
-//!   lock, so a live run blocks execution with `CHECKPOINT_LEASE_HELD`;
-//! - `blob` serves one regular file of the run's base/end tree as bytes for a
-//!   plain-text response (≤1 MiB, workspace-relative normal paths only);
+//! - `revert/preview` is read-only: the git-native plan (restore/delete actions,
+//!   type conflicts flagged, full counts) plus a bounded entry list with
+//!   `truncated`; no lock is taken;
+//! - `revert` executes per path, requires an explicit acknowledgement for every
+//!   `type_conflict` path, fails fast with `CHECKPOINT_RESTORE_LOCKED` while
+//!   another restore runs, and reports per-path outcomes plus the `suspects`
+//!   written concurrently during the execution;
+//! - `blob` serves one regular file of the slice tree as plain text (≤1 MiB);
 //! - `git-status` projects the user repository's own porcelain status read-only
 //!   (isolated env, no hooks) for the dual-diff separation (spec §6.4 / S4).
 //!
 //! The axum handlers in `main.rs` only map these outcomes to the frozen
 //! Problem+JSON shapes; no control-plane or UI concept lives here.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tracing::info;
 
-use crate::checkpoint::{
-    CheckpointError, HeadFingerprint, HeadFingerprintStatus, WorkspaceGitStatus, validate_run_id,
-    validate_workspace_id,
-};
+use crate::checkpoint::{CheckpointError, WorkspaceGitStatus, validate_workspace_id};
 use crate::checkpoint_api::{
-    CheckpointService, LeaseAcquire, MutationLeaseRegistry, REASON_GIT_FAILED,
-    REASON_WORKSPACE_UNKNOWN, unavailable_reason,
+    CheckpointService, REASON_GIT_FAILED, REASON_WORKSPACE_UNKNOWN, unavailable_reason,
 };
 use crate::checkpoint_revert::{
-    MAX_BLOB_BYTES, RevertAcks, RevertBlobRef, RevertError, RevertItemOutcome, RevertPlanState,
-    RevertPreview, RevertResult,
+    MAX_BLOB_BYTES, RestoreError, RestoreItemOutcome, RestorePreview, RestoreResult,
 };
 
 /// Preview entry cap: the counts always cover the full plan, `truncated` marks a
-/// shortened `entries` list (response-size guard for very large runs).
+/// shortened `entries` list (response-size guard for very large plans).
 pub const MAX_PREVIEW_ENTRIES: usize = 1000;
 
-/// The `?ref=base|end` selector of the blob endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum BlobRef {
-    Base,
-    End,
-}
-
-impl BlobRef {
-    fn engine_ref(self) -> RevertBlobRef {
-        match self {
-            Self::Base => RevertBlobRef::Base,
-            Self::End => RevertBlobRef::End,
-        }
-    }
-}
-
-/// One entry of the revert preview: a pending `restore`/`delete`, or a conflict
-/// carrying the frozen reason code. Noop items are counted but not listed.
+/// One entry of the restore preview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RevertPreviewEntry {
+pub struct RestorePreviewEntry {
     /// Workspace-relative path with forward slashes.
     pub path: String,
-    /// Rename source; the engine splits renames into independent delete/add items,
-    /// so this field is currently never emitted (kept for wire stability).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub old_path: Option<String>,
+    /// `restore` (M/D) or `delete` (A).
     pub action: String,
-    /// Frozen conflict reason (`CONTENT_CHANGED`) when this entry is skipped.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub conflict_reason: Option<String>,
-}
-
-/// Preview counts (wire names are frozen: `skipConflicts`, not the engine's internal
-/// `conflicts`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RevertPreviewCounts {
-    pub restore: usize,
-    pub delete: usize,
-    pub skip_conflicts: usize,
-    pub noop: usize,
-}
-
-/// Recorded vs current HEAD fingerprint of the workspace user repository.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RevertHeadFingerprint {
-    pub recorded: Option<HeadFingerprint>,
-    pub current: Option<HeadFingerprint>,
-    /// `ok` / `changed` / `unknown` / `not_repo` (decision #41 / S2).
-    pub status: HeadFingerprintStatus,
-}
-
-/// `POST .../revert/preview` 200 body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RevertPreviewOutcome {
-    pub run_id: String,
-    /// Always `sealed`: preview requires the end ref.
+    /// `execute` / `noop` / `type_conflict`.
     pub state: String,
-    pub counts: RevertPreviewCounts,
-    pub entries: Vec<RevertPreviewEntry>,
-    pub head_fingerprint: RevertHeadFingerprint,
-    /// Seal marker from the in-memory seal record; `false` when unknown (after a
-    /// Runtime restart the CP row remains the durable projection).
-    pub sealed_with_live_jobs: bool,
-    /// `true` when `entries` was cut at [`MAX_PREVIEW_ENTRIES`].
-    pub truncated: bool,
-}
-
-/// One entry of the revert execution result.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RevertExecuteEntry {
-    pub path: String,
-    /// `restored` / `deleted` / `skippedConflict` / `failed` / `noop`.
-    pub result: String,
+    /// Frozen type-change reason (`TYPE_CHANGE`) when this entry is a conflict.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
 
-/// Execution counts (wire names are frozen; the engine `total` is not exposed).
+/// Preview counts over the full plan: `restore`/`delete` count by action
+/// (type-conflict entries included), `typeConflict` counts by state.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RevertExecuteCounts {
-    pub restored: usize,
-    pub deleted: usize,
-    pub skipped_conflict: usize,
-    pub failed: usize,
-    pub noop: usize,
+pub struct RestorePreviewCounts {
+    pub restore: usize,
+    pub delete: usize,
+    pub type_conflict: usize,
 }
 
-/// `POST .../revert` 200 body.
+/// `POST .../checkpoints/revert/preview` 200 body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RevertExecuteOutcome {
-    pub run_id: String,
-    /// `refs/xihe/<runId>/rollback/<epochMs>` audit ref; `null` when it could not
-    /// be written (the per-item results remain authoritative).
-    pub revert_ref: Option<String>,
-    pub counts: RevertExecuteCounts,
-    pub entries: Vec<RevertExecuteEntry>,
+pub struct RestorePreviewOutcome {
+    pub slice_ref: String,
+    pub counts: RestorePreviewCounts,
+    pub entries: Vec<RestorePreviewEntry>,
+    /// `true` when `entries` was cut at [`MAX_PREVIEW_ENTRIES`].
+    pub truncated: bool,
+}
+
+/// One entry of the restore execution result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreExecuteEntry {
+    pub path: String,
+    /// `restored` / `deleted` / `failed` / `suspect`.
+    pub outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Execution counts (suspects are listed separately on the response).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreExecuteCounts {
+    pub restored: usize,
+    pub deleted: usize,
+    pub failed: usize,
+}
+
+/// `POST .../checkpoints/revert` 200 body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreExecuteOutcome {
+    pub slice_ref: String,
+    pub counts: RestoreExecuteCounts,
+    pub entries: Vec<RestoreExecuteEntry>,
     pub duration_ms: u64,
+    /// Executed paths that no longer match the target slice (concurrent write).
+    pub suspects: Vec<String>,
 }
 
 /// One blob read result; `content` is raw (text policy lives in the handler).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobOutcome {
     pub path: String,
-    pub reference: &'static str,
     pub content: Vec<u8>,
 }
 
 /// `revert/preview` / `revert` failures mapped to 404 / 409 / 503.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RevertFailure {
+pub enum RestoreFailure {
     NotFound {
-        run_id: String,
+        detail: String,
     },
-    NotSealed {
-        run_id: String,
-    },
-    LeaseHeld {
-        /// Workspace lease holder as recorded (`run-*` or the synthetic
-        /// `revert-*` owner); `None` when only the engine lock was held.
-        holder: Option<String>,
-        expires_at_ms: Option<u64>,
-    },
-    HeadChanged {
-        recorded: Option<HeadFingerprint>,
-        observed: Option<HeadFingerprint>,
-    },
-    ConflictsUnacknowledged {
+    TypeChangesUnacknowledged {
         paths: Vec<String>,
     },
+    RestoreLocked,
     Unavailable {
         reason: &'static str,
         detail: String,
     },
 }
 
-/// Blob endpoint failures mapped to 400 / 404 / 409 / 413 / 503.
+/// Blob endpoint failures mapped to 400 / 404 / 413 / 503.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlobFailure {
     NotFound {
         detail: String,
-    },
-    NotSealed {
-        run_id: String,
     },
     Invalid {
         detail: String,
@@ -214,123 +155,62 @@ pub enum GitStatusFailure {
     },
 }
 
-/// Owner-scoped release of the synthetic revert lease: dropping the guard always
-/// releases exactly the `owner` entry, on success, error and panic paths alike.
-struct SyntheticLease<'a> {
-    leases: &'a MutationLeaseRegistry,
-    workspace_id: String,
-    owner: String,
-}
-
-impl<'a> SyntheticLease<'a> {
-    fn new(leases: &'a MutationLeaseRegistry, workspace_id: &str, owner: &str) -> Self {
-        Self {
-            leases,
-            workspace_id: workspace_id.to_string(),
-            owner: owner.to_string(),
-        }
-    }
-}
-
-impl Drop for SyntheticLease<'_> {
-    fn drop(&mut self) {
-        self.leases.release(&self.workspace_id, &self.owner);
-    }
-}
-
 impl CheckpointService {
-    /// Read-only revert dry-run for one sealed run (no lease).
-    pub async fn revert_preview(
+    /// Read-only restore dry-run for one slice (no lock taken).
+    pub async fn restore_preview(
         &self,
         workspace_id: &str,
-        run_id: &str,
-    ) -> Result<RevertPreviewOutcome, RevertFailure> {
-        validate_revert_pair(workspace_id, run_id)?;
+        slice_ref: &str,
+    ) -> Result<RestorePreviewOutcome, RestoreFailure> {
         let preview = self
             .engine()
-            .revert_preview(workspace_id, run_id)
+            .restore_preview(workspace_id, slice_ref)
             .await
-            .map_err(revert_failure)?;
-        let head = self
-            .engine()
-            .head_fingerprint_details(workspace_id, run_id)
-            .await
-            .map_err(revert_failure)?;
-        Ok(project_preview(
-            preview,
-            head,
-            self.sealed_with_live_jobs(workspace_id, run_id),
-        ))
+            .map_err(restore_failure)?;
+        Ok(project_preview(preview))
     }
 
-    /// Execute the revert of one sealed run.
+    /// Execute the restore of one slice.
     ///
-    /// Consulted leases: the workspace mutation registry first (synthetic owner
-    /// `revert-<uuid>`, so a live run answers 409 `CHECKPOINT_LEASE_HELD`), then the
-    /// engine's per-workspace lock inside `revert_execute`.
-    pub async fn revert_execute(
+    /// The engine holds the fail-fast restore lock for the execution only; every
+    /// `type_conflict` entry must be acknowledged explicitly.
+    pub async fn restore_execute(
         &self,
         workspace_id: &str,
-        run_id: &str,
-        acks: &RevertAcks,
-    ) -> Result<RevertExecuteOutcome, RevertFailure> {
-        validate_revert_pair(workspace_id, run_id)?;
-        let owner = format!("revert-{}", uuid::Uuid::new_v4());
-        match self.leases().try_acquire(workspace_id, &owner) {
-            LeaseAcquire::HeldByOther(view) => {
-                return Err(RevertFailure::LeaseHeld {
-                    holder: Some(view.run_id),
-                    expires_at_ms: Some(view.expires_at_ms),
-                });
-            }
-            LeaseAcquire::Acquired { .. } => {}
-        }
-        let _lease = SyntheticLease::new(self.leases(), workspace_id, &owner);
+        slice_ref: &str,
+        acknowledge_type_changes: &[String],
+    ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
         let result = self
             .engine()
-            .revert_execute(workspace_id, run_id, acks)
+            .restore_execute(workspace_id, slice_ref, acknowledge_type_changes)
             .await
-            .map_err(revert_failure)?;
+            .map_err(restore_failure)?;
         info!(
             workspace_id,
-            run_id,
+            slice_ref,
             restored = result.counts.restored,
             deleted = result.counts.deleted,
-            skipped_conflict = result.counts.skipped_conflict,
             failed = result.counts.failed,
-            noop = result.counts.noop,
-            "run revert executed via host API"
+            suspects = result.suspects.len(),
+            "checkpoint restore executed via host API"
         );
         Ok(project_execute(result))
     }
 
-    /// Read one regular file out of the run's base/end tree.
-    pub async fn revert_blob(
+    /// Read one regular file out of the slice tree.
+    pub async fn slice_blob(
         &self,
         workspace_id: &str,
-        run_id: &str,
-        reference: BlobRef,
+        slice_ref: &str,
         path: &str,
     ) -> Result<BlobOutcome, BlobFailure> {
-        validate_workspace_id(workspace_id)
-            .and_then(|()| validate_run_id(run_id))
-            .map_err(|error| BlobFailure::Invalid {
-                detail: error.to_string(),
-            })?;
         let blob = self
             .engine()
-            .revert_blob(
-                workspace_id,
-                run_id,
-                reference.engine_ref(),
-                path,
-                MAX_BLOB_BYTES,
-            )
+            .slice_blob(workspace_id, slice_ref, path, MAX_BLOB_BYTES)
             .await
-            .map_err(|error| blob_failure(error, run_id))?;
+            .map_err(blob_failure)?;
         Ok(BlobOutcome {
             path: blob.path,
-            reference: blob.reference,
             content: blob.content,
         })
     }
@@ -368,140 +248,96 @@ impl CheckpointService {
 }
 
 /// Project the engine dry-run into the frozen preview wire shape.
-fn project_preview(
-    preview: RevertPreview,
-    head: (
-        HeadFingerprintStatus,
-        Option<HeadFingerprint>,
-        Option<HeadFingerprint>,
-    ),
-    sealed_with_live_jobs: bool,
-) -> RevertPreviewOutcome {
+fn project_preview(preview: RestorePreview) -> RestorePreviewOutcome {
     let mut entries = Vec::new();
     let mut truncated = false;
-    for item in &preview.items {
-        if item.state == RevertPlanState::Noop {
-            continue;
-        }
+    for entry in &preview.entries {
         if entries.len() >= MAX_PREVIEW_ENTRIES {
             truncated = true;
             break;
         }
-        entries.push(RevertPreviewEntry {
-            path: item.path.clone(),
-            old_path: None,
-            action: item.action.as_str().to_string(),
-            conflict_reason: if item.state == RevertPlanState::Conflict {
-                item.reason.clone()
-            } else {
-                None
-            },
+        entries.push(RestorePreviewEntry {
+            path: entry.path.clone(),
+            action: entry.action.as_str().to_string(),
+            state: entry.state.as_str().to_string(),
+            reason: entry.reason.clone(),
         });
     }
-    RevertPreviewOutcome {
-        run_id: preview.run_id,
-        state: "sealed".to_string(),
-        counts: RevertPreviewCounts {
+    RestorePreviewOutcome {
+        slice_ref: preview.slice_ref,
+        counts: RestorePreviewCounts {
             restore: preview.counts.restore,
             delete: preview.counts.delete,
-            skip_conflicts: preview.counts.conflicts,
-            noop: preview.counts.noop,
+            type_conflict: preview.counts.type_conflict,
         },
         entries,
-        head_fingerprint: RevertHeadFingerprint {
-            recorded: head.1,
-            current: head.2,
-            status: head.0,
-        },
-        sealed_with_live_jobs,
         truncated,
     }
 }
 
 /// Project the engine execution result into the frozen execute wire shape.
-fn project_execute(result: RevertResult) -> RevertExecuteOutcome {
-    RevertExecuteOutcome {
-        run_id: result.run_id,
-        revert_ref: result.rollback_ref,
-        counts: RevertExecuteCounts {
+fn project_execute(result: RestoreResult) -> RestoreExecuteOutcome {
+    RestoreExecuteOutcome {
+        slice_ref: result.slice_ref,
+        counts: RestoreExecuteCounts {
             restored: result.counts.restored,
             deleted: result.counts.deleted,
-            skipped_conflict: result.counts.skipped_conflict,
             failed: result.counts.failed,
-            noop: result.counts.noop,
         },
         entries: result
-            .items
+            .entries
             .into_iter()
-            .map(|item| RevertExecuteEntry {
+            .map(|item| RestoreExecuteEntry {
                 path: item.path,
-                result: outcome_wire(item.outcome),
+                outcome: outcome_wire(item.outcome),
                 reason: item.reason,
             })
             .collect(),
         duration_ms: result.duration_ms,
+        suspects: result.suspects,
     }
 }
 
-fn outcome_wire(outcome: RevertItemOutcome) -> String {
+fn outcome_wire(outcome: RestoreItemOutcome) -> String {
     match outcome {
-        RevertItemOutcome::Restored => "restored",
-        RevertItemOutcome::Deleted => "deleted",
-        RevertItemOutcome::SkippedConflict => "skippedConflict",
-        RevertItemOutcome::Failed => "failed",
-        RevertItemOutcome::Noop => "noop",
+        RestoreItemOutcome::Restored => "restored",
+        RestoreItemOutcome::Deleted => "deleted",
+        RestoreItemOutcome::Failed => "failed",
+        RestoreItemOutcome::Suspect => "suspect",
     }
     .to_string()
 }
 
-/// Malformed identifiers are reported as 404 `CHECKPOINT_NOT_FOUND` (the frozen
-/// revert-endpoint vocabulary); the run id is echoed so the detail stays useful.
-fn validate_revert_pair(workspace_id: &str, run_id: &str) -> Result<(), RevertFailure> {
-    validate_workspace_id(workspace_id)
-        .and_then(|()| validate_run_id(run_id))
-        .map_err(|_| RevertFailure::NotFound {
-            run_id: run_id.to_string(),
-        })
-}
-
-fn revert_failure(error: RevertError) -> RevertFailure {
+fn restore_failure(error: RestoreError) -> RestoreFailure {
     match error {
-        RevertError::NotFound(run_id) => RevertFailure::NotFound { run_id },
-        RevertError::NotSealed(run_id) => RevertFailure::NotSealed { run_id },
-        RevertError::HeadChanged { recorded, observed } => {
-            RevertFailure::HeadChanged { recorded, observed }
-        }
-        RevertError::ConflictsUnacknowledged { paths } => {
-            RevertFailure::ConflictsUnacknowledged { paths }
-        }
-        RevertError::Unavailable { reason, detail } => {
-            RevertFailure::Unavailable { reason, detail }
-        }
-        RevertError::LeaseHeld => RevertFailure::LeaseHeld {
-            holder: None,
-            expires_at_ms: None,
+        RestoreError::SliceNotFound(detail) => RestoreFailure::NotFound {
+            detail: format!("no checkpoint slice for {detail}"),
         },
-        other => RevertFailure::Unavailable {
+        RestoreError::TypeChangesUnacknowledged { paths } => {
+            RestoreFailure::TypeChangesUnacknowledged { paths }
+        }
+        RestoreError::RestoreLocked => RestoreFailure::RestoreLocked,
+        RestoreError::Unavailable { reason, detail } => {
+            RestoreFailure::Unavailable { reason, detail }
+        }
+        other => RestoreFailure::Unavailable {
             reason: REASON_GIT_FAILED,
             detail: other.to_string(),
         },
     }
 }
 
-fn blob_failure(error: RevertError, run_id: &str) -> BlobFailure {
+fn blob_failure(error: RestoreError) -> BlobFailure {
     match error {
-        RevertError::NotFound(_) => BlobFailure::NotFound {
-            detail: format!("no checkpoint refs for run {run_id}"),
+        RestoreError::SliceNotFound(detail) => BlobFailure::NotFound {
+            detail: format!("no checkpoint slice for {detail}"),
         },
-        RevertError::NotSealed(run_id) => BlobFailure::NotSealed { run_id },
-        RevertError::InvalidRequest { detail } => BlobFailure::Invalid { detail },
-        RevertError::PathNotFound { reference, path } => BlobFailure::NotFound {
-            detail: format!("path {path} is not present in the run's {reference} tree"),
+        RestoreError::PathNotFound { path } => BlobFailure::NotFound {
+            detail: format!("path {path} is not present in the slice tree"),
         },
-        RevertError::BlobTooLarge {
-            path, size, max, ..
-        } => BlobFailure::TooLarge { path, size, max },
-        RevertError::Unavailable { reason, detail } => BlobFailure::Unavailable { reason, detail },
+        RestoreError::InvalidRequest { detail } => BlobFailure::Invalid { detail },
+        RestoreError::BlobTooLarge { path, size, max } => BlobFailure::TooLarge { path, size, max },
+        RestoreError::Unavailable { reason, detail } => BlobFailure::Unavailable { reason, detail },
         other => BlobFailure::Unavailable {
             reason: REASON_GIT_FAILED,
             detail: other.to_string(),
@@ -513,261 +349,185 @@ fn blob_failure(error: RevertError, run_id: &str) -> BlobFailure {
 mod tests {
     use super::*;
     use crate::checkpoint_revert::{
-        RevertAction, RevertItemResult, RevertPlanItem, RevertPreviewCounts as EnginePreviewCounts,
-        RevertResultCounts, RevertTarget,
+        RestoreAction, RestoreEntryState, RestoreItemResult,
+        RestorePreviewCounts as EnginePreviewCounts, RestoreResultCounts,
     };
 
-    fn plan_item(path: &str, state: RevertPlanState, action: RevertAction) -> RevertPlanItem {
-        RevertPlanItem {
-            path: path.to_string(),
-            action,
-            target: match action {
-                RevertAction::Restore => RevertTarget::Base,
-                RevertAction::Delete => RevertTarget::Absent,
-            },
-            state,
-            reason: (state == RevertPlanState::Conflict).then(|| "CONTENT_CHANGED".to_string()),
-            observed_at: None,
-        }
-    }
-
-    fn preview_with(items: Vec<RevertPlanItem>) -> RevertPreview {
-        let counts = {
-            let mut counts = EnginePreviewCounts::default();
-            for item in &items {
-                match item.state {
-                    RevertPlanState::Execute => match item.action {
-                        RevertAction::Restore => counts.restore += 1,
-                        RevertAction::Delete => counts.delete += 1,
-                    },
-                    RevertPlanState::Noop => counts.noop += 1,
-                    RevertPlanState::Conflict => counts.conflicts += 1,
-                }
-            }
-            counts.total = items.len();
-            counts
+    fn preview_with(entries: Vec<crate::checkpoint_revert::RestorePreviewEntry>) -> RestorePreview {
+        let counts = EnginePreviewCounts {
+            restore: entries
+                .iter()
+                .filter(|entry| entry.action == RestoreAction::Restore)
+                .count(),
+            delete: entries
+                .iter()
+                .filter(|entry| entry.action == RestoreAction::Delete)
+                .count(),
+            type_conflict: entries
+                .iter()
+                .filter(|entry| entry.state == RestoreEntryState::TypeConflict)
+                .count(),
         };
-        RevertPreview {
-            workspace_id: "ws".to_string(),
-            run_id: "run-1".to_string(),
-            base_commit: "base".to_string(),
-            end_commit: "end".to_string(),
-            head: HeadFingerprintStatus::Ok,
-            items,
+        RestorePreview {
+            slice_ref: "refs/xihe/slices/1-abc".to_string(),
+            commit: "abc".to_string(),
+            entries,
             counts,
         }
     }
 
-    fn no_head() -> (
-        HeadFingerprintStatus,
-        Option<HeadFingerprint>,
-        Option<HeadFingerprint>,
-    ) {
-        (
-            HeadFingerprintStatus::NotRepo,
-            Some(HeadFingerprint::default()),
-            Some(HeadFingerprint::default()),
-        )
+    fn entry(
+        path: &str,
+        action: RestoreAction,
+        state: RestoreEntryState,
+    ) -> crate::checkpoint_revert::RestorePreviewEntry {
+        crate::checkpoint_revert::RestorePreviewEntry {
+            path: path.to_string(),
+            action,
+            state,
+            reason: (state == RestoreEntryState::TypeConflict).then(|| "TYPE_CHANGE".to_string()),
+        }
     }
 
     #[test]
-    fn revert_preview_projection_excludes_noop_and_maps_conflicts() {
-        let outcome = project_preview(
-            preview_with(vec![
-                plan_item("a.txt", RevertPlanState::Execute, RevertAction::Restore),
-                plan_item("gone.txt", RevertPlanState::Execute, RevertAction::Delete),
-                plan_item(
-                    "clash.txt",
-                    RevertPlanState::Conflict,
-                    RevertAction::Restore,
-                ),
-                plan_item("done.txt", RevertPlanState::Noop, RevertAction::Restore),
-            ]),
-            no_head(),
-            true,
-        );
-        assert_eq!(outcome.run_id, "run-1");
-        assert_eq!(outcome.state, "sealed");
+    fn restore_preview_projection_maps_actions_states_and_truncation() {
+        let outcome = project_preview(preview_with(vec![
+            entry("a.txt", RestoreAction::Restore, RestoreEntryState::Execute),
+            entry("b.txt", RestoreAction::Delete, RestoreEntryState::Execute),
+            entry("p", RestoreAction::Restore, RestoreEntryState::TypeConflict),
+        ]));
+        assert_eq!(outcome.slice_ref, "refs/xihe/slices/1-abc");
         assert_eq!(
             outcome.counts,
-            RevertPreviewCounts {
-                restore: 1,
+            RestorePreviewCounts {
+                restore: 2,
                 delete: 1,
-                skip_conflicts: 1,
-                noop: 1,
+                type_conflict: 1,
             }
         );
-        assert!(
-            outcome.entries.iter().all(|entry| entry.path != "done.txt"),
-            "noop items are counted but never listed: {:?}",
-            outcome.entries
-        );
-        assert_eq!(outcome.entries.len(), 3);
+        assert_eq!(outcome.entries[0].action, "restore");
+        assert_eq!(outcome.entries[0].state, "execute");
+        assert_eq!(outcome.entries[0].reason, None);
         assert_eq!(outcome.entries[1].action, "delete");
-        assert_eq!(
-            outcome.entries[2].conflict_reason.as_deref(),
-            Some("CONTENT_CHANGED")
-        );
-        assert_eq!(outcome.entries[0].conflict_reason, None);
-        assert!(outcome.entries.iter().all(|entry| entry.old_path.is_none()));
-        assert!(outcome.sealed_with_live_jobs);
+        assert_eq!(outcome.entries[2].state, "type_conflict");
+        assert_eq!(outcome.entries[2].reason.as_deref(), Some("TYPE_CHANGE"));
         assert!(!outcome.truncated);
-        assert_eq!(
-            outcome.head_fingerprint.status,
-            HeadFingerprintStatus::NotRepo
-        );
-    }
 
-    #[test]
-    fn revert_preview_projection_truncates_entries_at_the_cap() {
-        let items: Vec<RevertPlanItem> = (0..=MAX_PREVIEW_ENTRIES)
+        let items: Vec<_> = (0..=MAX_PREVIEW_ENTRIES)
             .map(|index| {
-                plan_item(
+                entry(
                     &format!("file-{index:05}.txt"),
-                    RevertPlanState::Execute,
-                    RevertAction::Restore,
+                    RestoreAction::Restore,
+                    RestoreEntryState::Execute,
                 )
             })
             .collect();
         let total = items.len();
-        let outcome = project_preview(preview_with(items), no_head(), false);
-        assert!(outcome.truncated, "overflowing entry lists must be flagged");
-        assert_eq!(outcome.entries.len(), MAX_PREVIEW_ENTRIES);
-        assert_eq!(outcome.counts.restore, total, "counts cover the full plan");
+        let truncated = project_preview(preview_with(items));
+        assert!(
+            truncated.truncated,
+            "overflowing entry lists must be flagged"
+        );
+        assert_eq!(truncated.entries.len(), MAX_PREVIEW_ENTRIES);
+        assert_eq!(
+            truncated.counts.restore, total,
+            "counts cover the full plan"
+        );
     }
 
     #[test]
-    fn revert_execute_projection_maps_counts_and_results() {
-        let result = RevertResult {
-            workspace_id: "ws".to_string(),
-            run_id: "run-1".to_string(),
-            base_commit: "base".to_string(),
-            end_commit: "end".to_string(),
-            head: HeadFingerprintStatus::Ok,
-            items: vec![
-                RevertItemResult {
+    fn restore_execute_projection_maps_counts_outcomes_and_suspects() {
+        let result = RestoreResult {
+            slice_ref: "refs/xihe/slices/1-abc".to_string(),
+            commit: "abc".to_string(),
+            entries: vec![
+                RestoreItemResult {
                     path: "a.txt".to_string(),
-                    action: RevertAction::Restore,
-                    outcome: RevertItemOutcome::Restored,
+                    action: RestoreAction::Restore,
+                    outcome: RestoreItemOutcome::Restored,
                     reason: None,
-                    observed_at: None,
                 },
-                RevertItemResult {
+                RestoreItemResult {
                     path: "b.txt".to_string(),
-                    action: RevertAction::Delete,
-                    outcome: RevertItemOutcome::SkippedConflict,
-                    reason: Some("CONTENT_CHANGED".to_string()),
-                    observed_at: Some(7),
+                    action: RestoreAction::Delete,
+                    outcome: RestoreItemOutcome::Suspect,
+                    reason: None,
+                },
+                RestoreItemResult {
+                    path: "c.txt".to_string(),
+                    action: RestoreAction::Restore,
+                    outcome: RestoreItemOutcome::Failed,
+                    reason: Some("io detail".to_string()),
                 },
             ],
-            counts: RevertResultCounts {
+            counts: RestoreResultCounts {
                 restored: 1,
                 deleted: 0,
-                skipped_conflict: 1,
-                failed: 0,
-                noop: 0,
-                total: 2,
+                failed: 1,
             },
             duration_ms: 12,
-            rollback_ref: Some("refs/xihe/run-1/rollback/1".to_string()),
+            suspects: vec!["b.txt".to_string()],
         };
         let outcome = project_execute(result);
+        assert_eq!(outcome.slice_ref, "refs/xihe/slices/1-abc");
         assert_eq!(
-            outcome.revert_ref.as_deref(),
-            Some("refs/xihe/run-1/rollback/1")
+            outcome.counts,
+            RestoreExecuteCounts {
+                restored: 1,
+                deleted: 0,
+                failed: 1,
+            }
         );
-        assert_eq!(outcome.counts.restored, 1);
-        assert_eq!(outcome.counts.skipped_conflict, 1);
-        assert_eq!(outcome.entries[0].result, "restored");
+        assert_eq!(outcome.entries[0].outcome, "restored");
         assert_eq!(outcome.entries[0].reason, None);
-        assert_eq!(outcome.entries[1].result, "skippedConflict");
-        assert_eq!(
-            outcome.entries[1].reason.as_deref(),
-            Some("CONTENT_CHANGED")
-        );
+        assert_eq!(outcome.entries[1].outcome, "suspect");
+        assert_eq!(outcome.entries[2].outcome, "failed");
+        assert_eq!(outcome.entries[2].reason.as_deref(), Some("io detail"));
         assert_eq!(outcome.duration_ms, 12);
-    }
-
-    #[test]
-    fn synthetic_lease_blocks_other_owners_and_releases_on_drop() {
-        let registry = MutationLeaseRegistry::new();
-        {
-            let owner = "revert-synthetic";
-            match registry.try_acquire("ws", owner) {
-                LeaseAcquire::Acquired { fresh } => assert!(fresh),
-                other => panic!("expected Acquired, got {other:?}"),
-            }
-            let _lease = SyntheticLease::new(&registry, "ws", owner);
-            match registry.try_acquire("ws", "run-live") {
-                LeaseAcquire::HeldByOther(view) => assert_eq!(view.run_id, owner),
-                other => panic!("expected HeldByOther, got {other:?}"),
-            }
-        }
-        assert!(
-            matches!(
-                registry.try_acquire("ws", "run-live"),
-                LeaseAcquire::Acquired { fresh: true }
-            ),
-            "dropping the guard must release the synthetic lease"
-        );
+        assert_eq!(outcome.suspects, vec!["b.txt".to_string()]);
     }
 
     #[test]
     fn failure_mapping_projects_engine_errors_to_frozen_codes() {
         assert_eq!(
-            revert_failure(RevertError::NotFound("run-1".to_string())),
-            RevertFailure::NotFound {
-                run_id: "run-1".to_string()
-            }
-        );
-        assert_eq!(
-            revert_failure(RevertError::NotSealed("run-1".to_string())),
-            RevertFailure::NotSealed {
-                run_id: "run-1".to_string()
+            restore_failure(RestoreError::SliceNotFound(
+                "refs/xihe/slices/1-a".to_string()
+            )),
+            RestoreFailure::NotFound {
+                detail: "no checkpoint slice for refs/xihe/slices/1-a".to_string()
             }
         );
         assert!(matches!(
-            revert_failure(RevertError::ConflictsUnacknowledged {
-                paths: vec!["a.txt".to_string()]
+            restore_failure(RestoreError::TypeChangesUnacknowledged {
+                paths: vec!["p".to_string()]
             }),
-            RevertFailure::ConflictsUnacknowledged { paths } if paths == vec!["a.txt".to_string()]
+            RestoreFailure::TypeChangesUnacknowledged { paths } if paths == vec!["p".to_string()]
         ));
+        assert_eq!(
+            restore_failure(RestoreError::RestoreLocked),
+            RestoreFailure::RestoreLocked
+        );
         assert!(matches!(
-            revert_failure(RevertError::LeaseHeld),
-            RevertFailure::LeaseHeld {
-                holder: None,
-                expires_at_ms: None
-            }
-        ));
-        assert!(matches!(
-            revert_failure(RevertError::Failed("boom".to_string())),
-            RevertFailure::Unavailable {
+            restore_failure(RestoreError::Failed("boom".to_string())),
+            RestoreFailure::Unavailable {
                 reason: REASON_GIT_FAILED,
                 ..
             }
         ));
         assert_eq!(
-            blob_failure(
-                RevertError::PathNotFound {
-                    reference: "base",
-                    path: "a.txt".to_string()
-                },
-                "run-1"
-            ),
+            blob_failure(RestoreError::PathNotFound {
+                path: "a.txt".to_string()
+            }),
             BlobFailure::NotFound {
-                detail: "path a.txt is not present in the run's base tree".to_string()
+                detail: "path a.txt is not present in the slice tree".to_string()
             }
         );
         assert_eq!(
-            blob_failure(
-                RevertError::BlobTooLarge {
-                    reference: "end",
-                    path: "big.bin".to_string(),
-                    size: 10,
-                    max: 5,
-                },
-                "run-1"
-            ),
+            blob_failure(RestoreError::BlobTooLarge {
+                path: "big.bin".to_string(),
+                size: 10,
+                max: 5,
+            }),
             BlobFailure::TooLarge {
                 path: "big.bin".to_string(),
                 size: 10,
