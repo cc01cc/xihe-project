@@ -154,13 +154,13 @@ public class PolicyController {
         SessionPolicyState.Entry snapshot = sessionState.snapshot(sessionId).orElse(null);
         payload.put("sessionId", sessionId);
         payload.put("mode", snapshot == null || snapshot.mode() == null
-                ? LayeredPolicyResolver.MODE_DEFAULT : snapshot.mode());
+                ? LayeredPolicyResolver.MODE_MANUAL : snapshot.mode());
         payload.put("sessionRules", snapshot == null ? 0 : snapshot.rules().size());
         return ResponseEntity.ok(payload);
     }
 
     /**
-     * Session-scoped mode switch. Memory-only (decision #28): switching here never persists and
+     * Session-scoped mode switch. Switching here never changes another session and
      * never changes another session.
      */
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")

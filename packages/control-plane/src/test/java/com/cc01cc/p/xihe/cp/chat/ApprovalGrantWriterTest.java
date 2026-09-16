@@ -152,7 +152,7 @@ class ApprovalGrantWriterTest {
         ApprovalGrantWriter.RulePlan plan = new ApprovalGrantWriter.RulePlan(
                 "session", "session", "write_file", "write", "*", PolicyEffect.ALLOW);
         ApprovalGrantWriter.GrantContext context = new ApprovalGrantWriter.GrantContext(
-                "write_file", "abc123", "default", 42L, 3);
+                "write_file", "abc123", "manual", 42L, 3);
 
         writer.commit(plan, SESSION, USER, WORKSPACE, context);
 
@@ -160,7 +160,7 @@ class ApprovalGrantWriterTest {
         verify(sessionState).addGrant(eq(SESSION), grant.capture());
         assertEquals("sha256:abc123", grant.getValue().argumentsHash());
         assertEquals("write_file", grant.getValue().tool());
-        assertEquals("default", grant.getValue().modeAtGrant());
+        assertEquals("manual", grant.getValue().modeAtGrant());
         assertEquals(42L, grant.getValue().policyRevision());
         assertEquals(3, grant.getValue().sandboxGeneration());
         verify(ruleService, never()).create(any(), any(), any(), anyBoolean(), any());

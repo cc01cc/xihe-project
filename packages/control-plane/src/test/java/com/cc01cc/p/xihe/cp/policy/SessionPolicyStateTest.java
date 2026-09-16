@@ -16,9 +16,9 @@ class SessionPolicyStateTest {
 
     @Test
     void modeIsSessionScopedAndMemoryOnly() {
-        state.setMode("s1", LayeredPolicyResolver.MODE_BYPASS);
+        state.setMode("s1", LayeredPolicyResolver.MODE_AUTO);
 
-        assertEquals(LayeredPolicyResolver.MODE_BYPASS, state.modeOf("s1").orElseThrow());
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, state.modeOf("s1").orElseThrow());
         assertTrue(state.modeOf("s2").isEmpty());
     }
 
@@ -41,10 +41,10 @@ class SessionPolicyStateTest {
     @Test
     void setModePreservesExistingRules() {
         state.addRule("s1", PolicyRule.of("exec", "*", PolicyEffect.ALLOW));
-        state.setMode("s1", LayeredPolicyResolver.MODE_DEFAULT);
+        state.setMode("s1", LayeredPolicyResolver.MODE_MANUAL);
 
         assertEquals(1, state.rulesOf("s1").size());
-        assertEquals(LayeredPolicyResolver.MODE_DEFAULT, state.modeOf("s1").orElseThrow());
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, state.modeOf("s1").orElseThrow());
     }
 
     @Test
@@ -52,7 +52,7 @@ class SessionPolicyStateTest {
         var mutableRules = new java.util.ArrayList<>(List.of(
                 PolicyRule.of("exec", "pnpm test *", PolicyEffect.ALLOW)));
         SessionPolicyState.Entry entry = new SessionPolicyState.Entry(
-                LayeredPolicyResolver.MODE_MANAGED, mutableRules, Instant.now());
+                LayeredPolicyResolver.MODE_MANUAL, mutableRules, Instant.now());
         mutableRules.clear();
 
         assertEquals(1, entry.rules().size());
@@ -62,9 +62,9 @@ class SessionPolicyStateTest {
 
     @Test
     void clearDropsEverythingForTheSession() {
-        state.setMode("s1", LayeredPolicyResolver.MODE_BYPASS);
+        state.setMode("s1", LayeredPolicyResolver.MODE_AUTO);
         state.addRule("s1", PolicyRule.of("exec", "*", PolicyEffect.ALLOW));
-        state.addGrant("s1", grant("write_file", "sha256:abc", "default"));
+        state.addGrant("s1", grant("write_file", "sha256:abc", "manual"));
 
         state.clear("s1");
 
@@ -79,8 +79,8 @@ class SessionPolicyStateTest {
 
     @Test
     void grantsAreExactInvocationFingerprintsNotCoarseActionAllows() {
-        state.addGrant("s1", grant("write_file", "sha256:abc", "default"));
-        state.addGrant("s1", grant("execute_command", "sha256:def", "default"));
+        state.addGrant("s1", grant("write_file", "sha256:abc", "manual"));
+        state.addGrant("s1", grant("execute_command", "sha256:def", "manual"));
 
         assertEquals(7L, state.grantOf("s1", "write_file", "sha256:abc").orElseThrow().policyRevision());
         assertEquals("execute_command",
@@ -93,18 +93,18 @@ class SessionPolicyStateTest {
 
     @Test
     void regrantingTheSameFingerprintRefreshesInsteadOfDuplicating() {
-        state.addGrant("s1", grant("write_file", "sha256:abc", "default"));
+        state.addGrant("s1", grant("write_file", "sha256:abc", "manual"));
         state.addGrant("s1", new SessionPolicyState.Grant(
-                "sha256:abc", "write_file", "managed", 9L, 4, Instant.now()));
+                "sha256:abc", "write_file", "manual", 9L, 4, Instant.now()));
 
-        assertEquals("managed", state.grantOf("s1", "write_file", "sha256:abc").orElseThrow().modeAtGrant());
+        assertEquals("manual", state.grantOf("s1", "write_file", "sha256:abc").orElseThrow().modeAtGrant());
         assertEquals(1, state.snapshot("s1").orElseThrow().grants().size());
     }
 
     @Test
     void grantsAreBoundedPerSession() {
         for (int i = 0; i < SessionPolicyState.MAX_GRANTS_PER_SESSION + 5; i++) {
-            state.addGrant("s1", grant("write_file", "sha256:" + i, "default"));
+            state.addGrant("s1", grant("write_file", "sha256:" + i, "manual"));
         }
 
         assertEquals(SessionPolicyState.MAX_GRANTS_PER_SESSION,
@@ -117,9 +117,9 @@ class SessionPolicyStateTest {
 
     @Test
     void malformedGrantsAreIgnored() {
-        state.addGrant("s1", new SessionPolicyState.Grant(" ", "write_file", "default", 0L, 0, Instant.now()));
-        state.addGrant("s1", new SessionPolicyState.Grant("sha256:abc", null, "default", 0L, 0, Instant.now()));
-        state.addGrant(null, grant("write_file", "sha256:abc", "default"));
+        state.addGrant("s1", new SessionPolicyState.Grant(" ", "write_file", "manual", 0L, 0, Instant.now()));
+        state.addGrant("s1", new SessionPolicyState.Grant("sha256:abc", null, "manual", 0L, 0, Instant.now()));
+        state.addGrant(null, grant("write_file", "sha256:abc", "manual"));
 
         assertTrue(state.modeOf("s1").isEmpty());
         assertTrue(state.grantOf("s1", "write_file", "sha256:abc").isEmpty());
@@ -131,7 +131,7 @@ class SessionPolicyStateTest {
         for (int i = 0; i < 5; i++) {
             shortLived.addRule("stale-" + i, PolicyRule.of("exec", "*", PolicyEffect.ALLOW));
         }
-        shortLived.addGrant("stale-grant", grant("write_file", "sha256:abc", "default"));
+        shortLived.addGrant("stale-grant", grant("write_file", "sha256:abc", "manual"));
         Thread.sleep(600);
         shortLived.addRule("live", PolicyRule.of("exec", "*", PolicyEffect.ALLOW));
 

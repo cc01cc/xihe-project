@@ -771,7 +771,7 @@ public class ApprovalService {
         return sessionPolicyState.snapshot(sessionId)
                 .map(SessionPolicyState.Entry::mode)
                 .filter(mode -> mode != null && !mode.isBlank())
-                .orElse(LayeredPolicyResolver.MODE_DEFAULT);
+                .orElse(LayeredPolicyResolver.MODE_MANUAL);
     }
 
     /** Workspace sandbox generation; null when the workspace cannot be read (fail-closed). */

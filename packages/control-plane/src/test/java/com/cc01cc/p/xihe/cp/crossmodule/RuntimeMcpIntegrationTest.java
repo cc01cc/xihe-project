@@ -85,12 +85,24 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
-                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}")));
+                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":["
+                                + "{\"name\":\"apply_patch\",\"description\":\"Apply patch\","
+                                + "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+                                + "\"patches\":{\"type\":\"array\"}}}},"
+                                + "{\"name\":\"write_file\"}]},\"id\":1}")));
 
         ResponseEntity<String> response = restTemplate.postForEntity(
                 url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertTrue(response.getBody().contains("\"name\":\"apply_patch\""),
+                "Gateway tools/list must carry the public apply_patch tool");
+        assertTrue(response.getBody().contains("\"patches\":{\"type\":\"array\"}"),
+                "apply_patch wire schema must remain structured");
+        assertFalse(response.getBody().contains("create_snapshot"),
+                "create_snapshot must remain absent from Gateway tools/list");
+        assertFalse(response.getBody().contains("revert_snapshot"),
+                "revert_snapshot must remain absent from Gateway tools/list");
 
         wireMock.verify(postRequestedFor(urlEqualTo(runtimePath))
                 .withHeader("Content-Type", containing("application/json"))

@@ -141,7 +141,7 @@ public class ApprovalPolicySummary {
             mode = verdict.mode();
         }
         return mode == null || mode.isBlank()
-                ? LayeredPolicyResolver.MODE_DEFAULT : mode.toLowerCase(Locale.ROOT);
+                ? LayeredPolicyResolver.MODE_MANUAL : mode.toLowerCase(Locale.ROOT);
     }
 
     private static Set<String> keysOf(JsonNode root) {

@@ -26,13 +26,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class SessionPolicyState {
 
-    /** Supported modes; `plan` denies writes, `managed` only honours INSTANCE rules. */
+    /** Supported modes for the current session. */
     public static final Set<String> MODES = Set.of(
-            LayeredPolicyResolver.MODE_DEFAULT,
-            LayeredPolicyResolver.MODE_ACCEPT_EDITS,
-            LayeredPolicyResolver.MODE_BYPASS,
-            LayeredPolicyResolver.MODE_PLAN,
-            LayeredPolicyResolver.MODE_MANAGED);
+            LayeredPolicyResolver.MODE_MANUAL,
+            LayeredPolicyResolver.MODE_AUTO);
 
     /** Session state is short-lived: a stale entry must never keep granting (or bypassing). */
     static final Duration TTL = Duration.ofHours(12);
@@ -155,7 +152,7 @@ public class SessionPolicyState {
         return Optional.empty();
     }
 
-    /** Drops all state for a session (session deletion / rebind / workspace switch). */
+    /** Drops all state for a session when it is deleted. */
     public void clear(String sessionId) {
         if (sessionId != null) {
             sessions.remove(sessionId);

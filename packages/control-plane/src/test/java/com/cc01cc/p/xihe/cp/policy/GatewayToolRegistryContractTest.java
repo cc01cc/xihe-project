@@ -24,7 +24,7 @@ import static org.mockito.Mockito.mock;
  * #[tool] function names) rather than parsed at test time: a drift in the
  * Gateway must be an explicit edit here, visible in review — mirroring the
  * PLAN-290 §3.6-D "single source of truth + contract alignment" principle.
- * CP-only entries not yet on Gateway (apply_patch/snapshot/revert/
+ * CP-only entries not yet on Gateway (snapshot/revert/
  * write_file_binary) are allowed as a superset; the reverse direction
  * (Gateway → Policy gap) is what this test fails on.
  */
@@ -58,7 +58,8 @@ class GatewayToolRegistryContractTest {
         "start_background_process",
         "list_background_processes",
         "get_background_process",
-        "cancel_background_process"
+        "cancel_background_process",
+        "apply_patch"
     );
 
     private PolicyEngine createEngine() {
@@ -73,7 +74,7 @@ class GatewayToolRegistryContractTest {
 
     @Test
     void gatewayTools_areNotEmpty() {
-        assertEquals(22, GATEWAY_PUBLIC_TOOLS.size(),
+        assertEquals(23, GATEWAY_PUBLIC_TOOLS.size(),
             "Gateway tool count changed — re-extract from main.rs #[tool_router] "
                 + "and update this frozen set intentionally");
     }
@@ -148,7 +149,7 @@ class GatewayToolRegistryContractTest {
         Set<String> mutationOnGateway = Set.of(
             "write_file", "edit_file", "delete_file", "delete_directory",
             "move_file", "copy_file", "mkdir", "execute_command",
-            "start_background_process", "cancel_background_process"
+            "start_background_process", "cancel_background_process", "apply_patch"
         );
         PolicyEngine engine = createEngine();
         for (String tool : mutationOnGateway) {
@@ -162,7 +163,7 @@ class GatewayToolRegistryContractTest {
     }
 
     /**
-     * PLAN-292 M2 (T1/T3): container_runtime tools that stay internal-only —
+     * PLAN-292 M2 / PLAN-0328 T3.2: container_runtime tools that stay internal-only —
      * implemented in packages/runtime/src/container_runtime.rs but NOT exposed
      * via #[tool_router]. They remain classified in PolicyEngine (require_approval)
      * so a hypothetical direct MCP call is classified, never silently allowed;
@@ -170,7 +171,7 @@ class GatewayToolRegistryContractTest {
      * Putting any of these on the Gateway is an explicit edit here + this set.
      */
     private static final Set<String> INTERNAL_ONLY_TOOLS = Set.of(
-        "apply_patch", "create_snapshot", "revert_snapshot"
+        "create_snapshot", "revert_snapshot"
     );
 
     @Test
@@ -226,6 +227,8 @@ class GatewayToolRegistryContractTest {
             "shell execution is the interpreter face (resource cannot be enumerated)");
         assertEquals(ToolShape.STRUCTURED, registry.faceOf("write_file").shape());
         assertEquals(ToolShape.STRUCTURED, registry.faceOf("read_file").shape());
+        assertEquals(ToolFaceRegistry.ACTION_WRITE, registry.faceOf("apply_patch").actionClass());
+        assertEquals(ToolShape.STRUCTURED, registry.faceOf("apply_patch").shape());
         ToolFaceRegistry.Face unknown = registry.faceOf("third_party_mcp_tool");
         assertEquals(PolicyLayer.UNCLASSIFIED_ACTION, unknown.actionClass());
         assertEquals(ToolShape.OPAQUE, unknown.shape());

@@ -35,7 +35,7 @@ class OperationPolicySummaryTest {
     @Test
     void allowSnapshot_carriesExactlyTheSafeKeysWithLowerCaseEnums() throws Exception {
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ALLOW,
-                "{ read, \"*\", allow }", PolicyLayer.BUILTIN, "default", "allowed by read rules");
+                "{ read, \"*\", allow }", PolicyLayer.BUILTIN, "manual", "allowed by read rules");
 
         String snapshot = OperationPolicySummary.buildSnapshot(
                 verdict, readFace(), PolicyContext.EMPTY).orElseThrow();
@@ -50,7 +50,7 @@ class OperationPolicySummaryTest {
         assertEquals("builtin", root.get("sourceLayer").asText());
         assertEquals("{ read, \"*\", allow }", root.get("matchedRule").asText());
         assertEquals("allowed by read rules", root.get("reason").asText());
-        assertEquals("default", root.get("mode").asText());
+        assertEquals("manual", root.get("mode").asText());
         assertTrue(root.get("allowedBy").isNull());
         assertEquals("read", root.get("actionClass").asText());
         assertEquals("structured", root.get("shape").asText());
@@ -66,7 +66,7 @@ class OperationPolicySummaryTest {
     @Test
     void denySnapshot_keepsRuleAndLayerFromTheVerdict() {
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.DENY,
-                "{ write, \"/etc/**\", deny }", PolicyLayer.WORKSPACE, "managed",
+                "{ write, \"/etc/**\", deny }", PolicyLayer.WORKSPACE, "manual",
                 "denied by { write, \"/etc/**\", deny } (write)");
 
         Map<String, Object> policy = OperationPolicySummary
@@ -77,25 +77,25 @@ class OperationPolicySummaryTest {
         assertEquals("deny", policy.get("effect"));
         assertEquals("workspace", policy.get("sourceLayer"));
         assertEquals("{ write, \"/etc/**\", deny }", policy.get("matchedRule"));
-        assertEquals("managed", policy.get("mode"));
+        assertEquals("manual", policy.get("mode"));
         assertNull(policy.get("allowedBy"));
     }
 
     @Test
     void bypassAllow_recordsLowerCasedAllowedByMarker() {
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ASK,
-                "{ write, \"*\", ask }", PolicyLayer.SESSION, "bypass", "requires approval")
-                .allowedByMode("bypass@SESSION");
+                "{ write, \"*\", ask }", PolicyLayer.SESSION, "auto", "requires approval")
+                .allowedByMode("auto@SESSION");
         PolicyContext context = new PolicyContext(List.of(), Map.of(),
-                "bypass", PolicyLayer.SESSION);
+                "auto", PolicyLayer.SESSION);
 
         Map<String, Object> policy = OperationPolicySummary
                 .buildSnapshot(verdict, new ToolFaceRegistry.Face("write", ToolShape.OPAQUE), context)
                 .flatMap(OperationPolicySummary::parse).orElseThrow();
 
         assertEquals("allow", policy.get("effect"));
-        assertEquals("bypass", policy.get("mode"));
-        assertEquals("bypass@session", policy.get("allowedBy"));
+        assertEquals("auto", policy.get("mode"));
+        assertEquals("auto@session", policy.get("allowedBy"));
         assertEquals("opaque", policy.get("shape"));
     }
 
@@ -103,26 +103,26 @@ class OperationPolicySummaryTest {
     void sessionModeIsPreferredOverVerdictMode() {
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ASK,
                 null, PolicyLayer.BUILTIN, null, "unclassified tool requires explicit classification");
-        PolicyContext context = PolicyContext.failedClosed("accept-edits");
+        PolicyContext context = PolicyContext.failedClosed("manual");
 
         Map<String, Object> policy = OperationPolicySummary
                 .buildSnapshot(verdict, readFace(), context)
                 .flatMap(OperationPolicySummary::parse).orElseThrow();
 
-        assertEquals("accept-edits", policy.get("mode"));
+        assertEquals("manual", policy.get("mode"));
     }
 
     @Test
     void incompleteDescriptorNeverThrowsAndYieldsEmpty() {
         assertTrue(OperationPolicySummary.buildSnapshot(null, readFace(), PolicyContext.EMPTY).isEmpty());
         assertTrue(OperationPolicySummary.buildSnapshot(
-                PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "default", "   "),
+                PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "manual", "   "),
                 readFace(), PolicyContext.EMPTY).isEmpty());
         assertTrue(OperationPolicySummary.buildSnapshot(
-                PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "default", "ok"),
+                PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "manual", "ok"),
                 null, PolicyContext.EMPTY).isEmpty());
         assertTrue(OperationPolicySummary.buildSnapshot(
-                PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "default", "ok"),
+                PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "manual", "ok"),
                 new ToolFaceRegistry.Face("  ", ToolShape.STRUCTURED), PolicyContext.EMPTY).isEmpty());
     }
 
@@ -142,7 +142,7 @@ class OperationPolicySummaryTest {
                 + "\"matchedRule\":null,\"reason\":\"ok\",\"mode\":null,\"allowedBy\":null,"
                 + "\"actionClass\":\"read\",\"shape\":\"structured\"}").isEmpty());
         assertTrue(OperationPolicySummary.parse("{\"effect\":\"allow\",\"sourceLayer\":\"builtin\","
-                + "\"matchedRule\":null,\"reason\":\"ok\",\"mode\":null,\"allowedBy\":\"bypass@SESSION\","
+                + "\"matchedRule\":null,\"reason\":\"ok\",\"mode\":null,\"allowedBy\":\"auto@SESSION\","
                 + "\"actionClass\":\"read\",\"shape\":\"structured\"}").isEmpty());
         // missing nullable keys is also not the exact shape
         assertTrue(OperationPolicySummary.parse("{\"effect\":\"allow\",\"sourceLayer\":\"builtin\","
@@ -154,7 +154,7 @@ class OperationPolicySummaryTest {
     void parsedSnapshotIsTheExactSafeProjection() {
         String serialized = "{\"effect\":\"ask\",\"sourceLayer\":\"instance\","
                 + "\"matchedRule\":\"{ exec, \\\"*\\\", ask }\",\"reason\":\"requires approval\","
-                + "\"mode\":\"default\",\"allowedBy\":null,\"actionClass\":\"exec\","
+                + "\"mode\":\"manual\",\"allowedBy\":null,\"actionClass\":\"exec\","
                 + "\"shape\":\"interpreter\"}";
 
         Map<String, Object> policy = OperationPolicySummary.parse(serialized).orElseThrow();
@@ -164,7 +164,7 @@ class OperationPolicySummaryTest {
         assertEquals("instance", policy.get("sourceLayer"));
         assertEquals("{ exec, \"*\", ask }", policy.get("matchedRule"));
         assertEquals("requires approval", policy.get("reason"));
-        assertEquals("default", policy.get("mode"));
+        assertEquals("manual", policy.get("mode"));
         assertNull(policy.get("allowedBy"));
         assertEquals("exec", policy.get("actionClass"));
         assertEquals("interpreter", policy.get("shape"));
@@ -177,7 +177,7 @@ class OperationPolicySummaryTest {
     @Test
     void reuseAnnotationIsNullableAndStrictlyTyped() {
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ALLOW,
-                null, PolicyLayer.BUILTIN, "default", "allowed");
+                null, PolicyLayer.BUILTIN, "manual", "allowed");
 
         String hit = OperationPolicySummary
                 .buildSnapshot(verdict, readFace(), PolicyContext.EMPTY, Boolean.TRUE).orElseThrow();

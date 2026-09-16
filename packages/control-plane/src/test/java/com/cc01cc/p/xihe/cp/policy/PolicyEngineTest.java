@@ -49,31 +49,19 @@ class PolicyEngineTest {
         PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", "{}", "s1", null, null, null);
         assertEquals(PolicyEffect.ASK, verdict.effect());
         assertEquals(PolicyLayer.BUILTIN, verdict.sourceLayer());
-        assertEquals(LayeredPolicyResolver.MODE_DEFAULT, verdict.mode());
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, verdict.mode());
         assertNull(verdict.allowedBy());
         assertTrue(verdict.reason().contains("unclassified tool requires explicit classification"));
     }
 
     @Test
-    void unclassified_unknownTool_bypassStillAsks() {
+    void unclassified_unknownTool_autoStillAsks() {
         PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", "", "s1",
-                LayeredPolicyResolver.MODE_BYPASS, null, null);
+                LayeredPolicyResolver.MODE_AUTO, null, null);
 
         assertEquals(PolicyEffect.ASK, verdict.effect());
-        assertEquals(LayeredPolicyResolver.MODE_BYPASS, verdict.mode());
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, verdict.mode());
         assertNull(verdict.allowedBy());
-    }
-
-    @Test
-    void unclassified_unknownTool_neverUsesOtherAutomaticModes() {
-        for (String mode : List.of(LayeredPolicyResolver.MODE_ACCEPT_EDITS,
-                LayeredPolicyResolver.MODE_PLAN)) {
-            PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", "", "s1",
-                    mode, null, null);
-
-            assertEquals(PolicyEffect.ASK, verdict.effect(), mode);
-            assertNull(verdict.allowedBy(), mode);
-        }
     }
 
     @Test
@@ -81,7 +69,7 @@ class PolicyEngineTest {
         String body = "{\"params\":{\"arguments\":{\"path\":\"../../etc/passwd\"}}}";
 
         PolicyVerdict verdict = createEngine().evaluateVerdict("unknown_tool", body, "s1",
-                LayeredPolicyResolver.MODE_BYPASS, null, null);
+                LayeredPolicyResolver.MODE_AUTO, null, null);
 
         assertEquals(PolicyEffect.DENY, verdict.effect());
         assertTrue(verdict.reason().startsWith("hard guard:"));

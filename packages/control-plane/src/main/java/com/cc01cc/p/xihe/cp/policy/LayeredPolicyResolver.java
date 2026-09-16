@@ -19,17 +19,13 @@ import java.util.Optional;
  *
  * <p>Multi-domain: any DENY → DENY; else any ASK → ASK; else ALLOW.</p>
  *
- * <p>Modes: {@code plan} denies mutating domains (write / delete / exec) before any mode handling;
- * {@code bypass} turns ASK into ALLOW <em>after</em> DENY (decision #32) and records
- * {@code allowedBy}; {@code managed} considers only the INSTANCE layer.</p>
+ * <p>Mode {@code auto} turns ASK into ALLOW <em>after</em> DENY and records
+ * {@code allowedBy}; {@code manual} leaves ASK for the approval workflow.</p>
  */
 public class LayeredPolicyResolver {
 
-    public static final String MODE_DEFAULT = "default";
-    public static final String MODE_BYPASS = "bypass";
-    public static final String MODE_MANAGED = "managed";
-    public static final String MODE_ACCEPT_EDITS = "accept-edits";
-    public static final String MODE_PLAN = "plan";
+    public static final String MODE_MANUAL = "manual";
+    public static final String MODE_AUTO = "auto";
 
     /** One layer's ruleset. */
     public record LayerInput(PolicyLayer layer, List<PolicyRule> rules) {
@@ -39,51 +35,22 @@ public class LayeredPolicyResolver {
     }
 
     public PolicyVerdict resolve(PolicyRequest request, List<LayerInput> layers, String mode, PolicyLayer modeLayer) {
-        String effectiveMode = mode == null ? MODE_DEFAULT : mode;
+        String effectiveMode = mode == null ? MODE_MANUAL : mode;
         PolicyLayer resolvedModeLayer = modeLayer == null ? PolicyLayer.BUILTIN : modeLayer;
-
-        // plan mode denies mutating domains before any mode handling (bypass included)
-        if (MODE_PLAN.equals(effectiveMode) && deniesMutations(request)) {
-            return PolicyVerdict.of(PolicyEffect.DENY, null, resolvedModeLayer, effectiveMode,
-                    "plan mode denies mutations");
-        }
-
-        List<LayerInput> effectiveLayers = MODE_MANAGED.equals(effectiveMode)
-                ? layers.stream().filter(l -> l.layer() == PolicyLayer.INSTANCE).toList()
-                : layers;
 
         PolicyVerdict combined = null;
         for (String actionClass : request.actionClasses()) {
-            PolicyVerdict domain = evaluateDomain(actionClass, request, effectiveLayers);
+            PolicyVerdict domain = evaluateDomain(actionClass, request, layers);
             combined = combined == null ? domain : combine(combined, domain);
         }
         PolicyVerdict verdict = combined == null
                 ? PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN, effectiveMode, "no rules matched")
                 : combined;
 
-        if (verdict.effect() == PolicyEffect.ASK && MODE_BYPASS.equals(effectiveMode)) {
-            return verdict.allowedByMode(MODE_BYPASS + "@" + resolvedModeLayer.name());
-        }
-        if (verdict.effect() == PolicyEffect.ASK && MODE_ACCEPT_EDITS.equals(effectiveMode)
-                && isAcceptEditsDomain(request)) {
-            return verdict.allowedByMode(MODE_ACCEPT_EDITS + "@" + resolvedModeLayer.name());
+        if (verdict.effect() == PolicyEffect.ASK && MODE_AUTO.equals(effectiveMode)) {
+            return verdict.allowedByMode(MODE_AUTO + "@" + resolvedModeLayer.name());
         }
         return verdict;
-    }
-
-    private static boolean isAcceptEditsDomain(PolicyRequest request) {
-        return request.actionClasses().stream().allMatch(ToolFaceRegistry.ACTION_WRITE::equals);
-    }
-
-    /** plan mode: any mutating domain makes the request mutating (read/network evaluate normally). */
-    private static boolean deniesMutations(PolicyRequest request) {
-        return request.actionClasses().stream().anyMatch(LayeredPolicyResolver::isMutatingDomain);
-    }
-
-    private static boolean isMutatingDomain(String actionClass) {
-        return ToolFaceRegistry.ACTION_WRITE.equals(actionClass)
-                || ToolFaceRegistry.ACTION_DELETE.equals(actionClass)
-                || ToolFaceRegistry.ACTION_EXEC.equals(actionClass);
     }
 
     private PolicyVerdict evaluateDomain(String actionClass, PolicyRequest request, List<LayerInput> layers) {

@@ -34,7 +34,7 @@ class ApprovalPolicySummaryTest {
     void buildAtCreationUsesEmptyMcpBodyAndEffectiveSessionMode() {
         PolicyEngine engine = mock(PolicyEngine.class);
         PolicyContext context = new PolicyContext(List.of(), Map.of(),
-                LayeredPolicyResolver.MODE_BYPASS, PolicyLayer.SESSION);
+                LayeredPolicyResolver.MODE_AUTO, PolicyLayer.SESSION);
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ASK,
                 "{ write, \"*\", ask }", PolicyLayer.BUILTIN, null, "requires approval");
         when(engine.loadContext(USER, WORKSPACE, SESSION)).thenReturn(context);
@@ -55,7 +55,7 @@ class ApprovalPolicySummaryTest {
         assertEquals("builtin", policy.get("sourceLayer"));
         assertEquals("WriteCustom", policy.get("actionClass"));
         assertEquals("structured", policy.get("shape"));
-        assertEquals("bypass", policy.get("mode"));
+        assertEquals("auto", policy.get("mode"));
         assertTrue(policy.get("reason") instanceof String reason && !reason.isBlank());
         assertFalse(policy.containsKey("arguments"));
         assertFalse(policy.containsKey("details"));
@@ -81,7 +81,7 @@ class ApprovalPolicySummaryTest {
         PolicyEngine engine = mock(PolicyEngine.class);
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ASK,
                 "{ write, \"*\", ask }", PolicyLayer.INSTANCE, null, "requires approval");
-        PolicyContext context = PolicyContext.failedClosed(LayeredPolicyResolver.MODE_MANAGED);
+        PolicyContext context = PolicyContext.failedClosed(LayeredPolicyResolver.MODE_MANUAL);
         when(engine.loadContext(USER, WORKSPACE, SESSION)).thenReturn(context);
         when(engine.evaluateVerdict(context, "write_file", "", SESSION, null, USER, WORKSPACE))
                 .thenReturn(verdict);
@@ -89,7 +89,7 @@ class ApprovalPolicySummaryTest {
                 .thenReturn(new ToolFaceRegistry.Face("write", ToolShape.STRUCTURED));
         ApprovalPolicySummary summary = new ApprovalPolicySummary(engine);
 
-        assertEquals(LayeredPolicyResolver.MODE_MANAGED,
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL,
                 summary.buildAtCreation("write_file", SESSION, USER, WORKSPACE).orElseThrow().get("mode"));
     }
 
@@ -102,7 +102,7 @@ class ApprovalPolicySummaryTest {
                 "sourceLayer", "builtin",
                 "matchedRule", "{ write, \"*\", ask }",
                 "reason", "requires approval",
-                "mode", "default",
+                "mode", "manual",
                 "actionClass", "WriteCustom",
                 "shape", "structured");
         String serialized = new ObjectMapper().writeValueAsString(expected);

@@ -459,7 +459,7 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         operationService.transitionItem(item.getId(), "running", "allow", null, null, null);
         String snapshot = "{\"effect\":\"ask\",\"sourceLayer\":\"builtin\","
                 + "\"matchedRule\":\"{ write, \\\"*\\\", ask }\",\"reason\":\"requires approval for domain write\","
-                + "\"mode\":\"bypass\",\"allowedBy\":\"bypass@session\",\"actionClass\":\"write\","
+                + "\"mode\":\"auto\",\"allowedBy\":\"auto@session\",\"actionClass\":\"write\","
                 + "\"shape\":\"structured\"}";
         assertTrue(operationService.attachPolicySummary(item.getId(), snapshot));
 
@@ -477,7 +477,7 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(Set.of("effect", "sourceLayer", "matchedRule", "reason", "mode",
                 "allowedBy", "actionClass", "shape", "reused"), ownerPolicy.keySet());
         assertEquals("ask", ownerPolicy.get("effect"));
-        assertEquals("bypass@session", ownerPolicy.get("allowedBy"));
+        assertEquals("auto@session", ownerPolicy.get("allowedBy"));
         // V19 snapshot predates the T1.7 reuse annotation: it parses, with `reused` explicitly null.
         assertNull(ownerPolicy.get("reused"));
         assertEquals("allow", ownerItems.get(0).get("policyDecision"));
@@ -518,7 +518,7 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         // Missing item: skip safely, never create a second item.
         assertFalse(operationService.attachPolicySummary(UUID.randomUUID(),
                 "{\"effect\":\"allow\",\"sourceLayer\":\"builtin\",\"matchedRule\":null,"
-                        + "\"reason\":\"allowed by read rules\",\"mode\":\"default\",\"allowedBy\":null,"
+                        + "\"reason\":\"allowed by read rules\",\"mode\":\"manual\",\"allowedBy\":null,"
                         + "\"actionClass\":\"read\",\"shape\":\"structured\"}"));
         // Unsafe / malformed payloads are rejected instead of persisted.
         assertFalse(operationService.attachPolicySummary(legacy.getId(), "{\"effect\":\"ask\"}"));
@@ -534,10 +534,10 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
                 operationService.appendItem(operationId, UUID.randomUUID().toString(), null,
                         "tool_call", "read_file", "mcp", null, null, null);
         String first = "{\"effect\":\"allow\",\"sourceLayer\":\"builtin\",\"matchedRule\":null,"
-                + "\"reason\":\"allowed by read rules\",\"mode\":\"default\",\"allowedBy\":null,"
+                + "\"reason\":\"allowed by read rules\",\"mode\":\"manual\",\"allowedBy\":null,"
                 + "\"actionClass\":\"read\",\"shape\":\"structured\"}";
         String replay = "{\"effect\":\"deny\",\"sourceLayer\":\"instance\",\"matchedRule\":null,"
-                + "\"reason\":\"denied later\",\"mode\":\"managed\",\"allowedBy\":null,"
+                + "\"reason\":\"denied later\",\"mode\":\"manual\",\"allowedBy\":null,"
                 + "\"actionClass\":\"read\",\"shape\":\"structured\"}";
 
         assertTrue(operationService.attachPolicySummary(item.getId(), first));

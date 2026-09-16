@@ -144,7 +144,7 @@ public final class OperationPolicySummary {
             mode = verdict.mode();
         }
         return mode == null || mode.isBlank()
-                ? LayeredPolicyResolver.MODE_DEFAULT : mode.toLowerCase(Locale.ROOT);
+                ? LayeredPolicyResolver.MODE_MANUAL : mode.toLowerCase(Locale.ROOT);
     }
 
     private static String lowercaseOrNull(String value) {

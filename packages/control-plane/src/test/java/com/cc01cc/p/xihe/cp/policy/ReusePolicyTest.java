@@ -57,13 +57,10 @@ class ReusePolicyTest {
     }
 
     @Test
-    void modeRankIsStrictestFirstAndNullRanksAsDefault() {
-        assertTrue(ReusePolicy.modeRank("plan") > ReusePolicy.modeRank("managed"));
-        assertTrue(ReusePolicy.modeRank("managed") > ReusePolicy.modeRank("default"));
-        assertTrue(ReusePolicy.modeRank("default") > ReusePolicy.modeRank("accept-edits"));
-        assertTrue(ReusePolicy.modeRank("accept-edits") > ReusePolicy.modeRank("bypass"));
-        assertEquals(ReusePolicy.modeRank("default"), ReusePolicy.modeRank(null));
-        assertEquals(ReusePolicy.modeRank("default"), ReusePolicy.modeRank("unknown-mode"));
+    void modeRankIsStrictestFirstAndNullRanksAsManual() {
+        assertTrue(ReusePolicy.modeRank("manual") > ReusePolicy.modeRank("auto"));
+        assertEquals(ReusePolicy.modeRank("manual"), ReusePolicy.modeRank(null));
+        assertEquals(ReusePolicy.modeRank("manual"), ReusePolicy.modeRank("unknown-mode"));
     }
 
     @Test

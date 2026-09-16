@@ -249,7 +249,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         Map<String, Object> stored = objectMapper.readValue(saved.getPolicySummary(), Map.class);
         assertEquals("ask", stored.get("effect"));
         assertEquals("builtin", stored.get("sourceLayer"));
-        assertEquals("default", stored.get("mode"));
+        assertEquals("manual", stored.get("mode"));
         assertEquals("write", stored.get("actionClass"));
         assertEquals("structured", stored.get("shape"));
         assertTrue(stored.get("reason") instanceof String reason && !reason.isBlank());
@@ -259,7 +259,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         AuditLogger.AuditRecord creationAudit = auditLogger.getRecentRecords().get(auditKey);
         assertNotNull(creationAudit);
 
-        sessionPolicyState.setMode(sessionId, "bypass");
+        sessionPolicyState.setMode(sessionId, "auto");
         sessionPolicyState.addRule(sessionId, PolicyRule.of("write", "*", PolicyEffect.ALLOW));
         Map<String, Object> replay = approvalService.replayPending(sessionId, userId, workspaceId).stream()
                 .filter(item -> requestId.equals(String.valueOf(item.get("requestId"))))
@@ -323,21 +323,21 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     void decidePersistsModeAtGrantAndKeepsItAcrossLaterModeChanges() {
         activeRun("running");
         pendingApproval(requestId, Instant.now().plusSeconds(300));
-        sessionPolicyState.setMode(sessionId, "managed");
+        sessionPolicyState.setMode(sessionId, "manual");
 
         ResponseEntity<Map> first = decide(requestId, true);
 
         assertEquals(HttpStatus.OK, first.getStatusCode());
-        assertEquals("managed", first.getBody().get("modeAtGrant"));
-        assertEquals("managed", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
+        assertEquals("manual", first.getBody().get("modeAtGrant"));
+        assertEquals("manual", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
                 .getModeAtGrant());
 
-        sessionPolicyState.setMode(sessionId, "bypass");
+        sessionPolicyState.setMode(sessionId, "auto");
         ResponseEntity<Map> repeated = decide(requestId, true);
 
         assertEquals(HttpStatus.OK, repeated.getStatusCode());
-        assertEquals("managed", repeated.getBody().get("modeAtGrant"));
-        assertEquals("managed", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
+        assertEquals("manual", repeated.getBody().get("modeAtGrant"));
+        assertEquals("manual", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
                 .getModeAtGrant());
     }
 
@@ -433,7 +433,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     void retryDoesNotRewriteModeAtGrantAfterDispatchUnknown() {
         activeRun("running");
         pendingApproval(requestId, Instant.now().plusSeconds(300));
-        sessionPolicyState.setMode(sessionId, "managed");
+        sessionPolicyState.setMode(sessionId, "manual");
         AGENT_DECISION_STATUS.set(500);
 
         ResponseEntity<Map> first = noErrorClient().exchange(
@@ -441,16 +441,16 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
                 HttpMethod.POST, authorizedBody(true), Map.class);
 
         assertEquals(HttpStatus.BAD_GATEWAY, first.getStatusCode());
-        assertEquals("managed", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
+        assertEquals("manual", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
                 .getModeAtGrant());
 
-        sessionPolicyState.setMode(sessionId, "bypass");
+        sessionPolicyState.setMode(sessionId, "auto");
         AGENT_DECISION_STATUS.set(200);
         ResponseEntity<Map> retry = decide(requestId, true);
 
         assertEquals(HttpStatus.OK, retry.getStatusCode());
-        assertEquals("managed", retry.getBody().get("modeAtGrant"));
-        assertEquals("managed", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
+        assertEquals("manual", retry.getBody().get("modeAtGrant"));
+        assertEquals("manual", approvalRepository.findById(UUID.fromString(requestId)).orElseThrow()
                 .getModeAtGrant());
     }
 
@@ -540,9 +540,9 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         UUID id = UUID.fromString(requestId);
         Instant now = Instant.now();
 
-        assertEquals(1, approvalRepository.markDispatching(id, true, "managed", "once", 11L, 1, now));
+        assertEquals(1, approvalRepository.markDispatching(id, true, "manual", "once", 11L, 1, now));
         assertEquals(1, approvalRepository.markDispatchUnknown(id, "AGENT_APPROVAL_FAILED", now));
-        assertEquals(1, approvalRepository.markDispatching(id, true, "bypass", "session", 22L, 2, now));
+        assertEquals(1, approvalRepository.markDispatching(id, true, "auto", "session", 22L, 2, now));
 
         ChatApproval claimed = approvalRepository.findById(id).orElseThrow();
         assertEquals("dispatching", claimed.getState());
@@ -552,7 +552,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
                 "a retry must re-stamp the decision-time generation");
         assertEquals("session", claimed.getReuseScope(),
                 "a retry must re-stamp the decision-time reuse scope");
-        assertEquals("managed", claimed.getModeAtGrant(),
+        assertEquals("manual", claimed.getModeAtGrant(),
                 "the first grant's mode must stay conservative across the retry");
     }
 
@@ -567,19 +567,19 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         // The first claim landed in dispatch_unknown stamped with the revision of that moment
         // and an unset generation. Any rule/face write between claim and retry moves the durable
         // revision, so the retry must re-stamp both instead of coalescing the stale values.
-        sessionPolicyState.setMode(sessionId, "managed");
+        sessionPolicyState.setMode(sessionId, "manual");
         long staleRevision = policyRevision.current() - 1;
         ChatApproval claimed = approvalRepository.findById(pending.getRequestId()).orElseThrow();
         claimed.setState("dispatch_unknown");
         claimed.setApproved(true);
         claimed.setDecisionKind("once");
-        claimed.setModeAtGrant("managed");
+        claimed.setModeAtGrant("manual");
         claimed.setReuseScope("saved");
         claimed.setPolicyRevision(staleRevision);
         claimed.setSandboxGeneration(null);
         approvalRepository.save(claimed);
 
-        sessionPolicyState.setMode(sessionId, "bypass");
+        sessionPolicyState.setMode(sessionId, "auto");
         AGENT_DECISION_STATUS.set(200);
         ResponseEntity<Map> retry = decideWithoutErrorHandling(
                 pending.getRequestId().toString(), Map.of("decision", "once"));
@@ -594,7 +594,7 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
                 "the retry must re-stamp the decision-time sandbox generation");
         assertEquals("once", approved.getReuseScope(),
                 "the retry must re-stamp the decision-time reuse scope");
-        assertEquals("managed", approved.getModeAtGrant(),
+        assertEquals("manual", approved.getModeAtGrant(),
                 "the retry must not rewrite the first grant's mode");
         assertTrue(approvalService.consumeApprovedGrant(pending.getRequestId().toString(), userId,
                         workspaceId, sessionId, "write_file", body),

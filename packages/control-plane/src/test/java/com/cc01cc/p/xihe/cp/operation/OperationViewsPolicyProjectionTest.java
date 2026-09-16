@@ -23,7 +23,7 @@ class OperationViewsPolicyProjectionTest {
 
     private static final String SAFE_SUMMARY = "{\"effect\":\"ask\",\"sourceLayer\":\"builtin\","
             + "\"matchedRule\":\"{ write, \\\"*\\\", ask }\",\"reason\":\"requires approval for domain write\","
-            + "\"mode\":\"bypass\",\"allowedBy\":\"bypass@session\",\"actionClass\":\"write\","
+            + "\"mode\":\"auto\",\"allowedBy\":\"auto@session\",\"actionClass\":\"write\","
             + "\"shape\":\"structured\"}";
 
     private static OperationItem item(String policySummary) {
@@ -74,8 +74,8 @@ class OperationViewsPolicyProjectionTest {
             assertEquals(OperationPolicySummary.POLICY_KEYS, summary.keySet());
             assertEquals("ask", summary.get("effect"));
             assertEquals("builtin", summary.get("sourceLayer"));
-            assertEquals("bypass", summary.get("mode"));
-            assertEquals("bypass@session", summary.get("allowedBy"));
+            assertEquals("auto", summary.get("mode"));
+            assertEquals("auto@session", summary.get("allowedBy"));
             assertEquals("write", summary.get("actionClass"));
             assertEquals("structured", summary.get("shape"));
             // legacy marker stays untouched next to the new snapshot

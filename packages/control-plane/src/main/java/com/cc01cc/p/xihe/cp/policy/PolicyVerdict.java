@@ -4,8 +4,8 @@ package com.cc01cc.p.xihe.cp.policy;
  * Verdict produced by {@link LayeredPolicyResolver}. Carries the effective layer and matched rule
  * so audits and the UI can answer "why was this allowed / blocked" (PLAN-0328 spec §4.2 step 7).
  *
- * @param allowedBy non-null when the outcome came from a `bypass` mode rather than rules
- *                  (audit field `allowed_by`, decision #32), e.g. {@code bypass@SESSION}.
+ * @param allowedBy non-null when the outcome came from an `auto` mode rather than rules
+ *                  (audit field `allowed_by`), e.g. {@code auto@SESSION}.
  */
 public record PolicyVerdict(
         PolicyEffect effect,

@@ -12,8 +12,8 @@ import java.util.Map;
  *
  * @param layers      INSTANCE / USER / WORKSPACE / SESSION rules (lowest first); may be empty
  * @param extraFaces  tool → face declarations from persistence; may be empty
- * @param mode        session mode when one is set (bypass / accept-edits / plan / managed); null = default
- * @param modeLayer   layer that supplied {@code mode} (audit field `allowed_by=bypass@Lx`)
+ * @param mode        session mode when one is set (manual / auto); null = manual
+ * @param modeLayer   layer that supplied {@code mode} (audit field `allowed_by=auto@Lx`)
  * @param sessionMode coherent session mode retained for fail-closed evidence; not applied to resolution
  */
 public record PolicyContext(List<LayeredPolicyResolver.LayerInput> layers,

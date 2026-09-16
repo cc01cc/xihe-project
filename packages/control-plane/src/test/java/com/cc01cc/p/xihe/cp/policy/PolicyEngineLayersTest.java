@@ -54,20 +54,20 @@ class PolicyEngineLayersTest {
     }
 
     @Test
-    void sessionBypassModeAllowsAskButIsRecordedAsAllowedBy() {
-        PolicyEngine engine = engine(providerOf(List.of(), LayeredPolicyResolver.MODE_BYPASS, PolicyLayer.SESSION));
+    void sessionAutoModeAllowsAskButIsRecordedAsAllowedBy() {
+        PolicyEngine engine = engine(providerOf(List.of(), LayeredPolicyResolver.MODE_AUTO, PolicyLayer.SESSION));
 
         PolicyVerdict verdict = engine.evaluateVerdict("execute_command", "{}", "s1", null, "u1", "ws1");
 
         assertEquals(PolicyEffect.ALLOW, verdict.effect());
-        assertEquals("bypass@SESSION", verdict.allowedBy());
+        assertEquals("auto@SESSION", verdict.allowedBy());
     }
 
     @Test
-    void sessionBypassCannotOverrideInstanceDeny() {
+    void sessionAutoCannotOverrideInstanceDeny() {
         PolicyEngine engine = engine(providerOf(List.of(new LayeredPolicyResolver.LayerInput(
                 PolicyLayer.INSTANCE, List.of(new PolicyRule("exec", "*", PolicyEffect.DENY, 0, true, 1)))),
-                LayeredPolicyResolver.MODE_BYPASS, PolicyLayer.SESSION));
+                LayeredPolicyResolver.MODE_AUTO, PolicyLayer.SESSION));
 
         PolicyVerdict verdict = engine.evaluateVerdict("execute_command", "{}", "s1", null, "u1", "ws1");
 
@@ -77,28 +77,26 @@ class PolicyEngineLayersTest {
 
     @Test
     void explicitModeArgumentOverridesSessionState() {
-        PolicyEngine engine = engine(providerOf(List.of(), LayeredPolicyResolver.MODE_BYPASS, PolicyLayer.SESSION));
+        PolicyEngine engine = engine(providerOf(List.of(), LayeredPolicyResolver.MODE_AUTO, PolicyLayer.SESSION));
 
         PolicyVerdict verdict = engine.evaluateVerdict("execute_command", "{}", "s1",
-                LayeredPolicyResolver.MODE_DEFAULT, "u1", "ws1");
+                LayeredPolicyResolver.MODE_MANUAL, "u1", "ws1");
 
         assertEquals(PolicyEffect.ASK, verdict.effect());
         assertNull(verdict.allowedBy());
     }
 
     @Test
-    void managedModeIgnoresWorkspaceAndSessionRules() {
+    void manualModeHonoursWorkspaceRules() {
         PolicyEngine engine = engine(providerOf(List.of(
                 new LayeredPolicyResolver.LayerInput(PolicyLayer.WORKSPACE,
-                        List.of(PolicyRule.of("exec", "*", PolicyEffect.ALLOW))),
-                new LayeredPolicyResolver.LayerInput(PolicyLayer.SESSION,
                         List.of(PolicyRule.of("exec", "*", PolicyEffect.ALLOW)))),
-                LayeredPolicyResolver.MODE_MANAGED, PolicyLayer.SESSION));
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.SESSION));
 
         PolicyVerdict verdict = engine.evaluateVerdict("execute_command", "{}", "s1", null, "u1", "ws1");
 
-        assertEquals(PolicyEffect.ASK, verdict.effect());
-        assertNotNull(verdict.reason());
+        assertEquals(PolicyEffect.ALLOW, verdict.effect());
+        assertEquals(PolicyLayer.WORKSPACE, verdict.sourceLayer());
     }
 
     @Test

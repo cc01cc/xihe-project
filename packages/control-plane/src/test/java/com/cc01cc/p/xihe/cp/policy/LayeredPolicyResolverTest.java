@@ -41,7 +41,7 @@ class LayeredPolicyResolverTest {
                 layer(PolicyLayer.WORKSPACE, PolicyRule.of("exec", "pnpm test *", PolicyEffect.ALLOW)));
 
         PolicyVerdict verdict = resolver.resolve(request("exec", "pnpm test -- --run"), layers,
-                LayeredPolicyResolver.MODE_DEFAULT, PolicyLayer.BUILTIN);
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.BUILTIN);
 
         // workspace configures the domain → user's broader deny is not merged in
         assertEquals(PolicyEffect.ALLOW, verdict.effect());
@@ -55,7 +55,7 @@ class LayeredPolicyResolverTest {
                 PolicyRule.of("exec", "pnpm *", PolicyEffect.DENY, 0, 2)));
 
         PolicyVerdict verdict = resolver.resolve(request("exec", "pnpm test"), layers,
-                LayeredPolicyResolver.MODE_DEFAULT, PolicyLayer.BUILTIN);
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.BUILTIN);
 
         assertEquals(PolicyEffect.DENY, verdict.effect());
     }
@@ -67,7 +67,7 @@ class LayeredPolicyResolverTest {
                 PolicyRule.of("exec", "git push *", PolicyEffect.DENY, 0, 2)));
 
         PolicyVerdict verdict = resolver.resolve(request("exec", "git push origin main"), layers,
-                LayeredPolicyResolver.MODE_DEFAULT, PolicyLayer.BUILTIN);
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.BUILTIN);
 
         assertEquals(PolicyEffect.DENY, verdict.effect());
         assertTrue(verdict.matchedRule().contains("git push *"));
@@ -80,12 +80,12 @@ class LayeredPolicyResolverTest {
 
         PolicyVerdict covered = resolver.resolve(
                 multiDomain(List.of("write"), List.of("src/a.ts", "src/b.ts")), layers,
-                LayeredPolicyResolver.MODE_DEFAULT, PolicyLayer.BUILTIN);
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.BUILTIN);
         assertEquals(PolicyEffect.ALLOW, covered.effect());
 
         PolicyVerdict partial = resolver.resolve(
                 multiDomain(List.of("write"), List.of("src/a.ts", "etc/passwd")), layers,
-                LayeredPolicyResolver.MODE_DEFAULT, PolicyLayer.BUILTIN);
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.BUILTIN);
         assertEquals(PolicyEffect.ASK, partial.effect());
     }
 
@@ -95,7 +95,7 @@ class LayeredPolicyResolverTest {
                 PolicyRule.of("read", "*", PolicyEffect.ALLOW)));
 
         PolicyVerdict verdict = resolver.resolve(request("exec", "ls"), layers,
-                LayeredPolicyResolver.MODE_DEFAULT, PolicyLayer.BUILTIN);
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.BUILTIN);
 
         assertEquals(PolicyEffect.ASK, verdict.effect());
     }
@@ -107,7 +107,7 @@ class LayeredPolicyResolverTest {
                 layer(PolicyLayer.WORKSPACE, PolicyRule.of("exec", "*", PolicyEffect.ALLOW, 99, 2)));
 
         PolicyVerdict verdict = resolver.resolve(request("exec", "pnpm test"), layers,
-                LayeredPolicyResolver.MODE_DEFAULT, PolicyLayer.BUILTIN);
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.BUILTIN);
 
         assertEquals(PolicyEffect.DENY, verdict.effect());
     }
@@ -126,78 +126,36 @@ class LayeredPolicyResolverTest {
 
         PolicyVerdict verdict = resolver.resolve(
                 multiDomain(List.of("write", "delete"), List.of("src/a.ts")), layers,
-                LayeredPolicyResolver.MODE_DEFAULT, PolicyLayer.BUILTIN);
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.BUILTIN);
 
         assertEquals(PolicyEffect.DENY, verdict.effect());
     }
 
     @Test
-    void bypassTurnsAskIntoAllowButNeverOverridesDeny() {
+    void autoTurnsAskIntoAllowButNeverOverridesDeny() {
         var askLayers = List.of(layer(PolicyLayer.SESSION, PolicyRule.of("exec", "*", PolicyEffect.ASK)));
         PolicyVerdict allowed = resolver.resolve(request("exec", "pnpm test"), askLayers,
-                LayeredPolicyResolver.MODE_BYPASS, PolicyLayer.SESSION);
+                LayeredPolicyResolver.MODE_AUTO, PolicyLayer.SESSION);
         assertEquals(PolicyEffect.ALLOW, allowed.effect());
-        assertEquals("bypass@SESSION", allowed.allowedBy());
+        assertEquals("auto@SESSION", allowed.allowedBy());
 
         var denyLayers = List.of(layer(PolicyLayer.INSTANCE,
                 new PolicyRule("exec", "rm -rf *", PolicyEffect.DENY, 0, true, 1)));
         PolicyVerdict denied = resolver.resolve(request("exec", "rm -rf /"), denyLayers,
-                LayeredPolicyResolver.MODE_BYPASS, PolicyLayer.SESSION);
+                LayeredPolicyResolver.MODE_AUTO, PolicyLayer.SESSION);
         assertEquals(PolicyEffect.DENY, denied.effect());
         assertEquals(null, denied.allowedBy());
     }
 
     @Test
-    void managedConsidersInstanceRulesOnly() {
-        var layers = List.of(
-                layer(PolicyLayer.INSTANCE, PolicyRule.of("exec", "*", PolicyEffect.ASK)),
-                layer(PolicyLayer.USER, PolicyRule.of("exec", "*", PolicyEffect.ALLOW)));
+    void manualModeNeverAutoAllowsAsk() {
+        var askLayers = List.of(layer(PolicyLayer.SESSION, PolicyRule.of("exec", "*", PolicyEffect.ASK)));
 
-        PolicyVerdict verdict = resolver.resolve(request("exec", "pnpm test"), layers,
-                LayeredPolicyResolver.MODE_MANAGED, PolicyLayer.INSTANCE);
+        PolicyVerdict verdict = resolver.resolve(request("exec", "pnpm test"), askLayers,
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.SESSION);
 
         assertEquals(PolicyEffect.ASK, verdict.effect());
-    }
-
-    @Test
-    void acceptEditsOnlyAutoAllowsWriteDomain() {
-        var writeLayers = List.of(layer(PolicyLayer.SESSION, PolicyRule.of("write", "*", PolicyEffect.ASK)));
-        assertEquals(PolicyEffect.ALLOW, resolver.resolve(multiDomain(List.of("write"), List.of("src/a.ts")),
-                writeLayers, LayeredPolicyResolver.MODE_ACCEPT_EDITS, PolicyLayer.SESSION).effect());
-
-        var execLayers = List.of(layer(PolicyLayer.SESSION, PolicyRule.of("exec", "*", PolicyEffect.ASK)));
-        assertEquals(PolicyEffect.ASK, resolver.resolve(multiDomain(List.of("exec"), List.of("*")),
-                execLayers, LayeredPolicyResolver.MODE_ACCEPT_EDITS, PolicyLayer.SESSION).effect());
-    }
-
-    @Test
-    void planModeDeniesMutatingDomains() {
-        var allowAll = List.of(layer(PolicyLayer.SESSION,
-                PolicyRule.of("*", "*", PolicyEffect.ALLOW)));
-
-        PolicyVerdict write = resolver.resolve(multiDomain(List.of("write"), List.of("src/a.ts")),
-                allowAll, LayeredPolicyResolver.MODE_PLAN, PolicyLayer.SESSION);
-        assertEquals(PolicyEffect.DENY, write.effect());
-        assertEquals("plan mode denies mutations", write.reason());
-        assertEquals(PolicyLayer.SESSION, write.sourceLayer());
-        assertEquals(LayeredPolicyResolver.MODE_PLAN, write.mode());
-
-        assertEquals(PolicyEffect.DENY, resolver.resolve(request("exec", "pnpm test"),
-                allowAll, LayeredPolicyResolver.MODE_PLAN, PolicyLayer.SESSION).effect());
-        assertEquals(PolicyEffect.DENY, resolver.resolve(
-                multiDomain(List.of("delete"), List.of("src/a.ts")),
-                allowAll, LayeredPolicyResolver.MODE_PLAN, PolicyLayer.SESSION).effect());
-    }
-
-    @Test
-    void planModeKeepsReadDomainEvaluation() {
-        var layers = List.of(layer(PolicyLayer.WORKSPACE, PolicyRule.of("read", "*", PolicyEffect.ALLOW)));
-
-        PolicyVerdict verdict = resolver.resolve(request("read", "src/a.ts"), layers,
-                LayeredPolicyResolver.MODE_PLAN, PolicyLayer.SESSION);
-
-        assertEquals(PolicyEffect.ALLOW, verdict.effect());
-        assertEquals(PolicyLayer.WORKSPACE, verdict.sourceLayer());
+        assertEquals(null, verdict.allowedBy());
     }
 
     @Test

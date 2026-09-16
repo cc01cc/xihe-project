@@ -83,9 +83,9 @@ public class PolicyEngine {
     // (create_snapshot/revert_snapshot, container_runtime.rs:1379/1495) and the
     // dead write_file_binary entry removed — it is not a Gateway tool, not an
     // Agent tool, and REST binary write does not travel through MCP policy.
-    // apply_patch/create_snapshot/revert_snapshot stay classified as
-    // require_approval although they are NOT Gateway-public (PLAN-292 T3
-    // decision: internal-only; pinned by GatewayToolRegistryContractTest).
+    // apply_patch is Gateway-public and remains require_approval (PLAN-0328
+    // T3.2); create_snapshot/revert_snapshot stay classified for fail-closed
+    // direct calls but remain internal-only, pinned by the contract test.
     private static final Set<String> REQUIRE_APPROVAL_TOOLS = Set.of(
         "write_file", "edit_file", "delete_file",
         "delete_directory", "move_file", "copy_file", "mkdir",
@@ -195,10 +195,10 @@ public class PolicyEngine {
                     "hard guard: " + hardDeny.get().reason());
         }
 
-        // Explicit argument wins; otherwise the session-scoped mode (L4) applies.
+        // Explicit argument wins; otherwise the session/workspace mode applies.
         String effectiveMode = mode != null ? mode : context.mode();
         if (effectiveMode == null) {
-            effectiveMode = LayeredPolicyResolver.MODE_DEFAULT;
+            effectiveMode = LayeredPolicyResolver.MODE_MANUAL;
         }
         PolicyLayer modeLayer = mode != null ? PolicyLayer.BUILTIN
                 : (context.modeLayer() == null ? PolicyLayer.BUILTIN : context.modeLayer());

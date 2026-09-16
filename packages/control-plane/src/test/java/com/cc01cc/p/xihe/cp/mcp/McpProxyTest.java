@@ -94,7 +94,7 @@ class McpProxyTest {
         when(policyEngine.loadContext(any(), any(), any())).thenReturn(PolicyContext.EMPTY);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), anyString(), anyString(),
                 anyString(), any(), any(), any()))
-                .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "default", "auto_allow"));
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "manual", "auto_allow"));
         when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
                 .thenReturn(new ToolFaceRegistry.Face("read", ToolShape.STRUCTURED));
     }
@@ -319,7 +319,7 @@ class McpProxyTest {
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
-                        "default", "mutation requires approval"));
+                        "manual", "mutation requires approval"));
 
         Map<String, Map<String, String>> cache =
                 (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
@@ -349,13 +349,40 @@ class McpProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void handleToolsCall_applyPatch_requiresApprovalBeforeRuntimeForward() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"apply_patch\",\"arguments\":{"
+                + "\"patches\":[{\"path\":\"new.md\",\"expectedHash\":\"\","
+                + "\"hunks\":[{\"before\":\"\",\"after\":\"new\"}]}]}},\"id\":12}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("apply_patch"), eq(body), eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
+                        "manual", "mutation requires approval"));
+        when(policyEngine.faceOf(any(PolicyContext.class), eq("apply_patch")))
+                .thenReturn(new ToolFaceRegistry.Face(ToolFaceRegistry.ACTION_WRITE, ToolShape.STRUCTURED));
+        seedToolCache("apply_patch", "__system__");
+
+        HttpHeaders agentHeaders = new HttpHeaders();
+        agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                agentHeaders, "sess-1", accessContext(TEST_WS_UUID, "u-1"));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertTrue(response.getBody().contains("\"code\":\"APPROVAL_REQUIRED\""));
+        verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
+        verifyNoInteractions(mcpServerRepository);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void handleToolsCall_sessionFingerprintHitSkipsTheApprovalGate() throws Exception {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":8}";
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
-                        "default", "mutation requires approval"));
+                        "manual", "mutation requires approval"));
         seedToolCache("write_file", "__system__");
         when(approvalService.tryReuseSessionGrant(eq("sess-1"), eq(TEST_WS_UUID),
                 eq("write_file"), anyString())).thenReturn(true);
@@ -382,7 +409,7 @@ class McpProxyTest {
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
-                        "default", "mutation requires approval"));
+                        "manual", "mutation requires approval"));
         seedToolCache("write_file", "__system__");
         ChatApproval row = new ChatApproval("77000000-0000-0000-0000-000000000001", TEST_WS_UUID,
                 "sess-1", "u-1", TEST_WS_UUID, "write_file", "Execute write_file", "preview",
@@ -427,7 +454,7 @@ class McpProxyTest {
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
-                        "default", "mutation requires approval"));
+                        "manual", "mutation requires approval"));
         seedToolCache("write_file", "__system__");
         ChatApproval rejected = new ChatApproval("77000000-0000-0000-0000-000000000002", TEST_WS_UUID,
                 "sess-1", "u-1", TEST_WS_UUID, "write_file", "Execute write_file", "preview",
@@ -472,7 +499,7 @@ class McpProxyTest {
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
-                        "default", "mutation requires approval"));
+                        "manual", "mutation requires approval"));
 
         Map<String, Map<String, String>> cache =
                 (Map<String, Map<String, String>>) ReflectionTestUtils.getField(controller, "toolServerCache");
@@ -503,7 +530,7 @@ class McpProxyTest {
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("read_file"), eq(body), eq("sess-1"),
                 any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, "{ read, \"*\", allow }",
-                        PolicyLayer.BUILTIN, "default", "allowed by read rules"));
+                        PolicyLayer.BUILTIN, "manual", "allowed by read rules"));
         seedToolCache("read_file", "__system__");
 
         OperationItem item = new OperationItem();
@@ -554,7 +581,7 @@ class McpProxyTest {
             assertEquals("allow", root.get("effect").asText());
             assertEquals("builtin", root.get("sourceLayer").asText());
             assertEquals("{ read, \"*\", allow }", root.get("matchedRule").asText());
-            assertEquals("default", root.get("mode").asText());
+            assertEquals("manual", root.get("mode").asText());
             assertEquals("read", root.get("actionClass").asText());
             assertEquals("structured", root.get("shape").asText());
             assertTrue(root.get("allowedBy").isNull());
@@ -570,8 +597,8 @@ class McpProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void handleToolsCall_bypassAllow_recordsAllowedByMarker() throws Exception {
-        // PLAN-0328 决策 #32: bypass-mode allows carry `allowed_by` (bypass@<layer>) for audit.
+    void handleToolsCall_autoAllow_recordsAllowedByMarker() throws Exception {
+        // PLAN-0328 决策 #32: auto-mode allows carry `allowed_by` (bypass@<layer>) for audit.
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":13}";
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
@@ -579,8 +606,8 @@ class McpProxyTest {
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"),
                 any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }",
-                        PolicyLayer.SESSION, "bypass", "requires approval for domain write")
-                        .allowedByMode("bypass@SESSION"));
+                        PolicyLayer.SESSION, "auto", "requires approval for domain write")
+                        .allowedByMode("auto@SESSION"));
         when(policyEngine.faceOf(any(PolicyContext.class), eq("write_file")))
                 .thenReturn(new ToolFaceRegistry.Face("write", ToolShape.STRUCTURED));
         seedToolCache("write_file", "__system__");
@@ -623,8 +650,8 @@ class McpProxyTest {
             JsonNode root = objectMapper.readTree(summary.getValue());
             assertEquals("allow", root.get("effect").asText());
             assertEquals("session", root.get("sourceLayer").asText());
-            assertEquals("bypass", root.get("mode").asText());
-            assertEquals("bypass@session", root.get("allowedBy").asText());
+            assertEquals("auto", root.get("mode").asText());
+            assertEquals("auto@session", root.get("allowedBy").asText());
             assertEquals("write", root.get("actionClass").asText());
             assertFalse(summary.getValue().contains("secret-body-marker"));
         } finally {
@@ -642,7 +669,7 @@ class McpProxyTest {
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"),
                 any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.DENY, "{ write, \"**\", deny }",
-                        PolicyLayer.INSTANCE, "default", "denied by { write, \"**\", deny } (write)"));
+                        PolicyLayer.INSTANCE, "manual", "denied by { write, \"**\", deny } (write)"));
         seedToolCache("write_file", "__system__");
 
         HttpHeaders headers = new HttpHeaders();
@@ -673,7 +700,7 @@ class McpProxyTest {
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"),
                 any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }",
-                        PolicyLayer.BUILTIN, "default", "mutation requires approval"));
+                        PolicyLayer.BUILTIN, "manual", "mutation requires approval"));
         when(approvalService.consumeApprovedGrant(anyString(), any(), any(), any(), anyString(), anyString()))
                 .thenThrow(new IllegalStateException("approval store unavailable"));
         seedToolCache("write_file", "__system__");
@@ -739,7 +766,7 @@ class McpProxyTest {
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
-                        "default", "mutation requires approval"));
+                        "manual", "mutation requires approval"));
         when(approvalService.consumeApprovedGrant(
                 eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
                 .thenReturn(true);
@@ -802,7 +829,7 @@ class McpProxyTest {
         when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body), eq("sess-1"), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
-                        "default", "mutation requires approval"));
+                        "manual", "mutation requires approval"));
         when(approvalService.consumeApprovedGrant(
                 eq("grant-1"), eq("u-1"), eq(TEST_WS_UUID), eq("sess-1"), eq("write_file"), eq(body)))
                 .thenReturn(true);

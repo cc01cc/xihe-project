@@ -14,11 +14,8 @@ public final class ReusePolicy {
     public enum Tier { ONCE, SESSION, SAVED }
 
     /** Strictest-first mode precedence: a grant survives only into equally or less strict modes. */
-    private static final int RANK_PLAN = 4;
-    private static final int RANK_MANAGED = 3;
-    private static final int RANK_DEFAULT = 2;
-    private static final int RANK_ACCEPT_EDITS = 1;
-    private static final int RANK_BYPASS = 0;
+    private static final int RANK_MANUAL = 1;
+    private static final int RANK_AUTO = 0;
 
     private ReusePolicy() {}
 
@@ -60,17 +57,15 @@ public final class ReusePolicy {
         return tier == null || allowedTiers(shape, actionClass).contains(tier);
     }
 
-    /** Mode rank; null/unknown modes rank as default so a missing mode never loosens a check. */
+    /** Mode rank; null/unknown modes rank as manual so a missing mode never loosens a check. */
     public static int modeRank(String mode) {
         if (mode == null || mode.isBlank()) {
-            return RANK_DEFAULT;
+            return RANK_MANUAL;
         }
         return switch (mode.toLowerCase(Locale.ROOT)) {
-            case "plan" -> RANK_PLAN;
-            case "managed" -> RANK_MANAGED;
-            case "accept-edits" -> RANK_ACCEPT_EDITS;
-            case "bypass" -> RANK_BYPASS;
-            default -> RANK_DEFAULT;
+            case "manual" -> RANK_MANUAL;
+            case "auto" -> RANK_AUTO;
+            default -> RANK_MANUAL;
         };
     }
 

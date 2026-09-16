@@ -40,13 +40,13 @@ class PolicyControllerModeTest {
         TenantContext.setUserId("u1");
         TenantContext.setWorkspaceId("ws1");
         when(sessionState.snapshot("s1"))
-                .thenReturn(Optional.of(new SessionPolicyState.Entry("bypass", List.of(), Instant.now())));
+                .thenReturn(Optional.of(new SessionPolicyState.Entry("auto", List.of(), Instant.now())));
 
         ResponseEntity<?> response = controller.getMode("s1");
 
         verify(sessionService).requireCurrent("s1", "u1", "ws1");
         assertEquals(200, response.getStatusCode().value());
-        assertEquals("bypass", ((Map<?, ?>) response.getBody()).get("mode"));
+        assertEquals("auto", ((Map<?, ?>) response.getBody()).get("mode"));
     }
 
     @Test
@@ -54,10 +54,10 @@ class PolicyControllerModeTest {
         TenantContext.setUserId("u1");
         TenantContext.setWorkspaceId("ws1");
 
-        ResponseEntity<?> response = controller.setMode(Map.of("sessionId", "s1", "mode", "bypass"));
+        ResponseEntity<?> response = controller.setMode(Map.of("sessionId", "s1", "mode", "auto"));
 
         verify(sessionService).requireCurrent("s1", "u1", "ws1");
-        verify(sessionState).setMode("s1", "bypass");
+        verify(sessionState).setMode("s1", "auto");
         assertEquals(200, response.getStatusCode().value());
         assertEquals("session", ((Map<?, ?>) response.getBody()).get("scope"));
     }
@@ -73,7 +73,7 @@ class PolicyControllerModeTest {
         assertEquals(404, get.getStatusCode().value());
         assertEquals("SESSION_NOT_FOUND", ((Map<?, ?>) get.getBody()).get("code"));
 
-        ResponseEntity<?> set = controller.setMode(Map.of("sessionId", "s1", "mode", "default"));
+        ResponseEntity<?> set = controller.setMode(Map.of("sessionId", "s1", "mode", "yolo"));
         assertEquals(404, set.getStatusCode().value());
         assertEquals("SESSION_NOT_FOUND", ((Map<?, ?>) set.getBody()).get("code"));
     }
@@ -86,7 +86,7 @@ class PolicyControllerModeTest {
         assertEquals(401, get.getStatusCode().value());
         assertEquals("AUTHORIZATION_REQUIRED", ((Map<?, ?>) get.getBody()).get("code"));
 
-        ResponseEntity<?> set = controller.setMode(Map.of("sessionId", "s1", "mode", "default"));
+        ResponseEntity<?> set = controller.setMode(Map.of("sessionId", "s1", "mode", "yolo"));
         assertEquals(401, set.getStatusCode().value());
         assertEquals("AUTHORIZATION_REQUIRED", ((Map<?, ?>) set.getBody()).get("code"));
 

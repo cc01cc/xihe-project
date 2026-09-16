@@ -66,7 +66,7 @@ class ApprovalServiceTest {
     private static final String TEST_SESSION = "55555555-5555-5555-5555-555555555555";
     private static final String POLICY_SNAPSHOT = "{\"effect\":\"ask\",\"sourceLayer\":\"builtin\","
             + "\"matchedRule\":\"{ write, \\\"*\\\", ask }\","
-            + "\"reason\":\"requires approval for domain write\",\"mode\":\"default\","
+            + "\"reason\":\"requires approval for domain write\",\"mode\":\"manual\","
             + "\"actionClass\":\"write\",\"shape\":\"structured\"}";
 
     @BeforeEach
@@ -141,7 +141,7 @@ class ApprovalServiceTest {
         policy.put("sourceLayer", "builtin");
         policy.put("matchedRule", null);
         policy.put("reason", "requires approval");
-        policy.put("mode", "default");
+        policy.put("mode", "manual");
         policy.put("actionClass", "write");
         policy.put("shape", "structured");
         when(summary.buildAtCreation("write_file", TEST_SESSION, TEST_USER, TEST_WORKSPACE))
@@ -238,21 +238,21 @@ class ApprovalServiceTest {
     void decideCapturesModeAtGrantInTheAtomicClaim() {
         ChatApproval approval = pending(Instant.now().plusSeconds(60));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
-        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), eq("managed"),
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), eq("manual"),
                 any(), any(), any(), any(Instant.class)))
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
         when(agent.respond(TEST_REQUEST_ID, true, "once", null)).thenReturn(Map.of("status", "accepted"));
-        sessionPolicyState.setMode(TEST_SESSION, "managed");
+        sessionPolicyState.setMode(TEST_SESSION, "manual");
 
         Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
                 ApprovalDecision.once());
 
-        assertEquals("managed", response.get("modeAtGrant"));
-        assertEquals("managed", approval.getModeAtGrant());
+        assertEquals("manual", response.get("modeAtGrant"));
+        assertEquals("manual", approval.getModeAtGrant());
         verify(approvals).markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true),
-                eq("managed"), any(), any(), any(), any(Instant.class));
+                eq("manual"), any(), any(), any(), any(Instant.class));
     }
 
     @Test
@@ -294,7 +294,7 @@ class ApprovalServiceTest {
                 "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"secret.md\",\"content\":\"secret\"}}",
                 "pending", Instant.now().plusSeconds(60), null, null);
         approval.setPolicySummary(POLICY_SNAPSHOT);
-        approval.setModeAtGrant("managed");
+        approval.setModeAtGrant("manual");
         when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
                 TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending", "dispatching", "dispatch_unknown")))
                 .thenReturn(List.of(approval));
@@ -311,7 +311,7 @@ class ApprovalServiceTest {
         assertFalse(policy.containsKey("details"));
         assertFalse(policy.toString().contains("secret.md"));
         assertFalse(policy.toString().contains("secret"));
-        assertEquals("managed", policy.get("modeAtGrant"));
+        assertEquals("manual", policy.get("modeAtGrant"));
     }
 
     @Test
@@ -523,8 +523,8 @@ class ApprovalServiceTest {
     @Test
     void consumeRejectsModeRankDowngrade() {
         ChatApproval approval = approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
-        approval.setModeAtGrant("bypass");
-        sessionPolicyState.setMode(TEST_SESSION, "managed");
+        approval.setModeAtGrant("auto");
+        sessionPolicyState.setMode(TEST_SESSION, "manual");
 
         assertFalse(service.consumeApprovedGrant(
                 TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
@@ -535,8 +535,8 @@ class ApprovalServiceTest {
     @Test
     void consumeAllowsAModeRelaxationAfterTheGrant() {
         ChatApproval approval = approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
-        approval.setModeAtGrant("managed");
-        sessionPolicyState.setMode(TEST_SESSION, "bypass");
+        approval.setModeAtGrant("manual");
+        sessionPolicyState.setMode(TEST_SESSION, "auto");
         when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
                 eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(1);
 
@@ -551,7 +551,7 @@ class ApprovalServiceTest {
 
     @Test
     void sessionGrantReuseHitsForTheExactInvocationAndAudits() {
-        grant("write_file", CANONICAL_VECTOR_HASH, "default", 0L, 0);
+        grant("write_file", CANONICAL_VECTOR_HASH, "manual", 0L, 0);
 
         assertTrue(service.tryReuseSessionGrant(
                 TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
@@ -560,7 +560,7 @@ class ApprovalServiceTest {
 
     @Test
     void sessionGrantReuseMissesForAnotherToolOrArguments() {
-        grant("write_file", CANONICAL_VECTOR_HASH, "default", 0L, 0);
+        grant("write_file", CANONICAL_VECTOR_HASH, "manual", 0L, 0);
 
         assertFalse(service.tryReuseSessionGrant(
                 TEST_SESSION, TEST_WORKSPACE, "edit_file", vectorMcpBody()));
@@ -572,18 +572,18 @@ class ApprovalServiceTest {
 
     @Test
     void sessionGrantReuseIsInvalidatedByRevisionGenerationAndMode() {
-        grant("write_file", CANONICAL_VECTOR_HASH, "default", 5L, 0);
+        grant("write_file", CANONICAL_VECTOR_HASH, "manual", 5L, 0);
         assertFalse(service.tryReuseSessionGrant(
                 TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
 
         sessionPolicyState.clear(TEST_SESSION);
-        grant("write_file", CANONICAL_VECTOR_HASH, "default", 0L, 5);
+        grant("write_file", CANONICAL_VECTOR_HASH, "manual", 0L, 5);
         assertFalse(service.tryReuseSessionGrant(
                 TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
 
         sessionPolicyState.clear(TEST_SESSION);
-        grant("write_file", CANONICAL_VECTOR_HASH, "bypass", 0L, 0);
-        sessionPolicyState.setMode(TEST_SESSION, "managed");
+        grant("write_file", CANONICAL_VECTOR_HASH, "auto", 0L, 0);
+        sessionPolicyState.setMode(TEST_SESSION, "manual");
         assertFalse(service.tryReuseSessionGrant(
                 TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
 
