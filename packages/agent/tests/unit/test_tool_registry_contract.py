@@ -7,7 +7,7 @@ gatewayMutationTools_requireApproval）。两侧必须同步修改，禁止单�
 from xihe_agent.adapters.mcp_client import REQUIRE_APPROVAL_TOOLS
 
 # 与 GatewayToolRegistryContractTest#gatewayMutationTools_requireApproval
-# 冻结的 10 个 Gateway 公开 mutation 工具完全一致。
+# 冻结的 11 个 Gateway 公开 mutation 工具完全一致。
 _GATEWAY_MUTATION_TOOLS = frozenset({
     "write_file",
     "edit_file",
@@ -19,12 +19,12 @@ _GATEWAY_MUTATION_TOOLS = frozenset({
     "execute_command",
     "start_background_process",
     "cancel_background_process",
+    "apply_patch",
 })
 
 # CP internal-only 工具（决策 #12 / PLAN-292 M2）：不经 #[tool_router] 暴露，
 # Agent 审批门不得收录（收录即虚假完整性）。
 _INTERNAL_ONLY_TOOLS = frozenset({
-    "apply_patch",
     "create_snapshot",
     "revert_snapshot",
 })

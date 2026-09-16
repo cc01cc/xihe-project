@@ -69,6 +69,12 @@ class _SingleToolDiscoveryClient(_FakeDiscoveryClient):
         self.list_tools = AsyncMock(return_value=[SimpleNamespace(name="test_tool")])
 
 
+class _ApplyPatchDiscoveryClient(_FakeDiscoveryClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.list_tools = AsyncMock(return_value=[SimpleNamespace(name="apply_patch")])
+
+
 class _FailingDiscoveryClient:
     def __init__(self, *args, **kwargs):
         pass
@@ -156,6 +162,19 @@ class TestMCPClientManager:
 
         assert len(manager.tools) == 1
         assert manager.tools[0].spec.name == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_initialize_discovers_apply_patch_from_workspace_gateway(self, manager):
+        with (
+            patch("xihe_agent.adapters.mcp_client.Client", _ApplyPatchDiscoveryClient),
+            patch(
+                "xihe_agent.adapters.mcp_client.as_langchain_tool",
+                AsyncMock(return_value=_stub_tool("apply_patch")),
+            ),
+        ):
+            await manager.initialize()
+
+        assert [tool.spec.name for tool in manager.tools] == ["apply_patch"]
 
     @pytest.mark.asyncio
     async def test_initialize_can_bind_request_workspace_before_discovery(self):
@@ -264,6 +283,33 @@ class TestMCPAgentToolApproval:
             "X-Operation-Item-Id": "item-1",
             "X-Xihe-Approval-Request-Id": "grant-1",
         }
+
+    @pytest.mark.asyncio
+    async def test_apply_patch_uses_the_same_approval_and_grant_path(self, context):
+        context.metadata["operationItemId"] = "item-apply-patch"
+        approval_tool = MagicMock(spec=ApprovalAgentTool)
+        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-apply-patch"})
+        manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("patched"))
+        tool = MCPAgentTool(_stub_tool("apply_patch"), manager)
+        patch_arguments = {
+            "patches": [
+                {
+                    "path": "new.md",
+                    "expectedHash": "",
+                    "hunks": [{"before": "", "after": "new"}],
+                }
+            ]
+        }
+
+        result = await tool.execute(patch_arguments, context)
+
+        assert "patched" in result["content"]
+        approval_tool.execute.assert_awaited_once()
+        approval_request = approval_tool.execute.await_args.args[0]
+        assert approval_request["tool"] == "apply_patch"
+        assert json.loads(approval_request["details"])["arguments"] == patch_arguments
+        headers = manager.call_tool.await_args.args[2]
+        assert headers[APPROVAL_GRANT_HEADER] == "grant-apply-patch"
 
     @pytest.mark.asyncio
     async def test_read_only_tool_propagates_run_context_without_approval(self, context):
@@ -512,22 +558,48 @@ class TestMCPAgentToolPostGateApproval:
         logger.remove(sink_id)
 
     @pytest.mark.asyncio
-    async def test_gate_409_approve_retries_once_with_grant_header(self, context):
+    @pytest.mark.parametrize("tool_name", ["read_file", "apply_patch"])
+    async def test_gate_409_approve_retries_once_with_grant_header(self, context, tool_name):
         approval_tool = ApprovalAgentTool(timeout_seconds=5)
         calls: list[dict[str, str]] = []
+        published: list[dict] = []
+        if tool_name == "apply_patch":
+            context, published = _publishing_context()
+        arguments = (
+            {"path": "notes/a.md"}
+            if tool_name == "read_file"
+            else {
+                "patches": [
+                    {
+                        "path": "new.md",
+                        "expectedHash": "",
+                        "hunks": [{"before": "", "after": "new"}],
+                    }
+                ]
+            }
+        )
 
         async def _call(name, arguments, headers):
             calls.append(headers)
             if len(calls) == 1:
-                raise _gate_error("read_file")
+                raise _gate_error(tool_name)
             return _tool_result("gate-ok")
 
         manager = _fake_manager(approval_tool=approval_tool)
         manager.call_tool = AsyncMock(side_effect=_call)
-        tool = MCPAgentTool(_stub_tool("read_file"), manager)
+        tool = MCPAgentTool(_stub_tool(tool_name), manager)
 
-        task = asyncio.create_task(tool.execute({"path": "notes/a.md"}, context))
-        request_id = await _await_pending(approval_tool)
+        task = asyncio.create_task(tool.execute(arguments, context))
+        local_grant: str | None = None
+        if tool_name == "apply_patch":
+            for _ in range(1000):
+                if published:
+                    break
+                await asyncio.sleep(0)
+            assert len(published) == 1
+            local_grant = published[0]["requestId"]
+            assert approval_tool.resolve_approval_status(local_grant, True) == ("accepted", True)
+        request_id = await _await_pending(approval_tool, exclude={local_grant} if local_grant else None)
         assert request_id == "apr-00000001"
         assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
 
@@ -535,7 +607,10 @@ class TestMCPAgentToolPostGateApproval:
 
         assert "gate-ok" in result["content"]
         assert len(calls) == 2
-        assert APPROVAL_GRANT_HEADER not in calls[0]
+        if tool_name == "read_file":
+            assert APPROVAL_GRANT_HEADER not in calls[0]
+        else:
+            assert calls[0][APPROVAL_GRANT_HEADER] == local_grant
         assert calls[1][APPROVAL_GRANT_HEADER] == request_id
         # The retry must be the identical MCP call (same JSON-RPC bound payload).
         assert manager.call_tool.await_args_list[0].args[1] == manager.call_tool.await_args_list[1].args[1]

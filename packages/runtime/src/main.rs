@@ -240,6 +240,35 @@ pub struct EditFileRequest {
     pub replace_all: Option<bool>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct ApplyPatchRequest {
+    pub patches: Vec<ApplyPatchEntry>,
+    #[serde(rename = "snapshotId")]
+    pub snapshot_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct ApplyPatchEntry {
+    pub path: String,
+    #[serde(rename = "expectedHash")]
+    pub expected_hash: String,
+    pub hunks: Vec<ApplyPatchHunk>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct ApplyPatchHunk {
+    pub before: String,
+    pub after: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyPatchResult {
+    pub changed: Vec<String>,
+    pub diff: String,
+    pub new_hashes: std::collections::HashMap<String, String>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeleteFileRequest {
     pub path: String,
@@ -507,6 +536,24 @@ impl XiheRuntime {
             .await
             .map_err(|e| e.to_string())?;
         let result: EditFileResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
+        Ok(Json(result))
+    }
+
+    #[tool(description = "Apply an atomic multi-file patch with expected content hashes")]
+    async fn apply_patch(
+        &self,
+        Parameters(ApplyPatchRequest {
+            patches,
+            snapshot_id,
+        }): Parameters<ApplyPatchRequest>,
+    ) -> Result<Json<ApplyPatchResult>, String> {
+        let patch_values = serde_json::to_value(patches).map_err(|e| e.to_string())?;
+        let val = self
+            .router
+            .apply_patch(&self.ws_id, patch_values, snapshot_id.as_deref())
+            .await
+            .map_err(|e| e.to_string())?;
+        let result: ApplyPatchResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(result))
     }
 
@@ -4615,6 +4662,44 @@ mod tool_router_regression_tests {
             tools.len() >= 20,
             "expected the built-in tool surface, got {}",
             tools.len()
+        );
+        assert!(
+            tools.iter().any(|tool| tool.name == "apply_patch"),
+            "apply_patch missing from public tool surface"
+        );
+        for name in ["create_snapshot", "revert_snapshot"] {
+            assert!(
+                tools.iter().all(|tool| tool.name.as_ref() != name),
+                "{name} must remain internal-only"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_patch_tool_exposes_structured_patch_schema() {
+        let tools = XiheRuntime::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == "apply_patch")
+            .expect("apply_patch present");
+        let json = serde_json::to_value(tool).expect("tool serializes");
+        let props = json
+            .get("inputSchema")
+            .and_then(|schema| schema.get("properties"))
+            .and_then(|properties| properties.as_object())
+            .expect("apply_patch input schema missing");
+        assert!(
+            props.contains_key("patches"),
+            "patches must be structured input"
+        );
+        let schema = json.to_string();
+        assert!(
+            schema.contains("\"expectedHash\""),
+            "expectedHash must be in the wire schema"
+        );
+        assert!(
+            schema.contains("\"hunks\""),
+            "hunks must be in the wire schema"
         );
     }
 

@@ -192,10 +192,10 @@ def _context_headers(context: AgentContext | None, tool_name: str) -> dict[str, 
     return headers
 
 
-# PLAN-292 T4: only Gateway-public mutation tools belong here. The Runtime's
-# apply_patch/create_snapshot/revert_snapshot/cleanup_jobs are internal-only
-# (never exposed via #[tool_router], PLAN-292 T3 decision) and write_file_binary
-# does not exist as an MCP tool — listing them created false completeness.
+# PLAN-292 T4 / PLAN-0328 T3.2: only Gateway-public mutation tools belong here.
+# create_snapshot/revert_snapshot/cleanup_jobs remain internal-only (the first
+# two are not exposed via #[tool_router]); write_file_binary does not exist as
+# an MCP tool — listing it would create false completeness.
 REQUIRE_APPROVAL_TOOLS = frozenset({
     "write_file",
     "edit_file",
@@ -207,6 +207,7 @@ REQUIRE_APPROVAL_TOOLS = frozenset({
     "execute_command",
     "start_background_process",
     "cancel_background_process",
+    "apply_patch",
 })
 
 

@@ -750,6 +750,20 @@ impl WorkspaceExecutionRouter {
         self.exec_oneshot(workspace_id, "edit_file", payload).await
     }
 
+    pub async fn apply_patch(
+        &self,
+        workspace_id: &str,
+        patches: Value,
+        snapshot_id: Option<&str>,
+    ) -> Result<Value> {
+        let mut payload = serde_json::json!({"patches": patches});
+        if let Some(snapshot_id) = snapshot_id {
+            payload["snapshotId"] = serde_json::json!(snapshot_id);
+        }
+        self.exec_oneshot(workspace_id, "apply_patch", payload)
+            .await
+    }
+
     pub async fn delete_file(&self, workspace_id: &str, path: &str) -> Result<String> {
         let payload = serde_json::json!({"path": path});
         let val = self
