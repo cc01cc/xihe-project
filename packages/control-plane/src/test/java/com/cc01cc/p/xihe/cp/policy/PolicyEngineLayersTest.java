@@ -43,6 +43,40 @@ class PolicyEngineLayersTest {
     }
 
     @Test
+    void workspaceDefaultAutoAllowsAskAndIsRecordedAsAllowedBy() {
+        PolicyEngine engine = engine(providerOf(List.of(),
+                LayeredPolicyResolver.MODE_AUTO, PolicyLayer.WORKSPACE));
+
+        PolicyVerdict verdict = engine.evaluateVerdict("write_file", "{}", "s1", null, "u1", "ws1");
+
+        assertEquals(PolicyEffect.ALLOW, verdict.effect());
+        assertEquals("auto@WORKSPACE", verdict.allowedBy());
+    }
+
+    @Test
+    void sessionOverrideWinsOverTheWorkspaceDefaultInTheEngine() {
+        PolicyEngine engine = engine(providerOf(List.of(),
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.SESSION));
+
+        PolicyVerdict verdict = engine.evaluateVerdict("write_file", "{}", "s1", null, "u1", "ws1");
+
+        assertEquals(PolicyEffect.ASK, verdict.effect());
+        assertNull(verdict.allowedBy());
+    }
+
+    @Test
+    void workspaceDefaultAutoStillObeysAnExplicitDeny() {
+        PolicyEngine engine = engine(providerOf(
+                List.of(workspaceRule(PolicyRule.of("write", "*", PolicyEffect.DENY))),
+                LayeredPolicyResolver.MODE_AUTO, PolicyLayer.WORKSPACE));
+
+        PolicyVerdict verdict = engine.evaluateVerdict("write_file", "{}", "s1", null, "u1", "ws1");
+
+        assertEquals(PolicyEffect.DENY, verdict.effect());
+        assertNull(verdict.allowedBy());
+    }
+
+    @Test
     void sessionRuleAppliesWhenNoHigherLayerConfiguresTheDomain() {
         PolicyEngine engine = engine(providerOf(List.of(new LayeredPolicyResolver.LayerInput(
                 PolicyLayer.SESSION, List.of(PolicyRule.of("write", "*", PolicyEffect.ALLOW)))), null, null));

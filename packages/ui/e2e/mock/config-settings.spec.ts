@@ -9,6 +9,7 @@ const CONFIG_DOMAINS: Record<string, Record<string, string>> = {
   'agent-profile': { userName: 'zero' },
   'user-preference': { theme: 'dark' },
   'logging': { logLevel: 'INFO', levelCp: 'DEBUG' },
+  'approval-policy': { mode: 'manual' },
 }
 
 test.describe('Config Settings (three layers)', () => {
@@ -69,7 +70,7 @@ test.describe('Config Settings (three layers)', () => {
     await expect(page.getByTestId('config-field-agent-runtime-instructions')).toBeVisible()
   })
 
-  test('workspace tab shows five domains and the MCP section', async ({ page }) => {
+  test('workspace tab shows six domains and the MCP section', async ({ page }) => {
     await mockConfigAPIs(page)
     await page.goto('/settings/config', { waitUntil: 'load' })
 
@@ -80,6 +81,38 @@ test.describe('Config Settings (three layers)', () => {
     await expect(page.getByTestId('config-domain-logging')).toHaveCount(0)
     await expect(page.getByTestId('mcp-config-textarea')).toBeVisible()
     await expect(page).toHaveScreenshot('config-workspace-tab.png')
+  })
+
+  test('approval-policy stays workspace-only and renders the approval mode select', async ({ page }) => {
+    await mockConfigAPIs(page)
+    await page.goto('/settings/config', { waitUntil: 'load' })
+
+    // The instance tab must not offer a place to set the approval mode (PLAN-0337).
+    await expect(page.getByTestId('config-domain-approval-policy')).toHaveCount(0)
+
+    await page.getByTestId('config-tab-workspace').click()
+    const domain = page.getByTestId('config-domain-approval-policy')
+    await expect(domain).toBeVisible()
+    await domain.locator('button').first().click()
+
+    const modeSelect = page.getByTestId('config-field-approval-policy-mode').locator('select')
+    await expect(modeSelect).toHaveValue('manual')
+    await expect(modeSelect.locator('option')).toHaveCount(2)
+  })
+
+  test('saving the approval mode goes through the workspace endpoint', async ({ page }) => {
+    await mockConfigAPIs(page)
+    await page.goto('/settings/config', { waitUntil: 'load' })
+
+    await page.getByTestId('config-tab-workspace').click()
+    await page.getByTestId('config-domain-approval-policy').locator('button').first().click()
+    await page.getByTestId('config-field-approval-policy-mode').locator('select').selectOption('auto')
+
+    const [request] = await Promise.all([
+      page.waitForRequest(req => req.method() === 'PUT' && req.url().includes('/api/v1/config/workspace/approval-policy')),
+      page.getByTestId('config-domain-approval-policy').getByRole('button', { name: '保存' }).click(),
+    ])
+    expect(JSON.parse(request.postData() ?? '{}').mode).toBe('auto')
   })
 
   test('user tab drops instance-only domains and the instructions field', async ({ page }) => {
