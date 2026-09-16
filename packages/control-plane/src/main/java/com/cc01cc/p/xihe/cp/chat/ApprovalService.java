@@ -16,6 +16,7 @@ import com.cc01cc.p.xihe.cp.policy.LayeredPolicyResolver;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyRevision;
 import com.cc01cc.p.xihe.cp.policy.ReusePolicy;
+import com.cc01cc.p.xihe.cp.policy.SessionApprovalMode;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import org.slf4j.Logger;
@@ -63,6 +64,7 @@ public class ApprovalService {
     private final ApprovalPolicySummary policySummary;
     private final ApprovalPendingStore pendingStore;
     private final SessionPolicyState sessionPolicyState;
+    private final SessionApprovalMode sessionApprovalMode;
     private final PolicyRevision policyRevision;
     private final WorkspaceRepository workspaceRepository;
     private final AnswererChain answererChain;
@@ -77,6 +79,7 @@ public class ApprovalService {
                            ApprovalPolicySummary policySummary,
                            ApprovalPendingStore pendingStore,
                            SessionPolicyState sessionPolicyState,
+                           SessionApprovalMode sessionApprovalMode,
                            PolicyRevision policyRevision,
                            WorkspaceRepository workspaceRepository,
                            AnswererChain answererChain) {
@@ -92,6 +95,7 @@ public class ApprovalService {
         this.policySummary = policySummary;
         this.pendingStore = pendingStore;
         this.sessionPolicyState = sessionPolicyState;
+        this.sessionApprovalMode = sessionApprovalMode;
         this.policyRevision = policyRevision;
         this.workspaceRepository = workspaceRepository;
         this.answererChain = answererChain;
@@ -767,9 +771,13 @@ public class ApprovalService {
         return policySummary.readStored(approval.getPolicySummary());
     }
 
+    /**
+     * Session mode at decision time (PLAN-0337): the persisted session override, else the builtin
+     * manual. The workspace default is intentionally not folded in here — a grant stores the mode
+     * that was actually in force for the session tier.
+     */
     private String currentSessionMode(String sessionId) {
-        return sessionPolicyState.snapshot(sessionId)
-                .map(SessionPolicyState.Entry::mode)
+        return sessionApprovalMode.modeOf(sessionId)
                 .filter(mode -> mode != null && !mode.isBlank())
                 .orElse(LayeredPolicyResolver.MODE_MANUAL);
     }

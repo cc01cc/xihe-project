@@ -10,15 +10,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 /**
- * Session-scoped policy state: the active mode, the in-session rule set (PLAN-0328 spec §4.1 L4 /
- * §7 模式), and the T1.7 exact-invocation reuse grants.
+ * Session-scoped policy state: the in-session rule set (PLAN-0328 spec §4.1 L4 / §7 模式) and the
+ * T1.7 exact-invocation reuse grants.
  *
- * <p>Three invariants from the spec:</p>
+ * <p>The session <em>mode</em> is not here: since PLAN-0337 it is persisted on the session row and
+ * owned by {@link SessionApprovalMode}, so a CP restart no longer drops it (supersedes the earlier
+ * memory-only decision #28/#29 for mode only — rules and grants stay memory-only).</p>
+ *
+ * <p>Remaining invariants:</p>
  * <ul>
- *   <li><b>不落库</b>：mode switches, session rules and reuse grants are memory-only
- *       (decision #28/#29);</li>
- *   <li><b>不外溢</b>：session state never becomes a workspace rule, and is dropped when the
- *       session ends or the state expires;</li>
+ *   <li><b>不外溢</b>：session rules and grants never become a workspace rule, and are dropped when
+ *       the session ends or the state expires;</li>
  *   <li><b>精确指纹</b>：a session reuse grant is bound to one tool + one canonical
  *       {@code arguments_hash} — never a coarse "whole action class" allow (decision #27).</li>
  * </ul>
@@ -45,15 +47,15 @@ public class SessionPolicyState {
     public record Grant(String argumentsHash, String tool, String modeAtGrant, long policyRevision,
                         int sandboxGeneration, Instant grantedAt) {}
 
-    public record Entry(String mode, List<PolicyRule> rules, List<Grant> grants, Instant updatedAt) {
+    public record Entry(List<PolicyRule> rules, List<Grant> grants, Instant updatedAt) {
         public Entry {
             rules = rules == null ? List.of() : List.copyOf(rules);
             grants = grants == null ? List.of() : List.copyOf(grants);
         }
 
-        /** Backwards-compatible view for callers that only care about mode + rules. */
-        public Entry(String mode, List<PolicyRule> rules, Instant updatedAt) {
-            this(mode, rules, List.of(), updatedAt);
+        /** Backwards-compatible view for callers that only care about the session rules. */
+        public Entry(List<PolicyRule> rules, Instant updatedAt) {
+            this(rules, List.of(), updatedAt);
         }
     }
 
@@ -69,23 +71,6 @@ public class SessionPolicyState {
     /** Package-private for tests: a tiny TTL makes the expiration sweep observable. */
     SessionPolicyState(Duration ttl) {
         this.ttl = ttl;
-    }
-
-    public Optional<String> modeOf(String sessionId) {
-        return snapshot(sessionId).map(Entry::mode);
-    }
-
-    public void setMode(String sessionId, String mode) {
-        if (sessionId == null || sessionId.isBlank()) {
-            return;
-        }
-        if (mode == null || !MODES.contains(mode)) {
-            throw new IllegalArgumentException("unsupported policy mode: " + mode);
-        }
-        sessions.compute(sessionId, (key, existing) -> new Entry(mode,
-                existing == null ? List.of() : existing.rules(),
-                existing == null ? List.of() : existing.grants(),
-                Instant.now()));
     }
 
     public List<PolicyRule> rulesOf(String sessionId) {
@@ -106,7 +91,7 @@ public class SessionPolicyState {
             List<PolicyRule> rules = new java.util.ArrayList<>(existing == null ? List.of() : existing.rules());
             rules.add(new PolicyRule(rule.actionClass(), rule.resource(), rule.effect(),
                     rule.priority(), rule.locked(), seq.getAndIncrement()));
-            return new Entry(existing == null ? null : existing.mode(), List.copyOf(rules),
+            return new Entry(List.copyOf(rules),
                     existing == null ? List.of() : existing.grants(), Instant.now());
         });
     }
@@ -128,8 +113,7 @@ public class SessionPolicyState {
                 grants = new java.util.ArrayList<>(
                         grants.subList(grants.size() - MAX_GRANTS_PER_SESSION, grants.size()));
             }
-            return new Entry(existing == null ? null : existing.mode(),
-                    existing == null ? List.of() : existing.rules(), grants, Instant.now());
+            return new Entry(existing == null ? List.of() : existing.rules(), grants, Instant.now());
         });
     }
 

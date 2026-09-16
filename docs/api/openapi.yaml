@@ -402,6 +402,11 @@ paths:
     post:
       operationId: setPolicyMode
       summary: Set the session-scoped policy mode
+      description: |
+        Persists `manual` / `auto` on the session row (PLAN-0337 V24), so the choice survives a CP
+        restart; a workspace-level default comes from the `approval-policy` config domain. An
+        unsupported mode is rejected with `400 INVALID_REQUEST`, an unknown/unowned session with
+        `404 SESSION_NOT_FOUND`.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -1194,7 +1199,7 @@ components:
         approved: { type: [boolean, 'null'] }
     PolicyMode:
       type: string
-      enum: [default, bypass, managed, accept-edits, plan]
+      enum: [manual, auto]
     PolicyModeState:
       type: object
       additionalProperties: false
@@ -1317,7 +1322,7 @@ components:
         sourceLayer: { type: string, enum: [builtin, instance, user, workspace, session, per_call] }
         matchedRule: { type: [string, 'null'], minLength: 1 }
         reason: { type: string, minLength: 1 }
-        mode: { type: [string, 'null'], enum: [default, bypass, managed, accept-edits, plan] }
+        mode: { type: [string, 'null'], enum: [manual, auto] }
         actionClass: { type: string, minLength: 1 }
         shape: { type: string, enum: [structured, interpreter, opaque] }
         modeAtGrant:
@@ -1612,10 +1617,10 @@ components:
         sourceLayer: { type: string, enum: [builtin, instance, user, workspace, session, per_call] }
         matchedRule: { type: [string, 'null'], minLength: 1 }
         reason: { type: string, minLength: 1 }
-        mode: { type: [string, 'null'], enum: [default, bypass, managed, accept-edits, plan] }
+        mode: { type: [string, 'null'], enum: [manual, auto] }
         allowedBy:
           type: [string, 'null']
-          description: Lower-cased mode-bypass marker (e.g. `bypass@session`, `accept-edits@workspace`) when the allow came from a mode rather than a rule.
+          description: Lower-cased automatic-allow marker (e.g. `auto@session`) when the allow came from a mode rather than a rule.
         actionClass: { type: string, minLength: 1 }
         shape: { type: string, enum: [structured, interpreter, opaque] }
         reused:

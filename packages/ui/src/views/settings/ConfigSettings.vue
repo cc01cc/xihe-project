@@ -36,6 +36,7 @@ const domainLabels: Record<string, string> = {
   'agent-profile': t('settings.domainAgentProfile'),
   'user-preference': t('settings.domainUserPreference'),
   'logging': t('settings.domainLogging'),
+  'approval-policy': t('settings.domainApprovalPolicy'),
 }
 
 const providerOptions = [
@@ -74,6 +75,12 @@ const domainSchemas: Record<string, DomainField[]> = {
   'context-policy': [
     { key: 'defaults', label: t('settings.fieldCompactionDefaults'), type: 'json' },
     { key: 'models', label: t('settings.fieldCompactionModels'), type: 'json' },
+  ],
+  'approval-policy': [
+    { key: 'mode', label: t('settings.fieldApprovalMode'), type: 'select', options: [
+      { label: t('settings.approvalModeManual'), value: 'manual' },
+      { label: t('settings.approvalModeAuto'), value: 'auto' },
+    ] },
   ],
   'embedding': [
     { key: 'model', label: t('settings.fieldModel'), type: 'text' },

@@ -132,6 +132,22 @@ class ConfigServiceTest {
     }
 
     @Test
+    void putLayer_approvalPolicyIsWorkspaceWritableButNeverUserWritable() {
+        configService.putLayer("workspace", "approval-policy", Map.of("mode", "auto"), "user", null, wsA);
+
+        assertEquals("auto", configService.resolve("approval-policy", "mode", null, wsA));
+
+        assertThrows(ConfigService.ConfigAccessException.class, () ->
+            configService.putLayer("user", "approval-policy", Map.of("mode", "auto"), "user", userA, null));
+    }
+
+    @Test
+    void putLayer_unknownApprovalMode_isRejectedBySchema() {
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("workspace", "approval-policy", Map.of("mode", "yolo"), "user", null, wsA));
+    }
+
+    @Test
     void putLayer_instructionsAtUserLayer_isRejected() {
         configService.putLayer("instance", "agent-runtime",
             Map.of("instructions", "baseline prompt"), "admin", null, null);

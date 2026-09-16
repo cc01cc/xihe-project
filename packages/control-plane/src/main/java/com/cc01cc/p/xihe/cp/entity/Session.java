@@ -36,6 +36,13 @@ public class Session {
     @Column(name = "connection_revision")
     private Long connectionRevision;
 
+    /**
+     * PLAN-0337: session-scoped approval mode. {@code null} inherits the workspace
+     * {@code approval-policy.mode}; only {@code manual} / {@code auto} may be stored (V24 CHECK).
+     */
+    @Column(name = "approval_mode", length = 16)
+    private String approvalMode;
+
     @Column(nullable = false)
     private boolean archived;
 
@@ -87,6 +94,9 @@ public class Session {
 
     public Long getConnectionRevision() { return connectionRevision; }
     public void setConnectionRevision(Long connectionRevision) { this.connectionRevision = connectionRevision; }
+
+    public String getApprovalMode() { return approvalMode; }
+    public void setApprovalMode(String approvalMode) { this.approvalMode = approvalMode; }
 
     public boolean isArchived() { return archived; }
     public void setArchived(boolean archived) { this.archived = archived; }

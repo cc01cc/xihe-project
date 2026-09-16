@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
 import com.cc01cc.p.xihe.cp.entity.ToolFaceEntity;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
@@ -22,12 +23,18 @@ import org.junit.jupiter.api.Test;
 /** PLAN-0328 M1: persisted layers/faces are loaded per request and fail closed on error. */
 class DbPolicyContextProviderTest {
 
+    private static final String USER = "11111111-1111-4111-8111-111111111111";
+    private static final String WS = "22222222-2222-4222-8222-222222222222";
+
     private final PolicyRuleRepository ruleRepository = mock(PolicyRuleRepository.class);
     private final ToolFaceRepository faceRepository = mock(ToolFaceRepository.class);
     private final SessionPolicyState sessionState = new SessionPolicyState();
+    private final SessionApprovalMode sessionApprovalMode = mock(SessionApprovalMode.class);
     private final PolicyVersion policyVersion = new PolicyVersion();
+    private final ConfigService configService = mock(ConfigService.class);
     private final DbPolicyContextProvider provider =
-            new DbPolicyContextProvider(ruleRepository, faceRepository, sessionState, policyVersion);
+            new DbPolicyContextProvider(ruleRepository, faceRepository, sessionState, sessionApprovalMode,
+                    policyVersion, configService);
 
     private static PolicyRuleEntity rule(String layer, String owner, String actionClass, String resource,
                                          String effect, boolean locked) {
@@ -143,22 +150,66 @@ class DbPolicyContextProviderTest {
     }
 
     @Test
-    void loadsSessionModeAndRulesFromOneCoherentSnapshot() {
+    void loadsSessionRulesAndPersistedModeFromOneCoherentView() {
         SessionPolicyState coherentState = mock(SessionPolicyState.class);
+        SessionApprovalMode coherentMode = mock(SessionApprovalMode.class);
         PolicyRule sessionRule = PolicyRule.of("exec", "pnpm test *", PolicyEffect.ALLOW);
         SessionPolicyState.Entry entry = new SessionPolicyState.Entry(
-                LayeredPolicyResolver.MODE_MANUAL, List.of(sessionRule), java.time.Instant.now());
+                List.of(sessionRule), java.time.Instant.now());
         when(coherentState.snapshot("s1")).thenReturn(java.util.Optional.of(entry));
+        when(coherentMode.modeOf("s1")).thenReturn(java.util.Optional.of(LayeredPolicyResolver.MODE_MANUAL));
         DbPolicyContextProvider coherentProvider = new DbPolicyContextProvider(
-                ruleRepository, faceRepository, coherentState, policyVersion);
+                ruleRepository, faceRepository, coherentState, coherentMode, policyVersion, configService);
 
         PolicyContext context = coherentProvider.load("u1", "ws1", "s1");
 
         assertEquals(LayeredPolicyResolver.MODE_MANUAL, context.mode());
         assertEquals(List.of(sessionRule), context.layers().get(context.layers().size() - 1).rules());
         verify(coherentState).snapshot("s1");
-        verify(coherentState, never()).modeOf("s1");
         verify(coherentState, never()).rulesOf("s1");
+    }
+
+    @Test
+    void workspaceApprovalModeAppliesWhenTheSessionHasNoOverride() {
+        when(configService.resolve("approval-policy", "mode", null, UUID.fromString(WS)))
+                .thenReturn("auto");
+
+        PolicyContext context = provider.load(null, WS, "s1");
+
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, context.mode());
+        assertEquals(PolicyLayer.WORKSPACE, context.modeLayer());
+    }
+
+    @Test
+    void sessionModeOverridesTheWorkspaceMode() {
+        when(configService.resolve("approval-policy", "mode", UUID.fromString(USER), UUID.fromString(WS)))
+                .thenReturn("auto");
+        when(sessionApprovalMode.modeOf("s1")).thenReturn(java.util.Optional.of(LayeredPolicyResolver.MODE_MANUAL));
+
+        PolicyContext context = provider.load(USER, WS, "s1");
+
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, context.mode());
+        assertEquals(PolicyLayer.SESSION, context.modeLayer());
+    }
+
+    @Test
+    void unsupportedWorkspaceModeIsIgnoredInsteadOfRelaxing() {
+        when(configService.resolve("approval-policy", "mode", null, UUID.fromString(WS)))
+                .thenReturn("yolo");
+
+        PolicyContext context = provider.load(null, WS, "s1");
+
+        assertEquals(null, context.mode());
+    }
+
+    @Test
+    void workspaceModeLookupFailureFallsBackToBuiltinManual() {
+        when(configService.resolve("approval-policy", "mode", null, UUID.fromString(WS)))
+                .thenThrow(new IllegalStateException("config db down"));
+
+        PolicyContext context = provider.load(null, WS, "s1");
+
+        assertEquals(null, context.mode());
     }
 
     @Test

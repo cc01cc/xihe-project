@@ -209,7 +209,7 @@ erDiagram
 > - `idx_workspace_users_user_id (user_id)`
 > - `idx_workspace_users_user_workspace (user_id, workspace_id)` — 双向查（`V14`）
 
-**sessions**（`V1` + `V14/V19`，Entity `entity/Session.java`）：服务端 canonical 会话，详见 [DEV-017](DEV-017-session-architecture.md)。
+**sessions**（`V1` + `V14/V19/V24`，Entity `entity/Session.java`）：服务端 canonical 会话，详见 [DEV-017](DEV-017-session-architecture.md)。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -222,6 +222,7 @@ erDiagram
 | archived | BOOLEAN | NOT NULL DEFAULT FALSE | 归档非删除 |
 | provider_connection_id | VARCHAR(36) | nullable，无 FK（`V19`） | 逻辑绑定，不做外键避免跨域耦合 |
 | connection_revision | BIGINT | nullable（`V19`） | 绑定时的连接版本 |
+| approval_mode | VARCHAR(16) | nullable，`ck_sessions_approval_mode`（`V24`） | 会话审批模式 `manual`/`auto`；NULL = 继承 workspace 的 `approval-policy.mode`（PLAN-0337） |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 | updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
@@ -479,7 +480,7 @@ erDiagram
 | layer | VARCHAR(16) | NOT NULL，`ck_config_layer` | `instance` / `workspace` / `user`（V12 前为 SYSTEM/ADMIN/USER，`admin` 已规范化为 `instance`） |
 | user_id | UUID | nullable FK `users(id) ON DELETE CASCADE`，`ck_config_scope_binding` | `layer=user` 必填（V12 加） |
 | workspace_id | UUID | nullable FK `workspaces(id) ON DELETE CASCADE`，`ck_config_scope_binding` | `layer=workspace` 必填（V12 加） |
-| domain | VARCHAR(32) | NOT NULL | 八域：`llm-provider`/`context-policy`/`embedding`/`rag`/`agent-runtime`/`agent-profile`/`user-preference`/`logging` |
+| domain | VARCHAR(32) | NOT NULL | 九域：`llm-provider`/`context-policy`/`embedding`/`rag`/`agent-runtime`/`agent-profile`/`user-preference`/`logging`/`approval-policy`（后者 V24 起，仅 workspace 层，PLAN-0337） |
 | config_key | VARCHAR(64) | NOT NULL | 配置键 |
 | config_value | TEXT | nullable | 值（结构化值为 JSON 文本）；**一切凭证键禁写**——`rejectProviderSecrets` 对 `*ApiKey`/secret/password/token 返回 403，凭证只归 `provider_connections`/env 兜底（决策 #21/#37） |
 | updated_by | VARCHAR(64) | nullable | 修改人 |

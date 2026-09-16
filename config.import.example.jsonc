@@ -1,6 +1,6 @@
 {
   // =========================================================================
-  // xihe 配置导入模板 — instance 层（PLAN-0307 八域模型）
+  // xihe 配置导入模板 — instance 层（PLAN-0307 九域模型，approval-policy 由 PLAN-0337 新增）
   // =========================================================================
   // 用法:
   //   PowerShell: Copy-Item config.import.example.jsonc config.import.local.jsonc
@@ -30,6 +30,10 @@
 
   // context-policy — 上下文压缩策略（defaults/models 结构见 schema）
   "context-policy": {},
+
+  // approval-policy — 审批模式（仅 workspace 层可写；instance 层留空即不施加约束）
+  // mode: manual（ask 交人确认）| auto（ask 自动放行，deny 与能力边界仍生效）
+  "approval-policy": {},
 
   // embedding — 检索嵌入
   "embedding": {

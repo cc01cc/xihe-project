@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "mode": { "type": "string", "enum": ["manual", "auto"] }
+  },
+  "additionalProperties": false
+}

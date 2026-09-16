@@ -57,9 +57,11 @@ class ApprovalDecisionTierTest {
             approvals, new ObjectMapper(), policySummary);
     private final com.cc01cc.p.xihe.cp.policy.SessionPolicyState sessionPolicyState =
             new com.cc01cc.p.xihe.cp.policy.SessionPolicyState();
+    private final com.cc01cc.p.xihe.cp.policy.SessionApprovalMode sessionApprovalMode =
+            mock(com.cc01cc.p.xihe.cp.policy.SessionApprovalMode.class);
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
             operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
-            policyRevision, workspaceRepository,
+            sessionApprovalMode, policyRevision, workspaceRepository,
             new AnswererChain(List.of(new UserAnswerer(), new AutoReviewAnswerer())));
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";

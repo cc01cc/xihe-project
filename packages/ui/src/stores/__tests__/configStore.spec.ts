@@ -253,13 +253,13 @@ describe('useConfigStore', () => {
 
       await store.loadLayerDomains('workspace', 'ws-1')
 
-      expect(calls).toHaveLength(5)
+      expect(calls).toHaveLength(6)
       for (const call of calls) {
         expect(call.url).toContain('layer=workspace')
         expect(call.url).toContain('includeMeta=true')
         expect(call.url).toContain('workspaceId=ws-1')
       }
-      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(5)
+      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(6)
       expect(store.layerConfig.workspace['embedding']).toEqual({ 'workspace-embedding-key': 'value' })
       expect(store.envOverridden['embedding']).toEqual({ model: 'env-model' })
       expect(store.envOverridden['rag']).toEqual({})

@@ -7,18 +7,24 @@ import { request } from '../composables/api'
 
 export type ConfigLayer = 'instance' | 'workspace' | 'user'
 
-/** PLAN-0307 target domain set (decision #37): instance(8) ⊇ user(7) ⊇ workspace(5). */
-export const CONFIG_DOMAINS = [
+/** PLAN-0307 target domain set (decision #37). Instance layer only. */
+export const INSTANCE_DOMAINS = [
   'llm-provider', 'context-policy', 'embedding', 'rag',
   'agent-runtime', 'agent-profile', 'user-preference', 'logging',
 ] as const
 
+/**
+ * Full domain set. PLAN-0337 adds `approval-policy` (workspace-only approval mode), so it is NOT
+ * part of `INSTANCE_DOMAINS`: the instance layer must not expose a place to set the approval mode.
+ */
+export const CONFIG_DOMAINS = [...INSTANCE_DOMAINS, 'approval-policy'] as const
+
 export type ConfigDomain = typeof CONFIG_DOMAINS[number]
 
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
-  instance: CONFIG_DOMAINS,
+  instance: INSTANCE_DOMAINS,
   user: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'agent-profile', 'user-preference'],
-  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime'],
+  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'approval-policy'],
 }
 
 export interface ConfigImportReport {

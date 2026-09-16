@@ -9,23 +9,13 @@ import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** PLAN-0328 M1: session mode + session-only rules (L4) never leak into other scopes. */
+/**
+ * PLAN-0328 M1 (mode moved out by PLAN-0337): session-only rules and reuse grants (L4) never leak
+ * into other scopes; the session mode is persisted and covered by {@code SessionApprovalModeTest}.
+ */
 class SessionPolicyStateTest {
 
     private final SessionPolicyState state = new SessionPolicyState();
-
-    @Test
-    void modeIsSessionScopedAndMemoryOnly() {
-        state.setMode("s1", LayeredPolicyResolver.MODE_AUTO);
-
-        assertEquals(LayeredPolicyResolver.MODE_AUTO, state.modeOf("s1").orElseThrow());
-        assertTrue(state.modeOf("s2").isEmpty());
-    }
-
-    @Test
-    void rejectsUnsupportedMode() {
-        assertThrows(IllegalArgumentException.class, () -> state.setMode("s1", "yolo"));
-    }
 
     @Test
     void sessionRulesAccumulateWithInsertionSequence() {
@@ -39,20 +29,10 @@ class SessionPolicyStateTest {
     }
 
     @Test
-    void setModePreservesExistingRules() {
-        state.addRule("s1", PolicyRule.of("exec", "*", PolicyEffect.ALLOW));
-        state.setMode("s1", LayeredPolicyResolver.MODE_MANUAL);
-
-        assertEquals(1, state.rulesOf("s1").size());
-        assertEquals(LayeredPolicyResolver.MODE_MANUAL, state.modeOf("s1").orElseThrow());
-    }
-
-    @Test
     void snapshotEntryKeepsRulesImmutable() {
         var mutableRules = new java.util.ArrayList<>(List.of(
                 PolicyRule.of("exec", "pnpm test *", PolicyEffect.ALLOW)));
-        SessionPolicyState.Entry entry = new SessionPolicyState.Entry(
-                LayeredPolicyResolver.MODE_MANUAL, mutableRules, Instant.now());
+        SessionPolicyState.Entry entry = new SessionPolicyState.Entry(mutableRules, Instant.now());
         mutableRules.clear();
 
         assertEquals(1, entry.rules().size());
@@ -62,13 +42,11 @@ class SessionPolicyStateTest {
 
     @Test
     void clearDropsEverythingForTheSession() {
-        state.setMode("s1", LayeredPolicyResolver.MODE_AUTO);
         state.addRule("s1", PolicyRule.of("exec", "*", PolicyEffect.ALLOW));
         state.addGrant("s1", grant("write_file", "sha256:abc", "manual"));
 
         state.clear("s1");
 
-        assertTrue(state.modeOf("s1").isEmpty());
         assertTrue(state.rulesOf("s1").isEmpty());
         assertTrue(state.grantOf("s1", "write_file", "sha256:abc").isEmpty());
     }
@@ -121,7 +99,6 @@ class SessionPolicyStateTest {
         state.addGrant("s1", new SessionPolicyState.Grant("sha256:abc", null, "manual", 0L, 0, Instant.now()));
         state.addGrant(null, grant("write_file", "sha256:abc", "manual"));
 
-        assertTrue(state.modeOf("s1").isEmpty());
         assertTrue(state.grantOf("s1", "write_file", "sha256:abc").isEmpty());
     }
 

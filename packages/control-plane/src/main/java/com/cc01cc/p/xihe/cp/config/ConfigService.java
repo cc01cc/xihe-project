@@ -36,17 +36,24 @@ public class ConfigService {
 
     private static final Logger log = LoggerFactory.getLogger(ConfigService.class);
 
-    /** Eight-domain target set (decision #13/#17/#37). */
+    /**
+     * Nine-domain target set (decision #13/#17/#37, extended by PLAN-0337): {@code approval-policy}
+     * carries the workspace-level approval mode. It is workspace-writable only — the user layer must
+     * not expose a third place to set the approval mode, and instance-level lockdown is expressed by
+     * locked deny/ask rules instead.
+     */
     public static final Set<String> DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
-        "agent-runtime", "agent-profile", "user-preference", "logging");
+        "agent-runtime", "agent-profile", "user-preference", "logging",
+        "approval-policy");
 
     private static final Set<String> USER_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
         "agent-runtime", "agent-profile", "user-preference");
 
     private static final Set<String> WORKSPACE_WRITABLE_DOMAINS = Set.of(
-        "llm-provider", "context-policy", "embedding", "rag", "agent-runtime");
+        "llm-provider", "context-policy", "embedding", "rag", "agent-runtime",
+        "approval-policy");
 
     /** Decision #17: instructions is instance-level behaviour, never user/workspace writable. */
     private static final Map<String, Set<String>> INSTANCE_ONLY_KEYS = Map.of(

@@ -15,9 +15,9 @@ updated: 2026-09-12
 >
 > 现行模型（PLAN-0307 已落地）：**三层 `instance / workspace / user`**（解析链 `workspace > user > instance > 代码默认`）+ 凭证 **BYOK**（`provider_connections` 加密表，两级 `WORKSPACE > USER`，SYSTEM 已废除）+ **env 覆盖锁定**（env 为最高部署权威，UI 显示 env 生效值并禁用该项）。端点以 `docs/api/openapi.yaml` 为准。
 
-## 1. 三层所有权与八域
+## 1. 三层所有权与九域
 
-ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合满足 `instance(8) ⊇ user(7) ⊇ workspace(5)`：
+ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合满足 `instance(8) ⊇ user(7) ⊇ workspace(6)`（`approval-policy` 由 PLAN-0337 新增，仅 workspace 层）：
 
 | Domain | instance | user | workspace | 备注 |
 |--------|----------|------|-----------|------|
@@ -29,6 +29,7 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 | `agent-profile` | ✅（默认） | ✅（个人） | ❌ | `userName` |
 | `user-preference` | ✅（默认） | ✅（个人） | ❌ | `theme` / `language` |
 | `logging` | ✅ | ❌ | ❌ | instance 层唯一权威，可热更（决策 #23） |
+| `approval-policy` | ❌ | ❌ | ✅ | 审批模式 `mode`（`manual` / `auto`）；仅 workspace 层，user 层写入 403；instance 管控改用 locked deny/ask（PLAN-0337） |
 
 已裁撤域：`infrastructure`（→ env）、`workspace-config`（→ env / 工作区 API）、`mcp`（→ `mcp_stdio_servers` / `mcp_remote_servers` 表，决策 #27）；键迁移：`llm-provider.contextPolicy` → `context-policy`、`user-preference.{defaultModel,maxTokens,temperature}` → `llm-provider`（决策 #13/#16/#39）。
 
@@ -58,7 +59,7 @@ flowchart TD
 
 锚点：`ConfigService.resolve()` / `EnvOverlayRegistry`（env↔DB 键映射唯一登记点）。
 
-UI 入口 `/settings/config` 为**三个设置条目**：实例（仅 ADMIN，8 域）、工作区（当前 workspace，5 域）、个人（user 层 7 域）。读取统一 `GET /api/v1/config/{domain}?layer=<instance|workspace|user>&includeMeta=true`——`envOverridden` 列出被 env 覆盖的键及其 env 生效值，UI 对这些键禁用编辑并展示 env 值；保存体自动剔除锁定键。`includeMeta=true` 在 resolved（不带 layer）与单层视图下都返回该元数据。
+UI 入口 `/settings/config` 为**三个设置条目**：实例（仅 ADMIN，8 域）、工作区（当前 workspace，6 域，含 `approval-policy`）、个人（user 层 7 域）。读取统一 `GET /api/v1/config/{domain}?layer=<instance|workspace|user>&includeMeta=true`——`envOverridden` 列出被 env 覆盖的键及其 env 生效值，UI 对这些键禁用编辑并展示 env 值；保存体自动剔除锁定键。`includeMeta=true` 在 resolved（不带 layer）与单层视图下都返回该元数据。
 
 ## 2. 启动环境变量（.env 文件链 + CLI --set）
 
@@ -145,7 +146,7 @@ curl -X POST http://localhost:12631/api/v1/provider-connections \
 **方式 B：JSONC 导入**（批量初始化）
 
 ```bash
-cp config.import.example.jsonc config.import.local.jsonc  # 按八域模型填写非密钥配置（凭证走 provider_connections）
+cp config.import.example.jsonc config.import.local.jsonc  # 按九域模型填写非密钥配置（凭证走 provider_connections）
 curl -X POST "http://localhost:12631/api/v1/config/import?layer=instance" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \

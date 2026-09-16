@@ -34,13 +34,16 @@ public class PolicyController {
     private final PolicyRuleService ruleService;
     private final ToolFaceService faceService;
     private final SessionPolicyState sessionState;
+    private final SessionApprovalMode sessionApprovalMode;
     private final SessionService sessionService;
 
     public PolicyController(PolicyRuleService ruleService, ToolFaceService faceService,
-                            SessionPolicyState sessionState, SessionService sessionService) {
+                            SessionPolicyState sessionState, SessionApprovalMode sessionApprovalMode,
+                            SessionService sessionService) {
         this.ruleService = ruleService;
         this.faceService = faceService;
         this.sessionState = sessionState;
+        this.sessionApprovalMode = sessionApprovalMode;
         this.sessionService = sessionService;
     }
 
@@ -153,8 +156,8 @@ public class PolicyController {
         Map<String, Object> payload = new LinkedHashMap<>();
         SessionPolicyState.Entry snapshot = sessionState.snapshot(sessionId).orElse(null);
         payload.put("sessionId", sessionId);
-        payload.put("mode", snapshot == null || snapshot.mode() == null
-                ? LayeredPolicyResolver.MODE_MANUAL : snapshot.mode());
+        payload.put("mode", sessionApprovalMode.modeOf(sessionId)
+                .orElse(LayeredPolicyResolver.MODE_MANUAL));
         payload.put("sessionRules", snapshot == null ? 0 : snapshot.rules().size());
         return ResponseEntity.ok(payload);
     }
@@ -184,9 +187,12 @@ public class PolicyController {
             return problem(e);
         }
         try {
-            sessionState.setMode(sessionId, mode);
+            sessionApprovalMode.setMode(sessionId, mode);
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    e.getMessage());
+        } catch (IllegalStateException e) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND",
                     e.getMessage());
         }
         Map<String, Object> payload = new LinkedHashMap<>();

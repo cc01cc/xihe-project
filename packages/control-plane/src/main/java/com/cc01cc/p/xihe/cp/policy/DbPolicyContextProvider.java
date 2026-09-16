@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
 import com.cc01cc.p.xihe.cp.entity.ToolFaceEntity;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
@@ -25,7 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p><b>Cache</b> (spec §4.3): the DB layers and tool faces are cached per {@code (userId|workspaceId)}
  * key together with the per-process {@link PolicyVersion}; writers bump the version to invalidate.
- * SESSION rules and mode are memory-only and always read fresh from {@link SessionPolicyState}.</p>
+ * Session rules are memory-only ({@link SessionPolicyState}) and the session/workspace modes are
+ * always read fresh (PLAN-0337), so neither is cached with the rule snapshot.</p>
  *
  * <p><b>Fail-closed</b>: any load failure is logged and yields {@link PolicyContext#failedClosed()}
  * (forced INSTANCE-level ask), never allow (spec §4.3); failures are never cached.</p>
@@ -42,21 +44,30 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
     private static final String SCOPE_INSTANCE = "instance";
     private static final String SCOPE_WORKSPACE = "workspace";
 
+    /** PLAN-0337: workspace-level approval mode lives in its own config domain. */
+    static final String APPROVAL_POLICY_DOMAIN = "approval-policy";
+    static final String APPROVAL_MODE_KEY = "mode";
+
     private final PolicyRuleRepository ruleRepository;
     private final ToolFaceRepository faceRepository;
     private final SessionPolicyState sessionState;
+    private final SessionApprovalMode sessionApprovalMode;
     private final PolicyVersion policyVersion;
+    private final ConfigService configService;
     private final Map<String, CachedContext> cache = new ConcurrentHashMap<>();
 
     public DbPolicyContextProvider(PolicyRuleRepository ruleRepository, ToolFaceRepository faceRepository,
-                                   SessionPolicyState sessionState, PolicyVersion policyVersion) {
+                                   SessionPolicyState sessionState, SessionApprovalMode sessionApprovalMode,
+                                   PolicyVersion policyVersion, ConfigService configService) {
         this.ruleRepository = ruleRepository;
         this.faceRepository = faceRepository;
         this.sessionState = sessionState;
+        this.sessionApprovalMode = sessionApprovalMode;
         this.policyVersion = policyVersion;
+        this.configService = configService;
     }
 
-    /** DB-only snapshot; session rules and mode are never cached. */
+    /** DB-only snapshot of rules and tool faces; session rules and both mode sources stay fresh. */
     private record CachedContext(long version,
                                  List<LayeredPolicyResolver.LayerInput> layers,
                                  Map<String, ToolFaceRegistry.Face> faces) {
@@ -87,16 +98,69 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
             if (!sessionRules.isEmpty()) {
                 layers.add(new LayeredPolicyResolver.LayerInput(PolicyLayer.SESSION, sessionRules));
             }
-            String mode = sessionSnapshot.map(SessionPolicyState.Entry::mode).orElse(null);
-            PolicyLayer modeLayer = mode == null ? null : PolicyLayer.SESSION;
+            // Mode precedence (PLAN-0337): session override > workspace default > builtin manual.
+            String sessionMode = sessionApprovalMode.modeOf(sessionId).orElse(null);
+            String mode = sessionMode;
+            PolicyLayer modeLayer = sessionMode == null ? null : PolicyLayer.SESSION;
+            if (mode == null) {
+                String workspaceMode = workspaceMode(userId, workspaceId);
+                if (workspaceMode != null) {
+                    mode = workspaceMode;
+                    modeLayer = PolicyLayer.WORKSPACE;
+                }
+            }
 
             return new PolicyContext(layers, cached.faces(), mode, modeLayer);
         } catch (RuntimeException e) {
             // fail-closed: an unreadable rule set must never relax the decision
             log.error("[POLICY] context load failed, falling back to forced ask (fail-closed) "
                     + "userId={} workspaceId={} sessionId={}", userId, workspaceId, sessionId, e);
-            String sessionMode = sessionSnapshot.map(SessionPolicyState.Entry::mode).orElse(null);
+            String sessionMode = sessionApprovalMode.modeOf(sessionId).orElse(null);
             return PolicyContext.failedClosed(sessionMode);
+        }
+    }
+
+    /**
+     * Reads the workspace-level approval mode from the {@code approval-policy} config domain.
+     *
+     * <p>Read fresh (not cached with the rule snapshot): config writes do not bump
+     * {@link PolicyVersion}, so caching here would serve a stale mode after a settings change.</p>
+     *
+     * <p>Fail-closed: an unreadable config or an unsupported value is logged and ignored so the
+     * caller falls back to {@code manual}; a broken config must never relax the decision.</p>
+     */
+    private String workspaceMode(String userId, String workspaceId) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            return null;
+        }
+        try {
+            String raw = configService.resolve(APPROVAL_POLICY_DOMAIN, APPROVAL_MODE_KEY,
+                    parseUuid(userId), parseUuid(workspaceId));
+            if (raw == null || raw.isBlank()) {
+                return null;
+            }
+            String normalized = raw.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!SessionPolicyState.MODES.contains(normalized)) {
+                log.warn("[POLICY] ignoring unsupported {}.{}={} (fail-closed to manual)",
+                        APPROVAL_POLICY_DOMAIN, APPROVAL_MODE_KEY, raw);
+                return null;
+            }
+            return normalized;
+        } catch (RuntimeException e) {
+            log.error("[POLICY] approval-policy mode lookup failed, falling back to manual "
+                    + "userId={} workspaceId={}", userId, workspaceId, e);
+            return null;
+        }
+    }
+
+    private static java.util.UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.util.UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 

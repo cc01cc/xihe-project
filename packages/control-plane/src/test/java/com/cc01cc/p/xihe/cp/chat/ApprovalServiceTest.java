@@ -12,6 +12,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.policy.BuiltinPolicyContextProvider;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyRevision;
+import com.cc01cc.p.xihe.cp.policy.SessionApprovalMode;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,11 +54,12 @@ class ApprovalServiceTest {
     private final ApprovalPendingStore pendingStore = new ApprovalPendingStore(
             approvals, new ObjectMapper(), policySummary);
     private final SessionPolicyState sessionPolicyState = new SessionPolicyState();
+    private final SessionApprovalMode sessionApprovalMode = mock(SessionApprovalMode.class);
     private final AnswererChain answererChain = new AnswererChain(
             List.of(new UserAnswerer(), new AutoReviewAnswerer()));
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
             operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
-            policyRevision, workspaceRepository, answererChain);
+            sessionApprovalMode, policyRevision, workspaceRepository, answererChain);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
@@ -104,13 +106,13 @@ class ApprovalServiceTest {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
                 operationService, grantWriter, audit, summary,
                 new ApprovalPendingStore(approvals, new ObjectMapper(), summary), sessionPolicyState,
-                policyRevision, workspaceRepository, answererChain);
+                sessionApprovalMode, policyRevision, workspaceRepository, answererChain);
     }
 
     private ApprovalService serviceWithAnswerers(ApprovalAnswerer... answerers) {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
                 operationService, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
-                policyRevision, workspaceRepository, new AnswererChain(List.of(answerers)));
+                sessionApprovalMode, policyRevision, workspaceRepository, new AnswererChain(List.of(answerers)));
     }
 
     @Test
@@ -244,7 +246,6 @@ class ApprovalServiceTest {
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
         when(agent.respond(TEST_REQUEST_ID, true, "once", null)).thenReturn(Map.of("status", "accepted"));
-        sessionPolicyState.setMode(TEST_SESSION, "manual");
 
         Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
                 ApprovalDecision.once());
@@ -524,7 +525,7 @@ class ApprovalServiceTest {
     void consumeRejectsModeRankDowngrade() {
         ChatApproval approval = approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
         approval.setModeAtGrant("auto");
-        sessionPolicyState.setMode(TEST_SESSION, "manual");
+        when(sessionApprovalMode.modeOf(TEST_SESSION)).thenReturn(Optional.of("manual"));
 
         assertFalse(service.consumeApprovedGrant(
                 TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, TEST_SESSION, "write_file", vectorMcpBody()));
@@ -536,7 +537,7 @@ class ApprovalServiceTest {
     void consumeAllowsAModeRelaxationAfterTheGrant() {
         ChatApproval approval = approvedRow(CANONICAL_VECTOR_HASH, Instant.now().plusSeconds(60));
         approval.setModeAtGrant("manual");
-        sessionPolicyState.setMode(TEST_SESSION, "auto");
+        when(sessionApprovalMode.modeOf(TEST_SESSION)).thenReturn(Optional.of("auto"));
         when(approvals.consumeApprovedGrant(eq(UUID.fromString(TEST_REQUEST_ID)), eq(TEST_USER),
                 eq(TEST_WORKSPACE), eq(TEST_SESSION), eq("write_file"), any(Instant.class))).thenReturn(1);
 
@@ -583,7 +584,7 @@ class ApprovalServiceTest {
 
         sessionPolicyState.clear(TEST_SESSION);
         grant("write_file", CANONICAL_VECTOR_HASH, "auto", 0L, 0);
-        sessionPolicyState.setMode(TEST_SESSION, "manual");
+        when(sessionApprovalMode.modeOf(TEST_SESSION)).thenReturn(Optional.of("manual"));
         assertFalse(service.tryReuseSessionGrant(
                 TEST_SESSION, TEST_WORKSPACE, "write_file", vectorMcpBody()));
 
