@@ -26,7 +26,7 @@ tags:
 | 表数量 | 33 张业务表 + `flyway_schema_history`（Flyway 自维护，不在本文列字段） |
 | 权威顺序 | Flyway SQL > JPA Entity > 本文档；`ddl-auto=validate`（PLAN-280），Flyway 是唯一 schema manager |
 | 主键风格 | 全部 PostgreSQL 原生 `UUID`（PLAN-280）；Java 侧 @Id 为 `UUID` 类型，FK 列为 `String` + `UuidStringConverter` |
-| 时间风格 | 全部 `TIMESTAMPTZ DEFAULT NOW()`（PLAN-280 消除裸 `TIMESTAMP`） |
+| 时间风格 | 当前 Flyway 链的时间列均为带时区类型：`TIMESTAMPTZ`（V21/V23 以等价的 `TIMESTAMP WITH TIME ZONE` 书写），默认值按各迁移定义；不存在裸 `TIMESTAMP` |
 | 删除语义 | `workspaces.deleted_at` 软删 + 部分唯一索引；`messages/context_*` 随 `sessions` 级联删；`files.message_id` 置空 |
 | 扩展 | `V1` 内 `CREATE EXTENSION IF NOT EXISTS vector`（幂等）；`document_chunks` 由 Agent 侧 langchain_postgres 自建自管，不在 Flyway 链内 |
 | 表格式约定 | 每张表：字段表（一行一字段，`约束` 列只放单列约束）+ 表下索引注释（`CREATE INDEX` 与跨列唯一约束） |
@@ -38,11 +38,11 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 全量迁移 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql`（PLAN-280 destructive rebaseline，旧 V2~V22/U6 已移出，仅 Git 历史可追溯） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V23__run_checkpoint_revert.sql`（当前 active chain；V1 基线，V2–V23 增量迁移） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（30 个）+ `context/entity/`（3 个） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
-> **PLAN-280 rebaseline（2026-09-07）**：本地数据库一次性重建为单一 `V1__init_schema.sql`（21 张表）。统一原生 UUID、TIMESTAMPTZ、显式命名约束与 ON DELETE、`ddl-auto=validate`。旧 V1~V22+U6 迁移链已从 active classpath 移出（仅 Git 历史可追溯）。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
+> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；其后的 V2–V23 继续在 active classpath 中按顺序增量应用。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
 >
 > **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V23）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
 
@@ -165,8 +165,8 @@ erDiagram
 | name | VARCHAR(100) | nullable | 展示用 |
 | avatar | VARCHAR(512) | nullable | 展示用 |
 | settings | TEXT | nullable | 遗留自由字段，用户偏好以 `config` 表为准 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | 创建时间 |
-| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | 无自动更新触发器，靠 JPA 维护 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | 创建时间 |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | 无自动更新触发器，靠 JPA 维护 |
 
 > 索引：`idx_users_email (email)`
 
@@ -188,8 +188,8 @@ erDiagram
 | sandbox_spec_hash | VARCHAR(64) | nullable（`V11`） | 当前生效规格哈希 |
 | sandbox_spec | JSONB | nullable（`V11`） | 当前生效规格快照 |
 | deleted_at | TIMESTAMPTZ | nullable（`V14`） | 软删标记，删后不阻塞同 owner 新建 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
-| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：
 > - `idx_workspaces_owner_id (owner_id)`
@@ -203,7 +203,7 @@ erDiagram
 | workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id)`，联合 PK | 归属 |
 | user_id | VARCHAR(36) | NOT NULL FK `users(id)`，联合 PK | 成员 |
 | role | VARCHAR(20) | NOT NULL DEFAULT 'MEMBER' | 成员角色 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | 加入时间 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | 加入时间 |
 
 > 索引：
 > - `idx_workspace_users_user_id (user_id)`
@@ -222,8 +222,8 @@ erDiagram
 | archived | BOOLEAN | NOT NULL DEFAULT FALSE | 归档非删除 |
 | provider_connection_id | VARCHAR(36) | nullable，无 FK（`V19`） | 逻辑绑定，不做外键避免跨域耦合 |
 | connection_revision | BIGINT | nullable（`V19`） | 绑定时的连接版本 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
-| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：
 > - `idx_sessions_workspace_id (workspace_id)`
@@ -243,7 +243,7 @@ erDiagram
 | metadata | TEXT | nullable | 遗留自由字段 |
 | attachments | JSONB | nullable（`V6`） | 内联附件摘要，canonical 附件在 `files` |
 | run_id | VARCHAR(36) | nullable FK `chat_runs(id)`（`V16`） | 归属轮次，见 §3.2 `chat_runs` |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | 排序键 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | 排序键 |
 
 > 索引：
 > - `idx_messages_session_id (session_id)`
@@ -343,8 +343,8 @@ erDiagram
 | auth_config | TEXT | nullable | 遗留，OAuth 密文已迁 `oauth_credentials` |
 | enabled | BOOLEAN | NOT NULL DEFAULT TRUE | 禁用即摘流 |
 | auth_mode | VARCHAR(16) | NOT NULL DEFAULT 'oauth'（旧链 V15） | `oauth` / `no-auth`（公开免 broker） |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
-| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：`idx_mcp_remote_servers_workspace_id (workspace_id)`（V12 改名）
 
@@ -370,8 +370,8 @@ erDiagram
 | server_id | VARCHAR(36) | NOT NULL | 真实后端 server |
 | backend_name | VARCHAR(255) | NOT NULL | 真实后端工具名 |
 | generation | BIGINT | NOT NULL DEFAULT 0 | 每次 `tools/list` 合并递增，审计回放用 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
-| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：`idx_mcp_tool_aliases_server (workspace_id, server_id)`
 
@@ -390,8 +390,8 @@ erDiagram
 | refresh_token_ciphertext | TEXT | NOT NULL | 信封加密密文 |
 | encryption_key_version | VARCHAR(32) | NOT NULL | 密钥版本，用于轮转 |
 | status | VARCHAR(32) | NOT NULL DEFAULT 'AUTHORIZED' | 授权态 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
-| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：
 > - `idx_oauth_credentials_workspace (workspace_id)`
@@ -523,7 +523,7 @@ erDiagram
 | cmetadata | JSONB | nullable | 来源元数据 |
 | document_id | VARCHAR(36) | nullable | 来源文档 |
 | chunk_index | INT | nullable | 切片序号 |
-| created_at | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：
 > - `idx_chunks_embedding` — `ivfflat (embedding vector_cosine_ops) WITH (lists=100)`，余弦检索
@@ -542,7 +542,7 @@ erDiagram
 | payload | JSONB | NOT NULL DEFAULT '{}' | 事件内容 |
 | correlation_id | VARCHAR(36) | nullable | 关联链 |
 | causation_id | VARCHAR(36) | nullable | 因果链 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：
 > - `idx_context_events_session_id (session_id)`
@@ -562,8 +562,8 @@ erDiagram
 | projection_type | VARCHAR(50) | NOT NULL DEFAULT 'agent_context' | 投影类型 |
 | latest_sequence | BIGINT | NOT NULL DEFAULT 0 | 已物化到的事件序号 |
 | payload | JSONB | NOT NULL DEFAULT '{}' | 投影内容 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
-| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：
 > - `idx_context_projections_session_id (session_id)`
@@ -577,8 +577,8 @@ erDiagram
 | workspace_id | VARCHAR(36) | NOT NULL | 归属 |
 | source_key | VARCHAR(255) | NOT NULL | 源标识 |
 | hash | VARCHAR(64) | NOT NULL | 内容哈希 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
-| updated_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：
 > - `idx_context_source_hashes_workspace_id (workspace_id)`
@@ -600,7 +600,7 @@ erDiagram
 | storage_path | VARCHAR(512) | NOT NULL | 物理路径 |
 | session_id | VARCHAR(36) | nullable FK `sessions(id) ON DELETE CASCADE`（`V6`） | 删会话清附件 |
 | message_id | VARCHAR(36) | nullable FK `messages(id) ON DELETE SET NULL`（`V6`） | 删消息保留文件行 |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | orphan 清理 24h 窗口基准 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | orphan 清理 24h 窗口基准 |
 
 > 索引：
 > - `idx_files_user_id (user_id)`
@@ -619,7 +619,7 @@ erDiagram
 | resource_type | VARCHAR(50) | nullable | 资源类型 |
 | resource_id | VARCHAR(36) | nullable | 资源 ID |
 | details | TEXT | nullable | 脱敏后 JSON |
-| created_at | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
 > 索引：
 > - `idx_audit_logs_user_id (user_id)`

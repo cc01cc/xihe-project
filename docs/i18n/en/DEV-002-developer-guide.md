@@ -6,7 +6,7 @@ sidebar_group: "Developer Guide"
 sidebar_order: 2
 status: active
 created: 2026-05-28
-updated: 2026-06-15
+updated: 2026-09-16
 ---
 
 # Developer Guide — xihe Agent Platform
@@ -275,20 +275,17 @@ Agent integration tests (`packages/agent/tests/test_agent_cp_integration.py`) re
 docker compose up -d --build
 cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
 
-# Method 2: Host H2 mode
-# Terminal/process 1 (tracked separately): start CP and keep its output available for diagnostics.
-XIHE_CP_DATASOURCE_URL="jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE" \
-XIHE_CP_DATASOURCE_DRIVER="org.h2.Driver" \
-XIHE_CP_DATASOURCE_USERNAME="sa" \
-XIHE_CP_DATASOURCE_PASSWORD="" \
-mvn spring-boot:run -q -f packages/control-plane/pom.xml
+# Method 2: Host stack
+# Use the tracked orchestrator; it owns the process lifecycle and readiness checks.
+mise run dev:host
 
-# Terminal/process 2: probe CP before running Agent tests; fail with the response/diagnostic if not ready.
-curl --fail-with-body --silent --show-error --max-time 5 http://localhost:8080/actuator/health || { echo "CP health probe failed; inspect the tracked CP process and response above."; exit 1; }
+# In a separate terminal, probe CP before running Agent tests. The bounded health
+# probe is a prerequisite and reports failure instead of silently skipping tests.
+curl --fail-with-body --silent --show-error --max-time 5 http://localhost:12631/actuator/health
 cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
 ```
 
-Test files may use `@pytest.mark.skipif` only for explicitly optional tests; an unreachable CP is otherwise an explicit test/setup failure.
+Test files may use `@pytest.mark.skipif` only for explicitly optional tests; an unreachable CP is otherwise an explicit test/setup failure. Do not use fixed sleeps, bare background shell operators, or untracked processes; use the tracked process/readiness/health probe with a bounded timeout.
 
 ## 3. Architecture Design
 
@@ -296,7 +293,7 @@ Test files may use `@pytest.mark.skipif` only for explicitly optional tests; an 
 
 - UI ↔ CP: HTTP + SSE, for chat message streaming
 - Agent ↔ CP: HTTP + SSE, for Agent streaming responses
-- CP ↔ Runtime: MCP (Streamable HTTP), for tool invocation
+- CP ↔ Runtime: a per-request Runtime executor boundary for tool invocation; the tracked executor owns process readiness and health probing.
 
 ### 3.2. MCP Reverse Proxy
 
@@ -365,7 +362,7 @@ Test directories are named by **test pattern**, not by functional module:
 
 Rules:
 - **Mock Tests**: Do not depend on external services; all APIs intercepted via `page.route()` or Mock objects
-- **Real Tests**: Depend on real backend (Docker Compose); automatically checked for reachability via `skipif`
+- **Real Tests**: Depend on the declared real backend; readiness is checked before the test with a bounded probe, and unreachable required dependencies fail the test rather than being skipped
 - **No Mixed Placement**: Same directory should not contain both Mock and Real tests (`e2e/` split into mock/ and real/ for this purpose)
 
 **Total: 756+ tests**
