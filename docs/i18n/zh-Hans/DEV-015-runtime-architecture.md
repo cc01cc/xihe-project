@@ -53,7 +53,7 @@ sequenceDiagram
 
 镜像预置 `xihe-executor` / `xihe-job` 独立容器用户（切换与凭据隔离语义待实现确认，见 DEV-018）
 - `execute_command` 为显式 Shell 语义：`args` 作 positional parameters 传入（禁拼接）；timeout/cancel 终止并等待 child/process group；stdout/stderr 与 retained artifact 有界，超限只留 bounded preview。
-- MCP 工具集（rmcp `#[tool]`，`main.rs` 共 22 个）：read_file/read_file_range（二进制安全，base64+is_binary，16MiB 预览上限）/write_file/list_directory/glob/grep/execute_command/read_command_output/get_file_info/watch_directory/edit_file/delete_file/delete_directory/move_file/copy_file/mkdir/extract_pdf_text/web_fetch/start_background_process/list_background_processes/get_background_process/cancel_background_process。公开集由 `GatewayToolRegistryContractTest` 冻结（PLAN-290 M0.2 / PLAN-292 M2）；`apply_patch/create_snapshot/revert_snapshot` 为 internal-only 不在此列。
+- MCP 工具集（rmcp `#[tool]`，`main.rs` 共 23 个）：read_file/read_file_range（二进制安全，base64+is_binary，16MiB 预览上限）/write_file/list_directory/glob/grep/execute_command/read_command_output/get_file_info/watch_directory/edit_file/delete_file/delete_directory/move_file/copy_file/mkdir/extract_pdf_text/web_fetch/start_background_process/list_background_processes/get_background_process/cancel_background_process/apply_patch（多文件原子 patch，需审批）。公开集由 `GatewayToolRegistryContractTest` 冻结（PLAN-290 M0.2 / PLAN-292 M2 / PLAN-0328 T3.2）；`create_snapshot/revert_snapshot` 仍为 internal-only，不在此列。
 
 ## 3. 后台 Job 与 FS 安全
 
@@ -76,3 +76,12 @@ sequenceDiagram
 - **未确认追偿**：取消未确认的条目保留在注册表，空闲回收循环用 `inspect_exec` 复核；确认结束则回调 CP 的 late-termination 端点（5 次重试后放弃告警）。
 - **Job 运行时限**：`start_background_process` 的 `timeout`（payload `timeoutSecs`）默认 60 分钟、显式 0 不限；到点由宿主清理通道（`cleanup_jobs` op）终止进程组并落 `timeout` 终态。job 参数/描述统一 `jobId`，清理先判活（`/bin/kill -0`）、以**文件** mtime 判过期（禁用目录 mtime，防误清运行中 job）。
 - 容器侧改动必须先 `mise run image:workspace:build` 才生效（否则测到的是旧二进制）。
+
+## 6. 当前事实：Run checkpoint 与回滚（PLAN-0328）
+
+- Runtime 在 `<hostRoot>/.xihe-shadow/<workspaceId>.git` 维护独立影子 Git；它位于 workspace 外、不 bind 进 Sandbox，不写用户 `.git`、index、branch。每个 Run 使用 `refs/xihe/<runId>/{base,end}`，只记录工作区变更集。
+- `hostRoot` 是 workspace 物理根；Runtime 先按 workspace 派生目录并执行路径/归属校验，影子库与工作区均限于该根下，未知 workspace、Git 不可用或版本不足均显式返回不可回滚，不回退到宿主任意目录。
+- Runtime 内部契约为 `POST /internal/v1/runtime/workspaces/{workspaceId}/checkpoints`、`GET .../checkpoints/{runId}`、`POST .../{runId}/seal`、`POST .../checkpoints/gc`，以及 revert preview/execute、blob、`GET .../git-status`；CP 是调用方，公共 `/api/v1/chat/runs/{runId}/checkpoint...` 与 workspace 路由由 CP 投影/代理。
+- workspace mutation lease 为单写者、TTL 30 分钟；并发建立或回滚返回 `CHECKPOINT_LEASE_HELD`。保留策略固定为每 workspace 最新 50 个 Run、TTL 30 天；unsealed checkpoint 永不由 GC 删除。
+- `apply_patch` 是 Gateway-public 的 23 工具之一，走正常 Agent/CP 审批并触发 checkpoint；`create_snapshot`、`revert_snapshot` 是 Runtime/container internal-only，不进入 `tools/list`，Agent 不可发现或调用。UI 回滚只走 CP public revert 路由。
+- 端点和字段以 [OpenAPI](../../api/openapi.yaml) / [API inventory](../../api/inventory.md) 为准；实现与真实验证证据见 [PLAN-0328 M2/M3 evidence](../../../../plans/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md)。

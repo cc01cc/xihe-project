@@ -73,3 +73,10 @@ flowchart LR
 - **Runtime 不可达/未确认** → 账本落 `aborted` 并保留追偿：Runtime 复核结束后回调 `POST /internal/v1/operations/items/{itemId}/late-termination`，CP 只追加 `item.terminated.late` 事件、不回改终态。
 - **恢复与对账**：启动恢复把崩溃遗留的 `cancelling` 收敛为 `cancelled`；`ChatRunReconciliationService` 周期（默认 5 分钟，宽限 10 分钟）收敛无 lease 且超宽限的非终态 run（`cancelling → cancelled`，其余 `ambiguous(CP_RECONCILED)`），并收口 operation 与在途 item/attempt；**本进程活跃 run 一律跳过**（防误伤）。
 - 账本写路径约束：批量状态转换显式刷新 `updated_at`（`CURRENT_INSTANT`）；`appendItem` 先对 operation 行加悲观锁再分配序号，`appendEvent` 用聚合 `max`。
+
+## 8. 当前事实：PLAN-0328 审批与 Run checkpoint
+
+- **审批策略**：策略面（tool face、规则、mode、grant reuse）与既有 UI 人工审批并行；post-gate 的 run-scoped ASK 以 HTTP `409` 携带 JSON-RPC `error.code=-32003`、`error.message=APPROVAL_REQUIRED` 和 `error.data`（含 `approvalRequestId` 等安全字段）。无 run context 仍使用 legacy Problem Details 409。
+- **Checkpoint 投影**：Runtime 负责影子 Git；CP 以 `run_checkpoints`（V22）投影 base/sealed/unsealed/degraded/expired 状态，V23 追加 revert 状态与摘要。公共 Run/workspace checkpoint、preview、revert、file、git-status、retention、GC 路由以 [OpenAPI](../../api/openapi.yaml) 和 [API inventory](../../api/inventory.md) 为准。
+- **回滚账本**：UI 触发的 `revert_snapshot` 记录为 `kind=checkpoint`、`source=ui`；checkpoint 建立/封存仍记录 `source=runtime`。摘要只含计数、结果与安全原因，不含原始参数或文件内容。
+- **规范入口**：完整策略与 checkpoint 设计、测试和剩余证据见 [PLAN-0328 evidence](../../../../plans/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md)。本文只保留当前边界，不复制设计。

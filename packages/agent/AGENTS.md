@@ -74,6 +74,8 @@ src/xihe_agent/
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph
 - Context 通过 `ContextProvider.load()` 获取 CP 投影后的 `AgentContext` 快照；事件持久化由 `EventStore` 写入 CP
 - **Chat 流式（PLAN-230）**：`XiheLiteLLM` 以 `streaming=True` 实现 `BaseChatModel._astream()`，使 `astream_events` 产生真实 `on_chat_model_stream`；`LangGraphEventAdapter` 按 `run_id` 记录 `streamed` 状态，`on_chat_model_end` 仅在无 stream 时 fallback 单 `token`，避免重复；`main.py` 设置 `litellm.suppress_debug_info=True` 并经 `log_redact` 掩码 `Authorization:`，日志仅 `tokenChars`/`tokenCount` 不记内容
+- **Post-gate approval**：CP 闸门以 JSON-RPC `-32003` 返回，`error.data` 携带 `code=APPROVAL_REQUIRED`、`approvalRequestId`、`tool`、`expiresAt` 与 `retryHeader`。Agent 注册 waiter 等待同一 request id，批准后仅重试一次，并以 `X-Xihe-Approval-Request-Id` 头携带 grant；第二次 gate/403、过期、错配或传输失败均 fail-closed。复用 grant 必须绑定同一工具及 canonical arguments SHA-256，不得以截断 preview 匹配。
+- **Tool visibility**：`apply_patch` 是 Gateway-public mutation，走正常 approval；`create_snapshot`/`revert_snapshot` 仍 internal-only。Agent 变更至少运行 `cd packages/agent && uv run pytest tests/unit/test_approval_tool.py tests/unit/test_mcp_client.py tests/unit/test_tool_registry_contract.py tests/unit/test_mcp_timeout_override.py -q`，并按影响范围补跑 `uv run ruff check src/` 与 `uv run mypy src/`。
 
 ## Permissions
 

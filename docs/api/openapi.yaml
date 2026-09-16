@@ -80,7 +80,9 @@ paths:
       operationId: mcpPost
       summary: MCP JSON-RPC endpoint (tools/list, tools/call, discovery)
       description: |
-        Agent-facing MCP gateway. `tools/call` is policy-gated: ALLOW dispatches, ASK requires an
+        Agent-facing MCP gateway. The Gateway-public built-in mutation `apply_patch` is exposed
+        through the normal approval path; `create_snapshot` and `revert_snapshot` remain
+        internal-only and are not returned by `tools/list`. `tools/call` is policy-gated: ALLOW dispatches, ASK requires an
         exact approval grant or session fingerprint. A run-scoped ASK without either creates (or
         reuses) the durable pending approval and answers `409` with a JSON-RPC error frame carrying
         the safe extension in `error.data`; a call without run context falls back to the legacy
@@ -265,7 +267,7 @@ paths:
         PLAN-0328 M3 W2 (decision #12): UI/user-initiated only — the Agent never reaches this route. The
         Runtime takes the workspace mutation lease itself, so a live run answers 409 `CHECKPOINT_LEASE_HELD`.
         Acks are required for head-change and conflicting paths reported by the preview. On success the CP
-        appends a `checkpoint`/`revert_snapshot` ledger item (`source=cp`) and records
+        appends a `checkpoint`/`revert_snapshot` ledger item (`source=ui`) and records
         `run_checkpoints.revert_state` (`rolled_back` when nothing failed or was skipped, else `partial`),
         `revert_ref`, `revert_summary`, `reverted_at` and the attempt counter under a `state='sealed'` guard;
         an SSE `run_checkpoint` follows. The body mirrors the Runtime result (per-item outcomes stay

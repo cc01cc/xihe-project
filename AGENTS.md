@@ -135,7 +135,7 @@ packages/
 - **配置（ConfigService）**：三层作用域 `instance / workspace / user`（域集合 `instance ⊇ user ⊇ workspace`），解析链 `workspace > user > instance > 代码默认`，env 为部署权威（命中即锁定并显式暴露）。凭证 BYOK 两级 `WORKSPACE > USER`（`provider_connections` 加密表，SYSTEM 层已废）；config 层任何 `*ApiKey` 写入一律 `rejectProviderSecrets` 403。`mcp` 域拆 `mcp_stdio_servers` / `mcp_remote_servers` 两载体；`infrastructure` / `workspace-config` 域已撤。
 - **Provider 共享**：Agent 不逐层拼装实例密钥；CP `GET /internal/v1/config/effective/{domain}` 提供单份 effective（含 env 覆盖），user/workspace 覆盖随 run payload push；凭证由 `provider_connections` 租约下发，env 兜底仅限离线/无租约路径。
 - **Agent 接口抽象**：`AgentRunner`（`LangGraphRunner` 实现）、`BaseAgentTool`/`ToolSpec`、`EventAdapter`（→ SSE `AgentEvent`）、`LLMProvider`、`EventStore`/`AgentContext`；LangChain/LangGraph 实现必须隔离在接口之后。
-- **Runtime / Sandbox 边界**：控制面（CP：workspace 元数据/授权/健康/降级）与执行面（Runtime：文件/命令/容器/MCP bridge）分离，进程保活由外部 orchestrator（Docker/mise watcher）负责。`/health` 仅进程存活、`/ready` 不等待全部 Sandbox 物化，Workspace 按 `workspaceId` 懒加载。单 Runtime/单设备 v1 不以 registration/heartbeat/generation/warm pool/microVM/多设备接管为前置条件。未知 workspace、Docker 不可用、执行超时必须显式失败，禁止默认目录或静默降级掩盖状态丢失。远程 MCP 仅经 CP logical endpoint，禁止跨 workspace 复用已发现工具。CP→Runtime 调用恒有界（connect 2s / read 10s，超时走既有显式降级，禁 host fallback）；工作区删除以 DB 逻辑删除为权威，Runtime 沙盒清理在事务提交后 best-effort（失败记 `RUNTIME_CLEANUP_FAILED`，孤儿容器由 Runtime 启动期 `cleanup_orphans` 兜底）。**沙盒后端须可替换**：执行层抽象建在能力（execute/session/fs/lifecycle）而非 Docker 传输，禁止把 `docker exec`/容器 IP/端口发布/`network_mode`/容器内 pid 文件/沙盒内 HTTP 服务泄漏到执行层之上（设计原则与泄漏审计见 `sandbox-backend-abstraction` skill）。
+- **Runtime / Sandbox 边界**：控制面（CP：workspace 元数据/授权/健康/降级）与执行面（Runtime：文件/命令/容器/MCP bridge）分离，进程保活由外部 orchestrator（Docker/mise watcher）负责。`/health` 仅进程存活、`/ready` 不等待全部 Sandbox 物化，Workspace 按 `workspaceId` 懒加载。单 Runtime/单设备 v1 不以 registration/heartbeat/generation/warm pool/microVM/多设备接管为前置条件。未知 workspace、Docker 不可用、执行超时必须显式失败，禁止默认目录或静默降级掩盖状态丢失。远程 MCP 仅经 CP logical endpoint，禁止跨 workspace 复用已发现工具。CP→Runtime 调用恒有界（connect 2s / read 10s，超时走既有显式降级，禁 host fallback）；工作区删除以 DB 逻辑删除为权威，Runtime 沙盒清理在事务提交后 best-effort（失败记 `RUNTIME_CLEANUP_FAILED`，孤儿容器由 Runtime 启动期 `cleanup_orphans` 兜底）。**沙盒后端须可替换**：执行层抽象建在能力（execute/session/fs/lifecycle）而非 Docker 传输，禁止把 `docker exec`/容器 IP/端口发布/`network_mode`/容器内 pid 文件/沙盒内 HTTP 服务泄漏到执行层之上（设计原则见 `sandbox-backend-abstraction` skill；**契约与能力声明见 DEV-031**，泄漏审计记录见 PLAN-0329）。
 - **待收敛项**：`WorkspaceRegistry` 与 `WorkspaceManager` 必须收敛为单一可恢复 workspace 状态机（create/exec/MCP/pause/resume/restart/delete），不得在双路径继续堆叠；隔离引擎升级排在生命周期状态机、持久化恢复与 fail-closed 边界之后。详见 DEV-015 / DEV-018。
 
 ## Code Style
@@ -191,6 +191,12 @@ packages/
 
 > Docker Desktop for Windows 须启用 WSL2 集成。所有标记 ✅ 的测试层不得因 Docker 环境跳过。
 
+默认按受影响边界选择测试层：单模块改动跑对应单元/文件级命令；跨模块协议改动跑 T2/T3 integration；UI 消费或端到端行为改动再跑对应 Playwright profile。测试编排与真实性规则见 `xc-cross-cutting-checklist`、`test`、`integration-test-realism` 和 `playwright` skills；全量仅在里程碑或 PLAN 收尾执行。
+
+### Contract and document sync
+
+Route/SSE/Flyway/tool-surface changes must update the OpenAPI contract or route/event inventory and the affected package docs in the same change wave. Do not defer this sync until PLAN completion.
+
 ## Telemetry & Logging
 
 日志通过 `XIHE_LOG_LEVEL_<MODULE>` → `XIHE_LOG_LEVEL` 回退链设定，支持 ConfigService 动态调级。JSONL 格式，`mise run clean` 清空。四模块在序列化层统一脱敏（token/JWT/Bearer/PEM → `***redacted***`），`X-Request-Id` 经 CP filter 生成并向 Runtime/Agent 贯通；泄露扫描门禁 `node scripts/scan-log-secrets.mjs`。详见 `docs/i18n/zh-Hans/DEV-004-logging.md`。
@@ -224,6 +230,7 @@ packages/
 - **@PreAuthorize**: 与 `/health` 方法级注解冲突，需方法级而非类级
 - **Spring Boot 4 HTTP 层 ≠ Hibernate Jackson2**: CP 响应不得直接放 Jackson2 `JsonNode` / 第三方 mapper 类型（Boot 4 消息转换器与 Hibernate JSON 映射不同源，`JsonNode` 会被当 POJO 序列化）；统一 `objectMapper.convertValue(node, Object.class)` 转普通 Map/List。`isProviderSecretKey` 类嗅探器注意 `maxTokens` 含 "token" 的误伤（`contains("token") && !contains("maxtoken")`）
 - **E2E 串行**: Playwright + Docker 同时运行易 OOM，mock/real 分开串行
+- **上下文管道现状（2026-09-15 审计；修复见 PLAN-0330）**: ① `CONTEXT_OVERFLOW` 是**死信**——Agent 抛出（`langgraph_runner.py`），**全仓零消费者**，超窗自愈未落地；② 源去重键为 **workspace 级**（`ContextSourceRefreshService` 的 `(workspace_id, source_key)`）而 `context.source_changed` 事件写给**调用时的 sessionId** → **新会话拿不到 `AGENTS.md` 注入**（作用域错配）；③ 压缩摘要**双写**（`messages` 一份受 20 条截断 + `epoch.system_messages` 一份），且 `applyCompaction` 与 `setEpoch` 都**整体重建 epoch** → 压缩会清掉 L1 规则、源变更会清掉摘要；④ **cwd 三层未落地**：DEV-031 契约要求 `execute(op)` 显式 `argv/cwd/env`，但 `RequestRewriter` 实为 pass-through（注释与实现不符）、`OperationItem.cwd` 无写入方，实际 cwd 仅来自容器 WORKDIR `/workspace`；⑤ 嵌套 `AGENTS.md`（`packages/agent/`、`packages/runtime/`）**当前完全不注入**
 - **容器资源约束**: compose 4 服务均有 `mem_limit`（pg 512m / cp 768m / agent 640m / runtime 128m），CP 内置 SerialGC + Xmx384m，沙盒容器限 512MB + 2 CPU；OOM 时按需上调
 - **Runtime 执行边界**: Workspace 操作统一经 `WorkspaceExecutionRouter` 的 per-request Docker exec（`--oneshot` 单帧：宿主读取首个完整 result JSON 后关闭 stdin，EOF 仅为清理边界），无 HTTP 通道/instance token/长驻 worker；background job 用 `/tmp/xihe-jobs` 状态文件（opaque `jobId` + `cancel_background_process`）；FS 写路径经 rustix openat2 helper
 - **Safe Coding Loop**: Runtime mutation core 用 snapshot manifest + pre/post content hash + 多文件 patch 失败回滚；Agent MCP interceptor 经一次性 durable approval grant 恢复批准后 dispatch，grant 缺失/不匹配/重复消费 fail-closed；grant 匹配键 = canonical arguments SHA-256（`arguments_hash`），preview 截断不影响批准后执行
@@ -231,14 +238,14 @@ packages/
 - **MCP session-id 签名**: 必须 HMAC 签名，禁止明文或仅 Base64
 - **Agent MCP init 按需执行**: 纯 chat 即使带 `workspaceId` 也不连接 CP MCP；仅明确需要 Workspace tool 的请求才触发工具发现与 Sandbox materialization；不得跨 Workspace 复用已发现工具
 - **dev:full/T3 拓扑边界**: 验证主线是 Windows `dev:host`；Compose E2E 需 Runtime 的 Docker Engine socket 与容器内 WorkspaceStorage 映射，未完成前不得把 `dev:full`/T3 失败归因于 host v1
-- **数据库必须 fresh baseline**: active Flyway 链以 `V1__init_schema.sql` 为 baseline（含 V2–V14），`ddl-auto=validate`、`baseline-on-migrate=false`；旧本地库会被拒绝，恢复用 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内
+- **数据库必须 fresh baseline**: 当前源码迁移目录包含 V1–V23；`V1__init_schema.sql` 是 fresh baseline，V22/V23 承载当前 checkpoint/revert 投影，`ddl-auto=validate`、`baseline-on-migrate=false`；旧本地库会被拒绝，恢复用 `mise run dev:reset -- -Reset`。`document_chunks` 由 Agent 侧 langchain_postgres 自建，不在 Flyway 链内
 - **dev seed 密码不可知**: `DataSeeder` 生成的 `admin@xihe.local` 随机密码不打印不落盘，`dev:reset` 后恢复用 `mise run reset-admin`
 - **Runtime 生命周期技术债**: `WorkspaceRegistry` / `WorkspaceManager` 已部分收敛，但 REST 文件操作仍直连 host filesystem（未走 executor Docker exec），cross-map 一致性靠周期检查兜底；后续须消除 WorkspaceManager 直接 Docker 操作并统一 REST/MCP 执行路径。`runtime_jobs` 悬空 registry 已随 PLAN-0326 删除（V14）；J-3/P1-10 立项时按需重新设计
 - **`dev:host` 原生编排**: `dev:host` 先以 Docker 起 PostgreSQL 再并行管理原生 CP/Agent/Runtime/UI；`dev:host:watch` 由 Node watcher 监控四健康端点并在任务组失败后重启；`XIHE_WORKSPACE_HOST_ROOT` 控制 `host_directory` 根（默认 `A03-xihe\.xihe-workspaces`）
 - **Host E2E 数据边界**: `test:e2e:host` 每轮独立 DB + host root，不连长期 dev DB；成功/失败/中断都必须 teardown 并反向确认无本轮残留；`--keep` 仅限本地调试
 - **Visual evidence boundary**: `toHaveScreenshot()` 只证明画面接近 baseline；人工 UI 审查还须读 actual/diff、检查 DOM/computed style、overflow、console/pageerror 与交互状态；`*-snapshots/*.png` 为本地生成工件，不能声称为 fresh checkout 可复现的 Git baseline
 - **E2E evidence matrix**: profile/readiness/测试计数/失败分类/清理证据记录在 workspace 私有 internal 层（不在本仓库分发）；必须区分 Compose/host/manual，不得混合统计
-- **Agent MCP hop / Grant 终态**: MCP 本地 hop 超时默认 ~30s（审批等待不计入）；禁用 Streamable HTTP GET server stream；用户直连 MCP mutation 免 Agent 审批并记 `actorType=user`；Agent 单 workspace 绑定，换 workspace 须重启 Agent；`apply_patch`/`create_snapshot`/`revert_snapshot` internal-only（契约测试钉死）；断线恢复 `GET /api/v1/chat/runs/{runId}`；operation 允许 `waiting_for_approval→completed/failed`（run 终态为准）；审批等待期中断以 ambiguous 收尾
+- **Agent MCP hop / Grant 终态**: MCP 本地 hop 超时默认 ~30s（审批等待不计入）；禁用 Streamable HTTP GET server stream；用户直连 MCP mutation 免 Agent 审批并记 `actorType=user`；Agent 单 workspace 绑定，换 workspace 须重启 Agent；`apply_patch` 是 Gateway-public 且走正常 Agent/CP 审批，`create_snapshot`/`revert_snapshot` 仍 internal-only（契约测试钉死）；断线恢复 `GET /api/v1/chat/runs/{runId}`；operation 允许 `waiting_for_approval→completed/failed`（run 终态为准）；审批等待期中断以 ambiguous 收尾
 
 详见 `docs/i18n/zh-Hans/DEV-018-known-issues.md`。
 

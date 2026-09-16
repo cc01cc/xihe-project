@@ -276,16 +276,19 @@ docker compose up -d --build
 cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
 
 # Method 2: Host H2 mode
+# Terminal/process 1 (tracked separately): start CP and keep its output available for diagnostics.
 XIHE_CP_DATASOURCE_URL="jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE" \
 XIHE_CP_DATASOURCE_DRIVER="org.h2.Driver" \
 XIHE_CP_DATASOURCE_USERNAME="sa" \
 XIHE_CP_DATASOURCE_PASSWORD="" \
-mvn spring-boot:run -q -f packages/control-plane/pom.xml &
-sleep 12
+mvn spring-boot:run -q -f packages/control-plane/pom.xml
+
+# Terminal/process 2: probe CP before running Agent tests; fail with the response/diagnostic if not ready.
+curl --fail-with-body --silent --show-error --max-time 5 http://localhost:8080/actuator/health || { echo "CP health probe failed; inspect the tracked CP process and response above."; exit 1; }
 cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
 ```
 
-Test files include `@pytest.mark.skipif` for automatic detection; when CP is unreachable, tests are silently skipped.
+Test files may use `@pytest.mark.skipif` only for explicitly optional tests; an unreachable CP is otherwise an explicit test/setup failure.
 
 ## 3. Architecture Design
 

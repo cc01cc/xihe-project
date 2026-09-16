@@ -7,7 +7,7 @@ sidebar_order: 19
 status: active
 created: 2026-09-07
 updated: 2026-09-15
-description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V14 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
+description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V23 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
   - flyway
@@ -16,7 +16,7 @@ tags:
 
 # DEV-019: 数据库设计
 
-> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Source of Truth 是 `packages/control-plane/src/main/resources/db/migration/V1~V14`，JPA Entity 只是镜像。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
+> 读者：新加入 XH 的后端 / 全栈开发者。内容：当前最终库表一览（结论先行），细节按域查表。Source of Truth 是 `packages/control-plane/src/main/resources/db/migration/V1~V23`，JPA Entity 只是镜像。前置阅读：[DEV-001](DEV-001-system-architecture.md)（四模块与 PG 定位）、[DEV-014](DEV-014-control-plane-architecture.md)（CP 通道）、[DEV-017](DEV-017-session-architecture.md)（会话语义）、[DEV-003](DEV-003-config-management.md)（Config 三层）。
 
 ## 1. 结论与使用规则
 
@@ -44,7 +44,7 @@ tags:
 
 > **PLAN-280 rebaseline（2026-09-07）**：本地数据库一次性重建为单一 `V1__init_schema.sql`（21 张表）。统一原生 UUID、TIMESTAMPTZ、显式命名约束与 ON DELETE、`ddl-auto=validate`。旧 V1~V22+U6 迁移链已从 active classpath 移出（仅 Git 历史可追溯）。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
 >
-> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V14）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
+> **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V23）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
 
 ## 2. ER 关系（分域 erDiagram）
 
@@ -645,9 +645,9 @@ erDiagram
 
 **V14 变更**：drop 空表 `runtime_jobs`（悬空 registry，PLAN-274 债务 #11）；唯一键替换为上式（历史不迁移，开发态按 fresh baseline 清库）。
 
-## 4. 迁移对照（当前链 V1~V14）
+## 4. 迁移对照（当前 active 链 V1~V23）
 
-> 历史链 V1~V22 已被 PLAN-280 destructive rebaseline 取代（旧 V2~V22/U6 移出仓库，仅 Git 历史可追溯）；下表为当前 active 链。原文末尾的历史 V1~V22 对照表保留在 Git 历史中，本节按当前链重写。
+> PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；其后新增的 V15~V23 是当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用。
 
 | 版本 | 文件 | 变更 | 影响表 |
 |------|------|------|--------|
@@ -665,6 +665,15 @@ erDiagram
 | V12 | `V12__config_tiers_and_mcp_split.sql` | config 三层化（instance/workspace/user + scope 约束/部分唯一索引、删 `environment`/`mcp_config`/`is_set`）+ MCP 分载体（新建 `mcp_stdio_servers`、`mcp_servers` → `mcp_remote_servers`）+ `config_audit.config_id` SET NULL（PLAN-0307 决策 #27/#30/#37） | `config/config_audit/mcp_stdio_servers/mcp_remote_servers` |
 | V13 | `V13__config_legacy_key_cleanup.sql` | 旧域键清理：裁撤域整体删除 + 各域废弃键删除（不搬移，决策 #39） | `config` |
 | V14 | `V14__ledger_channel_identity.sql` | 通道事实行身份（唯一键含 `source`）+ drop 悬空 `runtime_jobs`（PLAN-0326 决策 #4/#9） | `operation_items`/`runtime_jobs` |
+| V15 | `V15__policy_rules_and_tool_faces.sql` | 建立持久化策略规则与工具面分类表及约束 | `policy_rules/tool_faces` |
+| V16 | `V16__approval_decision_kind_and_pending_index.sql` | 审批决定类型与 pending 查询索引 | `approval_requests` |
+| V17 | `V17__approval_policy_snapshot.sql` | 审批策略快照字段 | `approval_requests` |
+| V18 | `V18__approval_mode_at_grant.sql` | grant 决策时的 mode 快照 | `approval_requests` |
+| V19 | `V19__operation_policy_summary.sql` | 操作账本安全策略摘要 | `operation_items` |
+| V20 | `V20__approval_grant_reuse.sql` | grant reuse 绑定、范围与消费约束 | `approval_requests` |
+| V21 | `V21__policy_revision_counter.sql` | 持久化单调策略 revision counter | `policy_revision` |
+| V22 | `V22__run_checkpoints.sql` | Run checkpoint CP 投影、状态与账本 kind 约束扩展 | `run_checkpoints/operation_items` |
+| V23 | `V23__run_checkpoint_revert.sql` | checkpoint revert 状态、引用、摘要与尝试计数 | `run_checkpoints` |
 
 ## 5. 本地查看与运维
 
@@ -680,13 +689,11 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **V15 回滚（`policy_rules` / `tool_faces`）**：迁移源 `V15__policy_rules_and_tool_faces.sql`，两表为新增、无数据迁移。
-> 回滚步骤：`DROP TABLE tool_faces, policy_rules;` **并**清除 Flyway 历史行（`DELETE FROM flyway_schema_history WHERE version = '15';` 或 `flyway repair`）。
-> 注意：只 DROP 表会残留历史行，旧 CP 构建启动即报 `Detected applied migration not resolved locally`；完成上述清理前，旧版本 CP 无法启动。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22 建立 `run_checkpoints` CP projection；V23 为 UI 触发 revert 的追加列（不新建表）。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 
-> 「active 首次迁移」指当前 V1~V14 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
+> 「active 首次迁移」指当前 V1~V23 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
 
 | 表 | Entity | active 首次迁移 |
 |----|--------|-----------------|

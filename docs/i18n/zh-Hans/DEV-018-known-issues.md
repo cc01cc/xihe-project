@@ -55,6 +55,15 @@ updated: 2026-09-06
 - **工作区删除语义（STO-1）**：Runtime 清理移出事务、在提交后 best-effort 执行；失败记 `RUNTIME_CLEANUP_FAILED` 日志（含 stacktrace），DB 逻辑删除为权威，接口恒返回 `204`（与 OpenAPI 一致；旧实现返回未文档化的 `502`）。孤儿沙盒容器由 Runtime 启动期 `cleanup_orphans` 兜底。
 - **Agent 配置（CFG-1/2/3）**：修复 llm-ready 守卫读死键 `effective`（改读 `status`），fail-closed 恢复生效；非必需域瞬断保留上一份有效值并在 `SyncReport.degraded` + 日志上报，不再整体替换缓存导致静默丢配置；user 层 `embedding`/`rag`/`agent-runtime` 覆盖随 run payload（`userOverrides`/`workspaceOverrides`）送达 Agent（`context-policy`/`user-preference` 无 Agent 读取点，不纳入）。
 
+## PLAN-0328 当前残余
+
+- **真实预算阈值**：H: 盘冷缓存实测仍为 2 PASS / 7 FAIL；建立、seal 与 100 文件 revert 延迟超过冻结阈值，不能改写为通过。证据：`plans/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md` §8.3。
+- **Full UI 上传/树刷新竞态**：workspace 初始 `loadTree` 在途时上传触发的刷新可能被静默丢弃；`full-ui-acceptance` 仍为 5 PASS / 1 FAIL。不得用手动 Refresh 冒充通过。证据：同一 PLAN evidence §8.3。
+- **T3.10 审计不变量**：双路径落库及 revert 摘要无文件内容已验证，但 checkpoint×revert 合并矩阵仍待收尾。证据：`plans/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md` §7。
+- **T1.9 后置证据**：`headless`/后台/断线 `ask → deny`、`auto_review` 实现及其失败回退仍是后置/待补证据；当前只保留 seam 与 fail-closed 设计，不宣称已完成。证据：`plans/PLAN-0328-XH-change-safety-net/evidence/m1-reuse-and-answerer-2026-09-15.md`。
+
+> UI 触发 revert 的账本来源已修正为 `source=ui`；不要再登记或声称存在未解决的 `source=cp` 缺陷。
+
 ## Code
 
 - **Jackson 2/3 混用**: CP 同时依赖 Jackson2（`com.fasterxml.jackson.databind`，如 `McpProxyController` 仍用 `fieldNames()`）与 Jackson3（`tools.jackson`）。3.x 新增 `propertyNames()`（返回 `Collection<String>`）；按所在模块的依赖对齐选用，禁跨版本混调
