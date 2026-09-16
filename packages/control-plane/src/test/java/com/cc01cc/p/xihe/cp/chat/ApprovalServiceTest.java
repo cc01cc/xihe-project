@@ -181,6 +181,8 @@ class ApprovalServiceTest {
 
         assertNotNull(saved);
         assertNull(saved.getPolicySummary());
+        // PLAN-0337 V25：便利重载属 Agent 中继路径，来源必须落成 agent_relay。
+        assertEquals(ChatApproval.ORIGIN_AGENT_RELAY, saved.getOrigin());
         verify(approvals).save(any(ChatApproval.class));
     }
 
@@ -877,6 +879,8 @@ class ApprovalServiceTest {
 
         assertTrue(outcome.orElseThrow().parked());
         assertEquals("pending", outcome.orElseThrow().row().getState());
+        // PLAN-0337 V25：闸门创建的 durable 行必须带 cp_gate 来源，才能与 Agent 中继行区分。
+        assertEquals(ChatApproval.ORIGIN_CP_GATE, outcome.orElseThrow().row().getOrigin());
         verify(audit).record(eq(TEST_SESSION), eq("write_file"), eq("approval_answerer"),
                 eq("answerer=user outcome=defer"));
         verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), any(), eq("awaiting_approval"),

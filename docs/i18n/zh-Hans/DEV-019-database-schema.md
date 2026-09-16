@@ -284,7 +284,7 @@ erDiagram
 > - `idx_chat_runs_active_lease (session_id, status, lease_expires_at)` — 活跃租约判定（`V22`）
 > - 唯一约束 `(user_id, session_id, idempotency_key)` — 同 key 不重复起 run，同 key 不同 payload 报冲突
 
-**approval_requests**（基线 `V1` 内建，`V7` 加 `grant_consumed_at`，`V9` 加 `arguments_hash`；Entity `entity/ChatApproval.java`）：工具高危操作人审。
+**approval_requests**（基线 `V1` 内建，`V7` 加 `grant_consumed_at`，`V9` 加 `arguments_hash`，`V25` 加 `origin`；Entity `entity/ChatApproval.java`）：工具高危操作人审。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -303,6 +303,7 @@ erDiagram
 | dispatch_error_code | VARCHAR(64) | nullable | 下发失败码 |
 | grant_consumed_at | TIMESTAMPTZ | nullable | grant 单次消费时间（`V7`） |
 | arguments_hash | VARCHAR(96) | nullable | canonical arguments SHA-256（`V9`，PLAN-292 M1 grant 哈希匹配；存量行为 NULL 走 legacy 比对） |
+| origin | VARCHAR(16) | nullable，`ck_approval_requests_origin`（`V25`） | 创建来源：`cp_gate`（CP 闸门判定后创建）/ `agent_relay`（Agent 中继的模型显式 `request_approval`）；NULL = 本列引入前的历史行。用于审计/统计区分两条创建路径（PLAN-0337） |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
 | updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
 

@@ -21,8 +21,8 @@
  *    `approval-allow-session`；通用 `modal-content` 会被其它弹窗命中，已弃用）；
  *  - 审批行数：隔离 PostgreSQL `approval_requests`（durable），按各组专属写路径**字面**匹配
  *    （`position(...)`，不用 `LIKE` 以免 `_` 当通配符误匹配）；
- *  - 复用命中/闸门来源：CP 审计 JSONL 的 `action=grant_reused` / `action=approval_required`；
- *    `event=chat_approval_gate_pending` 属类 logger，读 `cp.log`（字段为 `sessionId=`）。
+ *  - 复用命中：CP 审计 JSONL 的 `action=grant_reused`；
+ *  - 闸门来源：durable `approval_requests.origin='cp_gate'`（V25；不再依赖日志文本匹配）。
  *
  * 三组写路径与内容互不相同（避免跨组命中同一 grant），组内逐字节相同（命中同一 arguments_hash）。
  * 组 B/C 在未修复代码下会多弹审批卡：用例**始终**点击档位按钮释放 run（避免前一组把会话卡在
@@ -45,9 +45,6 @@ const PG_DATABASE = `xihe_e2e_${RUN_ID.replace(/[^a-z0-9]/gi, "_")}`;
 const PROJECT_DIR = path.resolve(process.cwd(), "../..");
 const HOST_ROOT = path.join(PROJECT_DIR, ".tmp", "e2e-host", RUN_ID);
 const AUDIT_LOG = path.join(HOST_ROOT, "logs", "audit.log");
-// 注意：`audit.log` 只挂 AUDIT logger（additivity=false）；类 logger 的生命周期事件
-// （如 `chat_approval_gate_pending`）由 root → cp.log。两者字段名也不同（`session=` vs `sessionId=`）。
-const CP_LOG = path.join(HOST_ROOT, "logs", "cp.log");
 
 const TERMINAL_RUN_STATES = /^(succeeded|failed|partial|ambiguous|cancelled)$/;
 const TERMINAL_OPERATION_STATES = /^(completed|failed|partial|cancelled|none)$/;
@@ -138,16 +135,17 @@ const countAction = (actions: string[], action: string): number =>
     actions.filter((entry) => entry === action).length;
 
 /**
- * 类 logger 生命周期事件计数（读 `cp.log`）：`chat_approval_gate_pending` 由
- * `ApprovalService` 的类 logger 输出，落 `cp.log` 而非 `audit.log`（Audit 2 B1-b 修正）。
- * cp.log 的会话字段是 `sessionId=`（audit.log 才是 `session=`）。
+ * 按 durable 来源统计审批行（V25 `approval_requests.origin`）。
+ * 这是审计/Audit 2 B1 建议的收口口径：不再依赖 `audit.log`/`cp.log` 的文本匹配，
+ * 直接查库区分「CP 闸门判定创建」与「Agent 中继（模型显式提问）创建」。
  */
-function lifecycleEventCount(sessionId: string, event: string): number {
-    if (!existsSync(CP_LOG)) return 0;
-    return readFileSync(CP_LOG, "utf8")
-        .split("\n")
-        .filter((line) => line.includes(`sessionId=${sessionId}`) && line.includes(`event=${event}`))
-        .length;
+function approvalRowCountByOrigin(sessionId: string, origin: string): number {
+    return Number(
+        psqlValue(
+            `select count(*) from approval_requests` +
+                ` where session_id = '${sessionId}' and origin = '${origin}'`,
+        ),
+    );
 }
 
 async function latestOperationStatus(
@@ -419,24 +417,24 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
         .soft(cContent, "auto 模式落盘内容必须与写入内容一致（排除残留文件假绿）")
         .toBe(CONTENT_C);
 
-    // UI 侧来源：审批卡必须来自 CP 闸门判定，而不是 Agent 本地前置触发。
-    // CP 的 `approval_required` 审计（McpProxyController 的 ASK-无 grant 分支）是当前唯一能区分
-    // “闸门创建”与“Agent 中继创建”的正向标识：两条创建路径在 durable 行上同构
-    // （recordGatePending 委托 recordPending，见 ApprovalService），行内没有 provenance 字段。
-    const gateOwnedAsks = countAction(actions, "approval_required");
-    const gatePendingRows = lifecycleEventCount(sessionId, "chat_approval_gate_pending");
-    // 精确值而非 >0：A 组 3 次 + B 组首轮 1 次 = 必须恰好 4。
-    // 阈值过松会放过"混合回归"（例如 1 张闸门卡 + 3 张 Agent 中继卡）。
+    // 来源：审批行必须由 CP 闸门判定产生，而不是 Agent 中继（模型显式提问）。
+    // V25 起 `approval_requests.origin` 是唯一权威口径（此前两条创建路径在 durable 行上同构，
+    // 只能翻 audit.log/cp.log 文本猜，见 Audit 2 B1）。
+    // 精确值而非 >0：A 组 3 次 + B 组首轮 1 次 = 恰好 4；阈值过松会放过"混合回归"。
+    const gateOwnedRows = approvalRowCountByOrigin(sessionId, "cp_gate");
     expect
-        .soft(
-            gateOwnedAsks,
-            "审批卡必须恰好 4 次由 CP 闸门判定产生（A×3 + B首轮；审计 action=approval_required）",
-        )
+        .soft(gateOwnedRows, "审批行必须恰好 4 条来自 CP 闸门（approval_requests.origin=cp_gate）")
         .toBe(4);
+    const relayOwnedRows = approvalRowCountByOrigin(sessionId, "agent_relay");
     expect
-        .soft(
-            gatePendingRows,
-            "CP 闸门 pending 审计次数必须与 approval_required 对齐（同为 4）",
-        )
-        .toBe(4);
+        .soft(relayOwnedRows, "本场景不得出现 Agent 中继来源的审批行（模型未调用 request_approval）")
+        .toBe(0);
+    const legacyOriginRows = Number(
+        psqlValue(
+            `select count(*) from approval_requests where session_id = '${sessionId}' and origin is null`,
+        ),
+    );
+    expect
+        .soft(legacyOriginRows, "本会话不得有无来源（NULL）的历史行：每轮新库，全部行都应带 origin")
+        .toBe(0);
 });

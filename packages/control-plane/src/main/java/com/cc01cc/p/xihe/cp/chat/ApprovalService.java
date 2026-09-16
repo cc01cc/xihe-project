@@ -101,9 +101,22 @@ public class ApprovalService {
         this.answererChain = answererChain;
     }
 
+    /**
+     * Convenience overload for the **Agent-relay** path: an approval request that reached CP from
+     * the Agent's event stream (model-initiated {@code request_approval}). Gate-created rows must
+     * use the explicit-origin overload so the durable row records {@link ChatApproval#ORIGIN_CP_GATE}
+     * (PLAN-0337 V25: the two paths used to converge into indistinguishable rows).
+     */
     @Transactional
     public ChatApproval recordPending(Map<?, ?> payload, String expectedSessionId, String expectedRunId,
                                       String userId, String workspaceId) {
+        return recordPending(payload, expectedSessionId, expectedRunId, userId, workspaceId,
+                ChatApproval.ORIGIN_AGENT_RELAY);
+    }
+
+    @Transactional
+    public ChatApproval recordPending(Map<?, ?> payload, String expectedSessionId, String expectedRunId,
+                                      String userId, String workspaceId, String origin) {
         String requestId = required(payload, "requestId");
         String runId = optional(payload, "runId", expectedRunId);
         String sessionId = optional(payload, "sessionId", expectedSessionId);
@@ -154,6 +167,7 @@ public class ApprovalService {
                 snapshotId,
                 policyClass,
                 argumentsHash);
+        approval.setOrigin(origin);
         return applyAnswererChain(approval, payload, runId, requestId);
     }
 
@@ -724,7 +738,10 @@ public class ApprovalService {
             payload.put("details", gateDetailsPreview(tool, mcpBody));
             payload.put("argumentsHash", argumentsHash);
             payload.put("expiresAt", expiresAt.toString());
-            existing = Optional.of(recordPending(payload, sessionId, runId, userId, workspaceId));
+            // PLAN-0337 V25: gate-created rows are tagged cp_gate so the durable row (and any
+            // audit/statistics query) can tell them apart from Agent-relayed model requests.
+            existing = Optional.of(recordPending(payload, sessionId, runId, userId, workspaceId,
+                    ChatApproval.ORIGIN_CP_GATE));
         }
         ChatApproval row = existing.get();
         // T1.9: an answerer-rejected row is terminal from creation; parking the run on

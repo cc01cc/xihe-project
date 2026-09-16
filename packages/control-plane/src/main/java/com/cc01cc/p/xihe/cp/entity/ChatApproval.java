@@ -105,6 +105,20 @@ public class ChatApproval {
     @Column(name = "reuse_scope", length = 16)
     private String reuseScope;
 
+    /**
+     * PLAN-0337 (V25): durable creation provenance — {@code cp_gate} (CP policy gate asked for
+     * approval) or {@code agent_relay} (model explicitly requested approval via
+     * {@code request_approval}); {@code null} = legacy row predating the column.
+     */
+    @Column(name = "origin", length = 16)
+    private String origin;
+
+    /** Provenance of a CP-gate-created approval row. */
+    public static final String ORIGIN_CP_GATE = "cp_gate";
+
+    /** Provenance of an Agent-relayed (model-initiated) approval row. */
+    public static final String ORIGIN_AGENT_RELAY = "agent_relay";
+
     public ChatApproval() {}
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
@@ -184,4 +198,7 @@ public class ChatApproval {
     public void setPolicyRevision(Long policyRevision) { this.policyRevision = policyRevision; }
     public void setSandboxGeneration(Integer sandboxGeneration) { this.sandboxGeneration = sandboxGeneration; }
     public void setReuseScope(String reuseScope) { this.reuseScope = reuseScope; }
+
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
 }
