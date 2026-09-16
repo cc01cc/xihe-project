@@ -598,7 +598,7 @@ class McpProxyTest {
     @Test
     @SuppressWarnings("unchecked")
     void handleToolsCall_autoAllow_recordsAllowedByMarker() throws Exception {
-        // PLAN-0328 决策 #32: auto-mode allows carry `allowed_by` (bypass@<layer>) for audit.
+        // PLAN-0328 决策 #32: auto-mode allows carry `allowed_by` (auto@<layer>) for audit.
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{\"path\":\"secret-body-marker\"}},\"id\":13}";
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))

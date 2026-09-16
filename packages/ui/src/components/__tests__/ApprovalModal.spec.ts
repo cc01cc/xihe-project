@@ -184,7 +184,7 @@ describe('ApprovalModal', () => {
     expect(wrapper.find('[data-testid="approval-evidence-matched-rule"]').text()).toBe('write:/test.txt')
     expect(wrapper.find('[data-testid="approval-evidence-source-layer"]').text()).toBe('Workspace layer')
     expect(wrapper.find('[data-testid="approval-evidence-reason"]').text()).toContain('No allow rule matched')
-    expect(wrapper.find('[data-testid="approval-evidence-mode"]').text()).toBe('Default')
+    expect(wrapper.find('[data-testid="approval-evidence-mode"]').text()).toBe('Manual approval')
     expect(wrapper.find('[data-testid="approval-evidence-mode-at-grant"]').text()).toBe('Manual approval')
   })
 

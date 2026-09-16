@@ -125,7 +125,7 @@ describe('AuditView policy verdict (PLAN-0328 T1.15)', () => {
     expect(wrapper.find('[data-testid="settings-audit-policy-call-ask-2-effect"]').text()).toBe('询问')
     expect(wrapper.find('[data-testid="settings-audit-policy-call-ask-2-matched-rule"]').text()).toBe('{ exec, "*", ask }')
     expect(wrapper.find('[data-testid="settings-audit-policy-call-ask-2-source-layer"]').text()).toBe('内置层')
-    expect(wrapper.find('[data-testid="settings-audit-policy-call-ask-2-mode"]').text()).toBe('默认')
+    expect(wrapper.find('[data-testid="settings-audit-policy-call-ask-2-mode"]').text()).toBe('手动审批')
     expect(wrapper.find('[data-testid="settings-audit-policy-call-ask-2-allowed-by"]').exists()).toBe(false)
   })
 
