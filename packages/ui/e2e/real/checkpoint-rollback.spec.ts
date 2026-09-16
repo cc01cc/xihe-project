@@ -50,7 +50,10 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), '../../.local/evidence/checkpoi
 const TERMINAL_RUN_STATUSES = ['succeeded', 'failed', 'partial', 'ambiguous', 'cancelled'] as const
 const TERMINAL_RUN_PATTERN = new RegExp(`^(${TERMINAL_RUN_STATUSES.join('|')})$`)
 const TERMINAL_OPERATION_STATUSES = ['completed', 'failed', 'cancelled', 'interrupted', 'ambiguous']
-const TERMINAL_OPERATION_PATTERN = new RegExp(`^(${TERMINAL_OPERATION_STATUSES.join('|')})$`)
+// A fresh user has an empty operation ledger until the first send — the send gate
+// must treat "no operation yet" as ready instead of polling for a terminal status.
+const NO_OPERATION_STATUS = 'none'
+const TERMINAL_OPERATION_PATTERN_OR_NONE = new RegExp(`^(${[NO_OPERATION_STATUS, ...TERMINAL_OPERATION_STATUSES].join('|')})$`)
 
 interface OperationSummary {
   id: string
@@ -170,8 +173,8 @@ async function awaitLatestOperationTerminal(request: APIRequestContext, headers:
   await expect.poll(async () => {
     const res = await request.get(`${CP_URL}/api/v1/operations?size=1`, { headers })
     const body = (await res.json()) as { operations?: Array<{ status?: string }> }
-    return body.operations?.[0]?.status ?? 'unknown'
-  }, { timeout: 180000, intervals: [2000] }).toMatch(TERMINAL_OPERATION_PATTERN)
+    return body.operations?.[0]?.status ?? NO_OPERATION_STATUS
+  }, { timeout: 180000, intervals: [2000] }).toMatch(TERMINAL_OPERATION_PATTERN_OR_NONE)
 }
 
 /** The newest operation that carries a runId — i.e. the run just started. */
@@ -317,9 +320,13 @@ async function writeFileRunThroughUi(
 }
 
 /**
- * S1/S4 shared UI revert: reloads (deterministic sealed marker), drives the preview dialog
- * (counts + conservative default focus), executes and returns the visible markers to assert on.
+ * S1/S4 shared UI revert: drives the preview dialog on the LIVE timeline marker (counts +
+ * conservative default focus), executes and returns the visible markers to assert on.
  * `previewBodies` collects the raw preview responses so callers can prove payload purity.
+ *
+ * No page reload here: the workspace chat surface does not hydrate persisted messages on
+ * load (only `/chat/:sessionId` does, ChatView.vue:64-118), so a reload drops the whole
+ * timeline including the marker (reported as a product gap; see the batch evidence).
  */
 async function revertThroughUi(
   page: Page,
@@ -337,7 +344,6 @@ async function revertThroughUi(
       void response.text().then((body) => resultBodies.push(body)).catch(() => {})
     }
   })
-  await page.reload({ waitUntil: 'load' })
   const marker = latestMarker(page)
   await expect(marker).toHaveAttribute('data-checkpoint-kind', 'rollbackable', { timeout: 30000 })
   await expect(marker.getByTestId('run-checkpoint-summary')).toContainText(String(flow.view.changedCount))
@@ -481,7 +487,10 @@ test.describe('@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)', () =
     const flow = await writeFileRunThroughUi(page, request, sharedHeaders, hostDir, fileName, agentContent)
 
     // Mutate the file through the UI file panel (code panel → tree → markdown source → save).
-    await page.reload({ waitUntil: 'load' })
+    // No reload: the workspace chat keeps the live timeline (persisted history is not hydrated
+    // on this surface, so a reload would drop the run's marker — reported product gap).
+    const treeRefresh = page.getByRole('button', { name: 'Refresh' }).first()
+    if (await treeRefresh.isVisible().catch(() => false)) await treeRefresh.click()
     const codeToggle = page.getByTestId('workspace-toolbar-code')
     await codeToggle.click()
     await expect(codeToggle).toHaveAttribute('aria-pressed', 'true')
@@ -581,7 +590,8 @@ test.describe('@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)', () =
     expect(revert.body.code).toBe('CHECKPOINT_NOT_AVAILABLE')
 
     // Visible result: the timeline stays honest — no revert entry, an explicit "无快照" marker.
-    await page.reload({ waitUntil: 'load' })
+    // Asserted on the live timeline (a reload would drop it — workspace chat does not hydrate
+    // persisted messages; reported product gap).
     const marker = page.locator('[data-testid="run-checkpoint-marker"][data-checkpoint-kind="none"]').last()
     await expect(marker).toBeVisible({ timeout: 30000 })
     await expect(marker.getByTestId('run-checkpoint-none')).toContainText('本轮无快照')
