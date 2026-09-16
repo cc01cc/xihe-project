@@ -264,31 +264,33 @@ class TestMCPAgentToolApproval:
         logger.remove(sink_id)
 
     @pytest.mark.asyncio
-    async def test_sensitive_tool_waits_for_approval_and_injects_grant(self, context):
+    async def test_sensitive_tool_dispatches_without_any_local_approval(self, context):
+        """PLAN-0337 M2：写类工具首调用直达 CP 闸门，Agent 不做本地前置审批。"""
         context.metadata["operationItemId"] = "item-1"
         approval_tool = MagicMock(spec=ApprovalAgentTool)
-        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
+        approval_tool.execute = AsyncMock()
         manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
         tool = MCPAgentTool(_stub_tool("write_file"), manager)
 
         result = await tool.execute({"path": "README.md"}, context)
 
         assert "ok" in result["content"]
-        approval_tool.execute.assert_awaited_once()
+        approval_tool.execute.assert_not_awaited()
         headers = manager.call_tool.await_args.args[2]
         assert headers == {
             "X-Session-Id": "session-1",
             "X-Chat-Run-Id": "run-1",
             "X-Operation-Id": "operation-1",
             "X-Operation-Item-Id": "item-1",
-            "X-Xihe-Approval-Request-Id": "grant-1",
         }
+        assert APPROVAL_GRANT_HEADER not in headers
 
     @pytest.mark.asyncio
-    async def test_apply_patch_uses_the_same_approval_and_grant_path(self, context):
+    async def test_apply_patch_dispatches_without_any_local_approval(self, context):
+        """PLAN-0337 M2：apply_patch 与其它写类工具同一路径，均由 CP 闸门裁决。"""
         context.metadata["operationItemId"] = "item-apply-patch"
         approval_tool = MagicMock(spec=ApprovalAgentTool)
-        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-apply-patch"})
+        approval_tool.execute = AsyncMock()
         manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("patched"))
         tool = MCPAgentTool(_stub_tool("apply_patch"), manager)
         patch_arguments = {
@@ -304,12 +306,10 @@ class TestMCPAgentToolApproval:
         result = await tool.execute(patch_arguments, context)
 
         assert "patched" in result["content"]
-        approval_tool.execute.assert_awaited_once()
-        approval_request = approval_tool.execute.await_args.args[0]
-        assert approval_request["tool"] == "apply_patch"
-        assert json.loads(approval_request["details"])["arguments"] == patch_arguments
+        approval_tool.execute.assert_not_awaited()
         headers = manager.call_tool.await_args.args[2]
-        assert headers[APPROVAL_GRANT_HEADER] == "grant-apply-patch"
+        assert APPROVAL_GRANT_HEADER not in headers
+        assert manager.call_tool.await_args.args[1] == patch_arguments
 
     @pytest.mark.asyncio
     async def test_read_only_tool_propagates_run_context_without_approval(self, context):
@@ -344,11 +344,11 @@ class TestMCPAgentToolApproval:
         assert "X-Xihe-Tool-Timeout-Per-Call" not in manager.call_tool.await_args.args[2]
 
     @pytest.mark.asyncio
-    async def test_per_call_timeout_header_present_on_approved_call(self, context):
-        """审批工具的授权后调用同样携带 per-call 头（与只读路径同一规则）。"""
+    async def test_per_call_timeout_header_present_on_mutation_call(self, context):
+        """PLAN-0337 M2：写类工具同样走单一派发路径，per-call 头与只读路径同一规则。"""
         context.runtime_state["toolTimeouts"] = {"execute_command": 120}
         approval_tool = MagicMock(spec=ApprovalAgentTool)
-        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
+        approval_tool.execute = AsyncMock()
         manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
         tool = MCPAgentTool(_stub_tool("execute_command"), manager)
 
@@ -356,23 +356,21 @@ class TestMCPAgentToolApproval:
 
         headers = manager.call_tool.await_args.args[2]
         assert headers["X-Xihe-Tool-Timeout-Per-Call"] == "120"
-        assert headers["X-Xihe-Approval-Request-Id"] == "grant-1"
+        assert APPROVAL_GRANT_HEADER not in headers
 
     @pytest.mark.asyncio
-    async def test_post_grant_wait_is_logged_with_tool_call_id(self, context, log_sink):
-        """T1.8（spec S5.1）：授权后转发的等待值打点，随 toolCallId 串三层时间线。"""
+    async def test_dispatch_wait_is_logged_with_tool_call_id(self, context, log_sink):
+        """T1.8（spec S5.1）：派发等待值打点，随 toolCallId 串三层时间线。"""
         context.metadata["operationItemId"] = "call-9"
         context.runtime_state["toolWaits"] = {"execute_command": 124}
         context.runtime_state["toolWaitOrigins"] = {"execute_command": "per-call"}
-        approval_tool = MagicMock(spec=ApprovalAgentTool)
-        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
-        manager = _fake_manager(approval_tool=approval_tool, result=_tool_result("ok"))
+        manager = _fake_manager(result=_tool_result("ok"))
         tool = MCPAgentTool(_stub_tool("execute_command"), manager)
 
         await tool.execute({}, context)
 
         text = "\n".join(log_sink)
-        assert "event=mcp_tool_post_grant" in text
+        assert "event=mcp_tool_wait" in text
         assert "toolCallId=call-9" in text
         assert "waitS=124" in text
         assert "valueOrigin=per-call" in text
@@ -560,11 +558,9 @@ class TestMCPAgentToolPostGateApproval:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tool_name", ["read_file", "apply_patch"])
     async def test_gate_409_approve_retries_once_with_grant_header(self, context, tool_name):
+        """PLAN-0337 M2：写类工具首调用也不带 grant；闸门批准后仅重试一次并携 CP grant。"""
         approval_tool = ApprovalAgentTool(timeout_seconds=5)
         calls: list[dict[str, str]] = []
-        published: list[dict] = []
-        if tool_name == "apply_patch":
-            context, published = _publishing_context()
         arguments = (
             {"path": "notes/a.md"}
             if tool_name == "read_file"
@@ -590,16 +586,7 @@ class TestMCPAgentToolPostGateApproval:
         tool = MCPAgentTool(_stub_tool(tool_name), manager)
 
         task = asyncio.create_task(tool.execute(arguments, context))
-        local_grant: str | None = None
-        if tool_name == "apply_patch":
-            for _ in range(1000):
-                if published:
-                    break
-                await asyncio.sleep(0)
-            assert len(published) == 1
-            local_grant = published[0]["requestId"]
-            assert approval_tool.resolve_approval_status(local_grant, True) == ("accepted", True)
-        request_id = await _await_pending(approval_tool, exclude={local_grant} if local_grant else None)
+        request_id = await _await_pending(approval_tool)
         assert request_id == "apr-00000001"
         assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
 
@@ -607,10 +594,9 @@ class TestMCPAgentToolPostGateApproval:
 
         assert "gate-ok" in result["content"]
         assert len(calls) == 2
-        if tool_name == "read_file":
-            assert APPROVAL_GRANT_HEADER not in calls[0]
-        else:
-            assert calls[0][APPROVAL_GRANT_HEADER] == local_grant
+        assert APPROVAL_GRANT_HEADER not in calls[0], (
+            "首个 dispatch 必须无 grant 头：审批权在 CP 闸门，Agent 不得先自行取得本地 grant"
+        )
         assert calls[1][APPROVAL_GRANT_HEADER] == request_id
         # The retry must be the identical MCP call (same JSON-RPC bound payload).
         assert manager.call_tool.await_args_list[0].args[1] == manager.call_tool.await_args_list[1].args[1]
@@ -700,9 +686,10 @@ class TestMCPAgentToolPostGateApproval:
         assert manager.call_tool.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_legacy_preflight_grant_is_consumed_by_gate_retry_without_double_request(self):
+    async def test_gate_retry_path_publishes_no_local_approval_event(self):
+        """PLAN-0337 M2：闸门路径下 Agent 不发布任何本地审批事件（sink 保持空）。"""
         approval_tool = ApprovalAgentTool(timeout_seconds=5)
-        context, published = _publishing_context("session-legacy-gate")
+        context, published = _publishing_context("session-gate-only")
         calls: list[dict[str, str]] = []
 
         async def _call(name, arguments, headers):
@@ -716,26 +703,16 @@ class TestMCPAgentToolPostGateApproval:
         tool = MCPAgentTool(_stub_tool("write_file"), manager)
 
         task = asyncio.create_task(tool.execute({"path": "a.md", "content": "x"}, context))
-        for _ in range(1000):
-            if published:
-                break
-            await asyncio.sleep(0)
-        assert len(published) == 1
-        local_grant = published[0]["requestId"]
-        assert approval_tool.resolve_approval_status(local_grant, True) == ("accepted", True)
-
-        cp_request_id = await _await_pending(approval_tool, exclude={local_grant})
-        assert cp_request_id == "apr-00000001"
+        cp_request_id = await _await_pending(approval_tool)
         assert approval_tool.resolve_approval_status(cp_request_id, True) == ("accepted", True)
 
         result = await asyncio.wait_for(task, timeout=5)
 
         assert "write-ok" in result["content"]
         assert len(calls) == 2
-        assert calls[0][APPROVAL_GRANT_HEADER] == local_grant
+        assert APPROVAL_GRANT_HEADER not in calls[0]
         assert calls[1][APPROVAL_GRANT_HEADER] == cp_request_id
-        # The post-gate path must not publish a second pre-flight approval.
-        assert len(published) == 1
+        assert published == [], "审批由 CP 闸门唯一触发，Agent 不得发布本地审批事件"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

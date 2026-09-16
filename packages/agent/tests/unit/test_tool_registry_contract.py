@@ -1,42 +1,36 @@
-"""工具面契约测试：冻结 Agent 侧审批门工具清单（PLAN-292 T4）。
+"""工具面契约（PLAN-0337 M2 起）：审批权威在 CP，Agent 侧不得持有本地判定。
 
-Java 对端：packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/policy/
-GatewayToolRegistryContractTest.java（GATEWAY_PUBLIC_TOOLS +
-gatewayMutationTools_requireApproval）。两侧必须同步修改，禁止单边漂移。
+历史：本文件原先冻结 Agent 侧 `REQUIRE_APPROVAL_TOOLS` 清单，并与 CP 的
+`GatewayToolRegistryContractTest`（`GATEWAY_PUBLIC_TOOLS` +
+`gatewayMutationTools_requireApproval`）做等值断言。M2 已删除该清单——
+**工具分类与「是否需要人工确认」的唯一权威是 CP**（`ToolFaceRegistry` + 闸门），
+因此等值断言不再有对端可比，改为守卫「本地判定不得重新回到 Agent 侧」。
+
+Agent 侧的行为契约见 `test_gate_owned_approval_contract.py`（首调用直达闸门、
+无本地清单、gate 信号等待 + 只重试一次）。
 """
-from xihe_agent.adapters.mcp_client import REQUIRE_APPROVAL_TOOLS
 
-# 与 GatewayToolRegistryContractTest#gatewayMutationTools_requireApproval
-# 冻结的 11 个 Gateway 公开 mutation 工具完全一致。
-_GATEWAY_MUTATION_TOOLS = frozenset({
-    "write_file",
-    "edit_file",
-    "delete_file",
-    "delete_directory",
-    "move_file",
-    "copy_file",
-    "mkdir",
-    "execute_command",
-    "start_background_process",
-    "cancel_background_process",
-    "apply_patch",
-})
+import inspect
 
-# CP internal-only 工具（决策 #12 / PLAN-292 M2）：不经 #[tool_router] 暴露，
-# Agent 审批门不得收录（收录即虚假完整性）。
-_INTERNAL_ONLY_TOOLS = frozenset({
-    "create_snapshot",
-    "revert_snapshot",
-})
+from xihe_agent.adapters import mcp_client as mcp_client_module
+
+# M2 删除的符号：任何人重新引入即为回归（审批判定必须留在 CP）。
+_FORBIDDEN_LOCAL_DECISION_SYMBOLS = (
+    "REQUIRE_APPROVAL_TOOLS",
+    "_request_approval",
+)
 
 
-def test_require_approval_tools_match_gateway_mutation_contract():
-    assert REQUIRE_APPROVAL_TOOLS == _GATEWAY_MUTATION_TOOLS, (
-        "REQUIRE_APPROVAL_TOOLS 与 GatewayToolRegistryContractTest 冻结集合漂移；"
-        "新增/删除 Gateway mutation 工具必须两侧同步修改"
+def test_agent_holds_no_local_approval_decision_symbols():
+    present = [name for name in _FORBIDDEN_LOCAL_DECISION_SYMBOLS if hasattr(mcp_client_module, name)]
+    assert present == [], (
+        f"Agent dispatch 层不得持有本地审批判定符号 {present}；"
+        "审批触发权只在 CP（PLAN-0337 M2）"
     )
 
 
-def test_internal_only_tools_are_not_require_approval_tools():
-    leaked = REQUIRE_APPROVAL_TOOLS & _INTERNAL_ONLY_TOOLS
-    assert not leaked, f"internal-only 工具不得进入 Agent 审批门清单: {sorted(leaked)}"
+def test_agent_dispatch_source_has_no_local_pre_flight_call_site():
+    source = inspect.getsource(mcp_client_module)
+    assert "request_approval(" not in source, (
+        "dispatch 路径不得调用本地前置审批；工具调用必须直达 CP 闸门"
+    )

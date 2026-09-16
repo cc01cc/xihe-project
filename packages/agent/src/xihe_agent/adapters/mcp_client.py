@@ -192,23 +192,9 @@ def _context_headers(context: AgentContext | None, tool_name: str) -> dict[str, 
     return headers
 
 
-# PLAN-292 T4 / PLAN-0328 T3.2: only Gateway-public mutation tools belong here.
-# create_snapshot/revert_snapshot/cleanup_jobs remain internal-only (the first
-# two are not exposed via #[tool_router]); write_file_binary does not exist as
-# an MCP tool — listing it would create false completeness.
-REQUIRE_APPROVAL_TOOLS = frozenset({
-    "write_file",
-    "edit_file",
-    "delete_file",
-    "delete_directory",
-    "move_file",
-    "copy_file",
-    "mkdir",
-    "execute_command",
-    "start_background_process",
-    "cancel_background_process",
-    "apply_patch",
-})
+# PLAN-0337 M2：审批触发权归 CP。本模块**不再持有**需审批工具的本地清单，也不做任何
+# 前置判定——工具分类与「是否需要人工确认」的唯一权威是 CP（`ToolFaceRegistry` + 闸门）。
+# 首个调用直达 CP 闸门；闸门以 409 APPROVAL_REQUIRED 返回时由 `_retry_after_gate` 处理。
 
 
 # PLAN-0328 T1.9（post-gate）：CP MCP 闸门对无有效 grant 的 ASK 返回 HTTP 409，
@@ -357,42 +343,21 @@ class MCPAgentTool(BaseAgentTool):
                 ):
                     payload[key] = val[1:]
             headers = _context_headers(context, self._tool.name)
-            if self._tool.name in REQUIRE_APPROVAL_TOOLS:
-                grant_id = await self._request_approval(payload, context)
-                if grant_id:
-                    headers[APPROVAL_GRANT_HEADER] = grant_id
-                # Post-approval Runtime call is local: fail fast if gateway stalls.
-                # The approval wait itself is user-bound and must NOT count here.
-                post_wait = _resolve_tool_wait(self._tool.name, context)
-                # T1.8（spec S5.1）：审批工具的等待值同样打点。
-                # 2026-09-13 E2E（V3）：补 grantId —— grant 即 CP 审批请求 id，而
-                # CP 账本条目键 = 审批请求 id、Runtime 注册表键 = 该条目键，
-                # 三跳时间线可据此串起（Agent grantId ↔ CP item ↔ Runtime exec）。
-                logger.info(
-                    "[LIFECYCLE] service=agent event=mcp_tool_post_grant tool={} toolCallId={}"
-                    + " grantId={} waitS={} source={} valueOrigin={}",
-                    self._tool.name,
-                    post_wait.tool_call_id or "-",
-                    grant_id or "-",
-                    post_wait.seconds,
-                    post_wait.source,
-                    post_wait.value_origin or "",
-                )
-                result = await self._dispatch(payload, headers, context, post_wait)
-            else:
-                # PLAN-0308 M1：等待值由 CP 计算（含余量与冷启动增量），本模块只执行；
-                # T1.8：toolCallId 与 CP/Runtime 共用，超时可跨三层串时间线（spec S5.1）。
-                wait = _resolve_tool_wait(self._tool.name, context)
-                logger.info(
-                    "[LIFECYCLE] service=agent event=mcp_tool_wait tool={} toolCallId={}"
-                    + " waitS={} source={} valueOrigin={}",
-                    self._tool.name,
-                    wait.tool_call_id or "-",
-                    wait.seconds,
-                    wait.source,
-                    wait.value_origin or "",
-                )
-                result = await self._dispatch(payload, headers, context, wait)
+            # PLAN-0337 M2：单一派发路径。是否弹窗由 CP 闸门判定；本模块不预判、不预取 grant，
+            # 仅在闸门返回 409 APPROVAL_REQUIRED 时等待决定并携 grant 重试一次（_retry_after_gate）。
+            # PLAN-0308 M1：等待值由 CP 计算（含余量与冷启动增量），本模块只执行；
+            # T1.8：toolCallId 与 CP/Runtime 共用，超时可跨三层串时间线（spec S5.1）。
+            wait = _resolve_tool_wait(self._tool.name, context)
+            logger.info(
+                "[LIFECYCLE] service=agent event=mcp_tool_wait tool={} toolCallId={}"
+                + " waitS={} source={} valueOrigin={}",
+                self._tool.name,
+                wait.tool_call_id or "-",
+                wait.seconds,
+                wait.source,
+                wait.value_origin or "",
+            )
+            result = await self._dispatch(payload, headers, context, wait)
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
             content = _result_text(result)
             wait = _resolve_tool_wait(self._tool.name, context)
@@ -462,7 +427,7 @@ class MCPAgentTool(BaseAgentTool):
     ) -> Any:
         """等待 CP 推送的用户决定，然后携 grant 头重试同一次 MCP 调用（仅一次）。
 
-        - 不重新触发 pre-flight 审批（REQUIRE_APPROVAL_TOOLS 的本地 grant 不重复申请）；
+        - PLAN-0337 M2：本模块不再有本地前置审批，故不存在"重复申请本地 grant"；
         - 拒绝/过期按既有终态错误上抛；
         - 重试侧任何失败（第二次 409/403、grant 不匹配、传输错误）一律 fail-closed，
           绝不成环。
@@ -516,30 +481,6 @@ class MCPAgentTool(BaseAgentTool):
             signal.request_id,
         )
         return result
-
-    async def _request_approval(self, payload: dict[str, Any], context: AgentContext) -> str | None:
-        """审批门控工具：请求一次性 grant 并返回 requestId（无审批工具/上下文时跳过）。"""
-        approval_tool = self._manager.approval_tool
-        if approval_tool is None or context is None:
-            return None
-        details = json.dumps(
-            {"tool": self._tool.name, "arguments": payload},
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        approval = await approval_tool.execute(
-            {
-                "tool": self._tool.name,
-                "action": f"Execute {self._tool.name}",
-                "details": details,
-            },
-            context,
-        )
-        grant_id = approval.get("requestId")
-        if not isinstance(grant_id, str) or not grant_id:
-            raise ApprovalTerminalError("Approval did not return a grant requestId")
-        return grant_id
 
     @property
     def spec(self) -> ToolSpec:
