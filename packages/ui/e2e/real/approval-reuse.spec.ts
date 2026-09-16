@@ -10,11 +10,19 @@
  *  2. 必须带 Runtime（**不得** `--skip-runtime`）：write_file 需要 Runtime 沙箱真正执行并落盘。
  *  3. 必须是隔离栈（`XIHE_E2E_RUN_ID` 存在）。durable 断言直接查该轮隔离库；无 run id
  *     （例如对着长期 `dev:host` 跑 `@host` 全量）时本文件整体 skip，绝不误查 dev 库。
+ *     设 `XIHE_E2E_REQUIRE_APPROVAL_GUARD=1` 可把"前置不满足"从 skip 升级为硬失败，
+ *     供专用 lane 防止护栏静默跳过（Audit 2 B7）。
+ *  4. **每个用例运行必须配一个新栈**：Agent 每进程只绑定一个 workspace，同一持久栈二次运行会
+ *     在 Agent 侧以 `MCP workspace context cannot be reused across workspaces` 秒失败
+ *     （Audit 2 观察）；迭代时先 teardown 再起新栈，否则会误判为回归。
  *
  * 断言口径（三层互相独立，不看 UI 文案）：
- *  - 审批卡次数：真实 UI 的审批弹窗出现次数（`[data-testid="modal-content"]`）；
- *  - 审批行数：隔离 PostgreSQL `approval_requests`（durable），按各组专属写路径过滤；
- *  - 复用命中：CP 审计 JSONL 的 `action=grant_reused`；CP 闸门来源：`action=approval_required`。
+ *  - 审批卡次数：真实 UI 的审批弹窗出现次数（**审批专属** testid：`approval-approve` /
+ *    `approval-allow-session`；通用 `modal-content` 会被其它弹窗命中，已弃用）；
+ *  - 审批行数：隔离 PostgreSQL `approval_requests`（durable），按各组专属写路径**字面**匹配
+ *    （`position(...)`，不用 `LIKE` 以免 `_` 当通配符误匹配）；
+ *  - 复用命中/闸门来源：CP 审计 JSONL 的 `action=grant_reused` / `action=approval_required`；
+ *    `event=chat_approval_gate_pending` 属类 logger，读 `cp.log`（字段为 `sessionId=`）。
  *
  * 三组写路径与内容互不相同（避免跨组命中同一 grant），组内逐字节相同（命中同一 arguments_hash）。
  * 组 B/C 在未修复代码下会多弹审批卡：用例**始终**点击档位按钮释放 run（避免前一组把会话卡在
@@ -37,6 +45,9 @@ const PG_DATABASE = `xihe_e2e_${RUN_ID.replace(/[^a-z0-9]/gi, "_")}`;
 const PROJECT_DIR = path.resolve(process.cwd(), "../..");
 const HOST_ROOT = path.join(PROJECT_DIR, ".tmp", "e2e-host", RUN_ID);
 const AUDIT_LOG = path.join(HOST_ROOT, "logs", "audit.log");
+// 注意：`audit.log` 只挂 AUDIT logger（additivity=false）；类 logger 的生命周期事件
+// （如 `chat_approval_gate_pending`）由 root → cp.log。两者字段名也不同（`session=` vs `sessionId=`）。
+const CP_LOG = path.join(HOST_ROOT, "logs", "cp.log");
 
 const TERMINAL_RUN_STATES = /^(succeeded|failed|partial|ambiguous|cancelled)$/;
 const TERMINAL_OPERATION_STATES = /^(completed|failed|partial|cancelled|none)$/;
@@ -45,15 +56,27 @@ const TERMINAL_OPERATION_STATES = /^(completed|failed|partial|cancelled|none)$/;
 // 新 workspace 而旧 Agent 无法复用，因此本文件关闭重试。
 test.describe.configure({ retries: 0 });
 
-test.skip(
+// 前置不满足时默认 skip（保持本文件可被任意 lane 安全执行），但 `XIHE_E2E_REQUIRE_APPROVAL_GUARD=1`
+// 时改为硬失败——否则"护栏静默 skip + 退出码 0"会让回归在无人察觉中通过（Audit 2 B7）。
+const GUARD_REQUIRED = process.env.XIHE_E2E_REQUIRE_APPROVAL_GUARD === "1";
+function gateOrSkip(condition: boolean, reason: string) {
+    if (!condition) {
+        return;
+    }
+    if (GUARD_REQUIRED) {
+        throw new Error(`approval-reuse 护栏前置不满足且已要求强制执行: ${reason}`);
+    }
+    test.skip(true, reason);
+}
+gateOrSkip(
     !RUN_ID,
-    "approval-reuse 需要隔离 host 栈（scripts/e2e-host.mjs --persistent），禁止对 dev 库取证",
+    "需要隔离 host 栈（scripts/e2e-host.mjs --persistent），禁止对 dev 库取证",
 );
-test.skip(
+gateOrSkip(
     LLM_MODE !== "write_file",
-    "approval-reuse 需要以 --llm-mode=write_file 启动的栈（fake LLM 的确定性 write_file tool call）",
+    "需要以 --llm-mode=write_file 启动的栈（fake LLM 的确定性 write_file tool call）",
 );
-test.skip(PROFILE !== "host", "approval-reuse 是 @host 用例");
+gateOrSkip(PROFILE !== "host", "本文件是 @host 用例");
 
 interface PhaseTurn {
     runId: string;
@@ -80,7 +103,7 @@ function approvalRowCount(sessionId: string, pathFragment: string): number {
     return Number(
         psqlValue(
             `select count(*) from approval_requests` +
-                ` where session_id = '${sessionId}' and details like '%${pathFragment}%'`,
+                ` where session_id = '${sessionId}' and position('${pathFragment}' in details) > 0`,
         ),
     );
 }
@@ -88,7 +111,7 @@ function approvalRowCount(sessionId: string, pathFragment: string): number {
 function approvalRowScalar(sessionId: string, pathFragment: string, column: string): string {
     return psqlValue(
         `select coalesce(${column}, '') from approval_requests` +
-            ` where session_id = '${sessionId}' and details like '%${pathFragment}%'` +
+            ` where session_id = '${sessionId}' and position('${pathFragment}' in details) > 0` +
             ` order by created_at asc limit 1`,
     );
 }
@@ -113,6 +136,19 @@ function auditActionsForSession(sessionId: string): string[] {
 
 const countAction = (actions: string[], action: string): number =>
     actions.filter((entry) => entry === action).length;
+
+/**
+ * 类 logger 生命周期事件计数（读 `cp.log`）：`chat_approval_gate_pending` 由
+ * `ApprovalService` 的类 logger 输出，落 `cp.log` 而非 `audit.log`（Audit 2 B1-b 修正）。
+ * cp.log 的会话字段是 `sessionId=`（audit.log 才是 `session=`）。
+ */
+function lifecycleEventCount(sessionId: string, event: string): number {
+    if (!existsSync(CP_LOG)) return 0;
+    return readFileSync(CP_LOG, "utf8")
+        .split("\n")
+        .filter((line) => line.includes(`sessionId=${sessionId}`) && line.includes(`event=${event}`))
+        .length;
+}
 
 async function latestOperationStatus(
     request: APIRequestContext,
@@ -163,7 +199,11 @@ async function sendMarkerTurn(
 
     const input = page.locator('[data-testid="chat-input"]');
     const send = page.locator('[data-testid="chat-send-button"]');
-    const modal = page.locator('[data-testid="modal-content"]');
+    // 审批专属标识（Audit 2 B6）：通用 `modal-content` 会被任何弹窗命中而误判为"出现了审批卡"；
+    // 以审批操作按钮的存在作为卡出现判据。
+    const modal = page
+        .locator('[data-testid="approval-approve"], [data-testid="approval-allow-session"]')
+        .first();
     await expect(input).toBeVisible({ timeout: 30000 });
 
     const marker = `XIHE-E2E-WRITE ${turn.path} ${turn.content}`;
@@ -244,6 +284,10 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
     const pathA = "pl0337-guard-a-once.txt";
     const pathB = "pl0337-guard-b-session.txt";
     const pathC = "pl0337-guard-c-auto.txt";
+    // 内容用于验证"真实落盘"（排除残留同名文件造成的假绿），组间互不相同。
+    const CONTENT_A = "pl0337 guard group A once-tier probe";
+    const CONTENT_B = "pl0337 guard group B session-tier probe";
+    const CONTENT_C = "pl0337 guard group C auto-mode probe";
 
     await test.step("准备：注册单 workspace + 单会话（Agent 单 workspace 绑定）", async () => {
         ctx = await registerJourneyUser(request, "ApprovalReuseGuard");
@@ -268,7 +312,7 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
             phaseTurns.A.push(
                 await sendMarkerTurn(page, request, sessionId, ctx.headers, {
                     path: pathA,
-                    content: "pl0337 guard group A once-tier probe",
+                    content: CONTENT_A,
                     tier: "once",
                 }),
             );
@@ -280,7 +324,7 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
             phaseTurns.B.push(
                 await sendMarkerTurn(page, request, sessionId, ctx.headers, {
                     path: pathB,
-                    content: "pl0337 guard group B session-tier probe",
+                    content: CONTENT_B,
                     tier: "session",
                 }),
             );
@@ -301,7 +345,7 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
                 phaseTurns.C.push(
                     await sendMarkerTurn(page, request, sessionId, ctx.headers, {
                         path: pathC,
-                        content: "pl0337 guard group C auto-mode probe",
+                        content: CONTENT_C,
                         tier: "once",
                     }),
                 );
@@ -356,7 +400,7 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
     const grantReused = countAction(actions, "grant_reused");
     expect
         .soft(grantReused, "B 组第 2/3 次调用必须命中 CP 侧 grant 复用（审计 action=grant_reused）")
-        .toBeGreaterThanOrEqual(2);
+        .toBe(2);
 
     // C 免批（auto）：会话模式 auto → 0 卡、0 行，但写必须真实落盘。
     expect
@@ -369,16 +413,30 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
     expect.soft(rowsC, "C auto 组 durable 审批行数 = 0").toBe(0);
     const hostFile = path.join(HOST_ROOT, ctx.workspaceId, pathC);
     expect.soft(existsSync(hostFile), `auto 模式下的写必须真实落盘: ${hostFile}`).toBe(true);
+    // 只验存在会被"残留同名文件"假绿：内容必须与该轮写入逐字节相同（每轮独立 host root，故内容即新鲜度）。
+    const cContent = existsSync(hostFile) ? readFileSync(hostFile, "utf8") : "";
+    expect
+        .soft(cContent, "auto 模式落盘内容必须与写入内容一致（排除残留文件假绿）")
+        .toBe(CONTENT_C);
 
     // UI 侧来源：审批卡必须来自 CP 闸门判定，而不是 Agent 本地前置触发。
     // CP 的 `approval_required` 审计（McpProxyController 的 ASK-无 grant 分支）是当前唯一能区分
     // “闸门创建”与“Agent 中继创建”的正向标识：两条创建路径在 durable 行上同构
     // （recordGatePending 委托 recordPending，见 ApprovalService），行内没有 provenance 字段。
     const gateOwnedAsks = countAction(actions, "approval_required");
+    const gatePendingRows = lifecycleEventCount(sessionId, "chat_approval_gate_pending");
+    // 精确值而非 >0：A 组 3 次 + B 组首轮 1 次 = 必须恰好 4。
+    // 阈值过松会放过"混合回归"（例如 1 张闸门卡 + 3 张 Agent 中继卡）。
     expect
         .soft(
             gateOwnedAsks,
-            "审批卡必须由 CP 闸门判定产生（审计 action=approval_required，McpProxyController ASK 分支）",
+            "审批卡必须恰好 4 次由 CP 闸门判定产生（A×3 + B首轮；审计 action=approval_required）",
         )
-        .toBeGreaterThan(0);
+        .toBe(4);
+    expect
+        .soft(
+            gatePendingRows,
+            "CP 闸门 pending 审计次数必须与 approval_required 对齐（同为 4）",
+        )
+        .toBe(4);
 });

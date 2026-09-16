@@ -9,6 +9,10 @@ import { createServer as createTcpServer } from 'node:net'
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
 const e2eRunId = `host-${Date.now()}-${randomBytes(2).toString('hex')}`
+// 外部复用（XIHE_E2E_EXTERNAL_SERVER=1）时栈属于更早的 runId，而隔离 DB 名与 host root
+// 都由 runId 派生：传给 Playwright 的必须是**栈的** runId，否则会去查不存在的库/目录（假失败）。
+// 审计发现（PLAN-0337 Audit 2 B2）：reuse 分支此前只回写 ports，未回写 runId。
+let runIdForTests = e2eRunId
 const isKeep = process.argv.includes('--keep')
 // PLAN-294 M4-a: persistent stack for regression matrices — boot the whole
 // isolated stack once, then run Playwright repeatedly against it.
@@ -479,7 +483,7 @@ async function runPlaywright() {
     env: {
       XIHE_E2E_PROFILE: 'host',
       XIHE_E2E_EXTERNAL_SERVER: '1',
-      XIHE_E2E_RUN_ID: e2eRunId,
+      XIHE_E2E_RUN_ID: runIdForTests,
       XIHE_CP_API_TOKEN: serviceToken,
       XIHE_UI_PORT: uiPort,
       XIHE_CP_PORT: cpPort,
@@ -701,7 +705,11 @@ async function main() {
     const state = JSON.parse(await readFile(stateFile, 'utf8'))
     uiPort = state.ports.ui; cpPort = state.ports.cp; agentPort = state.ports.agent
     runtimePort = state.ports.runtime; pgPort = state.ports.pg
+    runIdForTests = state.runId
     console.log(`[e2e-host] persistent stack ${state.runId}: ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort}`)
+    // 关键：本进程新生成的 e2eRunId 与栈不同，传给 Playwright 的必须是栈 runId
+    // （隔离库名与 host root 都由它派生）。两者都打印，避免操作者误判。
+    console.log(`[e2e-host] reuse: 传给 Playwright 的 XIHE_E2E_RUN_ID=${runIdForTests}（本次进程 runId=${e2eRunId} 仅用于日志）`)
   } else if (externalServer) {
     console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')
   }

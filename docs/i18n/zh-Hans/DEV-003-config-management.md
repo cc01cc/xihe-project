@@ -17,7 +17,7 @@ updated: 2026-09-12
 
 ## 1. 三层所有权与九域
 
-ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合满足 `instance(8) ⊇ user(7) ⊇ workspace(6)`（`approval-policy` 由 PLAN-0337 新增，仅 workspace 层）：
+ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合为 `instance(8)`、`user(7)`、`workspace(6)`——其中 `approval-policy` 由 PLAN-0337 新增且**仅 workspace 层**，故 `workspace ⊄ user`、`user ⊄ workspace`（原「逐层包含」关系自本次新增起不再成立）：
 
 | Domain | instance | user | workspace | 备注 |
 |--------|----------|------|-----------|------|
@@ -33,7 +33,7 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 
 已裁撤域：`infrastructure`（→ env）、`workspace-config`（→ env / 工作区 API）、`mcp`（→ `mcp_stdio_servers` / `mcp_remote_servers` 表，决策 #27）；键迁移：`llm-provider.contextPolicy` → `context-policy`、`user-preference.{defaultModel,maxTokens,temperature}` → `llm-provider`（决策 #13/#16/#39）。
 
-**写权限**：instance = ADMIN；user = 本人；workspace = 该 workspace 的 owner（决策 #37）。**读掩码**：非 ADMIN 读 `agent-runtime`（含 `instructions`）被隐藏/掩码（决策 #33），含密字段按 admin 与否脱敏。
+**写权限**：instance = ADMIN；user = 本人；workspace = **可访问该 workspace 的 USER/ADMIN**（`ConfigController` 的 `hasAnyRole('USER','ADMIN')` + `requireAccessibleWorkspace`；决策 #37 的「owner」表述已由 PLAN-0337 冻结契约取代，`approval-policy` 亦适用）。**读掩码**：非 ADMIN 读 `agent-runtime`（含 `instructions`）被隐藏/掩码（决策 #33），含密字段按 admin 与否脱敏。
 
 **解析链（单键通道，CP 进程内）**：
 

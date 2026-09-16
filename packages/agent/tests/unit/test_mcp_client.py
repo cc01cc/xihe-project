@@ -443,24 +443,42 @@ class TestMCPAgentToolTimeout:
         assert "hello" in result["content"]
 
     @pytest.mark.asyncio
-    async def test_approval_tool_skips_outer_short_timeout(self):
-        """write_file waits on the user; outer short bound must not kill the approval wait."""
-        approval_tool = MagicMock(spec=ApprovalAgentTool)
-        approval_tool.execute = AsyncMock(return_value={"requestId": "grant-1"})
+    async def test_gate_approval_wait_is_not_bounded_by_per_call_tool_wait(self):
+        """闸门等待由 CP/用户决定，不受 per-call tool wait 约束（PLAN-0337 Audit 2 A2）。
 
-        async def _slow(*args, **kwargs):
-            await asyncio.sleep(0.2)
-            return _tool_result("ok")
+        替代原 `test_approval_tool_skips_outer_short_timeout`：该用例 mock 的本地前置审批
+        已随 M2 删除，残留断言不再验证任何审批语义（0.2s 远小于默认 30s，必然通过）。
+        此处钉住真正的不变式：per-call wait 设为 0.05s 时，"等用户决定"仍可远超该值而不超时，
+        且重试只发生一次并携带 CP grant。
+        """
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        context, _published = _publishing_context("session-gate-wait")
+        context.runtime_state["toolWaits"] = {"write_file": 0.05}
+        context.runtime_state["toolWaitOrigins"] = {"write_file": "per-call"}
+        calls: list[dict[str, str]] = []
 
-        manager = _fake_manager(approval_tool=approval_tool, side_effect=_slow)
+        async def _call(name, arguments, headers):
+            calls.append(dict(headers))
+            if len(calls) == 1:
+                raise _gate_error("write_file")
+            return _tool_result("gate-ok")
+
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(side_effect=_call)
         tool = MCPAgentTool(_stub_tool("write_file"), manager)
-        context = AgentContext.empty(aggregate_id="ctx-approval-timeout")
 
-        result = await tool.execute({"path": "a.md", "content": "x"}, context)
+        task = asyncio.create_task(tool.execute({"path": "a.md", "content": "x"}, context))
+        request_id = await _await_pending(approval_tool)
+        # 让"等待用户决定"明显超过 per-call 的 0.05s（审批等待不计入 tool wait）。
+        await asyncio.sleep(0.2)
+        assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
 
-        # Not "timed out" — approval-class tools are bounded post-grant only.
-        assert "ok" in result["content"]
-        assert "timed out" not in result["content"]
+        result = await asyncio.wait_for(task, timeout=5)
+
+        assert "gate-ok" in result["content"]
+        assert len(calls) == 2, "批准后只允许重试一次"
+        assert APPROVAL_GRANT_HEADER not in calls[0]
+        assert calls[1][APPROVAL_GRANT_HEADER] == request_id
 
 
 # ---------------------------------------------------------------------------
