@@ -58,13 +58,15 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0328 M3 W2: the public Run-checkpoint surface — ownership/terminal gates,
- * Runtime passthrough of preview/execute/blob, expired flip, and the
- * workspace-scoped git-status/retention/gc routes. The Runtime is a local stub;
- * everything else (security, JPA, service wiring) is real.
+ * PLAN-0338: the public Run-scoped checkpoint surface over the slice model —
+ * ownership/terminal gates, Runtime passthrough of preview/restore/blob, expired
+ * flip, and the workspace-scoped git-status/retention/gc routes. The Runtime is a
+ * local stub; everything else (security, JPA, service wiring) is real.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RunCheckpointControllerTest extends AbstractH2Test {
+
+    private static final String SLICE_REF = "refs/xihe/slices/1757980000000-ab12cd";
 
     @Autowired
     private UserRepository userRepository;
@@ -209,6 +211,11 @@ class RunCheckpointControllerTest extends AbstractH2Test {
                 new HttpEntity<>(body, authHeaders()), Map.class);
     }
 
+    private static boolean isCapturedState(String state) {
+        return RunCheckpoint.STATE_CAPTURED.equals(state)
+                || RunCheckpoint.STATE_ABNORMAL_CAPTURED.equals(state);
+    }
+
     private RunCheckpoint seedCheckpoint(String state) {
         return seedCheckpoint(runId, state);
     }
@@ -219,11 +226,8 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         row.setRunId(checkpointRunId);
         row.setWorkspaceId(workspaceId);
         row.setState(state);
-        if (!RunCheckpoint.STATE_DEGRADED.equals(state)) {
-            row.setBaseRef("refs/xihe/" + checkpointRunId + "/base");
-        }
-        if (RunCheckpoint.STATE_SEALED.equals(state)) {
-            row.setEndRef("refs/xihe/" + checkpointRunId + "/end");
+        if (isCapturedState(state)) {
+            row.setEndRef(SLICE_REF);
             row.setChangedFiles("[{\"status\":\"M\",\"path\":\"src/a.txt\"}]");
             row.setSealedAt(Instant.now());
         }
@@ -238,18 +242,18 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     }
 
     private static String previewBody() {
-        return "{\"runId\":\"ignored\",\"state\":\"sealed\",\"counts\":{\"restore\":2,\"delete\":1,"
-                + "\"skipConflicts\":1,\"noop\":3},\"entries\":["
-                + "{\"path\":\"src/a.txt\",\"action\":\"restore\"},"
-                + "{\"path\":\"c.txt\",\"action\":\"restore\",\"conflictReason\":\"CONTENT_CHANGED\"}],"
-                + "\"headFingerprint\":{\"recorded\":null,\"current\":null,\"status\":\"not_repo\"},"
-                + "\"sealedWithLiveJobs\":true,\"truncated\":false}";
+        return "{\"sliceRef\":\"" + SLICE_REF + "\","
+                + "\"counts\":{\"restore\":2,\"delete\":1,\"typeConflict\":1},\"entries\":["
+                + "{\"path\":\"src/a.txt\",\"action\":\"restore\",\"state\":\"planned\"},"
+                + "{\"path\":\"c.txt\",\"action\":\"restore\",\"state\":\"typeConflict\","
+                + "\"reason\":\"TYPE_CHANGED\"}],\"truncated\":false}";
     }
 
     private static String revertBody() {
-        return "{\"runId\":\"ignored\",\"revertRef\":\"refs/xihe/run/rollback/9\","
-                + "\"counts\":{\"restored\":2,\"deleted\":1,\"skippedConflict\":0,\"failed\":0,\"noop\":3},"
-                + "\"entries\":[{\"path\":\"src/a.txt\",\"result\":\"restored\"}],\"durationMs\":42}";
+        return "{\"sliceRef\":\"" + SLICE_REF + "\","
+                + "\"counts\":{\"restored\":2,\"deleted\":1,\"failed\":0},"
+                + "\"entries\":[{\"path\":\"src/a.txt\",\"outcome\":\"restored\"}],\"durationMs\":42,"
+                + "\"suspects\":[]}";
     }
 
     // ── Run-scoped projection ───────────────────────────────────────────────
@@ -288,20 +292,19 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     }
 
     @Test
-    void checkpointProjectionReturnsSealedRowAndRevertState() {
-        RunCheckpoint row = seedCheckpoint(RunCheckpoint.STATE_SEALED);
+    void checkpointProjectionReturnsCapturedRowAndRevertState() {
+        RunCheckpoint row = seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         row.setRevertState(RunCheckpoint.REVERT_ROLLED_BACK);
-        row.setRevertRef("refs/xihe/" + runId + "/rollback/3");
+        row.setRevertRef(SLICE_REF);
         row.setRevertedAt(Instant.parse("2026-09-15T12:00:00Z"));
-        row.setRevertSummary("{\"counts\":{\"restored\":1,\"deleted\":0,\"skippedConflict\":0,"
-                + "\"failed\":0,\"noop\":0}}");
+        row.setRevertSummary("{\"counts\":{\"restored\":1,\"deleted\":0,\"failed\":0}}");
         row.setRevertAttemptCount(1);
         checkpointRepository.save(row);
 
         ResponseEntity<Map> response = get("/api/v1/chat/runs/" + runId + "/checkpoint");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals("sealed", response.getBody().get("state"));
+        assertEquals("captured", response.getBody().get("state"));
         assertEquals(1, response.getBody().get("changedCount"));
         assertNotNull(response.getBody().get("sealedAt"));
         @SuppressWarnings("unchecked")
@@ -311,7 +314,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         @SuppressWarnings("unchecked")
         Map<String, Object> revert = (Map<String, Object>) response.getBody().get("revert");
         assertEquals("rolled_back", revert.get("state"));
-        assertEquals("refs/xihe/" + runId + "/rollback/3", revert.get("ref"));
+        assertEquals(SLICE_REF, revert.get("ref"));
         assertEquals("2026-09-15T12:00:00Z", revert.get("at"));
         @SuppressWarnings("unchecked")
         Map<String, Object> counts = (Map<String, Object>) revert.get("counts");
@@ -324,7 +327,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     void previewRevertRequiresTerminalRunAndNeverCallsRuntime() {
         run.setStatus("running");
         chatRunRepository.save(run);
-        seedCheckpoint(RunCheckpoint.STATE_SEALED);
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         RESPONSES.put("preview", new AtomicReference<>(json(200, previewBody())));
 
         ResponseEntity<Map> response = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert/preview", null);
@@ -335,58 +338,59 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     }
 
     @Test
-    void previewRevertPassesThroughRuntimePreview() {
-        seedCheckpoint(RunCheckpoint.STATE_SEALED);
+    void previewRevertPassesThroughSlicePreview() {
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         RESPONSES.put("preview", new AtomicReference<>(json(200, previewBody())));
 
         ResponseEntity<Map> response = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert/preview", null);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals("sealed", response.getBody().get("state"));
+        assertEquals(SLICE_REF, response.getBody().get("sliceRef"));
         @SuppressWarnings("unchecked")
         Map<String, Object> counts = (Map<String, Object>) response.getBody().get("counts");
         assertEquals(2, counts.get("restore"));
-        assertEquals(1, counts.get("skipConflicts"));
+        assertEquals(1, counts.get("typeConflict"));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> entries = (List<Map<String, Object>>) response.getBody().get("entries");
         assertEquals(2, entries.size());
-        assertEquals("CONTENT_CHANGED", entries.get(1).get("conflictReason"));
-        assertEquals(true, response.getBody().get("sealedWithLiveJobs"));
+        assertEquals("typeConflict", entries.get(1).get("state"));
+        assertEquals("TYPE_CHANGED", entries.get(1).get("reason"));
         assertEquals(false, response.getBody().get("truncated"));
         assertEquals(1, calls("preview"));
     }
 
     @Test
-    void previewRevertBlocksUnavailableAndUnsealedRowsWithoutRuntimeCall() {
+    void previewRevertBlocksDegradedAndReflessRowsWithoutRuntimeCall() {
         RunCheckpoint degraded = seedCheckpoint(RunCheckpoint.STATE_DEGRADED);
-        degraded.setUnrollableReason("LEASE_HELD");
+        degraded.setUnrollableReason("UNAVAILABLE");
         checkpointRepository.save(degraded);
 
         ResponseEntity<Map> response = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert/preview", null);
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals("CHECKPOINT_NOT_AVAILABLE", response.getBody().get("code"));
-        assertTrue(String.valueOf(response.getBody().get("detail")).contains("LEASE_HELD"));
+        assertTrue(String.valueOf(response.getBody().get("detail")).contains("UNAVAILABLE"));
         assertEquals(0, calls("preview"));
 
         checkpointRepository.deleteAll();
-        seedCheckpoint(RunCheckpoint.STATE_BASE);
-        ResponseEntity<Map> unsealed = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert/preview", null);
-        assertEquals(HttpStatus.CONFLICT, unsealed.getStatusCode());
-        assertEquals("CHECKPOINT_NOT_SEALED", unsealed.getBody().get("code"));
+        RunCheckpoint noRef = seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
+        noRef.setEndRef(null);
+        checkpointRepository.save(noRef);
+        ResponseEntity<Map> noSlice = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert/preview", null);
+        assertEquals(HttpStatus.CONFLICT, noSlice.getStatusCode());
+        assertEquals("CHECKPOINT_NOT_AVAILABLE", noSlice.getBody().get("code"));
         assertEquals(0, calls("preview"));
     }
 
     @Test
-    void previewRevertForwardsConflictCodesAndExpiresMissingRefsOnce() {
-        seedCheckpoint(RunCheckpoint.STATE_SEALED);
+    void previewRevertForwardsTypeConflictsAndExpiresMissingSliceOnce() {
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         RESPONSES.put("preview", new AtomicReference<>(json(409,
-                "{\"code\":\"CHECKPOINT_CONFLICTS_UNACKNOWLEDGED\",\"paths\":[\"a.txt\",\"b.txt\"]}")));
+                "{\"code\":\"CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED\",\"paths\":[\"a.txt\",\"b.txt\"]}")));
 
         ResponseEntity<Map> conflicts = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert/preview", null);
         assertEquals(HttpStatus.CONFLICT, conflicts.getStatusCode());
-        assertEquals("CHECKPOINT_CONFLICTS_UNACKNOWLEDGED", conflicts.getBody().get("code"));
-        assertEquals(List.of("a.txt", "b.txt"), conflicts.getBody().get("paths"));
+        assertEquals("CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED", conflicts.getBody().get("code"));
 
         RESPONSES.put("preview", new AtomicReference<>(json(404, "{\"code\":\"CHECKPOINT_NOT_FOUND\"}")));
         ResponseEntity<Map> expired = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert/preview", null);
@@ -404,16 +408,16 @@ class RunCheckpointControllerTest extends AbstractH2Test {
 
     @Test
     void revertHappyPathUpdatesRowLedgerAndAttemptCount() {
-        seedCheckpoint(RunCheckpoint.STATE_SEALED);
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         var operation = operationService.startOperation(userId, sessionId, workspaceId, runId,
                 UUID.randomUUID().toString(), "chat", "ui", "user", userId, null, null);
         RESPONSES.put("revert", new AtomicReference<>(json(200, revertBody())));
 
         ResponseEntity<Map> response = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert",
-                Map.of("acknowledgeConflicts", List.of(RAW_REQUEST_MARKER), "acknowledgeHeadChange", true));
+                Map.of("acknowledgeTypeChanges", List.of(RAW_REQUEST_MARKER)));
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals("refs/xihe/run/rollback/9", response.getBody().get("revertRef"));
+        assertEquals(SLICE_REF, response.getBody().get("sliceRef"));
         @SuppressWarnings("unchecked")
         Map<String, Object> counts = (Map<String, Object>) response.getBody().get("counts");
         assertEquals(2, counts.get("restored"));
@@ -422,10 +426,11 @@ class RunCheckpointControllerTest extends AbstractH2Test {
 
         RunCheckpoint row = checkpointRepository.findByRunIdAndWorkspaceId(runId, workspaceId).orElseThrow();
         assertEquals(RunCheckpoint.REVERT_ROLLED_BACK, row.getRevertState());
-        assertEquals("refs/xihe/run/rollback/9", row.getRevertRef());
+        assertEquals(SLICE_REF, row.getRevertRef());
         assertEquals(1, row.getRevertAttemptCount());
         assertNotNull(row.getRevertedAt());
         assertTrue(row.getRevertSummary().contains("\"marker\":\"revert\""));
+        assertTrue(row.getRevertSummary().contains("\"sliceRef\":\"" + SLICE_REF + "\""));
         assertTrue(row.getRevertSummary().contains("\"allowedBy\":\"user_ui\""));
         assertFalse(row.getRevertSummary().contains(RAW_REQUEST_MARKER));
         assertFalse(row.getRevertSummary().contains("arguments"));
@@ -446,55 +451,52 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     }
 
     @Test
-    void revertPartialKeepsPartialStateAndConflictReason() {
-        seedCheckpoint(RunCheckpoint.STATE_SEALED);
+    void revertPartialKeepsPartialStateAndFailureReason() {
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         RESPONSES.put("revert", new AtomicReference<>(json(200,
-                "{\"runId\":\"ignored\",\"revertRef\":\"refs/xihe/run/rollback/10\","
-                        + "\"counts\":{\"restored\":1,\"deleted\":0,\"skippedConflict\":1,"
-                        + "\"failed\":0,\"noop\":0},"
-                        + "\"entries\":[{\"path\":\"c.txt\",\"result\":\"skippedConflict\","
-                        + "\"reason\":\"CONTENT_CHANGED\"}],\"durationMs\":7}")));
+                "{\"sliceRef\":\"" + SLICE_REF + "\","
+                        + "\"counts\":{\"restored\":1,\"deleted\":0,\"failed\":1},"
+                        + "\"entries\":[{\"path\":\"c.txt\",\"outcome\":\"failed\","
+                        + "\"reason\":\"IO_ERROR\"}],\"durationMs\":7,\"suspects\":[\"c.txt\"]}")));
 
         ResponseEntity<Map> response = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert", Map.of());
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         RunCheckpoint row = checkpointRepository.findByRunIdAndWorkspaceId(runId, workspaceId).orElseThrow();
         assertEquals(RunCheckpoint.REVERT_PARTIAL, row.getRevertState());
-        assertTrue(row.getRevertSummary().contains("\"reason\":\"CONFLICTS\""));
+        assertTrue(row.getRevertSummary().contains("\"reason\":\"FAILED\""));
         assertTrue(row.getRevertSummary().contains("c.txt"));
     }
 
     @Test
-    void revertMapsLeaseHeldAndHeadChangedRuntimeConflicts() {
-        seedCheckpoint(RunCheckpoint.STATE_SEALED);
+    void revertMapsRestoreLockedAndTypeChangesRuntimeConflicts() {
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         RESPONSES.put("revert", new AtomicReference<>(json(409,
-                "{\"code\":\"CHECKPOINT_LEASE_HELD\",\"heldByRunId\":\"run-live\",\"expiresAtMs\":7}")));
+                "{\"code\":\"CHECKPOINT_RESTORE_LOCKED\"}")));
 
-        ResponseEntity<Map> lease = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert", Map.of());
-        assertEquals(HttpStatus.CONFLICT, lease.getStatusCode());
-        assertEquals("CHECKPOINT_LEASE_HELD", lease.getBody().get("code"));
-        assertEquals("run-live", lease.getBody().get("heldByRunId"));
+        ResponseEntity<Map> locked = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert", Map.of());
+        assertEquals(HttpStatus.CONFLICT, locked.getStatusCode());
+        assertEquals("CHECKPOINT_RESTORE_LOCKED", locked.getBody().get("code"));
 
         RESPONSES.put("revert", new AtomicReference<>(json(409,
-                "{\"code\":\"CHECKPOINT_HEAD_CHANGED\",\"recorded\":{\"commit\":\"a\"},"
-                        + "\"observed\":{\"commit\":\"b\"}}")));
-        ResponseEntity<Map> head = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert", Map.of());
-        assertEquals(HttpStatus.CONFLICT, head.getStatusCode());
-        assertEquals("CHECKPOINT_HEAD_CHANGED", head.getBody().get("code"));
-        assertNotNull(head.getBody().get("recorded"));
+                "{\"code\":\"CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED\",\"paths\":[\"a.txt\"]}")));
+        ResponseEntity<Map> typeChanges = post("/api/v1/chat/runs/" + runId + "/checkpoint/revert", Map.of());
+        assertEquals(HttpStatus.CONFLICT, typeChanges.getStatusCode());
+        assertEquals("CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED", typeChanges.getBody().get("code"));
 
-        assertEquals(RunCheckpoint.STATE_SEALED,
+        assertEquals(RunCheckpoint.STATE_CAPTURED,
                 checkpointRepository.findByRunIdAndWorkspaceId(runId, workspaceId).orElseThrow().getState(),
                 "a rejected revert must not change the row");
     }
 
     @Test
     void checkpointFileReturnsPlainTextAndMapsTooLarge() {
-        seedCheckpoint(RunCheckpoint.STATE_SEALED);
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         RESPONSES.put("blob", new AtomicReference<>(text("file contents")));
 
         ResponseEntity<String> ok = restTemplate.exchange(
-                url("/api/v1/chat/runs/" + runId + "/checkpoint/file?path=src%2Fa.txt&ref=base"),
+                url("/api/v1/chat/runs/" + runId + "/checkpoint/file?path=src%2Fa.txt&ref="
+                        + "refs%2Fxihe%2Fslices%2F1757980000000-ab12cd"),
                 HttpMethod.GET, new HttpEntity<>(authHeaders()), String.class);
         assertEquals(HttpStatus.OK, ok.getStatusCode());
         assertEquals("file contents", ok.getBody());
@@ -503,7 +505,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         RESPONSES.put("blob", new AtomicReference<>(json(413,
                 "{\"code\":\"CHECKPOINT_BLOB_TOO_LARGE\",\"path\":\"big.bin\",\"size\":9,\"max\":5}")));
         ResponseEntity<Map> tooLarge = get(
-                "/api/v1/chat/runs/" + runId + "/checkpoint/file?path=big.bin&ref=end");
+                "/api/v1/chat/runs/" + runId + "/checkpoint/file?path=big.bin&ref=" + SLICE_REF);
         assertEquals(413, tooLarge.getStatusCode().value());
         assertEquals("CHECKPOINT_BLOB_TOO_LARGE", tooLarge.getBody().get("code"));
         assertEquals(9, tooLarge.getBody().get("size"));
@@ -511,7 +513,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         RESPONSES.put("blob", new AtomicReference<>(json(404,
                 "{\"code\":\"CHECKPOINT_NOT_FOUND\",\"detail\":\"path gone.txt is not present\"}")));
         ResponseEntity<Map> missing = get(
-                "/api/v1/chat/runs/" + runId + "/checkpoint/file?path=gone.txt&ref=base");
+                "/api/v1/chat/runs/" + runId + "/checkpoint/file?path=gone.txt&ref=" + SLICE_REF);
         assertEquals(HttpStatus.NOT_FOUND, missing.getStatusCode());
         assertEquals("CHECKPOINT_NOT_FOUND", missing.getBody().get("code"));
     }
@@ -560,7 +562,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
 
     @Test
     void retentionReturnsConstantsAndCurrentCounts() {
-        seedCheckpoint(RunCheckpoint.STATE_SEALED);
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
         seedCheckpoint(UUID.randomUUID().toString(), RunCheckpoint.STATE_DEGRADED);
 
         ResponseEntity<Map> response = get("/api/v1/workspaces/" + workspaceId + "/checkpoints/retention");
@@ -570,20 +572,20 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         assertEquals(30, response.getBody().get("ttlDays"));
         assertEquals(true, response.getBody().get("unsealedNeverDeleted"));
         assertEquals(2, response.getBody().get("currentRuns"));
-        assertEquals(2, response.getBody().get("currentRefs"));
+        assertEquals(1, response.getBody().get("currentRefs"));
     }
 
     @Test
     void gcProxiesRuntimeSweepAndOwnership() {
         RESPONSES.put("gc", new AtomicReference<>(json(200,
-                "{\"counts\":{\"deletedRuns\":3,\"keptSealed\":50,\"keptUnsealed\":1}}")));
+                "{\"counts\":{\"deleted\":3,\"kept\":50}}")));
 
         ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId + "/checkpoints/gc", Map.of());
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         @SuppressWarnings("unchecked")
         Map<String, Object> counts = (Map<String, Object>) response.getBody().get("counts");
-        assertEquals(3, counts.get("deletedRuns"));
+        assertEquals(3, counts.get("deleted"));
         assertEquals(1, calls("gc"));
 
         Workspace foreign = workspaceRepository.save(new Workspace("cp-foreign-gc", UUID.randomUUID().toString()));

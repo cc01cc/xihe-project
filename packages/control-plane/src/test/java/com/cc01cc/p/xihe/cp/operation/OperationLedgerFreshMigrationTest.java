@@ -252,12 +252,24 @@ class OperationLedgerFreshMigrationTest {
                         + "'::uuid, '" + workspaceId + "'::uuid, 'bogus')"));
         assertTrue(badState.getMessage().contains("ck_run_checkpoints_state"), badState.getMessage());
 
-        // degraded rows carry the frozen unrollable reasons.
+        // degraded rows carry the frozen capture-failure reason.
         executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state, unrollable_reason) "
                 + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '"
-                + workspaceId + "'::uuid, 'degraded', 'LEASE_HELD')");
+                + workspaceId + "'::uuid, 'degraded', 'UNAVAILABLE')");
         assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
-                + workspaceId + "'::uuid AND state = 'degraded' AND unrollable_reason = 'LEASE_HELD'"));
+                + workspaceId + "'::uuid AND state = 'degraded' AND unrollable_reason = 'UNAVAILABLE'"));
+
+        // PLAN-0338 (V26): the slice state vocabulary is accepted by the widened allowlist.
+        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state, end_ref) "
+                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '"
+                + workspaceId + "'::uuid, 'captured', 'refs/xihe/slices/1757980000000-ab12cd')");
+        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) "
+                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '"
+                + workspaceId + "'::uuid, 'abnormal-captured')");
+        assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
+                + workspaceId + "'::uuid AND state = 'captured'"));
+        assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
+                + workspaceId + "'::uuid AND state = 'abnormal-captured'"));
 
         // A ledger checkpoint marker row is accepted by the extended kind allowlist.
         UUID operationId = UUID.randomUUID();

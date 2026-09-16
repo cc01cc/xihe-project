@@ -104,12 +104,10 @@ public class RunCheckpointController {
         }
         RuntimeCheckpointClient.RevertPreview preview = outcome.preview();
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("runId", preview.runId());
-        body.put("state", preview.state());
+        body.put("runId", runId);
+        body.put("sliceRef", preview.sliceRef());
         body.put("counts", preview.counts());
         body.put("entries", preview.entries());
-        body.put("headFingerprint", preview.headFingerprint());
-        body.put("sealedWithLiveJobs", preview.sealedWithLiveJobs());
         body.put("truncated", preview.truncated());
         return ResponseEntity.ok(body);
     }
@@ -127,26 +125,27 @@ public class RunCheckpointController {
         if (active != null) {
             return active;
         }
-        List<String> acknowledgeConflicts = stringList(
-                request == null ? null : request.get("acknowledgeConflicts"));
-        boolean acknowledgeHeadChange = request != null
-                && Boolean.TRUE.equals(request.get("acknowledgeHeadChange"));
+        // PLAN-0338: only the slice-model acknowledgement is honored; the legacy
+        // acknowledgeConflicts/acknowledgeHeadChange fields are ignored.
+        List<String> acknowledgeTypeChanges = stringList(
+                request == null ? null : request.get("acknowledgeTypeChanges"));
         RunCheckpointService.RevertOutcome outcome = checkpoints.revert(
-                runId, ref.run().getWorkspaceId(), acknowledgeConflicts, acknowledgeHeadChange);
+                runId, ref.run().getWorkspaceId(), acknowledgeTypeChanges);
         if (outcome.gate() != Gate.OK) {
             return gateResponse(outcome.gate(), outcome.reason(), outcome.details());
         }
         RuntimeCheckpointClient.RevertResult result = outcome.result();
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("runId", result.runId());
-        body.put("revertRef", result.revertRef());
+        body.put("runId", runId);
+        body.put("sliceRef", result.sliceRef());
         body.put("counts", result.counts());
         body.put("entries", result.entries());
         body.put("durationMs", result.durationMs());
+        body.put("suspects", result.suspects());
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_revert_completed runId={} restored={} "
-                        + "deleted={} skippedConflict={} failed={}",
+                        + "deleted={} failed={}",
                 runId, result.counts().restored(), result.counts().deleted(),
-                result.counts().skippedConflict(), result.counts().failed());
+                result.counts().failed());
         return ResponseEntity.ok(body);
     }
 
@@ -282,16 +281,12 @@ public class RunCheckpointController {
             case NOT_AVAILABLE -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
                     "CHECKPOINT_NOT_AVAILABLE",
                     "Run checkpoint is not available (" + reason + ")", details);
-            case LEASE_HELD -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
-                    "CHECKPOINT_LEASE_HELD",
-                    "another run holds the workspace mutation lease", details);
-            case HEAD_CHANGED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
-                    "CHECKPOINT_HEAD_CHANGED",
-                    "the workspace HEAD/branch fingerprint changed since the checkpoint base; "
-                            + "acknowledge it to revert anyway", details);
-            case CONFLICTS_UNACKNOWLEDGED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
-                    "CHECKPOINT_CONFLICTS_UNACKNOWLEDGED",
-                    "conflict paths must be acknowledged from the preview before reverting", details);
+            case TYPE_CHANGES_UNACKNOWLEDGED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED",
+                    "type-change paths must be acknowledged from the preview before reverting", details);
+            case RESTORE_LOCKED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "CHECKPOINT_RESTORE_LOCKED",
+                    "another restore is already running in this workspace", details);
             case INVALID_REQUEST -> ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
                     "CHECKPOINT_INVALID_REQUEST", "Invalid checkpoint file request", details);
             case TOO_LARGE -> ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE,

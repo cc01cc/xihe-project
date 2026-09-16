@@ -17,10 +17,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -29,8 +29,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * PLAN-0328 M2 W3: startup recovery must also seal "terminal but not sealed"
- * Run checkpoints (spec §3.1 补 seal) — once, without failing the recovery.
+ * PLAN-0338: startup recovery must also compensate "terminal but not yet
+ * captured" Run slices (single capture, no pre-dispatch row) — once, without
+ * failing the recovery.
  */
 class ChatRunRecoveryServiceTest {
 
@@ -38,6 +39,7 @@ class ChatRunRecoveryServiceTest {
     private static final String WORKSPACE_ID = "22222222-2222-2222-2222-222222222222";
     private static final String USER_ID = "55555555-5555-5555-5555-555555555555";
     private static final String SESSION_ID = "44444444-4444-4444-4444-444444444444";
+    private static final String SLICE_REF = "refs/xihe/slices/1757980000000-ab12cd";
 
     private ChatRunRepository chatRunRepository;
     private ChatApprovalRepository approvalRepository;
@@ -55,6 +57,7 @@ class ChatRunRecoveryServiceTest {
         runCheckpointService = mock(RunCheckpointService.class);
         when(chatRunRepository.findByStatus("cancelling")).thenReturn(List.of());
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of());
+        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any())).thenReturn(List.of());
         service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
                 operationService, runCheckpointService);
     }
@@ -65,7 +68,7 @@ class ChatRunRecoveryServiceTest {
     }
 
     @Test
-    void recoveryMarksUnrecoverableRunAmbiguousAndSweepsCheckpoints() {
+    void recoveryMarksUnrecoverableRunAmbiguousAndCapturesCheckpoints() {
         ChatRun active = runWithStatus("running");
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of(active));
         when(approvalRepository.findByRunIdAndStateIn(anyString(), any())).thenReturn(List.of());
@@ -75,12 +78,12 @@ class ChatRunRecoveryServiceTest {
         assertEquals("CP_RESTARTED", active.getErrorCode());
         verify(chatRunRepository).save(active);
 
-        service.sealRecoveredCheckpoints();
-        verify(runCheckpointService).sealTerminalCheckpoints();
+        service.captureRecoveredRuns();
+        verify(runCheckpointService).captureTerminalRuns();
     }
 
     @Test
-    void recoveryRestoresRunWithLiveApprovalWithoutSealing() {
+    void recoveryRestoresRunWithLiveApprovalWithoutCapturing() {
         ChatRun active = runWithStatus("running");
         ChatApproval live = new ChatApproval("77777777-7777-7777-7777-777777777777", RUN_ID,
                 SESSION_ID, USER_ID, WORKSPACE_ID, "write_file", "Execute write_file", "preview",
@@ -95,42 +98,40 @@ class ChatRunRecoveryServiceTest {
     }
 
     @Test
-    void sealSweepFailureNeverFailsRecovery() {
-        doThrow(new IllegalStateException("runtime down")).when(runCheckpointService).sealTerminalCheckpoints();
+    void captureSweepFailureNeverFailsRecovery() {
+        doThrow(new IllegalStateException("runtime down")).when(runCheckpointService).captureTerminalRuns();
 
-        service.sealRecoveredCheckpoints();
+        service.captureRecoveredRuns();
 
-        verify(runCheckpointService).sealTerminalCheckpoints();
+        verify(runCheckpointService).captureTerminalRuns();
     }
 
     @Test
-    void recoverySealsTerminalRunOnce() {
+    void recoveryCapturesTerminalRunOnce() {
         RunCheckpointRepository checkpointRepository = mock(RunCheckpointRepository.class);
         RuntimeCheckpointClient client = mock(RuntimeCheckpointClient.class);
         List<RunCheckpoint> rows = new ArrayList<>();
-        RunCheckpoint base = new RunCheckpoint();
-        base.setId(java.util.UUID.randomUUID());
-        base.setRunId(RUN_ID);
-        base.setWorkspaceId(WORKSPACE_ID);
-        base.setState(RunCheckpoint.STATE_BASE);
-        base.setCreatedAt(Instant.now());
-        base.setUpdatedAt(Instant.now());
-        rows.add(base);
-        when(checkpointRepository.findByState(RunCheckpoint.STATE_BASE)).thenAnswer(
-                invocation -> rows.stream()
-                        .filter(row -> RunCheckpoint.STATE_BASE.equals(row.getState()))
-                        .toList());
-        when(checkpointRepository.findByRunId(RUN_ID)).thenAnswer(invocation -> rows);
-        when(checkpointRepository.markSealed(any(), any(), any(), anyBoolean(), anyBoolean(), any()))
-                .thenAnswer(invocation -> {
-                    rows.get(0).setState(RunCheckpoint.STATE_SEALED);
-                    return 1;
-                });
-        when(client.seal(WORKSPACE_ID, RUN_ID)).thenReturn(new RuntimeCheckpointClient.SealResult(
-                RuntimeCheckpointClient.Outcome.OK, "sealed", null, List.of(), false, false, null));
+        when(checkpointRepository.findByRunIdAndWorkspaceId(anyString(), anyString()))
+                .thenAnswer(invocation -> rows.stream()
+                        .filter(row -> row.getRunId().equals(invocation.getArgument(0))
+                                && row.getWorkspaceId().equals(invocation.getArgument(1)))
+                        .findFirst());
+        when(checkpointRepository.save(any(RunCheckpoint.class))).thenAnswer(invocation -> {
+            RunCheckpoint row = invocation.getArgument(0);
+            rows.add(row);
+            return row;
+        });
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, "run-terminal-capture:" + RUN_ID, true))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(RuntimeCheckpointClient.Outcome.OK,
+                        RUN_ID, false, SLICE_REF, "ab12cd", "2026-09-15T00:00:00Z",
+                        RunCheckpoint.STATE_CAPTURED,
+                        List.of(new RuntimeCheckpointClient.ChangedFile("M", "src/a.txt")),
+                        List.of(), null, null));
 
         ChatRun terminal = runWithStatus("ambiguous");
-        when(chatRunRepository.findById(java.util.UUID.fromString(RUN_ID)))
+        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+                .thenReturn(List.of(terminal));
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(terminal));
         RunCheckpointService realService = new RunCheckpointService(checkpointRepository, client,
                 operationService, chatRunRepository, new ObjectMapper(),
@@ -138,11 +139,13 @@ class ChatRunRecoveryServiceTest {
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
                 approvalRepository, chatController, operationService, realService);
         try {
-            recovery.sealRecoveredCheckpoints();
-            recovery.sealRecoveredCheckpoints();
+            recovery.captureRecoveredRuns();
+            recovery.captureRecoveredRuns();
 
-            verify(client, times(1)).seal(WORKSPACE_ID, RUN_ID);
-            assertEquals(RunCheckpoint.STATE_SEALED, rows.get(0).getState());
+            verify(client, times(1)).capture(WORKSPACE_ID, RUN_ID, USER_ID,
+                    "run-terminal-capture:" + RUN_ID, true);
+            assertEquals(RunCheckpoint.STATE_CAPTURED, rows.get(0).getState());
+            assertEquals(SLICE_REF, rows.get(0).getEndRef());
         } finally {
             realService.shutdown();
         }

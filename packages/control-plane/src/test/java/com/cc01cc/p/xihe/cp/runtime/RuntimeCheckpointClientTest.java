@@ -17,10 +17,11 @@ import java.util.function.BiFunction;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0328 M2 W3: typed mapping of the Runtime Run-checkpoint contract
+ * PLAN-0338: typed mapping of the Runtime slice-checkpoint contract
  * (no Docker required).
  */
 class RuntimeCheckpointClientTest {
@@ -62,60 +63,93 @@ class RuntimeCheckpointClientTest {
     }
 
     @Test
-    void createParsesContractFieldsAndSendsServiceAuth() throws IOException {
+    void captureParsesContractFieldsAndSendsServiceAuth() throws IOException {
         String url = startServer((method, path) -> new Stub(200,
-                "{\"checkpointId\":\"33333333-3333-3333-3333-333333333333\","
-                        + "\"runId\":\"run-1\",\"state\":\"base\","
-                        + "\"baseRef\":\"refs/xihe/run-1/base\",\"createdAt\":\"2026-09-15T00:00:00Z\"}"));
+                "{\"runId\":\"run-1\",\"noChange\":false,"
+                        + "\"sliceRef\":\"refs/xihe/slices/1757980000000-ab12cd\","
+                        + "\"commit\":\"ab12cd\",\"capturedAt\":\"2026-09-15T00:00:00Z\","
+                        + "\"state\":\"captured\","
+                        + "\"changedFiles\":[{\"status\":\"M\",\"path\":\"src/a.txt\"},"
+                        + "{\"status\":\"A\",\"path\":\"src/b.txt\"}],"
+                        + "\"opaqueNestedRepos\":[\"vendor/lib\"],"
+                        + "\"predecessor\":\"refs/xihe/slices/1757900000000-998877\"}"));
         RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
 
-        RuntimeCheckpointClient.CreateResult result = client.create("ws-1", "run-1", "user-1", "call-1");
+        RuntimeCheckpointClient.CaptureResult result =
+                client.capture("ws-1", "run-1", "user-1", "call-1", false);
 
         assertEquals(RuntimeCheckpointClient.Outcome.OK, result.outcome());
-        assertEquals("33333333-3333-3333-3333-333333333333", result.checkpointId());
         assertEquals("run-1", result.runId());
-        assertEquals("base", result.state());
-        assertEquals("refs/xihe/run-1/base", result.baseRef());
-        assertEquals("2026-09-15T00:00:00Z", result.createdAt());
+        assertFalse(result.noChange());
+        assertEquals("refs/xihe/slices/1757980000000-ab12cd", result.sliceRef());
+        assertEquals("ab12cd", result.commit());
+        assertEquals("2026-09-15T00:00:00Z", result.capturedAt());
+        assertEquals("captured", result.state());
+        assertEquals(2, result.changedFiles().size());
+        assertEquals("M", result.changedFiles().get(0).status());
+        assertEquals("src/a.txt", result.changedFiles().get(0).path());
+        assertEquals(List.of("vendor/lib"), result.opaqueNestedRepos());
+        assertEquals("refs/xihe/slices/1757900000000-998877", result.predecessor());
         assertEquals("POST", lastMethod.get());
-        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints", lastPath.get());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/capture", lastPath.get());
         assertEquals("Bearer test-token", lastAuth.get());
         assertTrue(lastBody.get().contains("\"runId\":\"run-1\""));
         assertTrue(lastBody.get().contains("\"actor\":\"user-1\""));
         assertTrue(lastBody.get().contains("\"callId\":\"call-1\""));
+        assertTrue(lastBody.get().contains("\"abnormal\":false"));
     }
 
     @Test
-    void createMapsConflictToLeaseHeld() throws IOException {
-        String url = startServer((method, path) -> new Stub(409,
-                "{\"code\":\"CHECKPOINT_LEASE_HELD\"}"));
+    void captureSendsAbnormalFlagAndParsesNoChange() throws IOException {
+        String url = startServer((method, path) -> new Stub(200,
+                "{\"runId\":\"run-1\",\"noChange\":true,\"state\":\"abnormal-captured\","
+                        + "\"changedFiles\":[],\"opaqueNestedRepos\":[]}"));
         RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
 
-        RuntimeCheckpointClient.CreateResult result = client.create("ws-1", "run-1", "user-1", "call-1");
+        RuntimeCheckpointClient.CaptureResult result =
+                client.capture("ws-1", "run-1", "user-1", "call-1", true);
 
-        assertEquals(RuntimeCheckpointClient.Outcome.LEASE_HELD, result.outcome());
-        assertEquals("CHECKPOINT_LEASE_HELD", result.reason());
+        assertEquals(RuntimeCheckpointClient.Outcome.OK, result.outcome());
+        assertTrue(result.noChange());
+        assertEquals("abnormal-captured", result.state());
+        assertNull(result.sliceRef());
+        assertTrue(result.changedFiles().isEmpty());
+        assertTrue(lastBody.get().contains("\"abnormal\":true"));
     }
 
     @Test
-    void createMapsServiceUnavailableWithReason() throws IOException {
-        String url = startServer((method, path) -> new Stub(503,
+    void captureMapsInvalidRequestAndUnavailable() throws IOException {
+        String invalidUrl = startServer((method, path) -> new Stub(400,
+                "{\"code\":\"CHECKPOINT_INVALID_REQUEST\"}"));
+        RuntimeCheckpointClient.CaptureResult invalid =
+                new RuntimeCheckpointClient(invalidUrl, "test-token")
+                        .capture("ws-1", "run-1", "user-1", "call-1", false);
+        assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST, invalid.outcome());
+
+        server.stop(0);
+        String unavailableUrl = startServer((method, path) -> new Stub(503,
                 "{\"code\":\"CHECKPOINT_UNAVAILABLE\",\"reason\":\"git_unavailable\"}"));
-        RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
+        RuntimeCheckpointClient.CaptureResult unavailable =
+                new RuntimeCheckpointClient(unavailableUrl, "test-token")
+                        .capture("ws-1", "run-1", "user-1", "call-1", false);
+        assertEquals(RuntimeCheckpointClient.Outcome.UNAVAILABLE, unavailable.outcome());
+        assertEquals("git_unavailable", unavailable.reason());
 
-        RuntimeCheckpointClient.CreateResult result = client.create("ws-1", "run-1", "user-1", "call-1");
-
-        assertEquals(RuntimeCheckpointClient.Outcome.UNAVAILABLE, result.outcome());
-        assertEquals("git_unavailable", result.reason());
+        server.stop(0);
+        String notFoundUrl = startServer((method, path) -> new Stub(404, "{\"code\":\"RUN_NOT_FOUND\"}"));
+        RuntimeCheckpointClient.CaptureResult missing =
+                new RuntimeCheckpointClient(notFoundUrl, "test-token")
+                        .capture("ws-1", "run-1", "user-1", "call-1", false);
+        assertEquals(RuntimeCheckpointClient.Outcome.NOT_FOUND, missing.outcome());
     }
 
     @Test
-    void createMapsOtherStatusesAndTransportToTransport() throws IOException {
+    void captureMapsOtherStatusesAndTransportToTransport() throws IOException {
         String url = startServer((method, path) -> new Stub(500, "boom"));
         RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
 
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT,
-                client.create("ws-1", "run-1", "user-1", "call-1").outcome());
+                client.capture("ws-1", "run-1", "user-1", "call-1", false).outcome());
 
         int closedPort;
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -123,79 +157,24 @@ class RuntimeCheckpointClientTest {
         }
         RuntimeCheckpointClient unreachable =
                 new RuntimeCheckpointClient("http://127.0.0.1:" + closedPort, "test-token");
-        RuntimeCheckpointClient.CreateResult result =
-                unreachable.create("ws-1", "run-1", "user-1", "call-1");
+        RuntimeCheckpointClient.CaptureResult result =
+                unreachable.capture("ws-1", "run-1", "user-1", "call-1", false);
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, result.outcome());
         assertEquals("unreachable", result.reason());
     }
 
     @Test
-    void sealParsesChangedFilesAndFlags() throws IOException {
-        String url = startServer((method, path) -> new Stub(200,
-                "{\"runId\":\"run-1\",\"state\":\"sealed\","
-                        + "\"changedFiles\":[{\"status\":\"M\",\"path\":\"src/a.txt\"},"
-                        + "{\"status\":\"A\",\"path\":\"src/b.txt\"}],"
-                        + "\"sealedWithLiveJobs\":true,\"sealedAfterAbnormal\":false}"));
-        RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
-
-        RuntimeCheckpointClient.SealResult result = client.seal("ws-1", "run-1");
-
-        assertEquals(RuntimeCheckpointClient.Outcome.OK, result.outcome());
-        assertEquals("sealed", result.state());
-        assertEquals(2, result.changedFiles().size());
-        assertEquals("M", result.changedFiles().get(0).status());
-        assertEquals("src/a.txt", result.changedFiles().get(0).path());
-        assertTrue(result.sealedWithLiveJobs());
-        assertFalse(result.sealedAfterAbnormal());
-        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/run-1/seal", lastPath.get());
-    }
-
-    @Test
-    void sealMapsNotFoundAndUnavailable() throws IOException {
-        String notFoundUrl = startServer((method, path) -> new Stub(404, "{\"code\":\"RUN_NOT_FOUND\"}"));
-        RuntimeCheckpointClient notFoundClient = new RuntimeCheckpointClient(notFoundUrl, "test-token");
-        RuntimeCheckpointClient.SealResult missing = notFoundClient.seal("ws-1", "run-1");
-        assertEquals(RuntimeCheckpointClient.Outcome.NOT_FOUND, missing.outcome());
-        assertTrue(missing.changedFiles().isEmpty());
-
-        server.stop(0);
-        String unavailableUrl = startServer((method, path) -> new Stub(503,
-                "{\"reason\":\"checkpoint_not_sealed\"}"));
-        RuntimeCheckpointClient unavailableClient = new RuntimeCheckpointClient(unavailableUrl, "test-token");
-        RuntimeCheckpointClient.SealResult unavailable = unavailableClient.seal("ws-1", "run-1");
-        assertEquals(RuntimeCheckpointClient.Outcome.UNAVAILABLE, unavailable.outcome());
-        assertEquals("checkpoint_not_sealed", unavailable.reason());
-    }
-
-    @Test
-    void statusMapsFoundAndNotFound() throws IOException {
-        String url = startServer((method, path) -> path.endsWith("/run-1")
-                ? new Stub(200, "{\"runId\":\"run-1\",\"state\":\"sealed\"}")
-                : new Stub(404, "{\"code\":\"RUN_NOT_FOUND\"}"));
-        RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
-
-        RuntimeCheckpointClient.StatusResult found = client.status("ws-1", "run-1");
-        assertEquals(RuntimeCheckpointClient.Outcome.OK, found.outcome());
-        assertEquals("sealed", found.state());
-        assertEquals("GET", lastMethod.get());
-
-        RuntimeCheckpointClient.StatusResult missing = client.status("ws-1", "run-2");
-        assertEquals(RuntimeCheckpointClient.Outcome.NOT_FOUND, missing.outcome());
-    }
-
-    @Test
     void gcReturnsCounts() throws IOException {
         String url = startServer((method, path) -> new Stub(200,
-                "{\"counts\":{\"deletedRuns\":2,\"keptSealed\":50,\"keptUnsealed\":1}}"));
+                "{\"counts\":{\"deleted\":2,\"kept\":50}}"));
         RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
 
         RuntimeCheckpointClient.GcResult result = client.gc("ws-1");
 
         assertEquals(RuntimeCheckpointClient.Outcome.OK, result.outcome());
         Map<String, Object> counts = result.counts();
-        assertEquals(2, ((Number) counts.get("deletedRuns")).intValue());
-        assertEquals(50, ((Number) counts.get("keptSealed")).intValue());
-        assertNotNull(counts.get("keptUnsealed"));
+        assertEquals(2, ((Number) counts.get("deleted")).intValue());
+        assertEquals(50, ((Number) counts.get("kept")).intValue());
         assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/gc", lastPath.get());
     }
 
@@ -204,84 +183,73 @@ class RuntimeCheckpointClientTest {
         RuntimeCheckpointClient client = new RuntimeCheckpointClient("http://127.0.0.1:1", "test-token");
 
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT,
-                client.create(" ", "run-1", "user-1", "call-1").outcome());
-        assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, client.seal("ws-1", "").outcome());
-        assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, client.status("", "run-1").outcome());
+                client.capture(" ", "run-1", "user-1", "call-1", false).outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, client.gc(null).outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, client.previewRevert("ws-1", " ").outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT,
-                client.revert(" ", "run-1", List.of(), false).outcome());
+                client.revert(" ", "refs/xihe/slices/1-a", List.of()).outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST,
-                client.checkpointBlob("ws-1", "run-1", "base", " ").outcome());
+                client.checkpointBlob("ws-1", "refs/xihe/slices/1-a", " ").outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST,
                 client.workspaceGitStatus("").outcome());
     }
 
-    // ── PLAN-0328 M3 W2: revert preview / execute / blob / git-status ───────
+    // ── PLAN-0338: slice preview / restore / blob / git-status ──────────────
 
     @Test
-    void previewRevertParsesContractFields() throws IOException {
+    void previewRevertSendsSliceRefAndParsesContractFields() throws IOException {
+        String sliceRef = "refs/xihe/slices/1757980000000-ab12cd";
         String url = startServer((method, path) -> new Stub(200,
-                "{\"runId\":\"run-1\",\"state\":\"sealed\",\"counts\":{\"restore\":2,\"delete\":1,"
-                        + "\"skipConflicts\":1,\"noop\":3},\"entries\":["
-                        + "{\"path\":\"a.txt\",\"action\":\"restore\"},"
-                        + "{\"path\":\"b.txt\",\"action\":\"delete\"},"
-                        + "{\"path\":\"c.txt\",\"action\":\"restore\",\"conflictReason\":\"CONTENT_CHANGED\"}],"
-                        + "\"headFingerprint\":{\"recorded\":null,\"current\":null,\"status\":\"not_repo\"},"
-                        + "\"sealedWithLiveJobs\":true,\"truncated\":false}"));
+                "{\"sliceRef\":\"" + sliceRef + "\","
+                        + "\"counts\":{\"restore\":2,\"delete\":1,\"typeConflict\":1},"
+                        + "\"entries\":["
+                        + "{\"path\":\"a.txt\",\"action\":\"restore\",\"state\":\"planned\"},"
+                        + "{\"path\":\"b.txt\",\"action\":\"delete\",\"state\":\"planned\"},"
+                        + "{\"path\":\"c.txt\",\"action\":\"restore\",\"state\":\"typeConflict\","
+                        + "\"reason\":\"TYPE_CHANGED\"}],"
+                        + "\"truncated\":false}"));
         RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
 
-        RuntimeCheckpointClient.RevertPreview preview = client.previewRevert("ws-1", "run-1");
+        RuntimeCheckpointClient.RevertPreview preview = client.previewRevert("ws-1", sliceRef);
 
         assertEquals(RuntimeCheckpointClient.Outcome.OK, preview.outcome());
-        assertEquals("run-1", preview.runId());
-        assertEquals("sealed", preview.state());
+        assertEquals(sliceRef, preview.sliceRef());
         assertEquals(2, preview.counts().restore());
         assertEquals(1, preview.counts().delete());
-        assertEquals(1, preview.counts().skipConflicts());
+        assertEquals(1, preview.counts().typeConflict());
         assertEquals(3, preview.entries().size());
-        assertEquals("CONTENT_CHANGED", preview.entries().get(2).conflictReason());
-        assertTrue(preview.sealedWithLiveJobs());
+        assertEquals("typeConflict", preview.entries().get(2).state());
+        assertEquals("TYPE_CHANGED", preview.entries().get(2).reason());
         assertFalse(preview.truncated());
-        assertEquals("not_repo", preview.headFingerprint().get("status"));
         assertEquals("POST", lastMethod.get());
-        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/run-1/revert/preview",
-                lastPath.get());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/revert/preview", lastPath.get());
         assertEquals("Bearer test-token", lastAuth.get());
-        assertEquals("{}", lastBody.get().trim());
+        assertTrue(lastBody.get().contains("\"sliceRef\":\"" + sliceRef + "\""));
     }
 
     @Test
-    void previewRevertMapsConflictCodesAndKeepsProblemFields() throws IOException {
+    void previewRevertMapsRestoreFailureCodes() throws IOException {
+        String sliceRef = "refs/xihe/slices/1-a";
+
         String conflictsUrl = startServer((method, path) -> new Stub(409,
-                "{\"code\":\"CHECKPOINT_CONFLICTS_UNACKNOWLEDGED\",\"paths\":[\"a.txt\"]}"));
+                "{\"code\":\"CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED\",\"paths\":[\"a.txt\"]}"));
         RuntimeCheckpointClient.RevertPreview conflicts =
-                new RuntimeCheckpointClient(conflictsUrl, "test-token").previewRevert("ws-1", "run-1");
-        assertEquals(RuntimeCheckpointClient.Outcome.CONFLICTS_UNACKNOWLEDGED, conflicts.outcome());
+                new RuntimeCheckpointClient(conflictsUrl, "test-token").previewRevert("ws-1", sliceRef);
+        assertEquals(RuntimeCheckpointClient.Outcome.TYPE_CHANGES_UNACKNOWLEDGED, conflicts.outcome());
         assertEquals(List.of("a.txt"), conflicts.problem().get("paths"));
 
         server.stop(0);
-        String headUrl = startServer((method, path) -> new Stub(409,
-                "{\"code\":\"CHECKPOINT_HEAD_CHANGED\",\"recorded\":{\"commit\":\"a\"},"
-                        + "\"observed\":{\"commit\":\"b\"}}"));
-        RuntimeCheckpointClient.RevertPreview head =
-                new RuntimeCheckpointClient(headUrl, "test-token").previewRevert("ws-1", "run-1");
-        assertEquals(RuntimeCheckpointClient.Outcome.HEAD_CHANGED, head.outcome());
-        assertNotNull(head.problem().get("recorded"));
-
-        server.stop(0);
-        String leaseUrl = startServer((method, path) -> new Stub(409,
-                "{\"code\":\"CHECKPOINT_LEASE_HELD\",\"heldByRunId\":\"run-other\"}"));
-        RuntimeCheckpointClient.RevertPreview lease =
-                new RuntimeCheckpointClient(leaseUrl, "test-token").previewRevert("ws-1", "run-1");
-        assertEquals(RuntimeCheckpointClient.Outcome.LEASE_HELD, lease.outcome());
-        assertEquals("run-other", lease.problem().get("heldByRunId"));
+        String lockedUrl = startServer((method, path) -> new Stub(409,
+                "{\"code\":\"CHECKPOINT_RESTORE_LOCKED\"}"));
+        RuntimeCheckpointClient.RevertPreview locked =
+                new RuntimeCheckpointClient(lockedUrl, "test-token").previewRevert("ws-1", sliceRef);
+        assertEquals(RuntimeCheckpointClient.Outcome.RESTORE_LOCKED, locked.outcome());
 
         server.stop(0);
         String notSealedUrl = startServer((method, path) -> new Stub(409,
                 "{\"code\":\"CHECKPOINT_NOT_SEALED\"}"));
         assertEquals(RuntimeCheckpointClient.Outcome.NOT_SEALED,
-                new RuntimeCheckpointClient(notSealedUrl, "test-token").previewRevert("ws-1", "run-1")
+                new RuntimeCheckpointClient(notSealedUrl, "test-token").previewRevert("ws-1", sliceRef)
                         .outcome());
     }
 
@@ -290,14 +258,15 @@ class RuntimeCheckpointClientTest {
         String notFoundUrl = startServer((method, path) -> new Stub(404,
                 "{\"code\":\"CHECKPOINT_NOT_FOUND\"}"));
         assertEquals(RuntimeCheckpointClient.Outcome.NOT_FOUND,
-                new RuntimeCheckpointClient(notFoundUrl, "test-token").previewRevert("ws-1", "run-1")
-                        .outcome());
+                new RuntimeCheckpointClient(notFoundUrl, "test-token")
+                        .previewRevert("ws-1", "refs/xihe/slices/1-a").outcome());
 
         server.stop(0);
         String unavailableUrl = startServer((method, path) -> new Stub(503,
                 "{\"code\":\"CHECKPOINT_UNAVAILABLE\",\"reason\":\"git_unavailable\"}"));
         RuntimeCheckpointClient.RevertPreview unavailable =
-                new RuntimeCheckpointClient(unavailableUrl, "test-token").previewRevert("ws-1", "run-1");
+                new RuntimeCheckpointClient(unavailableUrl, "test-token")
+                        .previewRevert("ws-1", "refs/xihe/slices/1-a");
         assertEquals(RuntimeCheckpointClient.Outcome.UNAVAILABLE, unavailable.outcome());
         assertEquals("git_unavailable", unavailable.reason());
 
@@ -307,70 +276,85 @@ class RuntimeCheckpointClientTest {
         }
         RuntimeCheckpointClient.RevertPreview transport =
                 new RuntimeCheckpointClient("http://127.0.0.1:" + closedPort, "test-token")
-                        .previewRevert("ws-1", "run-1");
+                        .previewRevert("ws-1", "refs/xihe/slices/1-a");
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, transport.outcome());
         assertEquals("unreachable", transport.reason());
     }
 
     @Test
-    void revertSendsAcksAndParsesResult() throws IOException {
+    void revertSendsSliceRefAndAcksAndParsesResult() throws IOException {
+        String sliceRef = "refs/xihe/slices/1757980000000-ab12cd";
         String url = startServer((method, path) -> new Stub(200,
-                "{\"runId\":\"run-1\",\"revertRef\":\"refs/xihe/run-1/rollback/9\","
-                        + "\"counts\":{\"restored\":2,\"deleted\":1,\"skippedConflict\":1,"
-                        + "\"failed\":0,\"noop\":3},\"entries\":["
-                        + "{\"path\":\"a.txt\",\"result\":\"restored\"},"
-                        + "{\"path\":\"b.txt\",\"result\":\"skippedConflict\",\"reason\":\"CONTENT_CHANGED\"}],"
-                        + "\"durationMs\":42}"));
+                "{\"sliceRef\":\"" + sliceRef + "\","
+                        + "\"counts\":{\"restored\":2,\"deleted\":1,\"failed\":0},\"entries\":["
+                        + "{\"path\":\"a.txt\",\"outcome\":\"restored\"},"
+                        + "{\"path\":\"b.txt\",\"outcome\":\"failed\",\"reason\":\"IO_ERROR\"}],"
+                        + "\"durationMs\":42,\"suspects\":[\"c.txt\"]}"));
         RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
 
         RuntimeCheckpointClient.RevertResult result =
-                client.revert("ws-1", "run-1", List.of("b.txt"), true);
+                client.revert("ws-1", sliceRef, List.of("b.txt"));
 
         assertEquals(RuntimeCheckpointClient.Outcome.OK, result.outcome());
-        assertEquals("refs/xihe/run-1/rollback/9", result.revertRef());
+        assertEquals(sliceRef, result.sliceRef());
         assertEquals(2, result.counts().restored());
-        assertEquals(1, result.counts().skippedConflict());
+        assertEquals(1, result.counts().deleted());
+        assertEquals(0, result.counts().failed());
         assertEquals(42L, result.durationMs());
-        assertEquals("skippedConflict", result.entries().get(1).result());
-        assertEquals("CONTENT_CHANGED", result.entries().get(1).reason());
-        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/run-1/revert", lastPath.get());
-        assertTrue(lastBody.get().contains("\"acknowledgeConflicts\":[\"b.txt\"]"));
-        assertTrue(lastBody.get().contains("\"acknowledgeHeadChange\":true"));
+        assertEquals("failed", result.entries().get(1).outcome());
+        assertEquals("IO_ERROR", result.entries().get(1).reason());
+        assertEquals(List.of("c.txt"), result.suspects());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/revert", lastPath.get());
+        assertTrue(lastBody.get().contains("\"sliceRef\":\"" + sliceRef + "\""));
+        assertTrue(lastBody.get().contains("\"acknowledgeTypeChanges\":[\"b.txt\"]"));
     }
 
     @Test
-    void revertMapsLeaseHeldConflict() throws IOException {
-        String url = startServer((method, path) -> new Stub(409,
-                "{\"code\":\"CHECKPOINT_LEASE_HELD\",\"heldByRunId\":\"run-live\",\"expiresAtMs\":7}"));
-        RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
+    void revertMapsRestoreFailureCodes() throws IOException {
+        String lockedUrl = startServer((method, path) -> new Stub(409,
+                "{\"code\":\"CHECKPOINT_RESTORE_LOCKED\"}"));
+        RuntimeCheckpointClient.RevertResult locked =
+                new RuntimeCheckpointClient(lockedUrl, "test-token")
+                        .revert("ws-1", "refs/xihe/slices/1-a", List.of());
+        assertEquals(RuntimeCheckpointClient.Outcome.RESTORE_LOCKED, locked.outcome());
 
-        RuntimeCheckpointClient.RevertResult result = client.revert("ws-1", "run-1", List.of(), false);
+        server.stop(0);
+        String conflictsUrl = startServer((method, path) -> new Stub(409,
+                "{\"code\":\"CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED\",\"paths\":[\"a.txt\"]}"));
+        RuntimeCheckpointClient.RevertResult conflicts =
+                new RuntimeCheckpointClient(conflictsUrl, "test-token")
+                        .revert("ws-1", "refs/xihe/slices/1-a", List.of());
+        assertEquals(RuntimeCheckpointClient.Outcome.TYPE_CHANGES_UNACKNOWLEDGED, conflicts.outcome());
+        assertTrue(lastBody.get().contains("\"acknowledgeTypeChanges\":[]"));
 
-        assertEquals(RuntimeCheckpointClient.Outcome.LEASE_HELD, result.outcome());
-        assertEquals("run-live", result.problem().get("heldByRunId"));
-        assertTrue(lastBody.get().contains("\"acknowledgeConflicts\":[]"));
-        assertTrue(lastBody.get().contains("\"acknowledgeHeadChange\":false"));
+        server.stop(0);
+        String notFoundUrl = startServer((method, path) -> new Stub(404,
+                "{\"code\":\"CHECKPOINT_NOT_FOUND\"}"));
+        assertEquals(RuntimeCheckpointClient.Outcome.NOT_FOUND,
+                new RuntimeCheckpointClient(notFoundUrl, "test-token")
+                        .revert("ws-1", "refs/xihe/slices/1-a", List.of()).outcome());
     }
 
     @Test
-    void checkpointBlobEncodesPathAndMapsLimitFailures() throws IOException {
+    void checkpointBlobEncodesSliceRefAndMapsLimitFailures() throws IOException {
         String url = startServer((method, path) -> new Stub(200, "hello blob"));
         RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
 
-        RuntimeCheckpointClient.BlobResult ok = client.checkpointBlob("ws-1", "run-1", "base", "src/a b.txt");
+        RuntimeCheckpointClient.BlobResult ok =
+                client.checkpointBlob("ws-1", "refs/xihe/slices/1-a", "src/a b.txt");
 
         assertEquals(RuntimeCheckpointClient.Outcome.OK, ok.outcome());
         assertEquals("hello blob", ok.content());
         assertEquals("GET", lastMethod.get());
-        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/run-1/blob", lastPath.get());
-        assertEquals("path=src%2Fa%20b.txt&ref=base", lastQuery.get());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/blob", lastPath.get());
+        assertEquals("sliceRef=refs%2Fxihe%2Fslices%2F1-a&path=src%2Fa%20b.txt", lastQuery.get());
 
         server.stop(0);
         String tooLargeUrl = startServer((method, path) -> new Stub(413,
                 "{\"code\":\"CHECKPOINT_BLOB_TOO_LARGE\",\"path\":\"big.bin\",\"size\":9,\"max\":5}"));
         RuntimeCheckpointClient.BlobResult tooLarge =
                 new RuntimeCheckpointClient(tooLargeUrl, "test-token")
-                        .checkpointBlob("ws-1", "run-1", "end", "big.bin");
+                        .checkpointBlob("ws-1", "refs/xihe/slices/1-a", "big.bin");
         assertEquals(RuntimeCheckpointClient.Outcome.TOO_LARGE, tooLarge.outcome());
         assertEquals(9, ((Number) tooLarge.problem().get("size")).intValue());
 
@@ -379,14 +363,14 @@ class RuntimeCheckpointClientTest {
                 "{\"code\":\"CHECKPOINT_INVALID_REQUEST\"}"));
         assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST,
                 new RuntimeCheckpointClient(invalidUrl, "test-token")
-                        .checkpointBlob("ws-1", "run-1", "base", "../x").outcome());
+                        .checkpointBlob("ws-1", "refs/xihe/slices/1-a", "../x").outcome());
 
         server.stop(0);
         String notFoundUrl = startServer((method, path) -> new Stub(404,
                 "{\"code\":\"CHECKPOINT_NOT_FOUND\"}"));
         assertEquals(RuntimeCheckpointClient.Outcome.NOT_FOUND,
                 new RuntimeCheckpointClient(notFoundUrl, "test-token")
-                        .checkpointBlob("ws-1", "run-1", "base", "gone.txt").outcome());
+                        .checkpointBlob("ws-1", "refs/xihe/slices/1-a", "gone.txt").outcome());
     }
 
     @Test
@@ -414,5 +398,6 @@ class RuntimeCheckpointClientTest {
         assertEquals(RuntimeCheckpointClient.Outcome.UNAVAILABLE, unavailable.outcome());
         assertEquals("git_below_minimum", unavailable.reason());
         assertFalse(unavailable.isRepository());
+        assertNotNull(unavailable.entries());
     }
 }

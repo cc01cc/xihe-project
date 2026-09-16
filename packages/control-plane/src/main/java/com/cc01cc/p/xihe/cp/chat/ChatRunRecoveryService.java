@@ -92,18 +92,19 @@ public class ChatRunRecoveryService {
     }
 
     /**
-     * PLAN-0328 M2 W3（spec §3.1 补 seal）：恢复事务提交后，封存"已终态但未 seal"
-     * 的 Run checkpoint。放在独立的低优先级监听器里，保证：(a) 先看到恢复写下的终态；
-     * (b) 不在恢复事务内做 Runtime HTTP 调用。幂等——每次启动重复执行安全。
+     * PLAN-0338（切片模型补拍）：恢复事务提交后，对"已终态但没有任何 checkpoint
+     * 投影行"的 Run 补拍切片。放在独立的低优先级监听器里，保证：(a) 先看到恢复写下的
+     * 终态；(b) 不在恢复事务内做 Runtime HTTP 调用。幂等——每次启动重复执行安全。
      */
     @Order(Ordered.LOWEST_PRECEDENCE)
     @EventListener(ApplicationReadyEvent.class)
-    public void sealRecoveredCheckpoints() {
+    public void captureRecoveredRuns() {
         try {
-            int sealed = runCheckpointService.sealTerminalCheckpoints();
-            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_recovery_seal_completed sealed={}", sealed);
+            int captured = runCheckpointService.captureTerminalRuns();
+            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_recovery_capture_completed captured={}",
+                    captured);
         } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_recovery_seal_failed", e);
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_recovery_capture_failed", e);
         }
     }
 

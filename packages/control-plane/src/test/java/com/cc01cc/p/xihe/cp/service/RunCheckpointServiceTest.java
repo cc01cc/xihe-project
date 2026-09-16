@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -24,6 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -38,14 +40,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * PLAN-0328 M2 W3: Run checkpoint lifecycle — idempotent establishment, frozen
- * degradation policy, idempotent seal, ledger markers, startup sweep.
+ * PLAN-0338: Run slice-checkpoint lifecycle — single terminal capture, no-change
+ * rows, frozen degradation policy, ledger markers, startup compensation.
  */
 class RunCheckpointServiceTest {
 
     private static final String RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String WORKSPACE_ID = "22222222-2222-2222-2222-222222222222";
-    private static final String CHECKPOINT_ID = "33333333-3333-3333-3333-333333333333";
+    private static final String USER_ID = "55555555-5555-5555-5555-555555555555";
+    private static final String SESSION_ID = "44444444-4444-4444-4444-444444444444";
+    private static final String SLICE_REF = "refs/xihe/slices/1757980000000-ab12cd";
     private static final String RAW_REQUEST_MARKER = "secret-revert-request-marker";
 
     private RunCheckpointRepository repository;
@@ -70,37 +74,17 @@ class RunCheckpointServiceTest {
                         .filter(row -> row.getRunId().equals(invocation.getArgument(0))
                                 && row.getWorkspaceId().equals(invocation.getArgument(1)))
                         .findFirst());
-        when(repository.findByRunId(anyString()))
-                .thenAnswer(invocation -> rows.stream()
-                        .filter(row -> row.getRunId().equals(invocation.getArgument(0)))
-                        .toList());
-        when(repository.findByState(anyString()))
-                .thenAnswer(invocation -> rows.stream()
-                        .filter(row -> row.getState().equals(invocation.getArgument(0)))
-                        .toList());
         when(repository.save(any(RunCheckpoint.class))).thenAnswer(invocation -> {
             RunCheckpoint row = invocation.getArgument(0);
             rows.removeIf(existing -> existing.getId().equals(row.getId()));
             rows.add(row);
             return row;
         });
-        when(repository.markSealed(any(), any(), any(), anyBoolean(), anyBoolean(), any()))
-                .thenAnswer(invocation -> {
-                    UUID id = invocation.getArgument(0);
-                    for (RunCheckpoint row : rows) {
-                        if (row.getId().equals(id) && RunCheckpoint.STATE_BASE.equals(row.getState())) {
-                            row.setState(RunCheckpoint.STATE_SEALED);
-                            row.setChangedFiles(invocation.getArgument(2));
-                            return 1;
-                        }
-                    }
-                    return 0;
-                });
         when(repository.markReverted(any(), any(), any(), any(), any()))
                 .thenAnswer(invocation -> {
                     UUID id = invocation.getArgument(0);
                     for (RunCheckpoint row : rows) {
-                        if (row.getId().equals(id) && RunCheckpoint.STATE_SEALED.equals(row.getState())) {
+                        if (row.getId().equals(id) && isCaptured(row.getState())) {
                             return 1;
                         }
                     }
@@ -110,7 +94,7 @@ class RunCheckpointServiceTest {
                 .thenAnswer(invocation -> {
                     UUID id = invocation.getArgument(0);
                     for (RunCheckpoint row : rows) {
-                        if (row.getId().equals(id) && RunCheckpoint.STATE_SEALED.equals(row.getState())) {
+                        if (row.getId().equals(id) && isCaptured(row.getState())) {
                             row.setState(RunCheckpoint.STATE_EXPIRED);
                             return 1;
                         }
@@ -131,278 +115,303 @@ class RunCheckpointServiceTest {
         service.shutdown();
     }
 
-    private RunCheckpoint seedBaseRow() {
+    private static boolean isCaptured(String state) {
+        return RunCheckpoint.STATE_CAPTURED.equals(state)
+                || RunCheckpoint.STATE_ABNORMAL_CAPTURED.equals(state);
+    }
+
+    private RunCheckpoint seedCapturedRow() {
         RunCheckpoint row = new RunCheckpoint();
         row.setId(UUID.randomUUID());
         row.setRunId(RUN_ID);
         row.setWorkspaceId(WORKSPACE_ID);
-        row.setState(RunCheckpoint.STATE_BASE);
-        row.setBaseRef("refs/xihe/" + RUN_ID + "/base");
+        row.setState(RunCheckpoint.STATE_CAPTURED);
+        row.setEndRef(SLICE_REF);
+        row.setChangedFiles("[{\"status\":\"M\",\"path\":\"src/a.txt\"}]");
+        row.setSealedAt(Instant.now());
         row.setCreatedAt(Instant.now());
         row.setUpdatedAt(Instant.now());
         rows.add(row);
         return row;
     }
 
-    private RuntimeCheckpointClient.CreateResult created() {
-        return new RuntimeCheckpointClient.CreateResult(RuntimeCheckpointClient.Outcome.OK,
-                CHECKPOINT_ID, RUN_ID, "base", "refs/xihe/" + RUN_ID + "/base",
-                "2026-09-15T00:00:00Z", null);
+    private ChatRun runWithStatus(String status) {
+        return new ChatRun(RUN_ID, SESSION_ID, USER_ID, WORKSPACE_ID,
+                "idem-" + status, "hash", "openai", "gpt-test", "none", status);
     }
 
-    private RuntimeCheckpointClient.SealResult sealed() {
-        return new RuntimeCheckpointClient.SealResult(RuntimeCheckpointClient.Outcome.OK, "sealed",
-                "refs/xihe/" + RUN_ID + "/end",
-                List.of(new RuntimeCheckpointClient.ChangedFile("M", "src/a.txt")), false, false, null);
+    private RuntimeCheckpointClient.CaptureResult captureOk(String sliceRef) {
+        return new RuntimeCheckpointClient.CaptureResult(RuntimeCheckpointClient.Outcome.OK, RUN_ID, false,
+                sliceRef, "ab12cd", "2026-09-15T00:00:00Z", RunCheckpoint.STATE_CAPTURED,
+                List.of(new RuntimeCheckpointClient.ChangedFile("M", "src/a.txt")), List.of(), null, null);
     }
 
-    @Test
-    void ensureCheckpointIsIdempotentPerRun() {
-        when(client.create(WORKSPACE_ID, RUN_ID, "user-1", "call-1")).thenReturn(created());
-
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-
-        verify(client, times(1)).create(WORKSPACE_ID, RUN_ID, "user-1", "call-1");
-        assertEquals(1, rows.size());
-        assertEquals(RunCheckpoint.STATE_BASE, rows.get(0).getState());
-        assertEquals(CHECKPOINT_ID, rows.get(0).getId().toString());
-        assertEquals("refs/xihe/" + RUN_ID + "/base", rows.get(0).getBaseRef());
+    private static String captureCallId(String runId) {
+        return "run-terminal-capture:" + runId;
     }
 
-    @Test
-    void leaseHeldDegradesWithFrozenReason() {
-        when(client.create(WORKSPACE_ID, RUN_ID, "user-1", "call-1"))
-                .thenReturn(new RuntimeCheckpointClient.CreateResult(
-                        RuntimeCheckpointClient.Outcome.LEASE_HELD, null, RUN_ID, null, null, null,
-                        "CHECKPOINT_LEASE_HELD"));
-
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-
-        assertEquals(1, rows.size());
-        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
-        assertEquals(RunCheckpointService.REASON_LEASE_HELD, rows.get(0).getUnrollableReason());
-    }
-
-    @Test
-    void unavailableDegradesWithFrozenReason() {
-        when(client.create(WORKSPACE_ID, RUN_ID, "user-1", "call-1"))
-                .thenReturn(new RuntimeCheckpointClient.CreateResult(
-                        RuntimeCheckpointClient.Outcome.UNAVAILABLE, null, RUN_ID, null, null, null,
-                        "CHECKPOINT_UNAVAILABLE"));
-
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-
-        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
-        assertEquals(RunCheckpointService.REASON_UNAVAILABLE, rows.get(0).getUnrollableReason());
-    }
-
-    @Test
-    void transportFailureDegradesInsteadOfThrowing() {
-        when(client.create(WORKSPACE_ID, RUN_ID, "user-1", "call-1"))
-                .thenReturn(new RuntimeCheckpointClient.CreateResult(
-                        RuntimeCheckpointClient.Outcome.TRANSPORT, null, RUN_ID, null, null, null,
-                        "unreachable"));
-
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-
-        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
-        assertEquals(RunCheckpointService.REASON_UNAVAILABLE, rows.get(0).getUnrollableReason());
-    }
-
-    @Test
-    void unexpectedEstablishFailureIsSwallowedInsteadOfBlockingDispatch() {
-        when(repository.findByRunIdAndWorkspaceId(anyString(), anyString()))
-                .thenThrow(new IllegalStateException("checkpoint store down"));
-
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-
-        verify(client, never()).create(anyString(), anyString(), any(), any());
-    }
-
-    @Test
-    void degradedRowStopsFurtherEstablishAttemptsForTheRun() {
-        when(client.create(WORKSPACE_ID, RUN_ID, "user-1", "call-1"))
-                .thenReturn(new RuntimeCheckpointClient.CreateResult(
-                        RuntimeCheckpointClient.Outcome.LEASE_HELD, null, RUN_ID, null, null, null,
-                        "CHECKPOINT_LEASE_HELD"));
-
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-
-        verify(client, times(1)).create(anyString(), anyString(), any(), any());
-        assertEquals(1, rows.size());
-    }
-
-    @Test
-    void sealTransitionsBaseRowOnceAndIsIdempotent() {
-        seedBaseRow();
-        when(client.seal(WORKSPACE_ID, RUN_ID)).thenReturn(sealed());
-
-        assertTrue(service.sealCheckpoint(RUN_ID));
-        assertFalse(service.sealCheckpoint(RUN_ID), "a sealed row must not seal twice");
-
-        verify(client, times(1)).seal(WORKSPACE_ID, RUN_ID);
-        assertEquals(RunCheckpoint.STATE_SEALED, rows.get(0).getState());
-        assertTrue(rows.get(0).getChangedFiles().contains("src/a.txt"));
-        assertFalse(rows.get(0).isSealedWithLiveJobs());
-        assertFalse(rows.get(0).isSealedAfterAbnormal());
-    }
-
-    @Test
-    void sealFailureLeavesBaseRowForRuntimeSweep() {
-        seedBaseRow();
-        when(client.seal(WORKSPACE_ID, RUN_ID)).thenReturn(new RuntimeCheckpointClient.SealResult(
-                RuntimeCheckpointClient.Outcome.UNAVAILABLE, null, null, List.of(), false, false,
-                "git_unavailable"));
-
-        assertFalse(service.sealCheckpoint(RUN_ID));
-
-        assertEquals(RunCheckpoint.STATE_BASE, rows.get(0).getState());
-        verify(repository, never()).markSealed(any(), any(), any(), anyBoolean(), anyBoolean(), any());
-    }
-
-    @Test
-    void sealWithoutRowIsANoOp() {
-        assertFalse(service.sealCheckpoint(RUN_ID));
-        verify(client, never()).seal(anyString(), anyString());
-    }
-
-    @Test
-    void sealPreservesRuntimeAbnormalFlags() {
-        seedBaseRow();
-        when(client.seal(WORKSPACE_ID, RUN_ID)).thenReturn(new RuntimeCheckpointClient.SealResult(
-                RuntimeCheckpointClient.Outcome.OK, "sealed", null, List.of(), true, true, null));
-
-        assertTrue(service.sealCheckpoint(RUN_ID));
-
-        assertTrue(rows.get(0).isSealedWithLiveJobs());
-        assertTrue(rows.get(0).isSealedAfterAbnormal());
-    }
+    // ── PLAN-0338: terminal capture ─────────────────────────────────────────
 
     @Test
     @SuppressWarnings("unchecked")
-    void createAndSealAppendDistinctLedgerMarkers() {
+    void terminalCaptureWritesCapturedRowAndLedgerMarker() {
         UUID operationId = UUID.randomUUID();
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
         when(operationService.findOperationIdByRunId(RUN_ID)).thenReturn(operationId);
         OperationItem item = new OperationItem();
         item.setId(UUID.randomUUID());
         item.setStatus("pending");
         when(operationService.appendItem(eq(operationId), any(), any(), eq("checkpoint"),
                 eq("run_checkpoint"), eq("runtime"), any(), any(), any())).thenReturn(item);
-        when(client.create(WORKSPACE_ID, RUN_ID, "user-1", "call-1")).thenReturn(created());
-        when(client.seal(WORKSPACE_ID, RUN_ID)).thenReturn(sealed());
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
 
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
-        assertTrue(service.sealCheckpoint(RUN_ID));
+        assertTrue(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(1, rows.size());
+        RunCheckpoint row = rows.get(0);
+        assertEquals(RunCheckpoint.STATE_CAPTURED, row.getState());
+        assertEquals(SLICE_REF, row.getEndRef());
+        assertNull(row.getBaseRef());
+        assertTrue(row.getChangedFiles().contains("src/a.txt"));
+        assertFalse(row.isSealedAfterAbnormal());
+        assertNotNull(row.getSealedAt());
+        verify(client).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
 
         ArgumentCaptor<String> previews = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> toolCallIds = ArgumentCaptor.forClass(String.class);
-        verify(operationService, times(2)).appendItem(eq(operationId), toolCallIds.capture(), any(),
+        verify(operationService).appendItem(eq(operationId), toolCallIds.capture(), any(),
                 eq("checkpoint"), eq("run_checkpoint"), eq("runtime"), previews.capture(), isNull(), isNull());
-        verify(operationService, times(2)).transitionItem(eq(item.getId()), eq("completed"),
+        verify(operationService).transitionItem(eq(item.getId()), eq("completed"),
                 isNull(), isNull(), any(), isNull());
-        assertEquals(2, toolCallIds.getAllValues().stream().distinct().count(),
-                "base and seal markers must use distinct ledger identities");
-        assertTrue(previews.getAllValues().stream().anyMatch(value -> value.contains("base")));
-        assertTrue(previews.getAllValues().stream().anyMatch(value -> value.contains("seal")));
+        assertNotNull(UUID.fromString(toolCallIds.getValue()), "the marker identity is a UUID");
+        assertTrue(previews.getValue().contains(SLICE_REF));
+        assertTrue(previews.getValue().contains("\"marker\":\"captured\""));
+    }
+
+    @Test
+    void abnormalTerminalCapturesAbnormalState() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("ambiguous")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), true))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(RuntimeCheckpointClient.Outcome.OK,
+                        RUN_ID, false, SLICE_REF, "ab12cd", "2026-09-15T00:00:00Z",
+                        RunCheckpoint.STATE_ABNORMAL_CAPTURED,
+                        List.of(), List.of(), null, null));
+
+        assertTrue(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(RunCheckpoint.STATE_ABNORMAL_CAPTURED, rows.get(0).getState());
+        assertTrue(rows.get(0).isSealedAfterAbnormal());
+    }
+
+    @Test
+    void succeededAndCancelledAreNormalTerminals() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("cancelled")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
+
+        assertTrue(service.captureCheckpoint(RUN_ID));
+
+        assertFalse(rows.get(0).isSealedAfterAbnormal());
+        verify(client).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
+    }
+
+    @Test
+    void noChangeCaptureWritesRowWithoutSliceRef() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(RuntimeCheckpointClient.Outcome.OK,
+                        RUN_ID, true, null, null, null, RunCheckpoint.STATE_CAPTURED,
+                        List.of(), List.of(), null, null));
+
+        assertTrue(service.captureCheckpoint(RUN_ID));
+
+        RunCheckpoint row = rows.get(0);
+        assertEquals(RunCheckpoint.STATE_CAPTURED, row.getState());
+        assertNull(row.getEndRef());
+        assertEquals("[]", row.getChangedFiles());
+        assertNotNull(row.getSealedAt());
+    }
+
+    @Test
+    void unavailableCaptureDegradesWithFrozenReason() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.UNAVAILABLE, RUN_ID, false, null, null, null,
+                        null, List.of(), List.of(), null, "git_unavailable"));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(1, rows.size());
+        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
+        assertEquals(RunCheckpointService.REASON_UNAVAILABLE, rows.get(0).getUnrollableReason());
+    }
+
+    @Test
+    void transportFailureDegradesInsteadOfThrowing() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.TRANSPORT, RUN_ID, false, null, null, null,
+                        null, List.of(), List.of(), null, "unreachable"));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
+        assertEquals(RunCheckpointService.REASON_UNAVAILABLE, rows.get(0).getUnrollableReason());
+    }
+
+    @Test
+    void invalidCaptureRequestDegradesWithInvalidReason() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.INVALID_REQUEST, RUN_ID, false, null, null, null,
+                        null, List.of(), List.of(), null, "CHECKPOINT_INVALID_REQUEST"));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.get(0).getState());
+        assertEquals(RunCheckpointService.REASON_INVALID_REQUEST, rows.get(0).getUnrollableReason());
+    }
+
+    @Test
+    void captureIsIdempotentPerRun() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
+
+        assertTrue(service.captureCheckpoint(RUN_ID));
+        assertFalse(service.captureCheckpoint(RUN_ID), "a captured row must not capture twice");
+
+        verify(client, times(1)).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
+        assertEquals(1, rows.size());
+    }
+
+    @Test
+    void captureWithoutRunIsANoOp() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.empty());
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        verify(client, never()).capture(anyString(), anyString(), any(), any(), anyBoolean());
+        assertTrue(rows.isEmpty());
+    }
+
+    @Test
+    void unexpectedCaptureFailureIsSwallowed() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(repository.findByRunIdAndWorkspaceId(anyString(), anyString()))
+                .thenThrow(new IllegalStateException("checkpoint store down"));
+
+        assertFalse(service.captureCheckpoint(RUN_ID));
+
+        verify(client, never()).capture(anyString(), anyString(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void requestCaptureRunsAsynchronouslyAndNeverThrows() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
+
+        service.requestCapture(RUN_ID);
+
+        verify(client, timeout(3000)).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
+    }
+
+    @Test
+    void requestCaptureForMissingRunNeverThrows() {
+        service.requestCapture(RUN_ID);
+        verify(client, never()).capture(anyString(), anyString(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void startupSweepCapturesTerminalRunWithoutRowOnce() {
+        ChatRun terminal = runWithStatus("ambiguous");
+        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+                .thenReturn(List.of(terminal));
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(terminal));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), true))
+                .thenReturn(captureOk(SLICE_REF));
+
+        assertEquals(1, service.captureTerminalRuns());
+        assertEquals(0, service.captureTerminalRuns(), "the sweep is idempotent");
+
+        verify(client, times(1)).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), true);
+        assertEquals(RunCheckpoint.STATE_CAPTURED, rows.get(0).getState());
+    }
+
+    @Test
+    void startupSweepSkipsRunsThatAlreadyHaveARow() {
+        seedCapturedRow();
+        ChatRun terminal = runWithStatus("succeeded");
+        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+                .thenReturn(List.of(terminal));
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(terminal));
+
+        assertEquals(0, service.captureTerminalRuns());
+
+        verify(client, never()).capture(anyString(), anyString(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void startupSweepFailureNeverThrows() {
+        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+                .thenThrow(new IllegalStateException("checkpoint store down"));
+
+        assertEquals(0, service.captureTerminalRuns());
     }
 
     @Test
     void ledgerMarkerIsSkippedWhenOperationIsMissing() {
-        when(client.create(WORKSPACE_ID, RUN_ID, "user-1", "call-1")).thenReturn(created());
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
 
-        service.ensureCheckpoint(RUN_ID, WORKSPACE_ID, "user-1", "call-1");
+        assertTrue(service.captureCheckpoint(RUN_ID));
 
         verify(operationService, never()).appendItem(any(), any(), any(), anyString(), anyString(),
                 anyString(), any(), any(), any());
         assertEquals(1, rows.size());
     }
 
-    @Test
-    void startupSweepSealsTerminalRunOnce() {
-        seedBaseRow();
-        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
-                .thenReturn(Optional.of(runWithStatus("ambiguous")));
-        when(client.seal(WORKSPACE_ID, RUN_ID)).thenReturn(sealed());
-
-        assertEquals(1, service.sealTerminalCheckpoints());
-        assertEquals(0, service.sealTerminalCheckpoints(), "the sweep is idempotent");
-
-        verify(client, times(1)).seal(WORKSPACE_ID, RUN_ID);
-        assertEquals(RunCheckpoint.STATE_SEALED, rows.get(0).getState());
-    }
-
-    @Test
-    void startupSweepSkipsLiveRuns() {
-        seedBaseRow();
-        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
-                .thenReturn(Optional.of(runWithStatus("running")));
-
-        assertEquals(0, service.sealTerminalCheckpoints());
-
-        verify(client, never()).seal(anyString(), anyString());
-        assertEquals(RunCheckpoint.STATE_BASE, rows.get(0).getState());
-    }
-
-    @Test
-    void requestSealRunsAsynchronouslyAndNeverThrows() {
-        seedBaseRow();
-        when(client.seal(WORKSPACE_ID, RUN_ID)).thenReturn(sealed());
-
-        service.requestSeal(RUN_ID);
-
-        verify(client, timeout(3000)).seal(WORKSPACE_ID, RUN_ID);
-    }
-
-    @Test
-    void requestSealForMissingRunNeverThrows() {
-        service.requestSeal(RUN_ID);
-        verify(client, never()).seal(anyString(), anyString());
-    }
-
-    private ChatRun runWithStatus(String status) {
-        return new ChatRun(RUN_ID, "44444444-4444-4444-4444-444444444444",
-                "55555555-5555-5555-5555-555555555555", WORKSPACE_ID,
-                "idem-" + status, "hash", "openai", "gpt-test", "none", status);
-    }
-
     // ── PLAN-0328 M3 W2: view / revert / file / git / retention ─────────────
 
-    private static final String SESSION_ID = "44444444-4444-4444-4444-444444444444";
-
-    private RunCheckpoint seedSealedRow() {
-        RunCheckpoint row = seedBaseRow();
-        row.setState(RunCheckpoint.STATE_SEALED);
-        row.setEndRef("refs/xihe/" + RUN_ID + "/end");
-        row.setChangedFiles("[{\"status\":\"M\",\"path\":\"src/a.txt\"}]");
-        row.setSealedAt(Instant.now());
-        return row;
-    }
-
     private RuntimeCheckpointClient.RevertPreview previewOk() {
-        return new RuntimeCheckpointClient.RevertPreview(RuntimeCheckpointClient.Outcome.OK, RUN_ID,
-                "sealed", new RuntimeCheckpointClient.PreviewCounts(1, 0, 0, 0),
-                List.of(new RuntimeCheckpointClient.PreviewEntry("src/a.txt", null, "restore", null)),
-                Map.of("status", "ok"), false, false, Map.of(), null);
+        return new RuntimeCheckpointClient.RevertPreview(RuntimeCheckpointClient.Outcome.OK, SLICE_REF,
+                new RuntimeCheckpointClient.PreviewCounts(1, 0, 0),
+                List.of(new RuntimeCheckpointClient.PreviewEntry("src/a.txt", "restore", "planned", null)),
+                false, Map.of(), null);
     }
 
-    private RuntimeCheckpointClient.RevertResult revertOk(int restored, int skippedConflict, int failed) {
-        List<RuntimeCheckpointClient.ExecuteEntry> entries = new java.util.ArrayList<>();
+    private RuntimeCheckpointClient.RevertResult revertOk(int restored, int failed, int suspectCount) {
+        List<RuntimeCheckpointClient.ExecuteEntry> entries = new ArrayList<>();
         for (int i = 0; i < restored; i++) {
             entries.add(new RuntimeCheckpointClient.ExecuteEntry("r" + i + ".txt", "restored", null));
-        }
-        for (int i = 0; i < skippedConflict; i++) {
-            entries.add(new RuntimeCheckpointClient.ExecuteEntry("c" + i + ".txt", "skippedConflict",
-                    "CONTENT_CHANGED"));
         }
         for (int i = 0; i < failed; i++) {
             entries.add(new RuntimeCheckpointClient.ExecuteEntry("f" + i + ".txt", "failed", "IO_ERROR"));
         }
-        return new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.OK, RUN_ID,
-                "refs/xihe/" + RUN_ID + "/rollback/1",
-                new RuntimeCheckpointClient.ExecuteCounts(restored, 0, skippedConflict, failed, 0),
-                entries, 12L, Map.of(), null);
+        List<String> suspects = new ArrayList<>();
+        for (int i = 0; i < suspectCount; i++) {
+            suspects.add("suspect-" + i + ".txt");
+        }
+        return new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.OK, SLICE_REF,
+                new RuntimeCheckpointClient.ExecuteCounts(restored, 0, failed),
+                entries, 12L, suspects, Map.of(), null);
     }
 
     @Test
@@ -417,7 +426,7 @@ class RunCheckpointServiceTest {
 
     @Test
     void viewCapsChangedFilesAtTwentyAndCountsAll() {
-        RunCheckpoint row = seedSealedRow();
+        RunCheckpoint row = seedCapturedRow();
         StringBuilder json = new StringBuilder("[");
         for (int i = 0; i < 25; i++) {
             if (i > 0) {
@@ -430,7 +439,7 @@ class RunCheckpointServiceTest {
 
         RunCheckpointService.View view = service.view(RUN_ID, WORKSPACE_ID);
 
-        assertEquals(RunCheckpoint.STATE_SEALED, view.state());
+        assertEquals(RunCheckpoint.STATE_CAPTURED, view.state());
         assertEquals(25, view.changedCount());
         assertEquals(20, view.changedFiles().size());
         assertEquals("f0.txt", view.changedFiles().get(0).path());
@@ -438,62 +447,64 @@ class RunCheckpointServiceTest {
 
     @Test
     void viewProjectsRevertSummaryCounts() {
-        RunCheckpoint row = seedSealedRow();
+        RunCheckpoint row = seedCapturedRow();
         row.setRevertState(RunCheckpoint.REVERT_PARTIAL);
         row.setRevertedAt(Instant.parse("2026-09-15T10:00:00Z"));
-        row.setRevertRef("refs/xihe/" + RUN_ID + "/rollback/7");
+        row.setRevertRef(SLICE_REF);
         row.setRevertSummary("{\"marker\":\"revert\",\"counts\":{\"restored\":2,\"deleted\":1,"
-                + "\"skippedConflict\":1,\"failed\":0,\"noop\":0},\"revertRef\":\"refs/xihe/x\"}");
+                + "\"failed\":0},\"sliceRef\":\"refs/xihe/slices/x\"}");
 
         RunCheckpointService.View view = service.view(RUN_ID, WORKSPACE_ID);
 
         assertEquals(RunCheckpoint.REVERT_PARTIAL, view.revert().state());
         assertEquals(Instant.parse("2026-09-15T10:00:00Z"), view.revert().at());
-        assertEquals("refs/xihe/" + RUN_ID + "/rollback/7", view.revert().ref());
+        assertEquals(SLICE_REF, view.revert().ref());
         assertEquals(2, ((Number) view.revert().counts().get("restored")).intValue());
     }
 
     @Test
-    void previewRevertBlocksMissingDegradedAndUnsealedRows() {
+    void previewRevertBlocksMissingDegradedAndUncapturedRows() {
         RunCheckpointService.PreviewOutcome missing = service.previewRevert(RUN_ID, WORKSPACE_ID);
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, missing.gate());
         assertEquals(RunCheckpointService.REASON_MISSING, missing.reason());
 
-        RunCheckpoint degraded = seedBaseRow();
+        RunCheckpoint degraded = seedCapturedRow();
         degraded.setState(RunCheckpoint.STATE_DEGRADED);
-        degraded.setUnrollableReason(RunCheckpointService.REASON_LEASE_HELD);
+        degraded.setUnrollableReason(RunCheckpointService.REASON_UNAVAILABLE);
         RunCheckpointService.PreviewOutcome degradedOutcome =
                 service.previewRevert(RUN_ID, WORKSPACE_ID);
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, degradedOutcome.gate());
-        assertEquals(RunCheckpointService.REASON_LEASE_HELD, degradedOutcome.reason());
+        assertEquals(RunCheckpointService.REASON_UNAVAILABLE, degradedOutcome.reason());
 
-        degraded.setState(RunCheckpoint.STATE_BASE);
+        degraded.setState(RunCheckpoint.STATE_CAPTURED);
         degraded.setUnrollableReason(null);
-        RunCheckpointService.PreviewOutcome unsealed = service.previewRevert(RUN_ID, WORKSPACE_ID);
-        assertEquals(RunCheckpointService.Gate.NOT_SEALED, unsealed.gate());
+        degraded.setEndRef(null);
+        RunCheckpointService.PreviewOutcome noRef = service.previewRevert(RUN_ID, WORKSPACE_ID);
+        assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, noRef.gate());
+        assertEquals(RunCheckpointService.REASON_MISSING, noRef.reason());
 
         verify(client, never()).previewRevert(anyString(), anyString());
     }
 
     @Test
-    void previewRevertPassesThroughSealedRuntimePreview() {
-        seedSealedRow();
-        when(client.previewRevert(WORKSPACE_ID, RUN_ID)).thenReturn(previewOk());
+    void previewRevertPassesSliceRefToRuntimePreview() {
+        seedCapturedRow();
+        when(client.previewRevert(WORKSPACE_ID, SLICE_REF)).thenReturn(previewOk());
 
         RunCheckpointService.PreviewOutcome outcome = service.previewRevert(RUN_ID, WORKSPACE_ID);
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         assertEquals(1, outcome.preview().counts().restore());
-        assertEquals("restore", outcome.preview().entries().get(0).action());
-        verify(client).previewRevert(WORKSPACE_ID, RUN_ID);
+        assertEquals("planned", outcome.preview().entries().get(0).state());
+        verify(client).previewRevert(WORKSPACE_ID, SLICE_REF);
     }
 
     @Test
-    void previewRevertFlipsSealedRowToExpiredOnceWhenRuntimeRefsAreGone() {
-        seedSealedRow();
-        when(client.previewRevert(WORKSPACE_ID, RUN_ID)).thenReturn(
+    void previewRevertFlipsCapturedRowToExpiredOnceWhenRuntimeSliceIsGone() {
+        seedCapturedRow();
+        when(client.previewRevert(WORKSPACE_ID, SLICE_REF)).thenReturn(
                 new RuntimeCheckpointClient.RevertPreview(RuntimeCheckpointClient.Outcome.NOT_FOUND,
-                        null, null, null, List.of(), Map.of(), false, false, Map.of(), "http_404"));
+                        null, null, List.of(), false, Map.of(), "http_404"));
 
         RunCheckpointService.PreviewOutcome first = service.previewRevert(RUN_ID, WORKSPACE_ID);
         RunCheckpointService.PreviewOutcome second = service.previewRevert(RUN_ID, WORKSPACE_ID);
@@ -504,12 +515,12 @@ class RunCheckpointServiceTest {
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, second.gate());
         assertEquals(RunCheckpointService.REASON_EXPIRED, second.reason());
         verify(repository, times(1)).markExpired(any(), any());
-        verify(client, times(1)).previewRevert(WORKSPACE_ID, RUN_ID);
+        verify(client, times(1)).previewRevert(WORKSPACE_ID, SLICE_REF);
     }
 
     @Test
     void revertHappyPathRecordsRolledBackLedgerAndAttemptCount() {
-        seedSealedRow();
+        seedCapturedRow();
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
         UUID operationId = UUID.randomUUID();
@@ -519,26 +530,27 @@ class RunCheckpointServiceTest {
         item.setStatus("pending");
         when(operationService.appendItem(eq(operationId), any(), any(), eq("checkpoint"),
                 eq("revert_snapshot"), eq("ui"), any(), any(), any())).thenReturn(item);
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of(RAW_REQUEST_MARKER), false))
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(RAW_REQUEST_MARKER)))
                 .thenReturn(revertOk(2, 0, 0));
 
         RunCheckpointService.RevertOutcome outcome = service.revert(
-                RUN_ID, WORKSPACE_ID, List.of(RAW_REQUEST_MARKER), false);
+                RUN_ID, WORKSPACE_ID, List.of(RAW_REQUEST_MARKER));
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
         assertEquals(RunCheckpoint.REVERT_ROLLED_BACK, row.getRevertState());
-        assertEquals("refs/xihe/" + RUN_ID + "/rollback/1", row.getRevertRef());
+        assertEquals(SLICE_REF, row.getRevertRef());
         assertEquals(1, row.getRevertAttemptCount());
         assertNotNull(row.getRevertedAt());
         verify(repository).markReverted(eq(row.getId()), eq(RunCheckpoint.REVERT_ROLLED_BACK),
-                eq("refs/xihe/" + RUN_ID + "/rollback/1"), any(), any());
+                eq(SLICE_REF), any(), any());
 
         ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
         verify(operationService).appendItem(eq(operationId), any(), any(), eq("checkpoint"),
                 eq("revert_snapshot"), eq("ui"), summary.capture(), isNull(), isNull());
         assertTrue(summary.getValue().contains("\"marker\":\"revert\""));
         assertTrue(summary.getValue().contains("\"checkpointId\":\"" + row.getId() + "\""));
+        assertTrue(summary.getValue().contains("\"sliceRef\":\"" + SLICE_REF + "\""));
         assertTrue(summary.getValue().contains("\"allowedBy\":\"user_ui\""));
         assertTrue(summary.getValue().contains("\"restored\":2"));
         assertTrue(summary.getValue().contains("\"reason\":null"));
@@ -551,7 +563,7 @@ class RunCheckpointServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(sseManager).send(eq(SESSION_ID), eq("run_checkpoint"), payload.capture());
-        assertEquals(RunCheckpoint.STATE_SEALED, payload.getValue().get("state"));
+        assertEquals(RunCheckpoint.STATE_CAPTURED, payload.getValue().get("state"));
         assertEquals(RUN_ID, payload.getValue().get("runId"));
         @SuppressWarnings("unchecked")
         Map<String, Object> revert = (Map<String, Object>) payload.getValue().get("revert");
@@ -559,8 +571,8 @@ class RunCheckpointServiceTest {
     }
 
     @Test
-    void revertPartialRecordsPartialStateAndCappedConflicts() {
-        seedSealedRow();
+    void revertPartialRecordsPartialStateAndCappedSuspects() {
+        seedCapturedRow();
         UUID operationId = UUID.randomUUID();
         when(operationService.findOperationIdByRunId(RUN_ID)).thenReturn(operationId);
         OperationItem item = new OperationItem();
@@ -568,11 +580,11 @@ class RunCheckpointServiceTest {
         item.setStatus("completed");
         when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(),
                 any(), any(), any())).thenReturn(item);
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of("c0.txt", RAW_REQUEST_MARKER), true))
-                .thenReturn(revertOk(1, 25, 0));
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of("c0.txt", RAW_REQUEST_MARKER)))
+                .thenReturn(revertOk(1, 2, 25));
 
-        RunCheckpointService.RevertOutcome outcome =
-                service.revert(RUN_ID, WORKSPACE_ID, List.of("c0.txt", RAW_REQUEST_MARKER), true);
+        RunCheckpointService.RevertOutcome outcome = service.revert(
+                RUN_ID, WORKSPACE_ID, List.of("c0.txt", RAW_REQUEST_MARKER));
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
@@ -580,9 +592,10 @@ class RunCheckpointServiceTest {
         ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
         verify(operationService).appendItem(any(), any(), any(), eq("checkpoint"), eq("revert_snapshot"),
                 eq("ui"), summary.capture(), any(), any());
-        assertTrue(summary.getValue().contains("\"reason\":\"CONFLICTS\""));
-        long conflictCount = summary.getValue().split("\"path\":\"c", -1).length - 1;
-        assertEquals(20, conflictCount, "conflicts are capped at 20 in the ledger summary");
+        assertTrue(summary.getValue().contains("\"reason\":\"FAILED\""));
+        assertTrue(summary.getValue().contains("\"failed\":2"));
+        long suspectCount = summary.getValue().split("\"suspect-", -1).length - 1;
+        assertEquals(20, suspectCount, "suspects are capped at 20 in the ledger summary");
         assertFalse(summary.getValue().contains(RAW_REQUEST_MARKER));
         assertFalse(summary.getValue().contains("arguments"));
         assertFalse(summary.getValue().contains("details"));
@@ -590,95 +603,84 @@ class RunCheckpointServiceTest {
     }
 
     @Test
-    void revertPartialWithFailuresUsesFailedReasonAndNoLedgerWhenOperationMissing() {
-        seedSealedRow();
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of(), false)).thenReturn(revertOk(1, 1, 2));
+    void revertWithFailuresAndNoOperationSkipsLedger() {
+        seedCapturedRow();
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(revertOk(1, 2, 0));
 
-        RunCheckpointService.RevertOutcome outcome = service.revert(RUN_ID, WORKSPACE_ID, List.of(), false);
+        RunCheckpointService.RevertOutcome outcome = service.revert(RUN_ID, WORKSPACE_ID, List.of());
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
         assertEquals(RunCheckpoint.REVERT_PARTIAL, row.getRevertState());
-        assertTrue(row.getRevertSummary().contains("\"reason\":\"FAILED_AND_CONFLICTS\""));
+        assertTrue(row.getRevertSummary().contains("\"reason\":\"FAILED\""));
         verify(operationService, never()).appendItem(any(), any(), any(), anyString(), anyString(),
                 anyString(), any(), any(), any());
     }
 
     @Test
     void revertMapsRuntimeFailureGates() {
-        RunCheckpoint row = seedSealedRow();
+        RunCheckpoint row = seedCapturedRow();
 
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of(), false)).thenReturn(
-                new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.LEASE_HELD,
-                        null, null, null, List.of(), 0L,
-                        Map.of("heldByRunId", "run-other", "expiresAtMs", 1), "CHECKPOINT_LEASE_HELD"));
-        RunCheckpointService.RevertOutcome lease = service.revert(RUN_ID, WORKSPACE_ID, List.of(), false);
-        assertEquals(RunCheckpointService.Gate.LEASE_HELD, lease.gate());
-        assertEquals("run-other", lease.details().get("heldByRunId"));
-
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of(), false)).thenReturn(
-                new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.HEAD_CHANGED,
-                        null, null, null, List.of(), 0L,
-                        Map.of("recorded", Map.of("commit", "a"), "observed", Map.of("commit", "b")),
-                        "CHECKPOINT_HEAD_CHANGED"));
-        RunCheckpointService.RevertOutcome head = service.revert(RUN_ID, WORKSPACE_ID, List.of(), false);
-        assertEquals(RunCheckpointService.Gate.HEAD_CHANGED, head.gate());
-        assertTrue(head.details().containsKey("recorded"));
-
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of(), false)).thenReturn(
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(
                 new RuntimeCheckpointClient.RevertResult(
-                        RuntimeCheckpointClient.Outcome.CONFLICTS_UNACKNOWLEDGED, null, null, null,
-                        List.of(), 0L, Map.of("paths", List.of("a.txt")), "CHECKPOINT_CONFLICTS_UNACKNOWLEDGED"));
-        RunCheckpointService.RevertOutcome conflicts = service.revert(RUN_ID, WORKSPACE_ID, List.of(), false);
-        assertEquals(RunCheckpointService.Gate.CONFLICTS_UNACKNOWLEDGED, conflicts.gate());
-        assertEquals(List.of("a.txt"), conflicts.details().get("paths"));
+                        RuntimeCheckpointClient.Outcome.TYPE_CHANGES_UNACKNOWLEDGED,
+                        null, null, List.of(), 0L, List.of(), Map.of(),
+                        "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED"));
+        RunCheckpointService.RevertOutcome conflicts = service.revert(RUN_ID, WORKSPACE_ID, List.of());
+        assertEquals(RunCheckpointService.Gate.TYPE_CHANGES_UNACKNOWLEDGED, conflicts.gate());
 
-        when(client.revert(WORKSPACE_ID, RUN_ID, List.of(), false)).thenReturn(
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(
+                new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.RESTORE_LOCKED,
+                        null, null, List.of(), 0L, List.of(), Map.of(), "CHECKPOINT_RESTORE_LOCKED"));
+        RunCheckpointService.RevertOutcome locked = service.revert(RUN_ID, WORKSPACE_ID, List.of());
+        assertEquals(RunCheckpointService.Gate.RESTORE_LOCKED, locked.gate());
+
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(
                 new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.TRANSPORT,
-                        null, null, null, List.of(), 0L, Map.of(), "unreachable"));
-        RunCheckpointService.RevertOutcome transport = service.revert(RUN_ID, WORKSPACE_ID, List.of(), false);
+                        null, null, List.of(), 0L, List.of(), Map.of(), "unreachable"));
+        RunCheckpointService.RevertOutcome transport = service.revert(RUN_ID, WORKSPACE_ID, List.of());
         assertEquals(RunCheckpointService.Gate.UNAVAILABLE, transport.gate());
         assertEquals(RunCheckpointService.REASON_UNAVAILABLE, transport.reason());
-        assertEquals(RunCheckpoint.STATE_SEALED, row.getState(), "failed reverts leave the row sealed");
+        assertEquals(RunCheckpoint.STATE_CAPTURED, row.getState(), "failed reverts leave the row captured");
         assertEquals(RunCheckpoint.REVERT_NONE, row.getRevertState());
     }
 
     @Test
     void revertOnMissingRowNeverCallsRuntime() {
-        RunCheckpointService.RevertOutcome outcome = service.revert(RUN_ID, WORKSPACE_ID, List.of(), false);
+        RunCheckpointService.RevertOutcome outcome = service.revert(RUN_ID, WORKSPACE_ID, List.of());
 
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, outcome.gate());
         assertEquals(RunCheckpointService.REASON_MISSING, outcome.reason());
-        verify(client, never()).revert(anyString(), anyString(), any(), anyBoolean());
+        verify(client, never()).revert(anyString(), anyString(), any());
     }
 
     @Test
     void checkpointFileMapsOutcomes() {
-        seedSealedRow();
-        when(client.checkpointBlob(WORKSPACE_ID, RUN_ID, "base", "src/a.txt")).thenReturn(
+        seedCapturedRow();
+        when(client.checkpointBlob(WORKSPACE_ID, SLICE_REF, "src/a.txt")).thenReturn(
                 new RuntimeCheckpointClient.BlobResult(RuntimeCheckpointClient.Outcome.OK, "src/a.txt",
-                        "base", "hello", null, Map.of()));
+                        SLICE_REF, "hello", null, Map.of()));
         RunCheckpointService.FileOutcome ok = service.checkpointFile(RUN_ID, WORKSPACE_ID,
-                "src/a.txt", "base");
+                "src/a.txt", SLICE_REF);
         assertEquals(RunCheckpointService.Gate.OK, ok.gate());
         assertEquals("hello", ok.content());
 
-        when(client.checkpointBlob(WORKSPACE_ID, RUN_ID, "end", "big.bin")).thenReturn(
+        when(client.checkpointBlob(WORKSPACE_ID, SLICE_REF, "big.bin")).thenReturn(
                 new RuntimeCheckpointClient.BlobResult(RuntimeCheckpointClient.Outcome.TOO_LARGE,
-                        "big.bin", "end", null, "http_413",
+                        "big.bin", SLICE_REF, null, "http_413",
                         Map.of("path", "big.bin", "size", 2, "max", 1)));
         RunCheckpointService.FileOutcome tooLarge = service.checkpointFile(RUN_ID, WORKSPACE_ID,
-                "big.bin", "end");
+                "big.bin", SLICE_REF);
         assertEquals(RunCheckpointService.Gate.TOO_LARGE, tooLarge.gate());
         assertEquals("big.bin", tooLarge.details().get("path"));
 
-        when(client.checkpointBlob(WORKSPACE_ID, RUN_ID, "base", "missing.txt")).thenReturn(
+        when(client.checkpointBlob(WORKSPACE_ID, SLICE_REF, "missing.txt")).thenReturn(
                 new RuntimeCheckpointClient.BlobResult(RuntimeCheckpointClient.Outcome.NOT_FOUND,
-                        "missing.txt", "base", null, "http_404", Map.of()));
+                        "missing.txt", SLICE_REF, null, "http_404", Map.of()));
         RunCheckpointService.FileOutcome missing = service.checkpointFile(RUN_ID, WORKSPACE_ID,
-                "missing.txt", "base");
+                "missing.txt", SLICE_REF);
         assertEquals(RunCheckpointService.Gate.FILE_NOT_FOUND, missing.gate());
-        assertEquals(RunCheckpoint.STATE_SEALED, rows.get(0).getState(),
+        assertEquals(RunCheckpoint.STATE_CAPTURED, rows.get(0).getState(),
                 "a missing blob path must never expire the checkpoint row");
     }
 
@@ -699,10 +701,10 @@ class RunCheckpointServiceTest {
         assertEquals("git_unavailable", degraded.reason());
 
         when(client.gc(WORKSPACE_ID)).thenReturn(new RuntimeCheckpointClient.GcResult(
-                RuntimeCheckpointClient.Outcome.OK, Map.of("deletedRuns", 2), null));
+                RuntimeCheckpointClient.Outcome.OK, Map.of("deleted", 2), null));
         RunCheckpointService.GcOutcome gc = service.gc(WORKSPACE_ID);
         assertEquals(RunCheckpointService.Gate.OK, gc.gate());
-        assertEquals(2, ((Number) gc.counts().get("deletedRuns")).intValue());
+        assertEquals(2, ((Number) gc.counts().get("deleted")).intValue());
 
         when(client.gc(WORKSPACE_ID)).thenReturn(new RuntimeCheckpointClient.GcResult(
                 RuntimeCheckpointClient.Outcome.TRANSPORT, Map.of(), "unreachable"));
@@ -712,7 +714,7 @@ class RunCheckpointServiceTest {
     @Test
     void retentionReturnsConstantsAndCounts() {
         when(repository.countByWorkspaceId(WORKSPACE_ID)).thenReturn(7L);
-        when(repository.countBaseRefs(WORKSPACE_ID)).thenReturn(7L);
+        when(repository.countBaseRefs(WORKSPACE_ID)).thenReturn(0L);
         when(repository.countEndRefs(WORKSPACE_ID)).thenReturn(5L);
 
         RunCheckpointService.RetentionView view = service.retention(WORKSPACE_ID);
@@ -721,40 +723,39 @@ class RunCheckpointServiceTest {
         assertEquals(30, view.ttlDays());
         assertTrue(view.unsealedNeverDeleted());
         assertEquals(7, view.currentRuns());
-        assertEquals(12, view.currentRefs());
+        assertEquals(5, view.currentRefs());
     }
 
     @Test
-    void degradedAndSealedRowsEmitRunCheckpointSse() {
+    @SuppressWarnings("unchecked")
+    void capturedAndDegradedRowsEmitRunCheckpointSse() {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
-        seedBaseRow();
-        when(client.seal(WORKSPACE_ID, RUN_ID)).thenReturn(sealed());
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
 
-        assertTrue(service.sealCheckpoint(RUN_ID));
+        assertTrue(service.captureCheckpoint(RUN_ID));
 
-        @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(sseManager).send(eq(SESSION_ID), eq("run_checkpoint"), payload.capture());
-        assertEquals(RunCheckpoint.STATE_SEALED, payload.getValue().get("state"));
+        assertEquals(RunCheckpoint.STATE_CAPTURED, payload.getValue().get("state"));
         assertEquals(1, payload.getValue().get("changedCount"));
 
-        when(client.create(WORKSPACE_ID, "99999999-9999-9999-9999-999999999999", "user-1", "call-1"))
-                .thenReturn(new RuntimeCheckpointClient.CreateResult(
-                        RuntimeCheckpointClient.Outcome.LEASE_HELD,
-                        null, "99999999-9999-9999-9999-999999999999", null, null, null,
-                        "CHECKPOINT_LEASE_HELD"));
-        when(chatRunRepository.findById(UUID.fromString("99999999-9999-9999-9999-999999999999")))
-                .thenReturn(Optional.of(new ChatRun("99999999-9999-9999-9999-999999999999", SESSION_ID,
-                        "55555555-5555-5555-5555-555555555555", WORKSPACE_ID,
-                        "idem", "hash", "openai", "gpt-test", "none", "running")));
+        String otherRun = "99999999-9999-9999-9999-999999999999";
+        when(chatRunRepository.findById(UUID.fromString(otherRun)))
+                .thenReturn(Optional.of(new ChatRun(otherRun, SESSION_ID, USER_ID, WORKSPACE_ID,
+                        "idem", "hash", "openai", "gpt-test", "none", "succeeded")));
+        when(client.capture(WORKSPACE_ID, otherRun, USER_ID, captureCallId(otherRun), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.UNAVAILABLE, otherRun, false, null, null, null,
+                        null, List.of(), List.of(), null, "git_unavailable"));
 
-        service.ensureCheckpoint("99999999-9999-9999-9999-999999999999", WORKSPACE_ID, "user-1", "call-1");
+        assertFalse(service.captureCheckpoint(otherRun));
 
         ArgumentCaptor<Map<String, Object>> degradedPayload = ArgumentCaptor.forClass(Map.class);
         verify(sseManager, times(2)).send(eq(SESSION_ID), eq("run_checkpoint"), degradedPayload.capture());
         assertEquals(RunCheckpoint.STATE_DEGRADED, degradedPayload.getAllValues().get(1).get("state"));
-        assertEquals(RunCheckpointService.REASON_LEASE_HELD,
+        assertEquals(RunCheckpointService.REASON_UNAVAILABLE,
                 degradedPayload.getAllValues().get(1).get("unrollableReason"));
     }
 }

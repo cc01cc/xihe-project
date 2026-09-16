@@ -18,16 +18,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * PLAN-0328 M2 W3: client for the Runtime Run-checkpoint contract
+ * PLAN-0338: client for the Runtime slice-checkpoint contract
  * ({@code /internal/v1/runtime/workspaces/{ws}/checkpoints...}).
+ *
+ * <p>Slice model: a Run is captured exactly once at its terminal transition
+ * ({@code capture}); the Runtime either writes one slice ref
+ * ({@code refs/xihe/slices/<epochMs>-<hash>}) or reports {@code noChange}. Revert
+ * works on a slice ref ({@code revert/preview} + {@code revert}); there is no
+ * mutation lease and no per-run base/end tree.</p>
  *
  * <p>Follows {@link RuntimeExecutionClient} conventions: JDK {@link HttpClient},
  * service bearer auth, bounded connect/read timeouts, and a typed error mapping
- * instead of exceptions — 409 maps to {@code LEASE_HELD}, 503 to
- * {@code UNAVAILABLE}, every other non-2xx / transport failure to
- * {@code TRANSPORT}. Callers decide the degradation policy; the checkpoint
- * establishment path must never turn an unreachable Runtime into a dispatch
- * failure.</p>
+ * instead of exceptions — 503 maps to {@code UNAVAILABLE}, every other
+ * unrecognized non-2xx / transport failure to {@code TRANSPORT}. Callers decide
+ * the degradation policy; the terminal capture path must never turn an
+ * unreachable Runtime into a Run-transition failure.</p>
  */
 @Component
 public class RuntimeCheckpointClient {
@@ -36,11 +41,9 @@ public class RuntimeCheckpointClient {
 
     /** Cross-process connect bound (aligned with the other Runtime clients). */
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
-    /** Establishment budget: design §5.1 targets median ≤ 2s / P95 ≤ 8s. */
-    private static final Duration CREATE_TIMEOUT = Duration.ofSeconds(10);
-    /** Seal scans the change set after the Run; P95 ≤ 8s plus margin. */
-    private static final Duration SEAL_TIMEOUT = Duration.ofSeconds(12);
-    /** Read-only revert dry-run re-diffs the sealed tree (same class as seal). */
+    /** Capture scans the change set at the Run terminal; P95 ≤ 8s plus margin. */
+    private static final Duration CAPTURE_TIMEOUT = Duration.ofSeconds(12);
+    /** Read-only revert dry-run re-diffs the target slice against the current tree. */
     private static final Duration PREVIEW_TIMEOUT = Duration.ofSeconds(12);
     /**
      * Revert budget: the Runtime restores per file (V17 budget ≤ 50ms/file, 100
@@ -50,62 +53,66 @@ public class RuntimeCheckpointClient {
     private static final Duration REVERT_TIMEOUT = Duration.ofSeconds(60);
     /** Blob reads are capped at 1 MiB by the Runtime; a plain git read. */
     private static final Duration BLOB_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration STATUS_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration GIT_STATUS_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration GC_TIMEOUT = Duration.ofSeconds(10);
 
     /**
      * Typed call outcome; never an exception at the call site. The 409 codes of the
-     * revert surface map to their own values ({@code NOT_SEALED}, {@code HEAD_CHANGED},
-     * {@code CONFLICTS_UNACKNOWLEDGED}); unrecognized non-2xx responses stay
-     * {@code TRANSPORT}.
+     * revert surface map to their own values ({@code TYPE_CHANGES_UNACKNOWLEDGED},
+     * {@code RESTORE_LOCKED}); unrecognized non-2xx responses stay {@code TRANSPORT}.
+     * {@code NOT_SEALED} is retained for callers that still distinguish the legacy
+     * Runtime code, the slice contract itself never emits it.
      */
     public enum Outcome {
-        OK, NOT_FOUND, LEASE_HELD, UNAVAILABLE, TRANSPORT,
-        NOT_SEALED, HEAD_CHANGED, CONFLICTS_UNACKNOWLEDGED, INVALID_REQUEST, TOO_LARGE
+        OK, NOT_FOUND, UNAVAILABLE, TRANSPORT,
+        NOT_SEALED, TYPE_CHANGES_UNACKNOWLEDGED, RESTORE_LOCKED, INVALID_REQUEST, TOO_LARGE
     }
 
-    /** One entry of a seal change set. */
+    /** One entry of a capture change set. */
     public record ChangedFile(String status, String path) {}
 
-    public record CreateResult(Outcome outcome, String checkpointId, String runId, String state,
-                               String baseRef, String createdAt, String reason) {}
-
-    public record SealResult(Outcome outcome, String state, String endRef,
-                             List<ChangedFile> changedFiles, boolean sealedWithLiveJobs,
-                             boolean sealedAfterAbnormal, String reason) {}
-
-    public record StatusResult(Outcome outcome, String state, Map<String, Object> body, String reason) {}
+    /**
+     * Slice capture result. {@code noChange=true} carries no sliceRef/commit/
+     * capturedAt (the tree equals the chain tail); {@code state} is
+     * {@code captured|abnormal-captured}, {@code predecessor} is the previous
+     * slice ref when the workspace chain is not empty.
+     */
+    public record CaptureResult(Outcome outcome, String runId, boolean noChange, String sliceRef,
+                                String commit, String capturedAt, String state,
+                                List<ChangedFile> changedFiles, List<String> opaqueNestedRepos,
+                                String predecessor, String reason) {}
 
     public record GcResult(Outcome outcome, Map<String, Object> counts, String reason) {}
 
-    /** One preview entry ({@code action} = restore|delete; noop items are not listed). */
-    public record PreviewEntry(String path, String oldPath, String action, String conflictReason) {}
+    /** One preview entry ({@code action} = restore|delete; {@code state} = planned|typeConflict). */
+    public record PreviewEntry(String path, String action, String state, String reason) {}
 
-    public record PreviewCounts(int restore, int delete, int skipConflicts, int noop) {}
+    public record PreviewCounts(int restore, int delete, int typeConflict) {}
 
     /**
      * `revert/preview` result. {@code problem} carries the parsed RFC 9457 body of a
-     * failed call (empty on success) so callers can forward fields such as
-     * {@code paths}, {@code recorded}/{@code observed} or {@code heldByRunId}.
+     * failed call (empty on success) so callers can inspect fields such as
+     * {@code paths}.
      */
-    public record RevertPreview(Outcome outcome, String runId, String state, PreviewCounts counts,
-                                List<PreviewEntry> entries, Map<String, Object> headFingerprint,
-                                boolean sealedWithLiveJobs, boolean truncated,
+    public record RevertPreview(Outcome outcome, String sliceRef, PreviewCounts counts,
+                                List<PreviewEntry> entries, boolean truncated,
                                 Map<String, Object> problem, String reason) {}
 
-    /** One executed revert item ({@code result} = restored|deleted|skippedConflict|failed|noop). */
-    public record ExecuteEntry(String path, String result, String reason) {}
+    /** One executed revert item ({@code outcome} = restored|deleted|failed). */
+    public record ExecuteEntry(String path, String outcome, String reason) {}
 
-    public record ExecuteCounts(int restored, int deleted, int skippedConflict, int failed, int noop) {}
+    public record ExecuteCounts(int restored, int deleted, int failed) {}
 
-    /** `revert` execution result; {@code problem} as in {@link RevertPreview}. */
-    public record RevertResult(Outcome outcome, String runId, String revertRef, ExecuteCounts counts,
-                               List<ExecuteEntry> entries, long durationMs,
+    /**
+     * `revert` execution result; {@code suspects} lists paths whose result was
+     * detected as concurrent-moved during the restore (PLAN-0338).
+     */
+    public record RevertResult(Outcome outcome, String sliceRef, ExecuteCounts counts,
+                               List<ExecuteEntry> entries, long durationMs, List<String> suspects,
                                Map<String, Object> problem, String reason) {}
 
-    /** One plain-text blob of the run's base/end tree; {@code problem} as in {@link RevertPreview}. */
-    public record BlobResult(Outcome outcome, String path, String ref, String content,
+    /** One plain-text blob of a slice tree; {@code problem} as in {@link RevertPreview}. */
+    public record BlobResult(Outcome outcome, String path, String sliceRef, String content,
                              String reason, Map<String, Object> problem) {}
 
     /** One entry of the workspace user-repository status. */
@@ -128,103 +135,53 @@ public class RuntimeCheckpointClient {
         this.serviceToken = serviceToken;
     }
 
-    /** Establishes the Run base checkpoint (Runtime-side idempotent per run). */
-    public CreateResult create(String workspaceId, String runId, String actor, String callId) {
+    /**
+     * Captures the terminal Run into one slice (Runtime-side idempotent per run;
+     * no-change answers {@code noChange=true} without writing a ref).
+     */
+    public CaptureResult capture(String workspaceId, String runId, String actor, String callId,
+                                 boolean abnormal) {
         if (isBlank(workspaceId) || isBlank(runId)) {
-            return new CreateResult(Outcome.TRANSPORT, null, runId, null, null, null, "invalid_request");
+            return transportCapture(runId, "invalid_request");
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("runId", runId);
         payload.put("actor", actor);
         payload.put("callId", callId);
-        String url = baseUrl(workspaceId);
+        payload.put("abnormal", abnormal);
+        String url = baseUrl(workspaceId) + "/capture";
         try {
-            HttpResponse<String> response = send("create", url, payload, CREATE_TIMEOUT);
+            HttpResponse<String> response = send("capture", url, payload, CAPTURE_TIMEOUT);
             int status = response.statusCode();
-            if (status == 409) {
-                return new CreateResult(Outcome.LEASE_HELD, null, runId, null, null, null,
-                        errorReason(status, response.body()));
+            if (status == 400) {
+                return new CaptureResult(Outcome.INVALID_REQUEST, runId, false, null, null, null,
+                        null, List.of(), List.of(), null, errorReason(status, response.body()));
+            }
+            if (status == 404) {
+                return new CaptureResult(Outcome.NOT_FOUND, runId, false, null, null, null,
+                        null, List.of(), List.of(), null, errorReason(status, response.body()));
             }
             if (status == 503) {
-                return new CreateResult(Outcome.UNAVAILABLE, null, runId, null, null, null,
-                        errorReason(status, response.body()));
+                return new CaptureResult(Outcome.UNAVAILABLE, runId, false, null, null, null,
+                        null, List.of(), List.of(), null, errorReason(status, response.body()));
             }
             if (status / 100 != 2) {
-                return new CreateResult(Outcome.TRANSPORT, null, runId, null, null, null,
-                        errorReason(status, response.body()));
+                return new CaptureResult(Outcome.TRANSPORT, runId, false, null, null, null,
+                        null, List.of(), List.of(), null, errorReason(status, response.body()));
             }
             Map<String, Object> body = parseBody(response.body());
-            return new CreateResult(Outcome.OK, stringValue(body, "checkpointId"),
+            return new CaptureResult(Outcome.OK,
                     stringValue(body, "runId") == null ? runId : stringValue(body, "runId"),
-                    stringValue(body, "state"), stringValue(body, "baseRef"),
-                    stringValue(body, "createdAt"), null);
+                    Boolean.TRUE.equals(body.get("noChange")),
+                    stringValue(body, "sliceRef"), stringValue(body, "commit"),
+                    stringValue(body, "capturedAt"), stringValue(body, "state"),
+                    parseChangedFiles(body.get("changedFiles")),
+                    parseStringList(body.get("opaqueNestedRepos")),
+                    stringValue(body, "predecessor"), null);
         } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_create_unreachable workspaceId={} runId={} error={}",
+            logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_capture_unreachable workspaceId={} runId={} error={}",
                     workspaceId, runId, e.getMessage());
-            return new CreateResult(Outcome.TRANSPORT, null, runId, null, null, null, "unreachable");
-        }
-    }
-
-    /** Seals the Run (Runtime-side idempotent: an existing end ref is returned). */
-    public SealResult seal(String workspaceId, String runId) {
-        if (isBlank(workspaceId) || isBlank(runId)) {
-            return transportSeal("invalid_request");
-        }
-        String url = baseUrl(workspaceId) + "/" + runId + "/seal";
-        try {
-            HttpResponse<String> response = send("seal", url, Map.of(), SEAL_TIMEOUT);
-            int status = response.statusCode();
-            if (status == 404) {
-                return new SealResult(Outcome.NOT_FOUND, null, null, List.of(), false, false,
-                        errorReason(status, response.body()));
-            }
-            if (status == 503) {
-                return new SealResult(Outcome.UNAVAILABLE, null, null, List.of(), false, false,
-                        errorReason(status, response.body()));
-            }
-            if (status / 100 != 2) {
-                return transportSeal(errorReason(status, response.body()));
-            }
-            Map<String, Object> body = parseBody(response.body());
-            return new SealResult(Outcome.OK, stringValue(body, "state"),
-                    stringValue(body, "endRef"), parseChangedFiles(body.get("changedFiles")),
-                    Boolean.TRUE.equals(body.get("sealedWithLiveJobs")),
-                    Boolean.TRUE.equals(body.get("sealedAfterAbnormal")), null);
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_seal_unreachable workspaceId={} runId={} error={}",
-                    workspaceId, runId, e.getMessage());
-            return transportSeal("unreachable");
-        }
-    }
-
-    /** Reads the Runtime-side checkpoint status for one Run. */
-    public StatusResult status(String workspaceId, String runId) {
-        if (isBlank(workspaceId) || isBlank(runId)) {
-            return new StatusResult(Outcome.TRANSPORT, null, Map.of(), "invalid_request");
-        }
-        String url = baseUrl(workspaceId) + "/" + runId;
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("Authorization", "Bearer " + serviceToken)
-                    .header("Accept", "application/json")
-                    .GET()
-                    .timeout(STATUS_TIMEOUT)
-                    .build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            int status = response.statusCode();
-            if (status == 404) {
-                return new StatusResult(Outcome.NOT_FOUND, null, Map.of(), errorReason(status, response.body()));
-            }
-            if (status / 100 != 2) {
-                return new StatusResult(Outcome.TRANSPORT, null, Map.of(), errorReason(status, response.body()));
-            }
-            Map<String, Object> body = parseBody(response.body());
-            return new StatusResult(Outcome.OK, stringValue(body, "state"), body, null);
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_status_unreachable workspaceId={} runId={} error={}",
-                    workspaceId, runId, e.getMessage());
-            return new StatusResult(Outcome.TRANSPORT, null, Map.of(), "unreachable");
+            return transportCapture(runId, "unreachable");
         }
     }
 
@@ -252,77 +209,79 @@ public class RuntimeCheckpointClient {
     }
 
     /**
-     * Read-only revert dry-run for one sealed run (no lease; PLAN-0328 M3 W2).
-     * 404 means the Runtime refs are gone (the caller flips the sealed row once).
+     * Read-only revert dry-run against one target slice ref. 404 means the slice
+     * ref is gone (the caller flips the projection row to expired once).
      */
-    public RevertPreview previewRevert(String workspaceId, String runId) {
-        if (isBlank(workspaceId) || isBlank(runId)) {
+    public RevertPreview previewRevert(String workspaceId, String sliceRef) {
+        if (isBlank(workspaceId) || isBlank(sliceRef)) {
             return transportPreview("invalid_request");
         }
-        String url = baseUrl(workspaceId) + "/" + runId + "/revert/preview";
+        String url = baseUrl(workspaceId) + "/revert/preview";
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("sliceRef", sliceRef);
         try {
-            HttpResponse<String> response = send("revert_preview", url, Map.of(), PREVIEW_TIMEOUT);
+            HttpResponse<String> response = send("revert_preview", url, payload, PREVIEW_TIMEOUT);
             int status = response.statusCode();
             if (status / 100 != 2) {
                 Map<String, Object> problem = parseBody(response.body());
-                return new RevertPreview(failureOutcome(status, problem), null, null, null, List.of(),
-                        Map.of(), false, false, problem, errorReason(status, response.body()));
+                return new RevertPreview(failureOutcome(status, problem), null, null, List.of(),
+                        false, problem, errorReason(status, response.body()));
             }
             Map<String, Object> body = parseBody(response.body());
-            return new RevertPreview(Outcome.OK, stringValue(body, "runId"),
-                    stringValue(body, "state"), parsePreviewCounts(body.get("counts")),
-                    parsePreviewEntries(body.get("entries")), objectMap(body.get("headFingerprint")),
-                    Boolean.TRUE.equals(body.get("sealedWithLiveJobs")),
+            return new RevertPreview(Outcome.OK, stringValue(body, "sliceRef"),
+                    parsePreviewCounts(body.get("counts")), parsePreviewEntries(body.get("entries")),
                     Boolean.TRUE.equals(body.get("truncated")), Map.of(), null);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_revert_preview_unreachable "
-                            + "workspaceId={} runId={} error={}",
-                    workspaceId, runId, e.getMessage());
+                            + "workspaceId={} sliceRef={} error={}",
+                    workspaceId, sliceRef, e.getMessage());
             return transportPreview("unreachable");
         }
     }
 
     /**
-     * Executes the revert of one sealed run. The Runtime takes the workspace
-     * mutation lease itself (a live run answers 409 {@code CHECKPOINT_LEASE_HELD}).
+     * Executes the restore back to one target slice ref. The Runtime serializes
+     * restores itself (a concurrent restore answers 409 {@code CHECKPOINT_RESTORE_LOCKED});
+     * type changes must be acknowledged explicitly in {@code acknowledgeTypeChanges}.
      */
-    public RevertResult revert(String workspaceId, String runId,
-                               List<String> acknowledgeConflicts, boolean acknowledgeHeadChange) {
-        if (isBlank(workspaceId) || isBlank(runId)) {
+    public RevertResult revert(String workspaceId, String sliceRef,
+                               List<String> acknowledgeTypeChanges) {
+        if (isBlank(workspaceId) || isBlank(sliceRef)) {
             return transportRevert("invalid_request");
         }
-        String url = baseUrl(workspaceId) + "/" + runId + "/revert";
+        String url = baseUrl(workspaceId) + "/revert";
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("acknowledgeConflicts", acknowledgeConflicts == null ? List.of() : acknowledgeConflicts);
-        payload.put("acknowledgeHeadChange", acknowledgeHeadChange);
+        payload.put("sliceRef", sliceRef);
+        payload.put("acknowledgeTypeChanges",
+                acknowledgeTypeChanges == null ? List.of() : acknowledgeTypeChanges);
         try {
             HttpResponse<String> response = send("revert_execute", url, payload, REVERT_TIMEOUT);
             int status = response.statusCode();
             if (status / 100 != 2) {
                 Map<String, Object> problem = parseBody(response.body());
-                return new RevertResult(failureOutcome(status, problem), null, null, null, List.of(), 0L,
-                        problem, errorReason(status, response.body()));
+                return new RevertResult(failureOutcome(status, problem), null, null, List.of(), 0L,
+                        List.of(), problem, errorReason(status, response.body()));
             }
             Map<String, Object> body = parseBody(response.body());
-            return new RevertResult(Outcome.OK, stringValue(body, "runId"),
-                    stringValue(body, "revertRef"), parseExecuteCounts(body.get("counts")),
-                    parseExecuteEntries(body.get("entries")), longValue(body.get("durationMs")),
+            return new RevertResult(Outcome.OK, stringValue(body, "sliceRef"),
+                    parseExecuteCounts(body.get("counts")), parseExecuteEntries(body.get("entries")),
+                    longValue(body.get("durationMs")), parseStringList(body.get("suspects")),
                     Map.of(), null);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_revert_unreachable "
-                            + "workspaceId={} runId={} error={}",
-                    workspaceId, runId, e.getMessage());
+                            + "workspaceId={} sliceRef={} error={}",
+                    workspaceId, sliceRef, e.getMessage());
             return transportRevert("unreachable");
         }
     }
 
-    /** Reads one plain-text file out of the run's {@code base|end} tree (≤ 1 MiB). */
-    public BlobResult checkpointBlob(String workspaceId, String runId, String ref, String path) {
-        if (isBlank(workspaceId) || isBlank(runId) || isBlank(ref) || isBlank(path)) {
-            return new BlobResult(Outcome.INVALID_REQUEST, path, ref, null, "invalid_request", Map.of());
+    /** Reads one plain-text file out of a slice tree (≤ 1 MiB). */
+    public BlobResult checkpointBlob(String workspaceId, String sliceRef, String path) {
+        if (isBlank(workspaceId) || isBlank(sliceRef) || isBlank(path)) {
+            return new BlobResult(Outcome.INVALID_REQUEST, path, sliceRef, null, "invalid_request", Map.of());
         }
-        String url = baseUrl(workspaceId) + "/" + runId + "/blob?path=" + encodeQuery(path)
-                + "&ref=" + encodeQuery(ref);
+        String url = baseUrl(workspaceId) + "/blob?sliceRef=" + encodeQuery(sliceRef)
+                + "&path=" + encodeQuery(path);
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -334,16 +293,16 @@ public class RuntimeCheckpointClient {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             int status = response.statusCode();
             if (status / 100 == 2) {
-                return new BlobResult(Outcome.OK, path, ref, response.body(), null, Map.of());
+                return new BlobResult(Outcome.OK, path, sliceRef, response.body(), null, Map.of());
             }
             Map<String, Object> problem = parseBody(response.body());
-            return new BlobResult(failureOutcome(status, problem), path, ref, null,
+            return new BlobResult(failureOutcome(status, problem), path, sliceRef, null,
                     errorReason(status, response.body()), problem);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_blob_unreachable "
-                            + "workspaceId={} runId={} error={}",
-                    workspaceId, runId, e.getMessage());
-            return new BlobResult(Outcome.TRANSPORT, path, ref, null, "unreachable", Map.of());
+                            + "workspaceId={} sliceRef={} error={}",
+                    workspaceId, sliceRef, e.getMessage());
+            return new BlobResult(Outcome.TRANSPORT, path, sliceRef, null, "unreachable", Map.of());
         }
     }
 
@@ -400,13 +359,17 @@ public class RuntimeCheckpointClient {
         return runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/checkpoints";
     }
 
+    private CaptureResult transportCapture(String runId, String reason) {
+        return new CaptureResult(Outcome.TRANSPORT, runId, false, null, null, null, null,
+                List.of(), List.of(), null, reason);
+    }
+
     private RevertPreview transportPreview(String reason) {
-        return new RevertPreview(Outcome.TRANSPORT, null, null, null, List.of(), Map.of(), false,
-                false, Map.of(), reason);
+        return new RevertPreview(Outcome.TRANSPORT, null, null, List.of(), false, Map.of(), reason);
     }
 
     private RevertResult transportRevert(String reason) {
-        return new RevertResult(Outcome.TRANSPORT, null, null, null, List.of(), 0L, Map.of(), reason);
+        return new RevertResult(Outcome.TRANSPORT, null, null, List.of(), 0L, List.of(), Map.of(), reason);
     }
 
     /**
@@ -428,9 +391,8 @@ public class RuntimeCheckpointClient {
             }
             return switch (code) {
                 case "CHECKPOINT_NOT_SEALED" -> Outcome.NOT_SEALED;
-                case "CHECKPOINT_LEASE_HELD" -> Outcome.LEASE_HELD;
-                case "CHECKPOINT_HEAD_CHANGED" -> Outcome.HEAD_CHANGED;
-                case "CHECKPOINT_CONFLICTS_UNACKNOWLEDGED" -> Outcome.CONFLICTS_UNACKNOWLEDGED;
+                case "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED" -> Outcome.TYPE_CHANGES_UNACKNOWLEDGED;
+                case "CHECKPOINT_RESTORE_LOCKED" -> Outcome.RESTORE_LOCKED;
                 default -> Outcome.TRANSPORT;
             };
         }
@@ -445,19 +407,18 @@ public class RuntimeCheckpointClient {
 
     private static PreviewCounts parsePreviewCounts(Object raw) {
         if (!(raw instanceof Map<?, ?> map)) {
-            return new PreviewCounts(0, 0, 0, 0);
+            return new PreviewCounts(0, 0, 0);
         }
         return new PreviewCounts(intValue(map.get("restore")), intValue(map.get("delete")),
-                intValue(map.get("skipConflicts")), intValue(map.get("noop")));
+                intValue(map.get("typeConflict")));
     }
 
     private static ExecuteCounts parseExecuteCounts(Object raw) {
         if (!(raw instanceof Map<?, ?> map)) {
-            return new ExecuteCounts(0, 0, 0, 0, 0);
+            return new ExecuteCounts(0, 0, 0);
         }
         return new ExecuteCounts(intValue(map.get("restored")), intValue(map.get("deleted")),
-                intValue(map.get("skippedConflict")), intValue(map.get("failed")),
-                intValue(map.get("noop")));
+                intValue(map.get("failed")));
     }
 
     private static List<PreviewEntry> parsePreviewEntries(Object raw) {
@@ -467,8 +428,8 @@ public class RuntimeCheckpointClient {
         List<PreviewEntry> entries = new ArrayList<>();
         for (Object item : list) {
             if (item instanceof Map<?, ?> map) {
-                entries.add(new PreviewEntry(asString(map.get("path")), asString(map.get("oldPath")),
-                        asString(map.get("action")), asString(map.get("conflictReason"))));
+                entries.add(new PreviewEntry(asString(map.get("path")), asString(map.get("action")),
+                        asString(map.get("state")), asString(map.get("reason"))));
             }
         }
         return List.copyOf(entries);
@@ -481,7 +442,7 @@ public class RuntimeCheckpointClient {
         List<ExecuteEntry> entries = new ArrayList<>();
         for (Object item : list) {
             if (item instanceof Map<?, ?> map) {
-                entries.add(new ExecuteEntry(asString(map.get("path")), asString(map.get("result")),
+                entries.add(new ExecuteEntry(asString(map.get("path")), asString(map.get("outcome")),
                         asString(map.get("reason"))));
             }
         }
@@ -505,8 +466,18 @@ public class RuntimeCheckpointClient {
         return List.copyOf(entries);
     }
 
-    private static Map<String, Object> objectMap(Object raw) {
-        return raw instanceof Map<?, ?> map ? toObjectMap(map) : Map.of();
+    private static List<String> parseStringList(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            return List.of();
+        }
+        List<String> values = new ArrayList<>();
+        for (Object item : list) {
+            String value = asString(item);
+            if (value != null) {
+                values.add(value);
+            }
+        }
+        return List.copyOf(values);
     }
 
     private static int intValue(Object raw) {
@@ -520,10 +491,6 @@ public class RuntimeCheckpointClient {
     private static String encodeQuery(String value) {
         return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
-    }
-
-    private SealResult transportSeal(String reason) {
-        return new SealResult(Outcome.TRANSPORT, null, null, List.of(), false, false, reason);
     }
 
     private static String errorReason(int status, String body) {

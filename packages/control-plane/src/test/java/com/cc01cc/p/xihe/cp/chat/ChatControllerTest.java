@@ -123,7 +123,7 @@ class ChatControllerTest extends AbstractH2Test {
     @MockitoSpyBean
     private ApprovalAgentClient approvalAgentClient;
 
-    /** PLAN-0328 M2 W3: terminal transitions must request a checkpoint seal. */
+    /** PLAN-0338: terminal transitions must request a Run slice capture. */
     @MockitoSpyBean
     private com.cc01cc.p.xihe.cp.service.RunCheckpointService runCheckpointService;
 
@@ -455,7 +455,12 @@ class ChatControllerTest extends AbstractH2Test {
         pollMessages(5000);
         UUID operationId = UUID.fromString((String) response.getBody().get("operationId"));
         Map<String, Object> trace = operationService.getOperationTrace(operationId);
-        List<?> items = (List<?>) trace.get("items");
+        // PLAN-0338：终态还会异步追加 checkpoint 切片标记（kind=checkpoint），
+        // 本用例只断言 tool 事实条目。
+        List<?> items = ((List<?>) trace.get("items")).stream()
+                .filter(item -> "tool_call".equals(
+                        ((com.cc01cc.p.xihe.cp.entity.OperationItem) item).getKind()))
+                .toList();
         List<?> attempts = (List<?>) trace.get("attempts");
         assertEquals(1, items.size());
         assertEquals("completed", ((com.cc01cc.p.xihe.cp.entity.OperationItem) items.get(0)).getStatus());
@@ -850,7 +855,7 @@ class ChatControllerTest extends AbstractH2Test {
         });
     }
 
-    // ── PLAN-0328 M2 W3：终态路径的 checkpoint seal 触发 ─────────────────────────
+    // ── PLAN-0338：终态路径的 Run 切片捕获触发 ────────────────────────
 
     @Test
     void chat_terminalSuccessRequestsCheckpointSeal() throws IOException {
@@ -886,7 +891,7 @@ class ChatControllerTest extends AbstractH2Test {
             ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
             assertEquals("succeeded", run.getStatus());
         });
-        verify(runCheckpointService, timeout(5000)).requestSeal(runId);
+        verify(runCheckpointService, timeout(5000)).requestCapture(runId);
     }
 
     @Test
@@ -914,7 +919,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         String runId = (String) response.getBody().get("runId");
 
-        verify(runCheckpointService, timeout(5000)).requestSeal(runId);
+        verify(runCheckpointService, timeout(5000)).requestCapture(runId);
     }
 
     @Test
@@ -933,6 +938,6 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("cancel_accepted", response.getBody().get("status"));
         assertEquals("cancelled", chatRunRepository.findById(run.getId()).orElseThrow().getStatus());
-        verify(runCheckpointService, timeout(5000)).requestSeal(run.getId().toString());
+        verify(runCheckpointService, timeout(5000)).requestCapture(run.getId().toString());
     }
 }

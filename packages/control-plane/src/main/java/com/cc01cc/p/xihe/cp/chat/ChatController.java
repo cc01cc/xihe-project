@@ -571,8 +571,8 @@ public class ChatController {
             logger.warn("[LIFECYCLE] service=cp event=run_cancel_transition_ignored runId={}", runId);
         }
         operationService.transitionOperationForRun(runId, "cancelled", null, null);
-        // PLAN-0328 M2 W3: cancellation bypasses transitionRun; seal explicitly.
-        runCheckpointService.requestSeal(runId);
+        // PLAN-0338: cancellation bypasses transitionRun; capture the slice explicitly.
+        runCheckpointService.requestCapture(runId);
         logger.info("[LIFECYCLE] service=cp event=run_cancelled runId={}", runId);
     }
 
@@ -820,9 +820,9 @@ public class ChatController {
                 List.of("accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching"),
                 terminalStatus, outcome, errorCode, detail, 0, 0);
         if (!transitioned) {
-            // The run was already terminal through another path: the seal request
+            // The run was already terminal through another path: the capture request
             // must still happen (transitionRun could not issue it).
-            runCheckpointService.requestSeal(runId);
+            runCheckpointService.requestCapture(runId);
         }
         sseManager.send(sessionId, "error", Map.of(
                 "code", errorCode,
@@ -873,11 +873,11 @@ public class ChatController {
                     errorCode == null && "partial".equals(status) ? "PARTIAL_RESULT" : errorCode,
                     errorDetail);
         }
-        // PLAN-0328 M2 W3: terminal transition → seal the run checkpoint. The
-        // request is asynchronous and never fails the transition; a failed seal
-        // stays in `base` for the Runtime sweep / startup reconcile.
+        // PLAN-0338: terminal transition → capture the run slice. The request is
+        // asynchronous and never fails the transition; a failed capture records a
+        // degraded row for the startup reconcile.
         if (TERMINAL_RUN_STATUSES.contains(status)) {
-            runCheckpointService.requestSeal(runId);
+            runCheckpointService.requestCapture(runId);
         }
         return true;
     }
