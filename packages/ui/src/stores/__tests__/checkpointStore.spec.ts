@@ -173,6 +173,30 @@ describe("workspace checkpoint cleanup", () => {
         expect(mockedApi.listWorkspaceCheckpoints).toHaveBeenCalledTimes(2);
     });
 
+    it("does not let a pending list repopulate after workspace cleanup", async () => {
+        let resolveList: ((value: WorkspaceCheckpoint[]) => void) | null = null;
+        mockedApi.listWorkspaceCheckpoints.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveList = resolve;
+                }),
+        );
+        const store = useCheckpointStore();
+        const pending = store.fetchWorkspaceCheckpoints(WORKSPACE_ID);
+        await flushPromises();
+        store.mergeEvent({
+            runId: RUN_ID,
+            sessionId: SESSION_ID,
+            state: "captured",
+            changedCount: 1,
+        });
+        store.clearWorkspace(WORKSPACE_ID);
+        resolveList?.([checkpoint()]);
+        await pending;
+        expect(store.getForWorkspace(WORKSPACE_ID)).toEqual([]);
+        expect(store.getEvent(RUN_ID)).toBeUndefined();
+    });
+
     it("clears records and events on user switch", () => {
         const store = useCheckpointStore();
         store.mergeEvent({

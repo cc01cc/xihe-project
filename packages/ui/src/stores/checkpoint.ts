@@ -117,10 +117,12 @@ export const useCheckpointStore = defineStore("checkpoint", () => {
     }
 
     function clearWorkspace(workspaceId: string): void {
+        storeGeneration += 1;
         for (const recordKey of Object.keys(records.value)) {
             if (records.value[recordKey]?.workspaceId === workspaceId)
                 delete records.value[recordKey];
         }
+        eventRecords.value = {};
         loadedWorkspaces.delete(workspaceId);
         inFlight.delete(workspaceId);
         delete workspaceErrors.value[workspaceId];

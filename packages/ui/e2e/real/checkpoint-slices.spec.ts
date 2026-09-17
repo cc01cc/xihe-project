@@ -810,6 +810,11 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         const changedPaths = view.changedFiles.map((file) => file.path);
         expect(changedPaths).toContain(fileName);
         expect(changedPaths, "gitlink path is in the capture change set").toContain("sub-repo");
+        expect(
+            view.opaqueNestedRepos,
+            "opaque nested repos are exposed by the projection",
+        ).toContain("sub-repo");
+        expect(preview.body.opaqueNestedRepos).toContain("sub-repo");
 
         record("s3-nested-repo", {
             runId,
@@ -929,5 +934,45 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
             expect(ref, `unexpected/legacy ref shape: ${ref}`).toMatch(SLICE_REF_PATTERN);
         }
         record("s6-ref-namespace", { refs });
+    });
+
+    // S8 ─ explicit cleanup removes refs and allows a fresh C0 bootstrap ────────
+    test("S8: cleanup physically clears refs and the next materialize bootstraps again", async ({
+        request,
+    }) => {
+        const before = listSliceRefs(ctx.workspaceId);
+        expect(before.length, "cleanup requires an existing slice ref").toBeGreaterThan(0);
+
+        const cleanup = await request.post(
+            `${CP_URL}/api/v1/workspaces/${ctx.workspaceId}/checkpoints/cleanup`,
+            { headers: ctx.headers, data: { acknowledge: true } },
+        );
+        const cleanupBody = await cleanup.json();
+        expect(cleanup.status(), JSON.stringify(cleanupBody)).toBe(200);
+        expect(cleanupBody.removed).toBe(true);
+        await expect
+            .poll(() => listSliceRefs(ctx.workspaceId).length, {
+                message: "cleanup must remove all shadow slice refs",
+                timeout: 60000,
+                intervals: [1000, 2000, 3000],
+            })
+            .toBe(0);
+
+        const rematerialize = await request.post(
+            `${CP_URL}/api/v1/workspaces/${ctx.workspaceId}/materialize`,
+            { headers: ctx.headers },
+        );
+        expect([200, 202]).toContain(rematerialize.status());
+        await expect
+            .poll(() => listSliceRefs(ctx.workspaceId).length, {
+                message: "materialize must bootstrap a fresh C0 slice after cleanup",
+                timeout: 180000,
+                intervals: [1000, 2000, 3000],
+            })
+            .toBeGreaterThan(0);
+        record("s8-cleanup-bootstrap", {
+            before,
+            afterCleanup: listSliceRefs(ctx.workspaceId),
+        });
     });
 });

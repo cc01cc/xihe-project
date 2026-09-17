@@ -61,6 +61,7 @@ function createState(): MockState {
                 },
             ],
             truncated: false,
+            opaqueNestedRepos: ["vendor/lib"],
         },
         result: {
             sliceRef: SLICE_REF,
