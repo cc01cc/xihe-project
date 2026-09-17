@@ -508,7 +508,7 @@ class LangGraphRunner(AgentRunner):
         if l1_text:
             messages.append(SystemMessage(content=l1_text))
 
-        env_text = _render_env_block()
+        env_text = _render_env_block(context.epoch)
         if env_text:
             messages.append(SystemMessage(content=env_text))
 
@@ -557,18 +557,23 @@ class LangGraphRunner(AgentRunner):
         return result
 
 
-def _render_env_block() -> str:
-    """PLAN-0340 T1.2: L1b env (local half). Git half omitted until Runtime fact endpoint."""
+def _render_env_block(epoch=None) -> str:
+    """PLAN-0340 T1.2: L1b env. Local facts + optional git from epoch (Runtime facts)."""
     import os
     import platform
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     lines = [
         "cwd: /",
         f"platform: {platform.system()}",
-        f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"date: {datetime.now(UTC).strftime('%Y-%m-%d')}",
         f"shell: {os.environ.get('SHELL') or os.environ.get('COMSPEC') or 'unknown'}",
     ]
+    if epoch is not None and getattr(epoch, "env_is_repository", False):
+        branch = getattr(epoch, "env_branch", "") or "unknown"
+        head = getattr(epoch, "env_head", "") or "unknown"
+        lines.append(f"git.branch: {branch}")
+        lines.append(f"git.head: {head}")
     body = "\n".join(lines)
     if len(body.encode()) > 4096:
         body = body.encode()[:4096].decode(errors="ignore")

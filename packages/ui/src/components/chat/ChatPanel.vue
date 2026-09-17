@@ -19,6 +19,7 @@ import InputArea from "./InputArea.vue";
 import SSEStream from "./SSEStream.vue";
 import ApprovalModal from "./ApprovalModal.vue";
 import SessionPolicyControls from "./SessionPolicyControls.vue";
+import ContextSourcesU1 from "./ContextSourcesU1.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 
@@ -273,6 +274,7 @@ watch(
 <template>
     <div class="flex flex-col h-full min-h-0 overflow-hidden">
         <SessionPolicyControls :session-id="sessionId" />
+        <ContextSourcesU1 :session-id="sessionId" />
 
         <div
             v-if="runRecovery"

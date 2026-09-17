@@ -872,13 +872,19 @@ paths:
   /internal/v1/context/{sessionId}/events/latest:
     get: { operationId: latestContextSequence, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Sequence } } }
   /internal/v1/context/{sessionId}/refresh-sources:
-    post: { operationId: refreshContextSources, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '202': { description: Accepted } } }
+    post: { operationId: refreshContextSources, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: 'status: created|updated|unchanged|failed' } } }
+  /api/v1/context/{sessionId}/sources:
+    get: { operationId: getContextSources, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: 'U1 metadata only (sourceKey/status/hashPrefix/envBranch/envHead); never body' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/context/{sessionId}/replay:
     post: { operationId: replayContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Replayed } } }
   /internal/v1/context/{sessionId}/compact:
     post: { operationId: compactContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Compacted } } }
   /internal/v1/context/{sourceSessionId}/fork:
     post: { operationId: forkContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sourceSessionId, required: true, schema: { type: string } }], responses: { '201': { description: Forked } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/git-status:
+    get: { operationId: workspaceGitStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: isRepository + porcelain entries } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/git-facts:
+    get: { operationId: workspaceGitFacts, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: 'branch + short HEAD only (PLAN-0340 L1b); non-git isRepository=false' } } }
   /internal/v1/runtime/workspaces:
     post: { operationId: registerRuntimeWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Registered } } }
   /internal/v1/runtime/workspaces/{workspaceId}/execution-spec:

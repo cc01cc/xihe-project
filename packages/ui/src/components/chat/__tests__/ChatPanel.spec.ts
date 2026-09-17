@@ -50,7 +50,7 @@ function mountPanel() {
     props: { sessionId: SESSION_ID },
     global: {
       plugins: [i18n],
-      stubs: { SSEStream: true, InputArea: true, MessageList: true, SessionPolicyControls: true },
+      stubs: { SSEStream: true, InputArea: true, MessageList: true, SessionPolicyControls: true, ContextSourcesU1: true },
     },
   })
 }

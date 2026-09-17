@@ -47,8 +47,11 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `/api/v1/sessions/{sessionId}/attachments[/{fileId}]` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `/api/v1/files/{fileId}`, `/api/v1/files/upload` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `/api/v1/rag/stats`, `/api/v1/rag/ingest`, `/api/v1/rag/search`, `/api/v1/rag/documents/{docId}` | unchanged `/api/v1/...` | user Bearer | UI |
-| CP | `/api/v1/context/**` | `/internal/v1/context/**` | service Bearer | Agent context client |
+| CP | `/internal/v1/context/**` | `/internal/v1/context/**` | service Bearer | Agent context client（events/snapshot/refresh-sources/compact/fork） |
+| CP | `/context/{sessionId}/sources` | `GET /api/v1/context/{sessionId}/sources` | user Bearer | UI `ContextSourcesU1` U1 元信息（无正文，PLAN-0340） |
 | Runtime | `/workspace/**` | `/internal/v1/runtime/workspaces/**` | service Bearer | CP, UI through CP |
+| Runtime | git porcelain status | `/internal/v1/runtime/workspaces/{workspaceId}/git-status` | service Bearer | CP dual-diff 待提交侧 |
+| Runtime | git branch+HEAD 事实 | `/internal/v1/runtime/workspaces/{workspaceId}/git-facts` | service Bearer | CP L1b env（PLAN-0340，仅 branch/HEAD，无 dirty） |
 | Runtime | targeted execution spec lookup | `/internal/v1/runtime/workspaces/{workspaceId}/execution-spec` | service Bearer | Runtime lazy materialization |
 | Runtime | per-workspace materialization status | `/internal/v1/runtime/workspaces/{workspaceId}/status` | service Bearer | CP environment view/diagnostics |
 | Runtime | explicit materialization trigger (202, poll status) | `/internal/v1/runtime/workspaces/{workspaceId}/materialize` | service Bearer | CP materialize proxy (PLAN-262 M4) |

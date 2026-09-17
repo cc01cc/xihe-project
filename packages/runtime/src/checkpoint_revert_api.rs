@@ -245,6 +245,37 @@ impl CheckpointService {
             }),
         }
     }
+
+    /// PLAN-0340: branch + short HEAD only (L1b).
+    pub async fn git_facts(
+        &self,
+        workspace_id: &str,
+    ) -> Result<crate::checkpoint::WorkspaceGitFacts, GitStatusFailure> {
+        validate_workspace_id(workspace_id).map_err(|error| GitStatusFailure::Validation {
+            detail: error.to_string(),
+        })?;
+        match self.engine().workspace_git_facts(workspace_id).await {
+            Ok(facts) => Ok(facts),
+            Err(CheckpointError::GitUnavailable(detail)) => {
+                let capability = self.engine().probe().await;
+                Err(GitStatusFailure::Unavailable {
+                    reason: unavailable_reason(&capability.version),
+                    detail,
+                })
+            }
+            Err(CheckpointError::InvalidIdentifier { detail, .. }) => {
+                Err(GitStatusFailure::Validation { detail })
+            }
+            Err(CheckpointError::WorkspaceMissing(detail)) => Err(GitStatusFailure::Unavailable {
+                reason: REASON_WORKSPACE_UNKNOWN,
+                detail,
+            }),
+            Err(other) => Err(GitStatusFailure::Unavailable {
+                reason: REASON_GIT_FAILED,
+                detail: other.to_string(),
+            }),
+        }
+    }
 }
 
 /// Project the engine dry-run into the frozen preview wire shape.

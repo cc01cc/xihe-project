@@ -174,6 +174,11 @@ const messages = {
             approvalModeChanged: "已切换审批模式",
             approvalModeLoadFailed: "审批模式获取失败",
             approvalModeChangeFailed: "审批模式切换失败",
+            contextSourcesTitle: "上下文源",
+            contextSourcesToggle: "切换上下文源摘要",
+            contextSourcesLoading: "加载中…",
+            contextSourcesError: "源摘要不可用",
+            contextSourcesFailed: "读取失败",
             approvalUnclassifiedNotice:
                 "未分类工具：默认按 ask 处理，且不能保存会话级或持久规则。仅工作区 OWNER / ADMIN 可分类。",
             approvalClassifyAndAllow: "分类并放行",
@@ -765,6 +770,11 @@ const messages = {
             approvalModeChanged: "Approval mode changed",
             approvalModeLoadFailed: "Failed to load approval mode",
             approvalModeChangeFailed: "Failed to change approval mode",
+            contextSourcesTitle: "Context sources",
+            contextSourcesToggle: "Toggle context source summary",
+            contextSourcesLoading: "Loading…",
+            contextSourcesError: "Source summary unavailable",
+            contextSourcesFailed: "read failed",
             approvalUnclassifiedNotice:
                 "Unclassified tool: it defaults to ask and cannot grant session or saved rules. Only a workspace OWNER / ADMIN can classify it.",
             approvalClassifyAndAllow: "Classify and allow",

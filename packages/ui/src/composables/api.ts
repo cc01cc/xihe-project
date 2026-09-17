@@ -1060,6 +1060,16 @@ export const api = {
     async getSession(id: string): Promise<SessionResponse> {
         return normalizeSession(await request<unknown>(`/sessions/${encodeURIComponent(id)}`));
     },
+    /** PLAN-0340 U1: source summary metadata only (no body). */
+    getContextSources(sessionId: string) {
+        return request<{
+            sourceKey: string;
+            status: string;
+            hashPrefix: string;
+            envBranch?: string;
+            envHead?: string;
+        }>(`/context/${encodeURIComponent(sessionId)}/sources`);
+    },
     async createSession(title?: string): Promise<SessionResponse> {
         const body = title === undefined ? {} : { title };
         return normalizeSession(

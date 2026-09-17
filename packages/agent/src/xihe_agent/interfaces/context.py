@@ -41,6 +41,9 @@ class ContextEpoch:
     source_hash: str = ""
     summary_hash: str = ""
     l1_rendered: str = ""
+    env_branch: str = ""
+    env_head: str = ""
+    env_is_repository: bool = False
 
 
 @dataclass
@@ -144,6 +147,20 @@ class AgentContext:
                 source_hash=prev.source_hash,
                 summary_hash=payload.get("summaryHash", ""),
                 l1_rendered=prev.l1_rendered,
+            )
+        elif event_type == "context.env_updated":
+            prev = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])
+            self.epoch = ContextEpoch(
+                epoch_id=prev.epoch_id,
+                baseline_hash=prev.baseline_hash,
+                system_messages=prev.system_messages,
+                sources=prev.sources,
+                source_hash=prev.source_hash,
+                summary_hash=prev.summary_hash,
+                l1_rendered=prev.l1_rendered,
+                env_branch=payload.get("branch", ""),
+                env_head=payload.get("head", ""),
+                env_is_repository=bool(payload.get("is_repository", False)),
             )
         elif event_type == "taskplan.created":
             self.metadata["task_plan"] = {

@@ -91,6 +91,7 @@ public class ContextProjectionService {
             // PLAN-0340: source updates replace the epoch L1 slot; they must not
             // append into messages (old path was truncated by HISTORY_LIMIT).
             case "context.source_changed" -> applySourceChanged(context, payload);
+            case "context.env_updated" -> applyEnvUpdated(context, payload);
             case "epoch.started", "epoch.replaced" -> setEpoch(context, payload);
             case "runtime.state_cleared" -> clearRuntimeState(context);
             case "session.forked" -> recordFork(context, payload);
@@ -222,6 +223,17 @@ public class ContextProjectionService {
         sourcesMeta.put("source_hash", hash);
         sourcesMeta.put("updated_at", Instant.now().toString());
         meta.set("context_sources", sourcesMeta);
+    }
+
+    private void applyEnvUpdated(ObjectNode context, ObjectNode payload) {
+        ObjectNode epoch = (ObjectNode) context.get("epoch");
+        if (epoch == null) {
+            emptyContextSlots(context);
+            epoch = (ObjectNode) context.get("epoch");
+        }
+        epoch.put("env_branch", payload.path("branch").asText(""));
+        epoch.put("env_head", payload.path("head").asText(""));
+        epoch.put("env_is_repository", payload.path("is_repository").asBoolean(false));
     }
 
     private void setWorkspaceAndUser(ObjectNode context, ObjectNode payload) {

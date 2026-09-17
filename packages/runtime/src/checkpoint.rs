@@ -247,6 +247,17 @@ pub struct WorkspaceGitStatus {
     pub entries: Vec<GitStatusEntry>,
 }
 
+/// PLAN-0340 L1b git half: stable facts only (branch + short HEAD), no dirty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitFacts {
+    pub is_repository: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+}
+
 struct GitOutput {
     status: ExitStatus,
     stdout: Vec<u8>,
@@ -1096,6 +1107,61 @@ impl ShadowGit {
         Ok(WorkspaceGitStatus {
             is_repository: true,
             entries: parse_porcelain_status_z(&stdout),
+        })
+    }
+
+    /// PLAN-0340 T1.2: `branch` + short `HEAD` for L1b (no dirty list).
+    pub async fn workspace_git_facts(&self, workspace_id: &str) -> Result<WorkspaceGitFacts> {
+        let work_tree = self.work_tree(workspace_id)?;
+        if !work_tree.is_dir() {
+            return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
+                &work_tree,
+            )));
+        }
+        let Some(git_dir) = resolve_user_git_dir(&work_tree).await else {
+            return Ok(WorkspaceGitFacts {
+                is_repository: false,
+                branch: None,
+                head: None,
+            });
+        };
+        self.require_git().await?;
+        let mut env = self.null_config_env();
+        env.push(("GIT_DIR".to_string(), normalize_path_for_git(&git_dir)));
+        env.push((
+            "GIT_WORK_TREE".to_string(),
+            normalize_path_for_git(&work_tree),
+        ));
+        env.push(("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()));
+        env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
+        let hooks = self.shadow_git_dir(workspace_id)?.join("empty-hooks");
+        let hooks_config = format!("core.hooksPath={}", normalize_path_for_git(&hooks));
+        let branch_out = self
+            .run_git_checked(
+                &["-c", &hooks_config, "rev-parse", "--abbrev-ref", "HEAD"],
+                &env,
+                None,
+                self.call_timeout,
+            )
+            .await?;
+        let head_out = self
+            .run_git_checked(
+                &["-c", &hooks_config, "rev-parse", "--short", "HEAD"],
+                &env,
+                None,
+                self.call_timeout,
+            )
+            .await?;
+        let branch = String::from_utf8_lossy(&branch_out).trim().to_string();
+        let head = String::from_utf8_lossy(&head_out).trim().to_string();
+        Ok(WorkspaceGitFacts {
+            is_repository: true,
+            branch: if branch.is_empty() || branch == "HEAD" {
+                None
+            } else {
+                Some(branch)
+            },
+            head: if head.is_empty() { None } else { Some(head) },
         })
     }
 

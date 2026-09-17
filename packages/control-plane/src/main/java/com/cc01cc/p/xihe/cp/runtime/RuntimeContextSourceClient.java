@@ -51,4 +51,24 @@ public class RuntimeContextSourceClient {
             return Optional.empty();
         }
     }
+
+    /** PLAN-0340: branch + short HEAD for L1b; empty when non-git or unreachable. */
+    public Optional<Map<String, Object>> readGitFacts(String workspaceId) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(serviceToken);
+            var response = restTemplate.exchange(
+                    runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/git-facts",
+                    org.springframework.http.HttpMethod.GET,
+                    new HttpEntity<>(headers),
+                    new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() { });
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                return Optional.empty();
+            }
+            return Optional.of(response.getBody());
+        } catch (Exception e) {
+            logger.warn("Runtime git-facts failed workspaceId={}: {}", workspaceId, e.getMessage());
+            return Optional.empty();
+        }
+    }
 }

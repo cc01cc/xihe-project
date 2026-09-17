@@ -120,6 +120,7 @@ public class ContextSourceRefreshService {
         if (!firstOrChanged) {
             // Session already has this content in L1; keep workspace row fresh.
             upsertWorkspaceHash(workspaceId, hash, existing.orElse(null));
+            refreshEnvFacts(sessionId, workspaceId, userId);
             return STATUS_UNCHANGED;
         }
 
@@ -144,10 +145,32 @@ public class ContextSourceRefreshService {
         Map<String, Object> eventPayload = objectMapper.convertValue(payload, Map.class);
         contextService.appendEvent(sessionId, workspaceId, userId, "context.source_changed", eventPayload);
         upsertWorkspaceHash(workspaceId, hash, existing.orElse(null));
+        refreshEnvFacts(sessionId, workspaceId, userId);
         logger.info(LogRedactor.redact(
                 "context sources refreshed sessionId=" + sessionId + " status=" + payload.get("status").asText()
                         + " hashPrefix=" + hash.substring(0, Math.min(8, hash.length()))));
         return payload.get("status").asText();
+    }
+
+    /** PLAN-0340: emit env git facts when they change (L1b git half). */
+    private void refreshEnvFacts(String sessionId, String workspaceId, String userId) {
+        Optional<Map<String, Object>> factsOpt = runtimeContextSourceClient.readGitFacts(workspaceId);
+        String branch = factsOpt.map(m -> String.valueOf(m.getOrDefault("branch", ""))).orElse("");
+        String head = factsOpt.map(m -> String.valueOf(m.getOrDefault("head", ""))).orElse("");
+        ObjectNode context = projectionService.project(sessionId, 0L);
+        ObjectNode epoch = (ObjectNode) context.get("epoch");
+        String prevBranch = epoch == null ? "" : epoch.path("env_branch").asText("");
+        String prevHead = epoch == null ? "" : epoch.path("env_head").asText("");
+        if (branch.equals(prevBranch) && head.equals(prevHead)) {
+            return;
+        }
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("branch", branch);
+        payload.put("head", head);
+        payload.put("is_repository", factsOpt.map(m -> Boolean.TRUE.equals(m.get("isRepository")))
+                .orElse(Boolean.FALSE));
+        contextService.appendEvent(sessionId, workspaceId, userId, "context.env_updated",
+                objectMapper.convertValue(payload, Map.class));
     }
 
     private void emitFailed(String sessionId, String workspaceId, String userId) {

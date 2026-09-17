@@ -2137,6 +2137,17 @@ async fn workspace_git_status_handler(
     }
 }
 
+/// PLAN-0340 L1b: branch + short HEAD (no dirty).
+async fn workspace_git_facts_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+) -> Response {
+    match app.checkpoints.git_facts(&ws_id).await {
+        Ok(facts) => AxumJson(facts).into_response(),
+        Err(failure) => git_status_failure_response(failure),
+    }
+}
+
 /// `GET /internal/v1/runtime/diagnostics` — ops projection; carries no secrets
 /// and never workspace contents.
 async fn runtime_diagnostics_handler(State(app): State<Arc<AppState>>) -> Response {
@@ -2259,6 +2270,10 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/git-status",
             get(workspace_git_status_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/git-facts",
+            get(workspace_git_facts_handler),
         )
         .route(
             "/internal/v1/runtime/diagnostics",
