@@ -45,7 +45,7 @@
     "defaultBaseUrl": "https://api.xiaomimimo.com/v1",
     "modelDiscovery": "remote-models",
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
-    "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false }
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false }
   },
   {
     "id": "google-gemini",

@@ -17,6 +17,16 @@ from xihe_agent.interfaces.llm import LLMProvider, LLMRequest, LLMToken
 
 ProviderName = str
 
+# PLAN-0364 M3: OpenAI-wire routes fall back to the real OpenAI endpoint
+# (`api_base`/`OPENAI_API_KEY`) when no explicit base URL is supplied. The
+# resolved route must therefore carry an explicit base; XH refuses to inherit
+# that implicit default.
+_WIRE_SLUGS_REQUIRING_EXPLICIT_BASE = frozenset({"openai", "custom_openai", "openai_like"})
+
+
+class LLMRouteConfigError(RuntimeError):
+    """Resolved route would silently fall back to a provider default endpoint (PLAN-0364 M3)."""
+
 # PLAN-0307 decisions #21/#39: the config table holds no provider credentials.
 # These env keys are the offline fallback (dev / CP unavailable); the normal
 # credential path is the per-run provider connection lease issued by CP.
@@ -245,30 +255,30 @@ def _to_langchain_messages(messages: list[dict[str, Any]]) -> list[BaseMessage]:
 
 class XiheLiteLLM(ChatLiteLLM, LLMProvider):
     _config: LLMConfig = PrivateAttr()
-    _use_openai_compat_for_tools: bool = PrivateAttr(default=False)
 
     def __init__(
         self,
         config: LLMConfig | None = None,
-        *,
-        use_openai_compat_for_tools: bool = False,
         **kwargs: Any,
     ):
         cfg = config or LLMConfig.from_env()
         model = cfg.model
+        route_provider = cfg.route_provider or (
+            "xiaomi_mimo" if cfg.provider == "xiaomi" else cfg.provider
+        )
+        if (
+            route_provider in _WIRE_SLUGS_REQUIRING_EXPLICIT_BASE
+            and not (cfg.api_base or "").strip()
+        ):
+            raise LLMRouteConfigError(
+                f"Base URL is required for route '{route_provider}'; "
+                "refusing the implicit OpenAI default endpoint"
+            )
         if "/" not in model and cfg.provider and cfg.provider != "mock":
-            # LiteLLM has a native openai-compatible Xiaomi provider. Keep the
-            # provider prefix so LiteLLM selects the correct adapter instead of
-            # treating MiMo as an arbitrary OpenAI-compatible endpoint.
-            route_provider = cfg.route_provider or (
-                "xiaomi_mimo" if cfg.provider == "xiaomi" else cfg.provider
-            )
-            litellm_provider = (
-                "openai"
-                if cfg.provider == "xiaomi" and use_openai_compat_for_tools
-                else route_provider
-            )
-            model = f"{litellm_provider}/{model}"
+            # Route slug comes from the CP-issued grant (catalog `litellmProvider`).
+            # No tool-driven rewriting: PLAN-0364 M3 removed the silent switch to
+            # `openai/...`; a tool/route mismatch is surfaced by litellm instead.
+            model = f"{route_provider}/{model}"
         llm_kwargs: dict[str, Any] = {
             "model": model,
             "streaming": True,
@@ -286,16 +296,6 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
         llm_kwargs = {k: v for k, v in llm_kwargs.items() if v is not None}
         super().__init__(**llm_kwargs)
         self._config = cfg
-        self._use_openai_compat_for_tools = use_openai_compat_for_tools
-
-    def bind_tools(self, tools: Sequence[BaseTool | dict[str, Any] | type | Any], **kwargs: Any) -> Runnable:
-        if self._config.provider == "xiaomi" and tools and not self._use_openai_compat_for_tools:
-            compatible = XiheLiteLLM(
-                config=self._config,
-                use_openai_compat_for_tools=True,
-            )
-            return compatible.bind_tools(tools, **kwargs)
-        return super().bind_tools(tools, **kwargs)
 
     async def complete(self, request: LLMRequest) -> str:
         messages = _to_langchain_messages(request.messages)
@@ -309,10 +309,7 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
                 yield LLMToken(content=chunk.content)
 
     def with_model(self, model: str) -> LLMProvider:
-        return XiheLiteLLM(
-            config=self._config.with_model(model),
-            use_openai_compat_for_tools=self._use_openai_compat_for_tools,
-        )
+        return XiheLiteLLM(config=self._config.with_model(model))
 
 
 class MockChatModel(BaseChatModel, LLMProvider):

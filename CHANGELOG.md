@@ -19,6 +19,8 @@
 
 ### Changed
 
+- MiMo 按配置调用（PLAN-0364 M3）：移除 Agent `bind_tools` 在 `provider=xiaomi` 且带工具时自动切 `openai/mimo-v2.5` 的隐式行为；native `xiaomi_mimo` 的工具请求由 litellm 报错并映射为 `LLM_TOOL_ROUTE_UNSUPPORTED`；OpenAI wire 路由（`openai`/`custom_openai`/`openai_like`）缺 `baseUrl` 时 fail-fast（`LLM_BASE_URL_MISSING`），不再回落到 OpenAI 默认端点；catalog native `xiaomi` 标 `supports.tools=false`；UI `errorMessages` 增两条文案。
+
 - PLAN-0326：操作账本改为 v3 通道事实模型——中继按 SSE 阶段记录 Agent 侧事实，MCP 网关记录派发事实；`source` 纳入 `operation_items` 唯一键 `(operation_id, source, tool_call_id)`，删除启发式匹配与悬空 `runtime_jobs`（V14）。修复 Runtime attached collector 等待 oneshot EOF 导致正常 `list_directory` 命中 30 秒超时：首个完整 JSON 帧即返回并关闭 stdin。
 
 - Runtime 门禁与工具链（PLAN-0323）：`mise run lint:runtime` 升级为 `cargo fmt --check && cargo clippy --all-targets -- -D warnings`；`scripts/mise/format.sh` 三段 fail-fast（UI 段 `--if-present`）；Rust 工具链统一 pin 1.97.1（`packages/runtime/rust-toolchain.toml` + mise `[tools].rust`，AGENTS/DEV 文档同步）。
@@ -33,7 +35,7 @@
 - Agent 任务连续性（PLAN-276 M0-M3）：TaskPlan/todo/question 7 种域事件 + AgentContext 投影；CP `task_plans` + `task_items` 持久化（V6 migration + 2 Entity + 2 Repository）；自动 compaction（3 thresholds + SHA-256 summary hash + context epoch + kept task items）；RunUsage telemetry（inputTokens/outputTokens/totalTokens/turns/toolCalls/durationMs/cost）；mock E2E 4 用例（SSE streaming + usage event + compaction contract + event structure）。
 - Session Operation Ledger（PLAN-281 M1）：Flyway `V2__session_operation_ledger.sql` 6 表（operation/item/attempt/event/extension/diagnostic_artifacts，17 FK/8 唯一/10 CHECK 全显式命名）+ 6 Entity/Repository；`OperationService` 幂等创建/条件状态转换/append-only event；User 脱敏分页查询 `GET /api/v1/operations`（owner-only trace）+ 服务间 `POST /internal/v1/operations`（幂等）与完整 trace 查询；fresh DB 全迁移链回归测试；dev-reset 兼容确认。
 - Chat SSE 真实流式（PLAN-230）：`XiheLiteLLM._astream()` 显式 `streaming=True` 使真实 MiMo 产生多 `on_chat_model_stream` token 并经 `LangGraphEventAdapter` 按 `run_id` 去重（`on_chat_model_end` 仅 fallback），`SseEmitterManager` 会话持久 SSE + `generation` + `compareAndRemove` + `heartbeat` 15s，UI `chatTransport` 单飞/退避重连 + `ensureConnected` 受控 409 恢复 + `replaceStreamingParts` 逐 token 实时渲染；真实浏览器 115 distinct lengths（0→704）与截图 `xh-incremental-stream-verified.png` 验证。
-- 小米 MiMo 多模态 provider 真实验证：`mimo-v2.5` 为 canonical 模型（`GET /api/v1/models` 返回 6 模型，经 `GET /internal/v1/agent/models` 汇聚），`config.import.example.jsonc` 与 `ConfigClient`/`LLMConfig`/`UI BUILTIN_PROVIDERS` 均已对齐 `mimo-v2.5`，`ProviderManager`/`ChatLiteLLM` 使用 `xiaomi_mimo/mimo-v2.5` 原生 LiteLLM 路由（富工具时自动切 `openai/mimo-v2.5`），文本 + 图片多模态经真实 CP→Agent→MiMo 链路验证（M3 截图与 SSE 日志证据）。
+- 小米 MiMo 多模态 provider 真实验证：`mimo-v2.5` 为 canonical 模型（`GET /api/v1/models` 返回 6 模型，经 `GET /internal/v1/agent/models` 汇聚），`config.import.example.jsonc` 与 `ConfigClient`/`LLMConfig`/`UI BUILTIN_PROVIDERS` 均已对齐 `mimo-v2.5`，`ProviderManager`/`ChatLiteLLM` 使用 `xiaomi_mimo/mimo-v2.5` 原生 LiteLLM 路由（PLAN-0364 M3 后不再在富工具时自动切 `openai/mimo-v2.5`；需工具请用 OpenAI 兼容连接），文本 + 图片多模态经真实 CP→Agent→MiMo 链路验证（M3 截图与 SSE 日志证据）。
 - 服务韧性架构：CP 新增 HealthMonitor（10s 轮询 Agent/Runtime 健康）、CircuitBreaker（3 次失败 → open → 30s half-open）、RequestQueue（Agent 故障时暂存 chat 请求，60s TTL，恢复后自动 drain 重发）。
 - 外部进程保活：Docker Compose 所有服务加 `restart: unless-stopped` + healthcheck；`dev-host.ps1` 新增 `-Watch` 模式（health loop + 自动重启）。
 - Agent readiness gate：config sync 完成后才将 health 从 `starting` 改为 `ok`，config sync 失败时保持 `starting`。

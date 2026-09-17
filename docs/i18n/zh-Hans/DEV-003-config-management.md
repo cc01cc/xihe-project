@@ -182,4 +182,6 @@ curl -X POST "http://localhost:12631/api/v1/config/import?layer=instance" \
 
 Agent 启动和周期 refresh 使用同一 atomic runtime snapshot。模型目录通过 `/internal/v1/agent/models` 返回 provider 状态、`chat` capability、`verifiedAt` 和 `configRevision`，不返回 key 或 base URL；UI 只展示 ready 且 `chat=true` 的模型。provider 目录条目来源于当前上下文可见的 READY `provider_connections`（CP `/api/v1/models` 汇总）。
 
+**路由与工具能力错误（PLAN-0364 M3）**：`LLM_TOOL_ROUTE_UNSUPPORTED` = 所选路由不支持工具参数（native `xiaomi_mimo` 等无工具元数据；litellm 抛 `UnsupportedParamsError` 后映射，需改用 OpenAI 兼容连接）；`LLM_BASE_URL_MISSING` = `openai` / `custom_openai` / `openai_like` 路由缺 `baseUrl`（Agent 侧 fail-fast，禁止回落到 OpenAI 默认端点）。两者已在 UI `errorMessages` 登记。
+
 凭证只归 `provider_connections`（加密存储 + 租约）：USER 可读取脱敏配置与安全 provider 状态，但不能写入 `llm-provider` 凭证键；ConfigAudit 对 provider 凭证只保存 `present/missing` 和不可逆 fingerprint。ADMIN 配置 GET 的 raw-read 例外仅限配置 API 响应本身，不得扩展到 health、catalog、日志、trace 或截图证据。

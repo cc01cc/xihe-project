@@ -9,6 +9,7 @@ from xihe_agent.interfaces.llm import LLMProvider, LLMRequest
 from xihe_agent.llm.base import (
     ENV_PROVIDER_KEY_MAP,
     LLMConfig,
+    LLMRouteConfigError,
     MockChatModel,
     XiheLiteLLM,
     create_llm,
@@ -319,7 +320,8 @@ class TestCreateLLM:
         assert observed["stream"] is True
         assert [chunk.content for chunk in chunks if chunk.content] == ["first", " second"]
 
-    def test_xiaomi_uses_openai_compat_route_when_tools_are_bound(self):
+    def test_xiaomi_keeps_native_route_when_tools_are_bound(self):
+        """PLAN-0364 M3: no silent switch to `openai/...` — route follows config."""
         model = create_llm(LLMConfig(
             provider="xiaomi",
             api_key="sk-test-key",
@@ -338,7 +340,28 @@ class TestCreateLLM:
         bound = model.bind_tools([tool])
 
         assert getattr(model, "model") == "xiaomi_mimo/mimo-v2.5"
-        assert getattr(bound.bound, "model") == "openai/mimo-v2.5"
+        assert getattr(bound.bound, "model") == "xiaomi_mimo/mimo-v2.5"
+
+    def test_openai_wire_route_requires_explicit_base_url(self):
+        """PLAN-0364 M3: empty baseUrl must fail fast instead of using OpenAI defaults."""
+        with pytest.raises(LLMRouteConfigError):
+            create_llm(LLMConfig(
+                provider="custom-openai-compatible",
+                route_provider="openai",
+                api_key="sk-test-key",
+                api_base="",
+                model="mimo-v2.5",
+            ))
+
+    def test_openai_wire_route_rejects_blank_base_url(self):
+        with pytest.raises(LLMRouteConfigError):
+            create_llm(LLMConfig(
+                provider="custom-openai-compatible",
+                route_provider="openai",
+                api_key="sk-test-key",
+                api_base="   ",
+                model="mimo-v2.5",
+            ))
 
 
 class TestMockChatModel:

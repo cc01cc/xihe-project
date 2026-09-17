@@ -43,6 +43,7 @@ from xihe_agent.interfaces.agent_runner import RunnerConfig
 from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.llm.base import (
     LLMConfig,
+    LLMRouteConfigError,
     ProviderName,
     create_llm,
     env_api_key,
@@ -467,7 +468,22 @@ def _merge_run_domain(
 
 def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
     """Map provider failures to safe, stable client-facing error semantics."""
+    if isinstance(error, LLMRouteConfigError):
+        return "LLM_BASE_URL_MISSING", str(error), False
     text = str(error).lower()
+    if (
+        isinstance(error, litellm.exceptions.UnsupportedParamsError)
+        or "unsupportedparams" in text
+        or "does not support parameters" in text
+    ):
+        # PLAN-0364 M3: the resolved route rejects tool parameters (e.g. the native
+        # Xiaomi slug has no tool metadata). Never drop tools silently — the user
+        # must switch to an OpenAI-compatible connection or another model.
+        return (
+            "LLM_TOOL_ROUTE_UNSUPPORTED",
+            "当前模型路由不支持工具调用：请改用 OpenAI 兼容连接，或更换支持工具的模型",
+            False,
+        )
     if any(marker in text for marker in ("missing credentials", "api key", "apikey")):
         return "LLM_NOT_CONFIGURED", "Provider credentials are not configured", True
     if any(marker in text for marker in ("authentication", "unauthorized", "401", "403")):
