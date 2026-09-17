@@ -98,15 +98,16 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
             if (!sessionRules.isEmpty()) {
                 layers.add(new LayeredPolicyResolver.LayerInput(PolicyLayer.SESSION, sessionRules));
             }
-            // Mode precedence (PLAN-0337): session override > workspace default > builtin manual.
+            // Mode precedence (PLAN-0337；PLAN-0364 决策 #9): session override >
+            // config 链（workspace > user > instance，env 命中视为 instance 钉死）> builtin manual.
             String sessionMode = sessionApprovalMode.modeOf(sessionId).orElse(null);
             String mode = sessionMode;
             PolicyLayer modeLayer = sessionMode == null ? null : PolicyLayer.SESSION;
             if (mode == null) {
-                String workspaceMode = workspaceMode(userId, workspaceId);
-                if (workspaceMode != null) {
-                    mode = workspaceMode;
-                    modeLayer = PolicyLayer.WORKSPACE;
+                ModeResolution configMode = approvalMode(userId, workspaceId);
+                if (configMode != null) {
+                    mode = configMode.mode();
+                    modeLayer = configMode.layer();
                 }
             }
 
@@ -121,21 +122,29 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
     }
 
     /**
-     * Reads the workspace-level approval mode from the {@code approval-policy} config domain.
+     * Reads the approval mode from the {@code approval-policy} config domain and reports the
+     * layer that actually supplied it (PLAN-0364 决策 #9).
      *
      * <p>Read fresh (not cached with the rule snapshot): config writes do not bump
      * {@link PolicyVersion}, so caching here would serve a stale mode after a settings change.</p>
      *
+     * <p>Layer mapping follows the config resolution chain
+     * ({@code workspace > user > instance > code default}); an env overlay is reported as
+     * {@link PolicyLayer#INSTANCE} because env is the instance-level deployment lockdown
+     * (PLAN-0364 决策 #2). Reporting the real source removes the previous mislabel where an
+     * instance-layer value was audited as {@code WORKSPACE}.</p>
+     *
      * <p>Fail-closed: an unreadable config or an unsupported value is logged and ignored so the
      * caller falls back to {@code manual}; a broken config must never relax the decision.</p>
      */
-    private String workspaceMode(String userId, String workspaceId) {
+    private ModeResolution approvalMode(String userId, String workspaceId) {
         if (workspaceId == null || workspaceId.isBlank()) {
             return null;
         }
         try {
-            String raw = configService.resolve(APPROVAL_POLICY_DOMAIN, APPROVAL_MODE_KEY,
-                    parseUuid(userId), parseUuid(workspaceId));
+            ConfigService.EffectiveConfig effective = configService.effective(
+                    APPROVAL_POLICY_DOMAIN, parseUuid(userId), parseUuid(workspaceId));
+            String raw = effective.entries().get(APPROVAL_MODE_KEY);
             if (raw == null || raw.isBlank()) {
                 return null;
             }
@@ -145,13 +154,27 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
                         APPROVAL_POLICY_DOMAIN, APPROVAL_MODE_KEY, raw);
                 return null;
             }
-            return normalized;
+            return new ModeResolution(normalized, layerOfSource(effective.source()));
         } catch (RuntimeException e) {
             log.error("[POLICY] approval-policy mode lookup failed, falling back to manual "
                     + "userId={} workspaceId={}", userId, workspaceId, e);
             return null;
         }
     }
+
+    private static PolicyLayer layerOfSource(String source) {
+        if (source == null) {
+            return null;
+        }
+        return switch (source) {
+            case "workspace" -> PolicyLayer.WORKSPACE;
+            case "user" -> PolicyLayer.USER;
+            case "instance", "env" -> PolicyLayer.INSTANCE;
+            default -> null;
+        };
+    }
+
+    private record ModeResolution(String mode, PolicyLayer layer) {}
 
     private static java.util.UUID parseUuid(String value) {
         if (value == null || value.isBlank()) {

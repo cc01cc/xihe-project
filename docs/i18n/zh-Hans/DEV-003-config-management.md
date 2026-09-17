@@ -29,7 +29,7 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 | `agent-profile` | ✅（默认） | ✅（个人） | ❌ | `userName` |
 | `user-preference` | ✅（默认） | ✅（个人） | ❌ | `theme` / `language` |
 | `logging` | ✅ | ❌ | ❌ | instance 层唯一权威，可热更（决策 #23） |
-| `approval-policy` | ❌（后端拒绝写入） | ❌ | ✅ | 审批模式 `mode`（`manual` / `auto`）；仅 workspace 层可写——user 层与 instance 层写入都被拒绝（instance 由 `ConfigService.INSTANCE_FORBIDDEN_DOMAINS` 显式拒绝）；平台管控改用 locked deny/ask（PLAN-0337） |
+| `approval-policy` | ✅（平台 ADMIN） | ❌ | ✅ | 审批模式 `mode`（`manual` / `auto`）；**instance 层可写默认、workspace 可覆盖**，user 层不可写（显式例外）；审计来源层由 `DbPolicyContextProvider` 按 `ConfigService.effective(...).source` 回填（PLAN-0364 决策 #9，supersede PLAN-0337 选项①；env 命中视为 instance 钉死） |
 
 已裁撤域：`infrastructure`（→ env）、`workspace-config`（→ env / 工作区 API）、`mcp`（→ `mcp_stdio_servers` / `mcp_remote_servers` 表，决策 #27）；键迁移：`llm-provider.contextPolicy` → `context-policy`、`user-preference.{defaultModel,maxTokens,temperature}` → `llm-provider`（决策 #13/#16/#39）。
 

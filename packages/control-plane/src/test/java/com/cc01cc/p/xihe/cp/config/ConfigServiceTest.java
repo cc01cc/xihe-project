@@ -142,11 +142,18 @@ class ConfigServiceTest {
     }
 
     @Test
-    void putLayer_approvalPolicyAtInstanceLayer_isRejected() {
-        // PLAN-0337 Audit 2 C8（选项①）：该域是 workspace-only，instance 层必须显式拒绝，
-        // 否则平台写入会被当成 workspace 默认并在审计里错标来源层。
-        assertThrows(ConfigService.ConfigAccessException.class, () ->
-            configService.putLayer("instance", "approval-policy", Map.of("mode", "auto"), "admin", null, null));
+    void putLayer_approvalPolicyAtInstanceLayer_isAcceptedAsDefaultOverriddenByWorkspace() {
+        // PLAN-0364 决策 #9（supersede PLAN-0337 选项①）：instance 层可写默认，workspace 覆盖；
+        // 审计来源层由 effective(...).source 反映真实层级。
+        configService.putLayer("instance", "approval-policy", Map.of("mode", "auto"), "admin", null, null);
+
+        assertEquals("auto", configService.resolve("approval-policy", "mode", null, wsA));
+        assertEquals("instance", configService.effective("approval-policy", null, wsA).source());
+
+        configService.putLayer("workspace", "approval-policy", Map.of("mode", "manual"), "user", null, wsA);
+
+        assertEquals("manual", configService.resolve("approval-policy", "mode", null, wsA));
+        assertEquals("workspace", configService.effective("approval-policy", null, wsA).source());
     }
 
     @Test

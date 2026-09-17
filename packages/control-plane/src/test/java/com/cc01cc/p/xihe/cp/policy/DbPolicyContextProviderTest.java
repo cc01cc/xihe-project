@@ -45,6 +45,12 @@ class DbPolicyContextProviderTest {
         return new ToolFaceEntity(UUID.randomUUID(), scope, owner, tool, actionClass, shape, "tester");
     }
 
+    private static ConfigService.EffectiveConfig effectiveApprovalMode(String source, String mode) {
+        return new ConfigService.EffectiveConfig(
+                "approval-policy", "revision-1", source,
+                mode == null ? java.util.Map.of() : java.util.Map.of("mode", mode));
+    }
+
     @Test
     void loadsInstanceUserAndWorkspaceLayersInPriorityOrder() {
         when(ruleRepository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance"))
@@ -171,8 +177,8 @@ class DbPolicyContextProviderTest {
 
     @Test
     void workspaceApprovalModeAppliesWhenTheSessionHasNoOverride() {
-        when(configService.resolve("approval-policy", "mode", null, UUID.fromString(WS)))
-                .thenReturn("auto");
+        when(configService.effective("approval-policy", null, UUID.fromString(WS)))
+                .thenReturn(effectiveApprovalMode("workspace", "auto"));
 
         PolicyContext context = provider.load(null, WS, "s1");
 
@@ -181,9 +187,43 @@ class DbPolicyContextProviderTest {
     }
 
     @Test
-    void sessionModeOverridesTheWorkspaceMode() {
-        when(configService.resolve("approval-policy", "mode", UUID.fromString(USER), UUID.fromString(WS)))
-                .thenReturn("auto");
+    void instanceApprovalModeIsReportedAsInstanceLayer() {
+        // PLAN-0364 决策 #9：instance 默认不再被错标为 WORKSPACE。
+        when(configService.effective("approval-policy", null, UUID.fromString(WS)))
+                .thenReturn(effectiveApprovalMode("instance", "auto"));
+
+        PolicyContext context = provider.load(null, WS, "s1");
+
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, context.mode());
+        assertEquals(PolicyLayer.INSTANCE, context.modeLayer());
+    }
+
+    @Test
+    void envOverriddenApprovalModeIsReportedAsInstanceLayer() {
+        // PLAN-0364 决策 #2：env = instance 级部署钉死。
+        when(configService.effective("approval-policy", null, UUID.fromString(WS)))
+                .thenReturn(effectiveApprovalMode("env", "auto"));
+
+        PolicyContext context = provider.load(null, WS, "s1");
+
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, context.mode());
+        assertEquals(PolicyLayer.INSTANCE, context.modeLayer());
+    }
+
+    @Test
+    void userLayerApprovalModeIsReportedAsUserLayer() {
+        // user 层不在 API 可写集（显式例外），但若存在该层行，来源层必须如实标注。
+        when(configService.effective("approval-policy", UUID.fromString(USER), UUID.fromString(WS)))
+                .thenReturn(effectiveApprovalMode("user", "auto"));
+
+        PolicyContext context = provider.load(USER, WS, "s1");
+
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, context.mode());
+        assertEquals(PolicyLayer.USER, context.modeLayer());
+    }
+
+    @Test
+    void sessionModeOverridesTheConfigMode() {
         when(sessionApprovalMode.modeOf("s1")).thenReturn(java.util.Optional.of(LayeredPolicyResolver.MODE_MANUAL));
 
         PolicyContext context = provider.load(USER, WS, "s1");
@@ -193,9 +233,9 @@ class DbPolicyContextProviderTest {
     }
 
     @Test
-    void unsupportedWorkspaceModeIsIgnoredInsteadOfRelaxing() {
-        when(configService.resolve("approval-policy", "mode", null, UUID.fromString(WS)))
-                .thenReturn("yolo");
+    void unsupportedConfigModeIsIgnoredInsteadOfRelaxing() {
+        when(configService.effective("approval-policy", null, UUID.fromString(WS)))
+                .thenReturn(effectiveApprovalMode("workspace", "yolo"));
 
         PolicyContext context = provider.load(null, WS, "s1");
 
@@ -203,8 +243,8 @@ class DbPolicyContextProviderTest {
     }
 
     @Test
-    void workspaceModeLookupFailureFallsBackToBuiltinManual() {
-        when(configService.resolve("approval-policy", "mode", null, UUID.fromString(WS)))
+    void configModeLookupFailureFallsBackToBuiltinManual() {
+        when(configService.effective("approval-policy", null, UUID.fromString(WS)))
                 .thenThrow(new IllegalStateException("config db down"));
 
         PolicyContext context = provider.load(null, WS, "s1");

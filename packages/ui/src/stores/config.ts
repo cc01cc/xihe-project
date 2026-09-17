@@ -11,13 +11,14 @@ export type ConfigLayer = 'instance' | 'workspace' | 'user'
 export const INSTANCE_DOMAINS = [
   'llm-provider', 'context-policy', 'embedding', 'rag',
   'agent-runtime', 'agent-profile', 'user-preference', 'logging',
+  'approval-policy',
 ] as const
 
 /**
- * Full domain set. PLAN-0337 adds `approval-policy` (workspace-only approval mode), so it is NOT
- * part of `INSTANCE_DOMAINS`: the instance layer must not expose a place to set the approval mode.
+ * Full domain set. PLAN-0364 决策 #9（supersede PLAN-0337 选项①）：`approval-policy` 在
+ * instance 层可写默认、workspace 可覆盖；user 层仍不可写（显式例外，见 DEV-003）。
  */
-export const CONFIG_DOMAINS = [...INSTANCE_DOMAINS, 'approval-policy'] as const
+export const CONFIG_DOMAINS = INSTANCE_DOMAINS
 
 export type ConfigDomain = typeof CONFIG_DOMAINS[number]
 

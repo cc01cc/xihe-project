@@ -60,15 +60,6 @@ public class ConfigService {
         "agent-runtime", Set.of("instructions"));
 
     /**
-     * PLAN-0337（Audit 2 C8，选项①）：workspace-only domains must be rejected at the instance
-     * layer instead of silently accepted. {@code approval-policy} is the first such domain —
-     * instance-level lockdown is expressed by locked deny/ask rules, not by an instance default
-     * mode. Accepting an instance write here would also mislabel the resolved value as
-     * {@code WORKSPACE} in the policy audit trail (see {@code DbPolicyContextProvider}).
-     */
-    private static final Set<String> INSTANCE_FORBIDDEN_DOMAINS = Set.of("approval-policy");
-
-    /**
      * Decision #24: resolved/effective include code defaults so the UI and the
      * execution modules agree on fallback values.
      */
@@ -300,10 +291,9 @@ public class ConfigService {
         switch (layer) {
             case "instance" -> {
                 // ADMIN-only; enforced by the controller.
-                if (INSTANCE_FORBIDDEN_DOMAINS.contains(domain)) {
-                    throw new ConfigAccessException(
-                        "Domain is workspace-only and cannot be written at the instance layer: " + domain);
-                }
+                // PLAN-0364 决策 #9（supersede PLAN-0337 选项①）：取消 instance 层的
+                // workspace-only 拒绝——approval-policy 在 instance 层可写默认，审计来源层
+                // 由 DbPolicyContextProvider 按 effective(...).source 回填。
             }
             case "user" -> {
                 if (userId == null) {
