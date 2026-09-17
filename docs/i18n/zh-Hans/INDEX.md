@@ -42,12 +42,14 @@ sidebar_order: 0
 ### 规范
 
 - [DEV-030: 文档规范与归属制](DEV-030-documentation-layout-and-frontmatter.md)
+- [DEV-031: 沙盒后端契约](DEV-031-sandbox-backend-contract.md)
+- [DEV-032: 术语规范（一词多义与多词一义）](DEV-032-terminology.md)
 
 ## PLAN-0328 / 合同入口
 
 - [API OpenAPI](../../api/openapi.yaml) 与 [API inventory](../../api/inventory.md) 是当前公共/内部路由和 JSON 字段的 canonical contract。
 - PLAN-0328 的审批、checkpoint、revert 证据见 [M3 证据](../../../../plans/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md)；本索引不复制设计细节。
-- DEV-031 沙盒后端契约当前仍为 pending/untracked 文档，不在本索引建立可能未随仓库发布的链接。
+- DEV-031 沙盒后端契约、DEV-032 术语规范见「规范」小节；PLAN 叙述用词以 DEV-032 为准。
 
 ## 用户手册
 

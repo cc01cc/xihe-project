@@ -21,6 +21,7 @@ General-purpose Agent tool platform.
 - [DEV-012: Integration Test Strategy](DEV-012-integration-test-strategy.md)
 - [DEV-013: Unit Test Strategy](DEV-013-unit-test-strategy.md)
 - [DEV-015: Session Views Design](DEV-015-session-views.md)
+- [DEV-032: Terminology (Polysemy and Synonyms)](DEV-032-terminology.md)
 - [RFC-001: Session Domain Model](RFC-001-session-domain-model.md)
 - [ADR-001: Session Store Boundary](ADR-001-session-store-boundary.md)
 

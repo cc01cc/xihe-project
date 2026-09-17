@@ -142,6 +142,7 @@ packages/
 
 - **Naming**: `camelCase` (TS/JS/Java), `snake_case` (Python/Rust)
 - **Agent 术语**: 代码包用 Agent 模块 (module)，运行进程用 Agent 服务 (server)，运行时单元用 Agent Worker (Worker)
+- **文档术语**: 一词多义与多词一义按 `docs/i18n/zh-Hans/DEV-032-terminology.md`（execution lease holder ≠ 角色 owner；ensure ≠ 裸 materialize 叙述；unpause ≠ run resume；context/diagnostic/checkpoint 的 L1 必须带域前缀）
 - **异常日志**: 每个 catch 必须有日志 + stacktrace，禁止 silent catch
 - **UI**: reka-ui + Tailwind v4；聊天组件使用自研 MessageScroller / Message / Bubble / Attachment / Marker 五个组件族；Toast 为唯一反馈渠道
   - reka-ui 封装契约：`ComboboxContent position=popper` 必须显式 `ComboboxAnchor` 包裹触发器（否则定位到视口外且零报错）；`CollapsibleTrigger` 自带切换，不得再绑 click（双重翻转 = 永不折叠）；`AlertDialogAction` 点击无条件关闭——需校验失败保持打开时用普通 destructive `Button`；reka-ui MenuItem 程序化选择在 jsdom 不可行，交互层由 Playwright 覆盖
