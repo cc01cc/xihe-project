@@ -185,7 +185,7 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         approvalRepository.save(new com.cc01cc.p.xihe.cp.entity.ChatApproval(
                 approvalRequestId, runId, sessionId, userId, workspaceId,
                 "request_approval", "delete file", "README.md",
-                "pending", java.time.Instant.now().plusSeconds(300), null, null));
+                "pending", java.time.Instant.now().plusSeconds(300)));
         com.cc01cc.p.xihe.cp.entity.OperationItem item =
                 operationService.appendApprovalItem(operationId, approvalRequestId, "request_approval", "{}");
         assertEquals("waiting_for_approval", item.getStatus());

@@ -79,7 +79,7 @@ class ApprovalDecisionTierTest {
 
     private ChatApproval pendingRow(String requestId, String tool, Instant expiresAt) {
         return new ChatApproval(requestId, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                tool, "Execute " + tool, "preview", "pending", expiresAt, null, "require_approval");
+                tool, "Execute " + tool, "preview", "pending", expiresAt);
     }
 
     private void claimPrimary() {

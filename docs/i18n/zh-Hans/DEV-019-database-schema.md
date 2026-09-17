@@ -38,11 +38,11 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V27__run_checkpoints_workspace_slices.sql`（当前 active chain；V1 基线，V2–V27 增量迁移） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V28__legacy_snapshot_retirement.sql`（当前 active chain；V1 基线，V2–V28 增量迁移） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（30 个）+ `context/entity/`（3 个） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
-> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；其后的 V2–V27 继续在 active classpath 中按顺序增量应用。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
+> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；其后的 V2–V28 继续在 active classpath 中按顺序增量应用。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
 >
 > **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V23）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
 
@@ -684,8 +684,8 @@ erDiagram
 | V1 | `V1__init_schema.sql` | 全量基线：21 表（原生 UUID 主键、`TIMESTAMPTZ`、显式命名 FK/CHECK/UNIQUE/索引与 `ON DELETE`） | 全部表（含 `approval_requests/chat_runs/sessions/messages/files/mcp_servers/audit_logs` 等） |
 | V2 | `V2__session_operation_ledger.sql` | Session Operation Ledger 6 表 | `session_operations/operation_items/operation_attempts/operation_events/operation_extensions/diagnostic_artifacts` |
 | V3 | `V3__runtime_jobs.sql` | Runtime 后台任务 durable registry | `runtime_jobs` |
-| V4 | `V4__workspace_snapshots.sql` | Workspace snapshot 双表 | `workspace_snapshots/workspace_snapshot_files` |
-| V5 | `V5__approval_snapshot_policy.sql` | 审批绑定 snapshot/policyClass | `approval_requests.snapshot_id/policy_class` |
+| V4 | `V4__workspace_snapshots.sql` | Workspace snapshot 双表（**V28 退役删除**） | `workspace_snapshots/workspace_snapshot_files` |
+| V5 | `V5__approval_snapshot_policy.sql` | 审批绑定 snapshot/policyClass（**V28 退役删除**） | `approval_requests.snapshot_id/policy_class` |
 | V6 | `V6__task_continuity.sql` | 任务连续性 | `task_plans/task_items` |
 | V7 | `V7__approval_grant_consumption.sql` | grant 单次消费 | `approval_requests.grant_consumed_at` |
 | V8 | `V8__schema_gate_fixes.sql` | schema 门禁修正（FK `ON DELETE NO ACTION` 显式化、去冗余索引、`config.created_at`） | 多表 |
@@ -706,6 +706,7 @@ erDiagram
 | V23 | `V23__run_checkpoint_revert.sql` | checkpoint revert 状态、引用、摘要与尝试计数 | `run_checkpoints` |
 | V26 | `V26__run_checkpoint_slice_state_vocabulary.sql` | checkpoint 切片状态词表（`captured`/`abnormal-captured`）；切片表重建归 PLAN-0339 | `run_checkpoints` |
 | V27 | `V27__run_checkpoints_workspace_slices.sql` | 物理清空旧投影并重建 workspace slice rows、来源/前驱/嵌套仓库与 revert bookkeeping | `run_checkpoints` |
+| V28 | `V28__legacy_snapshot_retirement.sql` | Legacy snapshot 退役：删 `idx_approval_requests_snapshot`、`approval_requests.snapshot_id/policy_class`、`workspace_snapshot_files`、`workspace_snapshots`（PLAN-0357；实测空表，纯清理，不触碰切片表/shadow Git） | `approval_requests/workspace_snapshots/workspace_snapshot_files` |
 
 ## 5. 本地查看与运维
 
@@ -721,7 +722,7 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slice projection，不做旧格式数据迁移。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slice projection，不做旧格式数据迁移；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象（空表纯清理，V4/V5 原文保留为不可变历史）。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 
@@ -757,8 +758,6 @@ erDiagram
 | operation_events | `entity/OperationEvent.java` | V2 |
 | operation_extensions | `entity/OperationExtension.java` | V2 |
 | diagnostic_artifacts | `entity/DiagnosticArtifact.java` | V2 |
-| workspace_snapshots | `entity/WorkspaceSnapshot.java` | V4 |
-| workspace_snapshot_files | `entity/WorkspaceSnapshotFile.java` | V4 |
 | task_plans | `entity/TaskPlan.java` | V6 |
 | task_items | `entity/TaskItem.java` | V6 |
 | mcp_stdio_servers | `entity/McpStdioServer.java` | V12（自 config 域 `mcp` 迁出） |

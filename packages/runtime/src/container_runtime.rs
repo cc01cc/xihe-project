@@ -576,37 +576,13 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             let timed_out = enforce_job_timeouts()?;
             Ok(serde_json::json!({"cleaned": cleaned, "timedOut": timed_out}))
         }
-        "create_snapshot" => {
-            let snapshot_id = req
-                .payload
-                .get("snapshotId")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| RuntimeError::InvalidPath("missing snapshotId".into()))?;
-            let files = req
-                .payload
-                .get("files")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| RuntimeError::InvalidPath("missing files array".into()))?;
-            let result = create_snapshot(snapshot_id, files)?;
-            Ok(serde_json::to_value(result).unwrap())
-        }
-        "revert_snapshot" => {
-            let snapshot_id = req
-                .payload
-                .get("snapshotId")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| RuntimeError::InvalidPath("missing snapshotId".into()))?;
-            let result = revert_snapshot(snapshot_id)?;
-            Ok(serde_json::to_value(result).unwrap())
-        }
         "apply_patch" => {
             let patches = req
                 .payload
                 .get("patches")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| RuntimeError::InvalidPath("missing patches array".into()))?;
-            let snapshot_id = req.payload.get("snapshotId").and_then(|v| v.as_str());
-            let result = apply_patch(snapshot_id, patches)?;
+            let result = apply_patch(patches)?;
             Ok(serde_json::to_value(result).unwrap())
         }
         _ => Err(RuntimeError::InvalidPath(format!(
@@ -1331,11 +1307,8 @@ fn enforce_job_timeouts_with(
     Ok(enforced)
 }
 
-// ── Snapshot/Revert/Patch (PLAN-275 M2) ────────────────────────────────
+// ── Patch (PLAN-275 M2) ────────────────────────────────────────────────
 
-const SNAPSHOT_DIR: &str = "/workspace/.xihe-snapshots";
-const SNAPSHOT_MAX_FILES: usize = 200;
-const SNAPSHOT_MAX_SIZE: usize = 10 * 1024 * 1024; // 10MB per file
 const PATCH_DIFF_MAX_BYTES: usize = 256 * 1024;
 
 fn is_safe_relative_path(path: &str) -> bool {
@@ -1346,252 +1319,11 @@ fn is_safe_relative_path(path: &str) -> bool {
         && !path.contains('\0')
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotResult {
-    snapshot_id: String,
-    files_captured: usize,
-    files: Vec<SnapshotFileInfo>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotFileInfo {
-    relative_path: String,
-    existed_before: bool,
-    content_hash: String,
-    post_content_hash: Option<String>,
-    size_bytes: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SnapshotManifest {
-    files: Vec<SnapshotFileInfo>,
-}
-
 fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     format!("{:x}", hasher.finalize())
-}
-
-fn create_snapshot(
-    snapshot_id: &str,
-    files: &[serde_json::Value],
-) -> Result<SnapshotResult, RuntimeError> {
-    create_snapshot_at(
-        Path::new(SNAPSHOT_DIR),
-        Path::new(WORKSPACE),
-        snapshot_id,
-        files,
-    )
-}
-
-fn create_snapshot_at(
-    snapshot_root: &Path,
-    workspace: &Path,
-    snapshot_id: &str,
-    files: &[serde_json::Value],
-) -> Result<SnapshotResult, RuntimeError> {
-    if !is_safe_job_id(snapshot_id) {
-        return Err(RuntimeError::InvalidPath(format!(
-            "invalid snapshot id: {snapshot_id}"
-        )));
-    }
-    if files.len() > SNAPSHOT_MAX_FILES {
-        return Err(RuntimeError::InvalidPath(format!(
-            "snapshot file limit exceeded: {} > {}",
-            files.len(),
-            SNAPSHOT_MAX_FILES
-        )));
-    }
-
-    let snapshot_dir = snapshot_root.join(snapshot_id);
-    std::fs::create_dir_all(&snapshot_dir).map_err(RuntimeError::Io)?;
-
-    let mut captured = Vec::new();
-
-    for file_entry in files {
-        let rel_path = file_entry
-            .get("relativePath")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                RuntimeError::InvalidPath("missing relativePath in snapshot file entry".to_string())
-            })?;
-
-        if !is_safe_relative_path(rel_path) {
-            return Err(RuntimeError::PathTraversal {
-                path: rel_path.to_string(),
-            });
-        }
-
-        let abs_path = workspace.join(rel_path);
-        let existed_before = abs_path.exists();
-
-        if existed_before {
-            let content = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
-            if content.len() > SNAPSHOT_MAX_SIZE {
-                return Err(RuntimeError::InvalidPath(format!(
-                    "snapshot file too large: {} ({})",
-                    rel_path,
-                    content.len()
-                )));
-            }
-            let hash = sha256_hex(&content);
-            let dest = snapshot_dir.join(rel_path);
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(RuntimeError::Io)?;
-            }
-            std::fs::write(&dest, &content).map_err(RuntimeError::Io)?;
-
-            captured.push(SnapshotFileInfo {
-                relative_path: rel_path.to_string(),
-                existed_before: true,
-                content_hash: hash,
-                post_content_hash: None,
-                size_bytes: content.len() as u64,
-            });
-        } else {
-            captured.push(SnapshotFileInfo {
-                relative_path: rel_path.to_string(),
-                existed_before: false,
-                content_hash: String::new(),
-                post_content_hash: None,
-                size_bytes: 0,
-            });
-        }
-    }
-
-    let manifest = SnapshotManifest {
-        files: captured.clone(),
-    };
-    let manifest_payload = serde_json::to_vec(&manifest).map_err(|e| {
-        RuntimeError::Command(format!("failed to serialize snapshot manifest: {e}"))
-    })?;
-    std::fs::write(snapshot_dir.join(".manifest.json"), manifest_payload)
-        .map_err(RuntimeError::Io)?;
-
-    let files_captured = captured.len();
-    info!(
-        "snapshot_created id={} files={}",
-        snapshot_id, files_captured
-    );
-    Ok(SnapshotResult {
-        snapshot_id: snapshot_id.to_string(),
-        files_captured,
-        files: captured,
-    })
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RevertResult {
-    snapshot_id: String,
-    files_reverted: usize,
-    conflicts: Vec<String>,
-}
-
-fn revert_snapshot(snapshot_id: &str) -> Result<RevertResult, RuntimeError> {
-    revert_snapshot_at(Path::new(SNAPSHOT_DIR), Path::new(WORKSPACE), snapshot_id)
-}
-
-fn revert_snapshot_at(
-    snapshot_root: &Path,
-    workspace: &Path,
-    snapshot_id: &str,
-) -> Result<RevertResult, RuntimeError> {
-    if !is_safe_job_id(snapshot_id) {
-        return Err(RuntimeError::InvalidPath(format!(
-            "invalid snapshot id: {snapshot_id}"
-        )));
-    }
-
-    let snapshot_dir = snapshot_root.join(snapshot_id);
-    if !snapshot_dir.exists() {
-        return Err(RuntimeError::FileNotFound(format!(
-            "snapshot not found: {snapshot_id}"
-        )));
-    }
-
-    let manifest_path = snapshot_dir.join(".manifest.json");
-    let manifest_payload = std::fs::read(&manifest_path).map_err(RuntimeError::Io)?;
-    let manifest: SnapshotManifest = serde_json::from_slice(&manifest_payload)
-        .map_err(|e| RuntimeError::InvalidPath(format!("invalid snapshot manifest: {e}")))?;
-    if manifest.files.len() > SNAPSHOT_MAX_FILES {
-        return Err(RuntimeError::InvalidPath(
-            "snapshot manifest file limit exceeded".into(),
-        ));
-    }
-
-    let mut reverted = 0;
-    let mut conflicts = Vec::new();
-
-    for file in manifest.files {
-        let rel_path = file.relative_path;
-        if !is_safe_relative_path(&rel_path) {
-            return Err(RuntimeError::PathTraversal { path: rel_path });
-        }
-
-        let abs_path = workspace.join(&rel_path);
-
-        if !file.existed_before {
-            if abs_path.exists() {
-                if abs_path.is_file()
-                    && file.post_content_hash.as_deref().is_some_and(|hash| {
-                        std::fs::read(&abs_path)
-                            .map(|content| sha256_hex(&content) == hash)
-                            .unwrap_or(false)
-                    })
-                {
-                    std::fs::remove_file(&abs_path).map_err(RuntimeError::Io)?;
-                    reverted += 1;
-                } else {
-                    conflicts.push(rel_path);
-                }
-            }
-            continue;
-        }
-
-        let snapshot_file = snapshot_dir.join(&rel_path);
-        let pre_image = std::fs::read(&snapshot_file).map_err(RuntimeError::Io)?;
-        let pre_hash = sha256_hex(&pre_image);
-        if pre_hash != file.content_hash {
-            return Err(RuntimeError::InvalidPath(format!(
-                "snapshot manifest hash mismatch for {rel_path}"
-            )));
-        }
-
-        if abs_path.exists() {
-            let current = std::fs::read(&abs_path).map_err(RuntimeError::Io)?;
-            let current_hash = sha256_hex(&current);
-            let already_reverted = current_hash == file.content_hash;
-            let matches_post_image =
-                file.post_content_hash.as_deref() == Some(current_hash.as_str());
-            if !already_reverted && !matches_post_image {
-                conflicts.push(rel_path);
-                continue;
-            }
-        }
-
-        if let Some(parent) = abs_path.parent() {
-            std::fs::create_dir_all(parent).map_err(RuntimeError::Io)?;
-        }
-        std::fs::write(&abs_path, &pre_image).map_err(RuntimeError::Io)?;
-        reverted += 1;
-    }
-
-    info!(
-        "snapshot_reverted id={} reverted={} conflicts={}",
-        snapshot_id,
-        reverted,
-        conflicts.len()
-    );
-    Ok(RevertResult {
-        snapshot_id: snapshot_id.to_string(),
-        files_reverted: reverted,
-        conflicts,
-    })
 }
 
 #[derive(Serialize)]
@@ -1610,22 +1342,12 @@ struct PreparedPatch {
     content: String,
 }
 
-fn apply_patch(
-    snapshot_id: Option<&str>,
-    patches: &[serde_json::Value],
-) -> Result<PatchResult, RuntimeError> {
-    apply_patch_at(
-        Path::new(WORKSPACE),
-        Path::new(SNAPSHOT_DIR),
-        snapshot_id,
-        patches,
-    )
+fn apply_patch(patches: &[serde_json::Value]) -> Result<PatchResult, RuntimeError> {
+    apply_patch_at(Path::new(WORKSPACE), patches)
 }
 
 fn apply_patch_at(
     workspace: &Path,
-    snapshot_root: &Path,
-    snapshot_id: Option<&str>,
     patches: &[serde_json::Value],
 ) -> Result<PatchResult, RuntimeError> {
     if patches.is_empty() {
@@ -1715,10 +1437,6 @@ fn apply_patch_at(
         });
     }
 
-    let prepared_manifest = snapshot_id
-        .map(|id| prepare_snapshot_post_hashes(snapshot_root, id, &prepared))
-        .transpose()?;
-
     // Phase 2: apply all patches and restore already-written files on failure.
     let mut applied = Vec::with_capacity(prepared.len());
     for (index, patch) in prepared.iter().enumerate() {
@@ -1770,22 +1488,6 @@ fn apply_patch_at(
         }
     }
 
-    if let Some((manifest_path, manifest_payload)) = prepared_manifest
-        && let Err(error) = std::fs::write(&manifest_path, manifest_payload)
-    {
-        if let Err(rollback_error) = rollback_patches(&prepared, &applied) {
-            tracing::error!(
-                error = %error,
-                rollback_error = %rollback_error,
-                "snapshot manifest update and patch rollback both failed"
-            );
-            return Err(RuntimeError::Command(format!(
-                "snapshot manifest update failed and rollback failed: {error}; {rollback_error}"
-            )));
-        }
-        return Err(RuntimeError::Io(error));
-    }
-
     let diff = diff_lines.join("\n");
     info!("patch_applied files={}", changed.len());
     Ok(PatchResult {
@@ -1793,41 +1495,6 @@ fn apply_patch_at(
         diff,
         new_hashes,
     })
-}
-
-fn prepare_snapshot_post_hashes(
-    snapshot_root: &Path,
-    snapshot_id: &str,
-    changes: &[PreparedPatch],
-) -> Result<(PathBuf, Vec<u8>), RuntimeError> {
-    if !is_safe_job_id(snapshot_id) {
-        return Err(RuntimeError::InvalidPath(format!(
-            "invalid snapshot id: {snapshot_id}"
-        )));
-    }
-    let snapshot_dir = snapshot_root.join(snapshot_id);
-    let manifest_path = snapshot_dir.join(".manifest.json");
-    let manifest_payload = std::fs::read(&manifest_path).map_err(RuntimeError::Io)?;
-    let mut manifest: SnapshotManifest = serde_json::from_slice(&manifest_payload)
-        .map_err(|e| RuntimeError::InvalidPath(format!("invalid snapshot manifest: {e}")))?;
-    for change in changes {
-        let hash = sha256_hex(change.content.as_bytes());
-        let entry = manifest
-            .files
-            .iter_mut()
-            .find(|file| file.relative_path == change.relative_path)
-            .ok_or_else(|| {
-                RuntimeError::InvalidPath(format!(
-                    "snapshot manifest missing patch path: {}",
-                    change.relative_path
-                ))
-            })?;
-        entry.post_content_hash = Some(hash);
-    }
-    let updated = serde_json::to_vec(&manifest).map_err(|e| {
-        RuntimeError::Command(format!("failed to serialize snapshot manifest: {e}"))
-    })?;
-    Ok((manifest_path, updated))
 }
 
 fn rollback_patches(changes: &[PreparedPatch], applied: &[usize]) -> Result<(), std::io::Error> {
@@ -2264,53 +1931,9 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_manifest_reverts_nested_and_new_files() {
-        let tmp = TempDir::new().expect("temporary snapshot directory");
-        let workspace = tmp.path().join("workspace");
-        let snapshot_root = tmp.path().join("snapshots");
-        std::fs::create_dir_all(workspace.join("src")).unwrap();
-        std::fs::write(workspace.join("src/main.rs"), "before").unwrap();
-
-        let files = vec![
-            serde_json::json!({"relativePath": "src/main.rs"}),
-            serde_json::json!({"relativePath": "created.txt"}),
-        ];
-        let snapshot = create_snapshot_at(&snapshot_root, &workspace, "snapshot-1", &files)
-            .expect("snapshot should be created");
-        assert_eq!(snapshot.files_captured, 2);
-        assert!(snapshot_root.join("snapshot-1/.manifest.json").exists());
-
-        let patches = vec![
-            serde_json::json!({
-                "path": "src/main.rs",
-                "expectedHash": sha256_hex(b"before"),
-                "hunks": [{"before": "before", "after": "after"}]
-            }),
-            serde_json::json!({
-                "path": "created.txt",
-                "expectedHash": "",
-                "hunks": [{"before": "", "after": "created"}]
-            }),
-        ];
-        apply_patch_at(&workspace, &snapshot_root, Some("snapshot-1"), &patches)
-            .expect("patch should update the snapshot post-images");
-
-        let reverted = revert_snapshot_at(&snapshot_root, &workspace, "snapshot-1")
-            .expect("snapshot should be reverted");
-        assert_eq!(reverted.files_reverted, 2);
-        assert!(reverted.conflicts.is_empty());
-        assert_eq!(
-            std::fs::read_to_string(workspace.join("src/main.rs")).unwrap(),
-            "before"
-        );
-        assert!(!workspace.join("created.txt").exists());
-    }
-
-    #[test]
     fn apply_patch_rolls_back_previous_files_when_later_write_fails() {
         let tmp = TempDir::new().expect("temporary workspace");
         let workspace = tmp.path().join("workspace");
-        let snapshot_root = tmp.path().join("snapshots");
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::write(workspace.join("first.txt"), "before").unwrap();
         std::fs::write(workspace.join("blocked"), "not a directory").unwrap();
@@ -2328,42 +1951,12 @@ mod tests {
             }),
         ];
 
-        assert!(apply_patch_at(&workspace, &snapshot_root, None, &patches).is_err());
+        assert!(apply_patch_at(&workspace, &patches).is_err());
         assert_eq!(
             std::fs::read_to_string(workspace.join("first.txt")).unwrap(),
             "before"
         );
         assert!(!workspace.join("blocked/second.txt").exists());
-    }
-
-    #[test]
-    fn revert_snapshot_reports_external_modification_conflict() {
-        let tmp = TempDir::new().expect("temporary snapshot directory");
-        let workspace = tmp.path().join("workspace");
-        let snapshot_root = tmp.path().join("snapshots");
-        std::fs::create_dir_all(&workspace).unwrap();
-        std::fs::write(workspace.join("file.txt"), "before").unwrap();
-
-        let files = vec![serde_json::json!({"relativePath": "file.txt"})];
-        create_snapshot_at(&snapshot_root, &workspace, "snapshot-2", &files)
-            .expect("snapshot should be created");
-        let patches = vec![serde_json::json!({
-            "path": "file.txt",
-            "expectedHash": sha256_hex(b"before"),
-            "hunks": [{"before": "before", "after": "after"}]
-        })];
-        apply_patch_at(&workspace, &snapshot_root, Some("snapshot-2"), &patches)
-            .expect("patch should apply");
-        std::fs::write(workspace.join("file.txt"), "external").unwrap();
-
-        let reverted = revert_snapshot_at(&snapshot_root, &workspace, "snapshot-2")
-            .expect("revert should return a conflict result");
-        assert_eq!(reverted.files_reverted, 0);
-        assert_eq!(reverted.conflicts, vec!["file.txt"]);
-        assert_eq!(
-            std::fs::read_to_string(workspace.join("file.txt")).unwrap(),
-            "external"
-        );
     }
 
     #[test]
@@ -2380,8 +1973,7 @@ mod tests {
             "expectedHash": sha256_hex(original.as_bytes()),
             "hunks": [{"before": original, "after": replacement}]
         })];
-        let result = apply_patch_at(&workspace, tmp.path(), None, &patches)
-            .expect("large patch should apply");
+        let result = apply_patch_at(&workspace, &patches).expect("large patch should apply");
 
         assert!(result.diff.len() <= PATCH_DIFF_MAX_BYTES);
         assert!(result.diff.contains("diff truncated"));

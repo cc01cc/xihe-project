@@ -175,9 +175,17 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void reconciliationRestoresAwaitingApprovalForLiveApproval() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
-        ChatApproval approval = new ChatApproval(UUID.randomUUID().toString(), run.getId().toString(),
-                sessionId, userId, workspaceId, "request_approval", "delete file", "README.md",
-                "pending", Instant.now().plusSeconds(300), null, null);
+        ChatApproval approval = new ChatApproval(
+                UUID.randomUUID().toString(),
+                run.getId().toString(),
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "pending",
+                Instant.now().plusSeconds(300));
         approvalRepository.save(approval);
 
         reconciliationService().reconcileOnStartup();
@@ -190,9 +198,17 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void reconciliationRestoresAwaitingApprovalForLiveDispatchUnknownWithoutAgentResponse() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
-        ChatApproval unknown = new ChatApproval(UUID.randomUUID().toString(), run.getId().toString(),
-                sessionId, userId, workspaceId, "request_approval", "delete file", "README.md",
-                "dispatch_unknown", Instant.now().plusSeconds(300), null, null);
+        ChatApproval unknown = new ChatApproval(
+                UUID.randomUUID().toString(),
+                run.getId().toString(),
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "dispatch_unknown",
+                Instant.now().plusSeconds(300));
         approvalRepository.save(unknown);
 
         reconciliationService().reconcileOnStartup();
@@ -219,9 +235,17 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void reconciliationIgnoresExpiredApprovalAndMarksAmbiguous() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
-        ChatApproval expired = new ChatApproval(UUID.randomUUID().toString(), run.getId().toString(),
-                sessionId, userId, workspaceId, "request_approval", "delete file", "README.md",
-                "pending", Instant.now().minusSeconds(1), null, null);
+        ChatApproval expired = new ChatApproval(
+                UUID.randomUUID().toString(),
+                run.getId().toString(),
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "pending",
+                Instant.now().minusSeconds(1));
         approvalRepository.save(expired);
 
         reconciliationService().reconcileOnStartup();
@@ -234,9 +258,17 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void reconciliationIgnoresExpiredDispatchUnknownAndMarksAmbiguous() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
-        ChatApproval expired = new ChatApproval(UUID.randomUUID().toString(), run.getId().toString(),
-                sessionId, userId, workspaceId, "request_approval", "delete file", "README.md",
-                "dispatch_unknown", Instant.now().minusSeconds(1), null, null);
+        ChatApproval expired = new ChatApproval(
+                UUID.randomUUID().toString(),
+                run.getId().toString(),
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "dispatch_unknown",
+                Instant.now().minusSeconds(1));
         approvalRepository.save(expired);
 
         reconciliationService().reconcileOnStartup();

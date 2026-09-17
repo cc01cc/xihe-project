@@ -107,8 +107,17 @@ class ApprovalAgentIntegrationTest extends AbstractWireMockTest {
     }
 
     private ChatApproval pendingApproval() {
-        ChatApproval approval = new ChatApproval(requestId, runId, sessionId, userId, workspaceId,
-                "request_approval", "delete file", "README.md", "pending", Instant.now().plusSeconds(300), null, null);
+        ChatApproval approval = new ChatApproval(
+                requestId,
+                runId,
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "pending",
+                Instant.now().plusSeconds(300));
         return approvalRepository.save(approval);
     }
 

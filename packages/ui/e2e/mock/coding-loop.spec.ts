@@ -67,7 +67,6 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
           tool: 'write_file',
           action: 'write file',
           details: 'src/main.rs',
-          policyClass: 'ask_approval',
           expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
         })
       }, { requestId: REQUEST_ID_1, runId: RUN_ID_1, sessionId: SESSION_ID, workspaceId: WORKSPACE_ID })
@@ -91,7 +90,6 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
           tool: 'edit_file',
           action: 'edit file',
           details: 'src/lib.rs',
-          policyClass: 'ask_approval',
           expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
         })
       }, { requestId: REQUEST_ID_2, runId: RUN_ID_2, sessionId: SESSION_ID, workspaceId: WORKSPACE_ID })

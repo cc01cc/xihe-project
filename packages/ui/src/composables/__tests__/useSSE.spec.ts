@@ -175,8 +175,6 @@ describe("useSSE", () => {
                 tool: "write_file",
                 action: "write file",
                 details: "/README.md",
-                snapshotId: null,
-                policyClass: "ask_approval",
                 argumentsHash:
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 state: "pending",
@@ -190,8 +188,6 @@ describe("useSSE", () => {
             runId: RUN_ID,
             sessionId: SESSION_ID,
             workspaceId: WORKSPACE_ID,
-            snapshotId: null,
-            policyClass: "ask_approval",
             argumentsHash:
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             state: "pending",

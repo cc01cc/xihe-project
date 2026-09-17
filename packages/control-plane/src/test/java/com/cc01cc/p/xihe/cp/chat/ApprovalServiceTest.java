@@ -292,10 +292,17 @@ class ApprovalServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void replayWriteFileIncludesDisplayPolicyWithoutArguments() {
-        ChatApproval approval = new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER,
-                TEST_WORKSPACE, "write_file", "Execute write_file",
+        ChatApproval approval = new ChatApproval(
+                TEST_REQUEST_ID,
+                TEST_RUN_ID,
+                TEST_SESSION,
+                TEST_USER,
+                TEST_WORKSPACE,
+                "write_file",
+                "Execute write_file",
                 "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"secret.md\",\"content\":\"secret\"}}",
-                "pending", Instant.now().plusSeconds(60), null, null);
+                "pending",
+                Instant.now().plusSeconds(60));
         approval.setPolicySummary(POLICY_SNAPSHOT);
         approval.setModeAtGrant("manual");
         when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
@@ -339,10 +346,16 @@ class ApprovalServiceTest {
     @Test
     void consumeApprovedGrantRequiresExactToolAndArguments() {
         ChatApproval approval = new ChatApproval(
-                TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "write_file", "Execute write_file",
+                TEST_REQUEST_ID,
+                TEST_RUN_ID,
+                TEST_SESSION,
+                TEST_USER,
+                TEST_WORKSPACE,
+                "write_file",
+                "Execute write_file",
                 "{\"tool\":\"write_file\",\"arguments\":{}}",
-                "approved", Instant.now().plusSeconds(60), null, "require_approval");
+                "approved",
+                Instant.now().plusSeconds(60));
         approval.setApproved(true);
         approval.setPolicyRevision(0L);
         approval.setSandboxGeneration(0);
@@ -366,10 +379,16 @@ class ApprovalServiceTest {
     @Test
     void consumeApprovedGrantRejectsReplayAndMismatchedArguments() {
         ChatApproval approval = new ChatApproval(
-                TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "write_file", "Execute write_file",
+                TEST_REQUEST_ID,
+                TEST_RUN_ID,
+                TEST_SESSION,
+                TEST_USER,
+                TEST_WORKSPACE,
+                "write_file",
+                "Execute write_file",
                 "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"a\"}}",
-                "approved", Instant.now().plusSeconds(60), null, "require_approval");
+                "approved",
+                Instant.now().plusSeconds(60));
         approval.setApproved(true);
         approval.setPolicyRevision(0L);
         approval.setSandboxGeneration(0);
@@ -405,10 +424,17 @@ class ApprovalServiceTest {
 
     private ChatApproval approvedRowWithHash(String argumentsHash) {
         ChatApproval approval = new ChatApproval(
-                TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "write_file", "Execute write_file",
+                TEST_REQUEST_ID,
+                TEST_RUN_ID,
+                TEST_SESSION,
+                TEST_USER,
+                TEST_WORKSPACE,
+                "write_file",
+                "Execute write_file",
                 "x".repeat(500) + "…[truncated]",
-                "approved", Instant.now().plusSeconds(60), null, "require_approval", argumentsHash);
+                "approved",
+                Instant.now().plusSeconds(60),
+                argumentsHash);
         approval.setApproved(true);
         approval.setPolicyRevision(0L);
         approval.setSandboxGeneration(0);
@@ -462,10 +488,17 @@ class ApprovalServiceTest {
 
     private ChatApproval approvedRow(String argumentsHash, Instant expiresAt) {
         ChatApproval approval = new ChatApproval(
-                TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "write_file", "Execute write_file",
+                TEST_REQUEST_ID,
+                TEST_RUN_ID,
+                TEST_SESSION,
+                TEST_USER,
+                TEST_WORKSPACE,
+                "write_file",
+                "Execute write_file",
                 "{\"tool\":\"write_file\",\"arguments\":{}}",
-                "approved", expiresAt, null, "require_approval", argumentsHash);
+                "approved",
+                expiresAt,
+                argumentsHash);
         approval.setApproved(true);
         approval.setPolicyRevision(0L);
         approval.setSandboxGeneration(0);
@@ -663,9 +696,17 @@ class ApprovalServiceTest {
 
     @Test
     void decideRetriesDispatchUnknownViaExplicitUserDecision() {
-        ChatApproval approval = new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "request_approval", "delete file", "README.md", "dispatch_unknown",
-                Instant.now().plusSeconds(60), null, null);
+        ChatApproval approval = new ChatApproval(
+                TEST_REQUEST_ID,
+                TEST_RUN_ID,
+                TEST_SESSION,
+                TEST_USER,
+                TEST_WORKSPACE,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "dispatch_unknown",
+                Instant.now().plusSeconds(60));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
         when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
                 any(), any(), any(), any(Instant.class)))
@@ -687,9 +728,17 @@ class ApprovalServiceTest {
 
     @Test
     void decideExpiresStaleDispatchUnknownInsteadOfStuckConflict() {
-        ChatApproval approval = new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "request_approval", "delete file", "README.md", "dispatch_unknown",
-                Instant.now().minusSeconds(1), null, null);
+        ChatApproval approval = new ChatApproval(
+                TEST_REQUEST_ID,
+                TEST_RUN_ID,
+                TEST_SESSION,
+                TEST_USER,
+                TEST_WORKSPACE,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "dispatch_unknown",
+                Instant.now().minusSeconds(1));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
         when(approvals.markExpired(eq(UUID.fromString(TEST_REQUEST_ID)), any(Instant.class))).thenReturn(1);
 
@@ -754,8 +803,17 @@ class ApprovalServiceTest {
     }
 
     private ChatApproval approval(String state, Instant expiresAt) {
-        return new ChatApproval(TEST_REQUEST_ID, TEST_RUN_ID, TEST_SESSION, TEST_USER, TEST_WORKSPACE,
-                "request_approval", "delete file", "README.md", state, expiresAt, null, null);
+        return new ChatApproval(
+                TEST_REQUEST_ID,
+                TEST_RUN_ID,
+                TEST_SESSION,
+                TEST_USER,
+                TEST_WORKSPACE,
+                "request_approval",
+                "delete file",
+                "README.md",
+                state,
+                expiresAt);
     }
 
     @Test

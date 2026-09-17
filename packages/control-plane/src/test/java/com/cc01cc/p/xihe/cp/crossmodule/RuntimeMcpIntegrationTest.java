@@ -99,10 +99,6 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
                 "Gateway tools/list must carry the public apply_patch tool");
         assertTrue(response.getBody().contains("\"patches\":{\"type\":\"array\"}"),
                 "apply_patch wire schema must remain structured");
-        assertFalse(response.getBody().contains("create_snapshot"),
-                "create_snapshot must remain absent from Gateway tools/list");
-        assertFalse(response.getBody().contains("revert_snapshot"),
-                "revert_snapshot must remain absent from Gateway tools/list");
         assertFalse(response.getBody().contains("revert_checkpoint"),
                 "revert_checkpoint is a CP ledger value, not a Gateway tool");
 

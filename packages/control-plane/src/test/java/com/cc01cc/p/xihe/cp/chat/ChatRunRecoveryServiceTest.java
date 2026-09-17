@@ -85,9 +85,17 @@ class ChatRunRecoveryServiceTest {
     @Test
     void recoveryRestoresRunWithLiveApprovalWithoutCapturing() {
         ChatRun active = runWithStatus("running");
-        ChatApproval live = new ChatApproval("77777777-7777-7777-7777-777777777777", RUN_ID,
-                SESSION_ID, USER_ID, WORKSPACE_ID, "write_file", "Execute write_file", "preview",
-                "pending", Instant.now().plusSeconds(300), null, null);
+        ChatApproval live = new ChatApproval(
+                "77777777-7777-7777-7777-777777777777",
+                RUN_ID,
+                SESSION_ID,
+                USER_ID,
+                WORKSPACE_ID,
+                "write_file",
+                "Execute write_file",
+                "preview",
+                "pending",
+                Instant.now().plusSeconds(300));
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of(active));
         when(approvalRepository.findByRunIdAndStateIn(anyString(), any())).thenReturn(List.of(live));
 

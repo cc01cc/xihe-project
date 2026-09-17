@@ -378,7 +378,6 @@ async fn spike_c_excluded_patterns_never_appear_in_changed_files() {
         ".cache/cache.bin",
         ".tmp/tmp.bin",
         ".env",
-        ".xihe-snapshots/snap-1.json",
         ".xihe-sentinel",
         ".xihe-probe-writable",
         ".xihe-container-runtime.log",

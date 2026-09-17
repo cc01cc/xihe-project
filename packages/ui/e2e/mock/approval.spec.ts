@@ -20,8 +20,6 @@ const approvalEvent = (
   tool: 'request_approval',
   action: 'delete file',
   details: 'workspace/README.md',
-  snapshotId: null,
-  policyClass: 'unknown',
   argumentsHash: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
   expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
   state: 'pending',

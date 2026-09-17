@@ -243,8 +243,6 @@ pub struct EditFileRequest {
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ApplyPatchRequest {
     pub patches: Vec<ApplyPatchEntry>,
-    #[serde(rename = "snapshotId")]
-    pub snapshot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -542,15 +540,12 @@ impl XiheRuntime {
     #[tool(description = "Apply an atomic multi-file patch with expected content hashes")]
     async fn apply_patch(
         &self,
-        Parameters(ApplyPatchRequest {
-            patches,
-            snapshot_id,
-        }): Parameters<ApplyPatchRequest>,
+        Parameters(ApplyPatchRequest { patches }): Parameters<ApplyPatchRequest>,
     ) -> Result<Json<ApplyPatchResult>, String> {
         let patch_values = serde_json::to_value(patches).map_err(|e| e.to_string())?;
         let val = self
             .router
-            .apply_patch(&self.ws_id, patch_values, snapshot_id.as_deref())
+            .apply_patch(&self.ws_id, patch_values)
             .await
             .map_err(|e| e.to_string())?;
         let result: ApplyPatchResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
@@ -4341,12 +4336,6 @@ mod tool_router_regression_tests {
             tools.iter().any(|tool| tool.name == "apply_patch"),
             "apply_patch missing from public tool surface"
         );
-        for name in ["create_snapshot", "revert_snapshot"] {
-            assert!(
-                tools.iter().all(|tool| tool.name.as_ref() != name),
-                "{name} must remain internal-only"
-            );
-        }
     }
 
     #[test]
@@ -4374,6 +4363,10 @@ mod tool_router_regression_tests {
         assert!(
             schema.contains("\"hunks\""),
             "hunks must be in the wire schema"
+        );
+        assert!(
+            !props.contains_key("snapshotId"),
+            "snapshotId must not remain in the apply_patch wire schema"
         );
     }
 

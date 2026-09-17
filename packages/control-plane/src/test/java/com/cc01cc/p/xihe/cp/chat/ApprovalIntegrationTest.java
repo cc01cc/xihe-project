@@ -188,8 +188,17 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     }
 
     private ChatApproval pendingApproval(String reqId, Instant expiresAt) {
-        ChatApproval approval = new ChatApproval(reqId, runId, sessionId, userId, workspaceId,
-                "request_approval", "delete file", "README.md", "pending", expiresAt, null, null);
+        ChatApproval approval = new ChatApproval(
+                reqId,
+                runId,
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "pending",
+                expiresAt);
         return approvalRepository.save(approval);
     }
 
@@ -281,8 +290,16 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
         pendingApproval(expiredId, Instant.now().minusSeconds(1));
         String decidedId = UUID.randomUUID().toString();
         ChatApproval decided = new ChatApproval(
-                decidedId, runId, sessionId, userId, workspaceId,
-                "request_approval", "delete file", "README.md", "approved", Instant.now().plusSeconds(300), null, null);
+                decidedId,
+                runId,
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "approved",
+                Instant.now().plusSeconds(300));
         approvalRepository.save(decided);
 
         List<Map<String, Object>> replay = approvalService.replayPending(sessionId, userId, workspaceId);
@@ -461,10 +478,16 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     void consumeApprovedGrantIsBoundToInvocationAndOneShot() {
         activeRun("running");
         ChatApproval approval = new ChatApproval(
-                requestId, runId, sessionId, userId, workspaceId,
-                "write_file", "Execute write_file",
+                requestId,
+                runId,
+                sessionId,
+                userId,
+                workspaceId,
+                "write_file",
+                "Execute write_file",
                 "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}}",
-                "approved", Instant.now().plusSeconds(300), null, "require_approval");
+                "approved",
+                Instant.now().plusSeconds(300));
         approval.setApproved(true);
         // PLAN-0328 T1.7: the V20 columns decide whether the grant is still consumable.
         approval.setPolicyRevision(policyRevision.current());
@@ -487,10 +510,16 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     void consumeRejectsLegacyRowWithoutV20GrantColumns() {
         activeRun("running");
         ChatApproval legacy = new ChatApproval(
-                requestId, runId, sessionId, userId, workspaceId,
-                "write_file", "Execute write_file",
+                requestId,
+                runId,
+                sessionId,
+                userId,
+                workspaceId,
+                "write_file",
+                "Execute write_file",
                 "{\"tool\":\"write_file\",\"arguments\":{\"path\":\"a.txt\"}}",
-                "approved", Instant.now().plusSeconds(300), null, "require_approval");
+                "approved",
+                Instant.now().plusSeconds(300));
         legacy.setApproved(true);
         approvalRepository.save(legacy);
 
@@ -515,9 +544,16 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     void decideRetriesDispatchUnknownWhenAgentRecovers() {
         activeRun("running");
         ChatApproval approval = new ChatApproval(
-                requestId, runId, sessionId, userId, workspaceId,
-                "request_approval", "delete file", "README.md", "dispatch_unknown",
-                Instant.now().plusSeconds(300), null, null);
+                requestId,
+                runId,
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "dispatch_unknown",
+                Instant.now().plusSeconds(300));
         approval.setDispatchErrorCode("AGENT_APPROVAL_FAILED");
         approvalRepository.save(approval);
 
@@ -614,9 +650,16 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     void decideExpiresStaleDispatchUnknownApproval() {
         activeRun("running");
         ChatApproval approval = new ChatApproval(
-                requestId, runId, sessionId, userId, workspaceId,
-                "request_approval", "delete file", "README.md", "dispatch_unknown",
-                Instant.now().minusSeconds(1), null, null);
+                requestId,
+                runId,
+                sessionId,
+                userId,
+                workspaceId,
+                "request_approval",
+                "delete file",
+                "README.md",
+                "dispatch_unknown",
+                Instant.now().minusSeconds(1));
         approvalRepository.save(approval);
 
         ResponseEntity<Map> response = noErrorClient().exchange(
@@ -651,8 +694,17 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
 
     private ChatApproval pendingToolApproval(String reqId, String tool, String run, String session,
                                              String user, String workspace, Instant expiresAt) {
-        ChatApproval approval = new ChatApproval(reqId, run, session, user, workspace,
-                tool, "Execute " + tool, "preview", "pending", expiresAt, null, "require_approval");
+        ChatApproval approval = new ChatApproval(
+                reqId,
+                run,
+                session,
+                user,
+                workspace,
+                tool,
+                "Execute " + tool,
+                "preview",
+                "pending",
+                expiresAt);
         return approvalRepository.save(approval);
     }
 

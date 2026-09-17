@@ -70,7 +70,6 @@ pub const STATIC_EXCLUDE_PATTERNS: &[&str] = &[
     ".cache/",
     ".tmp/",
     ".env",
-    ".xihe-snapshots/",
     ".xihe-sentinel",
     ".xihe-probe-writable",
     ".xihe-container-runtime.log",

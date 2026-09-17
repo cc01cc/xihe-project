@@ -80,17 +80,15 @@ public class PolicyEngine {
     );
 
     // PLAN-292 M2 (T2/T4): names aligned with container_runtime implementations
-    // (create_snapshot/revert_snapshot, container_runtime.rs:1379/1495) and the
-    // dead write_file_binary entry removed — it is not a Gateway tool, not an
-    // Agent tool, and REST binary write does not travel through MCP policy.
+    // and the dead write_file_binary entry removed — it is not a Gateway tool, not
+    // an Agent tool, and REST binary write does not travel through MCP policy.
     // apply_patch is Gateway-public and remains require_approval (PLAN-0328
-    // T3.2); create_snapshot/revert_snapshot stay classified for fail-closed
-    // direct calls but remain internal-only, pinned by the contract test.
+    // T3.2); the legacy snapshot operations were retired in PLAN-0357.
     private static final Set<String> REQUIRE_APPROVAL_TOOLS = Set.of(
         "write_file", "edit_file", "delete_file",
         "delete_directory", "move_file", "copy_file", "mkdir",
         "execute_command", "start_background_process", "cancel_background_process",
-        "apply_patch", "create_snapshot", "revert_snapshot"
+        "apply_patch"
     );
 
     /** Package-private for contract tests (PLAN-290 M0.2); not a public API. */

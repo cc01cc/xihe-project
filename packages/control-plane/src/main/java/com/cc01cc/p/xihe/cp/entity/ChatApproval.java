@@ -3,15 +3,10 @@ package com.cc01cc.p.xihe.cp.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
-import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
-import jakarta.persistence.Convert;
 import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
-import jakarta.persistence.Convert;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -70,13 +65,6 @@ public class ChatApproval {
     @Column(name = "dispatch_error_code", length = 64)
     private String dispatchErrorCode;
 
-    @Column(name = "snapshot_id", length = 36)
-    @Convert(converter = UuidStringConverter.class)
-    private String snapshotId;
-
-    @Column(name = "policy_class", length = 32)
-    private String policyClass;
-
     @Column(name = "grant_consumed_at")
     private Instant grantConsumedAt;
 
@@ -123,14 +111,14 @@ public class ChatApproval {
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
                         String workspaceId, String tool, String action, String details,
-                        String state, Instant expiresAt, String snapshotId, String policyClass) {
+                        String state, Instant expiresAt) {
         this(requestId, runId, sessionId, userId, workspaceId, tool, action, details,
-                state, expiresAt, snapshotId, policyClass, null);
+                state, expiresAt, null);
     }
 
     public ChatApproval(String requestId, String runId, String sessionId, String userId,
                         String workspaceId, String tool, String action, String details,
-                        String state, Instant expiresAt, String snapshotId, String policyClass,
+                        String state, Instant expiresAt,
                         String argumentsHash) {
         this.requestId = UUID.fromString(requestId);
         this.runId = runId;
@@ -142,8 +130,6 @@ public class ChatApproval {
         this.details = details;
         this.state = state;
         this.expiresAt = expiresAt;
-        this.snapshotId = snapshotId;
-        this.policyClass = policyClass;
         this.argumentsHash = argumentsHash;
     }
 
@@ -180,8 +166,6 @@ public class ChatApproval {
     public void setDecisionKind(String decisionKind) { this.decisionKind = decisionKind; }
     public void setDecidedAt(Instant decidedAt) { this.decidedAt = decidedAt; }
     public void setDispatchErrorCode(String dispatchErrorCode) { this.dispatchErrorCode = dispatchErrorCode; }
-    public String getSnapshotId() { return snapshotId; }
-    public String getPolicyClass() { return policyClass; }
     public Instant getGrantConsumedAt() { return grantConsumedAt; }
     public String getArgumentsHash() { return argumentsHash; }
     public String getDecisionKind() { return decisionKind; }
@@ -190,8 +174,6 @@ public class ChatApproval {
     public Long getPolicyRevision() { return policyRevision; }
     public Integer getSandboxGeneration() { return sandboxGeneration; }
     public String getReuseScope() { return reuseScope; }
-    public void setSnapshotId(String snapshotId) { this.snapshotId = snapshotId; }
-    public void setPolicyClass(String policyClass) { this.policyClass = policyClass; }
     public void setGrantConsumedAt(Instant grantConsumedAt) { this.grantConsumedAt = grantConsumedAt; }
     public void setPolicySummary(String policySummary) { this.policySummary = policySummary; }
     public void setModeAtGrant(String modeAtGrant) { this.modeAtGrant = modeAtGrant; }

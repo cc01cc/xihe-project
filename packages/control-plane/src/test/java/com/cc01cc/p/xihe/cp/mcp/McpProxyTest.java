@@ -407,9 +407,17 @@ class McpProxyTest {
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
                         "manual", "mutation requires approval"));
         seedToolCache("write_file", "__system__");
-        ChatApproval row = new ChatApproval("77000000-0000-0000-0000-000000000001", TEST_WS_UUID,
-                "sess-1", "u-1", TEST_WS_UUID, "write_file", "Execute write_file", "preview",
-                "pending", Instant.now().plusSeconds(300), null, null);
+        ChatApproval row = new ChatApproval(
+                "77000000-0000-0000-0000-000000000001",
+                TEST_WS_UUID,
+                "sess-1",
+                "u-1",
+                TEST_WS_UUID,
+                "write_file",
+                "Execute write_file",
+                "preview",
+                "pending",
+                Instant.now().plusSeconds(300));
         when(approvalService.recordGatePending(eq("sess-1"), eq(TEST_WS_UUID), eq("u-1"),
                 eq(TEST_WS_UUID), eq("write_file"), eq(body), any(Instant.class)))
                 .thenReturn(java.util.Optional.of(ApprovalService.GateApprovalOutcome.parked(row)));
@@ -452,9 +460,17 @@ class McpProxyTest {
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "{ write, \"*\", ask }", PolicyLayer.BUILTIN,
                         "manual", "mutation requires approval"));
         seedToolCache("write_file", "__system__");
-        ChatApproval rejected = new ChatApproval("77000000-0000-0000-0000-000000000002", TEST_WS_UUID,
-                "sess-1", "u-1", TEST_WS_UUID, "write_file", "Execute write_file", "preview",
-                "rejected", Instant.now().plusSeconds(300), null, null);
+        ChatApproval rejected = new ChatApproval(
+                "77000000-0000-0000-0000-000000000002",
+                TEST_WS_UUID,
+                "sess-1",
+                "u-1",
+                TEST_WS_UUID,
+                "write_file",
+                "Execute write_file",
+                "preview",
+                "rejected",
+                Instant.now().plusSeconds(300));
         rejected.setApproved(false);
         rejected.setDecisionKind("reject");
         when(approvalService.recordGatePending(eq("sess-1"), eq(TEST_WS_UUID), eq("u-1"),

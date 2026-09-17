@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -153,10 +154,31 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
+    }
+
+    @Test
+    void v28LegacySnapshotRetirementApplied() throws SQLException {
+        // PLAN-0357: the V4/V5 legacy snapshot objects are retired on a fresh chain.
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '28' AND success = true"),
+                "V28 must be recorded as applied");
+        assertNull(scalarString("SELECT to_regclass('public.workspace_snapshots')"),
+                "workspace_snapshots must be dropped by V28");
+        assertNull(scalarString("SELECT to_regclass('public.workspace_snapshot_files')"),
+                "workspace_snapshot_files must be dropped by V28");
+        for (String column : new String[]{"snapshot_id", "policy_class"}) {
+            assertEquals(0, scalarInt(
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' "
+                            + "AND table_name = 'approval_requests' AND column_name = '" + column + "'"),
+                    "legacy approval column must be removed: " + column);
+        }
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_approval_requests_snapshot'"),
+                "legacy approval snapshot index must be removed");
     }
 
     @Test

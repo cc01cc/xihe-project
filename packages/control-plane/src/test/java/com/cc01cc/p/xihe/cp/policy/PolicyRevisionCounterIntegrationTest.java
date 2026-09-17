@@ -211,9 +211,17 @@ class PolicyRevisionCounterIntegrationTest extends AbstractIntegrationTest {
     }
 
     private ChatApproval approvedGrant(String requestId, long revision) {
-        ChatApproval approval = new ChatApproval(requestId, runId, sessionId, userId, workspaceId,
-                "write_file", "Execute write_file", APPROVED_DETAILS, "approved",
-                Instant.now().plusSeconds(300), null, "require_approval");
+        ChatApproval approval = new ChatApproval(
+                requestId,
+                runId,
+                sessionId,
+                userId,
+                workspaceId,
+                "write_file",
+                "Execute write_file",
+                APPROVED_DETAILS,
+                "approved",
+                Instant.now().plusSeconds(300));
         approval.setApproved(true);
         approval.setPolicyRevision(revision);
         Integer generation = workspaceRepository.findById(UUID.fromString(workspaceId))

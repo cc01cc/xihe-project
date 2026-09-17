@@ -81,8 +81,7 @@ paths:
       summary: MCP JSON-RPC endpoint (tools/list, tools/call, discovery)
       description: |
         Agent-facing MCP gateway. The Gateway-public built-in mutation `apply_patch` is exposed
-        through the normal approval path; `create_snapshot` and `revert_snapshot` remain
-        internal-only and are not returned by `tools/list`. `tools/call` is policy-gated: ALLOW dispatches, ASK requires an
+        through the normal approval path. `tools/call` is policy-gated: ALLOW dispatches, ASK requires an
         exact approval grant or session fingerprint. A run-scoped ASK without either creates (or
         reuses) the durable pending approval and answers `409` with a JSON-RPC error frame carrying
         the safe extension in `error.data`; a call without run context falls back to the legacy
@@ -1396,7 +1395,7 @@ components:
     ChatApprovalRequest:
       type: object
       additionalProperties: false
-      description: CP-owned durable approval envelope used by live/replayed SSE events and ChatRun recovery. Details is a bounded preview; raw tool arguments are never included. Legacy rows may omit snapshotId, policyClass, argumentsHash, and state; when present they are preserved as emitted.
+      description: CP-owned durable approval envelope used by live/replayed SSE events and ChatRun recovery. Details is a bounded preview; raw tool arguments are never included. Legacy rows may omit argumentsHash and state; when present they are preserved as emitted.
       required: [requestId, runId, sessionId, workspaceId, tool, action, details, expiresAt, replayed]
       properties:
         requestId: { type: string, format: uuid }
@@ -1406,8 +1405,6 @@ components:
         tool: { type: string, minLength: 1 }
         action: { type: string, minLength: 1 }
         details: { type: string, minLength: 1 }
-        snapshotId: { type: [string, 'null'], format: uuid }
-        policyClass: { type: [string, 'null'], minLength: 1 }
         argumentsHash: { type: [string, 'null'], description: Hash of the canonical arguments; the arguments themselves are not included. }
         expiresAt: { type: string, format: date-time }
         state: { type: string, enum: [pending, dispatching, dispatch_unknown, approved, rejected, expired] }

@@ -30,14 +30,12 @@ public class ToolFaceRegistry {
 
     private static final Set<String> WRITE_TOOLS = Set.of(
             "write_file", "edit_file", "delete_file", "delete_directory",
-            "move_file", "copy_file", "mkdir", "apply_patch", "create_snapshot");
+            "move_file", "copy_file", "mkdir", "apply_patch");
 
     private static final Set<String> EXEC_TOOLS = Set.of(
             "execute_command", "start_background_process", "cancel_background_process");
 
     private static final Set<String> NETWORK_TOOLS = Set.of("web_fetch");
-
-    private static final Set<String> DESTRUCTIVE_TOOLS = Set.of("revert_snapshot");
 
     private final Map<String, Face> faces;
 
@@ -52,7 +50,6 @@ public class ToolFaceRegistry {
         WRITE_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_WRITE, ToolShape.STRUCTURED)));
         NETWORK_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_NETWORK, ToolShape.STRUCTURED)));
         EXEC_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_EXEC, ToolShape.INTERPRETER)));
-        DESTRUCTIVE_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_DELETE, ToolShape.STRUCTURED)));
         builder.putAll(extraFaces);
         this.faces = Map.copyOf(builder);
     }

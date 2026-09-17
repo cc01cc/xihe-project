@@ -36,9 +36,6 @@ export function useWorkspaceAgentSync() {
       case 'copy_file':
         ws.refreshTree()
         break
-      case 'create_snapshot':
-        ws.refreshTree()
-        break
     }
   }
 

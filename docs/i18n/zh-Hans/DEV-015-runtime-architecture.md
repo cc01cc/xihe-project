@@ -53,7 +53,7 @@ sequenceDiagram
 
 镜像预置 `xihe-executor` / `xihe-job` 独立容器用户（切换与凭据隔离语义待实现确认，见 DEV-018）
 - `execute_command` 为显式 Shell 语义：`args` 作 positional parameters 传入（禁拼接）；timeout/cancel 终止并等待 child/process group；stdout/stderr 与 retained artifact 有界，超限只留 bounded preview。
-- MCP 工具集（rmcp `#[tool]`，`main.rs` 共 23 个）：read_file/read_file_range（二进制安全，base64+is_binary，16MiB 预览上限）/write_file/list_directory/glob/grep/execute_command/read_command_output/get_file_info/watch_directory/edit_file/delete_file/delete_directory/move_file/copy_file/mkdir/extract_pdf_text/web_fetch/start_background_process/list_background_processes/get_background_process/cancel_background_process/apply_patch（多文件原子 patch，需审批）。公开集由 `GatewayToolRegistryContractTest` 冻结（PLAN-290 M0.2 / PLAN-292 M2 / PLAN-0328 T3.2）；`create_snapshot/revert_snapshot` 仍为 internal-only，不在此列。
+- MCP 工具集（rmcp `#[tool]`，`main.rs` 共 23 个）：read_file/read_file_range（二进制安全，base64+is_binary，16MiB 预览上限）/write_file/list_directory/glob/grep/execute_command/read_command_output/get_file_info/watch_directory/edit_file/delete_file/delete_directory/move_file/copy_file/mkdir/extract_pdf_text/web_fetch/start_background_process/list_background_processes/get_background_process/cancel_background_process/apply_patch（多文件原子 patch，需审批）。公开集由 `GatewayToolRegistryContractTest` 冻结（PLAN-290 M0.2 / PLAN-292 M2 / PLAN-0328 T3.2；PLAN-0357 退役 legacy snapshot 工具）。
 
 ## 3. 后台 Job 与 FS 安全
 
@@ -83,6 +83,6 @@ sequenceDiagram
 - `hostRoot` 是 workspace 物理根；Runtime 先按 workspace 派生目录并执行路径/归属校验，影子库与工作区均限于该根下，未知 workspace、Git 不可用或版本不足均显式返回 `CHECKPOINT_UNAVAILABLE`，不回退到宿主任意目录。
 - Runtime internal contract is `POST /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/capture`（`{runId,actor,callId,abnormal}`）、`POST .../checkpoints/gc`、`POST .../checkpoints/cleanup`、`POST .../checkpoints/revert/preview`（`{sliceRef}`）、`POST .../checkpoints/revert`（`{sliceRef,acknowledgeTypeChanges}`）、`GET .../checkpoints/blob?sliceRef=&path=`、`GET .../git-status`。CP 是调用方；public API 只暴露 workspace 级切片列表、按 `sliceRef` 的恢复/文件读取和清理。
 - 捕获锁与恢复锁为短锁（fail-fast，不排队）；恢复期间不阻塞 workspace 写入，与目标切片不符的路径在结果中标注 `suspects`。保留策略按**切片数**（最新 50 个切片 + TTL 30 天）；清理为方案 B（删除整个影子库，幂等，忙时 409 `CHECKPOINT_BUSY`）。
-- `apply_patch` 是 Gateway-public 的 23 工具之一，走正常 Agent/CP 审批；捕获只发生在 Run 终止/异常补拍/C0，不再由派发前置动作触发。`create_snapshot`、`revert_snapshot` 是 Runtime/container internal-only legacy 工具，不进入 `tools/list`，Agent 不可发现或调用；UI 回滚只走 CP public workspace route。
+- `apply_patch` 是 Gateway-public 的 23 工具之一，走正常 Agent/CP 审批；捕获只发生在 Run 终止/异常补拍/C0，不再由派发前置动作触发；UI 回滚只走 CP public workspace route。
 - 嵌套仓库按不透明 gitlink 声明（`opaqueNestedRepos[]`）；可选硬限制开关 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS`（默认关闭，开启时捕获以 `NESTED_REPO_LIMIT` 显式降级）。
 - 端点和字段以 [OpenAPI](../../api/openapi.yaml) / [API inventory](../../api/inventory.md) 为准；实现与真实验证证据见 `plans/PLAN-0338-XH-checkpoint-core-closure/evidence/`（`t1.0-*`、`t1.2-*`、`host-matrix/`）。

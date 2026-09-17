@@ -86,8 +86,6 @@ export interface ApprovalRequest {
     tool: string;
     action: string;
     details: string;
-    snapshotId?: string | null;
-    policyClass?: string | null;
     argumentsHash?: string | null;
     expiresAt?: string;
     replayed?: boolean;

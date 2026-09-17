@@ -267,7 +267,7 @@ export function normalizeApprovalRequest(
               ? record.state
               : null;
     if (state === null) return null;
-    for (const key of ["snapshotId", "policyClass", "argumentsHash"]) {
+    for (const key of ["argumentsHash"]) {
         if (hasField(record, key) && record[key] !== null && typeof record[key] !== "string")
             return null;
     }
@@ -288,12 +288,6 @@ export function normalizeApprovalRequest(
         tool: typeof record.tool === "string" ? record.tool : "request_approval",
         action: typeof record.action === "string" ? record.action : "",
         details: typeof record.details === "string" ? record.details : "",
-        ...(hasField(record, "snapshotId")
-            ? { snapshotId: record.snapshotId as string | null }
-            : {}),
-        ...(hasField(record, "policyClass")
-            ? { policyClass: record.policyClass as string | null }
-            : {}),
         ...(hasField(record, "argumentsHash")
             ? { argumentsHash: record.argumentsHash as string | null }
             : {}),
