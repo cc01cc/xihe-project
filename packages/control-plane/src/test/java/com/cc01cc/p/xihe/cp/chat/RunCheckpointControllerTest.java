@@ -439,7 +439,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         List<OperationItem> items = operationItemRepository
                 .findByOperationIdOrderBySequenceAsc(operation.operationId().toString());
         OperationItem revertItem = items.stream()
-                .filter(item -> "revert_snapshot".equals(item.getToolName()))
+                .filter(item -> "revert_checkpoint".equals(item.getToolName()))
                 .findFirst().orElseThrow();
         assertEquals("checkpoint", revertItem.getKind());
         assertEquals("ui", revertItem.getSource());

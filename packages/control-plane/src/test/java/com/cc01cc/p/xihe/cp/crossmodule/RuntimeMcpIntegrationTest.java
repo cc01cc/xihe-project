@@ -103,6 +103,8 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
                 "create_snapshot must remain absent from Gateway tools/list");
         assertFalse(response.getBody().contains("revert_snapshot"),
                 "revert_snapshot must remain absent from Gateway tools/list");
+        assertFalse(response.getBody().contains("revert_checkpoint"),
+                "revert_checkpoint is a CP ledger value, not a Gateway tool");
 
         wireMock.verify(postRequestedFor(urlEqualTo(runtimePath))
                 .withHeader("Content-Type", containing("application/json"))

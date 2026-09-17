@@ -434,9 +434,9 @@ test.describe('@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)', () =
     expect(previewBodies.join('\n'), 'preview payloads carry no raw file contents').not.toContain(content)
     expect(previewBodies.join('\n')).toContain(fileName)
 
-    // Ledger: the user revert is a checkpoint/revert_snapshot item owned by CP.
+    // Ledger: the user revert is a checkpoint/revert_checkpoint item owned by CP.
     const items = await operationItems(request, sharedHeaders, flow.runId)
-    const revertItems = items.filter((item) => item.kind === 'checkpoint' && item.toolName === 'revert_snapshot')
+    const revertItems = items.filter((item) => item.kind === 'checkpoint' && item.toolName === 'revert_checkpoint')
     expect(revertItems.length, 'one ledger item per executed revert').toBe(1)
     expect(revertItems[0].status).toBe('completed')
     expect(items.some((item) => item.kind === 'checkpoint' && item.toolName === 'run_checkpoint')).toBe(true)
@@ -646,7 +646,7 @@ test.describe('@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)', () =
 
     // Attempt count: each successful execution owns one ledger item (toolCallId carries the attempt).
     const items = await operationItems(request, sharedHeaders, runId)
-    const revertItems = items.filter((item) => item.kind === 'checkpoint' && item.toolName === 'revert_snapshot')
+    const revertItems = items.filter((item) => item.kind === 'checkpoint' && item.toolName === 'revert_checkpoint')
     expect(revertItems.length, 'two recorded revert attempts').toBe(2)
     expect(new Set(revertItems.map((item) => item.toolCallId)).size).toBe(2)
 

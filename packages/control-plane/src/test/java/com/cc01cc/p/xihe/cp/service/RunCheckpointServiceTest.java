@@ -529,7 +529,7 @@ class RunCheckpointServiceTest {
         item.setId(UUID.randomUUID());
         item.setStatus("pending");
         when(operationService.appendItem(eq(operationId), any(), any(), eq("checkpoint"),
-                eq("revert_snapshot"), eq("ui"), any(), any(), any())).thenReturn(item);
+                eq("revert_checkpoint"), eq("ui"), any(), any(), any())).thenReturn(item);
         when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(RAW_REQUEST_MARKER)))
                 .thenReturn(revertOk(2, 0, 0));
 
@@ -547,7 +547,7 @@ class RunCheckpointServiceTest {
 
         ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
         verify(operationService).appendItem(eq(operationId), any(), any(), eq("checkpoint"),
-                eq("revert_snapshot"), eq("ui"), summary.capture(), isNull(), isNull());
+                eq("revert_checkpoint"), eq("ui"), summary.capture(), isNull(), isNull());
         assertTrue(summary.getValue().contains("\"marker\":\"revert\""));
         assertTrue(summary.getValue().contains("\"checkpointId\":\"" + row.getId() + "\""));
         assertTrue(summary.getValue().contains("\"sliceRef\":\"" + SLICE_REF + "\""));
@@ -590,7 +590,7 @@ class RunCheckpointServiceTest {
         RunCheckpoint row = rows.get(0);
         assertEquals(RunCheckpoint.REVERT_PARTIAL, row.getRevertState());
         ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
-        verify(operationService).appendItem(any(), any(), any(), eq("checkpoint"), eq("revert_snapshot"),
+        verify(operationService).appendItem(any(), any(), any(), eq("checkpoint"), eq("revert_checkpoint"),
                 eq("ui"), summary.capture(), any(), any());
         assertTrue(summary.getValue().contains("\"reason\":\"FAILED\""));
         assertTrue(summary.getValue().contains("\"failed\":2"));

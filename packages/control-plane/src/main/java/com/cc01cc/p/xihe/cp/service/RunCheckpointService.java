@@ -87,7 +87,7 @@ public class RunCheckpointService {
 
     static final String LEDGER_KIND = "checkpoint";
     static final String LEDGER_TOOL_NAME = "run_checkpoint";
-    static final String LEDGER_TOOL_NAME_REVERT = "revert_snapshot";
+    static final String LEDGER_TOOL_NAME_REVERT = "revert_checkpoint";
     static final String LEDGER_SOURCE = "runtime";
     static final String LEDGER_SOURCE_UI = "ui";
 

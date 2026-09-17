@@ -37,7 +37,6 @@ export function useWorkspaceAgentSync() {
         ws.refreshTree()
         break
       case 'create_snapshot':
-      case 'revert_snapshot':
         ws.refreshTree()
         break
     }
