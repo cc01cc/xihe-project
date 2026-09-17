@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -87,7 +88,9 @@ public class ContextProjectionService {
             // the conversation for history assembly and compaction.
             case "assistant.responded" -> addMessage(context, payload, "ai");
             case "tool.result" -> addMessage(context, payload, "tool");
-            case "context.source_changed" -> addMessage(context, payload, "system");
+            // PLAN-0340: source updates replace the epoch L1 slot; they must not
+            // append into messages (old path was truncated by HISTORY_LIMIT).
+            case "context.source_changed" -> applySourceChanged(context, payload);
             case "epoch.started", "epoch.replaced" -> setEpoch(context, payload);
             case "runtime.state_cleared" -> clearRuntimeState(context);
             case "session.forked" -> recordFork(context, payload);
@@ -103,7 +106,7 @@ public class ContextProjectionService {
         context.put("aggregate_id", sessionId);
         context.put("latest_sequence", 0L);
         context.set("messages", objectMapper.createArrayNode());
-        context.set("epoch", objectMapper.createObjectNode());
+        emptyContextSlots(context);
         context.set("runtime_state", objectMapper.createObjectNode());
         context.set("metadata", objectMapper.createObjectNode());
         return context;
@@ -130,25 +133,95 @@ public class ContextProjectionService {
         messages.add(message);
     }
 
+    private void emptyContextSlots(ObjectNode context) {
+        ObjectNode epoch = objectMapper.createObjectNode();
+        epoch.put("epoch_id", "");
+        epoch.put("source_hash", "");
+        epoch.put("summary_hash", "");
+        epoch.set("system_messages", objectMapper.createArrayNode());
+        epoch.set("l1_sources", objectMapper.createArrayNode());
+        epoch.put("l1_rendered", "");
+        epoch.set("sources", objectMapper.createArrayNode());
+        context.set("epoch", epoch);
+    }
+
     private void setEpoch(ObjectNode context, ObjectNode payload) {
         ObjectNode epoch = objectMapper.createObjectNode();
         if (payload.has("epoch_id")) {
             epoch.put("epoch_id", payload.path("epoch_id").asText());
         }
         if (payload.has("baseline_hash")) {
-            epoch.put("baseline_hash", payload.path("baseline_hash").asText());
+            // Legacy field maps to source_hash for old epoch.started events.
+            epoch.put("source_hash", payload.path("baseline_hash").asText());
+            epoch.put("summary_hash", payload.path("baseline_hash").asText());
+        }
+        if (payload.has("source_hash")) {
+            epoch.put("source_hash", payload.path("source_hash").asText());
+        }
+        if (payload.has("summary_hash")) {
+            epoch.put("summary_hash", payload.path("summary_hash").asText());
         }
         ArrayNode systemMessages = objectMapper.createArrayNode();
         if (payload.has("system_messages") && payload.get("system_messages").isArray()) {
             payload.get("system_messages").forEach(node -> systemMessages.add(node.asText()));
         }
         epoch.set("system_messages", systemMessages);
+        ArrayNode l1Sources = objectMapper.createArrayNode();
+        if (payload.has("l1_sources") && payload.get("l1_sources").isArray()) {
+            payload.get("l1_sources").forEach(l1Sources::add);
+        }
+        epoch.set("l1_sources", l1Sources);
+        epoch.put("l1_rendered", payload.path("l1_rendered").asText(""));
         ArrayNode sources = objectMapper.createArrayNode();
         if (payload.has("snapshot") && payload.get("snapshot").has("sources")) {
             payload.get("snapshot").get("sources").forEach(sources::add);
         }
         epoch.set("sources", sources);
         context.set("epoch", epoch);
+    }
+
+    /** PLAN-0340 T1.5/T1.4: replace L1 slot only; preserve SUM (system_messages / summary_hash). */
+    private void applySourceChanged(ObjectNode context, ObjectNode payload) {
+        ObjectNode epoch = (ObjectNode) context.get("epoch");
+        if (epoch == null) {
+            epoch = objectMapper.createObjectNode();
+            epoch.put("epoch_id", "");
+            epoch.put("source_hash", "");
+            epoch.put("summary_hash", "");
+            epoch.set("system_messages", objectMapper.createArrayNode());
+            epoch.set("l1_sources", objectMapper.createArrayNode());
+            epoch.put("l1_rendered", "");
+            epoch.set("sources", objectMapper.createArrayNode());
+            context.set("epoch", epoch);
+        }
+        String status = payload.path("status").asText("updated");
+        String hash = payload.path("source_hash").asText("");
+        if ("failed".equals(status)) {
+            epoch.put("source_hash", "");
+            epoch.put("l1_rendered", "");
+            ((ArrayNode) epoch.get("l1_sources")).removeAll();
+            return;
+        }
+        epoch.put("source_hash", hash);
+        epoch.put("l1_rendered", payload.path("rendered_text").asText(""));
+        ArrayNode l1 = (ArrayNode) epoch.get("l1_sources");
+        if (l1 == null) {
+            l1 = objectMapper.createArrayNode();
+            epoch.set("l1_sources", l1);
+        }
+        l1.removeAll();
+        if (payload.has("l1_sources") && payload.get("l1_sources").isArray()) {
+            payload.get("l1_sources").forEach(l1::add);
+        } else if (payload.has("sources") && payload.get("sources").isArray()) {
+            payload.get("sources").forEach(l1::add);
+        }
+        // Dual-write metadata for U1 without inventing a new projection root key.
+        ObjectNode meta = (ObjectNode) context.get("metadata");
+        ObjectNode sourcesMeta = objectMapper.createObjectNode();
+        sourcesMeta.put("status", status);
+        sourcesMeta.put("source_hash", hash);
+        sourcesMeta.put("updated_at", Instant.now().toString());
+        meta.set("context_sources", sourcesMeta);
     }
 
     private void setWorkspaceAndUser(ObjectNode context, ObjectNode payload) {
@@ -194,20 +267,32 @@ public class ContextProjectionService {
             }
             context.set("messages", kept);
         }
-        // PLAN-294 M2 (the broken half): expose the new epoch to the runner —
-        // _build_system_messages reads epoch.system_messages, so the summary
-        // must land there too. instructions slot first, then the summary.
-        String epochId = payload.path("contextEpoch").asText("");
-        if (!epochId.isBlank()) {
-            ObjectNode epoch = objectMapper.createObjectNode();
-            epoch.put("epoch_id", epochId);
-            epoch.put("baseline_hash", payload.path("summaryHash").asText(""));
-            ArrayNode systemMessages = objectMapper.createArrayNode();
-            systemMessages.add("Conversation summary of compacted history:");
-            systemMessages.add(payload.path("summary").asText(""));
-            epoch.set("system_messages", systemMessages);
+        // PLAN-0340: compaction writes SUM only; must not wipe L1 (source_hash / l1_*).
+        ObjectNode epoch = (ObjectNode) context.get("epoch");
+        if (epoch == null) {
+            epoch = objectMapper.createObjectNode();
+            epoch.put("epoch_id", "");
+            epoch.put("source_hash", "");
+            epoch.put("summary_hash", "");
+            epoch.set("system_messages", objectMapper.createArrayNode());
+            epoch.set("l1_sources", objectMapper.createArrayNode());
+            epoch.put("l1_rendered", "");
+            epoch.set("sources", objectMapper.createArrayNode());
             context.set("epoch", epoch);
         }
+        String epochId = payload.path("contextEpoch").asText("");
+        if (!epochId.isBlank()) {
+            epoch.put("epoch_id", epochId);
+        }
+        epoch.put("summary_hash", payload.path("summaryHash").asText(""));
+        ArrayNode systemMessages = (ArrayNode) epoch.get("system_messages");
+        if (systemMessages == null) {
+            systemMessages = objectMapper.createArrayNode();
+            epoch.set("system_messages", systemMessages);
+        }
+        systemMessages.removeAll();
+        systemMessages.add("Conversation summary of compacted history:");
+        systemMessages.add(payload.path("summary").asText(""));
     }
 
     private ObjectNode parsePayload(String payload) {

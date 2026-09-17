@@ -32,12 +32,15 @@ class ContextSource:
 
 @dataclass(frozen=True)
 class ContextEpoch:
-    """Versioned system-context baseline."""
+    """Versioned system-context baseline with L1/SUM slot separation (PLAN-0340)."""
 
     epoch_id: str
     baseline_hash: str
     system_messages: list[str]
     sources: list[ContextSource] = field(default_factory=list)
+    source_hash: str = ""
+    summary_hash: str = ""
+    l1_rendered: str = ""
 
 
 @dataclass
@@ -96,7 +99,8 @@ class AgentContext:
                 "tool_input": payload.get("tool_input", {}),
             })
         elif event_type == "context.source_changed":
-            self._add_message_from_payload(payload, "system")
+            # PLAN-0340: replace L1 half of epoch; never append into messages.
+            self._apply_source_changed(payload)
         elif event_type in ("epoch.started", "epoch.replaced"):
             self.epoch = ContextEpoch(
                 epoch_id=payload.get("epoch_id", ""),
@@ -105,12 +109,16 @@ class AgentContext:
                 sources=[
                     ContextSource(
                         key=s["key"],
-                        source_type=s["source_type"],
-                        content=s["content"],
-                        content_hash=s["content_hash"],
+                        source_type=s.get("source_type", "agents_md"),
+                        content=s.get("content", ""),
+                        content_hash=s.get("content_hash", s.get("content_hash", "")),
                     )
                     for s in payload.get("sources", [])
+                    if isinstance(s, dict)
                 ],
+                source_hash=payload.get("source_hash", payload.get("baseline_hash", "")),
+                summary_hash=payload.get("summary_hash", ""),
+                l1_rendered=payload.get("l1_rendered", ""),
             )
         elif event_type == "runtime.state_cleared":
             self.clear_runtime_state()
@@ -120,8 +128,23 @@ class AgentContext:
                 "at_sequence": payload.get("at_sequence"),
             }
         elif event_type == "compaction.applied":
-            self.messages.clear()
-            self.messages.append(TextMessage(role="system", content=payload.get("summary", "")))
+            # Keep SUM in epoch; rewrite messages like CP projection (summary + keep window).
+            summary = payload.get("summary", "")
+            keep_from = max(0, len(self.messages) - 10)
+            self.messages = [TextMessage(role="system", content=summary), *self.messages[keep_from:]]
+            prev = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])
+            self.epoch = ContextEpoch(
+                epoch_id=payload.get("contextEpoch", prev.epoch_id),
+                baseline_hash=prev.baseline_hash,
+                system_messages=[
+                    "Conversation summary of compacted history:",
+                    summary,
+                ],
+                sources=prev.sources,
+                source_hash=prev.source_hash,
+                summary_hash=payload.get("summaryHash", ""),
+                l1_rendered=prev.l1_rendered,
+            )
         elif event_type == "taskplan.created":
             self.metadata["task_plan"] = {
                 "run_id": payload.get("run_id"),
@@ -201,6 +224,49 @@ class AgentContext:
         if content:
             self.messages.append(TextMessage(role=role, content=content))
 
+    def _apply_source_changed(self, payload: dict[str, Any]) -> None:
+        status = payload.get("status", "updated")
+        prev = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])
+        if status == "failed":
+            self.epoch = ContextEpoch(
+                epoch_id=prev.epoch_id,
+                baseline_hash="",
+                system_messages=prev.system_messages,
+                sources=[],
+                source_hash="",
+                summary_hash=prev.summary_hash,
+                l1_rendered="",
+            )
+            self.metadata["context_sources"] = {
+                "status": "failed",
+                "source_hash": "",
+            }
+            return
+        sources = [
+            ContextSource(
+                key=s.get("key", ""),
+                source_type=s.get("source_type", "agents_md"),
+                content=s.get("content", ""),
+                content_hash=s.get("content_hash", ""),
+            )
+            for s in payload.get("sources", [])
+            if isinstance(s, dict)
+        ]
+        source_hash = payload.get("source_hash", payload.get("baseline_hash", ""))
+        self.epoch = ContextEpoch(
+            epoch_id=prev.epoch_id,
+            baseline_hash=source_hash,
+            system_messages=prev.system_messages,
+            sources=sources,
+            source_hash=source_hash,
+            summary_hash=prev.summary_hash,
+            l1_rendered=payload.get("rendered_text", ""),
+        )
+        self.metadata["context_sources"] = {
+            "status": status,
+            "source_hash": source_hash,
+        }
+
     @classmethod
     def from_events(cls, aggregate_id: str, events: list[Event]) -> "AgentContext":
         """Reconstruct an AgentContext by replaying a list of events."""
@@ -247,18 +313,22 @@ class AgentContext:
         epoch_raw = snapshot.get("epoch")
         if epoch_raw:
             ctx.epoch = ContextEpoch(
-                epoch_id=epoch_raw["epoch_id"],
-                baseline_hash=epoch_raw["baseline_hash"],
-                system_messages=epoch_raw["system_messages"],
+                epoch_id=epoch_raw.get("epoch_id", ""),
+                baseline_hash=epoch_raw.get("baseline_hash", epoch_raw.get("source_hash", "")),
+                system_messages=epoch_raw.get("system_messages", []),
                 sources=[
                     ContextSource(
-                        key=s["key"],
-                        source_type=s["source_type"],
-                        content=s["content"],
-                        content_hash=s["content_hash"],
+                        key=s.get("key", ""),
+                        source_type=s.get("source_type", "agents_md"),
+                        content=s.get("content", ""),
+                        content_hash=s.get("content_hash", ""),
                     )
-                    for s in epoch_raw.get("sources", [])
+                    for s in epoch_raw.get("sources", epoch_raw.get("l1_sources", []))
+                    if isinstance(s, dict) and s.get("key")
                 ],
+                source_hash=epoch_raw.get("source_hash", ""),
+                summary_hash=epoch_raw.get("summary_hash", ""),
+                l1_rendered=epoch_raw.get("l1_rendered", ""),
             )
         return ctx
 
@@ -270,7 +340,19 @@ class AgentContext:
             "epoch_id": epoch.epoch_id,
             "baseline_hash": epoch.baseline_hash,
             "system_messages": epoch.system_messages,
+            "source_hash": epoch.source_hash,
+            "summary_hash": epoch.summary_hash,
+            "l1_rendered": epoch.l1_rendered,
             "sources": [
+                {
+                    "key": s.key,
+                    "source_type": s.source_type,
+                    "content": s.content,
+                    "content_hash": s.content_hash,
+                }
+                for s in epoch.sources
+            ],
+            "l1_sources": [
                 {
                     "key": s.key,
                     "source_type": s.source_type,

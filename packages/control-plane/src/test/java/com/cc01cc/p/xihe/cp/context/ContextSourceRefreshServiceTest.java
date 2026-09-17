@@ -12,13 +12,8 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeContextSourceClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -26,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
+/** PLAN-0340: per-session first inject + replace semantics (workspace hash must not suppress). */
 class ContextSourceRefreshServiceTest extends AbstractH2Test {
 
     @Autowired
@@ -54,79 +50,86 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
     }
 
     @Test
-    void refreshAgentsMdExistsEmitsSourceChangedEvent() throws Exception {
+    void refreshAgentsMdExistsEmitsSourceChangedEvent() {
         String userId = UUID.randomUUID().toString();
         String sessionId = UUID.randomUUID().toString();
         Workspace ws = createWorkspace(userId);
         when(runtimeContextSourceClient.readAgents(anyString()))
                 .thenReturn(Optional.of("You are a helpful assistant."));
 
-        Optional<String> hash = refreshService.refresh(sessionId, ws.getId().toString(), userId);
+        String status = refreshService.refresh(sessionId, ws.getId().toString(), userId);
 
-        assertThat(hash).isPresent();
+        assertThat(status).isEqualTo(ContextSourceRefreshService.STATUS_CREATED);
         assertThat(eventStoreService.read(sessionId, 0L))
                 .singleElement()
                 .satisfies(event -> assertThat(event.getEventType()).isEqualTo("context.source_changed"));
     }
 
     @Test
-    void refreshAgentsMdMissingReturnsEmpty() {
+    void refreshAgentsMdMissingReturnsEmptyStatusWithoutEventWhenNeverHadSource() {
         String userId = UUID.randomUUID().toString();
         String sessionId = UUID.randomUUID().toString();
         Workspace ws = createWorkspace(userId);
         when(runtimeContextSourceClient.readAgents(anyString()))
                 .thenReturn(Optional.empty());
 
-        Optional<String> hash = refreshService.refresh(sessionId, ws.getId().toString(), userId);
+        String status = refreshService.refresh(sessionId, ws.getId().toString(), userId);
 
-        assertThat(hash).isEmpty();
+        assertThat(status).isEqualTo(ContextSourceRefreshService.STATUS_UNCHANGED);
         assertThat(eventStoreService.read(sessionId, 0L)).isEmpty();
     }
 
     @Test
-    void refreshAgentsMdUnchangedDoesNotEmitDuplicateEvent() {
+    void secondSessionWithSameContentStillGetsFirstInject() {
         String userId = UUID.randomUUID().toString();
         Workspace ws = createWorkspace(userId);
         when(runtimeContextSourceClient.readAgents(anyString()))
                 .thenReturn(Optional.of("You are a helpful assistant."));
 
         String firstSessionId = UUID.randomUUID().toString();
-        Optional<String> firstHash = refreshService.refresh(firstSessionId, ws.getId().toString(), userId);
-        assertThat(firstHash).isPresent();
-        assertThat(eventStoreService.read(firstSessionId, 0L))
-                .singleElement()
-                .satisfies(event -> assertThat(event.getEventType()).isEqualTo("context.source_changed"));
+        String first = refreshService.refresh(firstSessionId, ws.getId().toString(), userId);
+        assertThat(first).isEqualTo(ContextSourceRefreshService.STATUS_CREATED);
 
         String secondSessionId = UUID.randomUUID().toString();
-        Optional<String> secondHash = refreshService.refresh(secondSessionId, ws.getId().toString(), userId);
-        assertThat(secondHash).isPresent().isEqualTo(firstHash);
-        assertThat(eventStoreService.read(secondSessionId, 0L)).isEmpty();
-        assertThat(sourceHashRepository.findByWorkspaceIdAndSourceKey(ws.getId().toString(), "AGENTS.md"))
-                .isPresent()
-                .hasValueSatisfying(record -> assertThat(record.getHash()).isEqualTo(firstHash.get()));
-    }
-
-    @Test
-    void refreshAgentsMdChangedEmitsNewEventAndUpdatesHash() {
-        String userId = UUID.randomUUID().toString();
-        Workspace ws = createWorkspace(userId);
-        when(runtimeContextSourceClient.readAgents(anyString()))
-                .thenReturn(Optional.of("You are a helpful assistant."));
-
-        String firstSessionId = UUID.randomUUID().toString();
-        Optional<String> firstHash = refreshService.refresh(firstSessionId, ws.getId().toString(), userId);
-        assertThat(firstHash).isPresent();
-
-        when(runtimeContextSourceClient.readAgents(anyString()))
-                .thenReturn(Optional.of("You are a coding assistant."));
-        String secondSessionId = UUID.randomUUID().toString();
-        Optional<String> secondHash = refreshService.refresh(secondSessionId, ws.getId().toString(), userId);
-        assertThat(secondHash).isPresent().isNotEqualTo(firstHash);
+        String second = refreshService.refresh(secondSessionId, ws.getId().toString(), userId);
+        // Workspace hash matches, but session L1 is empty → must inject (I1).
+        // Status is updated (workspace row exists); created is also acceptable if row was cleared.
+        assertThat(second).isIn(ContextSourceRefreshService.STATUS_CREATED, ContextSourceRefreshService.STATUS_UPDATED);
         assertThat(eventStoreService.read(secondSessionId, 0L))
                 .singleElement()
                 .satisfies(event -> assertThat(event.getEventType()).isEqualTo("context.source_changed"));
-        assertThat(sourceHashRepository.findByWorkspaceIdAndSourceKey(ws.getId().toString(), "AGENTS.md"))
-                .isPresent()
-                .hasValueSatisfying(record -> assertThat(record.getHash()).isEqualTo(secondHash.get()));
+    }
+
+    @Test
+    void sameSessionUnchangedDoesNotDuplicateEvent() {
+        String userId = UUID.randomUUID().toString();
+        String sessionId = UUID.randomUUID().toString();
+        Workspace ws = createWorkspace(userId);
+        when(runtimeContextSourceClient.readAgents(anyString()))
+                .thenReturn(Optional.of("You are a helpful assistant."));
+
+        String first = refreshService.refresh(sessionId, ws.getId().toString(), userId);
+        assertThat(first).isEqualTo(ContextSourceRefreshService.STATUS_CREATED);
+        long afterFirst = eventStoreService.read(sessionId, 0L).size();
+
+        String second = refreshService.refresh(sessionId, ws.getId().toString(), userId);
+        assertThat(second).isEqualTo(ContextSourceRefreshService.STATUS_UNCHANGED);
+        assertThat(eventStoreService.read(sessionId, 0L)).hasSize((int) afterFirst);
+    }
+
+    @Test
+    void changedContentEmitsUpdated() {
+        String userId = UUID.randomUUID().toString();
+        String sessionId = UUID.randomUUID().toString();
+        Workspace ws = createWorkspace(userId);
+        when(runtimeContextSourceClient.readAgents(anyString()))
+                .thenReturn(Optional.of("You are a helpful assistant."));
+        refreshService.refresh(sessionId, ws.getId().toString(), userId);
+
+        when(runtimeContextSourceClient.readAgents(anyString()))
+                .thenReturn(Optional.of("You are a coding assistant."));
+        String status = refreshService.refresh(sessionId, ws.getId().toString(), userId);
+
+        assertThat(status).isEqualTo(ContextSourceRefreshService.STATUS_UPDATED);
     }
 }

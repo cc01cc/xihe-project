@@ -79,6 +79,7 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
     private final com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient;
     private final RunCheckpointService runCheckpointService;
+    private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
@@ -126,7 +127,8 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
             com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient,
-            RunCheckpointService runCheckpointService) {
+            RunCheckpointService runCheckpointService,
+            com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -150,6 +152,7 @@ public class ChatController {
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.runtimeExecutionClient = runtimeExecutionClient;
         this.runCheckpointService = runCheckpointService;
+        this.contextSourceRefreshService = contextSourceRefreshService;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -612,6 +615,16 @@ public class ChatController {
                     // remains the safety net.
                     logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_compaction_failed sessionId={} runId={} error={}",
                             sessionId, runId, gateError.getMessage());
+                }
+                // PLAN-0340 T1.1: per-run source refresh while activeRuns still
+                // serializes the session. Failures are fail-open inside refresh.
+                try {
+                    String sourceStatus = contextSourceRefreshService.refreshForRun(sessionId, workspaceId, userId);
+                    logger.info("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh sessionId={} runId={} status={}",
+                            sessionId, runId, sourceStatus);
+                } catch (Exception sourceError) {
+                    logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh_failed sessionId={} runId={} error={}",
+                            sessionId, runId, sourceError.getMessage());
                 }
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
                 ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))

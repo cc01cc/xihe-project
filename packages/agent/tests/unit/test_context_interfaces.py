@@ -143,6 +143,13 @@ def test_agent_context_apply_session_forked():
 def test_agent_context_apply_compaction():
     ctx = AgentContext.empty("session-1")
     ctx.messages.append(TextMessage(role="human", content="old"))
+    ctx.epoch = ContextEpoch(
+        epoch_id="e1",
+        baseline_hash="",
+        system_messages=[],
+        source_hash="keep-me",
+        l1_rendered="<system-reminder>rules</system-reminder>",
+    )
     event = Event(
         aggregate_id="session-1",
         sequence=10,
@@ -151,9 +158,43 @@ def test_agent_context_apply_compaction():
         created_at=datetime.now(UTC),
     )
     ctx.apply_event(event)
-    assert len(ctx.messages) == 1
+    # CP parity: summary prepended, keep-window retains recent messages.
     assert ctx.messages[0].role == "system"
     assert ctx.messages[0].content == "summary of conversation"
+    assert any(m.content == "old" for m in ctx.messages)
+    # PLAN-0340: L1 half survives compaction.
+    assert ctx.epoch is not None
+    assert ctx.epoch.source_hash == "keep-me"
+    assert ctx.epoch.l1_rendered == "<system-reminder>rules</system-reminder>"
+    assert any("summary of conversation" in s for s in ctx.epoch.system_messages)
+
+
+def test_agent_context_source_changed_replaces_l1_not_messages():
+    ctx = AgentContext.empty("session-1")
+    event = Event(
+        aggregate_id="session-1",
+        sequence=1,
+        type="context.source_changed",
+        payload={
+            "status": "created",
+            "source_hash": "h1",
+            "rendered_text": "<system-reminder>rules-v1</system-reminder>",
+            "sources": [
+                {
+                    "key": "AGENTS.md",
+                    "source_type": "agents_md",
+                    "content": "rules-v1",
+                    "content_hash": "h1",
+                }
+            ],
+        },
+        created_at=datetime.now(UTC),
+    )
+    ctx.apply_event(event)
+    assert len(ctx.messages) == 0
+    assert ctx.epoch is not None
+    assert ctx.epoch.source_hash == "h1"
+    assert "rules-v1" in ctx.epoch.l1_rendered
 
 
 def test_agent_context_from_events():

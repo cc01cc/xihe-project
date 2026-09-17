@@ -7,7 +7,9 @@
       "properties": {
         "softThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
         "hardThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
-        "keepRecentMessages": { "type": "integer", "minimum": 0, "maximum": 200 }
+        "keepRecentMessages": { "type": "integer", "minimum": 0, "maximum": 200 },
+        "agentsMdMaxBytes": { "type": "integer", "minimum": 1024, "maximum": 262144 },
+        "envMaxBytes": { "type": "integer", "minimum": 256, "maximum": 65536 }
       }
     },
     "models": {
@@ -20,7 +22,9 @@
           "tokenizerRef": { "type": "string" },
           "softThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
           "hardThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
-          "keepRecentMessages": { "type": "integer", "minimum": 0, "maximum": 200 }
+          "keepRecentMessages": { "type": "integer", "minimum": 0, "maximum": 200 },
+          "agentsMdMaxBytes": { "type": "integer", "minimum": 1024, "maximum": 262144 },
+          "envMaxBytes": { "type": "integer", "minimum": 256, "maximum": 65536 }
         }
       }
     }

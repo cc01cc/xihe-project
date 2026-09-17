@@ -106,16 +106,10 @@ public class ContextController {
         if (!verifyAccess(sessionId)) {
             return forbidden();
         }
-        Optional<String> hash = sourceRefreshService.refresh(
+        String status = sourceRefreshService.refresh(
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId));
-        if (hash.isPresent()) {
-            return ResponseEntity.ok(Map.of(
-                    "status", "refreshed",
-                "sourceKey", "AGENTS.md",
-                    "hash", hash.get()));
-        }
         return ResponseEntity.ok(Map.of(
-                "status", "unchanged",
+                "status", status,
                 "sourceKey", "AGENTS.md"));
     }
 
