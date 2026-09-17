@@ -99,7 +99,8 @@ public class ChatController {
      * workspace-bound effective pull; instance-only domains stay pull-only.
      */
     private static final List<String> AGENT_RUN_OVERRIDE_DOMAINS =
-        List.of("llm-provider", "agent-profile", "embedding", "rag", "agent-runtime");
+        List.of("llm-provider", "agent-profile", "embedding", "rag", "agent-runtime",
+                "context-policy");
 
     @Value("${cp.agent-url:http://localhost:12632/chat}")
     private String agentUrl;
@@ -707,54 +708,89 @@ public class ChatController {
                     agentRequest.put("attachments", agentAttachments);
                 }
 
-                HttpRequest.Builder agentRequestBuilder = HttpRequest.newBuilder(URI.create(agentUrl))
-                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                    .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
-                    .header("Authorization", "Bearer " + agentApiToken)
-                    .header("X-Request-Id", requestId)
-                    .header("X-Chat-Run-Id", runId)
-                    .header("X-User-Id", userId)
-                    .header("X-Workspace-Id", workspaceId)
-                    .header("X-Session-Id", sessionId);
-                if (operationId != null) {
-                    agentRequestBuilder.header("X-Operation-Id", operationId.toString());
-                }
-                HttpRequest agentRequestMessage = agentRequestBuilder
-                    .timeout(Duration.ofSeconds(30))
-                    .POST(HttpRequest.BodyPublishers.ofString(
-                        objectMapper.writeValueAsString(agentRequest), StandardCharsets.UTF_8))
-                    .build();
+                String agentRequestBody = objectMapper.writeValueAsString(agentRequest);
+                String agentOperationIdHeader = operationId != null ? operationId.toString() : null;
 
-                long startMs = System.currentTimeMillis();
-                HttpResponse<InputStream> response = agentHttpClient.send(
-                    agentRequestMessage,
-                    HttpResponse.BodyHandlers.ofInputStream()
-                );
-                long elapsedMs = System.currentTimeMillis() - startMs;
-
-                if (response.statusCode() >= 400) {
-                    String upstreamBody;
-                    try (InputStream errorBody = response.body()) {
-                        upstreamBody = new String(errorBody.readAllBytes(), StandardCharsets.UTF_8);
-                    }
-                    Map<?, ?> upstreamProblem = asMap(parsePayload("error", upstreamBody));
-                    String upstreamCode = safeErrorCode(stringValue(upstreamProblem, "code"));
-                    String detail = safeErrorDetail(upstreamCode);
-                    logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode={} upstreamStatus={} durationMs={}",
-                            requestId, sessionId, runId, upstreamCode, response.statusCode(), elapsedMs);
-                    healthMonitor.getAgentBreaker().recordFailure();
-                sendRunErrorAndDone(sessionId, requestId, runId, upstreamCode, detail, "error", terminalSent);
-                    return;
-                }
-
-                healthMonitor.getAgentBreaker().recordSuccess();
-                logger.info("[LIFECYCLE] service=cp event=chat_run_forwarded requestId={} sessionId={} runId={} status={} durationMs={}",
-                        requestId, sessionId, runId, response.statusCode(), elapsedMs);
+                // PLAN-0341 T1.1 (decision #2/#3): at-most-once overflow retry.
+                // On CONTEXT_OVERFLOW: force-compact (bypass cooldown) → preflight →
+                // re-dispatch the same runId before any terminal transition.
+                boolean overflowRetried = false;
                 StreamRelayResult relayResult;
-                try (InputStream agentStream = response.body()) {
-                    relayResult = relayAgentStream(
-                            sessionId, agentStream, requestId, runId, userId, workspaceId, terminalSent, approvalInFlight);
+
+                while (true) {
+                    HttpRequest.Builder dispatchBuilder = HttpRequest.newBuilder(URI.create(agentUrl))
+                        .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                        .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
+                        .header("Authorization", "Bearer " + agentApiToken)
+                        .header("X-Request-Id", requestId)
+                        .header("X-Chat-Run-Id", runId)
+                        .header("X-User-Id", userId)
+                        .header("X-Workspace-Id", workspaceId)
+                        .header("X-Session-Id", sessionId);
+                    if (agentOperationIdHeader != null) {
+                        dispatchBuilder.header("X-Operation-Id", agentOperationIdHeader);
+                    }
+                    if (overflowRetried) {
+                        dispatchBuilder.header("X-Overflow-Retry", "1");
+                    }
+                    HttpRequest agentRequestMessage = dispatchBuilder
+                        .timeout(Duration.ofSeconds(30))
+                        .POST(HttpRequest.BodyPublishers.ofString(agentRequestBody, StandardCharsets.UTF_8))
+                        .build();
+
+                    long startMs = System.currentTimeMillis();
+                    HttpResponse<InputStream> response = agentHttpClient.send(
+                        agentRequestMessage,
+                        HttpResponse.BodyHandlers.ofInputStream()
+                    );
+                    long elapsedMs = System.currentTimeMillis() - startMs;
+
+                    if (response.statusCode() >= 400) {
+                        String upstreamBody;
+                        try (InputStream errorBody = response.body()) {
+                            upstreamBody = new String(errorBody.readAllBytes(), StandardCharsets.UTF_8);
+                        }
+                        Map<?, ?> upstreamProblem = asMap(parsePayload("error", upstreamBody));
+                        String upstreamCode = safeErrorCode(stringValue(upstreamProblem, "code"));
+                        if ("CONTEXT_OVERFLOW".equals(upstreamCode) && !overflowRetried
+                                && tryOverflowRecovery(sessionId, workspaceId, userId, requestId, runId,
+                                        effectiveModel, terminalSent)) {
+                            overflowRetried = true;
+                            continue;
+                        }
+                        String detail = safeErrorDetail(upstreamCode);
+                        logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode={} upstreamStatus={} durationMs={}",
+                                requestId, sessionId, runId, upstreamCode, response.statusCode(), elapsedMs);
+                        healthMonitor.getAgentBreaker().recordFailure();
+                        sendRunErrorAndDone(sessionId, requestId, runId, upstreamCode, detail, "error", terminalSent);
+                        return;
+                    }
+
+                    healthMonitor.getAgentBreaker().recordSuccess();
+                    logger.info("[LIFECYCLE] service=cp event=chat_run_forwarded requestId={} sessionId={} runId={} status={} durationMs={}",
+                            requestId, sessionId, runId, response.statusCode(), elapsedMs);
+                    try (InputStream agentStream = response.body()) {
+                        relayResult = relayAgentStream(
+                                sessionId, agentStream, requestId, runId, userId, workspaceId, terminalSent,
+                                approvalInFlight, !overflowRetried);
+                    }
+
+                    if ("CONTEXT_OVERFLOW".equals(relayResult.errorCode()) && !overflowRetried) {
+                        terminalSent.set(false);
+                        if (tryOverflowRecovery(sessionId, workspaceId, userId, requestId, runId,
+                                effectiveModel, terminalSent)) {
+                            overflowRetried = true;
+                            continue;
+                        }
+                        logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=CONTEXT_OVERFLOW reason=preflight_failed",
+                                requestId, sessionId, runId);
+                        sendRunErrorAndDone(sessionId, requestId, runId, "CONTEXT_OVERFLOW",
+                                safeErrorDetail("CONTEXT_OVERFLOW"), "error", terminalSent);
+                        return;
+                    }
+                    break;
                 }
+
                 String assistantContent = relayResult.assistantContent();
                 logger.info("[LIFECYCLE] service=cp event=chat_run_finished requestId={} sessionId={} runId={} assistantChars={}",
                         requestId, sessionId, runId, assistantContent == null ? 0 : assistantContent.length());
@@ -825,6 +861,70 @@ public class ChatController {
             releaseRun(sessionId, runId, "worker_start_failed");
             throw e;
         }
+    }
+
+    /**
+     * PLAN-0341 T1.1: force-compact on overflow (bypass cooldown), emit U3,
+     * then preflight. Returns true when the caller should re-dispatch.
+     */
+    private boolean tryOverflowRecovery(String sessionId, String workspaceId, String userId,
+                                        String requestId, String runId, String model,
+                                        AtomicBoolean terminalSent) {
+        try {
+            Long maxInputTokens = resolveMaxInputTokens(userId, workspaceId, model);
+            contextService.compactForOverflow(sessionId, workspaceId, userId);
+            contextService.appendEvent(sessionId, workspaceId, userId, "context.overflow_retry", Map.of(
+                    "runId", runId == null ? "" : runId,
+                    "requestId", requestId == null ? "" : requestId,
+                    "maxInputTokens", maxInputTokens == null ? 0 : maxInputTokens));
+            sseManager.send(sessionId, "context_overflow_retry", Map.of(
+                    "type", "context_overflow_retry",
+                    "requestId", requestId == null ? "" : requestId,
+                    "runId", runId == null ? "" : runId,
+                    "message", "上下文超限，已压缩并重试一次"));
+            logger.info("[LIFECYCLE] service=cp event=chat_overflow_recovery sessionId={} runId={} maxInputTokens={}",
+                    sessionId, runId, maxInputTokens);
+            return contextService.preflightRetryAfterOverflow(sessionId, maxInputTokens);
+        } catch (Exception e) {
+            logger.error("[LIFECYCLE] service=cp event=chat_overflow_recovery_failed sessionId={} runId={}",
+                    sessionId, runId, e);
+            return false;
+        }
+    }
+
+    /**
+     * Resolve model window from context-policy (T1.6). Priority:
+     * models.&lt;model&gt;.maxInputTokens → defaults.maxInputTokens → null (caller falls back).
+     */
+    private Long resolveMaxInputTokens(String userId, String workspaceId, String model) {
+        try {
+            Map<String, String> domain = configService.resolveDomain(
+                    "context-policy", uuidOrNull(userId), uuidOrNull(workspaceId));
+            if (domain == null || domain.isEmpty()) {
+                return null;
+            }
+            if (model != null && !model.isBlank()) {
+                String modelsJson = domain.get("models");
+                if (modelsJson != null && !modelsJson.isBlank()) {
+                    var models = objectMapper.readTree(modelsJson);
+                    var modelNode = models.path(model);
+                    if (modelNode.hasNonNull("maxInputTokens")) {
+                        return modelNode.get("maxInputTokens").asLong();
+                    }
+                }
+            }
+            String defaultsJson = domain.get("defaults");
+            if (defaultsJson != null && !defaultsJson.isBlank()) {
+                var defaults = objectMapper.readTree(defaultsJson);
+                if (defaults.hasNonNull("maxInputTokens")) {
+                    return defaults.get("maxInputTokens").asLong();
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=context_policy_max_input_tokens_unresolved model={} error={}",
+                    model, e.getMessage());
+        }
+        return null;
     }
 
     private void sendRunErrorAndDone(String sessionId, String requestId, String runId,
@@ -911,7 +1011,8 @@ public class ChatController {
                     "LLM_MODEL_UNAVAILABLE", "AGENT_UNAVAILABLE", "AGENT_TIMEOUT",
                     "AGENT_CIRCUIT_OPEN", "AGENT_STREAM_FAILED", "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS",
                     "IDEMPOTENCY_KEY_CONFLICT", "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
-                    "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH" -> code;
+                    "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH",
+                    "CONTEXT_OVERFLOW" -> code;
             default -> "AGENT_UNAVAILABLE";
         };
     }
@@ -932,6 +1033,8 @@ public class ChatController {
             case "APPROVAL_EXECUTOR_UNSUPPORTED" -> "The selected agent executor does not support approval";
             case "APPROVAL_DECISION_CONFLICT" -> "Approval request already has a different decision";
             case "AGENT_EVENT_ID_MISMATCH" -> "Agent event does not match the active chat run";
+            // PLAN-0341 Q2 freeze (2026-09-17): second-overflow terminal copy.
+            case "CONTEXT_OVERFLOW" -> "上下文超限，已压缩并重试一次，仍超出限制";
             default -> "Agent service unavailable";
         };
     }
@@ -1117,7 +1220,8 @@ public class ChatController {
                                                String requestId, String runId,
                                                String userId, String workspaceId,
                                                AtomicBoolean terminalSent,
-                                               AtomicBoolean approvalInFlight) throws Exception {
+                                               AtomicBoolean approvalInFlight,
+                                               boolean suppressOverflowError) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
         Map<String, Integer> eventCounts = new LinkedHashMap<>();
         // PLAN-294 decision #13: real/estimated token totals from the agent's
@@ -1178,6 +1282,13 @@ public class ChatController {
                         String eventOutcome = stringValue(errorPayload, "outcome");
                         outcome = "ambiguous".equals(eventOutcome)
                                 ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
+                        // PLAN-0341: first overflow is consumed by the retry loop;
+                        // do not forward it as a user-facing terminal error.
+                        if (suppressOverflowError && "CONTEXT_OVERFLOW".equals(errorCode)) {
+                            eventName = "message";
+                            data.setLength(0);
+                            continue;
+                        }
                     } else if (isDone) {
                         Map<?, ?> donePayload = asMap(parsePayload(eventName, data.toString()));
                         String doneOutcome = stringValue(donePayload, "outcome");
@@ -1191,7 +1302,10 @@ public class ChatController {
                             outcome = doneOutcome;
                         }
                     }
-                    if (!isDone || terminalSent.compareAndSet(false, true)) {
+                    boolean suppressThisEvent = suppressOverflowError
+                            && "CONTEXT_OVERFLOW".equals(errorCode)
+                            && ("error".equals(eventName) || isDone);
+                    if (!suppressThisEvent && (!isDone || terminalSent.compareAndSet(false, true))) {
                         dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
                                 userId, workspaceId, runLedger);
                     }
@@ -1243,7 +1357,8 @@ public class ChatController {
                     outcome = doneOutcome;
                 }
             }
-            if (!isDone || terminalSent.compareAndSet(false, true)) {
+            boolean suppressTail = suppressOverflowError && "CONTEXT_OVERFLOW".equals(errorCode);
+            if (!suppressTail && (!isDone || terminalSent.compareAndSet(false, true))) {
                 dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
                         userId, workspaceId, runLedger);
             }
@@ -1251,10 +1366,13 @@ public class ChatController {
         if (!doneSeen) {
             logger.warn("[LIFECYCLE] service=cp event=chat_run_missing_done requestId={} sessionId={} runId={} errorCode=AGENT_DONE_MISSING",
                     requestId, sessionId, runId);
-            if (terminalSent.compareAndSet(false, true)) {
+            boolean suppressSyntheticDone = suppressOverflowError && "CONTEXT_OVERFLOW".equals(errorCode);
+            if (!suppressSyntheticDone && terminalSent.compareAndSet(false, true)) {
                 dispatchEvent(sessionId, "done", "{\"type\":\"done\",\"outcome\":\"ambiguous\",\"synthetic\":true}");
             }
-            outcome = "ambiguous";
+            if (!suppressSyntheticDone) {
+                outcome = "ambiguous";
+            }
             eventCounts.put("done", 1);
         }
         logger.info("[LIFECYCLE] service=cp event=chat_stream_relay_finished requestId={} sessionId={} runId={} tokenCount={} assistantChars={}",

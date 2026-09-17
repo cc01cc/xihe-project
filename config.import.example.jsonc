@@ -30,7 +30,25 @@
   },
 
   // context-policy — 上下文压缩策略（defaults/models 结构见 schema）
-  "context-policy": {},
+  // PLAN-0341 T1.6：prune/压缩键可配置。maxInputTokens = 模型总窗；
+  // pruneWindowChars = 旧工具输出保留窗（窗口外才裁剪，与模型总窗独立）。
+  // 大窗模型（256K/1M）可上调 pruneWindowChars 与 maxInputTokens。
+  "context-policy": {
+    "defaults": {
+      "softThresholdPct": 0.70,
+      "hardThresholdPct": 0.90,
+      "keepRecentMessages": 10,
+      "maxInputTokens": 131072,
+      "pruneWindowChars": 80000,
+      "recoveryBand": 0.8
+    },
+    "models": {
+      // 示例：按模型覆盖
+      // "deepseek-v4-flash": { "maxInputTokens": 131072, "pruneWindowChars": 80000 },
+      // "gpt-4o": { "maxInputTokens": 128000 },
+      // "claude-sonnet-4": { "maxInputTokens": 200000, "pruneWindowChars": 120000 }
+    }
+  },
 
   // approval-policy — 审批模式：**仅 workspace 层可写**，instance 层不提供该域
   // （写入会被 403 拒绝；平台管控改用 locked deny/ask 规则）。

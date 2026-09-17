@@ -96,6 +96,8 @@ public class ContextProjectionService {
             case "runtime.state_cleared" -> clearRuntimeState(context);
             case "session.forked" -> recordFork(context, payload);
             case "compaction.applied" -> applyCompaction(context, payload);
+            // PLAN-0341 T1.2: prune tombstones are durable anti-resurrection facts.
+            case "context.prune" -> applyPrune(context, payload);
             default -> logger.debug("Unhandled event type in projection: {}", type);
         }
         context.put("latest_sequence", sequence);
@@ -261,23 +263,89 @@ public class ContextProjectionService {
         metadata.set("forked_from", forkInfo);
     }
 
+    /**
+     * PLAN-0341 T1.2 (I5 anti-resurrection): apply prune tombstones in-place.
+     * Matching tool messages are replaced with the placeholder so replay or a
+     * changed window constant cannot resurrect the original content.
+     * Match key: sha256(content) — projected messages carry no tool_call_id.
+     */
+    private void applyPrune(ObjectNode context, ObjectNode payload) {
+        if (!payload.has("tombstones") || !payload.get("tombstones").isArray()) {
+            return;
+        }
+        ArrayNode messages = (ArrayNode) context.get("messages");
+        if (messages == null || messages.isEmpty()) {
+            return;
+        }
+        java.util.Set<String> prunedHashes = new java.util.HashSet<>();
+        for (var tombstone : payload.get("tombstones")) {
+            String hash = tombstone.path("content_hash").asText("");
+            if (!hash.isBlank()) {
+                prunedHashes.add(hash);
+            }
+        }
+        if (prunedHashes.isEmpty()) {
+            return;
+        }
+        int replaced = 0;
+        for (int i = 0; i < messages.size(); i++) {
+            var node = messages.get(i);
+            if (!node.isObject()) {
+                continue;
+            }
+            if (!"tool".equals(node.path("role").asText(""))) {
+                continue;
+            }
+            String content = node.path("content").asText("");
+            // Already a placeholder — leave it.
+            if (content.isBlank() || content.startsWith("[old tool result")) {
+                continue;
+            }
+            String hash = sha256Hex(content);
+            if (prunedHashes.contains(hash)) {
+                ((ObjectNode) node).put("content", "[old tool result cleared]");
+                ((ObjectNode) node).put("pruned", true);
+                replaced++;
+            }
+        }
+        if (replaced > 0) {
+            logger.info("Applied prune tombstones: replaced={} candidates={}", replaced, prunedHashes.size());
+        }
+    }
+
+    private static String sha256Hex(String data) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(data.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * PLAN-0341 T1.4 (V4): compaction writes SUM only. The summary lives in
+     * {@code epoch.system_messages} + {@code summary_hash}; {@code messages}
+     * is truncated to the keep-recent tail and never receives the summary
+     * (the old double-write put it at risk of the 20-item fuse, duplicate
+     * injection, and order drift). L1 / sources are preserved (PLAN-0340).
+     */
     private void applyCompaction(ObjectNode context, ObjectNode payload) {
         if (payload.has("summary")) {
-            String summary = payload.path("summary").asText();
             ArrayNode messages = (ArrayNode) context.get("messages");
-            int size = messages.size();
-            // PLAN-294 decision #7: the most recent K messages stay verbatim;
-            // only the pre-window history is replaced by the summary.
-            int keepFrom = Math.max(0, size - ContextService.KEEP_RECENT_MESSAGES);
-            ObjectNode summaryMessage = objectMapper.createObjectNode();
-            summaryMessage.put("role", "system");
-            summaryMessage.put("content", summary);
-            ArrayNode kept = objectMapper.createArrayNode();
-            kept.add(summaryMessage);
-            for (int i = keepFrom; i < size; i++) {
-                kept.add(messages.get(i));
+            if (messages != null) {
+                int size = messages.size();
+                int keepFrom = Math.max(0, size - ContextService.KEEP_RECENT_MESSAGES);
+                ArrayNode kept = objectMapper.createArrayNode();
+                for (int i = keepFrom; i < size; i++) {
+                    kept.add(messages.get(i));
+                }
+                context.set("messages", kept);
             }
-            context.set("messages", kept);
         }
         // PLAN-0340: compaction writes SUM only; must not wipe L1 (source_hash / l1_*).
         ObjectNode epoch = (ObjectNode) context.get("epoch");

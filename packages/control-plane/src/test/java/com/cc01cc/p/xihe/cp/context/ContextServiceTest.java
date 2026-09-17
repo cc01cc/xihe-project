@@ -28,6 +28,9 @@ class ContextServiceTest extends AbstractH2Test {
     @Autowired
     private ContextProjectionService projectionService;
 
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository approvalRepository;
+
     @Test
     void forkCreatesNewSessionWithForkedEvent() {
         String sourceSessionId = "aaaaaaa7-0000-0000-0000-000000000000";
@@ -105,13 +108,14 @@ class ContextServiceTest extends AbstractH2Test {
         var snapshot = projectionService.project(sessionId, 0L);
         assertThat(snapshot.get("latest_sequence").asLong()).isEqualTo(4L);
         var messages = snapshot.get("messages");
-        // PLAN-294 decision #7: summary first, then the keep-recent tail.
-        // Both prior messages are inside the K=10 window, so they survive.
-        assertThat(messages).hasSize(3);
-        assertThat(messages.get(0).get("role").asText()).isEqualTo("system");
-        assertThat(messages.get(0).get("content").asText()).contains("[Goal]");
-        assertThat(messages.get(1).get("content").asText()).isEqualTo("hello");
-        assertThat(messages.get(2).get("content").asText()).isEqualTo("world");
+        // PLAN-0341 T1.4 (V4): summary lives only in SUM (epoch.system_messages).
+        // messages is keep-recent only — no summary system message.
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).get("content").asText()).isEqualTo("hello");
+        assertThat(messages.get(1).get("content").asText()).isEqualTo("world");
+        var epoch = snapshot.get("epoch");
+        assertThat(epoch.get("system_messages").toString()).contains("[Goal]");
+        assertThat(epoch.get("summary_hash").asText()).isNotBlank();
     }
 
     @Test
@@ -149,6 +153,235 @@ class ContextServiceTest extends AbstractH2Test {
         for (int i = 0; i < 60; i++) {
             contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
                     "message", Map.of("role", "human", "content", "m" + i)));
+        }
+        assertThat(contextService.shouldAutoCompact(sessionId)).isTrue();
+    }
+
+    @Test
+    void overflowCompaction_clearsCooldownGate() {
+        // PLAN-0341 decision #3: overflow-forced compaction tags trigger=overflow
+        // and the next shouldAutoCompact must not be blocked by cooldown.
+        String sessionId = "aaaaaaaf-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        for (int i = 0; i < 60; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "m" + i)));
+        }
+        com.cc01cc.p.xihe.cp.context.entity.ContextEvent overflowEvent =
+                contextService.compactForOverflow(sessionId, TEST_WS, TEST_USER);
+        assertThat(overflowEvent.getEventType()).isEqualTo("compaction.applied");
+
+        // Stay inside the 10-event cooldown window, then raise the token signal
+        // so the gate would fire if (and only if) cooldown is cleared.
+        for (int i = 0; i < 3; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "n" + i)));
+        }
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "llm.usage", Map.of(
+                "usage", Map.of("inputTokens", 100_000L, "windowTokens", 128_000L)));
+        assertThat(contextService.shouldAutoCompact(sessionId)).isTrue();
+    }
+
+    @Test
+    void normalCompaction_cooldownStillBlocks() {
+        // Control for overflowCompaction_clearsCooldownGate: a normal compact
+        // keeps the cooldown gate armed.
+        String sessionId = "aaaaaabc-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        for (int i = 0; i < 60; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "m" + i)));
+        }
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+        for (int i = 0; i < 3; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "n" + i)));
+        }
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "llm.usage", Map.of(
+                "usage", Map.of("inputTokens", 100_000L, "windowTokens", 128_000L)));
+        assertThat(contextService.shouldAutoCompact(sessionId)).isFalse();
+    }
+
+    @Test
+    void preflightRetryAfterOverflow_usesConfiguredWindow() {
+        // PLAN-0341 T1.1: preflight must respect configured maxInputTokens.
+        // Tiny window → estimate still over the limit → do not retry.
+        String sessionId = "aaaaaabb-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        // Large content so the chars/4 estimate is meaningful.
+        StringBuilder big = new StringBuilder();
+        for (int i = 0; i < 200; i++) {
+            big.append("x".repeat(200));
+        }
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", big.toString())));
+        contextService.compactForOverflow(sessionId, TEST_WS, TEST_USER);
+
+        // 8K window: estimate (~200*200/4 = 10_000 tokens) exceeds 8K*0.7*1.1.
+        assertThat(contextService.preflightRetryAfterOverflow(sessionId, 8_000L)).isFalse();
+        // 1M window: estimate fits comfortably.
+        assertThat(contextService.preflightRetryAfterOverflow(sessionId, 1_000_000L)).isTrue();
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0341 T1.3: carry-forward, shrink validation, recovery band
+    // ------------------------------------------------------------------
+
+    @Test
+    void summaryCarryForward_dedupsFilesAndKeepsGoal() {
+        String sessionId = "aaaaaacc-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "fix src/App.vue please")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "assistant.responded", Map.of(
+                "message", Map.of("role", "ai", "content", "editing src/App.vue and src/main.ts")));
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+        var first = contextService.readEvents(sessionId, 0L).stream()
+                .filter(e -> "compaction.applied".equals(e.getEventType()))
+                .findFirst().orElseThrow();
+        String firstSummary;
+        try {
+            firstSummary = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(first.getPayload()).path("summary").asText();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        assertThat(firstSummary).contains("[Goal]");
+        assertThat(firstSummary).contains("src/App.vue");
+        assertThat(firstSummary).doesNotContain("[Decisions]");
+
+        // Second compact: files must still appear exactly once in [Files&Artifacts].
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "now touch src/App.vue again")));
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+        var second = contextService.readEvents(sessionId, 0L).stream()
+                .filter(e -> "compaction.applied".equals(e.getEventType()))
+                .reduce((a, b) -> b).orElseThrow();
+        String secondSummary;
+        try {
+            secondSummary = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(second.getPayload()).path("summary").asText();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        // Carry-forward / truncation both keep the file reference.
+        assertThat(secondSummary).contains("src/App.vue");
+    }
+
+    @Test
+    void shrinkValidation_alwaysLeavesAppliedEvent() {
+        String sessionId = "aaaaaadd-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        for (int i = 0; i < 15; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "turn " + i + " " + "y".repeat(200))));
+        }
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+        for (int i = 0; i < 15; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "more " + i)));
+        }
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+
+        var events = contextService.readEvents(sessionId, 0L);
+        assertThat(events.stream()
+                .anyMatch(e -> "compaction.applied".equals(e.getEventType()))).isTrue();
+    }
+
+    @org.junit.jupiter.api.Test
+    void constraints_extractedVerbatimFromUserMessagesAndApprovals() {
+        // PLAN-0341 T1.5 (I6): explicit user constraints + decided approvals
+        // land in [Constraints] verbatim; hardcoded [Decisions] is gone.
+        String sessionId = "aaaaaaff-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human",
+                        "content", "请修改代码。不要动 production 配置，必须先确认再提交。")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "assistant.responded", Map.of(
+                "message", Map.of("role", "ai", "content", "ok, only touching src/")));
+
+        // Decided approval row.
+        var approval = new com.cc01cc.p.xihe.cp.entity.ChatApproval(
+                java.util.UUID.randomUUID().toString(),
+                "aaaaa000-0000-0000-0000-000000000001", sessionId, TEST_USER, TEST_WS,
+                "write_file", "src/App.vue", "{}", "approved",
+                java.time.Instant.now().plusSeconds(3600));
+        approval.setApproved(true);
+        approvalRepository.save(approval);
+
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+        var event = contextService.readEvents(sessionId, 0L).stream()
+                .filter(e -> "compaction.applied".equals(e.getEventType()))
+                .findFirst().orElseThrow();
+        String summary;
+        try {
+            summary = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(event.getPayload()).path("summary").asText();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        assertThat(summary).doesNotContain("[Decisions]");
+        assertThat(summary).contains("[Constraints]");
+        assertThat(summary).contains("不要动 production 配置");
+        assertThat(summary).contains("[approved] write_file");
+    }
+
+    @Test
+    void recoveryBand_opensCircuitWhenResidualStaysHigh() {
+        // PLAN-0341 T1.3 I3: when keep-recent itself is huge, residual stays
+        // above recoveryBand × soft threshold → circuit opens and auto is paused.
+        String sessionId = "aaaaaaee-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        // Window 60K tokens → bandLimit = 60K * 0.7 * 0.8 = 33600 tokens ≈ 134400 chars.
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "llm.usage", Map.of(
+                "usage", Map.of("inputTokens", 50_000L, "windowTokens", 60_000L)));
+        // Fill volume so the gate would otherwise fire, with a giant keep-recent tail.
+        for (int i = 0; i < 55; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "m" + i)));
+        }
+        // Last messages sit inside KEEP_RECENT_MESSAGES and stay verbatim after
+        // compaction — residual therefore remains above the recovery band.
+        for (int i = 0; i < 8; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "G".repeat(20_000))));
+        }
+
+        contextService.compactForOverflow(sessionId, TEST_WS, TEST_USER);
+
+        var events = contextService.readEvents(sessionId, 0L);
+        boolean circuitOpen = events.stream().anyMatch(e ->
+                "context.compaction_circuit".equals(e.getEventType())
+                        && e.getPayload().contains("open"));
+        assertThat(circuitOpen).isTrue();
+        assertThat(contextService.shouldAutoCompact(sessionId)).isFalse();
+
+        // Growth past the residual recorded at open (×1.15) closes the circuit.
+        // Push more verbatim keep-recent content so the estimate grows.
+        for (int i = 0; i < 6; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "H".repeat(20_000))));
         }
         assertThat(contextService.shouldAutoCompact(sessionId)).isTrue();
     }

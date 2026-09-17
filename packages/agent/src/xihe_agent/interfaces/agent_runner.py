@@ -43,6 +43,8 @@ class RunnerConfig:
     # PLAN-290 M0.3: when set, stream() must observe it and terminate the
     # LangGraph run, emitting error(code=cancelled) before usage.
     cancel_event: asyncio.Event | None = None
+    # PLAN-0341 T1.6: fixed cumulative chars of tool results to keep before prune.
+    prune_window_chars: int = 80_000
 
 
 class AgentRunner(ABC):

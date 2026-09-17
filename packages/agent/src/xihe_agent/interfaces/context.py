@@ -131,23 +131,28 @@ class AgentContext:
                 "at_sequence": payload.get("at_sequence"),
             }
         elif event_type == "compaction.applied":
-            # Keep SUM in epoch; rewrite messages like CP projection (summary + keep window).
-            summary = payload.get("summary", "")
+            # PLAN-0341 T1.4 (V4): summary lives only in epoch.system_messages
+            # (SUM). messages is truncated to the keep-recent tail — never
+            # receives the summary (no double-write).
             keep_from = max(0, len(self.messages) - 10)
-            self.messages = [TextMessage(role="system", content=summary), *self.messages[keep_from:]]
+            self.messages = list(self.messages[keep_from:])
             prev = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])
             self.epoch = ContextEpoch(
                 epoch_id=payload.get("contextEpoch", prev.epoch_id),
                 baseline_hash=prev.baseline_hash,
                 system_messages=[
                     "Conversation summary of compacted history:",
-                    summary,
+                    payload.get("summary", ""),
                 ],
                 sources=prev.sources,
                 source_hash=prev.source_hash,
                 summary_hash=payload.get("summaryHash", ""),
                 l1_rendered=prev.l1_rendered,
             )
+        elif event_type == "context.prune":
+            # PLAN-0341 T1.2: anti-resurrection — replace matching tool results
+            # with the placeholder so replay cannot restore pruned content.
+            self._apply_prune_tombstones(payload)
         elif event_type == "context.env_updated":
             prev = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])
             self.epoch = ContextEpoch(
@@ -240,6 +245,27 @@ class AgentContext:
             content = payload["token"]
         if content:
             self.messages.append(TextMessage(role=role, content=content))
+
+    def _apply_prune_tombstones(self, payload: dict[str, Any]) -> None:
+        import hashlib
+
+        tombstones = payload.get("tombstones") or []
+        if not tombstones:
+            return
+        pruned_hashes = {
+            t.get("content_hash", "")
+            for t in tombstones
+            if isinstance(t, dict) and t.get("content_hash")
+        }
+        if not pruned_hashes:
+            return
+        placeholder = "[old tool result cleared]"
+        for i, msg in enumerate(self.messages):
+            if msg.role != "tool" or msg.content == placeholder:
+                continue
+            digest = hashlib.sha256(msg.content.encode("utf-8", errors="replace")).hexdigest()
+            if digest in pruned_hashes:
+                self.messages[i] = TextMessage(role="tool", content=placeholder)
 
     def _apply_source_changed(self, payload: dict[str, Any]) -> None:
         status = payload.get("status", "updated")

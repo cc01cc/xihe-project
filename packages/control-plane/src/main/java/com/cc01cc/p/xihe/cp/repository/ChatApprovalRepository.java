@@ -28,6 +28,10 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
     List<ChatApproval> findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
             String sessionId, String userId, String workspaceId, Collection<String> states);
 
+    /** PLAN-0341 T1.5: decided approvals for SC constraint extraction. */
+    List<ChatApproval> findBySessionIdAndStateInOrderByCreatedAtDesc(
+            String sessionId, Collection<String> states);
+
     /** Cross-session live approval/retry view; callers choose actionable states explicitly. */
     List<ChatApproval> findByUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(
             String userId, String workspaceId, Collection<String> states);

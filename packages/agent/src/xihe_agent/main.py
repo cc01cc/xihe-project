@@ -523,6 +523,22 @@ async def reload_runtime_config(reason: str) -> dict[str, Any]:
         USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
         USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
         _agent_status = "ok" if staged_ready == "ready" else "degraded"
+        # PLAN-0341 T1.6: rebuild TokenCounter when tokenizerRef is configured.
+        global _token_counter
+        try:
+            default_model = staged_llm_config.model if staged_llm_config else None
+            policy = _resolve_policy_for_model(default_model)
+            if policy.tokenizer_ref:
+                _token_counter = TokenCounter(
+                    tokenizer_ref=policy.tokenizer_ref, model=default_model
+                )
+                logger.info(
+                    "[LIFECYCLE] service=agent event=tokenizer_ref_applied ref={} model={}",
+                    policy.tokenizer_ref,
+                    default_model,
+                )
+        except Exception as e:
+            logger.warning("Failed to apply tokenizerRef from context-policy: {}", e)
 
         logger.info(
             "[LIFECYCLE] service=agent event=runtime_config_swapped reason={} revision={} llmReady={} provider={} model={} verifiedAt={}",
@@ -751,9 +767,40 @@ async def internal_problem_handler(request: Request, exc: Exception) -> JSONResp
 _token_counter = TokenCounter()
 
 
-def _model_window_tokens(model: str | None) -> int:
-    """Best-effort model context window (decision #11). model_cost first;
-    the 3-tier contextPolicy maxInputTokens override lands with F1 config."""
+def _resolve_policy_for_model(
+    model: str | None,
+    user_overrides: dict[str, dict[str, str]] | None = None,
+    workspace_overrides: dict[str, dict[str, str]] | None = None,
+):
+    """PLAN-0341 T1.6: effective context-policy for this run."""
+    from xihe_agent.context_policy import resolve_context_policy
+
+    entries = dict(config_client.get_domain("context-policy"))
+    if user_overrides:
+        entries.update(user_overrides.get("context-policy", {}))
+    if workspace_overrides:
+        entries.update(workspace_overrides.get("context-policy", {}))
+    policy = resolve_context_policy(model, entries)
+    logger.info(
+        "[LIFECYCLE] service=agent event=context_policy_resolved model={} source={} maxInputTokens={} pruneWindowChars={} recoveryBand={}",
+        model,
+        policy.source,
+        policy.max_input_tokens,
+        policy.prune_window_chars,
+        policy.recovery_band,
+    )
+    return policy
+
+
+def _model_window_tokens(
+    model: str | None,
+    user_overrides: dict[str, dict[str, str]] | None = None,
+    workspace_overrides: dict[str, dict[str, str]] | None = None,
+) -> int:
+    """PLAN-0341 T1.6: config maxInputTokens overrides litellm static table."""
+    policy = _resolve_policy_for_model(model, user_overrides, workspace_overrides)
+    if policy.max_input_tokens:
+        return policy.max_input_tokens
     if not model:
         return 0
     try:
@@ -1103,6 +1150,11 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                     tools=all_tools,
                     context=context,
                     cancel_event=cancel_event,
+                    prune_window_chars=_resolve_policy_for_model(
+                        model_override or request_config.model,
+                        user_overrides,
+                        workspace_overrides,
+                    ).prune_window_chars,
                 )
 
                 llm_request_started = True
@@ -1170,7 +1222,9 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         # PLAN-294 M3 (decision #5): the model window rides
                         # along so the CP compaction gate can evaluate the
                         # percentage threshold without a config dependency.
-                        usage_data["windowTokens"] = _model_window_tokens(request_config.model)
+                        usage_data["windowTokens"] = _model_window_tokens(
+                            request_config.model, user_overrides, workspace_overrides
+                        )
                         yield render_sse("usage", correlated_data({"usage": usage_data}))
                     else:
                         yield render_sse(event.type, correlated_data(event.data))

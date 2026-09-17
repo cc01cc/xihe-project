@@ -142,7 +142,8 @@ def test_agent_context_apply_session_forked():
 
 def test_agent_context_apply_compaction():
     ctx = AgentContext.empty("session-1")
-    ctx.messages.append(TextMessage(role="human", content="old"))
+    for i in range(12):
+        ctx.messages.append(TextMessage(role="human", content=f"turn-{i}"))
     ctx.epoch = ContextEpoch(
         epoch_id="e1",
         baseline_hash="",
@@ -154,18 +155,22 @@ def test_agent_context_apply_compaction():
         aggregate_id="session-1",
         sequence=10,
         type="compaction.applied",
-        payload={"summary": "summary of conversation"},
+        payload={"summary": "summary of conversation", "summaryHash": "h1"},
         created_at=datetime.now(UTC),
     )
     ctx.apply_event(event)
-    # CP parity: summary prepended, keep-window retains recent messages.
-    assert ctx.messages[0].role == "system"
-    assert ctx.messages[0].content == "summary of conversation"
-    assert any(m.content == "old" for m in ctx.messages)
+    # PLAN-0341 T1.4 (V4): summary is SUM-only — never injected into messages.
+    assert all(m.role != "system" or "summary of conversation" not in m.content
+               for m in ctx.messages)
+    assert all(m.content != "summary of conversation" for m in ctx.messages)
+    # Keep-recent tail is retained verbatim.
+    assert any(m.content == "turn-11" for m in ctx.messages)
+    assert not any(m.content == "turn-0" for m in ctx.messages)
     # PLAN-0340: L1 half survives compaction.
     assert ctx.epoch is not None
     assert ctx.epoch.source_hash == "keep-me"
     assert ctx.epoch.l1_rendered == "<system-reminder>rules</system-reminder>"
+    assert ctx.epoch.summary_hash == "h1"
     assert any("summary of conversation" in s for s in ctx.epoch.system_messages)
 
 

@@ -121,15 +121,67 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         ObjectNode ctx = projectionService.project(sessionId, 0L);
 
         var messages = ctx.get("messages");
-        // PLAN-294 decision #7: summary + keep-recent tail. "old turn" sits
-        // inside the K=10 window, so the projection is summary + old + new.
-        assertThat(messages).hasSize(3);
-        assertThat(messages.get(0).get("role").asText()).isEqualTo("system");
-        assertThat(messages.get(0).get("content").asText()).contains("[Goal] old turn");
-        assertThat(messages.get(1).get("content").asText()).isEqualTo("old turn");
-        assertThat(messages.get(2).get("content").asText()).isEqualTo("new turn after compaction");
+        // PLAN-0341 T1.4 (V4): summary is SUM-only. messages keeps recent turns
+        // verbatim (old + new both inside K=10) with no summary system message.
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).get("content").asText()).isEqualTo("old turn");
+        assertThat(messages.get(1).get("content").asText()).isEqualTo("new turn after compaction");
         // PLAN-294 M2 fix: the epoch must surface for the runner.
         assertThat(ctx.get("epoch").get("epoch_id").asText()).isNotBlank();
         assertThat(ctx.get("epoch").get("system_messages").toString()).contains("[Goal] old turn");
+        assertThat(ctx.get("epoch").get("summary_hash").asText()).isNotBlank();
+    }
+
+    @Test
+    void pruneTombstonesReplaceMatchingToolResults() {
+        // PLAN-0341 T1.2 / I5: context.prune tombstones must replace the
+        // matching tool result in-place so replay cannot resurrect content.
+        String sessionId = "aaaaaaa9-0000-0000-0000-000000000000";
+        String toolContent = "giant tool output that was pruned";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "run the tool")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "result", toolContent,
+                "call_id", "call-1"
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "continue")
+        ));
+
+        // sha256 of toolContent (same algorithm as Agent/CP).
+        String hash;
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] h = digest.digest(toolContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            hash = java.util.HexFormat.of().formatHex(h);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "context.prune", Map.of(
+                "tombstones", java.util.List.of(Map.of(
+                        "tool_call_id", "call-1",
+                        "content_hash", hash,
+                        "size", toolContent.length(),
+                        "head", toolContent.substring(0, Math.min(120, toolContent.length())),
+                        "tail", "",
+                        "pruned", true,
+                        "reason", "oversized"
+                )),
+                "pruned_count", 1
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        boolean foundPlaceholder = false;
+        for (var msg : messages) {
+            if ("tool".equals(msg.path("role").asText())) {
+                assertThat(msg.path("content").asText()).isEqualTo("[old tool result cleared]");
+                assertThat(msg.path("pruned").asBoolean()).isTrue();
+                foundPlaceholder = true;
+            }
+        }
+        assertThat(foundPlaceholder).isTrue();
     }
 }

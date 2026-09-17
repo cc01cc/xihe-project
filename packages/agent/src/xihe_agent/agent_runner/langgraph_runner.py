@@ -1,7 +1,9 @@
 """LangGraph-based AgentRunner implementation."""
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -30,55 +32,130 @@ from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 from xihe_agent.interfaces.usage import RunUsage
 
-# PLAN-294 decision #8: assembly-layer backstop. The projection snapshot may
-# exceed the target window before auto-compaction has ever run; truncate to
-# the most recent N historical messages (plus the current turn) so a single
-# request cannot blow the window. Normal sessions never hit this — compaction
-# is the real governance; this is the fuse.
+# PLAN-0341 T1.2: assembly-layer fuse only — prune is the real governance.
+# Truncation must never orphan a tool result (window start lands on a tool
+# message → walk back so the preceding call stays paired).
 HISTORY_TRUNCATION_LIMIT = 20
 
-# PLAN-294 decision #17 (cheapest-first masking): historical tool results are
-# the token-dominant bulk of a coding-agent history. Masking (placeholder
-# swap) beats LLM summarization on cost and trajectory quality (JetBrains,
-# 500 SWE-bench instances). Rules:
+# PLAN-294 #17 / PLAN-0341 T1.2: cheapest-first prune of historical tool
+# results. Rules (decision #30/#47/#60):
 #   - only history OUTSIDE the keep-recent tail is eligible;
-#   - eligible tool messages are masked when byte-identical duplicates of an
-#     earlier tool result or longer than TOOL_RESULT_MASK_CHARS;
-#   - a tool message is NEVER masked when its call is inside the window and
-#     the result message carries no tool_call_id pairing info (v1 snapshot
-#     pairs by adjacency) — pairs are masked or kept together.
+#   - eligible tool messages are pruned when byte-identical duplicates of an
+#     earlier tool result, longer than TOOL_RESULT_MASK_CHARS, or outside the
+#     fixed cumulative prune window (pruneWindowChars);
+#   - tool call/result pairing is never broken (adjacency pairs).
 MASK_PLACEHOLDER = "[old tool result cleared]"
 TOOL_RESULT_MASK_CHARS = 2000
 KEEP_RECENT_TAIL = 10
+# Fixed (non-sliding) cumulative chars of tool-result content to keep.
+# Configurable via context-policy.pruneWindowChars (T1.6); this is the code default.
+DEFAULT_PRUNE_WINDOW_CHARS = 80_000
 
 
-def _mask_history_tool_results(history: list[Message]) -> list[Message]:
-    """Return history with stale oversized/duplicate tool results masked."""
+@dataclass
+class PruneTombstone:
+    """PLAN-0341 Q3 freeze: durable record of a pruned tool result."""
+
+    content_hash: str
+    size: int
+    head: str
+    tail: str
+    reason: str
+    tool_call_id: str = ""
+    pruned: bool = True
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "tool_call_id": self.tool_call_id,
+            "content_hash": self.content_hash,
+            "size": self.size,
+            "head": self.head,
+            "tail": self.tail,
+            "pruned": self.pruned,
+            "reason": self.reason,
+        }
+
+
+@dataclass
+class PruneResult:
+    messages: list[Message]
+    tombstones: list[PruneTombstone] = field(default_factory=list)
+
+
+def _content_head_tail(content: str, limit: int = 120) -> tuple[str, str]:
+    if len(content) <= limit:
+        return content, ""
+    return content[:limit], content[-limit:]
+
+
+def _align_truncation_start(history: list[Message], limit: int) -> int:
+    """Window start that never orphans a tool result (T1.2 fuse rule)."""
+    start = max(0, len(history) - limit)
+    # Walk back while the slice would begin on a tool message so its preceding
+    # call (adjacency pair) stays inside the window.
+    while start > 0 and start < len(history) and history[start].role == "tool":
+        start -= 1
+    return start
+
+
+def prune_history_tool_results(
+    history: list[Message],
+    prune_window_chars: int = DEFAULT_PRUNE_WINDOW_CHARS,
+) -> PruneResult:
+    """Prune stale oversized/duplicate/window-overflow tool results.
+
+    Returns the pruned view plus tombstones for every pruned result so the
+    operation is a durable, replayable fact (PLAN-0341 I5).
+    """
     size = len(history)
     if size <= KEEP_RECENT_TAIL:
-        return list(history)
+        return PruneResult(messages=list(history))
     window_start = size - KEEP_RECENT_TAIL
     seen_contents: set[str] = set()
-    masked_indexes: set[int] = set()
-    # First pass: decide eligibility (keep-recent tail is never masked).
+    # Index → reason. Oldest eligible tool results are pruned first when the
+    # cumulative kept size exceeds the fixed prune window.
+    prune_reasons: dict[int, str] = {}
+    kept_tool_chars = 0
     for i, msg in enumerate(history):
         if msg.role != "tool" or i >= window_start:
             continue
         duplicated = msg.content in seen_contents
         oversized = len(msg.content) > TOOL_RESULT_MASK_CHARS
-        if duplicated or oversized:
-            masked_indexes.add(i)
+        if duplicated:
+            prune_reasons[i] = "duplicate"
+        elif oversized:
+            prune_reasons[i] = "oversized"
+        else:
+            kept_tool_chars += len(msg.content)
+            if kept_tool_chars > prune_window_chars:
+                prune_reasons[i] = "window"
         seen_contents.add(msg.content)
-    if not masked_indexes:
-        return list(history)
-    # Second pass: emit, swapping masked results for the placeholder.
+    if not prune_reasons:
+        return PruneResult(messages=list(history))
+    tombstones: list[PruneTombstone] = []
     result: list[Message] = []
     for i, msg in enumerate(history):
-        if i in masked_indexes:
+        if i in prune_reasons:
+            digest = hashlib.sha256(msg.content.encode("utf-8", errors="replace")).hexdigest()
+            head, tail = _content_head_tail(msg.content)
+            tool_call_id = getattr(msg, "tool_call_id", "") or ""
+            tombstones.append(PruneTombstone(
+                content_hash=digest,
+                size=len(msg.content),
+                head=head,
+                tail=tail,
+                reason=prune_reasons[i],
+                tool_call_id=tool_call_id,
+            ))
             result.append(TextMessage(role="tool", content=MASK_PLACEHOLDER))
         else:
             result.append(msg)
-    return result
+    return PruneResult(messages=result, tombstones=tombstones)
+
+
+# Back-compat alias used by existing unit tests (PLAN-294 surface).
+def _mask_history_tool_results(history: list[Message]) -> list[Message]:
+    return prune_history_tool_results(history).messages
 
 
 _JSON_SCHEMA_TYPES: dict[str, Any] = {
@@ -315,10 +392,19 @@ class LangGraphRunner(AgentRunner):
         # conversation history (compaction already applied by CP). The caller's
         # `messages` list carries only the current turn's prompt; historical
         # turns come from the snapshot so multi-turn context reaches the LLM.
-        history = context.messages
+        history = list(context.messages)
+        # PLAN-0341 T1.2: assembly fuse only — never orphan a tool result.
         if len(history) > HISTORY_TRUNCATION_LIMIT:
-            history = history[-HISTORY_TRUNCATION_LIMIT:]
-        history = _mask_history_tool_results(history)
+            fuse_start = _align_truncation_start(history, HISTORY_TRUNCATION_LIMIT)
+            history = history[fuse_start:]
+        # PLAN-0341 T1.2: prune is the real shrinkage; emit tombstones as
+        # durable facts so replay cannot resurrect pruned content.
+        prune_result = prune_history_tool_results(
+            history, prune_window_chars=getattr(config, "prune_window_chars", DEFAULT_PRUNE_WINDOW_CHARS)
+        )
+        history = prune_result.messages
+        if prune_result.tombstones:
+            await self._append_prune_event(context, prune_result.tombstones)
         assembled = [*history, *messages]
 
         system_messages = self._build_system_messages(config, context)
@@ -471,6 +557,32 @@ class LangGraphRunner(AgentRunner):
                 )
             except Exception as e:
                 logger.warning("Failed to append prompt.admitted event: {}", e)
+
+    async def _append_prune_event(self, context: AgentContext, tombstones: list[PruneTombstone]) -> None:
+        """PLAN-0341 T1.2/I5: eventize prune as durable tombstones."""
+        if self._event_store is None or not tombstones:
+            return
+        try:
+            await self._event_store.append(
+                Event(
+                    aggregate_id=context.aggregate_id,
+                    sequence=0,
+                    type="context.prune",
+                    payload={
+                        "tombstones": [t.to_payload() for t in tombstones],
+                        "pruned_count": len(tombstones),
+                        "runId": context.metadata.get("runId"),
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
+            logger.info(
+                "Prune applied: count={} reasons={}",
+                len(tombstones),
+                [t.reason for t in tombstones],
+            )
+        except Exception as e:
+            logger.warning("Failed to append context.prune event: {}", e)
 
     def _build_system_messages(
         self,
