@@ -3,9 +3,8 @@
  * isolated real stack (native CP/Agent/Runtime + Docker Sandbox + fake LLM).
  *
  * Semantics under test (2026-09-16 slice model, spec/slice-model.md):
- *   - one slice per Run terminal capture: `refs/xihe/slices/<epochMs>-<hash>` in
- *     `<hostRoot>/.xihe-shadow/<workspaceId>.git`; no lease, no conflict ack,
- *     no head fingerprint;
+ *   - one slice per terminal capture: `refs/xihe/slices/<epochMs>-<hash>` in
+ *     `<hostRoot>/.xihe-shadow/<workspaceId>.git`;
  *   - a no-change capture writes NO slice ref (host-side for-each-ref proof);
  *   - restore is git-native against the slice (`restore` for M/D, `delete` for
  *     A) with `acknowledgeTypeChanges`, per-path outcomes + `suspects`; excluded
@@ -73,19 +72,26 @@ interface CheckpointChangedFile {
     path: string;
 }
 
-interface CheckpointView {
-    runId: string;
+interface WorkspaceCheckpointView {
+    id: string;
+    sliceRef: string | null;
+    capturedAt: string | null;
+    sourceRunId: string | null;
+    sourceSessionId: string | null;
+    predecessorRef: string | null;
     state: string;
     unrollableReason: string | null;
     changedCount: number;
     changedFiles: CheckpointChangedFile[];
-    sealedAt: string | null;
+    opaqueNestedRepos: string[];
+    truncated: boolean;
     revert: {
         state: string;
         at: string | null;
         counts: Record<string, number> | null;
         ref: string | null;
-    };
+        attemptCount?: number;
+    } | null;
 }
 
 interface PreviewEntry {
@@ -96,7 +102,6 @@ interface PreviewEntry {
 }
 
 interface PreviewBody {
-    runId: string;
     sliceRef: string;
     counts: { restore: number; delete: number; typeConflict: number };
     entries: PreviewEntry[];
@@ -110,7 +115,6 @@ interface RevertEntry {
 }
 
 interface RevertBody {
-    runId: string;
     sliceRef: string;
     counts: { restored: number; deleted: number; failed: number };
     entries: RevertEntry[];
@@ -259,19 +263,24 @@ async function awaitRunTerminal(
 async function awaitCheckpointCaptured(
     request: APIRequestContext,
     headers: Record<string, string>,
+    workspaceId: string,
     runId: string,
     timeoutMs: number,
-): Promise<CheckpointView> {
-    let view: CheckpointView | undefined;
+): Promise<WorkspaceCheckpointView> {
+    let view: WorkspaceCheckpointView | undefined;
     await expect
         .poll(
             async () => {
-                const res = await request.get(`${CP_URL}/api/v1/chat/runs/${runId}/checkpoint`, {
-                    headers,
-                });
+                const res = await request.get(
+                    `${CP_URL}/api/v1/workspaces/${workspaceId}/checkpoints`,
+                    {
+                        headers,
+                    },
+                );
                 if (!res.ok()) return `http-${res.status()}`;
-                view = (await res.json()) as CheckpointView;
-                return view.state;
+                const rows = (await res.json()) as WorkspaceCheckpointView[];
+                view = rows.find((row) => row.sourceRunId === runId);
+                return view?.state ?? "pending";
             },
             { timeout: timeoutMs, intervals: [1000, 2000] },
         )
@@ -284,25 +293,27 @@ async function awaitCheckpointCaptured(
 async function awaitCheckpointSettledOrNone(
     request: APIRequestContext,
     headers: Record<string, string>,
+    workspaceId: string,
     runId: string,
     timeoutMs: number,
-): Promise<CheckpointView | null> {
-    let view: CheckpointView | null = null;
+): Promise<WorkspaceCheckpointView | null> {
+    let view: WorkspaceCheckpointView | null = null;
     try {
         await expect
             .poll(
                 async () => {
                     const res = await request.get(
-                        `${CP_URL}/api/v1/chat/runs/${runId}/checkpoint`,
+                        `${CP_URL}/api/v1/workspaces/${workspaceId}/checkpoints`,
                         { headers },
                     );
                     if (!res.ok()) return `http-${res.status()}`;
-                    view = (await res.json()) as CheckpointView;
-                    return view.state;
+                    const rows = (await res.json()) as WorkspaceCheckpointView[];
+                    view = rows.find((row) => row.sourceRunId === runId) ?? null;
+                    return view ? view.state : "missing";
                 },
                 { timeout: timeoutMs, intervals: [1000, 2000] },
             )
-            .not.toBe("none");
+            .not.toBe("missing");
     } catch {
         return null;
     }
@@ -312,11 +323,12 @@ async function awaitCheckpointSettledOrNone(
 async function previewRevert(
     request: APIRequestContext,
     headers: Record<string, string>,
-    runId: string,
+    workspaceId: string,
+    sliceRef: string,
 ): Promise<{ status: number; body: PreviewBody & ProblemBody }> {
     const res = await request.post(
-        `${CP_URL}/api/v1/chat/runs/${runId}/checkpoint/revert/preview`,
-        { headers, data: {} },
+        `${CP_URL}/api/v1/workspaces/${workspaceId}/checkpoints/revert/preview`,
+        { headers, data: { sliceRef } },
     );
     return { status: res.status(), body: (await res.json()) as PreviewBody & ProblemBody };
 }
@@ -324,26 +336,30 @@ async function previewRevert(
 async function executeRevert(
     request: APIRequestContext,
     headers: Record<string, string>,
-    runId: string,
+    workspaceId: string,
+    sliceRef: string,
     acknowledgeTypeChanges: string[] = [],
 ): Promise<{ status: number; body: RevertBody & ProblemBody }> {
-    const res = await request.post(`${CP_URL}/api/v1/chat/runs/${runId}/checkpoint/revert`, {
-        headers,
-        data: { acknowledgeTypeChanges },
-    });
+    const res = await request.post(
+        `${CP_URL}/api/v1/workspaces/${workspaceId}/checkpoints/revert`,
+        {
+            headers,
+            data: { sliceRef, acknowledgeTypeChanges },
+        },
+    );
     return { status: res.status(), body: (await res.json()) as RevertBody & ProblemBody };
 }
 
 async function checkpointFile(
     request: APIRequestContext,
     headers: Record<string, string>,
-    runId: string,
-    ref: string,
+    workspaceId: string,
+    sliceRef: string,
     filePath: string,
 ): Promise<string> {
-    const res = await request.get(`${CP_URL}/api/v1/chat/runs/${runId}/checkpoint/file`, {
+    const res = await request.get(`${CP_URL}/api/v1/workspaces/${workspaceId}/checkpoints/blob`, {
         headers,
-        params: { ref, path: filePath },
+        params: { sliceRef, path: filePath },
     });
     expect(res.ok(), `checkpoint file ${res.status()} ${await res.text()}`).toBeTruthy();
     return res.text();
@@ -475,7 +491,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
     });
 
     // S1 ─ L1 native tool: write_file Run → exactly one new slice ───────────────
-    test("S1: write_file Run seals one new slice holding the written path", async ({
+    test("S1: write_file capture records one new slice holding the written path", async ({
         page,
         request,
     }) => {
@@ -494,14 +510,21 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
 
-        const view = await awaitCheckpointCaptured(request, ctx.headers, runId, 30000);
+        const view = await awaitCheckpointCaptured(
+            request,
+            ctx.headers,
+            ctx.workspaceId,
+            runId,
+            30000,
+        );
         expect(
             view.changedCount,
             "the written file is part of the capture change set",
         ).toBeGreaterThanOrEqual(1);
         expect(view.changedFiles.map((file) => file.path)).toContain(fileName);
 
-        const preview = await previewRevert(request, ctx.headers, runId);
+        expect(view.sliceRef).toBeTruthy();
+        const preview = await previewRevert(request, ctx.headers, ctx.workspaceId, view.sliceRef!);
         expect(preview.status, `preview ${preview.status} ${JSON.stringify(preview.body)}`).toBe(
             200,
         );
@@ -567,7 +590,13 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, runRel), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
-        await awaitCheckpointCaptured(request, ctx.headers, runId, 60000);
+        const view = await awaitCheckpointCaptured(
+            request,
+            ctx.headers,
+            ctx.workspaceId,
+            runId,
+            60000,
+        );
 
         // Direct workspace mutations after the capture: M + A + D plus one excluded
         // path the restore must never touch.
@@ -578,7 +607,8 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
 
         const envHashBefore = sha256(readFileSync(path.join(hostDir, envRel)));
 
-        const preview = await previewRevert(request, ctx.headers, runId);
+        expect(view.sliceRef).toBeTruthy();
+        const preview = await previewRevert(request, ctx.headers, ctx.workspaceId, view.sliceRef!);
         expect(preview.status, `preview ${preview.status} ${JSON.stringify(preview.body)}`).toBe(
             200,
         );
@@ -611,13 +641,31 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
 
         // The slice itself carries the original contents (read-only blob check).
         expect(
-            await checkpointFile(request, ctx.headers, runId, preview.body.sliceRef, keepRel),
+            await checkpointFile(
+                request,
+                ctx.headers,
+                ctx.workspaceId,
+                preview.body.sliceRef,
+                keepRel,
+            ),
         ).toBe(keepOriginal);
         expect(
-            await checkpointFile(request, ctx.headers, runId, preview.body.sliceRef, delRel),
+            await checkpointFile(
+                request,
+                ctx.headers,
+                ctx.workspaceId,
+                preview.body.sliceRef,
+                delRel,
+            ),
         ).toBe(delOriginal);
 
-        const revert = await executeRevert(request, ctx.headers, runId, []);
+        const revert = await executeRevert(
+            request,
+            ctx.headers,
+            ctx.workspaceId,
+            preview.body.sliceRef,
+            [],
+        );
         expect(revert.status, `revert ${revert.status} ${JSON.stringify(revert.body)}`).toBe(200);
         expect(revert.body.counts, "restore outcome counts").toEqual({
             restored: 2,
@@ -651,11 +699,22 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         expect(envHashAfter, ".env sha256 unchanged across the restore").toBe(envHashBefore);
 
         // Converged state: the re-preview is empty and the second execute is a no-op.
-        const converged = await previewRevert(request, ctx.headers, runId);
+        const converged = await previewRevert(
+            request,
+            ctx.headers,
+            ctx.workspaceId,
+            preview.body.sliceRef,
+        );
         expect(converged.status).toBe(200);
         expect(converged.body.counts).toEqual({ restore: 0, delete: 0, typeConflict: 0 });
         expect(converged.body.entries).toEqual([]);
-        const idempotent = await executeRevert(request, ctx.headers, runId, []);
+        const idempotent = await executeRevert(
+            request,
+            ctx.headers,
+            ctx.workspaceId,
+            preview.body.sliceRef,
+            [],
+        );
         expect(idempotent.status).toBe(200);
         expect(idempotent.body.counts, "second restore is idempotent").toEqual({
             restored: 0,
@@ -713,9 +772,16 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await approveCard(page);
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
-        const view = await awaitCheckpointCaptured(request, ctx.headers, runId, 60000);
+        const view = await awaitCheckpointCaptured(
+            request,
+            ctx.headers,
+            ctx.workspaceId,
+            runId,
+            60000,
+        );
 
-        const preview = await previewRevert(request, ctx.headers, runId);
+        expect(view.sliceRef).toBeTruthy();
+        const preview = await previewRevert(request, ctx.headers, ctx.workspaceId, view.sliceRef!);
         expect(preview.status, `preview ${preview.status} ${JSON.stringify(preview.body)}`).toBe(
             200,
         );
@@ -771,13 +837,20 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await awaitHostFile(path.join(hostDir, fileName), content);
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
 
-        const view = await awaitCheckpointCaptured(request, ctx.headers, runId, 60000);
+        const view = await awaitCheckpointCaptured(
+            request,
+            ctx.headers,
+            ctx.workspaceId,
+            runId,
+            60000,
+        );
         expect(
             view.changedFiles.map((file) => file.path),
             "shell-written file is in the capture change set",
         ).toContain(fileName);
 
-        const preview = await previewRevert(request, ctx.headers, runId);
+        expect(view.sliceRef).toBeTruthy();
+        const preview = await previewRevert(request, ctx.headers, ctx.workspaceId, view.sliceRef!);
         expect(preview.status, `preview ${preview.status} ${JSON.stringify(preview.body)}`).toBe(
             200,
         );
@@ -819,18 +892,20 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         expect(await awaitRunTerminal(request, ctx.headers, runId)).toBe("succeeded");
 
         // The no-change capture is asynchronous; bounded settle then host proof.
-        const view = await awaitCheckpointSettledOrNone(request, ctx.headers, runId, 60000);
+        const view = await awaitCheckpointSettledOrNone(
+            request,
+            ctx.headers,
+            ctx.workspaceId,
+            runId,
+            60000,
+        );
         if (view === null) {
             console.warn(
                 `[checkpoint-slices] no projection row for read-only run ${runId} (no-new-row variant)`,
             );
         } else {
-            expect(
-                ["captured", "none"],
-                `read-only run checkpoint state (got ${view.state})`,
-            ).toContain(view.state);
-            if (view.state === "captured")
-                expect(view.changedCount, "no-change capture has an empty change set").toBe(0);
+            expect("captured", `read-only capture state (got ${view.state})`).toBe(view.state);
+            expect(view.changedCount, "no-change capture has an empty change set").toBe(0);
         }
 
         const after = listSliceRefs(ctx.workspaceId);
@@ -840,14 +915,14 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
             runId,
             before,
             after,
-            state: view?.state ?? "none",
+            state: view?.state ?? "missing",
             changedCount: view?.changedCount ?? 0,
             changedFiles: view?.changedFiles ?? [],
         });
     });
 
-    // Ref namespace ─ no legacy per-Run ref shapes ─────────────────────────────
-    test("S6: the shadow ref namespace exposes slice refs only (no legacy ref shapes)", async () => {
+    // Ref namespace ─ only workspace slice refs are exposed ────────────────────
+    test("S6: the shadow ref namespace exposes slice refs only", async () => {
         const refs = listAllRefs(ctx.workspaceId);
         expect(refs.length, "C0 baseline guarantees at least one slice ref").toBeGreaterThan(0);
         for (const ref of refs) {

@@ -1,100 +1,112 @@
-import type { InjectionKey, Ref } from 'vue'
+import type { InjectionKey, Ref } from "vue";
 
 export interface SessionContext {
-  agents: string[]
-  ragContext?: RAGContext
-  mcpContext?: MCPContext
-  fileContext?: FileContext
+    agents: string[];
+    ragContext?: RAGContext;
+    mcpContext?: MCPContext;
+    fileContext?: FileContext;
 }
 
 export interface RAGContext {
-  knowledgeBaseIds?: string[]
-  searchEnabled?: boolean
+    knowledgeBaseIds?: string[];
+    searchEnabled?: boolean;
 }
 
 export interface MCPContext {
-  serverIds?: string[]
-  toolFilter?: string[]
+    serverIds?: string[];
+    toolFilter?: string[];
 }
 
 export interface FileContext {
-  workspaceFiles?: string[]
-  activeFilePath?: string
+    workspaceFiles?: string[];
+    activeFilePath?: string;
 }
 
 export interface Session {
-  id: string
-  title: string
-  createdAt: string
-  updatedAt: string
-  workspaceId?: string
-  modelProvider?: string
-  modelName?: string
-  providerConnectionId?: string
-  connectionRevision?: number
-  context?: SessionContext
+    id: string;
+    title: string;
+    createdAt: string;
+    updatedAt: string;
+    workspaceId?: string;
+    modelProvider?: string;
+    modelName?: string;
+    providerConnectionId?: string;
+    connectionRevision?: number;
+    context?: SessionContext;
 }
 
 export interface ToolCall {
-  id: string
-  name: string
-  arguments: string
-  status: 'running' | 'completed' | 'failed' | 'pending'
-  result?: string
-  error?: string
-  startedAt?: string
-  completedAt?: string
+    id: string;
+    name: string;
+    arguments: string;
+    status: "running" | "completed" | "failed" | "pending";
+    result?: string;
+    error?: string;
+    startedAt?: string;
+    completedAt?: string;
 }
 
-export type ApprovalPolicyEffect = 'allow' | 'ask' | 'deny'
-export type ApprovalPolicySourceLayer = 'builtin' | 'instance' | 'user' | 'workspace' | 'session' | 'per_call'
-export type ApprovalPolicyMode = 'manual' | 'auto' | null
-export type SessionPolicyMode = Exclude<ApprovalPolicyMode, null>
-export type ApprovalPolicyShape = 'structured' | 'interpreter' | 'opaque'
+export type ApprovalPolicyEffect = "allow" | "ask" | "deny";
+export type ApprovalPolicySourceLayer =
+    | "builtin"
+    | "instance"
+    | "user"
+    | "workspace"
+    | "session"
+    | "per_call";
+export type ApprovalPolicyMode = "manual" | "auto" | null;
+export type SessionPolicyMode = Exclude<ApprovalPolicyMode, null>;
+export type ApprovalPolicyShape = "structured" | "interpreter" | "opaque";
 
 export interface ApprovalPolicy {
-  effect: ApprovalPolicyEffect
-  sourceLayer: ApprovalPolicySourceLayer
-  matchedRule: string | null
-  reason: string
-  mode: ApprovalPolicyMode
-  modeAtGrant?: ApprovalPolicyMode
-  actionClass: string
-  shape: ApprovalPolicyShape
+    effect: ApprovalPolicyEffect;
+    sourceLayer: ApprovalPolicySourceLayer;
+    matchedRule: string | null;
+    reason: string;
+    mode: ApprovalPolicyMode;
+    modeAtGrant?: ApprovalPolicyMode;
+    actionClass: string;
+    shape: ApprovalPolicyShape;
 }
 
-export type ApprovalRequestState = 'pending' | 'dispatching' | 'approved' | 'rejected' | 'expired' | 'dispatch_unknown'
+export type ApprovalRequestState =
+    | "pending"
+    | "dispatching"
+    | "approved"
+    | "rejected"
+    | "expired"
+    | "dispatch_unknown";
 
 export interface ApprovalRequest {
-  requestId: string
-  operationId?: string
-  runId: string
-  sessionId: string
-  workspaceId?: string
-  tool: string
-  action: string
-  details: string
-  snapshotId?: string | null
-  policyClass?: string | null
-  argumentsHash?: string | null
-  expiresAt?: string
-  replayed?: boolean
-  state?: ApprovalRequestState
-  modeAtGrant?: ApprovalPolicyMode
-  policy?: ApprovalPolicy
+    requestId: string;
+    operationId?: string;
+    runId: string;
+    sessionId: string;
+    workspaceId?: string;
+    tool: string;
+    action: string;
+    details: string;
+    snapshotId?: string | null;
+    policyClass?: string | null;
+    argumentsHash?: string | null;
+    expiresAt?: string;
+    replayed?: boolean;
+    state?: ApprovalRequestState;
+    modeAtGrant?: ApprovalPolicyMode;
+    policy?: ApprovalPolicy;
 }
 
-export type ApprovalDecisionKind = 'once' | 'session' | 'saved' | 'reject' | 'reject_always'
+export type ApprovalDecisionKind = "once" | "session" | "saved" | "reject" | "reject_always";
 
 export interface ApprovalRuleSpec {
-  resource?: string
+    resource?: string;
 }
 
 export interface ApprovalDecision {
-  decision: ApprovalDecisionKind
-  feedback?: string
-  layer?: 'workspace' | 'user'
-  rule?: ApprovalRuleSpec
+    decision: ApprovalDecisionKind;
+    feedback?: string;
+    layer?: "workspace" | "user";
+    rule?: ApprovalRuleSpec;
 }
 
 /**
@@ -104,36 +116,36 @@ export interface ApprovalDecision {
  * `requestId` is dropped again before the API payload is built.
  */
 export interface ApprovalDecisionEnvelope extends ApprovalDecision {
-  requestId: string
+    requestId: string;
 }
 
 export interface PendingApprovalSummary {
-  sessionId: string
-  workspaceId: string
-  count: number
-  oldestRequestedAt: string
+    sessionId: string;
+    workspaceId: string;
+    count: number;
+    oldestRequestedAt: string;
 }
 
 export interface SessionPolicyModeState {
-  sessionId: string
-  mode: SessionPolicyMode
-  sessionRules?: number
+    sessionId: string;
+    mode: SessionPolicyMode;
+    sessionRules?: number;
 }
 
 export interface PolicyModeUpdateResponse {
-  sessionId: string
-  mode: SessionPolicyMode
-  scope: 'session'
+    sessionId: string;
+    mode: SessionPolicyMode;
+    scope: "session";
 }
 
 /** Persisted policy layers (PLAN-0328 decision #53); `builtin` never holds persisted rules. */
-export type PolicyRuleLayer = 'instance' | 'user' | 'workspace'
+export type PolicyRuleLayer = "instance" | "user" | "workspace";
 
 /** Response scope of a tool-face row; `builtin` is catalog metadata, never a write scope. */
-export type PolicyToolFaceScope = 'builtin' | 'instance' | 'workspace'
+export type PolicyToolFaceScope = "builtin" | "instance" | "workspace";
 
 /** Effective catalog scope accepted by `GET /api/v1/policy/tool-faces`. */
-export type PolicyToolFaceQueryScope = 'instance' | 'workspace'
+export type PolicyToolFaceQueryScope = "instance" | "workspace";
 
 /**
  * `DomainView` from the CP policy admin API (PLAN-0328 M1).
@@ -142,10 +154,10 @@ export type PolicyToolFaceQueryScope = 'instance' | 'workspace'
  * layer configures it); `ruleCounts` only lists layers that hold at least one rule.
  */
 export interface PolicyDomainView {
-  actionClass: string
-  effectiveLayer: ApprovalPolicySourceLayer
-  configuredLayers: PolicyRuleLayer[]
-  ruleCounts: Partial<Record<PolicyRuleLayer, number>>
+    actionClass: string;
+    effectiveLayer: ApprovalPolicySourceLayer;
+    configuredLayers: PolicyRuleLayer[];
+    ruleCounts: Partial<Record<PolicyRuleLayer, number>>;
 }
 
 /**
@@ -156,16 +168,16 @@ export interface PolicyDomainView {
  * allow shadowed by a more specific deny) and is null when the row has none.
  */
 export interface PolicyRuleView {
-  id: string
-  layer: PolicyRuleLayer
-  ownerId: string | null
-  actionClass: string
-  resource: string
-  effect: ApprovalPolicyEffect
-  priority: number
-  locked: boolean
-  effective: boolean
-  conflict: string | null
+    id: string;
+    layer: PolicyRuleLayer;
+    ownerId: string | null;
+    actionClass: string;
+    resource: string;
+    effect: ApprovalPolicyEffect;
+    priority: number;
+    locked: boolean;
+    effective: boolean;
+    conflict: string | null;
 }
 
 /**
@@ -176,128 +188,167 @@ export interface PolicyRuleView {
  * is absent until its first approval request.
  */
 export interface PolicyToolFaceView {
-  id: string | null
-  scope: PolicyToolFaceScope
-  ownerId: string | null
-  tool: string
-  actionClass: string
-  shape: ApprovalPolicyShape
+    id: string | null;
+    scope: PolicyToolFaceScope;
+    ownerId: string | null;
+    tool: string;
+    actionClass: string;
+    shape: ApprovalPolicyShape;
 }
 
 export interface AttachmentFile {
-  id: string
-  name: string
-  type: string
-  size: number
-  url: string
-  state: 'idle' | 'uploading' | 'processing' | 'error' | 'done'
-  fileId?: string
+    id: string;
+    name: string;
+    type: string;
+    size: number;
+    url: string;
+    state: "idle" | "uploading" | "processing" | "error" | "done";
+    fileId?: string;
 }
 
 export type MessagePart =
-  | { type: 'text'; content: string }
-  | { type: 'reasoning'; content: string }
-  | { type: 'citation'; index: number }
-  | { type: 'artifact'; identifier: string; artifactType: string; title: string; content: string }
+    | { type: "text"; content: string }
+    | { type: "reasoning"; content: string }
+    | { type: "citation"; index: number }
+    | {
+          type: "artifact";
+          identifier: string;
+          artifactType: string;
+          title: string;
+          content: string;
+      };
 
 export interface Message {
-  id: string
-  sessionId: string
-  role: 'user' | 'assistant' | 'system'
-  /** @deprecated Use `parts` instead. Kept for backward compat with old data. */
-  content: string
-  parts?: MessagePart[]
-  timestamp: string
-  toolCalls?: ToolCall[]
-  isStreaming?: boolean
-  attachments?: AttachmentFile[]
-  marker?: 'status' | 'date' | 'tool'
-  status?: string
-  runId?: string
-  operationId?: string
-  runStatus?: 'queued' | 'accepted' | 'running' | 'streaming' | 'succeeded' | 'failed' | 'partial' | 'ambiguous' | 'cancelled'
-  terminalOutcome?: 'success' | 'error' | 'partial' | 'ambiguous'
-  errorCode?: string
-  error?: string
-  retryable?: boolean
+    id: string;
+    sessionId: string;
+    role: "user" | "assistant" | "system";
+    /** @deprecated Use `parts` instead. Kept for backward compat with old data. */
+    content: string;
+    parts?: MessagePart[];
+    timestamp: string;
+    toolCalls?: ToolCall[];
+    isStreaming?: boolean;
+    attachments?: AttachmentFile[];
+    marker?: "status" | "date" | "tool";
+    status?: string;
+    runId?: string;
+    operationId?: string;
+    runStatus?:
+        | "queued"
+        | "accepted"
+        | "running"
+        | "streaming"
+        | "succeeded"
+        | "failed"
+        | "partial"
+        | "ambiguous"
+        | "cancelled";
+    terminalOutcome?: "success" | "error" | "partial" | "ambiguous";
+    errorCode?: string;
+    error?: string;
+    retryable?: boolean;
 }
 
 export interface ProviderConfig {
-  provider: string
-  apiKey: string
-  baseUrl?: string
+    provider: string;
+    apiKey: string;
+    baseUrl?: string;
 }
 
 export interface ModelConfig {
-  provider: string
-  model: string
-  apiKey: string
-  baseUrl?: string
+    provider: string;
+    model: string;
+    apiKey: string;
+    baseUrl?: string;
 }
 
 export interface ProviderInfo {
-  id: string
-  name: string
-  defaultModel: string
-  defaultBaseUrl: string
-  description?: string
+    id: string;
+    name: string;
+    defaultModel: string;
+    defaultBaseUrl: string;
+    description?: string;
 }
 
 export interface ThemeConfig {
-  mode: 'dark' | 'light' | 'system'
+    mode: "dark" | "light" | "system";
 }
 
 export interface MCPConfig {
-  configJson: string
+    configJson: string;
 }
 
 export interface SessionModelBinding {
-  provider: string
-  model: string
-  connectionId?: string
-  connectionRevision?: number
+    provider: string;
+    model: string;
+    connectionId?: string;
+    connectionRevision?: number;
 }
 
 export interface ModelFavorite {
-  provider: string
-  model: string
+    provider: string;
+    model: string;
 }
 
-export type Language = 'zh-CN' | 'en-US'
+export type Language = "zh-CN" | "en-US";
 
-export type SSEEventType = 'token' | 'tool_call' | 'tool_result' | 'approval_request' | 'status' | 'error' | 'done'
+export type SSEEventType =
+    | "token"
+    | "tool_call"
+    | "tool_result"
+    | "approval_request"
+    | "status"
+    | "error"
+    | "done";
 
 export interface SSEEvent {
-  type: SSEEventType
-  data: Record<string, unknown>
+    type: SSEEventType;
+    data: Record<string, unknown>;
 }
 
 export interface ChatRunResponse {
-  status: 'queued' | 'accepted' | 'running' | 'streaming' | 'succeeded' | 'failed' | 'partial' | 'ambiguous' | 'cancelled'
-  sessionId: string
-  runId: string
-  operationId?: string
-  messageId?: string
-  outcome?: 'success' | 'error' | 'partial' | 'ambiguous'
-  errorCode?: string
+    status:
+        | "queued"
+        | "accepted"
+        | "running"
+        | "streaming"
+        | "succeeded"
+        | "failed"
+        | "partial"
+        | "ambiguous"
+        | "cancelled";
+    sessionId: string;
+    runId: string;
+    operationId?: string;
+    messageId?: string;
+    outcome?: "success" | "error" | "partial" | "ambiguous";
+    errorCode?: string;
 }
 
-export type OperationStatus = 'accepted' | 'running' | 'waiting_for_approval' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'ambiguous'
+export type OperationStatus =
+    | "accepted"
+    | "running"
+    | "waiting_for_approval"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted"
+    | "ambiguous";
 
 export interface OperationSummary {
-  id: string
-  sessionId?: string | null
-  workspaceId?: string | null
-  runId?: string | null
-  kind: string
-  source: string
-  actorType: string
-  status: OperationStatus | string
-  summary?: string | null
-  errorCode?: string | null
-  startedAt?: string | null
-  finishedAt?: string | null
-  createdAt?: string | null
+    id: string;
+    sessionId?: string | null;
+    workspaceId?: string | null;
+    runId?: string | null;
+    kind: string;
+    source: string;
+    actorType: string;
+    status: OperationStatus | string;
+    summary?: string | null;
+    errorCode?: string | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    createdAt?: string | null;
 }
 
 /**
@@ -310,300 +361,283 @@ export interface OperationSummary {
  * legacy V19 snapshots) means reuse was not applicable. The view must not infer reuse otherwise.
  */
 export interface OperationPolicyView {
-  effect: ApprovalPolicyEffect
-  sourceLayer: ApprovalPolicySourceLayer
-  matchedRule: string | null
-  reason: string
-  mode: ApprovalPolicyMode
-  allowedBy: string | null
-  actionClass: string
-  shape: ApprovalPolicyShape
-  reused?: boolean | null
+    effect: ApprovalPolicyEffect;
+    sourceLayer: ApprovalPolicySourceLayer;
+    matchedRule: string | null;
+    reason: string;
+    mode: ApprovalPolicyMode;
+    allowedBy: string | null;
+    actionClass: string;
+    shape: ApprovalPolicyShape;
+    reused?: boolean | null;
 }
 
 export interface OperationItemView {
-  id: string
-  operationId: string
-  toolCallId?: string | null
-  sequence: number
-  kind: string
-  toolName?: string | null
-  source: string
-  policyDecision?: string | null
-  policy?: OperationPolicyView
-  approvalRequestId?: string | null
-  status: string
-  errorCode?: string | null
-  startedAt?: string | null
-  finishedAt?: string | null
+    id: string;
+    operationId: string;
+    toolCallId?: string | null;
+    sequence: number;
+    kind: string;
+    toolName?: string | null;
+    source: string;
+    policyDecision?: string | null;
+    policy?: OperationPolicyView;
+    approvalRequestId?: string | null;
+    status: string;
+    errorCode?: string | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
 }
 
 export interface OperationAttemptView {
-  id: string
-  itemId: string
-  stage: string
-  retryNo: number
-  parentAttemptId?: string | null
-  module: string
-  status: string
-  errorCode?: string | null
-  durationMs?: number | null
-  startedAt?: string | null
-  finishedAt?: string | null
+    id: string;
+    itemId: string;
+    stage: string;
+    retryNo: number;
+    parentAttemptId?: string | null;
+    module: string;
+    status: string;
+    errorCode?: string | null;
+    durationMs?: number | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
 }
 
 export interface OperationEventView {
-  id: string
-  operationId: string
-  itemId?: string | null
-  attemptId?: string | null
-  sequence: number
-  eventType: string
-  state: string
-  actor: string
-  createdAt?: string | null
+    id: string;
+    operationId: string;
+    itemId?: string | null;
+    attemptId?: string | null;
+    sequence: number;
+    eventType: string;
+    state: string;
+    actor: string;
+    createdAt?: string | null;
 }
 
 export interface OperationListResponse {
-  operations: OperationSummary[]
-  page: number
-  size: number
-  totalElements: number
-  totalPages: number
+    operations: OperationSummary[];
+    page: number;
+    size: number;
+    totalElements: number;
+    totalPages: number;
 }
 
 export interface OperationTrace {
-  operation: OperationSummary
-  items: OperationItemView[]
-  attempts: OperationAttemptView[]
-  events: OperationEventView[]
+    operation: OperationSummary;
+    items: OperationItemView[];
+    attempts: OperationAttemptView[];
+    events: OperationEventView[];
 }
 
 export interface AgentState {
-  status: 'idle' | 'thinking' | 'executing' | 'awaiting_approval' | 'error'
-  currentToolCall: ToolCall | null
-  pendingApprovals: ApprovalRequest[]
+    status: "idle" | "thinking" | "executing" | "awaiting_approval" | "error";
+    currentToolCall: ToolCall | null;
+    pendingApprovals: ApprovalRequest[];
 }
 
 export interface ChatSessionRunState {
-  runId?: string
-  status: AgentState['status']
+    runId?: string;
+    status: AgentState["status"];
 }
 
-// ── PLAN-0328 M2/M3: Run checkpoint (shadow-git snapshot) ────────────────────
-// Wire shapes follow the CP RunCheckpointController / OpenAPI contract. `unknown`
-// members are UI-only fallbacks for out-of-contract values: a marker must never
-// claim "rollbackable" or "no snapshot" from a value it does not understand.
+// ── PLAN-0339: workspace checkpoint slices ───────────────────────────────────
+// The workspace owns one append-only slice timeline. A Run is only source metadata;
+// restore operations always target an opaque `sliceRef`.
+// Timeline rows are refreshed after restore so the visible state stays durable.
 
-/** Public checkpoint projection states; `unknown` = out-of-contract fallback. */
-export type RunCheckpointState = 'none' | 'base' | 'sealed' | 'unsealed' | 'degraded' | 'expired' | 'unknown'
+export type WorkspaceCheckpointState = "captured" | "abnormal-captured" | "degraded" | "expired";
+export type WorkspaceCheckpointRevertState = "none" | "rolled_back" | "partial" | "failed";
 
-/** Last revert outcome; `unknown` = out-of-contract fallback. */
-export type RunCheckpointRevertState = 'none' | 'rolled_back' | 'partial' | 'failed' | 'unknown'
-
-export interface RunCheckpointChangedFile {
-  status: string
-  path: string
+export interface WorkspaceCheckpointChangedFile {
+    status: string;
+    path: string;
 }
 
-/** Projection revert counts; individual keys may be absent in legacy summaries. */
-export interface RunCheckpointRevertCounts {
-  restored?: number
-  deleted?: number
-  skippedConflict?: number
-  failed?: number
-  noop?: number
+export interface WorkspaceCheckpointRevertCounts {
+    restored?: number;
+    deleted?: number;
+    failed?: number;
 }
 
-/** Last revert attempt view (`revert` object of the projection and the SSE event). */
-export interface RunCheckpointRevertView {
-  state: RunCheckpointRevertState
-  at: string | null
-  counts: RunCheckpointRevertCounts | null
-  ref: string | null
+export interface WorkspaceCheckpointRevertView {
+    state: WorkspaceCheckpointRevertState;
+    at: string | null;
+    counts: WorkspaceCheckpointRevertCounts | null;
+    ref: string | null;
+    attemptCount?: number;
 }
 
-/** `GET /api/v1/chat/runs/{runId}/checkpoint` projection. */
-export interface RunCheckpointView {
-  runId: string
-  checkpointId?: string
-  state: RunCheckpointState
-  unrollableReason?: string
-  changedCount: number
-  /** Capped at 20 by the CP; `changedCount` always covers the full set. */
-  changedFiles: RunCheckpointChangedFile[]
-  sealedAt: string | null
-  revert: RunCheckpointRevertView | null
+/** Item returned by `GET /api/v1/workspaces/{workspaceId}/checkpoints`. */
+export interface WorkspaceCheckpoint {
+    id: string;
+    sliceRef: string | null;
+    capturedAt: string | null;
+    sourceRunId: string | null;
+    sourceSessionId: string | null;
+    predecessorRef: string | null;
+    state: WorkspaceCheckpointState;
+    changedCount: number;
+    /** The list may be capped; `changedCount` remains the complete count. */
+    changedFiles: WorkspaceCheckpointChangedFile[];
+    opaqueNestedRepos: string[];
+    unrollableReason: string | null;
+    truncated: boolean;
+    revert: WorkspaceCheckpointRevertView | null;
 }
 
-/** SSE `run_checkpoint` payload (seal / degradation / completed revert). */
-export interface RunCheckpointEvent {
-  runId: string
-  sessionId: string
-  state: RunCheckpointState
-  changedCount: number
-  unrollableReason?: string
-  revert?: RunCheckpointRevertView
+/** SSE lifecycle annotation used to refresh the workspace slice timeline. */
+export interface WorkspaceCheckpointEvent {
+    runId: string;
+    sessionId: string;
+    state: WorkspaceCheckpointState;
+    changedCount: number;
+    sliceRef?: string | null;
+    capturedAt?: string | null;
+    unrollableReason?: string;
+    revert?: WorkspaceCheckpointRevertView | null;
 }
 
-/** Dry-run action; `unknown` = out-of-contract fallback. */
-export type RevertPreviewAction = 'restore' | 'delete' | 'unknown'
+export type CheckpointPreviewAction = "restore" | "delete";
+export type CheckpointPreviewEntryState = "execute" | "noop" | "type_conflict";
 
-export interface RevertPreviewEntry {
-  path: string
-  oldPath?: string
-  action: RevertPreviewAction
-  /** Frozen conflict reason code when this entry will be skipped. */
-  conflictReason?: string
+export interface CheckpointPreviewEntry {
+    path: string;
+    action: CheckpointPreviewAction;
+    state: CheckpointPreviewEntryState;
+    reason?: string;
 }
 
-export interface RevertPreviewCounts {
-  restore: number
-  delete: number
-  skipConflicts: number
-  noop: number
+export interface CheckpointPreviewCounts {
+    restore: number;
+    delete: number;
+    typeConflict: number;
 }
 
-export type HeadFingerprintStatus = 'ok' | 'changed' | 'unknown' | 'not_repo'
-
-export interface HeadFingerprint {
-  recorded: string | null
-  current: string | null
-  status: HeadFingerprintStatus
+/** `POST .../checkpoints/revert/preview` response. */
+export interface CheckpointPreview {
+    sliceRef: string;
+    counts: CheckpointPreviewCounts;
+    entries: CheckpointPreviewEntry[];
+    truncated: boolean;
 }
 
-/** `POST .../checkpoint/revert/preview` response. */
-export interface RevertPreview {
-  runId: string
-  state: string
-  /** `null` when the server projection is incomplete; the UI must not guess. */
-  counts: RevertPreviewCounts | null
-  entries: RevertPreviewEntry[]
-  headFingerprint: HeadFingerprint
-  sealedWithLiveJobs: boolean
-  truncated: boolean
+export type CheckpointResultOutcome = "restored" | "deleted" | "failed" | "suspect";
+
+export interface CheckpointResultEntry {
+    path: string;
+    outcome: CheckpointResultOutcome;
+    reason?: string;
 }
 
-/** Per-entry execution outcome; `unknown` = out-of-contract fallback. */
-export type RevertEntryResult = 'restored' | 'deleted' | 'skippedConflict' | 'failed' | 'noop' | 'unknown'
-
-export interface RevertResultEntry {
-  path: string
-  result: RevertEntryResult
-  reason?: string
+export interface CheckpointResultCounts {
+    restored: number;
+    deleted: number;
+    failed: number;
 }
 
-export interface RevertResultCounts {
-  restored: number
-  deleted: number
-  skippedConflict: number
-  failed: number
-  noop: number
+/** `POST .../checkpoints/revert` response. */
+export interface CheckpointResult {
+    sliceRef: string;
+    counts: CheckpointResultCounts;
+    entries: CheckpointResultEntry[];
+    durationMs: number;
+    suspects: string[];
 }
 
-/** `POST .../checkpoint/revert` response. */
-export interface RevertResult {
-  runId: string
-  /** Runtime audit ref; `null` when it could not be written. */
-  revertRef: string | null
-  counts: RevertResultCounts | null
-  entries: RevertResultEntry[]
-  durationMs: number
+/** Type-change paths explicitly confirmed by the user before restore. */
+export interface CheckpointRestoreConfirmation {
+    acknowledgeTypeChanges: string[];
 }
 
-/** Acknowledge payload of the revert execute call. */
-export interface RevertAcknowledge {
-  acknowledgeConflicts: string[]
-  acknowledgeHeadChange: boolean
+export interface CheckpointCleanupResult {
+    removed: boolean;
 }
 
 export interface WorkspaceGitStatusEntry {
-  status: string
-  path: string
+    status: string;
+    path: string;
 }
 
 /** `GET /api/v1/workspaces/{id}/git-status` (dual-diff "待提交" side). */
 export interface WorkspaceGitStatus {
-  isRepository: boolean
-  entries: WorkspaceGitStatusEntry[]
+    isRepository: boolean;
+    entries: WorkspaceGitStatusEntry[];
 }
 
 /** `GET .../checkpoints/retention` response (decision #10 constants + counts). */
 export interface CheckpointRetention {
-  maxRuns: number
-  ttlDays: number
-  unsealedNeverDeleted: boolean
-  currentRuns: number
-  currentRefs: number
+    maxRuns: number;
+    ttlDays: number;
+    unsealedNeverDeleted: boolean;
+    currentRuns: number;
+    currentRefs: number;
 }
 
-/** `POST .../checkpoints/gc` counts; keys are Runtime-defined. */
-export type CheckpointGcCounts = Record<string, number>
-
 export type LangChainEventType =
-  | 'on_chat_model_start'
-  | 'on_chat_model_stream'
-  | 'on_llm_end'
-  | 'on_tool_start'
-  | 'on_tool_end'
-  | 'on_tool_error'
-  | 'on_chain_start'
-  | 'on_chain_end'
+    | "on_chat_model_start"
+    | "on_chat_model_stream"
+    | "on_llm_end"
+    | "on_tool_start"
+    | "on_tool_end"
+    | "on_tool_error"
+    | "on_chain_start"
+    | "on_chain_end";
 
 export interface LangChainEvent {
-  event: LangChainEventType
-  name?: string
-  data?: Record<string, unknown>
-  run_id?: string
+    event: LangChainEventType;
+    name?: string;
+    data?: Record<string, unknown>;
+    run_id?: string;
 }
 
 export interface User {
-  id: string
-  email: string
-  name?: string
-  workspaceId?: string
-  /** CP role name (`ADMIN` / `USER`); drives the instance settings entry (PLAN-0307 T2.17). */
-  role?: string
+    id: string;
+    email: string;
+    name?: string;
+    workspaceId?: string;
+    /** CP role name (`ADMIN` / `USER`); drives the instance settings entry (PLAN-0307 T2.17). */
+    role?: string;
 }
 
 export interface FileNode {
-  name: string
-  path: string
-  type: 'file' | 'directory'
-  mimeType?: string
-  size?: number
-  modified?: string
-  children?: FileNode[]
+    name: string;
+    path: string;
+    type: "file" | "directory";
+    mimeType?: string;
+    size?: number;
+    modified?: string;
+    children?: FileNode[];
 }
 
 export interface OpenFile {
-  path: string
-  name: string
-  content: string
-  originalContent: string
-  language: string
-  modified: boolean
-  loading: boolean
-  truncated?: boolean
-  chunks?: string[]
-  chunkIndex?: number
+    path: string;
+    name: string;
+    content: string;
+    originalContent: string;
+    language: string;
+    modified: boolean;
+    loading: boolean;
+    truncated?: boolean;
+    chunks?: string[];
+    chunkIndex?: number;
 }
 
 export interface UploadItem {
-  file: File
-  name: string
-  size: number
-  status: 'pending' | 'uploading' | 'done' | 'error' | 'cancelled'
-  targetPath: string
-  error?: string
+    file: File;
+    name: string;
+    size: number;
+    status: "pending" | "uploading" | "done" | "error" | "cancelled";
+    targetPath: string;
+    error?: string;
 }
 
-export type ViewMode = 'single' | 'scrollable' | 'dual'
+export type ViewMode = "single" | "scrollable" | "dual";
 
 export interface ThemeContext {
-  theme: Ref<'light' | 'dark'>
-  colorMode: Ref<'light' | 'dark' | 'system'>
-  setColorMode: (mode: 'light' | 'dark' | 'system') => void
+    theme: Ref<"light" | "dark">;
+    colorMode: Ref<"light" | "dark" | "system">;
+    setColorMode: (mode: "light" | "dark" | "system") => void;
 }
 
-export const ThemeInjectionKey: InjectionKey<ThemeContext> = Symbol('theme')
+export const ThemeInjectionKey: InjectionKey<ThemeContext> = Symbol("theme");
