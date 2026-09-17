@@ -107,8 +107,11 @@ public class ModelsProxyController {
                     || !seenProviders.add(connection.getProviderId())) {
                 continue;
             }
+            // Catalog discovery has no chat run: the lease must not reference a
+            // (non-existent) chat_runs row — `run_id` stays NULL and the synthetic
+            // id is only a descriptor-level correlation id for the Agent.
             ProviderCredentialLeaseService.IssuedLease lease = leaseService.issue(
-                    userId, workspaceId, null, catalogRunId,
+                    userId, workspaceId, null, null,
                     connection.getId().toString(), connection.getProviderId(), "*");
             Map<String, Object> descriptor = new LinkedHashMap<>();
             descriptor.put("lease", lease.token());

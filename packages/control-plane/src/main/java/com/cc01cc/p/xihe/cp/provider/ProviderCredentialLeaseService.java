@@ -102,7 +102,9 @@ public class ProviderCredentialLeaseService {
         if (lease.getExpiresAt().isBefore(now) || lease.getRevokedAt() != null || lease.getRedeemedAt() != null) {
             throw new IllegalArgumentException("Provider credential lease is no longer valid");
         }
-        if (!lease.getRunId().equals(request.runId())
+        // A lease issued for catalog discovery carries no chat run (run_id NULL), so the run
+        // binding is only enforced when the lease actually belongs to a run.
+        if ((lease.getRunId() != null && !lease.getRunId().equals(request.runId()))
                 || !lease.getProviderConnectionId().equals(request.providerConnectionId())
                 || !lease.getProviderId().equals(request.providerId())
                 || !lease.getModel().equals(request.model())) {

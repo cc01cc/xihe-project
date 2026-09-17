@@ -92,8 +92,11 @@ public class SessionController {
         String workspaceId = TenantContext.getWorkspaceId();
         try {
             String title = request == null ? null : request.title();
+            String modelProvider = request == null ? null : request.modelProvider();
+            String modelName = request == null ? null : request.modelName();
             String providerConnectionId = request == null ? null : request.providerConnectionId();
-            Session session = sessionService.create(userId, workspaceId, title, null, null, providerConnectionId);
+            Session session = sessionService.create(userId, workspaceId, title,
+                    modelProvider, modelName, providerConnectionId);
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
