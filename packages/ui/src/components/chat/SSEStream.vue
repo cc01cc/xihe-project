@@ -128,7 +128,9 @@ function connectSession(id: string) {
     },
     onContextOverflowRetry: (data) => {
       if (!isCurrentSession()) return
-      // PLAN-0341 U3: visible marker for the single overflow retry.
+      // PLAN-0341 U3 case B: fold prior visible content as interrupted so the
+      // retry reply is the official answer (decision #2 ③).
+      chatStore.interruptForOverflowRetry(id)
       toast.info(t('chat.contextOverflowRetry'), {
         description: data.runId ? `run ${data.runId.slice(0, 8)}` : undefined,
       })

@@ -181,6 +181,7 @@ const messages = {
             contextSourcesFailed: "读取失败",
             contextSourcesUpdated: "规则已更新（本轮起生效）",
             contextOverflowRetry: "上下文超限，已压缩并重试一次",
+            contextInterrupted: "已中断",
             contextCompactionCircuitOpen: "自动压缩已暂停（上下文未见改善）",
             contextCompactionCircuitClosed: "自动压缩已恢复",
             approvalUnclassifiedNotice:
@@ -781,6 +782,7 @@ const messages = {
             contextSourcesFailed: "read failed",
             contextSourcesUpdated: "Rules updated (applies this turn)",
             contextOverflowRetry: "Context limit exceeded; compacted and retrying once",
+            contextInterrupted: "Interrupted",
             contextCompactionCircuitOpen: "Auto-compaction paused (no improvement seen)",
             contextCompactionCircuitClosed: "Auto-compaction resumed",
             approvalUnclassifiedNotice:

@@ -158,6 +158,29 @@ describe('useChatStore', () => {
     expect(store.getMessages('s1')).toEqual([])
   })
 
+  it('interruptForOverflowRetry keeps visible content as interrupted (case B)', () => {
+    // PLAN-0341 U3: retry is the official reply; prior content is folded.
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.appendToParts('s1', { type: 'text', content: 'partial answer before overflow' })
+    store.interruptForOverflowRetry('s1')
+
+    const messages = store.getMessages('s1')
+    const assistant = messages.find((m) => m.role === 'assistant')
+    expect(assistant?.interrupted).toBe(true)
+    expect(assistant?.runStatus).toBe('interrupted')
+    expect(assistant?.content).toContain('partial answer before overflow')
+    expect(messages.some((m) => m.marker === 'status' && m.status === 'interrupted')).toBe(true)
+    expect(store.isStreaming('s1')).toBe(false)
+  })
+
+  it('interruptForOverflowRetry drops empty streaming bubble (case A)', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.interruptForOverflowRetry('s1')
+    expect(store.getMessages('s1').filter((m) => m.role === 'assistant')).toEqual([])
+  })
+
   it('removes an empty assistant when the stream fails', () => {
     const store = useChatStore()
     store.createStreamingMessage('s1')

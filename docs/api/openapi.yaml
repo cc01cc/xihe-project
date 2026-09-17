@@ -44,6 +44,8 @@ paths:
     get: { operationId: getSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     delete: { operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+  /api/v1/sessions/{sessionId}/compact:
+    post: { operationId: compactSessionContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { upToSequence: { type: integer, format: int64, description: Optional compaction cursor } } } } } }, responses: { '200': { description: 'Manual compaction applied (sequence/eventType/created_at); 409 when a chat run is active' }, '409': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/oauth/sessions:
     post:
       operationId: startOAuthSession

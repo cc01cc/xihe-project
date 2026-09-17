@@ -186,6 +186,46 @@ export const useChatStore = defineStore('chat', () => {
     setSessionRunState(sessionId, 'idle')
   }
 
+  /**
+   * PLAN-0341 U3 case B: overflow retry keeps prior visible content but marks
+   * it interrupted so the retry's new reply is the official answer.
+   * Case A (no visible content): drop the empty streaming bubble.
+   */
+  function interruptForOverflowRetry(sessionId: string) {
+    const messageId = streamingMessageId.value[sessionId]
+    if (!messageId) return
+
+    const message = messages.value[sessionId]?.find((msg) => msg.id === messageId)
+    if (message) {
+      const hasContent = Boolean(
+        message.content || message.parts?.some((part) => part.type !== 'citation' && Boolean(part.content)),
+      )
+      if (!hasContent) {
+        messages.value[sessionId] = messages.value[sessionId].filter((msg) => msg.id !== messageId)
+      } else {
+        message.isStreaming = false
+        message.runStatus = 'interrupted'
+        message.interrupted = true
+        message.terminalOutcome = 'partial'
+        if (message.parts) {
+          message.content = message.parts
+            .filter((p) => p.type === 'text')
+            .map((p) => p.content)
+            .join('')
+        }
+        addMarker(sessionId, {
+          role: 'system',
+          content: 'interrupted',
+          timestamp: new Date().toISOString(),
+          marker: 'status',
+          status: 'interrupted',
+        })
+      }
+    }
+    streamingMessageId.value[sessionId] = null
+    setSessionRunState(sessionId, 'idle')
+  }
+
   function markStreamingError(sessionId: string, error: {
     code: string
     detail: string
@@ -388,6 +428,7 @@ export const useChatStore = defineStore('chat', () => {
     appendToParts,
     replaceStreamingParts,
     finalizeStreaming,
+    interruptForOverflowRetry,
     markStreamingError,
     refreshRunRecovery,
     dismissRunRecovery,

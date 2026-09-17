@@ -240,11 +240,14 @@ export interface Message {
         | "failed"
         | "partial"
         | "ambiguous"
-        | "cancelled";
+        | "cancelled"
+        | "interrupted";
     terminalOutcome?: "success" | "error" | "partial" | "ambiguous";
     errorCode?: string;
     error?: string;
     retryable?: boolean;
+    /** PLAN-0341 U3 case B: prior attempt content kept but marked abandoned. */
+    interrupted?: boolean;
 }
 
 export interface ProviderConfig {

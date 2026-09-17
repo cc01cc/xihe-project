@@ -23,6 +23,7 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `/workspaces/{id}/mcp-config` | `/internal/v1/workspaces/{workspaceId}/stdio-servers`（原 `/internal/v1/config/workspaces/{id}/mcp-config` 改名） | service Bearer | Runtime stdio 声明同步 |
 | CP | `/workspaces/current`, `/workspaces`, `/workspaces/{workspaceId}` | unchanged under `/api/v1/workspaces/...` | user Bearer | UI, Runtime lifecycle |
 | CP | `/sessions`, `/sessions/{sessionId}` | unchanged under `/api/v1/sessions/...` | user Bearer + current workspace | UI |
+| CP | `/sessions/{sessionId}/compact` | `POST /api/v1/sessions/{sessionId}/compact`（`upToSequence` 可选；活跃 run 409 `CHAT_IN_PROGRESS`） | user Bearer + session ownership | UI 手动压缩（PLAN-294/0341；行为不变，openapi 已补登） |
 | CP | `/files/**`, `/rag/**` | `/api/v1/...` equivalent | user Bearer | UI |
 | CP | `POST /api/v1/chat` | `POST /api/v1/chat` (requires active SSE, single in-flight, `202` + `runId` + durable `operationId`, `409 SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`) | user Bearer + current workspace | UI — enqueues async Agent relay; streams `token` → `done` on persistent SSE |
 | CP | `GET /api/v1/chat/runs/{runId}` | unchanged under `/api/v1/chat/runs/{runId}` | user Bearer + current workspace/run ownership | UI — reconnect/reload recovery; returns run status, lease expiry, and pending approvals |
