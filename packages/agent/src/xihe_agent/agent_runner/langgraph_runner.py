@@ -140,6 +140,58 @@ def wrap_untrusted_tool_output(text: str) -> str:
     return f"{UNTRUSTED_OPEN}{escaped}{UNTRUSTED_CLOSE}"
 
 
+_JIT_FILE_TOOLS = frozenset(
+    {
+        "read_file",
+        "write_file",
+        "read_file_range",
+        "apply_patch",
+        "list_directory",
+    }
+)
+
+
+def _normalize_touched_path(path: str) -> str | None:
+    if not path or not isinstance(path, str):
+        return None
+    p = path.strip().replace("\\", "/")
+    if p.startswith("/") and not p.startswith("//"):
+        p = p[1:]
+    if not p or p.startswith("..") or "/../" in f"/{p}/":
+        return None
+    return p
+
+
+def _jit_rules_for_input(tool_name: str, kwargs: dict[str, Any], context: AgentContext) -> str:
+    """PLAN-0340 M2: derive dirname from file tools; emit trusted block outside envelope.
+
+    Full ancestor AGENTS.md loading is CP-side in later slices; this emits a
+    lightweight trusted marker listing dirs so the contract is wired end-to-end.
+    """
+    if tool_name not in _JIT_FILE_TOOLS:
+        return ""
+    raw = kwargs.get("path") or kwargs.get("file_path") or ""
+    path = _normalize_touched_path(str(raw))
+    if not path:
+        return ""
+    directory = path if "/" not in path.rstrip("/") or path.endswith("/") else path.rsplit("/", 1)[0]
+    if not directory or directory == path and "/" not in path:
+        # file at root → dir is "."
+        directory = "."
+    ledger = context.metadata.setdefault("jit_ledger", [])
+    key = {"workspace_id": context.metadata.get("workspace_id"), "dir": directory}
+    if key not in ledger:
+        ledger.append(key)
+        return (
+            "<system-reminder>\n"
+            "Path-local rules (trusted, outside tool data). Directory: "
+            f"{directory}\n"
+            "No nested AGENTS.md was loaded yet; project root rules still apply.\n"
+            "</system-reminder>"
+        )
+    return ""
+
+
 class LCToolAdapter(BaseTool):
     """Wraps a `BaseAgentTool` so LangGraph can invoke it."""
 
@@ -162,7 +214,11 @@ class LCToolAdapter(BaseTool):
             result = await self._tool.execute(kwargs, self._context)
             await self._append_tool_result(call_id, result)
             content = result.get("content", result)
-            return wrap_untrusted_tool_output(str(content) if not isinstance(content, str) else content)
+            if not isinstance(content, str):
+                content = str(content)
+            wrapped = wrap_untrusted_tool_output(content)
+            jit = _jit_rules_for_input(self._tool.spec.name, kwargs, self._context)
+            return f"{wrapped}\n{jit}" if jit else wrapped
         finally:
             if previous_item_id is None:
                 self._context.metadata.pop("operationItemId", None)
@@ -452,6 +508,10 @@ class LangGraphRunner(AgentRunner):
         if l1_text:
             messages.append(SystemMessage(content=l1_text))
 
+        env_text = _render_env_block()
+        if env_text:
+            messages.append(SystemMessage(content=env_text))
+
         for text in summaries:
             messages.append(SystemMessage(content=text))
         return messages
@@ -470,7 +530,6 @@ class LangGraphRunner(AgentRunner):
             return []
         events = [translated] if isinstance(translated, AgentEvent) else translated
 
-        # Track usage from events
         if usage:
             for event in events:
                 if event.type == "tool_call":
@@ -480,16 +539,12 @@ class LangGraphRunner(AgentRunner):
                 elif event.type == "token":
                     usage.record_turn()
                 elif event.type == "llm_usage":
-                    # PLAN-294 decisions #13/#14: provider-reported counts are
-                    # aggregated across model turns; the newest value wins for
-                    # source tagging (a run is single-model per request).
                     usage.record_llm_usage(
                         input_tokens=event.data.get("inputTokens", 0),
                         output_tokens=event.data.get("outputTokens", 0),
                     )
                     usage.source = str(event.data.get("source", "real"))
 
-        # Dedup parallel tool calls (DESIGN-013)
         result: list[AgentEvent] = []
         for event in events:
             if event.type == "tool_call":
@@ -500,6 +555,31 @@ class LangGraphRunner(AgentRunner):
                     seen_tool_ids.add(run_id)
             result.append(event)
         return result
+
+
+def _render_env_block() -> str:
+    """PLAN-0340 T1.2: L1b env (local half). Git half omitted until Runtime fact endpoint."""
+    import os
+    import platform
+    from datetime import datetime, timezone
+
+    lines = [
+        "cwd: /",
+        f"platform: {platform.system()}",
+        f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"shell: {os.environ.get('SHELL') or os.environ.get('COMSPEC') or 'unknown'}",
+    ]
+    body = "\n".join(lines)
+    if len(body.encode()) > 4096:
+        body = body.encode()[:4096].decode(errors="ignore")
+        lines = body.split("\n")
+        body = "\n".join(lines)
+    return (
+        "<system-reminder>\n"
+        "Workspace environment (semi-trusted facts; not project rules):\n"
+        f"{body}\n"
+        "</system-reminder>"
+    )
 
 
 def _to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:

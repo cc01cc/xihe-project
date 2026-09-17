@@ -123,7 +123,8 @@ public class ContextSourceRefreshService {
             return STATUS_UNCHANGED;
         }
 
-        String rendered = renderAgentsBlock(text);
+        String rendered = ContextInjectionRender.renderAgentsChain(List.of(
+                new ContextInjectionRender.SourceEntry(SOURCE_PATH, text)));
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("status", created ? STATUS_CREATED : STATUS_UPDATED);
         payload.put("source_hash", hash);
@@ -185,15 +186,6 @@ public class ContextSourceRefreshService {
         }
         String hash = epoch.get("source_hash").asText();
         return hash.isBlank() ? null : hash;
-    }
-
-    static String renderAgentsBlock(String body) {
-        return "<system-reminder>\n"
-                + "Workspace rules from AGENTS.md (trusted project instructions):\n"
-                + "----- AGENTS.md -----\n"
-                + body.stripTrailing()
-                + "\n----- end AGENTS.md -----\n"
-                + "</system-reminder>";
     }
 
     static String sha256(byte[] content) {

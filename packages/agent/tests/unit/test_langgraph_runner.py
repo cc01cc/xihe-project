@@ -189,6 +189,8 @@ def test_system_messages_inject_baseline_and_append_epoch_summary():
 
     assert [m.content for m in messages] == [
         "BASELINE-INSTRUCTIONS",
+        # PLAN-0340: L1b env always present (semi-trusted facts).
+        next(m.content for m in messages if "Workspace environment" in m.content),
         "Conversation summary of compacted history:",
         "SUMMARY",
     ]
@@ -200,7 +202,8 @@ def test_system_messages_without_epoch_only_baseline():
 
     messages = runner._build_system_messages(config, AgentContext.empty("s"))
 
-    assert [m.content for m in messages] == ["BASELINE"]
+    assert messages[0].content == "BASELINE"
+    assert any("Workspace environment" in m.content for m in messages)
 
 
 def test_system_messages_warn_when_baseline_missing_with_summary():
@@ -213,7 +216,9 @@ def test_system_messages_warn_when_baseline_missing_with_summary():
     with patch.object(langgraph_runner_module.logger, "warning") as warn:
         messages = runner._build_system_messages(config, context)
 
-    assert [m.content for m in messages] == ["SUMMARY"]
+    contents = [m.content for m in messages]
+    assert "SUMMARY" in contents
+    assert any("Workspace environment" in c for c in contents)
     assert warn.called
 
 
