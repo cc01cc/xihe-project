@@ -29,6 +29,8 @@ export function humanizeErrorCode(code: string | undefined | null, detail?: stri
       return '当前模型路由不支持工具调用：请改用 OpenAI 兼容连接或更换模型'
     case 'LLM_BASE_URL_MISSING':
       return '模型连接缺少 Base URL：请在设置中为该连接填写地址'
+    case 'LLM_REQUEST_REJECTED':
+      return '模型提供方拒绝了该请求（消息格式或参数不被接受）'
     case 'AGENT_TIMEOUT':
       return 'AI 响应超时，请重试'
     case 'AGENT_STREAM_FAILED':

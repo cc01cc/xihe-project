@@ -363,6 +363,37 @@ class TestCreateLLM:
                 model="mimo-v2.5",
             ))
 
+    def test_outbound_normalization_collapses_pure_string_content_lists(self):
+        # PLAN-0364 hotfix: MiMo rejects content=[""] (HTTP 400); canonical shape is str.
+        from langchain_core.messages import AIMessage
+
+        from xihe_agent.llm.base import _normalize_outbound_messages
+
+        normalized = _normalize_outbound_messages([
+            AIMessage(content=[""]),
+            AIMessage(content=["a", "b"]),
+        ])
+        assert normalized[0].content == ""
+        assert normalized[1].content == "ab"
+
+    def test_outbound_normalization_keeps_structured_multimodal_blocks(self):
+        from langchain_core.messages import HumanMessage
+
+        from xihe_agent.llm.base import _normalize_outbound_messages
+
+        block = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+        normalized = _normalize_outbound_messages([HumanMessage(content=[block])])
+        assert normalized[0].content == [block]
+
+    def test_wire_dict_normalization_collapses_pure_string_lists(self):
+        # Boundary guard for call paths that reach litellm without ChatLiteLLM.
+        from xihe_agent.llm.base import _normalize_message_dict
+
+        assert _normalize_message_dict({"role": "assistant", "content": [""]})["content"] == ""
+        assert _normalize_message_dict({"role": "assistant", "content": ["a", "b"]})["content"] == "ab"
+        block = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+        assert _normalize_message_dict({"role": "user", "content": [block]})["content"] == [block]
+
 
 class TestMockChatModel:
     """MockChatModel for testing."""

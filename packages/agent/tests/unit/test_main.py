@@ -141,6 +141,22 @@ def test_classify_llm_exception_preserves_provider_failure_class():
     assert _classify_llm_exception(TimeoutError("request timed out"))[0] == "LLM_PROVIDER_UNREACHABLE"
 
 
+def test_classify_llm_exception_maps_provider_400_to_request_rejected():
+    import litellm
+
+    # PLAN-0364 hotfix: provider 4xx (rejected payload) must not fall through to the
+    # generic, retryable AGENT_STREAM_FAILED — it is deterministic and non-retryable.
+    error = litellm.exceptions.BadRequestError(
+        message="Invalid request parameters",
+        model="mimo-v2.5",
+        llm_provider="openai",
+    )
+    code, detail, retryable = _classify_llm_exception(error)
+    assert code == "LLM_REQUEST_REJECTED"
+    assert retryable is False
+    assert detail
+
+
 @pytest.mark.asyncio
 async def test_pure_chat_does_not_initialize_mcp(monkeypatch):
     from xihe_agent import main as agent_main

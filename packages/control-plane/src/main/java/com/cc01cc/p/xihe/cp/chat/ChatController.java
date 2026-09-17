@@ -1008,7 +1008,7 @@ public class ChatController {
         }
         return switch (code) {
             case "LLM_NOT_CONFIGURED", "LLM_CREDENTIALS_INVALID", "LLM_PROVIDER_UNREACHABLE",
-                    "LLM_MODEL_UNAVAILABLE", "AGENT_UNAVAILABLE", "AGENT_TIMEOUT",
+                    "LLM_MODEL_UNAVAILABLE", "LLM_REQUEST_REJECTED", "AGENT_UNAVAILABLE", "AGENT_TIMEOUT",
                     "AGENT_CIRCUIT_OPEN", "AGENT_STREAM_FAILED", "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS",
                     "IDEMPOTENCY_KEY_CONFLICT", "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
                     "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH",
@@ -1023,6 +1023,7 @@ public class ChatController {
             case "LLM_CREDENTIALS_INVALID" -> "Provider credentials were rejected";
             case "LLM_PROVIDER_UNREACHABLE" -> "Provider is unreachable";
             case "LLM_MODEL_UNAVAILABLE" -> "Selected model is unavailable";
+            case "LLM_REQUEST_REJECTED" -> "The provider rejected the request (message shape or parameters)";
             case "AGENT_TIMEOUT" -> "Agent request timed out";
             case "AGENT_CIRCUIT_OPEN" -> "Agent service is temporarily unavailable";
             case "SSE_SUBSCRIPTION_REQUIRED" -> "An active SSE subscription is required";

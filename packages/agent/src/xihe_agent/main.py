@@ -484,6 +484,18 @@ def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
             "当前模型路由不支持工具调用：请改用 OpenAI 兼容连接，或更换支持工具的模型",
             False,
         )
+    provider_status = getattr(error, "status_code", None)
+    if provider_status is None:
+        provider_status = getattr(getattr(error, "response", None), "status_code", None)
+    if isinstance(error, litellm.exceptions.BadRequestError) or provider_status == 400:
+        # The provider rejected the payload (message shape / params / tool schema).
+        # Non-retryable: the same request cannot succeed; log the raw text for triage.
+        logger.error("[LLM] provider rejected the request: {}", str(error)[:500])
+        return (
+            "LLM_REQUEST_REJECTED",
+            "模型提供方拒绝了该请求（消息格式或参数不被接受）",
+            False,
+        )
     if any(marker in text for marker in ("missing credentials", "api key", "apikey")):
         return "LLM_NOT_CONFIGURED", "Provider credentials are not configured", True
     if any(marker in text for marker in ("authentication", "unauthorized", "401", "403")):

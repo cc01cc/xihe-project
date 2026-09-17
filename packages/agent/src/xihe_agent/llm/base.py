@@ -2,6 +2,7 @@ import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+import litellm
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
@@ -26,6 +27,69 @@ _WIRE_SLUGS_REQUIRING_EXPLICIT_BASE = frozenset({"openai", "custom_openai", "ope
 
 class LLMRouteConfigError(RuntimeError):
     """Resolved route would silently fall back to a provider default endpoint (PLAN-0364 M3)."""
+
+
+def _normalize_outbound_messages(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+    """Canonicalize message content before it reaches the provider wire.
+
+    LangChain can aggregate a reasoning-only assistant turn into a pure-string content
+    list (e.g. ``[""]``). Providers such as Xiaomi MiMo reject that shape with HTTP 400
+    ("Invalid request parameters"), even though ``content: ""`` is accepted. XH's
+    canonical shape is a string (empty when the turn only carried tool calls), so
+    collapse pure-string lists here.
+
+    Structured content blocks (images/audio) are left untouched so multimodal requests
+    keep working; providers accept those block lists.
+    """
+    normalized: list[BaseMessage] = []
+    for message in messages:
+        content = message.content
+        if isinstance(content, list) and all(isinstance(item, str) for item in content):
+            normalized.append(message.model_copy(update={"content": "".join(content)}))
+        else:
+            normalized.append(message)
+    return normalized
+
+
+def _normalize_message_dict(message: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Collapse a pure-string ``content`` list on an already-serialized wire message."""
+    content = message.get("content")
+    if isinstance(content, list) and all(isinstance(item, str) for item in content):
+        return {**message, "content": "".join(content)}
+    return message
+
+
+def _install_wire_normalizer() -> None:
+    """Normalize provider payloads at the litellm boundary (idempotent).
+
+    Some call paths reach ``litellm`` without going through ``ChatLiteLLM``; normalizing the
+    ``messages`` argument here covers every caller. Providers such as Xiaomi MiMo reject
+    ``content: [""]`` with HTTP 400 while accepting ``content: ""``.
+    """
+    if getattr(litellm.acompletion, "_xihe_normalized", False):
+        return
+    original_acompletion = litellm.acompletion
+    original_completion = litellm.completion
+
+    async def normalized_acompletion(*args: Any, **kwargs: Any) -> Any:
+        messages = kwargs.get("messages")
+        if isinstance(messages, list):
+            kwargs["messages"] = [_normalize_message_dict(m) for m in messages]
+        return await original_acompletion(*args, **kwargs)
+
+    def normalized_completion(*args: Any, **kwargs: Any) -> Any:
+        messages = kwargs.get("messages")
+        if isinstance(messages, list):
+            kwargs["messages"] = [_normalize_message_dict(m) for m in messages]
+        return original_completion(*args, **kwargs)
+
+    normalized_acompletion._xihe_normalized = True  # type: ignore[attr-defined]
+    normalized_completion._xihe_normalized = True  # type: ignore[attr-defined]
+    litellm.acompletion = normalized_acompletion
+    litellm.completion = normalized_completion
+
+
+_install_wire_normalizer()
 
 # PLAN-0307 decisions #21/#39: the config table holds no provider credentials.
 # These env keys are the offline fallback (dev / CP unavailable); the normal
@@ -296,6 +360,15 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
         llm_kwargs = {k: v for k, v in llm_kwargs.items() if v is not None}
         super().__init__(**llm_kwargs)
         self._config = cfg
+
+    # Single choke point for every sync/async path (ChatLiteLLM builds the provider
+    # payload here), so normalizing once covers _generate/_stream/_astream/_agenerate.
+    def _create_message_dicts(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return super()._create_message_dicts(_normalize_outbound_messages(messages), stop)
 
     async def complete(self, request: LLMRequest) -> str:
         messages = _to_langchain_messages(request.messages)
