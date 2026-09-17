@@ -83,12 +83,16 @@ test.describe('Config Settings (three layers)', () => {
     await expect(page).toHaveScreenshot('config-workspace-tab.png')
   })
 
-  test('approval-policy stays workspace-only and renders the approval mode select', async ({ page }) => {
+  test('approval-policy is instance-writable, workspace-overridable and user-hidden', async ({ page }) => {
     await mockConfigAPIs(page)
     await page.goto('/settings/config', { waitUntil: 'load' })
 
-    // The instance tab must not offer a place to set the approval mode (PLAN-0337).
-    await expect(page.getByTestId('config-domain-approval-policy')).toHaveCount(0)
+    // PLAN-0364 决策 #9（supersede PLAN-0337 选项①）：instance 层可写默认。
+    const instanceDomain = page.getByTestId('config-domain-approval-policy')
+    await expect(instanceDomain).toBeVisible()
+    await instanceDomain.locator('button').first().click()
+    const instanceSelect = page.getByTestId('config-field-approval-policy-mode').locator('select')
+    await expect(instanceSelect).toHaveValue('manual')
 
     await page.getByTestId('config-tab-workspace').click()
     const domain = page.getByTestId('config-domain-approval-policy')
@@ -98,6 +102,10 @@ test.describe('Config Settings (three layers)', () => {
     const modeSelect = page.getByTestId('config-field-approval-policy-mode').locator('select')
     await expect(modeSelect).toHaveValue('manual')
     await expect(modeSelect.locator('option')).toHaveCount(2)
+
+    // user 层仍不可写（显式例外）
+    await page.getByTestId('config-tab-user').click()
+    await expect(page.getByTestId('config-domain-approval-policy')).toHaveCount(0)
   })
 
   test('saving the approval mode goes through the workspace endpoint', async ({ page }) => {

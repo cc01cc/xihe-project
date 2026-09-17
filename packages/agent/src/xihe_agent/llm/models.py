@@ -36,12 +36,15 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _model_capabilities(provider: str, model_id: str) -> dict[str, bool]:
-    # The connection Catalog, rather than this function's provider allowlist,
-    # is the authority for which adapters are enabled. Keep the conservative
-    # suffix exclusions for endpoints that are clearly not chat models.
+def _model_capabilities(_provider: str, model_id: str) -> dict[str, bool]:
+    # PLAN-0364 M4: only `chat` is derived here. Model-level `vision`/`tools` are
+    # no longer guessed (they were hardcoded False yet read as authoritative);
+    # provider-level capability display comes from the CP catalog `supports`.
+    # The connection Catalog, rather than a provider allowlist, remains the
+    # authority for which adapters are enabled; keep the conservative suffix
+    # exclusions for endpoints that are clearly not chat models.
     chat = not bool(re.search(r"(?:-|_)(?:asr|tts)$", model_id, re.IGNORECASE))
-    return {"chat": chat, "vision": False, "tools": False}
+    return {"chat": chat}
 
 
 async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:

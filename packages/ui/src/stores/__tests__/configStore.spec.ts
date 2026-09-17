@@ -13,7 +13,7 @@ function seedReadyModel(store: ReturnType<typeof useConfigStore>, provider: stri
     providers: {
       [provider]: {
         status: 'ready',
-        models: [{ name: model, capabilities: { chat: true, vision: false, tools: false } }],
+        models: [{ name: model, capabilities: { chat: true } }],
       },
     },
   }
@@ -213,7 +213,7 @@ describe('useConfigStore', () => {
         providers: {
           openai: {
             status: 'ready',
-            models: [{ name: 'gpt-4o', capabilities: { chat: true, vision: false, tools: false } }],
+            models: [{ name: 'gpt-4o', capabilities: { chat: true } }],
           },
         },
       }

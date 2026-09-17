@@ -72,14 +72,15 @@ const selectableProviders = computed(() => {
 })
 
 function pickerGroupLabel(provider: ProviderDefinition): string {
-  if (provider.category === 'recommended') return '推荐'
-  if (provider.category === 'custom') return '本地与自定义'
-  return '其他'
+  // PLAN-0364 M4：按协议族（catalog adapter）一级分组，未来可加组（如 Anthropic）。
+  if (provider.adapter === 'openai-compatible') return 'OpenAI 兼容'
+  if (provider.adapter === 'native-litellm') return '原生协议'
+  return '本地与自定义'
 }
 
 const pickerGroups = computed(() => {
   const groups: Array<{ label: string; items: ProviderDefinition[] }> = []
-  const labels = ['推荐', '其他', '本地与自定义']
+  const labels = ['原生协议', 'OpenAI 兼容', '本地与自定义']
   for (const label of labels) {
     const items = selectableProviders.value.filter((provider) => pickerGroupLabel(provider) === label)
     if (items.length > 0) groups.push({ label, items })
@@ -387,7 +388,31 @@ onMounted(() => { void load() })
               <span class="min-w-0 flex-1">
                 <span class="block text-sm font-medium">{{ provider.displayName }}</span>
                 <span class="block truncate text-xs text-muted-foreground">
-                  {{ provider.description || `${adapterLabel(provider)} · ${provider.modelDiscovery}` }}
+                  {{ provider.description || provider.displayName }}
+                </span>
+                <span class="mt-0.5 block text-[10px] text-muted-foreground">
+                  {{ adapterLabel(provider) }} · {{ provider.modelDiscovery }}
+                </span>
+                <span
+                  class="mt-0.5 flex flex-wrap items-center gap-1"
+                  :data-testid="`provider-supports-${provider.id}`"
+                >
+                  <span
+                    v-if="provider.supports.streaming"
+                    class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                  >流式</span>
+                  <span
+                    v-if="provider.supports.tools"
+                    class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                  >工具</span>
+                  <span
+                    v-if="provider.supports.vision"
+                    class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                  >视觉</span>
+                  <span
+                    v-if="provider.supports.customBaseUrl"
+                    class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                  >可自定义地址</span>
                 </span>
               </span>
               <span
@@ -492,8 +517,6 @@ onMounted(() => { void load() })
               class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
             >
               <option value="remote-models">Provider /models</option>
-              <option value="litellm-catalog">LiteLLM Catalog</option>
-              <option value="curated">精选模型</option>
               <option value="manual">手动输入模型</option>
             </select>
             <span class="mt-1.5 block text-[11px] text-muted-foreground">XH 会先验证连接可用，再让模型进入选择器。</span>

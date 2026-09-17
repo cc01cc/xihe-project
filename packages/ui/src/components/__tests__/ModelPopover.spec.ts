@@ -79,7 +79,7 @@ function readyModelCache(models: Record<string, string[]>) {
         status: 'ready' as const,
         models: modelIds.map((name) => ({
           name,
-          capabilities: { chat: true, vision: false, tools: false },
+          capabilities: { chat: true },
         })),
       },
     ])),

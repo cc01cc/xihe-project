@@ -24,7 +24,7 @@ import { ChevronDown, ChevronRight, ChevronUp, Cpu, Star, StarOff } from '@lucid
 import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
-import { getProviderInfo, getModelTags, getModelContextWindow } from '../../types/provider'
+import { getProviderInfo } from '../../types/provider'
 import { listProviderConnections } from '../../services/providerConnectionService'
 
 const { t } = useI18n()
@@ -133,7 +133,7 @@ const hasAnyUnfilteredModels = computed(() => {
 
 function matchModel(provider: string, model: string, q: string): boolean {
   const info = getProviderInfo(provider)
-  const text = `${model} ${info?.name ?? provider} ${getModelTags(provider, model).join(' ')}`.toLowerCase()
+  const text = `${model} ${info?.name ?? provider}`.toLowerCase()
   return text.includes(q)
 }
 
@@ -199,10 +199,6 @@ function goToSettings() {
 function handleSelect(event: { detail: { value?: string } }) {
   const value = event.detail.value
   if (value) void selectModel(value)
-}
-
-function formatContext(ctx?: number): string {
-  return ctx ? `${ctx}K` : ''
 }
 
 onMounted(() => {
@@ -366,26 +362,13 @@ onMounted(() => {
                       v-for="model in group.models"
                       :key="`${group.provider}-${model}`"
                       :value="`${group.provider}/${model}`"
-                      :text-value="`${model} ${group.name} ${getModelTags(group.provider, model).join(' ')}`"
+                      :text-value="`${model} ${group.name}`"
                       :data-testid="`model-item-${group.provider}/${model}`"
                       class="w-full flex items-center justify-between px-2 py-1 pl-6 text-xs rounded hover:bg-accent data-[highlighted]:bg-accent data-[state=checked]:bg-accent outline-none cursor-pointer"
                       @select="handleSelect"
                     >
                       <div class="min-w-0 flex items-center gap-2">
                         <span class="truncate">{{ model }}</span>
-                        <span
-                          v-for="tag in getModelTags(group.provider, model)"
-                          :key="tag"
-                          class="inline-flex items-center px-1 rounded text-[10px] bg-muted text-muted-foreground"
-                        >
-                          {{ tag }}
-                        </span>
-                        <span
-                          v-if="getModelContextWindow(model)"
-                          class="text-[10px] text-muted-foreground"
-                        >
-                          {{ formatContext(getModelContextWindow(model)) }}
-                        </span>
                       </div>
                       <button
                         class="size-5 flex items-center justify-center shrink-0 rounded hover:bg-background"
