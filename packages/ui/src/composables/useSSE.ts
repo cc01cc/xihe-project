@@ -44,6 +44,10 @@ export interface SSECallbacks {
     onApprovalRequest?: (data: Record<string, unknown>) => void;
     onStatus?: (status: string) => void;
     onContextSourcesChanged?: (data: { sourceKey?: string; status?: string }) => void;
+    /** PLAN-0341 U3: overflow compacted + one retry dispatched. */
+    onContextOverflowRetry?: (data: { runId?: string; requestId?: string; message?: string }) => void;
+    /** PLAN-0341 U4: auto-compaction circuit open/closed. */
+    onContextCompactionCircuit?: (data: { state?: string; reason?: string }) => void;
     onError?: (error: SSEErrorPayload) => void;
     onDone?: (outcome?: string) => void;
 }
@@ -328,6 +332,33 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     currentCallbacks.onContextSourcesChanged?.(data);
                 } catch {
                     logger.warn("Failed to parse context_sources_changed payload");
+                }
+                break;
+
+            case "context_overflow_retry":
+                // PLAN-0341 U3: context overflow → compact → one retry.
+                try {
+                    const data = JSON.parse(msg.data) as {
+                        runId?: string;
+                        requestId?: string;
+                        message?: string;
+                    };
+                    currentCallbacks.onContextOverflowRetry?.(data);
+                } catch {
+                    logger.warn("Failed to parse context_overflow_retry payload");
+                }
+                break;
+
+            case "context_compaction_circuit":
+                // PLAN-0341 U4: recovery-band circuit open/close.
+                try {
+                    const data = JSON.parse(msg.data) as {
+                        state?: string;
+                        reason?: string;
+                    };
+                    currentCallbacks.onContextCompactionCircuit?.(data);
+                } catch {
+                    logger.warn("Failed to parse context_compaction_circuit payload");
                 }
                 break;
 

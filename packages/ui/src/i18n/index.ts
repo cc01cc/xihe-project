@@ -180,6 +180,9 @@ const messages = {
             contextSourcesError: "源摘要不可用",
             contextSourcesFailed: "读取失败",
             contextSourcesUpdated: "规则已更新（本轮起生效）",
+            contextOverflowRetry: "上下文超限，已压缩并重试一次",
+            contextCompactionCircuitOpen: "自动压缩已暂停（上下文未见改善）",
+            contextCompactionCircuitClosed: "自动压缩已恢复",
             approvalUnclassifiedNotice:
                 "未分类工具：默认按 ask 处理，且不能保存会话级或持久规则。仅工作区 OWNER / ADMIN 可分类。",
             approvalClassifyAndAllow: "分类并放行",
@@ -777,6 +780,9 @@ const messages = {
             contextSourcesError: "Source summary unavailable",
             contextSourcesFailed: "read failed",
             contextSourcesUpdated: "Rules updated (applies this turn)",
+            contextOverflowRetry: "Context limit exceeded; compacted and retrying once",
+            contextCompactionCircuitOpen: "Auto-compaction paused (no improvement seen)",
+            contextCompactionCircuitClosed: "Auto-compaction resumed",
             approvalUnclassifiedNotice:
                 "Unclassified tool: it defaults to ask and cannot grant session or saved rules. Only a workspace OWNER / ADMIN can classify it.",
             approvalClassifyAndAllow: "Classify and allow",

@@ -126,6 +126,22 @@ function connectSession(id: string) {
         description: data.sourceKey ?? 'AGENTS.md',
       })
     },
+    onContextOverflowRetry: (data) => {
+      if (!isCurrentSession()) return
+      // PLAN-0341 U3: visible marker for the single overflow retry.
+      toast.info(t('chat.contextOverflowRetry'), {
+        description: data.runId ? `run ${data.runId.slice(0, 8)}` : undefined,
+      })
+    },
+    onContextCompactionCircuit: (data) => {
+      if (!isCurrentSession()) return
+      // PLAN-0341 U4: circuit open pauses auto-compaction; close restores it.
+      if (data.state === 'open') {
+        toast.warning(t('chat.contextCompactionCircuitOpen'))
+      } else if (data.state === 'closed') {
+        toast.info(t('chat.contextCompactionCircuitClosed'))
+      }
+    },
     onToolCall: (name: string, args: Record<string, unknown>) => {
       if (!isCurrentSession()) return
       chatStore.setSessionRunState(id, 'executing', activeRunId)

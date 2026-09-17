@@ -23,15 +23,18 @@ public class ContextService {
     private final ContextProjectionService projectionService;
     private final ObjectMapper objectMapper;
     private final com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository approvalRepository;
+    private final com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager;
 
     public ContextService(EventStoreService eventStoreService,
                           ContextProjectionService projectionService,
                           ObjectMapper objectMapper,
-                          com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository approvalRepository) {
+                          com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository approvalRepository,
+                          com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager) {
         this.eventStoreService = eventStoreService;
         this.objectMapper = objectMapper;
         this.projectionService = projectionService;
         this.approvalRepository = approvalRepository;
+        this.sseManager = sseManager;
     }
 
     @Transactional
@@ -241,6 +244,15 @@ public class ContextService {
                 "bandLimit", bandLimit,
                 "trigger", trigger == null ? "auto" : trigger
         ));
+        // PLAN-0341 U4: surface the circuit to the session UI.
+        try {
+            sseManager.send(sessionId, "context_compaction_circuit", Map.of(
+                    "type", "context_compaction_circuit",
+                    "state", "open",
+                    "reason", "recovery_band"));
+        } catch (Exception e) {
+            logger.debug("Failed to emit compaction circuit SSE: {}", e.getMessage());
+        }
     }
 
     /**
@@ -486,6 +498,14 @@ public class ContextService {
                         "state", "closed",
                         "reason", "significant_growth"
                 ));
+        try {
+            sseManager.send(sessionId, "context_compaction_circuit", Map.of(
+                    "type", "context_compaction_circuit",
+                    "state", "closed",
+                    "reason", "significant_growth"));
+        } catch (Exception e) {
+            logger.debug("Failed to emit compaction circuit SSE: {}", e.getMessage());
+        }
     }
 
     private String computeSha256(String data) {
