@@ -59,7 +59,10 @@ export const useCheckpointStore = defineStore("checkpoint", () => {
         const existing = getForWorkspace(workspaceId);
         if (!options.force && loadedWorkspaces.has(workspaceId)) return existing;
         const pending = inFlight.get(workspaceId);
-        if (pending) return pending;
+        if (pending) {
+            if (!options.force) return pending;
+            return pending.then(() => fetchWorkspaceCheckpoints(workspaceId, { force: true }));
+        }
 
         const requestGeneration = storeGeneration;
         const request = Promise.resolve().then(

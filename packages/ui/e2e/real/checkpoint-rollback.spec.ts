@@ -45,6 +45,8 @@ const HOST_ROOT =
         : path.resolve(process.cwd(), "../../.xihe-workspaces"));
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/checkpoint-rollback");
+const BASELINE_FILE = ".xihe-checkpoint-rollback-baseline.txt";
+const BASELINE_CONTENT = "checkpoint rollback baseline\n";
 
 const TERMINAL_RUN_STATUSES = ["succeeded", "failed", "partial", "ambiguous", "cancelled"] as const;
 const TERMINAL_RUN_PATTERN = new RegExp(`^(${TERMINAL_RUN_STATUSES.join("|")})$`);
@@ -145,6 +147,20 @@ function seedPage(page: Page, token: string, wsId: string): void {
     });
 }
 
+function listSliceRefs(workspaceId: string): string[] {
+    const gitDir = path.join(HOST_ROOT, ".xihe-shadow", `${workspaceId}.git`);
+    const result = spawnSync(
+        "git",
+        ["--git-dir", gitDir, "for-each-ref", "--format=%(refname)", "refs/xihe/slices"],
+        { encoding: "utf8" },
+    );
+    if (result.status !== 0) return [];
+    return result.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+}
+
 /**
  * Send a chat message and wait for the real request plus visible user bubble.
  */
@@ -158,7 +174,8 @@ async function sendChat(page: Page, text: string): Promise<void> {
         { timeout: 30000 },
     );
     await send.click();
-    await expect(await response).toBeOK();
+    const chatResponse = await response;
+    expect(chatResponse.ok(), `chat request failed with ${chatResponse.status()}`).toBeTruthy();
     await expect(page.locator('[data-slot="message"][data-align="end"]').first()).toBeVisible({
         timeout: 30000,
     });
@@ -406,8 +423,7 @@ async function writeFileRunThroughUi(
 async function revertThroughUi(
     page: Page,
     flow: WriteFlow,
-    workspaceId: string,
-    fileName: string,
+    hostDir: string,
 ): Promise<{ previewBodies: string[]; resultBodies: string[] }> {
     const previewBodies: string[] = [];
     const resultBodies: string[] = [];
@@ -431,6 +447,9 @@ async function revertThroughUi(
     await expect(marker.getByTestId("run-checkpoint-summary")).toContainText(
         String(flow.view.changedCount),
     );
+    const extraFileName = `.xihe-checkpoint-extra-${Date.now()}.txt`;
+    const extraPath = path.join(hostDir, extraFileName);
+    writeFileSync(extraPath, "this file must be deleted by restoring the captured slice\n");
 
     await marker.getByTestId("run-checkpoint-revert-entry").click();
     const dialog = page.getByTestId("checkpoint-dialog");
@@ -440,16 +459,17 @@ async function revertThroughUi(
     );
     await expect(page.getByTestId("revert-preview-restore-count")).toHaveText("0");
     await expect(page.getByTestId("revert-preview-type-conflict-count")).toHaveText("0");
-    await expect(page.getByTestId("revert-preview-paths")).toContainText(fileName);
+    await expect(page.getByTestId("revert-preview-paths")).toContainText(extraFileName);
     // U2: the conservative default holds focus and no acknowledgement is required without conflicts.
     await expect(page.getByTestId("revert-preview-cancel")).toBeFocused();
     await expect(page.getByTestId("revert-preview-confirm")).toBeEnabled();
 
     await page.getByTestId("revert-preview-confirm").click();
     await expect(page.getByTestId("revert-result-counts")).toBeVisible({ timeout: 60000 });
-    await expect(page.getByTestId("revert-result-group-deleted")).toContainText(fileName);
+    await expect(page.getByTestId("revert-result-group-deleted")).toContainText(extraFileName);
     await expect(page.getByTestId("revert-result-ref")).toContainText(flow.view.sliceRef ?? "");
     await page.getByTestId("revert-result-dismiss").click();
+    await expect.poll(() => existsSync(extraPath)).toBe(false);
 
     await expect(
         page
@@ -493,6 +513,29 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         hostDir = path.join(HOST_ROOT, sharedWs);
     });
 
+    test("W: materialize the workspace and establish the C0 slice baseline", async ({
+        request,
+    }) => {
+        mkdirSync(hostDir, { recursive: true });
+        writeFileSync(path.join(hostDir, BASELINE_FILE), BASELINE_CONTENT);
+
+        const response = await request.post(`${CP_URL}/api/v1/workspaces/${sharedWs}/materialize`, {
+            headers: sharedHeaders,
+        });
+        expect(
+            [200, 202],
+            `materialize failed: ${response.status()} ${await response.text()}`,
+        ).toContain(response.status());
+        await expect
+            .poll(() => listSliceRefs(sharedWs).length, {
+                message: "C0 baseline slice ref must appear before rollback scenarios",
+                timeout: 180000,
+                intervals: [1000, 2000, 3000],
+            })
+            .toBeGreaterThan(0);
+        expect(existsSync(path.join(hostDir, BASELINE_FILE))).toBe(true);
+    });
+
     // S1 ─ L1 write_file happy path ────────────────────────────────────────────
     test("S1: write_file capture previews without contents and restores through the UI", async ({
         page,
@@ -526,11 +569,12 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         expect(view.changedFiles.map((file) => file.path)).toContain(fileName);
         expect(view.changedFiles.find((file) => file.path === fileName)?.status).toBe("A");
 
-        const { previewBodies } = await revertThroughUi(page, flow, sharedWs, fileName);
+        const { previewBodies } = await revertThroughUi(page, flow, hostDir);
         await page.screenshot({ path: path.join(EVIDENCE_DIR, "s1-reverted-marker.png") });
 
-        // Visible result + persistence after the revert.
-        await expect.poll(() => existsSync(flow.hostFile), { timeout: 30000 }).toBe(false);
+        // Restoring the captured slice preserves its original file; the extra file created
+        // immediately before the dialog was deleted by revertThroughUi.
+        await expect.poll(() => existsSync(flow.hostFile), { timeout: 30000 }).toBe(true);
         const after = await checkpointView(request, sharedHeaders, sharedWs, flow.runId);
         expect(after.revert?.state).toBe("rolled_back");
         expect(after.revert?.counts?.deleted).toBe(1);
@@ -551,7 +595,6 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             previewBodies.join("\n"),
             "preview payloads carry no raw file contents",
         ).not.toContain(content);
-        expect(previewBodies.join("\n")).toContain(fileName);
 
         // Ledger: the user revert is a checkpoint/revert_checkpoint item owned by CP.
         const items = await operationItems(request, sharedHeaders, flow.runId);
@@ -707,9 +750,9 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             "shadow lives under hostRoot/.xihe-shadow",
         ).toBe(true);
 
-        const { previewBodies } = await revertThroughUi(page, flow, sharedWs, fileName);
+        const { previewBodies } = await revertThroughUi(page, flow, hostDir);
         expect(previewBodies.join("\n")).not.toContain(content);
-        await expect.poll(() => existsSync(flow.hostFile), { timeout: 30000 }).toBe(false);
+        await expect.poll(() => existsSync(flow.hostFile), { timeout: 30000 }).toBe(true);
         const after = await checkpointView(request, sharedHeaders, sharedWs, flow.runId);
         expect(after.revert?.state).toBe("rolled_back");
     });

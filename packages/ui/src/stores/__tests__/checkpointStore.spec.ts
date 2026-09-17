@@ -109,6 +109,28 @@ describe("workspace checkpoint list fetch", () => {
         await expect(Promise.all([first, second])).resolves.toHaveLength(2);
     });
 
+    it("queues a forced refresh behind an in-flight initial list", async () => {
+        let resolveList: ((value: WorkspaceCheckpoint[]) => void) | null = null;
+        mockedApi.listWorkspaceCheckpoints.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    resolveList = resolve;
+                }),
+        );
+        const store = useCheckpointStore();
+        const initial = store.fetchWorkspaceCheckpoints(WORKSPACE_ID);
+        const forced = store.fetchWorkspaceCheckpoints(WORKSPACE_ID, { force: true });
+        await flushPromises();
+        expect(mockedApi.listWorkspaceCheckpoints).toHaveBeenCalledTimes(1);
+
+        resolveList?.([]);
+        await flushPromises();
+        expect(mockedApi.listWorkspaceCheckpoints).toHaveBeenCalledTimes(2);
+        resolveList?.([checkpoint()]);
+        await expect(Promise.all([initial, forced])).resolves.toHaveLength(2);
+        expect(store.getForRun(WORKSPACE_ID, RUN_ID)?.sliceRef).toBe(SLICE_REF);
+    });
+
     it("keeps a previous list annotated when refresh fails", async () => {
         mockedApi.listWorkspaceCheckpoints.mockResolvedValueOnce([checkpoint()]);
         const store = useCheckpointStore();

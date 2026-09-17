@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue";
+import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArchiveRestore, CircleAlert, Clock, RotateCcw } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
@@ -97,11 +97,18 @@ const changedFilesTitle = computed(() => {
 
 function loadCheckpoint() {
     const workspaceId = authStore.currentWorkspaceId;
-    if (workspaceId) void checkpointStore.fetchWorkspaceCheckpoints(workspaceId);
+    if (workspaceId) void checkpointStore.fetchWorkspaceCheckpoints(workspaceId, { force: true });
 }
 
-onMounted(loadCheckpoint);
-watch(() => props.runId, loadCheckpoint);
+watch(
+    [
+        () => props.runId,
+        () => authStore.currentWorkspaceId,
+        () => checkpointStore.getEvent(props.runId)?.state,
+    ],
+    loadCheckpoint,
+    { immediate: true },
+);
 </script>
 
 <template>
