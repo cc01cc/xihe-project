@@ -497,6 +497,7 @@ async function runPlaywright() {
       XIHE_FAKE_MCP_PORT: fakeMcpPort,
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
       XIHE_E2E_LLM_MODE: llmMode,
+      XIHE_E2E_ADMIN_PASSWORD: e2eAdminPassword,
       XIHE_E2E_HEADED: process.env.XIHE_E2E_HEADED ?? '0',
       XIHE_E2E_BROWSER_CHANNEL: process.env.XIHE_E2E_BROWSER_CHANNEL ?? 'chrome-beta',
     },

@@ -87,6 +87,12 @@ flowchart TD
 - Agent 无状态，通过 `/internal/v1/context/{sessionId}/snapshot` 获取投影快照。
 - 事件写入当前为同步；性能测试显示批量写入已足够快（~17k events/s），未引入异步队列。
 
+### 3.1b 收缩管道与 prune（PLAN-0341）
+
+- **装配**：`langgraph_runner.stream` 消费 CP 投影 keep-recent → `prune_history_tool_results`（固定窗 `pruneWindowChars` 默认 80K chars，可配）→ 写 `context.prune` 墓碑；`HISTORY_TRUNCATION_LIMIT=20` 仅装配熔断，窗口起点落在 tool 结果时回退对齐（`_align_truncation_start`）。
+- **配置**：`context_policy.resolve` 读 effective `context-policy`（`defaults`/`models` JSON）：`maxInputTokens` 覆盖 litellm 窗、`pruneWindowChars`、`recoveryBand`、`tokenizerRef`（受信命名空间 allowlist）；日志 `context_policy_resolved source=config|default`。
+- **SUM**：压缩摘要只在 `epoch.system_messages`；`AgentContext.apply_event("compaction.applied")` 截断 keep-recent 且不把摘要塞进 `messages`。
+
 ### 3.2 事件类型
 
 | 事件类型 | 触发时机 |
@@ -100,7 +106,10 @@ flowchart TD
 | `epoch.started` / `epoch.replaced` | epoch 开始/替换 |
 | `runtime.state_cleared` | `AgentRunner.reset()` |
 | `session.forked` | 会话 fork |
-| `compaction.applied` | 上下文压缩 |
+| `compaction.applied` | 上下文压缩（PLAN-0341：`messages` 不再写入摘要，摘要仅 `epoch.system_messages`/`summary_hash`） |
+| `context.prune` | prune 墓碑（PLAN-0341 T1.2：`tool_call_id`/hash/size/首尾 + `pruned`；投影按 hash 原地替换，防复活） |
+| `context.compaction_circuit` | 恢复带熔断开/关（PLAN-0341 T1.3：`state=open|closed`；overflow 强制压缩绕过熔断） |
+| `context.overflow_retry` | 溢出重跑审计（PLAN-0341 T1.1：runId + 预检 maxInputTokens） |
 | `assistant.responded` | assistant 回复持久化（PLAN-294 M1；runner 流成功终态 append，投影映射为 ai 消息） |
 | `llm.usage` | run 用量镜像（PLAN-294 M3；CP relay 写入，压缩门信号源） |
 
@@ -190,6 +199,10 @@ if recover_ids:
 - `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/context/`
 
 ## 7. 相关 PLAN
+
+- PLAN-0340 上下文源与注入（L1）
+- PLAN-0341 上下文管道与 prune（overflow/prune/SUM/熔断）— 本节 §3.1b
+- PLAN-294 上下文事件流与自动压缩门
 
 - `PLAN-033-XH-agent-module-decoupling.md`
 - `PLAN-035-XH-agent-context-architecture.md`

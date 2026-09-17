@@ -15,6 +15,13 @@ updated: 2026-09-06
 
 本文件收录 AGENTS.md 之外的已知问题，供排查时参考。
 
+## PLAN-0341 上下文管道与 prune — 状态（2026-09-17）
+
+- **已接线**：`CONTEXT_OVERFLOW` relay 白名单 + 至多一次重跑（force-compact → 预检 → 同 runId）；prune 墓碑；摘要 carry-forward + 熔断；SUM 去双写；U3/U4 toast。
+- **Host 证据**：`plans/PLAN-0341-…/evidence/t2.2-*.md`（journey-d D1/D2 + overflow V2）。
+- **残项**：全量 `mise run validate`；U4 熔断 host 见 `journey-d-circuit.spec.ts`（与本 PLAN 同批）；LLM 摘要/SC 抽取器归 0354/0355。
+- **Host E2E 注意**：本机 Docker 可能仅有 `docker-compose.exe`（e2e-host 已回退）；CP 改 Java 后须 `mvn -o package -DskipTests` 再跑 e2e-host；`/workspace/*` 固定 `toolMode=workspace`，无 Runtime 时 chat 用例走 `/chat/*`。
+
 ## PLAN-0340 上下文源注入 — 验收残项（2026-09-17）
 
 - **V14 host/浏览器 U1/U2 截图验收**尚未跑（需 `mise run dev:host` + `e2e-host`）；定向单测已绿。

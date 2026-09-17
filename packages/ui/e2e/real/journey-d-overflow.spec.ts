@@ -56,9 +56,19 @@ test.describe('@host Journey D — overflow retry (CTX-1)', () => {
       .first()
     await expect(assistant).toBeVisible({ timeout: 30000 })
 
-    // U3 toast marker (PLAN-0340/spec/ui-surfaces.md).
+    // U3 toast marker (PLAN-0340/spec/ui-surfaces.md) + V9 computed style.
     const overflowToast = page.getByText(/上下文超限|Context limit exceeded/)
-    await expect(overflowToast.first()).toBeVisible({ timeout: 15000 })
+    const toastEl = overflowToast.first()
+    await expect(toastEl).toBeVisible({ timeout: 15000 })
+    const toastBox = await toastEl.boundingBox()
+    expect(toastBox, 'U3 toast layout box').toBeTruthy()
+    const toastStyle = await toastEl.evaluate((el) => {
+      const cs = window.getComputedStyle(el)
+      return { opacity: cs.opacity, visibility: cs.visibility, fontSize: cs.fontSize }
+    })
+    expect(toastStyle.visibility).not.toBe('hidden')
+    expect(Number(toastStyle.opacity)).toBeGreaterThan(0)
+    expect(Number.parseFloat(toastStyle.fontSize)).toBeGreaterThan(8)
 
     // Public session messages must persist the retry reply.
     const sessions = await page.request.get(`${CP_URL}/api/v1/sessions`, { headers: sharedHeaders })
