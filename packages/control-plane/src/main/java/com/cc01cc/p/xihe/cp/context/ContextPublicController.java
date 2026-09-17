@@ -60,11 +60,11 @@ public class ContextPublicController {
         }
 
         ObjectNode snapshot = contextService.getSnapshot(sessionId, workspaceId, userId, null);
-        ObjectNode meta = (ObjectNode) snapshot.path("metadata");
-        ObjectNode sources = meta != null && meta.get("context_sources").isObject()
-                ? (ObjectNode) meta.get("context_sources")
-                : null;
-        ObjectNode epoch = (ObjectNode) snapshot.path("epoch");
+        com.fasterxml.jackson.databind.JsonNode meta = snapshot.path("metadata");
+        com.fasterxml.jackson.databind.JsonNode sourcesNode = meta.path("context_sources");
+        ObjectNode sources = sourcesNode.isObject() ? (ObjectNode) sourcesNode : null;
+        com.fasterxml.jackson.databind.JsonNode epochNode = snapshot.path("epoch");
+        ObjectNode epoch = epochNode.isObject() ? (ObjectNode) epochNode : null;
 
         Map<String, Object> body = new LinkedHashMap<>();
         String status = sources != null ? sources.path("status").asText("") : "";

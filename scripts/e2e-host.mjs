@@ -243,11 +243,15 @@ async function stopProcess(child) {
 }
 
 async function dockerCompose(args, options = {}) {
-  return run(
-    dockerCommand,
-    ['compose', '-p', pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), ...args],
-    options,
-  )
+  // Windows Docker Desktop may ship compose v1 as docker-compose.exe without
+  // the `docker compose` plugin — prefer the standalone binary then.
+  const probe = await run('docker', ['compose', 'version'], { stdio: ['ignore', 'pipe', 'ignore'] })
+  const usePlugin = probe.code === 0
+  const cmd = usePlugin ? dockerCommand : 'docker-compose.exe'
+  const composeArgs = usePlugin
+    ? ['compose', '-p', pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), ...args]
+    : ['-p', pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), ...args]
+  return run(cmd, composeArgs, options)
 }
 
 async function startIsolatedPostgres() {
@@ -669,7 +673,13 @@ async function teardownPersistent() {
   console.log(`[e2e-host] tearing down persistent stack ${state.runId}`)
   await stopPersistentProcesses(state)
   if (process.platform === 'win32') {
-    await run('docker', ['compose', '-p', state.pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), 'down', '--volumes', '--remove-orphans'], { stdio: 'inherit' })
+    const probe = await run('docker', ['compose', 'version'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    const usePlugin = probe.code === 0
+    const cmd = usePlugin ? 'docker' : 'docker-compose.exe'
+    const args = usePlugin
+      ? ['compose', '-p', state.pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), 'down', '--volumes', '--remove-orphans']
+      : ['-p', state.pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), 'down', '--volumes', '--remove-orphans']
+    await run(cmd, args, { stdio: 'inherit' })
   }
   await rm(stateFile, { force: true })
   console.log('[e2e-host] persistent stack torn down')
