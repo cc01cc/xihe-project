@@ -520,6 +520,7 @@ export interface CheckpointPreview {
     counts: CheckpointPreviewCounts;
     entries: CheckpointPreviewEntry[];
     truncated: boolean;
+    opaqueNestedRepos: string[];
 }
 
 export type CheckpointResultOutcome = "restored" | "deleted" | "failed" | "suspect";

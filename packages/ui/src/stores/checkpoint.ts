@@ -116,6 +116,16 @@ export const useCheckpointStore = defineStore("checkpoint", () => {
         inFlight.clear();
     }
 
+    function clearWorkspace(workspaceId: string): void {
+        for (const recordKey of Object.keys(records.value)) {
+            if (records.value[recordKey]?.workspaceId === workspaceId)
+                delete records.value[recordKey];
+        }
+        loadedWorkspaces.delete(workspaceId);
+        inFlight.delete(workspaceId);
+        delete workspaceErrors.value[workspaceId];
+    }
+
     return {
         records,
         eventRecords,
@@ -125,6 +135,7 @@ export const useCheckpointStore = defineStore("checkpoint", () => {
         getEvent,
         mergeEvent,
         fetchWorkspaceCheckpoints,
+        clearWorkspace,
         clearForUserSwitch,
     };
 });

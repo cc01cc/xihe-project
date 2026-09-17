@@ -42,6 +42,7 @@ const retryButton = ref<HTMLButtonElement | null>(null);
 let loadGeneration = 0;
 
 const counts = computed(() => preview.value?.counts ?? null);
+const opaqueNestedRepos = computed(() => preview.value?.opaqueNestedRepos ?? []);
 const entries = computed(() => preview.value?.entries ?? []);
 const visibleEntries = computed(() =>
     expanded.value ? entries.value : entries.value.slice(0, 20),
@@ -223,6 +224,32 @@ function submit() {
                             {{ counts.typeConflict }}
                         </div>
                     </div>
+                </div>
+
+                <p
+                    data-testid="revert-preview-concurrent-write-risk"
+                    class="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-900 dark:text-amber-100"
+                >
+                    {{ t("chat.checkpointPreviewConcurrentWriteRisk") }}
+                </p>
+
+                <div
+                    v-if="opaqueNestedRepos.length > 0"
+                    data-testid="revert-preview-opaque-nested-repos"
+                    class="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2"
+                >
+                    <p class="text-xs font-medium">
+                        {{ t("chat.checkpointPreviewOpaqueNestedRepos") }}
+                    </p>
+                    <ul class="space-y-1 text-xs text-muted-foreground">
+                        <li
+                            v-for="repo in opaqueNestedRepos"
+                            :key="repo"
+                            class="break-all font-mono"
+                        >
+                            {{ repo }}
+                        </li>
+                    </ul>
                 </div>
 
                 <div data-testid="revert-preview-paths">

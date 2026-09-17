@@ -241,7 +241,8 @@ class RunCheckpointControllerTest extends AbstractH2Test {
                 + "\"counts\":{\"restore\":2,\"delete\":1,\"typeConflict\":1},\"entries\":["
                 + "{\"path\":\"src/a.txt\",\"action\":\"restore\",\"state\":\"planned\"},"
                 + "{\"path\":\"c.txt\",\"action\":\"restore\",\"state\":\"typeConflict\","
-                + "\"reason\":\"TYPE_CHANGED\"}],\"truncated\":false}";
+                + "\"reason\":\"TYPE_CHANGED\"}],\"truncated\":false,"
+                + "\"opaqueNestedRepos\":[\"vendor/lib\"]}";
     }
 
     private String revertBody() {
@@ -295,6 +296,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(SLICE_REF, response.getBody().get("sliceRef"));
         assertEquals(false, response.getBody().get("truncated"));
+        assertEquals(List.of("vendor/lib"), response.getBody().get("opaqueNestedRepos"));
         assertEquals(1, calls("preview"));
     }
 

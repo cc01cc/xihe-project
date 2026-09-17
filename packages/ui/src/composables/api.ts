@@ -509,11 +509,15 @@ export function normalizeCheckpointPreview(value: unknown): CheckpointPreview | 
             if (entry) entries.push(entry);
         }
     }
+    const opaqueNestedRepos = Array.isArray(record.opaqueNestedRepos)
+        ? record.opaqueNestedRepos.filter(isNonEmptyString)
+        : [];
     return {
         sliceRef: record.sliceRef,
         counts,
         entries,
         truncated: record.truncated === true,
+        opaqueNestedRepos,
     };
 }
 

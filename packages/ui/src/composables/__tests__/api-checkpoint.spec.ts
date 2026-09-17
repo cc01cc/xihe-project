@@ -121,11 +121,13 @@ describe("checkpoint preview and result normalizers", () => {
                 { path: "src/c.ts", action: "restore", state: "noop" },
             ],
             truncated: true,
+            opaqueNestedRepos: ["vendor/lib"],
         });
         expect(preview).toMatchObject({
             sliceRef: SLICE_REF,
             counts: { restore: 2, delete: 1, typeConflict: 1 },
             truncated: true,
+            opaqueNestedRepos: ["vendor/lib"],
         });
         expect(preview?.entries[1].state).toBe("type_conflict");
         expect(
@@ -199,6 +201,7 @@ describe("workspace checkpoint API methods", () => {
                 counts: { restore: 1, delete: 0, typeConflict: 0 },
                 entries: [],
                 truncated: false,
+                opaqueNestedRepos: [],
             }),
         );
         await api.previewWorkspaceCheckpointRevert(WORKSPACE_ID, SLICE_REF);

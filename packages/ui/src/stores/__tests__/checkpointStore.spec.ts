@@ -161,6 +161,18 @@ describe("workspace checkpoint list fetch", () => {
 });
 
 describe("workspace checkpoint cleanup", () => {
+    it("clears a workspace timeline after explicit cleanup", async () => {
+        mockedApi.listWorkspaceCheckpoints.mockResolvedValueOnce([checkpoint()]);
+        const store = useCheckpointStore();
+        await store.fetchWorkspaceCheckpoints(WORKSPACE_ID);
+        expect(store.getForWorkspace(WORKSPACE_ID)).toHaveLength(1);
+        store.clearWorkspace(WORKSPACE_ID);
+        expect(store.getForWorkspace(WORKSPACE_ID)).toEqual([]);
+        mockedApi.listWorkspaceCheckpoints.mockResolvedValueOnce([]);
+        await store.fetchWorkspaceCheckpoints(WORKSPACE_ID);
+        expect(mockedApi.listWorkspaceCheckpoints).toHaveBeenCalledTimes(2);
+    });
+
     it("clears records and events on user switch", () => {
         const store = useCheckpointStore();
         store.mergeEvent({

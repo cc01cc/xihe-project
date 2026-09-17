@@ -1109,12 +1109,13 @@ components:
     CheckpointRevertPreviewResponse:
        type: object
        additionalProperties: false
-       required: [sliceRef, counts, entries, truncated]
+        required: [sliceRef, counts, entries, truncated, opaqueNestedRepos]
        properties:
          sliceRef: { type: string }
          counts: { type: object, required: [restore, delete, typeConflict], properties: { restore: { type: integer }, delete: { type: integer }, typeConflict: { type: integer } } }
-         entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertPreviewEntry' } }
-         truncated: { type: boolean }
+          entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertPreviewEntry' } }
+          truncated: { type: boolean }
+          opaqueNestedRepos: { type: array, items: { type: string } }
     CheckpointRevertEntry:
        type: object
        additionalProperties: false

@@ -28,6 +28,9 @@ const record = computed(() => {
     const current = workspaceId ? checkpointStore.getForRun(workspaceId, props.runId) : undefined;
     return current ?? checkpointStore.getEvent(props.runId);
 });
+const waitingForDurableRecord = computed(
+    () => !record.value?.sliceRef && checkpointStore.getEvent(props.runId)?.state === "captured",
+);
 
 type MarkerKind = "captured" | "abnormal-captured" | "degraded" | "expired" | "none";
 
@@ -226,7 +229,11 @@ watch(
                 class="inline-flex items-center gap-1.5 rounded-md border bg-muted/20 px-2 py-1 text-muted-foreground"
             >
                 <Clock class="size-3.5 shrink-0" aria-hidden="true" />
-                {{ t("chat.checkpointMarkerNoSnapshot") }}
+                {{
+                    waitingForDurableRecord
+                        ? t("chat.checkpointPreviewLoading")
+                        : t("chat.checkpointMarkerNoSnapshot")
+                }}
             </span>
         </template>
     </div>

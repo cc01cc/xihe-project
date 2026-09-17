@@ -7,10 +7,12 @@ import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import ImportPreview, { type ImportData } from "../../components/settings/ImportPreview.vue";
 import { apiRaw, api, ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
+import { useCheckpointStore } from "../../stores/checkpoint";
 import type { CheckpointRetention } from "../../types";
 
 const { t } = useI18n();
 const authStore = useAuthStore();
+const checkpointStore = useCheckpointStore();
 const exporting = ref(false);
 const importing = ref(false);
 const importFile = ref<File | null>(null);
@@ -58,6 +60,7 @@ async function cleanupCheckpoints() {
     cleanupResult.value = null;
     try {
         const outcome = await api.cleanupWorkspaceCheckpoints(wsId);
+        checkpointStore.clearWorkspace(wsId);
         cleanupResult.value = outcome.removed
             ? t("settings.checkpointCleanupDone")
             : t("settings.checkpointCleanupEmpty");

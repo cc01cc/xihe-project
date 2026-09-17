@@ -33,6 +33,8 @@ const i18n = createI18n({
                 checkpointPreviewCollapse: "Collapse",
                 checkpointPreviewTruncated: "Truncated",
                 checkpointPreviewNoEntries: "No paths",
+                checkpointPreviewConcurrentWriteRisk: "Concurrent writes may be marked",
+                checkpointPreviewOpaqueNestedRepos: "Opaque nested repositories",
                 checkpointPreviewConfirm: "Execute restore",
                 checkpointEntryRestore: "Restore",
                 checkpointEntryDelete: "Delete",
@@ -53,6 +55,7 @@ function preview(overrides: Partial<CheckpointPreview> = {}): CheckpointPreview 
             { path: "src/gone.ts", action: "delete", state: "execute" },
         ],
         truncated: false,
+        opaqueNestedRepos: [],
         ...overrides,
     };
 }
@@ -80,6 +83,20 @@ describe("RevertPreviewDialog", () => {
         expect(wrapper.find('[data-testid="revert-preview-restore-count"]').text()).toBe("2");
         expect(wrapper.find('[data-testid="revert-preview-delete-count"]').text()).toBe("1");
         expect(wrapper.find('[data-testid="revert-preview-type-conflict-count"]').text()).toBe("0");
+    });
+
+    it("shows concurrent-write risk and opaque nested repositories", async () => {
+        mockedApi.previewWorkspaceCheckpointRevert.mockResolvedValueOnce(
+            preview({ opaqueNestedRepos: ["vendor/lib"] }),
+        );
+        const wrapper = mountDialog();
+        await settle();
+        expect(wrapper.find('[data-testid="revert-preview-concurrent-write-risk"]').exists()).toBe(
+            true,
+        );
+        expect(wrapper.find('[data-testid="revert-preview-opaque-nested-repos"]').text()).toContain(
+            "vendor/lib",
+        );
     });
 
     it("requires and emits only type-change path confirmations", async () => {

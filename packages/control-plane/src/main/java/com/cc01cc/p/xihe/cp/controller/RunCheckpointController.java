@@ -77,6 +77,7 @@ public class RunCheckpointController {
         body.put("counts", preview.counts());
         body.put("entries", preview.entries());
         body.put("truncated", preview.truncated());
+        body.put("opaqueNestedRepos", outcome.details().getOrDefault("opaqueNestedRepos", List.of()));
         return ResponseEntity.ok(body);
     }
 
