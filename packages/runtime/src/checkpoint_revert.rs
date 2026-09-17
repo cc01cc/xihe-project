@@ -8,8 +8,9 @@
 //!   `M`/`D` → restore and `A` → delete;
 //! - type changes (file ↔ directory, file ↔ symlink) are reported as
 //!   `type_conflict` and are only executed after an explicit acknowledgement;
-//! - execution is per path: `git checkout <sliceCommit> -- :(literal)<path>` for
-//!   `M`/`D`, fs unlink plus empty-directory pruning for `A`; failures are reported
+//! - execution: deletes first (fs unlink + empty-dir prune), then restores in
+//!   **batched** `git checkout <sliceCommit> -- :(literal)<path>...` chunks
+//!   (PLAN-0358; per-path fallback on chunk failure); failures are reported
 //!   per path and never abort the remaining plan;
 //! - no attribution and no content-conflict skipping: every difference to the
 //!   target slice is a restore target. The restore lock is held for the execution
@@ -39,6 +40,9 @@ use crate::checkpoint::{
 
 /// Frozen type-conflict reason code (spec §5).
 pub const TYPE_CHANGE_REASON: &str = "TYPE_CHANGE";
+
+/// Max paths per batched `git checkout` (Windows argv headroom; PLAN-0358).
+const RESTORE_CHECKOUT_CHUNK: usize = 64;
 
 /// `Unavailable` reason for a missing or failing host git.
 pub const RESTORE_REASON_GIT_UNAVAILABLE: &str = "GIT_UNAVAILABLE";
@@ -338,54 +342,79 @@ impl ShadowGit {
         // Deletes run before restores: a slice file that is currently a directory
         // (acked type change) only materializes after the added children (which
         // sort after it) are removed and the empty directory is pruned.
-        let mut ordered: Vec<&PlannedEntry> = Vec::with_capacity(planned.len());
-        ordered.extend(
-            planned
-                .iter()
-                .filter(|entry| entry.action == RestoreAction::Delete),
-        );
-        ordered.extend(
-            planned
-                .iter()
-                .filter(|entry| entry.action == RestoreAction::Restore),
-        );
-        for entry in ordered {
-            let outcome = match entry.action {
-                RestoreAction::Restore => {
-                    match self
-                        .restore_path(&context, &target.commit, &entry.path, &scratch.path)
-                        .await
-                    {
-                        Ok(()) => RestoreItemResult {
+        let mut delete_paths: Vec<&PlannedEntry> = Vec::new();
+        let mut restore_paths: Vec<&PlannedEntry> = Vec::new();
+        for entry in &planned {
+            match entry.action {
+                RestoreAction::Delete => delete_paths.push(entry),
+                RestoreAction::Restore => restore_paths.push(entry),
+            }
+        }
+        for entry in delete_paths {
+            let outcome = match self.delete_path(&context, &entry.path).await {
+                Ok(()) => RestoreItemResult {
+                    path: entry.path.clone(),
+                    action: entry.action,
+                    outcome: RestoreItemOutcome::Deleted,
+                    reason: None,
+                },
+                Err(detail) => RestoreItemResult {
+                    path: entry.path.clone(),
+                    action: entry.action,
+                    outcome: RestoreItemOutcome::Failed,
+                    reason: Some(detail),
+                },
+            };
+            results.push(outcome);
+        }
+        // Batch restores: one `git checkout` per chunk instead of per path
+        // (Windows process-spawn dominated; PLAN-0358 T1.2). Chunk keeps argv
+        // under the Windows command-line limit; a failed chunk falls back to
+        // per-path restore so partial success stays attributable.
+        for chunk in restore_paths.chunks(RESTORE_CHECKOUT_CHUNK) {
+            match self
+                .restore_paths_batch(&context, &target.commit, chunk, &scratch.path)
+                .await
+            {
+                Ok(()) => {
+                    for entry in chunk {
+                        results.push(RestoreItemResult {
                             path: entry.path.clone(),
                             action: entry.action,
                             outcome: RestoreItemOutcome::Restored,
                             reason: None,
-                        },
-                        Err(detail) => RestoreItemResult {
-                            path: entry.path.clone(),
-                            action: entry.action,
-                            outcome: RestoreItemOutcome::Failed,
-                            reason: Some(detail),
-                        },
+                        });
                     }
                 }
-                RestoreAction::Delete => match self.delete_path(&context, &entry.path).await {
-                    Ok(()) => RestoreItemResult {
-                        path: entry.path.clone(),
-                        action: entry.action,
-                        outcome: RestoreItemOutcome::Deleted,
-                        reason: None,
-                    },
-                    Err(detail) => RestoreItemResult {
-                        path: entry.path.clone(),
-                        action: entry.action,
-                        outcome: RestoreItemOutcome::Failed,
-                        reason: Some(detail),
-                    },
-                },
-            };
-            results.push(outcome);
+                Err(batch_detail) => {
+                    warn!(
+                        workspace_id,
+                        slice_ref,
+                        error = %batch_detail,
+                        "batch restore checkout failed; falling back to per-path"
+                    );
+                    for entry in chunk {
+                        let outcome = match self
+                            .restore_path(&context, &target.commit, &entry.path, &scratch.path)
+                            .await
+                        {
+                            Ok(()) => RestoreItemResult {
+                                path: entry.path.clone(),
+                                action: entry.action,
+                                outcome: RestoreItemOutcome::Restored,
+                                reason: None,
+                            },
+                            Err(detail) => RestoreItemResult {
+                                path: entry.path.clone(),
+                                action: entry.action,
+                                outcome: RestoreItemOutcome::Failed,
+                                reason: Some(detail),
+                            },
+                        };
+                        results.push(outcome);
+                    }
+                }
+            }
         }
 
         // Concurrent writes are allowed during restore (no write lock), so every
@@ -590,6 +619,13 @@ impl ShadowGit {
             .write_tree(&index_env)
             .await
             .map_err(restore_git_failure)?;
+        // Keep stat cache warm for the next capture/preview (PLAN-0358).
+        if let Err(error) = self.save_last_index(&context.shadow, &index).await {
+            warn!(
+                error = %error,
+                "failed to persist last-index after restore plan (non-fatal)"
+            );
+        }
         let changed = self
             .changed_files_for(&index_env, &target.tree, &current_tree)
             .await
@@ -664,6 +700,32 @@ impl ShadowGit {
         let spec = literal_pathspec(path);
         let args = ["checkout", commit, "--", spec.as_str()];
         self.run_git_checked(&args, &env, Some(&context.work_tree), self.call_timeout)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// Batched restore: one `git checkout` for many literal paths (PLAN-0358).
+    async fn restore_paths_batch(
+        &self,
+        context: &RestoreContext,
+        commit: &str,
+        entries: &[&PlannedEntry],
+        index: &Path,
+    ) -> std::result::Result<(), String> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let mut specs = Vec::with_capacity(entries.len());
+        for entry in entries {
+            validate_relative_path(&entry.path)?;
+            specs.push(literal_pathspec(&entry.path));
+        }
+        let env = self.isolated_env(&context.shadow, &context.work_tree, Some(index));
+        let mut args = vec!["checkout".to_string(), commit.to_string(), "--".to_string()];
+        args.extend(specs);
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.run_git_checked(&arg_refs, &env, Some(&context.work_tree), self.call_timeout)
             .await
             .map_err(|error| error.to_string())?;
         Ok(())

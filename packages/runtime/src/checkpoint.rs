@@ -79,6 +79,10 @@ pub const STATIC_EXCLUDE_PATTERNS: &[&str] = &[
 ];
 
 const BOOTSTRAP_MARKER: &str = ".xihe-bootstrapped";
+
+/// Persisted index with valid stat cache (PLAN-0358): seeded into the next
+/// scratch index so `add -A` skips re-hashing unchanged files.
+const LAST_INDEX_NAME: &str = "last-index";
 const PROBE_RETRY_BACKOFF: Duration = Duration::from_secs(60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 const GIT_CALL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -452,6 +456,7 @@ impl ShadowGit {
             .await?;
         let index_env = self.isolated_env(&shadow, &work_tree, Some(&index));
         let tree = self.write_tree(&index_env).await?;
+        self.save_last_index(&shadow, &index).await?;
         let opaque_nested_repos = self.staged_gitlinks(&index_env).await?;
         if self.nested_repo_policy == NestedRepoPolicy::Reject && !opaque_nested_repos.is_empty() {
             return Err(CheckpointError::NestedRepoLimit {
@@ -820,6 +825,9 @@ impl ShadowGit {
                 "core.excludesFile",
                 normalize_path_for_git(&shadow.join("exclude")),
             ),
+            // PLAN-0358: persist untracked cache in the saved index so the next
+            // capture can skip a full untracked rescan when the tree is quiet.
+            ("core.untrackedCache", "true".to_string()),
         ];
         for (key, value) in configs {
             self.run_git_checked(&["config", key, &value], &env, None, self.call_timeout)
@@ -914,7 +922,12 @@ impl ShadowGit {
         reference_tree: Option<&str>,
     ) -> Result<()> {
         let env = self.isolated_env(shadow, work_tree, Some(index));
-        if let Some(tree) = reference_tree {
+        // Prefer the persisted last-index (valid stat + untracked cache) over a
+        // bare `read-tree` (zeroed stats → full re-hash on `add -A`). PLAN-0358.
+        let last_index = shadow.join(LAST_INDEX_NAME);
+        if last_index.is_file() {
+            tokio::fs::copy(&last_index, index).await?;
+        } else if let Some(tree) = reference_tree {
             self.run_git_checked(&["read-tree", tree], &env, None, self.call_timeout)
                 .await?;
         }
@@ -930,6 +943,16 @@ impl ShadowGit {
             self.call_timeout,
         )
         .await?;
+        Ok(())
+    }
+
+    /// Persist the scratch index as the next capture's stat-cache seed.
+    pub(crate) async fn save_last_index(&self, shadow: &Path, index: &Path) -> Result<()> {
+        if !index.is_file() {
+            return Ok(());
+        }
+        let last_index = shadow.join(LAST_INDEX_NAME);
+        tokio::fs::copy(index, &last_index).await?;
         Ok(())
     }
 
