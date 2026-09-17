@@ -43,6 +43,7 @@ export interface SSECallbacks {
     onToolResult?: (data: Record<string, unknown>) => void;
     onApprovalRequest?: (data: Record<string, unknown>) => void;
     onStatus?: (status: string) => void;
+    onContextSourcesChanged?: (data: { sourceKey?: string; status?: string }) => void;
     onError?: (error: SSEErrorPayload) => void;
     onDone?: (outcome?: string) => void;
 }
@@ -314,6 +315,19 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 } catch {
                     logger.warn("Failed to parse SSE done event payload");
                     currentCallbacks.onDone?.();
+                }
+                break;
+
+            case "context_sources_changed":
+                // PLAN-0340 U2: AGENTS.md chain updated (env changes are silent).
+                try {
+                    const data = JSON.parse(msg.data) as {
+                        sourceKey?: string;
+                        status?: string;
+                    };
+                    currentCallbacks.onContextSourcesChanged?.(data);
+                } catch {
+                    logger.warn("Failed to parse context_sources_changed payload");
                 }
                 break;
 

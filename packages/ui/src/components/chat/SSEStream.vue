@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useSSE, type SSEErrorPayload } from '../../composables/useSSE'
 import { useStreamParser } from '../../composables/useStreamParser'
 import { useChatStore } from '../../stores/chat'
@@ -23,6 +24,7 @@ const props = withDefaults(defineProps<{
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
 const configStore = useConfigStore()
+const { t } = useI18n()
 const { handleToolCall } = useWorkspaceAgentSync()
 
 const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(
@@ -116,6 +118,13 @@ function connectSession(id: string) {
       if (data.state !== undefined && data.state !== 'pending') return
       chatStore.setSessionRunState(id, 'awaiting_approval', activeRunId)
       agentStore.setStatus('awaiting_approval')
+    },
+    onContextSourcesChanged: (data) => {
+      if (!isCurrentSession()) return
+      // PLAN-0340 U2: low-disturbance toast; env date/HEAD changes never land here.
+      toast.info(`${t('chat.contextSourcesTitle')}: ${t('chat.contextSourcesUpdated')}`, {
+        description: data.sourceKey ?? 'AGENTS.md',
+      })
     },
     onToolCall: (name: string, args: Record<string, unknown>) => {
       if (!isCurrentSession()) return

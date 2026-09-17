@@ -15,6 +15,12 @@ updated: 2026-09-06
 
 本文件收录 AGENTS.md 之外的已知问题，供排查时参考。
 
+## PLAN-0340 上下文源注入 — 验收残项（2026-09-17）
+
+- **V14 host/浏览器 U1/U2 截图验收**尚未跑（需 `mise run dev:host` + `e2e-host`）；定向单测已绿。
+- **U2** 仅在 `AGENTS.md` 链 `created/updated` 时经 SSE `context_sources_changed` + toast；env（date/HEAD）静默替换符合设计。
+- JIT 磁盘内嵌套 `AGENTS.md`：run 级 cwd 恒为 workspace root，基准链退化为根文件；目录标记已接，事件化全量就近账本见 PLAN 边界。
+
 ## 已修复 — Chat SSE 生命周期与真实流式（PLAN-230 已完成 M1-M4）
 
 - **会话 SSE 一次性连接导致连续消息 409**：已修复。原因有二：CP 在每轮末尾无条件 `complete(sessionId)` 使会话 SSE 一次性，且旧 emitter `onCompletion` 按 sessionId 清理可能误删新连接；UI 侧 `onclose` 未重连。修复：CP 改持久会话 SSE（`SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储 + `removeIfCurrent` 身份比对，误删记 `stale_cleanup_ignored`；`complete` 仅在客户端断开/session 删除/不可写时调用）；UI `chatTransport` 单飞 + 指数退避重连，`SSEStream` 发送前手工确认连接。验证：同一页面连续两条 `POST /api/v1/chat` 均 202 且助手回复不空；多 `token` 事件在 `done` 前多次增长。

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { api } from '../../../composables/api'
+import { i18n } from '../../../i18n'
 import SSEStream from '../SSEStream.vue'
 
 vi.mock('@/services/chatTransport', () => ({
@@ -32,6 +33,7 @@ describe('SSEStream session ownership', () => {
     const cancel = vi.spyOn(api, 'cancelChatRun').mockResolvedValue({ status: 'cancelled', runId: 'run-a' })
     const wrapper = mount(SSEStream, {
       props: { sessionId: 'session-a', active: true },
+      global: { plugins: [i18n] },
     })
 
     await (wrapper.vm as unknown as { sendMessage: (content: string) => Promise<unknown> }).sendMessage('run')

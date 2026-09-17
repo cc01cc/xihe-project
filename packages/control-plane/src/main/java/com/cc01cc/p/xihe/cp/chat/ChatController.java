@@ -622,6 +622,13 @@ public class ChatController {
                     String sourceStatus = contextSourceRefreshService.refreshForRun(sessionId, workspaceId, userId);
                     logger.info("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh sessionId={} runId={} status={}",
                             sessionId, runId, sourceStatus);
+                    // PLAN-0340 U2: only AGENTS.md chain created/updated (not env, not unchanged/failed).
+                    if ("created".equals(sourceStatus) || "updated".equals(sourceStatus)) {
+                        sseManager.send(sessionId, "context_sources_changed", Map.of(
+                                "type", "context_sources_changed",
+                                "sourceKey", "AGENTS.md",
+                                "status", sourceStatus));
+                    }
                 } catch (Exception sourceError) {
                     logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh_failed sessionId={} runId={} error={}",
                             sessionId, runId, sourceError.getMessage());

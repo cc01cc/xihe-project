@@ -179,6 +179,7 @@ const messages = {
             contextSourcesLoading: "加载中…",
             contextSourcesError: "源摘要不可用",
             contextSourcesFailed: "读取失败",
+            contextSourcesUpdated: "规则已更新（本轮起生效）",
             approvalUnclassifiedNotice:
                 "未分类工具：默认按 ask 处理，且不能保存会话级或持久规则。仅工作区 OWNER / ADMIN 可分类。",
             approvalClassifyAndAllow: "分类并放行",
@@ -775,6 +776,7 @@ const messages = {
             contextSourcesLoading: "Loading…",
             contextSourcesError: "Source summary unavailable",
             contextSourcesFailed: "read failed",
+            contextSourcesUpdated: "Rules updated (applies this turn)",
             approvalUnclassifiedNotice:
                 "Unclassified tool: it defaults to ask and cannot grant session or saved rules. Only a workspace OWNER / ADMIN can classify it.",
             approvalClassifyAndAllow: "Classify and allow",

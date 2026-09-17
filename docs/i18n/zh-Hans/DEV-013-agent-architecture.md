@@ -96,7 +96,7 @@ flowchart TD
 | `llm.token` | 模型流式输出 |
 | `tool.called` | 工具被调用 |
 | `tool.result` | 工具返回 |
-| `context.source_changed` | AGENTS.md 等 source 变更 |
+| `context.source_changed` | AGENTS 等源变更（PLAN-0340：投影改为 **L1 槽替换**，不再追加 history；失败 `status=failed` 清 L1） |
 | `epoch.started` / `epoch.replaced` | epoch 开始/替换 |
 | `runtime.state_cleared` | `AgentRunner.reset()` |
 | `session.forked` | 会话 fork |
@@ -136,13 +136,15 @@ Agent 侧分工：
 - `EventSourcedContextProvider` 仅调用 CP `/snapshot` 端点。
 - `CrashRecovery` 经 `EventStore.read()` 读事件，再调 `AgentContext.apply_event()` 重建状态。
 
-### 3.4 Context Source 变更感知
+### 3.4 Context Source 变更感知（PLAN-0340）
 
-CP `ContextSourceRefreshService` 的去重流程：
+CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` 的 `activeRuns` 串行域内调用）：
 
-1. 读取 workspace `AGENTS.md`，计算 SHA-256 哈希。
-2. 持久化到 `context_source_hashes` 表。
-3. 仅当哈希变化时才追加 `context.source_changed` 事件，避免重复事件。
+1. 经 Runtime 读 workspace 根 `AGENTS.md`，SHA-256（超 32KiB 截断标注）。
+2. 对比 **session epoch `source_hash`**（首注入必发，不跨 session 抑制）；workspace 表仅作增量优化。
+3. 变化 → `context.source_changed`（`created|updated` + `rendered_text` + sources）→ 投影 **L1 槽替换**；I/O 失败 → `status=failed` 清 L1；未变 → `unchanged` 不发事件。
+4. Runtime `GET .../git-facts`（branch+HEAD，无 dirty）变化 → `context.env_updated` 存 epoch；U2 **不**因 env 告警。
+5. Agent `_build_system_messages`：`L0 → L1(l1_rendered) → env 块 → SUM`；不受 20 条历史截断。
 
 ## 4. 崩溃恢复
 
