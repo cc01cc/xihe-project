@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 15
 status: active
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-17
 ---
 
 # DEV-015: Runtime 架构
@@ -77,12 +77,99 @@ sequenceDiagram
 - **Job 运行时限**：`start_background_process` 的 `timeout`（payload `timeoutSecs`）默认 60 分钟、显式 0 不限；到点由宿主清理通道（`cleanup_jobs` op）终止进程组并落 `timeout` 终态。job 参数/描述统一 `jobId`，清理先判活（`/bin/kill -0`）、以**文件** mtime 判过期（禁用目录 mtime，防误清运行中 job）。
 - 容器侧改动必须先 `mise run image:workspace:build` 才生效（否则测到的是旧二进制）。
 
-## 6. 当前事实：workspace checkpoint 切片与回滚（PLAN-0338/0339）
+## 6. workspace checkpoint 切片与回滚（PLAN-0338/0339/0358）
 
-- Runtime 在 `<hostRoot>/.xihe-shadow/<workspaceId>.git` 维护独立影子 Git；它位于 workspace 外、不 bind 进 Sandbox，不写用户 `.git`、index、branch。Run 终止、异常补拍和 C0 bootstrap 经**单次捕获**生成切片（`refs/xihe/slices/<capturedAt>-<commitHash>`，一个切片一 ref，无序号）；树与链尾相同则返回 `noChange` 且不写新 ref。
-- `hostRoot` 是 workspace 物理根；Runtime 先按 workspace 派生目录并执行路径/归属校验，影子库与工作区均限于该根下，未知 workspace、Git 不可用或版本不足均显式返回 `CHECKPOINT_UNAVAILABLE`，不回退到宿主任意目录。
-- Runtime internal contract is `POST /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/capture`（`{runId,actor,callId,abnormal}`）、`POST .../checkpoints/gc`、`POST .../checkpoints/cleanup`、`POST .../checkpoints/revert/preview`（`{sliceRef}`）、`POST .../checkpoints/revert`（`{sliceRef,acknowledgeTypeChanges}`）、`GET .../checkpoints/blob?sliceRef=&path=`、`GET .../git-status`。CP 是调用方；public API 只暴露 workspace 级切片列表、按 `sliceRef` 的恢复/文件读取和清理。
-- 捕获锁与恢复锁为短锁（fail-fast，不排队）；恢复期间不阻塞 workspace 写入，与目标切片不符的路径在结果中标注 `suspects`。保留策略按**切片数**（最新 50 个切片 + TTL 30 天）；清理为方案 B（删除整个影子库，幂等，忙时 409 `CHECKPOINT_BUSY`）。
-- `apply_patch` 是 Gateway-public 的 23 工具之一，走正常 Agent/CP 审批；捕获只发生在 Run 终止/异常补拍/C0，不再由派发前置动作触发；UI 回滚只走 CP public workspace route。
-- 嵌套仓库按不透明 gitlink 声明（`opaqueNestedRepos[]`）；可选硬限制开关 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS`（默认关闭，开启时捕获以 `NESTED_REPO_LIMIT` 显式降级）。
-- 端点和字段以 [OpenAPI](../../api/openapi.yaml) / [API inventory](../../api/inventory.md) 为准；实现与真实验证证据见 `plans/PLAN-0338-XH-checkpoint-core-closure/evidence/`（`t1.0-*`、`t1.2-*`、`host-matrix/`）。
+### 6.1 心智模型与边界
+
+- Checkpoint 是**系统侧 Git 快照**，不是用户仓库的历史分支：**不是** Git 官方「shadow repo」功能；影子库与用户 `.git` **平行**，互不读写 refs/index/branch。
+- 用户可感动作：**capture（存）→ preview（看）→ restore（回滚）→ cleanup（清）**。
+- Runtime 在 `<hostRoot>/.xihe-shadow/<workspaceId>.git` 维护影子库；位于 workspace 外、不 bind 进 Sandbox。`hostRoot` 下做路径校验；未知 workspace、Git 不可用或版本不足 → 显式 `CHECKPOINT_UNAVAILABLE`，不回退到宿主任意目录。
+- 嵌套仓库按不透明 gitlink（`opaqueNestedRepos[]`）；可选 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS`（默认关，开启则 `NESTED_REPO_LIMIT` 降级）。**子仓内部文件不进入切片**（不可恢复嵌套内容）；可恢复方案见 backlog **BL-15**。
+- `apply_patch` 为 Gateway-public 工具之一，走正常审批；捕获只在 Run 终止 / 异常补拍 / C0，不由派发前置触发；UI 回滚只经 CP public workspace route。
+
+### 6.2 对象模型（Git 本体）
+
+```text
+refs/xihe/slices/<epochMs>-<commitHash>   ← 自定义 ref（非 refs/heads 分支）
+  → root commit（无 parent）              ← 快照信封（时间/作者/message）
+      → tree（完整相对目录树）
+          → 子 tree + blob（文件内容，内容寻址、可压缩去重）
+```
+
+| 对象 | 存什么 | 不存什么 |
+|---|---|---|
+| commit | tree 哈希、时间、作者、message | 工作区绝对路径、文件 mtime |
+| tree | mode + **basename** + 子对象哈希 | 完整绝对路径（沿层级拼出） |
+| blob | 文件内容（压缩后） | 文件名、目录、mtime |
+| index（`last-index`） | 路径、mode、blob id、stat/untracked 缓存 | 非还原权威，仅加速（PLAN-0358） |
+
+路径：tree 按相对目录嵌套；`src/a.rs` = root → `src` → `a.rs`。绝对路径仅在恢复写盘时由 `core.worktree` 决定。
+
+### 6.3 切片为何是独立 root commit
+
+| parent 链（普通分支） | 切片模型 |
+|---|---|
+| 相对父提交的演进 | 某一时刻完整状态 |
+| merge / rebase / blame | **不做归因** |
+| 删中间点纠缠对象图 | 按 ref 删，GC 简单 |
+
+- **链尾** = ref 名排序最新切片（**不是** Git parent）；**链尾树** = 该 commit 的 tree。
+- capture：`write-tree` 得 `T`；`T == 链尾树` → `noChange` 不写 ref；否则 `commit-tree`（无 `-p`）+ `update-ref`。
+- ref 机制是 Git 规范，命名空间 `xihe/slices` 由产品定义；`git branch` 不会列出这些 ref。
+
+### 6.4 捕获（capture）
+
+```text
+短锁 → git 探测/init → 链尾 → stage_index
+  （优先 copy last-index；否则 read-tree 链尾树
+   → 动态超限扫描 → excludesFile → add -A）
+→ write-tree → 保存 last-index
+→ 与链尾树比较 → 无变化则 noChange；否则 commit-tree + update-ref
+→ changed_files = diff(链尾树, T) → best-effort retention GC
+```
+
+- **树哈希每次完整计算**；**内容 hash 热路径可复用**（`last-index` stat），冷首片可能全量（性能见 DEV-015 与 PLAN-0358）。
+
+### 6.5 恢复（preview / execute）
+
+**Preview（只读）**：目标 commit → tree `T`；当前工作区同规则 stage → `C`；`diff T C`：
+
+| status | 计划 |
+|---|---|
+| A（当前有、T 无） | Delete |
+| M/D | Restore（自 T 的 blob 写回） |
+| 类型冲突 | type_conflict（须显式 ack） |
+
+**Execute**：短 restore 锁（不冻结旁路写）→ **先全部 Delete**（fs 删除+剪空目录）→ **再批量 Restore**（`git checkout <commit> -- paths`，0358 按批合并，失败回退单路径）→ **suspects 复核**（防并发写抢赢）。
+
+**为何 `checkout -- path` 而非 `reset`/`rebase`**：按路径写回、不动 HEAD；切片无当前分支、无 parent 链，reset/rebase 语义错误。
+
+### 6.6 排除边界（三层）
+
+`add -A` 在 worktree 上叠加：
+
+1. **工作区 `.gitignore`**（固定文件名；改名则 Git 默认不再扫描）；
+2. **影子 `core.excludesFile`**：Xihe 静态表（凭据、`node_modules/`、`.xihe-*` 等）+ 每次动态超限；
+3. **不读**用户全局 git 配置、用户仓库 `.git/info/exclude`。
+
+动态规则：**新的未跟踪且超 10MiB** 不进变更集；**已索引**路径变大不受该上限（`checkpoint_budget_test` 冻结）。
+
+- 进不了当前树 `C` 的路径 → diff 不出现 → **还原零触碰**；capture 与 restore **共用**该语义。
+- 未跟踪：排除集内不碰；集内且 T 无 → 删；T 有 → 写回。
+- 与用户 ignore 分离的产品方案见 backlog（BL-14），不在本节展开。
+- **当前实现调用形态**：stage 决策与机制均在 **系统 `git` 子进程**（porcelain `add -A` + plumbing）；**无** libgit2/`git2`/gitoxide 等进程内库，**不 fork Git**。嵌套默认 opaque；文件级可恢复与 ignore 分离的未来方案（收回 stage 决策层、机制仍 CLI/可选库）见 workspace backlog **BL-14/BL-15** 及内部方案备忘，不在本节展开。
+
+### 6.7 性能（PLAN-0358）
+
+| 项 | 要点 |
+|---|---|
+| 冷首片 | 大仓需全量 hash → 对照带可 supersede（见 0358 决策） |
+| 热路径 | `last-index` + `untrackedCache` 避免全量重哈希 |
+| restore | 批量 checkout（原每文件一 git 进程） |
+| 门禁基线 | 可复跑 harness：`packages/runtime/tests/checkpoint_perf_m0_test.rs` |
+
+### 6.8 契约与证据
+
+- Runtime internal：`POST /internal/v1/runtime/workspaces/{id}/checkpoints/capture|gc|cleanup|revert/preview|revert`、`GET .../blob`、`GET .../git-status`。CP 为调用方；public API 仅 workspace 级切片列表、按 `sliceRef` 恢复/读文件/清理。
+- 端点字段：[OpenAPI](../../api/openapi.yaml) / [API inventory](../../api/inventory.md)。
+- 实现与验证：`packages/runtime/src/checkpoint*.rs`；证据 `plans/PLAN-0338-XH-checkpoint-core-closure/evidence/`、`plans/PLAN-0358-XH-checkpoint-performance/evidence/`。
