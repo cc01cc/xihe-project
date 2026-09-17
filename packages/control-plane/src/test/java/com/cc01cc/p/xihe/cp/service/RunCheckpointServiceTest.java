@@ -13,6 +13,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -33,6 +34,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
@@ -40,8 +42,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * PLAN-0338: Run slice-checkpoint lifecycle — single terminal capture, no-change
- * rows, frozen degradation policy, ledger markers, startup compensation.
+ * PLAN-0339 T0.4: workspace slice-checkpoint lifecycle — single terminal capture,
+ * no-change omission, frozen degradation policy, ledger markers, startup compensation.
  */
 class RunCheckpointServiceTest {
 
@@ -69,11 +71,21 @@ class RunCheckpointServiceTest {
         sseManager = mock(SseEmitterManager.class);
         rows.clear();
 
-        when(repository.findByRunIdAndWorkspaceId(anyString(), anyString()))
+        when(repository.findBySourceRunIdAndWorkspaceId(anyString(), anyString()))
                 .thenAnswer(invocation -> rows.stream()
-                        .filter(row -> row.getRunId().equals(invocation.getArgument(0))
+                        .filter(row -> row.getSourceRunId().equals(invocation.getArgument(0))
                                 && row.getWorkspaceId().equals(invocation.getArgument(1)))
                         .findFirst());
+        when(repository.findByWorkspaceIdAndSliceRef(anyString(), anyString()))
+                .thenAnswer(invocation -> rows.stream()
+                        .filter(row -> row.getWorkspaceId().equals(invocation.getArgument(0))
+                                && java.util.Objects.equals(row.getSliceRef(), invocation.getArgument(1)))
+                        .findFirst());
+        when(repository.findByWorkspaceIdAndStateNotOrderByCapturedAtDesc(anyString(), anyString()))
+                .thenAnswer(invocation -> rows.stream()
+                        .filter(row -> row.getWorkspaceId().equals(invocation.getArgument(0))
+                                && !row.getState().equals(invocation.getArgument(1)))
+                        .toList());
         when(repository.save(any(RunCheckpoint.class))).thenAnswer(invocation -> {
             RunCheckpoint row = invocation.getArgument(0);
             rows.removeIf(existing -> existing.getId().equals(row.getId()));
@@ -102,8 +114,7 @@ class RunCheckpointServiceTest {
                     return 0;
                 });
         when(repository.countByWorkspaceId(anyString())).thenReturn(0L);
-        when(repository.countBaseRefs(anyString())).thenReturn(0L);
-        when(repository.countEndRefs(anyString())).thenReturn(0L);
+        when(repository.countSliceRefs(anyString())).thenReturn(0L);
         when(operationService.findOperationIdByRunId(anyString())).thenReturn(null);
 
         service = new RunCheckpointService(repository, client, operationService, chatRunRepository,
@@ -123,12 +134,14 @@ class RunCheckpointServiceTest {
     private RunCheckpoint seedCapturedRow() {
         RunCheckpoint row = new RunCheckpoint();
         row.setId(UUID.randomUUID());
-        row.setRunId(RUN_ID);
+        row.setSourceRunId(RUN_ID);
         row.setWorkspaceId(WORKSPACE_ID);
         row.setState(RunCheckpoint.STATE_CAPTURED);
-        row.setEndRef(SLICE_REF);
+        row.setSliceRef(SLICE_REF);
         row.setChangedFiles("[{\"status\":\"M\",\"path\":\"src/a.txt\"}]");
-        row.setSealedAt(Instant.now());
+        row.setCapturedAt(Instant.now());
+        row.setSourceSessionId(SESSION_ID);
+        row.setOpaqueNestedRepos("[]");
         row.setCreatedAt(Instant.now());
         row.setUpdatedAt(Instant.now());
         rows.add(row);
@@ -172,11 +185,10 @@ class RunCheckpointServiceTest {
         assertEquals(1, rows.size());
         RunCheckpoint row = rows.get(0);
         assertEquals(RunCheckpoint.STATE_CAPTURED, row.getState());
-        assertEquals(SLICE_REF, row.getEndRef());
-        assertNull(row.getBaseRef());
+        assertEquals(SLICE_REF, row.getSliceRef());
         assertTrue(row.getChangedFiles().contains("src/a.txt"));
-        assertFalse(row.isSealedAfterAbnormal());
-        assertNotNull(row.getSealedAt());
+        assertFalse(row.getSourceSessionId().isBlank());
+        assertNotNull(row.getCapturedAt());
         verify(client).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
 
         ArgumentCaptor<String> previews = ArgumentCaptor.forClass(String.class);
@@ -203,7 +215,7 @@ class RunCheckpointServiceTest {
         assertTrue(service.captureCheckpoint(RUN_ID));
 
         assertEquals(RunCheckpoint.STATE_ABNORMAL_CAPTURED, rows.get(0).getState());
-        assertTrue(rows.get(0).isSealedAfterAbnormal());
+        assertEquals(SESSION_ID, rows.get(0).getSourceSessionId());
     }
 
     @Test
@@ -215,7 +227,6 @@ class RunCheckpointServiceTest {
 
         assertTrue(service.captureCheckpoint(RUN_ID));
 
-        assertFalse(rows.get(0).isSealedAfterAbnormal());
         verify(client).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
     }
 
@@ -228,13 +239,8 @@ class RunCheckpointServiceTest {
                         RUN_ID, true, null, null, null, RunCheckpoint.STATE_CAPTURED,
                         List.of(), List.of(), null, null));
 
-        assertTrue(service.captureCheckpoint(RUN_ID));
-
-        RunCheckpoint row = rows.get(0);
-        assertEquals(RunCheckpoint.STATE_CAPTURED, row.getState());
-        assertNull(row.getEndRef());
-        assertEquals("[]", row.getChangedFiles());
-        assertNotNull(row.getSealedAt());
+        assertFalse(service.captureCheckpoint(RUN_ID));
+        assertTrue(rows.isEmpty(), "a no-change capture must not create a slice row");
     }
 
     @Test
@@ -311,7 +317,7 @@ class RunCheckpointServiceTest {
     void unexpectedCaptureFailureIsSwallowed() {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
-        when(repository.findByRunIdAndWorkspaceId(anyString(), anyString()))
+        when(repository.findBySourceRunIdAndWorkspaceId(anyString(), anyString()))
                 .thenThrow(new IllegalStateException("checkpoint store down"));
 
         assertFalse(service.captureCheckpoint(RUN_ID));
@@ -415,17 +421,12 @@ class RunCheckpointServiceTest {
     }
 
     @Test
-    void viewWithoutRowProjectsStateNone() {
-        RunCheckpointService.View view = service.view(RUN_ID, WORKSPACE_ID);
-
-        assertEquals(RunCheckpointService.STATE_NONE, view.state());
-        assertEquals(0, view.changedCount());
-        assertTrue(view.changedFiles().isEmpty());
-        assertEquals(RunCheckpoint.REVERT_NONE, view.revert().state());
+    void listWithoutRowsIsEmpty() {
+        assertTrue(service.list(WORKSPACE_ID).isEmpty());
     }
 
     @Test
-    void viewCapsChangedFilesAtTwentyAndCountsAll() {
+    void listCapsChangedFilesAndMarksTruncation() {
         RunCheckpoint row = seedCapturedRow();
         StringBuilder json = new StringBuilder("[");
         for (int i = 0; i < 25; i++) {
@@ -437,16 +438,17 @@ class RunCheckpointServiceTest {
         json.append("]");
         row.setChangedFiles(json.toString());
 
-        RunCheckpointService.View view = service.view(RUN_ID, WORKSPACE_ID);
+        RunCheckpointService.View view = service.list(WORKSPACE_ID).get(0);
 
         assertEquals(RunCheckpoint.STATE_CAPTURED, view.state());
         assertEquals(25, view.changedCount());
         assertEquals(20, view.changedFiles().size());
         assertEquals("f0.txt", view.changedFiles().get(0).path());
+        assertTrue(view.truncated());
     }
 
     @Test
-    void viewProjectsRevertSummaryCounts() {
+    void listProjectsRevertSummaryCounts() {
         RunCheckpoint row = seedCapturedRow();
         row.setRevertState(RunCheckpoint.REVERT_PARTIAL);
         row.setRevertedAt(Instant.parse("2026-09-15T10:00:00Z"));
@@ -454,7 +456,7 @@ class RunCheckpointServiceTest {
         row.setRevertSummary("{\"marker\":\"revert\",\"counts\":{\"restored\":2,\"deleted\":1,"
                 + "\"failed\":0},\"sliceRef\":\"refs/xihe/slices/x\"}");
 
-        RunCheckpointService.View view = service.view(RUN_ID, WORKSPACE_ID);
+        RunCheckpointService.View view = service.list(WORKSPACE_ID).get(0);
 
         assertEquals(RunCheckpoint.REVERT_PARTIAL, view.revert().state());
         assertEquals(Instant.parse("2026-09-15T10:00:00Z"), view.revert().at());
@@ -464,7 +466,7 @@ class RunCheckpointServiceTest {
 
     @Test
     void previewRevertBlocksMissingDegradedAndUncapturedRows() {
-        RunCheckpointService.PreviewOutcome missing = service.previewRevert(RUN_ID, WORKSPACE_ID);
+        RunCheckpointService.PreviewOutcome missing = service.previewRevert(WORKSPACE_ID, SLICE_REF);
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, missing.gate());
         assertEquals(RunCheckpointService.REASON_MISSING, missing.reason());
 
@@ -472,17 +474,12 @@ class RunCheckpointServiceTest {
         degraded.setState(RunCheckpoint.STATE_DEGRADED);
         degraded.setUnrollableReason(RunCheckpointService.REASON_UNAVAILABLE);
         RunCheckpointService.PreviewOutcome degradedOutcome =
-                service.previewRevert(RUN_ID, WORKSPACE_ID);
+                service.previewRevert(WORKSPACE_ID, SLICE_REF);
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, degradedOutcome.gate());
         assertEquals(RunCheckpointService.REASON_UNAVAILABLE, degradedOutcome.reason());
 
         degraded.setState(RunCheckpoint.STATE_CAPTURED);
         degraded.setUnrollableReason(null);
-        degraded.setEndRef(null);
-        RunCheckpointService.PreviewOutcome noRef = service.previewRevert(RUN_ID, WORKSPACE_ID);
-        assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, noRef.gate());
-        assertEquals(RunCheckpointService.REASON_MISSING, noRef.reason());
-
         verify(client, never()).previewRevert(anyString(), anyString());
     }
 
@@ -491,7 +488,7 @@ class RunCheckpointServiceTest {
         seedCapturedRow();
         when(client.previewRevert(WORKSPACE_ID, SLICE_REF)).thenReturn(previewOk());
 
-        RunCheckpointService.PreviewOutcome outcome = service.previewRevert(RUN_ID, WORKSPACE_ID);
+        RunCheckpointService.PreviewOutcome outcome = service.previewRevert(WORKSPACE_ID, SLICE_REF);
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         assertEquals(1, outcome.preview().counts().restore());
@@ -506,8 +503,8 @@ class RunCheckpointServiceTest {
                 new RuntimeCheckpointClient.RevertPreview(RuntimeCheckpointClient.Outcome.NOT_FOUND,
                         null, null, List.of(), false, Map.of(), "http_404"));
 
-        RunCheckpointService.PreviewOutcome first = service.previewRevert(RUN_ID, WORKSPACE_ID);
-        RunCheckpointService.PreviewOutcome second = service.previewRevert(RUN_ID, WORKSPACE_ID);
+        RunCheckpointService.PreviewOutcome first = service.previewRevert(WORKSPACE_ID, SLICE_REF);
+        RunCheckpointService.PreviewOutcome second = service.previewRevert(WORKSPACE_ID, SLICE_REF);
 
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, first.gate());
         assertEquals(RunCheckpointService.REASON_EXPIRED, first.reason());
@@ -516,6 +513,34 @@ class RunCheckpointServiceTest {
         assertEquals(RunCheckpointService.REASON_EXPIRED, second.reason());
         verify(repository, times(1)).markExpired(any(), any());
         verify(client, times(1)).previewRevert(WORKSPACE_ID, SLICE_REF);
+    }
+
+    @Test
+    void cleanupCallsRuntimeBeforeDeletingProjectionRows() {
+        when(client.cleanup(WORKSPACE_ID)).thenReturn(new RuntimeCheckpointClient.CleanupResult(
+                RuntimeCheckpointClient.Outcome.OK, true, null, Map.of()));
+        when(repository.deleteByWorkspaceId(WORKSPACE_ID)).thenReturn(3);
+
+        RunCheckpointService.CleanupOutcome outcome = service.cleanup(WORKSPACE_ID);
+
+        assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
+        assertTrue(outcome.removed());
+        assertEquals(3, outcome.deletedRows());
+        InOrder order = inOrder(client, repository);
+        order.verify(client).cleanup(WORKSPACE_ID);
+        order.verify(repository).deleteByWorkspaceId(WORKSPACE_ID);
+    }
+
+    @Test
+    void cleanupFailureLeavesProjectionRowsForRetry() {
+        when(client.cleanup(WORKSPACE_ID)).thenReturn(new RuntimeCheckpointClient.CleanupResult(
+                RuntimeCheckpointClient.Outcome.UNAVAILABLE, false, "runtime_down", Map.of()));
+
+        RunCheckpointService.CleanupOutcome outcome = service.cleanup(WORKSPACE_ID);
+
+        assertEquals(RunCheckpointService.Gate.UNAVAILABLE, outcome.gate());
+        assertEquals("runtime_down", outcome.reason());
+        verify(repository, never()).deleteByWorkspaceId(anyString());
     }
 
     @Test
@@ -534,7 +559,7 @@ class RunCheckpointServiceTest {
                 .thenReturn(revertOk(2, 0, 0));
 
         RunCheckpointService.RevertOutcome outcome = service.revert(
-                RUN_ID, WORKSPACE_ID, List.of(RAW_REQUEST_MARKER));
+                WORKSPACE_ID, SLICE_REF, List.of(RAW_REQUEST_MARKER));
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
@@ -584,7 +609,7 @@ class RunCheckpointServiceTest {
                 .thenReturn(revertOk(1, 2, 25));
 
         RunCheckpointService.RevertOutcome outcome = service.revert(
-                RUN_ID, WORKSPACE_ID, List.of("c0.txt", RAW_REQUEST_MARKER));
+                WORKSPACE_ID, SLICE_REF, List.of("c0.txt", RAW_REQUEST_MARKER));
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
@@ -607,7 +632,7 @@ class RunCheckpointServiceTest {
         seedCapturedRow();
         when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(revertOk(1, 2, 0));
 
-        RunCheckpointService.RevertOutcome outcome = service.revert(RUN_ID, WORKSPACE_ID, List.of());
+        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
@@ -626,19 +651,19 @@ class RunCheckpointServiceTest {
                         RuntimeCheckpointClient.Outcome.TYPE_CHANGES_UNACKNOWLEDGED,
                         null, null, List.of(), 0L, List.of(), Map.of(),
                         "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED"));
-        RunCheckpointService.RevertOutcome conflicts = service.revert(RUN_ID, WORKSPACE_ID, List.of());
+        RunCheckpointService.RevertOutcome conflicts = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
         assertEquals(RunCheckpointService.Gate.TYPE_CHANGES_UNACKNOWLEDGED, conflicts.gate());
 
         when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(
                 new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.RESTORE_LOCKED,
                         null, null, List.of(), 0L, List.of(), Map.of(), "CHECKPOINT_RESTORE_LOCKED"));
-        RunCheckpointService.RevertOutcome locked = service.revert(RUN_ID, WORKSPACE_ID, List.of());
+        RunCheckpointService.RevertOutcome locked = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
         assertEquals(RunCheckpointService.Gate.RESTORE_LOCKED, locked.gate());
 
         when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(
                 new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.TRANSPORT,
                         null, null, List.of(), 0L, List.of(), Map.of(), "unreachable"));
-        RunCheckpointService.RevertOutcome transport = service.revert(RUN_ID, WORKSPACE_ID, List.of());
+        RunCheckpointService.RevertOutcome transport = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
         assertEquals(RunCheckpointService.Gate.UNAVAILABLE, transport.gate());
         assertEquals(RunCheckpointService.REASON_UNAVAILABLE, transport.reason());
         assertEquals(RunCheckpoint.STATE_CAPTURED, row.getState(), "failed reverts leave the row captured");
@@ -647,7 +672,7 @@ class RunCheckpointServiceTest {
 
     @Test
     void revertOnMissingRowNeverCallsRuntime() {
-        RunCheckpointService.RevertOutcome outcome = service.revert(RUN_ID, WORKSPACE_ID, List.of());
+        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
 
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, outcome.gate());
         assertEquals(RunCheckpointService.REASON_MISSING, outcome.reason());
@@ -660,8 +685,7 @@ class RunCheckpointServiceTest {
         when(client.checkpointBlob(WORKSPACE_ID, SLICE_REF, "src/a.txt")).thenReturn(
                 new RuntimeCheckpointClient.BlobResult(RuntimeCheckpointClient.Outcome.OK, "src/a.txt",
                         SLICE_REF, "hello", null, Map.of()));
-        RunCheckpointService.FileOutcome ok = service.checkpointFile(RUN_ID, WORKSPACE_ID,
-                "src/a.txt", SLICE_REF);
+        RunCheckpointService.FileOutcome ok = service.checkpointFile(WORKSPACE_ID, "src/a.txt", SLICE_REF);
         assertEquals(RunCheckpointService.Gate.OK, ok.gate());
         assertEquals("hello", ok.content());
 
@@ -669,16 +693,14 @@ class RunCheckpointServiceTest {
                 new RuntimeCheckpointClient.BlobResult(RuntimeCheckpointClient.Outcome.TOO_LARGE,
                         "big.bin", SLICE_REF, null, "http_413",
                         Map.of("path", "big.bin", "size", 2, "max", 1)));
-        RunCheckpointService.FileOutcome tooLarge = service.checkpointFile(RUN_ID, WORKSPACE_ID,
-                "big.bin", SLICE_REF);
+        RunCheckpointService.FileOutcome tooLarge = service.checkpointFile(WORKSPACE_ID, "big.bin", SLICE_REF);
         assertEquals(RunCheckpointService.Gate.TOO_LARGE, tooLarge.gate());
         assertEquals("big.bin", tooLarge.details().get("path"));
 
         when(client.checkpointBlob(WORKSPACE_ID, SLICE_REF, "missing.txt")).thenReturn(
                 new RuntimeCheckpointClient.BlobResult(RuntimeCheckpointClient.Outcome.NOT_FOUND,
                         "missing.txt", SLICE_REF, null, "http_404", Map.of()));
-        RunCheckpointService.FileOutcome missing = service.checkpointFile(RUN_ID, WORKSPACE_ID,
-                "missing.txt", SLICE_REF);
+        RunCheckpointService.FileOutcome missing = service.checkpointFile(WORKSPACE_ID, "missing.txt", SLICE_REF);
         assertEquals(RunCheckpointService.Gate.FILE_NOT_FOUND, missing.gate());
         assertEquals(RunCheckpoint.STATE_CAPTURED, rows.get(0).getState(),
                 "a missing blob path must never expire the checkpoint row");
@@ -714,8 +736,7 @@ class RunCheckpointServiceTest {
     @Test
     void retentionReturnsConstantsAndCounts() {
         when(repository.countByWorkspaceId(WORKSPACE_ID)).thenReturn(7L);
-        when(repository.countBaseRefs(WORKSPACE_ID)).thenReturn(0L);
-        when(repository.countEndRefs(WORKSPACE_ID)).thenReturn(5L);
+        when(repository.countSliceRefs(WORKSPACE_ID)).thenReturn(5L);
 
         RunCheckpointService.RetentionView view = service.retention(WORKSPACE_ID);
 

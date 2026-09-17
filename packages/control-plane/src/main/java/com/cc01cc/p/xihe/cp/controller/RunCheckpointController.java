@@ -3,8 +3,6 @@ package com.cc01cc.p.xihe.cp.controller;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService.Gate;
@@ -22,89 +20,59 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
- * PLAN-0328 M3 W2: public Run-checkpoint surface.
- *
- * <p>Run-scoped routes ({@code /api/v1/chat/runs/{runId}/checkpoint...}) project the
- * CP {@code run_checkpoints} row and proxy the Runtime revert contract behind the
- * same ownership check as {@code ChatController} (404 RUN_NOT_FOUND / 403 FORBIDDEN).
- * Preview and execute additionally require a terminal Run (409 RUN_ACTIVE); revert
- * is only reachable by an authenticated UI user (decision #12), never by the Agent.
- * The projection and file routes stay available while a Run is active so the UI can
- * render the live checkpoint state.</p>
- *
- * <p>Workspace-scoped routes back the dual-diff "待提交" side and the retention
- * panel. Custom retention values are an explicit scope cut (decision #10 constants):
- * supervision is informational only, the sweep itself runs in the Runtime.</p>
+ * Workspace-scoped checkpoint slice API. Revert is a user-facing operation and
+ * is addressed only by a workspace plus an explicit slice ref.
  */
 @RestController
 public class RunCheckpointController {
 
     private static final Logger logger = LoggerFactory.getLogger(RunCheckpointController.class);
 
-    /** Mirrors {@code ChatController} terminal statuses for the RUN_ACTIVE gate. */
-    private static final List<String> TERMINAL_RUN_STATUSES = List.of(
-            "succeeded", "failed", "partial", "ambiguous", "cancelled");
-
-    private final ChatRunRepository chatRuns;
     private final RunCheckpointService checkpoints;
     private final WorkspaceService workspaces;
 
-    public RunCheckpointController(ChatRunRepository chatRuns,
-                                   RunCheckpointService checkpoints,
+    public RunCheckpointController(RunCheckpointService checkpoints,
                                    WorkspaceService workspaces) {
-        this.chatRuns = chatRuns;
         this.checkpoints = checkpoints;
         this.workspaces = workspaces;
     }
 
-    // ── Run-scoped checkpoint projection and revert ──────────────────────────
+    // ── Workspace-scoped checkpoint slices ───────────────────────────────────
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping("/api/v1/chat/runs/{runId}/checkpoint")
-    public ResponseEntity<?> getCheckpoint(@PathVariable String runId) {
-        RunRef ref = resolveRun(runId);
-        if (ref.error() != null) {
-            return ref.error();
+    @GetMapping("/api/v1/workspaces/{workspaceId}/checkpoints")
+    public ResponseEntity<?> list(@PathVariable String workspaceId) {
+        ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
+        if (denied != null) {
+            return denied;
         }
-        RunCheckpointService.View view = checkpoints.view(runId, ref.run().getWorkspaceId());
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("runId", runId);
-        body.put("state", view.state());
-        body.put("unrollableReason", view.unrollableReason());
-        body.put("changedCount", view.changedCount());
-        body.put("changedFiles", view.changedFiles());
-        body.put("sealedAt", timestamp(view.sealedAt()));
-        body.put("revert", revertView(view.revert()));
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(checkpoints.list(workspaceId));
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @PostMapping("/api/v1/chat/runs/{runId}/checkpoint/revert/preview")
-    public ResponseEntity<?> previewRevert(@PathVariable String runId) {
-        RunRef ref = resolveRun(runId);
-        if (ref.error() != null) {
-            return ref.error();
+    @PostMapping("/api/v1/workspaces/{workspaceId}/checkpoints/revert/preview")
+    public ResponseEntity<?> previewRevert(@PathVariable String workspaceId,
+                                           @RequestBody(required = false) Map<String, Object> request) {
+        ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
+        if (denied != null) {
+            return denied;
         }
-        ResponseEntity<?> active = requireTerminalRun(ref.run());
-        if (active != null) {
-            return active;
+        String sliceRef = requiredSliceRef(request, false);
+        if (sliceRef == null) {
+            return invalidRequest("sliceRef is required");
         }
-        RunCheckpointService.PreviewOutcome outcome =
-                checkpoints.previewRevert(runId, ref.run().getWorkspaceId());
+        RunCheckpointService.PreviewOutcome outcome = checkpoints.previewRevert(workspaceId, sliceRef);
         if (outcome.gate() != Gate.OK) {
             return gateResponse(outcome.gate(), outcome.reason(), outcome.details());
         }
         RuntimeCheckpointClient.RevertPreview preview = outcome.preview();
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("runId", runId);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("sliceRef", preview.sliceRef());
         body.put("counts", preview.counts());
         body.put("entries", preview.entries());
@@ -113,54 +81,57 @@ public class RunCheckpointController {
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @PostMapping("/api/v1/chat/runs/{runId}/checkpoint/revert")
+    @PostMapping("/api/v1/workspaces/{workspaceId}/checkpoints/revert")
     public ResponseEntity<?> revert(
-            @PathVariable String runId,
+            @PathVariable String workspaceId,
             @RequestBody(required = false) Map<String, Object> request) {
-        RunRef ref = resolveRun(runId);
-        if (ref.error() != null) {
-            return ref.error();
+        ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
+        if (denied != null) {
+            return denied;
         }
-        ResponseEntity<?> active = requireTerminalRun(ref.run());
-        if (active != null) {
-            return active;
+        String sliceRef = requiredSliceRef(request, true);
+        if (sliceRef == null) {
+            return invalidRequest("sliceRef is required");
         }
-        // PLAN-0338: only the slice-model acknowledgement is honored; the legacy
-        // acknowledgeConflicts/acknowledgeHeadChange fields are ignored.
-        List<String> acknowledgeTypeChanges = stringList(
-                request == null ? null : request.get("acknowledgeTypeChanges"));
+        Object rawAcknowledgements = request == null ? null : request.get("acknowledgeTypeChanges");
+        if (!(rawAcknowledgements instanceof List<?>)) {
+            return invalidRequest("acknowledgeTypeChanges is required and must be an array");
+        }
+        List<String> acknowledgeTypeChanges = stringList(rawAcknowledgements);
+        if (rawAcknowledgements instanceof List<?> values && values.size() != acknowledgeTypeChanges.size()) {
+            return invalidRequest("acknowledgeTypeChanges must contain only non-empty strings");
+        }
         RunCheckpointService.RevertOutcome outcome = checkpoints.revert(
-                runId, ref.run().getWorkspaceId(), acknowledgeTypeChanges);
+                workspaceId, sliceRef, acknowledgeTypeChanges);
         if (outcome.gate() != Gate.OK) {
             return gateResponse(outcome.gate(), outcome.reason(), outcome.details());
         }
         RuntimeCheckpointClient.RevertResult result = outcome.result();
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("runId", runId);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("sliceRef", result.sliceRef());
         body.put("counts", result.counts());
         body.put("entries", result.entries());
         body.put("durationMs", result.durationMs());
         body.put("suspects", result.suspects());
-        logger.info("[LIFECYCLE] service=cp event=run_checkpoint_revert_completed runId={} restored={} "
+        logger.info("[LIFECYCLE] service=cp event=run_checkpoint_revert_completed workspaceId={} sliceRef={} "
+                        + "restored={} "
                         + "deleted={} failed={}",
-                runId, result.counts().restored(), result.counts().deleted(),
+                workspaceId, sliceRef, result.counts().restored(), result.counts().deleted(),
                 result.counts().failed());
         return ResponseEntity.ok(body);
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping("/api/v1/chat/runs/{runId}/checkpoint/file")
+    @GetMapping("/api/v1/workspaces/{workspaceId}/checkpoints/blob")
     public ResponseEntity<?> checkpointFile(
-            @PathVariable String runId,
+            @PathVariable String workspaceId,
             @RequestParam(name = "path") String path,
-            @RequestParam(name = "ref") String ref) {
-        RunRef runRef = resolveRun(runId);
-        if (runRef.error() != null) {
-            return runRef.error();
+            @RequestParam(name = "sliceRef") String sliceRef) {
+        ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
+        if (denied != null) {
+            return denied;
         }
-        RunCheckpointService.FileOutcome outcome =
-                checkpoints.checkpointFile(runId, runRef.run().getWorkspaceId(), path, ref);
+        RunCheckpointService.FileOutcome outcome = checkpoints.checkpointFile(workspaceId, path, sliceRef);
         if (outcome.gate() != Gate.OK) {
             return gateResponse(outcome.gate(), outcome.reason(), outcome.details());
         }
@@ -219,44 +190,27 @@ public class RunCheckpointController {
         return ResponseEntity.ok(Map.of("counts", outcome.counts()));
     }
 
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @PostMapping("/api/v1/workspaces/{workspaceId}/checkpoints/cleanup")
+    public ResponseEntity<?> cleanup(@PathVariable String workspaceId,
+                                     @RequestBody(required = false) Map<String, Object> request) {
+        ResponseEntity<?> denied = requireWorkspaceAccess(workspaceId);
+        if (denied != null) {
+            return denied;
+        }
+        if (request == null || request.size() != 1 || !Boolean.TRUE.equals(request.get("acknowledge"))) {
+            return invalidRequest("acknowledge must be true to clear all checkpoint history");
+        }
+        RunCheckpointService.CleanupOutcome outcome = checkpoints.cleanup(workspaceId);
+        if (outcome.gate() != Gate.OK) {
+            return gateResponse(outcome.gate(), outcome.reason(), outcome.details());
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("removed", outcome.removed());
+        return ResponseEntity.ok(body);
+    }
+
     // ── Shared helpers ──────────────────────────────────────────────────────
-
-    /** Ownership-checked run lookup; the error response is non-null when blocked. */
-    private RunRef resolveRun(String runId) {
-        String userId = TenantContext.getUserId();
-        String workspaceId = TenantContext.getWorkspaceId();
-        if (userId == null || workspaceId == null) {
-            return new RunRef(null, ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required"));
-        }
-        UUID runUuid;
-        try {
-            runUuid = UUID.fromString(runId);
-        } catch (IllegalArgumentException e) {
-            return new RunRef(null, ProblemDetailsHandler.problemResponse(
-                    HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found"));
-        }
-        ChatRun run = chatRuns.findById(runUuid).orElse(null);
-        if (run == null) {
-            return new RunRef(null, ProblemDetailsHandler.problemResponse(
-                    HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found"));
-        }
-        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
-            return new RunRef(null, ProblemDetailsHandler.problemResponse(
-                    HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "Chat run does not belong to current user/workspace"));
-        }
-        return new RunRef(run, null);
-    }
-
-    /** Revert entry gate: only a terminal Run may preview or execute a revert. */
-    private ResponseEntity<Map<String, Object>> requireTerminalRun(ChatRun run) {
-        if (TERMINAL_RUN_STATUSES.contains(run.getStatus())) {
-            return null;
-        }
-        return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "RUN_ACTIVE",
-                "Run is still active: " + run.getStatus());
-    }
 
     /** Workspace ownership gate; the error response is non-null when blocked. */
     private ResponseEntity<?> requireWorkspaceAccess(String workspaceId) {
@@ -270,17 +224,35 @@ public class RunCheckpointController {
             return null;
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        } catch (IllegalArgumentException e) {
+            logger.warn("[SECURITY] service=cp event=workspace_access_invalid_id workspaceId={} failureType={}",
+                    workspaceId, e.getClass().getName());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found");
         }
+    }
+
+    private ResponseEntity<Map<String, Object>> invalidRequest(String detail) {
+        return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                "CHECKPOINT_INVALID_REQUEST", detail);
+    }
+
+    private static String requiredSliceRef(Map<String, Object> request, boolean allowAcknowledgements) {
+        if (request == null
+                || request.keySet().stream().anyMatch(key -> !key.equals("sliceRef")
+                && (!allowAcknowledgements || !key.equals("acknowledgeTypeChanges")))) {
+            return null;
+        }
+        Object raw = request.get("sliceRef");
+        return raw instanceof String value && !value.isBlank() ? value : null;
     }
 
     private ResponseEntity<Map<String, Object>> gateResponse(Gate gate, String reason,
                                                              Map<String, Object> details) {
         return switch (gate) {
-            case NOT_SEALED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
-                    "CHECKPOINT_NOT_SEALED", "Run checkpoint is not sealed", details);
             case NOT_AVAILABLE -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
                     "CHECKPOINT_NOT_AVAILABLE",
-                    "Run checkpoint is not available (" + reason + ")", details);
+                    "Checkpoint slice is not available (" + reason + ")", details);
             case TYPE_CHANGES_UNACKNOWLEDGED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
                     "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED",
                     "type-change paths must be acknowledged from the preview before reverting", details);
@@ -288,29 +260,18 @@ public class RunCheckpointController {
                     "CHECKPOINT_RESTORE_LOCKED",
                     "another restore is already running in this workspace", details);
             case INVALID_REQUEST -> ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
-                    "CHECKPOINT_INVALID_REQUEST", "Invalid checkpoint file request", details);
+                    "CHECKPOINT_INVALID_REQUEST", "Invalid checkpoint request", details);
             case TOO_LARGE -> ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE,
                     "CHECKPOINT_BLOB_TOO_LARGE", "file exceeds the checkpoint preview cap", details);
             case FILE_NOT_FOUND -> ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND,
-                    "CHECKPOINT_NOT_FOUND", "the path is not present in the requested base/end tree", details);
+                    "CHECKPOINT_NOT_FOUND", "the path is not present in the requested slice tree", details);
             case UNAVAILABLE -> ProblemDetailsHandler.problemResponse(HttpStatus.SERVICE_UNAVAILABLE,
-                    "CHECKPOINT_UNAVAILABLE", "Run checkpoint is unavailable", details);
+                    "CHECKPOINT_UNAVAILABLE", "Checkpoint service is unavailable", details);
+            case CLEANUP_BUSY -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "CHECKPOINT_BUSY", "checkpoint capture or restore is in progress", details);
             case OK -> ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR", "Unexpected checkpoint gate");
         };
-    }
-
-    private Map<String, Object> revertView(RunCheckpointService.RevertView revert) {
-        Map<String, Object> view = new LinkedHashMap<>();
-        view.put("state", revert.state());
-        view.put("at", timestamp(revert.at()));
-        view.put("counts", revert.counts());
-        view.put("ref", revert.ref());
-        return view;
-    }
-
-    private static String timestamp(Instant instant) {
-        return instant == null ? null : instant.toString();
     }
 
     private static List<String> stringList(Object raw) {
@@ -325,6 +286,4 @@ public class RunCheckpointController {
         }
         return List.copyOf(values);
     }
-
-    private record RunRef(ChatRun run, ResponseEntity<Map<String, Object>> error) {}
 }

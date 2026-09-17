@@ -55,6 +55,7 @@ public class RuntimeCheckpointClient {
     private static final Duration BLOB_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration GIT_STATUS_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration GC_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration CLEANUP_TIMEOUT = Duration.ofSeconds(10);
 
     /**
      * Typed call outcome; never an exception at the call site. The 409 codes of the
@@ -65,7 +66,8 @@ public class RuntimeCheckpointClient {
      */
     public enum Outcome {
         OK, NOT_FOUND, UNAVAILABLE, TRANSPORT,
-        NOT_SEALED, TYPE_CHANGES_UNACKNOWLEDGED, RESTORE_LOCKED, INVALID_REQUEST, TOO_LARGE
+        NOT_SEALED, TYPE_CHANGES_UNACKNOWLEDGED, RESTORE_LOCKED, CLEANUP_BUSY,
+        INVALID_REQUEST, TOO_LARGE
     }
 
     /** One entry of a capture change set. */
@@ -83,6 +85,9 @@ public class RuntimeCheckpointClient {
                                 String predecessor, String reason) {}
 
     public record GcResult(Outcome outcome, Map<String, Object> counts, String reason) {}
+
+    public record CleanupResult(Outcome outcome, boolean removed, String reason,
+                                Map<String, Object> problem) {}
 
     /** One preview entry ({@code action} = restore|delete; {@code state} = planned|typeConflict). */
     public record PreviewEntry(String path, String action, String state, String reason) {}
@@ -205,6 +210,31 @@ public class RuntimeCheckpointClient {
             logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_gc_unreachable workspaceId={} error={}",
                     workspaceId, e.getMessage());
             return new GcResult(Outcome.TRANSPORT, Map.of(), "unreachable");
+        }
+    }
+
+    /** Removes the Runtime shadow repository for one workspace; the operation is idempotent. */
+    public CleanupResult cleanup(String workspaceId) {
+        if (isBlank(workspaceId)) {
+            return new CleanupResult(Outcome.INVALID_REQUEST, false, "invalid_request", Map.of());
+        }
+        String url = baseUrl(workspaceId) + "/cleanup";
+        try {
+            HttpResponse<String> response = send("cleanup", url, Map.of(), CLEANUP_TIMEOUT);
+            int status = response.statusCode();
+            Map<String, Object> problem = status / 100 == 2 ? Map.of() : parseBody(response.body());
+            if (status / 100 != 2) {
+                Outcome outcome = status == 409
+                        && "CHECKPOINT_BUSY".equals(stringValue(problem, "code"))
+                        ? Outcome.CLEANUP_BUSY : failureOutcome(status, problem);
+                return new CleanupResult(outcome, false, errorReason(status, response.body()), problem);
+            }
+            Map<String, Object> body = parseBody(response.body());
+            return new CleanupResult(Outcome.OK, Boolean.TRUE.equals(body.get("removed")), null, Map.of());
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_cleanup_unreachable "
+                            + "workspaceId={} error={}", workspaceId, e.getMessage());
+            return new CleanupResult(Outcome.TRANSPORT, false, "unreachable", Map.of());
         }
     }
 
@@ -506,8 +536,9 @@ public class RuntimeCheckpointClient {
             if (code instanceof String value && !value.isBlank()) {
                 return value;
             }
-        } catch (Exception ignored) {
-            // fall through to the status-derived reason
+        } catch (Exception e) {
+            logger.debug("[LIFECYCLE] service=cp event=runtime_checkpoint_error_reason_unparsable "
+                    + "status={} failureType={}", status, e.getClass().getName());
         }
         return "http_" + status;
     }

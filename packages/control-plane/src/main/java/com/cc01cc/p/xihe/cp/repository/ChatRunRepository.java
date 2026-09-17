@@ -78,12 +78,12 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     /**
      * PLAN-0338 切片模型启动补偿：已终态但没有任何 checkpoint 投影行的 run
      * （进程在终态捕获前退出，或升级前从未写过行）。原生 SQL 是因为
-     * {@code run_checkpoints.run_id} 经 {@link com.cc01cc.p.xihe.cp.entity.UuidStringConverter}
+     * {@code run_checkpoints.source_run_id} 经 {@link com.cc01cc.p.xihe.cp.entity.UuidStringConverter}
      * 映射为字符串，JPQL 无法与 {@code chat_runs.id}（UUID）直接比较。
      * 调用方按页取用，保证单次启动的补偿量有界。
      */
     @Query(value = "select r.* from chat_runs r where r.status in (:statuses) "
-            + "and not exists (select 1 from run_checkpoints c where c.run_id = r.id)",
+            + "and not exists (select 1 from run_checkpoints c where c.source_run_id = r.id)",
             nativeQuery = true)
     List<ChatRun> findTerminalRunsWithoutCheckpoint(@Param("statuses") Collection<String> statuses,
             Pageable pageable);

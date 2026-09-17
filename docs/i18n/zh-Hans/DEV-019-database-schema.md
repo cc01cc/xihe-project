@@ -38,11 +38,11 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V26__run_checkpoint_slice_state_vocabulary.sql`（当前 active chain；V1 基线，V2–V26 增量迁移） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V27__run_checkpoints_workspace_slices.sql`（当前 active chain；V1 基线，V2–V27 增量迁移） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（30 个）+ `context/entity/`（3 个） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
-> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；其后的 V2–V23 继续在 active classpath 中按顺序增量应用。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
+> **PLAN-280 rebaseline（2026-09-07）**：`V1__init_schema.sql` 是当前链的 schema 基线；其后的 V2–V27 继续在 active classpath 中按顺序增量应用。统一原生 UUID、带时区时间类型、显式命名约束与 ON DELETE、`ddl-auto=validate`。更早的历史 V1~V22+U6 编号仍仅作 Git 历史溯源。`spring-boot-flyway` 模块缺失曾导致 Flyway 自动配置从未生效（schema 实际由 Hibernate 建），已在本轮修复。
 >
 > **版本标注约定**：§2/§3 各表括注与附录 A「旧链首次迁移」列的 `V<n>` 一律是 **rebaseline 前的旧链编号**（迁移溯源用），与 §4 的 active 链（V1~V23）**编号不通用**——例如「旧链 V11」指 `workspace_assignments` 建表，而 active `V11` 是 `mcp_server_tool_timeout`。逐表 active 变更见 §4。
 
@@ -77,6 +77,7 @@ erDiagram
 %%{init: {'theme': 'neutral'}}%%
 erDiagram
     workspaces ||--o{ workspace_execution_specs : "revisions by generation"
+    workspaces ||--o{ run_checkpoints : "owns slices"
 ```
 
 - `workspace_execution_specs.workspace_id` FK CASCADE；联合唯一 `(workspace_id, generation)`，每代一条规格快照
@@ -139,6 +140,7 @@ erDiagram
     sessions ||--o{ chat_runs : runs
     chat_runs ||--o{ messages : produces
     workspaces ||--o{ workspace_execution_specs : revisions
+    workspaces ||--o{ run_checkpoints : owns
     workspaces ||--o{ mcp_servers : registers
     mcp_servers ||--o{ oauth_credentials : authorizes
     provider_connections ||--o{ provider_credential_leases : leases
@@ -170,7 +172,7 @@ erDiagram
 
 > 索引：`idx_users_email (email)`
 
-### 3.2 协作（workspaces / workspace_users / sessions / messages / chat_runs / approval_requests）
+### 3.2 协作（workspaces / workspace_users / sessions / messages / chat_runs / run_checkpoints / approval_requests）
 
 **workspaces**（`V1` + `V2/V11/V14`，Entity `entity/Workspace.java`）：`owner_id` 拥有者，`deleted_at` 软删后同 owner 可重建。
 
@@ -283,6 +285,32 @@ erDiagram
 > - `idx_chat_runs_provider_connection (provider_connection_id, connection_revision)`（`V19`）
 > - `idx_chat_runs_active_lease (session_id, status, lease_expires_at)` — 活跃租约判定（`V22`）
 > - 唯一约束 `(user_id, session_id, idempotency_key)` — 同 key 不重复起 run，同 key 不同 payload 报冲突
+
+**run_checkpoints**（PLAN-0339 T0.4 / V27 重建，workspace slice projection）：每行代表一个 workspace 时间线切片，不再代表某个 Run 的区间。0339 上线时先物理清空旧投影行，再按以下切片语义重建；不转换、不回填旧格式数据。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | UUID | PK | CP 投影行键 |
+| workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id) ON DELETE CASCADE` | workspace 归属 |
+| slice_ref | TEXT | nullable（有效切片唯一；降级捕获可为空） | Runtime 影子 Git `refs/xihe/slices/<capturedAt>-<hash>` |
+| captured_at | TIMESTAMPTZ | nullable（降级捕获可为空） | 切片捕获时刻；按此排序 |
+| source_run_id | VARCHAR(36) | nullable | 产生该切片的 Run；C0 可空 |
+| source_session_id | VARCHAR(36) | nullable | 来源会话；C0/异常补拍可空 |
+| predecessor_ref | TEXT | nullable | 捕获时链尾前驱，缺失时不回填全量差异 |
+| changed_files | JSONB | NOT NULL DEFAULT '[]' | 相对前一切片的 `[{status, path}]`，不做来源归因 |
+| changed_count | INTEGER | NOT NULL DEFAULT 0 | 完整变更数量，不受 UI 列表截断影响 |
+| opaque_nested_repos | JSONB | NOT NULL DEFAULT '[]' | 不透明 gitlink 路径清单，内容不参与恢复 |
+| state | VARCHAR(24) | NOT NULL CHECK `captured/abnormal-captured/degraded/expired` | 捕获状态；`degraded` 仅表示捕获失败 |
+| unrollable_reason | VARCHAR(64) | nullable | 当前仅 `UNAVAILABLE` |
+| revert_state | VARCHAR(16) | NOT NULL DEFAULT 'none' | `none/rolled_back/partial/failed` |
+| revert_ref | TEXT | nullable | 本次恢复目标切片 ref |
+| revert_summary | JSONB | nullable | 脱敏后的计数、逐路径结果、安全原因 |
+| reverted_at | TIMESTAMPTZ | nullable | 最近一次接受的恢复时间 |
+| revert_attempt_count | INTEGER | NOT NULL DEFAULT 0 | 恢复尝试次数 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 投影创建时间 |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 投影更新时间 |
+
+> 索引与约束：`idx_run_checkpoints_workspace_captured (workspace_id, captured_at DESC)`；有效 `slice_ref` 在 workspace 内唯一。公共列表只返回非 `expired` 行；清理流程先成功删除 Runtime shadow Git，再删除该 workspace 的投影行。
 
 **approval_requests**（基线 `V1` 内建，`V7` 加 `grant_consumed_at`，`V9` 加 `arguments_hash`，`V25` 加 `origin`；Entity `entity/ChatApproval.java`）：工具高危操作人审。
 
@@ -677,6 +705,7 @@ erDiagram
 | V22 | `V22__run_checkpoints.sql` | Run checkpoint CP 投影、状态与账本 kind 约束扩展 | `run_checkpoints/operation_items` |
 | V23 | `V23__run_checkpoint_revert.sql` | checkpoint revert 状态、引用、摘要与尝试计数 | `run_checkpoints` |
 | V26 | `V26__run_checkpoint_slice_state_vocabulary.sql` | checkpoint 切片状态词表（`captured`/`abnormal-captured`）；切片表重建归 PLAN-0339 | `run_checkpoints` |
+| V27 | `V27__run_checkpoints_workspace_slices.sql` | 物理清空旧投影并重建 workspace slice rows、来源/前驱/嵌套仓库与 revert bookkeeping | `run_checkpoints` |
 
 ## 5. 本地查看与运维
 
@@ -692,7 +721,7 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22 建立 `run_checkpoints` CP projection；V23 为 UI 触发 revert 的追加列（不新建表）；V26 放宽 checkpoint 状态词表（切片模型，PLAN-0338），切片表重建与旧行清空归 PLAN-0339。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slice projection，不做旧格式数据迁移。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 
@@ -707,6 +736,7 @@ erDiagram
 | messages | `entity/Message.java` + `MessageRole.java` | V1 |
 | files | `entity/File.java` | V1 |
 | chat_runs | `entity/ChatRun.java` | V1 |
+| run_checkpoints | `entity/RunCheckpoint.java` | V27（V22/V23/V26 仅为历史增量） |
 | approval_requests | `entity/ChatApproval.java` | V1 |
 | provider_connections | `entity/ProviderConnection.java` | V1 |
 | provider_credential_leases | `entity/ProviderCredentialLease.java` | V1 |
@@ -738,7 +768,7 @@ erDiagram
 
 | 约定 | 内容 |
 |------|------|
-| 级联删 | `sessions` → `messages/context_events/context_projections/files(session)`；`workspaces` → `workspace_execution_specs`；`provider_connections` → `provider_credential_leases` |
+| 级联删 | `sessions` → `messages/context_events/context_projections/files(session)`；`workspaces` → `workspace_execution_specs/run_checkpoints`；`provider_connections` → `provider_credential_leases` |
 | 置空 | `messages` 删后 `files.message_id` 置空，文件行保留待 orphan 清理 |
 | 软删 | 仅 `workspaces.deleted_at`，查询须带 `WHERE deleted_at IS NULL`，唯一约束用部分索引实现 |
 | 只追加 | `context_events/provider_connection_audit` 禁 UPDATE/DELETE，`context_projections` 是唯一可重建的物化 |

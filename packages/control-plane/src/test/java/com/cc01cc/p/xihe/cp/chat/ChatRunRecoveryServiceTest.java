@@ -111,9 +111,9 @@ class ChatRunRecoveryServiceTest {
         RunCheckpointRepository checkpointRepository = mock(RunCheckpointRepository.class);
         RuntimeCheckpointClient client = mock(RuntimeCheckpointClient.class);
         List<RunCheckpoint> rows = new ArrayList<>();
-        when(checkpointRepository.findByRunIdAndWorkspaceId(anyString(), anyString()))
+        when(checkpointRepository.findBySourceRunIdAndWorkspaceId(anyString(), anyString()))
                 .thenAnswer(invocation -> rows.stream()
-                        .filter(row -> row.getRunId().equals(invocation.getArgument(0))
+                        .filter(row -> row.getSourceRunId().equals(invocation.getArgument(0))
                                 && row.getWorkspaceId().equals(invocation.getArgument(1)))
                         .findFirst());
         when(checkpointRepository.save(any(RunCheckpoint.class))).thenAnswer(invocation -> {
@@ -145,7 +145,7 @@ class ChatRunRecoveryServiceTest {
             verify(client, times(1)).capture(WORKSPACE_ID, RUN_ID, USER_ID,
                     "run-terminal-capture:" + RUN_ID, true);
             assertEquals(RunCheckpoint.STATE_CAPTURED, rows.get(0).getState());
-            assertEquals(SLICE_REF, rows.get(0).getEndRef());
+            assertEquals(SLICE_REF, rows.get(0).getSliceRef());
         } finally {
             realService.shutdown();
         }

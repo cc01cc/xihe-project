@@ -179,12 +179,40 @@ class RuntimeCheckpointClientTest {
     }
 
     @Test
+    void cleanupPostsToWorkspaceRuntimeAndMapsResult() throws IOException {
+        String url = startServer((method, path) -> new Stub(200, "{\"removed\":true}"));
+        RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
+
+        RuntimeCheckpointClient.CleanupResult result = client.cleanup("ws-1");
+
+        assertEquals(RuntimeCheckpointClient.Outcome.OK, result.outcome());
+        assertTrue(result.removed());
+        assertEquals("POST", lastMethod.get());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/checkpoints/cleanup", lastPath.get());
+        assertEquals("Bearer test-token", lastAuth.get());
+        assertEquals("{}", lastBody.get());
+    }
+
+    @Test
+    void cleanupMapsBusyAndKeepsProblemDetails() throws IOException {
+        String url = startServer((method, path) -> new Stub(409,
+                "{\"code\":\"CHECKPOINT_BUSY\",\"reason\":\"capture_in_progress\"}"));
+        RuntimeCheckpointClient.CleanupResult result =
+                new RuntimeCheckpointClient(url, "test-token").cleanup("ws-1");
+
+        assertEquals(RuntimeCheckpointClient.Outcome.CLEANUP_BUSY, result.outcome());
+        assertEquals("CHECKPOINT_BUSY", result.problem().get("code"));
+        assertEquals("capture_in_progress", result.reason());
+    }
+
+    @Test
     void blankIdentifiersAreRejectedWithoutCallingRuntime() {
         RuntimeCheckpointClient client = new RuntimeCheckpointClient("http://127.0.0.1:1", "test-token");
 
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT,
                 client.capture(" ", "run-1", "user-1", "call-1", false).outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, client.gc(null).outcome());
+        assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST, client.cleanup(" ").outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, client.previewRevert("ws-1", " ").outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT,
                 client.revert(" ", "refs/xihe/slices/1-a", List.of()).outcome());

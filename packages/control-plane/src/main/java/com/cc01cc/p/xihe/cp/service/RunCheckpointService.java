@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,10 +48,6 @@ import java.util.concurrent.atomic.AtomicLong;
  *       checkpoint projection row (the slice model has no pre-dispatch row).</li>
  * </ul>
  *
- * <p>NOTE (PLAN-0339): the slice-table rebuild replaces this projection. Until
- * then the slice ref is stored in the legacy {@code end_ref} column and the
- * state vocabulary is {@code captured | abnormal-captured | degraded | expired}.</p>
- *
  * <p>Checkpoint lifecycle markers use the existing operation ledger
  * ({@code kind=checkpoint}, {@code source=runtime}); user-triggered revert
  * markers use {@code source=ui}. When the run has no durable operation the
@@ -63,18 +60,14 @@ public class RunCheckpointService {
 
     public static final String REASON_UNAVAILABLE = "UNAVAILABLE";
 
-    /** PLAN-0328 M3: projection state for a run without a checkpoint row. */
-    public static final String STATE_NONE = "none";
-
     /** Frozen reason vocabulary for {@code 409 CHECKPOINT_NOT_AVAILABLE}. */
     public static final String REASON_MISSING = "MISSING";
     public static final String REASON_EXPIRED = "EXPIRED";
-    public static final String REASON_NOT_SEALED = "NOT_SEALED";
     public static final String REASON_DEGRADED = "DEGRADED";
     public static final String REASON_INVALID_REQUEST = "INVALID_REQUEST";
     public static final String REASON_TOO_LARGE = "TOO_LARGE";
 
-    /** Retention constants (decision #10): newest N runs + TTL days per workspace. */
+    /** Retention constants: newest N slices + TTL days per workspace. */
     public static final int RETENTION_MAX_RUNS = 50;
     public static final int RETENTION_TTL_DAYS = 30;
 
@@ -173,7 +166,7 @@ public class RunCheckpointService {
                 return false;
             }
             String workspaceId = run.getWorkspaceId();
-            RunCheckpoint existing = findRow(runId, workspaceId);
+            RunCheckpoint existing = findSourceRun(runId, workspaceId);
             if (existing != null && isCapturedState(existing.getState())) {
                 logger.debug("[LIFECYCLE] service=cp event=run_checkpoint_capture_exists runId={} workspaceId={}",
                         runId, workspaceId);
@@ -184,15 +177,15 @@ public class RunCheckpointService {
                     run.getUserId(), captureCallId(runId), abnormal);
             return switch (result.outcome()) {
                 case OK -> {
-                    persistCaptured(runId, workspaceId, result, abnormal);
-                    yield true;
+                    boolean persisted = persistCaptured(run, result, abnormal);
+                    yield persisted;
                 }
                 case INVALID_REQUEST -> {
-                    persistDegraded(runId, workspaceId, REASON_INVALID_REQUEST, result.reason());
+                    persistDegraded(run, REASON_INVALID_REQUEST, result.reason());
                     yield false;
                 }
                 default -> {
-                    persistDegraded(runId, workspaceId, REASON_UNAVAILABLE, result.reason());
+                    persistDegraded(run, REASON_UNAVAILABLE, result.reason());
                     yield false;
                 }
             };
@@ -240,8 +233,6 @@ public class RunCheckpointService {
     /** Service-level gate verdict; the controller maps each value to one HTTP shape. */
     public enum Gate {
         OK,
-        /** 409 CHECKPOINT_NOT_SEALED (legacy Runtime code) — the slice ref does not exist. */
-        NOT_SEALED,
         /** 409 CHECKPOINT_NOT_AVAILABLE {reason} — missing/expired/degraded row. */
         NOT_AVAILABLE,
         /** 409 CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED — type changes not acknowledged. */
@@ -255,16 +246,21 @@ public class RunCheckpointService {
         /** 404 CHECKPOINT_NOT_FOUND — the path is absent from the slice tree. */
         FILE_NOT_FOUND,
         /** 503 CHECKPOINT_UNAVAILABLE {reason} — Runtime slice refs unreachable. */
-        UNAVAILABLE
+        UNAVAILABLE,
+        /** 409 CHECKPOINT_BUSY — Runtime cleanup overlaps capture or restore. */
+        CLEANUP_BUSY
     }
 
-    /** Revert projection of the checkpoint view ({state,at,counts,ref}). */
-    public record RevertView(String state, Instant at, Map<String, Object> counts, String ref) {}
+    /** Revert projection of the checkpoint view ({state,at,counts,ref,attemptCount}). */
+    public record RevertView(String state, Instant at, Map<String, Object> counts, String ref,
+                             int attemptCount) {}
 
-    /** Public GET projection; {@code state=none} when the run has no row. */
-    public record View(String state, String unrollableReason, int changedCount,
-                       List<RuntimeCheckpointClient.ChangedFile> changedFiles, Instant sealedAt,
-                       RevertView revert) {}
+    /** Public workspace slice projection. Expired rows are omitted by {@link #list}. */
+    public record View(UUID id, String sliceRef, Instant capturedAt, String sourceRunId,
+                       String sourceSessionId, String predecessorRef, String state,
+                       String unrollableReason, int changedCount,
+                       List<RuntimeCheckpointClient.ChangedFile> changedFiles,
+                       boolean truncated, List<String> opaqueNestedRepos, RevertView revert) {}
 
     public record PreviewOutcome(Gate gate, String reason, RuntimeCheckpointClient.RevertPreview preview,
                                  Map<String, Object> details) {}
@@ -280,23 +276,33 @@ public class RunCheckpointService {
 
     public record GcOutcome(Gate gate, String reason, Map<String, Object> counts) {}
 
+    public record CleanupOutcome(Gate gate, String reason, boolean removed, int deletedRows,
+                                 Map<String, Object> details) {}
+
     /** Retention constants plus the workspace's current run/ref counts (read-only). */
     public record RetentionView(int maxRuns, int ttlDays, boolean unsealedNeverDeleted,
                                 long currentRuns, long currentRefs) {}
 
-    /** Read-only projection of the run's checkpoint row (no Runtime call). */
-    public View view(String runId, String workspaceId) {
-        RunCheckpoint row = findRow(runId, workspaceId);
-        if (row == null) {
-            return new View(STATE_NONE, null, 0, List.of(), null,
-                    new RevertView(RunCheckpoint.REVERT_NONE, null, null, null));
-        }
+    /** Lists all non-expired checkpoint slices for a workspace. */
+    public List<View> list(String workspaceId) {
+        return checkpoints.findByWorkspaceIdAndStateNotOrderByCapturedAtDesc(
+                        workspaceId, RunCheckpoint.STATE_EXPIRED)
+                .stream()
+                .sorted(Comparator.comparing(RunCheckpoint::getCapturedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
+                .map(this::toView)
+                .toList();
+    }
+
+    private View toView(RunCheckpoint row) {
         List<RuntimeCheckpointClient.ChangedFile> changed = parseChangedFiles(row.getChangedFiles());
         List<RuntimeCheckpointClient.ChangedFile> capped = changed.size() > MAX_VIEW_FILES
                 ? List.copyOf(changed.subList(0, MAX_VIEW_FILES))
                 : changed;
-        return new View(row.getState(), row.getUnrollableReason(), changed.size(), capped,
-                row.getSealedAt(), revertView(row));
+        return new View(row.getId(), row.getSliceRef(), row.getCapturedAt(), row.getSourceRunId(),
+                row.getSourceSessionId(), row.getPredecessorRef(), row.getState(),
+                row.getUnrollableReason(), changed.size(), capped,
+                changed.size() > MAX_VIEW_FILES, parseStringList(row.getOpaqueNestedRepos()), revertView(row));
     }
 
     /**
@@ -305,21 +311,17 @@ public class RunCheckpointService {
      * (decision #74 first consumer) and answers
      * {@code 409 CHECKPOINT_NOT_AVAILABLE {reason=EXPIRED}}.
      */
-    public PreviewOutcome previewRevert(String runId, String workspaceId) {
-        RunCheckpoint row = findRow(runId, workspaceId);
+    public PreviewOutcome previewRevert(String workspaceId, String sliceRef) {
+        RunCheckpoint row = findSlice(workspaceId, sliceRef);
         GateVerdict verdict = rowGate(row);
         if (verdict != null) {
             return new PreviewOutcome(verdict.gate(), verdict.reason(), null, Map.of());
         }
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
-        String sliceRef = capturedRow.getEndRef();
-        if (isBlank(sliceRef)) {
-            return new PreviewOutcome(Gate.NOT_AVAILABLE, REASON_MISSING, null, Map.of());
-        }
         RuntimeCheckpointClient.RevertPreview preview = runtime.previewRevert(workspaceId, sliceRef);
         return switch (preview.outcome()) {
-            case OK -> new PreviewOutcome(Gate.OK, null, preview, Map.of());
-            case NOT_SEALED -> new PreviewOutcome(Gate.NOT_SEALED, REASON_NOT_SEALED, null, Map.of());
+            case OK -> new PreviewOutcome(Gate.OK, null, preview,
+                    Map.of("opaqueNestedRepos", parseStringList(capturedRow.getOpaqueNestedRepos())));
             case TYPE_CHANGES_UNACKNOWLEDGED -> new PreviewOutcome(Gate.TYPE_CHANGES_UNACKNOWLEDGED,
                     "TYPE_CHANGES_UNACKNOWLEDGED", null, Map.of());
             case RESTORE_LOCKED -> new PreviewOutcome(Gate.RESTORE_LOCKED, "RESTORE_LOCKED", null, Map.of());
@@ -340,17 +342,13 @@ public class RunCheckpointService {
      * {@code reverted_at} plus the attempt counter under a captured-state guard;
      * bookkeeping is best-effort and never rewrites the Runtime's result.
      */
-    public RevertOutcome revert(String runId, String workspaceId, List<String> acknowledgeTypeChanges) {
-        RunCheckpoint row = findRow(runId, workspaceId);
+    public RevertOutcome revert(String workspaceId, String sliceRef, List<String> acknowledgeTypeChanges) {
+        RunCheckpoint row = findSlice(workspaceId, sliceRef);
         GateVerdict verdict = rowGate(row);
         if (verdict != null) {
             return new RevertOutcome(verdict.gate(), verdict.reason(), null, Map.of());
         }
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
-        String sliceRef = capturedRow.getEndRef();
-        if (isBlank(sliceRef)) {
-            return new RevertOutcome(Gate.NOT_AVAILABLE, REASON_MISSING, null, Map.of());
-        }
         RuntimeCheckpointClient.RevertResult result =
                 runtime.revert(workspaceId, sliceRef, acknowledgeTypeChanges);
         return switch (result.outcome()) {
@@ -358,7 +356,6 @@ public class RunCheckpointService {
                 recordRevert(capturedRow, result);
                 yield new RevertOutcome(Gate.OK, null, result, Map.of());
             }
-            case NOT_SEALED -> new RevertOutcome(Gate.NOT_SEALED, REASON_NOT_SEALED, null, Map.of());
             case TYPE_CHANGES_UNACKNOWLEDGED -> new RevertOutcome(Gate.TYPE_CHANGES_UNACKNOWLEDGED,
                     "TYPE_CHANGES_UNACKNOWLEDGED", null, Map.of());
             case RESTORE_LOCKED -> new RevertOutcome(Gate.RESTORE_LOCKED, "RESTORE_LOCKED", null, Map.of());
@@ -377,8 +374,8 @@ public class RunCheckpointService {
      * {@code NOT_FOUND} is passed through unchanged (it may be a missing path
      * inside a healthy slice — never treated as expiry here).
      */
-    public FileOutcome checkpointFile(String runId, String workspaceId, String path, String sliceRef) {
-        RunCheckpoint row = findRow(runId, workspaceId);
+    public FileOutcome checkpointFile(String workspaceId, String path, String sliceRef) {
+        RunCheckpoint row = findSlice(workspaceId, sliceRef);
         GateVerdict verdict = rowGate(row);
         if (verdict != null) {
             return new FileOutcome(verdict.gate(), verdict.reason(), null, null, Map.of());
@@ -390,7 +387,6 @@ public class RunCheckpointService {
                     null, null, Map.of());
             case TOO_LARGE -> new FileOutcome(Gate.TOO_LARGE, REASON_TOO_LARGE, null, null,
                     problemDetails(blob.problem(), "path", "size", "max"));
-            case NOT_SEALED -> new FileOutcome(Gate.NOT_SEALED, REASON_NOT_SEALED, null, null, Map.of());
             case NOT_FOUND -> new FileOutcome(Gate.FILE_NOT_FOUND, "FILE_NOT_FOUND", null, null, Map.of());
             case UNAVAILABLE -> new FileOutcome(Gate.UNAVAILABLE,
                     valueOrDefault(blob.reason(), REASON_UNAVAILABLE), null, null, Map.of());
@@ -411,11 +407,11 @@ public class RunCheckpointService {
         };
     }
 
-    /** Retention constants plus current run/ref counts of one workspace. */
+    /** Retention constants plus current slice/ref counts of one workspace. */
     public RetentionView retention(String workspaceId) {
-        long runs = checkpoints.countByWorkspaceId(workspaceId);
-        long refs = checkpoints.countBaseRefs(workspaceId) + checkpoints.countEndRefs(workspaceId);
-        return new RetentionView(RETENTION_MAX_RUNS, RETENTION_TTL_DAYS, true, runs, refs);
+        long slices = checkpoints.countByWorkspaceId(workspaceId);
+        long refs = checkpoints.countSliceRefs(workspaceId);
+        return new RetentionView(RETENTION_MAX_RUNS, RETENTION_TTL_DAYS, true, slices, refs);
     }
 
     /** Runs the Runtime retention sweep and returns its counts. */
@@ -427,6 +423,33 @@ public class RunCheckpointService {
                     valueOrDefault(result.reason(), REASON_UNAVAILABLE), Map.of());
             default -> new GcOutcome(Gate.UNAVAILABLE, REASON_UNAVAILABLE, Map.of());
         };
+    }
+
+    /** Cleans Runtime first, then physically removes the workspace projection rows. */
+    public CleanupOutcome cleanup(String workspaceId) {
+        RuntimeCheckpointClient.CleanupResult result = runtime.cleanup(workspaceId);
+        if (result.outcome() == RuntimeCheckpointClient.Outcome.CLEANUP_BUSY) {
+            return new CleanupOutcome(Gate.CLEANUP_BUSY, "CHECKPOINT_BUSY", false, 0,
+                    result.problem());
+        }
+        if (result.outcome() != RuntimeCheckpointClient.Outcome.OK) {
+            String reason = valueOrDefault(result.reason(), REASON_UNAVAILABLE);
+            Gate gate = result.outcome() == RuntimeCheckpointClient.Outcome.INVALID_REQUEST
+                    ? Gate.INVALID_REQUEST : Gate.UNAVAILABLE;
+            return new CleanupOutcome(gate, reason, false, 0, result.problem());
+        }
+        try {
+            int deletedRows = checkpoints.deleteByWorkspaceId(workspaceId);
+            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_cleanup_completed "
+                            + "workspaceId={} removed={} deletedRows={}",
+                    workspaceId, result.removed(), deletedRows);
+            return new CleanupOutcome(Gate.OK, null, result.removed(), deletedRows, Map.of());
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_cleanup_projection_failed "
+                            + "workspaceId={} failureType={}", workspaceId, e.getClass().getName(), e);
+            return new CleanupOutcome(Gate.UNAVAILABLE, "PROJECTION_DELETE_FAILED", result.removed(), 0,
+                    Map.of());
+        }
     }
 
     /** Gate verdict for row-state dependent operations; null when the row is usable. */
@@ -457,11 +480,11 @@ public class RunCheckpointService {
                 row.setState(RunCheckpoint.STATE_EXPIRED);
                 logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_expired runId={} workspaceId={} "
                                 + "reason=runtime_refs_missing",
-                        row.getRunId(), row.getWorkspaceId());
+                        row.getSourceRunId(), row.getWorkspaceId());
             }
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_expire_failed runId={} failureType={}",
-                    row.getRunId(), e.getClass().getName());
+                    row.getSourceRunId(), e.getClass().getName());
         }
     }
 
@@ -484,12 +507,12 @@ public class RunCheckpointService {
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_revert_bookkeeping_failed runId={} "
                             + "failureType={}",
-                    row.getRunId(), e.getClass().getName());
+                    row.getSourceRunId(), e.getClass().getName());
         }
         if (updated == 0) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_revert_bookkeeping_skipped runId={} "
                             + "revertState={} reason=state_changed",
-                    row.getRunId(), revertState);
+                    row.getSourceRunId(), revertState);
             return;
         }
         row.setRevertState(revertState);
@@ -499,7 +522,7 @@ public class RunCheckpointService {
         row.setRevertAttemptCount(row.getRevertAttemptCount() + 1);
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_reverted runId={} workspaceId={} "
                         + "revertState={} restored={} deleted={} failed={} attempt={}",
-                row.getRunId(), row.getWorkspaceId(), revertState, counts.restored(), counts.deleted(),
+                row.getSourceRunId(), row.getWorkspaceId(), revertState, counts.restored(), counts.deleted(),
                 counts.failed(), row.getRevertAttemptCount());
         emitRunCheckpoint(row, revertView(row));
     }
@@ -509,7 +532,7 @@ public class RunCheckpointService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("marker", "revert");
         payload.put("checkpointId", row.getId().toString());
-        payload.put("runId", row.getRunId());
+        payload.put("sourceRunId", row.getSourceRunId());
         // PLAN-0338: the Runtime no longer writes a rollback audit ref; the
         // restored slice ref is recorded instead (until the PLAN-0339 rebuild).
         payload.put("sliceRef", result.sliceRef());
@@ -540,15 +563,15 @@ public class RunCheckpointService {
     private void appendRevertLedger(RunCheckpoint row, String summary) {
         UUID operationId = null;
         try {
-            operationId = operationService.findOperationIdByRunId(row.getRunId());
+            operationId = operationService.findOperationIdByRunId(row.getSourceRunId());
         } catch (RuntimeException e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_lookup_failed runId={} marker=revert",
-                    row.getRunId());
+                    row.getSourceRunId());
         }
         if (operationId == null) {
             logger.info("[LIFECYCLE] service=cp event=run_checkpoint_ledger_skipped runId={} checkpointId={} "
                             + "marker=revert reason=operation_missing",
-                    row.getRunId(), row.getId());
+                    row.getSourceRunId(), row.getId());
             return;
         }
         try {
@@ -562,7 +585,7 @@ public class RunCheckpointService {
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_failed runId={} marker=revert "
                             + "failureType={}",
-                    row.getRunId(), e.getClass().getName());
+                    row.getSourceRunId(), e.getClass().getName());
         }
     }
 
@@ -577,7 +600,7 @@ public class RunCheckpointService {
         String ref = row.getRevertRef() != null ? row.getRevertRef() : asString(summary.get("sliceRef"));
         return new RevertView(
                 valueOrDefault(row.getRevertState(), RunCheckpoint.REVERT_NONE),
-                row.getRevertedAt(), counts, ref);
+                row.getRevertedAt(), counts, ref, row.getRevertAttemptCount());
     }
 
     /**
@@ -586,12 +609,12 @@ public class RunCheckpointService {
      */
     private void emitRunCheckpoint(RunCheckpoint row, RevertView revert) {
         try {
-            String sessionId = sessionIdFor(row.getRunId());
+            String sessionId = row.getSourceSessionId();
             if (sessionId == null) {
                 return;
             }
             Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("runId", row.getRunId());
+            payload.put("runId", row.getSourceRunId());
             payload.put("sessionId", sessionId);
             payload.put("state", row.getState());
             payload.put("changedCount", parseChangedFiles(row.getChangedFiles()).size());
@@ -604,7 +627,7 @@ public class RunCheckpointService {
             sseManager.send(sessionId, SSE_EVENT_RUN_CHECKPOINT, payload);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_sse_failed runId={} failureType={}",
-                    row.getRunId(), e.getClass().getName());
+                    row.getSourceRunId(), e.getClass().getName());
         }
     }
 
@@ -617,15 +640,11 @@ public class RunCheckpointService {
         return view;
     }
 
-    private String sessionIdFor(String runId) {
-        ChatRun run = findRun(runId);
-        return run == null ? null : run.getSessionId();
-    }
-
     private ChatRun findRun(String runId) {
         try {
             return chatRuns.findById(UUID.fromString(runId)).orElse(null);
         } catch (IllegalArgumentException e) {
+            logger.debug("[LIFECYCLE] service=cp event=run_checkpoint_run_id_invalid runId={}", runId);
             return null;
         } catch (RuntimeException e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_run_lookup_failed runId={} failureType={}",
@@ -634,11 +653,18 @@ public class RunCheckpointService {
         }
     }
 
-    private RunCheckpoint findRow(String runId, String workspaceId) {
-        if (isBlank(runId) || isBlank(workspaceId)) {
+    private RunCheckpoint findSourceRun(String sourceRunId, String workspaceId) {
+        if (isBlank(sourceRunId) || isBlank(workspaceId)) {
             return null;
         }
-        return checkpoints.findByRunIdAndWorkspaceId(runId, workspaceId).orElse(null);
+        return checkpoints.findBySourceRunIdAndWorkspaceId(sourceRunId, workspaceId).orElse(null);
+    }
+
+    private RunCheckpoint findSlice(String workspaceId, String sliceRef) {
+        if (isBlank(workspaceId) || isBlank(sliceRef)) {
+            return null;
+        }
+        return checkpoints.findByWorkspaceIdAndSliceRef(workspaceId, sliceRef).orElse(null);
     }
 
     private static Map<String, Object> problemDetails(Map<String, Object> problem, String... keys) {
@@ -700,49 +726,61 @@ public class RunCheckpointService {
         return value == null || value.isBlank() ? fallback : value;
     }
 
-    /** Persists the capture result into the projection row (insert or update). */
-    private void persistCaptured(String runId, String workspaceId,
-                                 RuntimeCheckpointClient.CaptureResult result, boolean abnormal) {
+    /** Persists a changed capture; no-change captures deliberately have no CP row. */
+    private boolean persistCaptured(ChatRun run, RuntimeCheckpointClient.CaptureResult result, boolean abnormal) {
+        String runId = run.getId().toString();
+        String workspaceId = run.getWorkspaceId();
+        if (result.noChange()) {
+            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_capture_no_change "
+                            + "runId={} workspaceId={}", runId, workspaceId);
+            return false;
+        }
+        if (isBlank(result.sliceRef())) {
+            persistDegraded(run, REASON_UNAVAILABLE, "missing_slice_ref");
+            return false;
+        }
         Instant now = Instant.now();
         Instant capturedAt = parseInstant(result.capturedAt());
         String state = valueOrDefault(result.state(),
                 abnormal ? RunCheckpoint.STATE_ABNORMAL_CAPTURED : RunCheckpoint.STATE_CAPTURED);
-        RunCheckpoint row = findRow(runId, workspaceId);
+        RunCheckpoint row = findSourceRun(runId, workspaceId);
         if (row == null) {
             row = new RunCheckpoint();
             row.setId(UUID.randomUUID());
-            row.setRunId(runId);
+            row.setSourceRunId(runId);
             row.setWorkspaceId(workspaceId);
+            row.setSourceSessionId(run.getSessionId());
             row.setCreatedAt(now);
         }
         row.setState(state);
-        // PLAN-0338: the slice ref lives in the legacy end_ref column until the
-        // PLAN-0339 slice-table rebuild replaces this projection.
-        row.setEndRef(result.sliceRef());
+        row.setSliceRef(result.sliceRef());
+        row.setCapturedAt(capturedAt == null ? now : capturedAt);
+        row.setPredecessorRef(result.predecessor());
         row.setChangedFiles(serializeChangedFiles(result.changedFiles()));
+        row.setOpaqueNestedRepos(serializeStringList(result.opaqueNestedRepos()));
         row.setUnrollableReason(null);
-        row.setSealedWithLiveJobs(false);
-        row.setSealedAfterAbnormal(abnormal);
-        row.setSealedAt(capturedAt == null ? now : capturedAt);
         row.setUpdatedAt(now);
         try {
             checkpoints.save(row);
         } catch (DataIntegrityViolationException e) {
             logger.info("[LIFECYCLE] service=cp event=run_checkpoint_capture_raced runId={} workspaceId={}",
                     runId, workspaceId);
-            return;
+            return false;
         }
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_captured runId={} workspaceId={} state={} "
                         + "noChange={} changedFiles={}",
                 runId, workspaceId, state, result.noChange(), result.changedFiles().size());
         appendLedgerMarker(row, state);
         emitRunCheckpoint(row, null);
+        return true;
     }
 
     /** Records one failed capture as a degraded row; never overwrites a captured row. */
-    private void persistDegraded(String runId, String workspaceId, String reason, String detail) {
+    private void persistDegraded(ChatRun run, String reason, String detail) {
+        String runId = run.getId().toString();
+        String workspaceId = run.getWorkspaceId();
         Instant now = Instant.now();
-        RunCheckpoint row = findRow(runId, workspaceId);
+        RunCheckpoint row = findSourceRun(runId, workspaceId);
         if (row != null && isCapturedState(row.getState())) {
             logger.info("[LIFECYCLE] service=cp event=run_checkpoint_degrade_skipped runId={} workspaceId={} "
                             + "reason=already_captured",
@@ -752,8 +790,11 @@ public class RunCheckpointService {
         if (row == null) {
             row = new RunCheckpoint();
             row.setId(UUID.randomUUID());
-            row.setRunId(runId);
+            row.setSourceRunId(runId);
             row.setWorkspaceId(workspaceId);
+            row.setSourceSessionId(run.getSessionId());
+            row.setChangedFiles("[]");
+            row.setOpaqueNestedRepos("[]");
             row.setCreatedAt(now);
         }
         row.setState(RunCheckpoint.STATE_DEGRADED);
@@ -775,15 +816,15 @@ public class RunCheckpointService {
     private void appendLedgerMarker(RunCheckpoint row, String marker) {
         UUID operationId = null;
         try {
-            operationId = operationService.findOperationIdByRunId(row.getRunId());
+            operationId = operationService.findOperationIdByRunId(row.getSourceRunId());
         } catch (RuntimeException e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_lookup_failed runId={} marker={}",
-                    row.getRunId(), marker);
+                    row.getSourceRunId(), marker);
         }
         if (operationId == null) {
             logger.info("[LIFECYCLE] service=cp event=run_checkpoint_ledger_skipped runId={} checkpointId={} "
                             + "marker={} reason=operation_missing",
-                    row.getRunId(), row.getId(), marker);
+                    row.getSourceRunId(), row.getId(), marker);
             return;
         }
         try {
@@ -797,7 +838,7 @@ public class RunCheckpointService {
             }
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_ledger_failed runId={} marker={} failureType={}",
-                    row.getRunId(), marker, e.getClass().getName());
+                    row.getSourceRunId(), marker, e.getClass().getName());
         }
     }
 
@@ -806,7 +847,7 @@ public class RunCheckpointService {
         payload.put("checkpointId", row.getId().toString());
         payload.put("marker", marker);
         payload.put("state", row.getState());
-        payload.put("sliceRef", row.getEndRef());
+        payload.put("sliceRef", row.getSliceRef());
         payload.put("unrollableReason", row.getUnrollableReason());
         try {
             return objectMapper.writeValueAsString(payload);
@@ -833,6 +874,29 @@ public class RunCheckpointService {
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_changed_files_unserializable");
             return "[]";
+        }
+    }
+
+    private String serializeStringList(List<String> values) {
+        try {
+            return objectMapper.writeValueAsString(values == null ? List.of() : values);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_nested_repos_unserializable "
+                    + "failureType={}", e.getClass().getName());
+            return "[]";
+        }
+    }
+
+    private List<String> parseStringList(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_nested_repos_unparsable "
+                    + "failureType={}", e.getClass().getName());
+            return List.of();
         }
     }
 

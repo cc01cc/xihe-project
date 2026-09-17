@@ -153,8 +153,8 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9")),
-                "fresh database must apply the current V1-V9 migration chain: " + versions);
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27")),
+                "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
     }
@@ -186,30 +186,42 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
-    void v22RunCheckpointsTableApplied() throws SQLException {
-        // PLAN-0328 M2 W3: the CP-side Run checkpoint projection must exist on a
-        // fresh chain with its unique key, workspace index and state allowlist.
+    void v27WorkspaceSliceProjectionApplied() throws SQLException {
+        // PLAN-0339 T0.4: the projection is rebuilt with slice fields and no
+        // interval-model compatibility columns.
         assertNotNull(scalarString("SELECT to_regclass('public.run_checkpoints')"),
-                "run_checkpoints must exist after V22");
+                "run_checkpoints must exist after V27");
         assertEquals(1, scalarInt(
-                "SELECT count(*) FROM flyway_schema_history WHERE version = '22' AND success = true"),
-                "V22 must be recorded as applied");
-        assertEquals("uuid", scalarString(
-                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
-                        + "AND table_name = 'run_checkpoints' AND column_name = 'run_id'"));
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '27' AND success = true"),
+                "V27 must be recorded as applied");
         assertEquals("uuid", scalarString(
                 "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
                         + "AND table_name = 'run_checkpoints' AND column_name = 'workspace_id'"));
+        for (String column : new String[]{"slice_ref", "captured_at", "source_run_id", "source_session_id",
+                "predecessor_ref", "changed_files", "opaque_nested_repos", "state", "unrollable_reason",
+                "revert_state", "revert_ref", "revert_summary", "reverted_at", "revert_attempt_count"}) {
+            assertNotNull(scalarString(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' "
+                            + "AND table_name = 'run_checkpoints' AND column_name = '" + column + "'"),
+                    "missing run_checkpoints column: " + column);
+        }
+        for (String column : new String[]{"run_id", "base_ref", "end_ref", "sealed_at",
+                "sealed_with_live_jobs", "sealed_after_abnormal"}) {
+            assertEquals(0, scalarInt(
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' "
+                            + "AND table_name = 'run_checkpoints' AND column_name = '" + column + "'"),
+                    "legacy checkpoint column must be removed: " + column);
+        }
         assertNotNull(scalarString(
-                "SELECT conname FROM pg_constraint WHERE conname = 'uq_run_checkpoints_run_workspace'"),
-                "unique (run_id, workspace_id) must exist");
+                "SELECT conname FROM pg_constraint WHERE conname = 'uq_run_checkpoints_workspace_slice'"),
+                "unique (workspace_id, slice_ref) must exist");
         assertNotNull(scalarString(
-                "SELECT indexname FROM pg_indexes WHERE indexname = 'idx_run_checkpoints_workspace_state'"),
+                "SELECT indexname FROM pg_indexes WHERE indexname = 'idx_run_checkpoints_workspace_state_captured'"),
                 "(workspace_id, state) index must exist");
         String stateDef = scalarString(
                 "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
                         + "WHERE conname = 'ck_run_checkpoints_state'");
-        for (String state : new String[]{"base", "sealed", "unsealed", "degraded", "expired"}) {
+        for (String state : new String[]{"captured", "abnormal-captured", "degraded", "expired"}) {
             assertTrue(stateDef.contains(state), "state allowlist must include " + state + ": " + stateDef);
         }
         // Ledger checkpoint markers (kind='checkpoint') must be allowed by V22;
@@ -224,7 +236,7 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
-    void v22RunCheckpointConstraintsAndCheckpointKindInsert() throws SQLException {
+    void v27WorkspaceSliceConstraintsAndCheckpointKindInsert() throws SQLException {
         UUID userId = UUID.randomUUID();
         UUID workspaceId = UUID.randomUUID();
         executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
@@ -233,41 +245,47 @@ class OperationLedgerFreshMigrationTest {
                 + "'::uuid, 'cp-ws', '" + userId + "'::uuid)");
 
         UUID runId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        executeUpdate("INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
+                + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'cp-session')");
         UUID checkpointId = UUID.randomUUID();
-        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) VALUES ('"
-                + checkpointId + "'::uuid, '" + runId + "'::uuid, '" + workspaceId + "'::uuid, 'base')");
-        assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE run_id = '"
+        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, slice_ref, captured_at, source_run_id, "
+                + "source_session_id, predecessor_ref, changed_files, opaque_nested_repos, state) VALUES ('"
+                + checkpointId + "'::uuid, '" + workspaceId + "'::uuid, 'refs/xihe/slices/1-ab12', NOW(), '"
+                + runId + "'::uuid, '" + sessionId + "'::uuid, 'refs/xihe/slices/0-cdef', '[]', '[]', 'captured')");
+        assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE source_run_id = '"
                 + runId + "'::uuid"));
 
         SQLException duplicate = assertThrows(SQLException.class,
-                () -> executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) "
-                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + runId + "'::uuid, '"
-                        + workspaceId + "'::uuid, 'base')"));
-        assertTrue(duplicate.getMessage().contains("uq_run_checkpoints_run_workspace"),
+                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, slice_ref, state) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, "
+                        + "'refs/xihe/slices/1-ab12', 'captured')"));
+        assertTrue(duplicate.getMessage().contains("uq_run_checkpoints_workspace_slice"),
                 duplicate.getMessage());
 
+        SQLException duplicateSourceRun = assertThrows(SQLException.class,
+                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, slice_ref, source_run_id, state) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, "
+                        + "'refs/xihe/slices/1-different', '" + runId + "'::uuid, 'captured')"));
+        assertTrue(duplicateSourceRun.getMessage().contains("uq_run_checkpoints_workspace_source_run"),
+                duplicateSourceRun.getMessage());
+
         SQLException badState = assertThrows(SQLException.class,
-                () -> executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) "
-                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID()
-                        + "'::uuid, '" + workspaceId + "'::uuid, 'bogus')"));
+                () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, slice_ref, state) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId
+                        + "'::uuid, 'refs/xihe/slices/bad', 'bogus')"));
         assertTrue(badState.getMessage().contains("ck_run_checkpoints_state"), badState.getMessage());
 
         // degraded rows carry the frozen capture-failure reason.
-        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state, unrollable_reason) "
-                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '"
+        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, state, unrollable_reason) "
+                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '"
                 + workspaceId + "'::uuid, 'degraded', 'UNAVAILABLE')");
         assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
                 + workspaceId + "'::uuid AND state = 'degraded' AND unrollable_reason = 'UNAVAILABLE'"));
 
-        // PLAN-0338 (V26): the slice state vocabulary is accepted by the widened allowlist.
-        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state, end_ref) "
-                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '"
-                + workspaceId + "'::uuid, 'captured', 'refs/xihe/slices/1757980000000-ab12cd')");
-        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) "
-                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '"
-                + workspaceId + "'::uuid, 'abnormal-captured')");
-        assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
-                + workspaceId + "'::uuid AND state = 'captured'"));
+        // Slice state vocabulary accepts abnormal captures and no old interval state.
+        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, state) "
+                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, 'abnormal-captured')");
         assertEquals(1, scalarInt("SELECT count(*) FROM run_checkpoints WHERE workspace_id = '"
                 + workspaceId + "'::uuid AND state = 'abnormal-captured'"));
 
@@ -281,99 +299,28 @@ class OperationLedgerFreshMigrationTest {
         assertEquals(1, scalarInt("SELECT count(*) FROM operation_items WHERE id = '"
                 + itemId + "'::uuid AND kind = 'checkpoint'"));
 
-        // Revert markers are UI/user-triggered facts; V2 accepts ui and rejects
-        // the old cp source without widening ck_operation_items_source.
+        // Revert markers are UI/user-triggered facts; the active operation name is
+        // checkpoint (legacy snapshot names are not accepted in this active test).
         UUID revertItemId = UUID.randomUUID();
         executeUpdate("INSERT INTO operation_items (id, operation_id, sequence, kind, source, status, tool_name) "
                 + "VALUES ('" + revertItemId + "'::uuid, '" + operationId
-                + "'::uuid, 3, 'checkpoint', 'ui', 'completed', 'revert_snapshot')");
+                + "'::uuid, 3, 'checkpoint', 'ui', 'completed', 'revert_checkpoint')");
         assertEquals("ui", scalarString("SELECT source FROM operation_items WHERE id = '"
                 + revertItemId + "'::uuid"));
 
         SQLException legacyCpSource = assertThrows(SQLException.class,
                 () -> executeUpdate("INSERT INTO operation_items (id, operation_id, sequence, kind, source, status, tool_name) "
-                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + operationId
-                        + "'::uuid, 4, 'checkpoint', 'cp', 'completed', 'revert_snapshot')"));
+                         + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + operationId
+                         + "'::uuid, 4, 'checkpoint', 'cp', 'completed', 'revert_checkpoint')"));
         assertTrue(legacyCpSource.getMessage().contains("ck_operation_items_source"),
                 legacyCpSource.getMessage());
 
-        // V10's llm_usage kind must still be accepted after the V22 rebuild.
+        // V10's llm_usage kind must still be accepted after the checkpoint rebuild.
         executeUpdate("INSERT INTO operation_items (id, operation_id, sequence, kind, source, status) "
                 + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + operationId
                 + "'::uuid, 5, 'llm_usage', 'agent', 'completed')");
         assertEquals(1, scalarInt("SELECT count(*) FROM operation_items WHERE operation_id = '"
                 + operationId + "'::uuid AND kind = 'llm_usage'"));
-    }
-
-    @Test
-    void v23RunCheckpointRevertBookkeepingApplied() throws SQLException {
-        // PLAN-0328 M3 W2: the revert bookkeeping projection must exist on a fresh
-        // chain with its state allowlist and safe defaults.
-        assertEquals(1, scalarInt(
-                "SELECT count(*) FROM flyway_schema_history WHERE version = '23' AND success = true"),
-                "V23 must be recorded as applied");
-        for (String column : new String[]{"revert_state", "revert_ref", "revert_summary", "reverted_at",
-                "revert_attempt_count"}) {
-            assertNotNull(scalarString(
-                    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' "
-                            + "AND table_name = 'run_checkpoints' AND column_name = '" + column + "'"),
-                    "missing run_checkpoints column: " + column);
-        }
-        assertEquals("NO", scalarString(
-                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
-                        + "AND table_name = 'run_checkpoints' AND column_name = 'revert_state'"));
-        assertTrue(String.valueOf(scalarString(
-                "SELECT column_default FROM information_schema.columns WHERE table_schema = 'public' "
-                        + "AND table_name = 'run_checkpoints' AND column_name = 'revert_state'"))
-                .contains("none"), "revert_state must default to none");
-        String stateDef = scalarString(
-                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                        + "WHERE conname = 'ck_run_checkpoints_revert_state'");
-        assertNotNull(stateDef, "ck_run_checkpoints_revert_state must exist");
-        for (String state : new String[]{"none", "rolled_back", "partial", "failed"}) {
-            assertTrue(stateDef.contains(state),
-                    "revert_state allowlist must include " + state + ": " + stateDef);
-        }
-    }
-
-    @Test
-    void v23RevertBookkeepingInsertAndCheckConstraint() throws SQLException {
-        UUID userId = UUID.randomUUID();
-        UUID workspaceId = UUID.randomUUID();
-        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
-                + "'::uuid, 'rv-" + userId + "@test.local', 'hash')");
-        executeUpdate("INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
-                + "'::uuid, 'rv-ws', '" + userId + "'::uuid)");
-
-        UUID checkpointId = UUID.randomUUID();
-        UUID runId = UUID.randomUUID();
-        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state, revert_state, "
-                + "revert_ref, revert_summary, reverted_at, revert_attempt_count) VALUES ('"
-                + checkpointId + "'::uuid, '" + runId + "'::uuid, '" + workspaceId + "'::uuid, "
-                + "'sealed', 'rolled_back', 'refs/xihe/" + runId + "/rollback/1', "
-                + "'revert-summary', NOW(), 1)");
-        assertEquals("rolled_back", scalarString(
-                "SELECT revert_state FROM run_checkpoints WHERE id = '" + checkpointId + "'::uuid"));
-        assertEquals(1, scalarInt(
-                "SELECT revert_attempt_count FROM run_checkpoints WHERE id = '" + checkpointId + "'::uuid"));
-        assertNotNull(scalarString(
-                "SELECT reverted_at::text FROM run_checkpoints WHERE id = '" + checkpointId + "'::uuid"));
-
-        // Defaults apply to every pre-V23-style insert.
-        UUID defaultedId = UUID.randomUUID();
-        executeUpdate("INSERT INTO run_checkpoints (id, run_id, workspace_id, state) VALUES ('"
-                + defaultedId + "'::uuid, '" + UUID.randomUUID() + "'::uuid, '" + workspaceId
-                + "'::uuid, 'base')");
-        assertEquals("none", scalarString(
-                "SELECT revert_state FROM run_checkpoints WHERE id = '" + defaultedId + "'::uuid"));
-        assertEquals(0, scalarInt(
-                "SELECT revert_attempt_count FROM run_checkpoints WHERE id = '" + defaultedId + "'::uuid"));
-
-        SQLException badState = assertThrows(SQLException.class,
-                () -> executeUpdate("UPDATE run_checkpoints SET revert_state = 'bogus' WHERE id = '"
-                        + checkpointId + "'::uuid"));
-        assertTrue(badState.getMessage().contains("ck_run_checkpoints_revert_state"),
-                badState.getMessage());
     }
 
     @Test

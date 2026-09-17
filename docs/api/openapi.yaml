@@ -179,153 +179,6 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
-  /api/v1/chat/runs/{runId}/checkpoint:
-    get:
-      operationId: getRunCheckpoint
-      summary: Run checkpoint projection (state, changed files, last revert)
-      description: |
-        PLAN-0328 M3 (spec/snapshot-rollback.md §8–§12): CP projection of the Runtime-owned Run checkpoint.
-        `state` ∈ `none | base | sealed | unsealed | degraded | expired`; `none` means the run has no
-        checkpoint row (nothing was ever established). `changedFiles` is capped at 20 entries while
-        `changedCount` always covers the full seal change set. `sealedAt` is null unless the end ref was
-        written. `revert` reports the last revert attempt: `state` (`none | rolled_back | partial`), `at`,
-        the Runtime-reported `counts`, and the Runtime audit `ref`. The projection stays readable while the
-        run is active so the UI can show live state and the "不可回滚" reason.
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: runId, required: true, schema: { type: string, format: uuid } }]
-      responses:
-        '200':
-          description: Checkpoint projection
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [runId, state, changedCount, changedFiles, revert]
-                properties:
-                  runId: { type: string, format: uuid }
-                  state: { type: string, enum: [none, base, sealed, unsealed, degraded, expired] }
-                  unrollableReason: { type: [string, 'null'], description: 'Frozen reason when state=degraded (LEASE_HELD | UNAVAILABLE) or extended reasons (EXPIRED); null when rollbackable' }
-                  changedCount: { type: integer, description: Full seal change-set size (not capped) }
-                  changedFiles:
-                    type: array
-                    maxItems: 20
-                    items: { type: object, properties: { status: { type: string }, path: { type: string } } }
-                  sealedAt: { type: [string, 'null'], format: date-time }
-                  revert:
-                    type: object
-                    required: [state, at, counts, ref]
-                    properties:
-                      state: { type: string, enum: [none, rolled_back, partial] }
-                      at: { type: [string, 'null'], format: date-time }
-                      counts: { type: [object, 'null'], additionalProperties: true }
-                      ref: { type: [string, 'null'] }
-        '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
-  /api/v1/chat/runs/{runId}/checkpoint/revert/preview:
-    post:
-      operationId: previewRunCheckpointRevert
-      summary: Revert dry-run for a terminal Run
-      description: |
-        PLAN-0328 M3 W2 (spec/ui-ux §4): read-only dry-run proxied to the Runtime; no lease is taken.
-        Requires a terminal Run (409 `RUN_ACTIVE` otherwise). Rows that are missing/expired/degraded answer
-        409 `CHECKPOINT_NOT_AVAILABLE` with a frozen `reason` (MISSING | EXPIRED | LEASE_HELD | UNAVAILABLE);
-        a row without an end ref answers 409 `CHECKPOINT_NOT_SEALED`. The Runtime 409 codes are passed
-        through unchanged (`CHECKPOINT_LEASE_HELD`, `CHECKPOINT_HEAD_CHANGED`,
-        `CHECKPOINT_CONFLICTS_UNACKNOWLEDGED` with `paths`); when the Runtime refs are gone for a row the CP
-        still considers sealed, the row flips to `expired` once and the response is 409 `CHECKPOINT_NOT_AVAILABLE {reason: EXPIRED}`.
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: runId, required: true, schema: { type: string, format: uuid } }]
-      responses:
-        '200':
-          description: 'Revert plan: counts cover the full plan, entries is capped by the Runtime with `truncated`'
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [runId, state, counts, entries, headFingerprint, sealedWithLiveJobs, truncated]
-                properties:
-                  runId: { type: string }
-                  state: { type: string, enum: [sealed] }
-                  counts: { type: object, properties: { restore: { type: integer }, delete: { type: integer }, skipConflicts: { type: integer }, noop: { type: integer } } }
-                  entries:
-                    type: array
-                    items: { type: object, properties: { path: { type: string }, oldPath: { type: string }, action: { type: string, enum: [restore, delete] }, conflictReason: { type: string } } }
-                  headFingerprint: { type: object, properties: { recorded: {}, current: {}, status: { type: string } } }
-                  sealedWithLiveJobs: { type: boolean }
-                  truncated: { type: boolean }
-        '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
-        '503': { $ref: '#/components/responses/Problem' }
-  /api/v1/chat/runs/{runId}/checkpoint/revert:
-    post:
-      operationId: executeRunCheckpointRevert
-      summary: Execute the revert of a terminal Run (user-initiated only)
-      description: |
-        PLAN-0328 M3 W2 (decision #12): UI/user-initiated only — the Agent never reaches this route. The
-        Runtime takes the workspace mutation lease itself, so a live run answers 409 `CHECKPOINT_LEASE_HELD`.
-        Acks are required for head-change and conflicting paths reported by the preview. On success the CP
-        appends a `checkpoint`/`revert_checkpoint` ledger item (`source=ui`) and records
-        `run_checkpoints.revert_state` (`rolled_back` when nothing failed or was skipped, else `partial`),
-        `revert_ref`, `revert_summary`, `reverted_at` and the attempt counter under a `state='sealed'` guard;
-        an SSE `run_checkpoint` follows. The body mirrors the Runtime result (per-item outcomes stay
-        authoritative even when the audit ref is null).
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: runId, required: true, schema: { type: string, format: uuid } }]
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                acknowledgeConflicts: { type: array, items: { type: string }, description: Workspace-relative conflict paths taken from the preview }
-                acknowledgeHeadChange: { type: boolean, description: Proceed although the workspace HEAD/branch fingerprint changed since the base }
-      responses:
-        '200':
-          description: Revert execution result
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [runId, counts, entries, durationMs]
-                properties:
-                  runId: { type: string }
-                  revertRef: { type: [string, 'null'], description: 'refs/xihe/<runId>/rollback/<epochMs> audit ref; null when it could not be written' }
-                  counts: { type: object, properties: { restored: { type: integer }, deleted: { type: integer }, skippedConflict: { type: integer }, failed: { type: integer }, noop: { type: integer } } }
-                  entries:
-                    type: array
-                    items: { type: object, properties: { path: { type: string }, result: { type: string, enum: [restored, deleted, skippedConflict, failed, noop] }, reason: { type: string } } }
-                  durationMs: { type: integer }
-        '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
-        '503': { $ref: '#/components/responses/Problem' }
-  /api/v1/chat/runs/{runId}/checkpoint/file:
-    get:
-      operationId: getRunCheckpointFile
-      summary: One plain-text file of the run's base/end tree
-      description: |
-        PLAN-0328 M3 W2: read-only file projection used by the rollback diff panel (`ref=base|end`).
-        The Runtime serves only regular plain-text files ≤ 1 MiB; binaries and traversal paths are
-        rejected (400), oversized blobs answer 413 `CHECKPOINT_BLOB_TOO_LARGE` with `path`/`size`/`max`.
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: path, required: true, schema: { type: string }, description: Workspace-relative path }
-        - { in: query, name: ref, required: true, schema: { type: string, enum: [base, end] } }
-      responses:
-        '200': { description: Plain-text file content, content: { text/plain: { schema: { type: string } } } }
-        '400': { $ref: '#/components/responses/Problem' }
-        '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
-        '413': { $ref: '#/components/responses/Problem' }
-        '503': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/approvals/{requestId}/decision:
     post:
       operationId: decideChatApproval
@@ -601,7 +454,7 @@ paths:
         * `done` terminates a **run**, not the session SSE. The connection stays open across multiple `POST /api/v1/chat` turns and only closes on client disconnect, session deletion, or explicit server termination.
         * The server sends a `heartbeat` comment/event every 15s to keep the connection observable. Heartbeat never enters the message bubble nor resets the run's token count.
         * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
-        * PLAN-0328 M2/M3: the session channel also carries `run_checkpoint` — `{runId, sessionId, state, changedCount, unrollableReason?, revert?}` — emitted after a seal, a degradation and a completed revert (`revert` = `{state, at, counts, ref}`; `unrollableReason` is the frozen "本轮不可回滚" reason on degraded rows). The event only annotates lifecycle; the GET projection remains the durable source on reload.
+        * PLAN-0338/0339: the session channel also carries `run_checkpoint` — `{runId, sessionId, sliceRef?, capturedAt?, state, changedCount, unrollableReason?, revert?}` — after a slice capture, a degraded capture, or a completed restore (`revert` = `{state, at, counts, ref, attemptCount}`). The event only annotates lifecycle; the workspace slice list remains the durable source on reload.
           * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for the channel-fact ledger; `request_approval` itself is represented by the approval event/item and does not emit a duplicate tool event. Approval live/replay envelopes are built from the durable row only and include `state` plus `replayed=false/true`; at creation, the display-only `policy` summary is persisted when it can be captured: `effect`, `sourceLayer`, `matchedRule`, `reason`, `mode`, `actionClass`, and `shape`. The policy summary never contains raw tool arguments. After the atomic decision claim, `policy.modeAtGrant` records the effective session mode at that decision and is never rewritten by a retry; replay uses the stored snapshot, and descriptor failure omits only policy metadata without blocking delivery. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -637,7 +490,7 @@ paths:
                 data: {"type":"done","runId":"run-abc"}
 
                 event: run_checkpoint
-                data: {"runId":"run-abc","sessionId":"sess-123","state":"sealed","changedCount":3,"revert":null}
+                data: {"runId":"run-abc","sessionId":"sess-123","sliceRef":"refs/xihe/slices/1757980000000-ab12cd","state":"captured","changedCount":3,"revert":null}
 
                 event: heartbeat
                 data: {"type":"heartbeat","connectionGeneration":2}
@@ -800,66 +653,167 @@ paths:
   /api/v1/workspaces/{workspaceId}/environment:
      get: { operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/materialize:
-     post: { operationId: materializeWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll environment for progress }, '404': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
+      post: { operationId: materializeWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll environment for progress }, '404': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/workspaces/{workspaceId}/checkpoints:
+      get:
+        operationId: listWorkspaceCheckpoints
+        summary: List the workspace checkpoint slices
+        description: |
+          Returns the current workspace slice timeline. Rows with state `expired` have already been
+          collected and are not listed. Access is granted to any accessible workspace member; the
+          projection is not scoped to a ChatRun.
+        security: [{ bearerAuth: [] }]
+        parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+        responses:
+          '200':
+            description: Workspace checkpoint slices, newest first
+            content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/CheckpointSlice' } } } }
+          '401': { $ref: '#/components/responses/Problem' }
+          '403': { $ref: '#/components/responses/Problem' }
+          '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/checkpoints/revert/preview:
+      post:
+        operationId: previewWorkspaceCheckpointRevert
+        summary: Preview restoring a workspace to a slice
+        description: |
+          Computes the complete set of changes between the selected slice and the current workspace.
+          The bounded `entries` list is marked by `truncated`; counts always cover the full plan. The
+          preview does not acquire the restore lock and does not mutate the workspace.
+        security: [{ bearerAuth: [] }]
+        parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+        requestBody:
+          required: true
+          content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertPreviewRequest' } } }
+        responses:
+          '200':
+            description: Restore plan for the selected slice
+            content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertPreviewResponse' } } }
+          '400': { $ref: '#/components/responses/Problem' }
+          '401': { $ref: '#/components/responses/Problem' }
+          '403': { $ref: '#/components/responses/Problem' }
+          '404': { $ref: '#/components/responses/Problem' }
+          '409': { $ref: '#/components/responses/Problem' }
+          '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/checkpoints/revert:
+      post:
+        operationId: executeWorkspaceCheckpointRevert
+        summary: Restore a workspace to a slice
+        description: |
+          Executes the selected slice restore after explicit user confirmation. Only path type changes
+          require acknowledgement; all changes after the target slice are intentionally included in the
+          preview and may be discarded. The response reports each path and any concurrent-write suspects.
+        security: [{ bearerAuth: [] }]
+        parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+        requestBody:
+          required: true
+          content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertRequest' } } }
+        responses:
+          '200':
+            description: Restore execution result
+            content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertResponse' } } }
+          '400': { $ref: '#/components/responses/Problem' }
+          '401': { $ref: '#/components/responses/Problem' }
+          '403': { $ref: '#/components/responses/Problem' }
+          '404': { $ref: '#/components/responses/Problem' }
+          '409': { $ref: '#/components/responses/Problem' }
+          '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/checkpoints/blob:
+      get:
+        operationId: getWorkspaceCheckpointBlob
+        summary: Read one plain-text file from a slice
+        description: Regular text files are capped at 1 MiB; traversal and binary content are rejected.
+        security: [{ bearerAuth: [] }]
+        parameters:
+          - { in: path, name: workspaceId, required: true, schema: { type: string } }
+          - { in: query, name: sliceRef, required: true, schema: { type: string }, description: Slice ref }
+          - { in: query, name: path, required: true, schema: { type: string }, description: Workspace-relative path }
+        responses:
+          '200': { description: Plain-text file content, content: { text/plain: { schema: { type: string } } } }
+          '400': { $ref: '#/components/responses/Problem' }
+          '401': { $ref: '#/components/responses/Problem' }
+          '403': { $ref: '#/components/responses/Problem' }
+          '404': { $ref: '#/components/responses/Problem' }
+          '413': { $ref: '#/components/responses/Problem' }
+          '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/checkpoints/cleanup:
+      post:
+        operationId: cleanupWorkspaceCheckpoints
+        summary: Physically clear all workspace checkpoint history
+        description: |
+          After explicit acknowledgement, asks Runtime to remove the shadow repository and then clears
+          the CP projection rows. The operation is idempotent; capture or restore in progress returns
+          `409 CHECKPOINT_BUSY` and CP rows are not removed before Runtime cleanup succeeds.
+        security: [{ bearerAuth: [] }]
+        parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+        requestBody:
+          required: true
+          content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointCleanupRequest' } } }
+        responses:
+          '200':
+            description: Cleanup result
+            content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointCleanupResponse' } } }
+          '400': { $ref: '#/components/responses/Problem' }
+          '401': { $ref: '#/components/responses/Problem' }
+          '403': { $ref: '#/components/responses/Problem' }
+          '404': { $ref: '#/components/responses/Problem' }
+          '409': { $ref: '#/components/responses/Problem' }
+          '503': { $ref: '#/components/responses/Problem' }
   /api/v1/workspaces/{workspaceId}/git-status:
-     get:
-       operationId: getWorkspaceGitStatus
-       summary: User-repository git status (dual-diff "待提交" side)
-       description: |
-         PLAN-0328 M3 W2 (spec/snapshot-rollback.md §6.4): read-only projection of the workspace's own
-         `.git` porcelain status, used next to the shadow-checkpoint diff (the two are independent
-         histories and may legitimately disagree). Non-Git workspaces answer `isRepository: false` with an
-         empty entry list; a missing/below-minimum host git answers 503 `CHECKPOINT_UNAVAILABLE {reason}`.
-         Ownership is enforced server-side (unknown or foreign workspace is 404 `WORKSPACE_NOT_FOUND`).
-       security: [{ bearerAuth: [] }]
-       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
-       responses:
-         '200':
-           description: Workspace git status
-           content:
-             application/json:
-               schema: { type: object, required: [isRepository, entries], properties: { isRepository: { type: boolean }, entries: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } } } }
-         '401': { $ref: '#/components/responses/Problem' }
-         '404': { $ref: '#/components/responses/Problem' }
-         '503': { $ref: '#/components/responses/Problem' }
+    get:
+      operationId: getWorkspaceGitStatus
+      summary: User-repository git status (dual-diff "待提交" side)
+      description: |
+        Read-only projection of the workspace's own `.git` porcelain status, used next to the
+        shadow-checkpoint slice diff (the two are independent histories and may legitimately disagree).
+        Non-Git workspaces answer `isRepository: false` with an empty entry list; a missing/below-minimum
+        host git answers 503 `CHECKPOINT_UNAVAILABLE {reason}`. Ownership is enforced server-side.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Workspace git status
+          content:
+            application/json:
+              schema: { type: object, required: [isRepository, entries], properties: { isRepository: { type: boolean }, entries: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /api/v1/workspaces/{workspaceId}/checkpoints/retention:
-     get:
-       operationId: getWorkspaceCheckpointRetention
-       summary: Checkpoint retention constants and current run/ref counts
-       description: |
-         PLAN-0328 M3 W2 (decision #10): informational retention view. Constants are fixed
-         (`maxRuns=50`, `ttlDays=30`, unsealed runs are never swept); custom retention values are an explicit
-         scope cut — no config key exists. `currentRuns` counts the workspace's checkpoint rows (all states)
-         and `currentRefs` counts the base + end refs those rows hold.
-       security: [{ bearerAuth: [] }]
-       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
-       responses:
-         '200':
-           description: Retention constants and current counts
-           content:
-             application/json:
-               schema: { type: object, required: [maxRuns, ttlDays, unsealedNeverDeleted, currentRuns, currentRefs], properties: { maxRuns: { type: integer }, ttlDays: { type: integer }, unsealedNeverDeleted: { type: boolean }, currentRuns: { type: integer }, currentRefs: { type: integer } } }
-         '401': { $ref: '#/components/responses/Problem' }
-         '404': { $ref: '#/components/responses/Problem' }
+    get:
+      operationId: getWorkspaceCheckpointRetention
+      summary: Checkpoint retention constants and current slice/ref counts
+      description: |
+        Informational retention view. The fixed policy is the newest 50 slices plus a 30-day TTL;
+        expired slices are collected and custom retention values are not configurable. The existing
+        response field names `maxRuns`/`currentRuns` are retained while their values count slices.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Retention constants and current counts
+          content:
+            application/json:
+              schema: { type: object, required: [maxRuns, ttlDays, unsealedNeverDeleted, currentRuns, currentRefs], properties: { maxRuns: { type: integer }, ttlDays: { type: integer }, unsealedNeverDeleted: { type: boolean }, currentRuns: { type: integer }, currentRefs: { type: integer } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/workspaces/{workspaceId}/checkpoints/gc:
-     post:
-       operationId: runWorkspaceCheckpointGc
-       summary: Run the Runtime retention sweep for one workspace
-       description: |
-         PLAN-0328 M3 W2: proxies the Runtime sweep (newest N=50 + TTL 30 days; unsealed runs are never
-         deleted) and returns its counts. The sweep is best-effort; checkpoint rows already flipped to
-         `expired` are the revert-time reconciliation (decision #74 first consumer), not this call.
-       security: [{ bearerAuth: [] }]
-       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
-       responses:
-         '200':
-           description: Retention sweep counts
-           content:
-             application/json:
-               schema: { type: object, properties: { counts: { type: object, additionalProperties: true } }, additionalProperties: true }
-         '401': { $ref: '#/components/responses/Problem' }
-         '404': { $ref: '#/components/responses/Problem' }
-         '503': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: runWorkspaceCheckpointGc
+      summary: Run the Runtime retention sweep for one workspace
+      description: |
+        Proxies the Runtime slice sweep (newest N=50 + TTL 30 days) and returns its counts. The sweep
+        is best-effort; expired slices are omitted from the public timeline.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Retention sweep counts
+          content:
+            application/json:
+              schema: { type: object, properties: { counts: { type: object, additionalProperties: true } }, additionalProperties: true }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /internal/v1/context/{sessionId}/events:
     get: { operationId: readContextEvents, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Events } } }
     post: { operationId: appendContextEvent, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '201': { description: Appended } } }
@@ -949,73 +903,98 @@ paths:
     post: { operationId: cancelRuntimeExecution, description: 'PLAN-0317 T2.3: cancels an in-flight execution identified by operationItemId and waits (bounded) for termination confirmation; scope is limited to the workspace in the path.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: itemId, required: true, schema: { type: string } }], responses: { '200': { description: 'Cancellation outcome (cancelled | unconfirmed | already_finished)', content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [cancelled, unconfirmed, already_finished] }, confirmed: { type: boolean } }, required: [status, confirmed] } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/operations/items/{itemId}/late-termination:
     post: { operationId: recordLateTermination, description: 'PLAN-0317 T2.9: records a late (retried) termination reported by the Runtime after an unconfirmed cancel; appends an item.terminated.late event without rewriting the item terminal state.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: itemId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirmed: { type: boolean } }, required: [confirmed] } } } }, responses: { '200': { description: Recorded }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
-  # PLAN-0328 M2: Runtime Run checkpoints (shadow git). The CP row `run_checkpoints`
-  # mirrors this contract with state ∈ {base, sealed, unsealed, degraded, expired};
-  # CP calls these routes before the first mutation-capable dispatch (create) and on
-  # every terminal transition (seal). 409/503 are degradations the CP records and
-  # continues dispatching.
-  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints:
+  # Runtime shadow-Git slice contract. CP is the caller; failures use RFC 9457
+  # Problem Details with a stable `code` and `requestId`.
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/capture:
     post:
-      operationId: runtimeCreateRunCheckpoint
-      description: 'PLAN-0328 M2: establishes the Run base checkpoint before the first mutation-capable dispatch. Idempotent per run. 409 CHECKPOINT_LEASE_HELD = another Run holds the workspace mutation lease; 503 CHECKPOINT_UNAVAILABLE {reason} = Runtime cannot establish it. Both are recorded by CP as `run_checkpoints.state=degraded` with `unrollableReason` LEASE_HELD / UNAVAILABLE, then the dispatch continues (frozen non-strict default).'
+      operationId: runtimeCaptureCheckpointSlice
+      description: 'Captures one workspace slice at Run termination, abnormal recovery, or C0 bootstrap. A tree equal to the chain tail returns `noChange=true` without writing a new ref. The response uses `predecessor`; CP projects it as `predecessorRef`.'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [runId], properties: { runId: { type: string }, actor: { type: string }, callId: { type: string } } } } } }
-      responses: { '200': { description: 'Base checkpoint established (idempotent replay returns the existing base)', content: { application/json: { schema: { type: object, required: [checkpointId, runId, state], properties: { checkpointId: { type: string, format: uuid }, runId: { type: string }, state: { type: string, enum: [base] }, baseRef: { type: string }, createdAt: { type: string } } } } }, '409': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeCheckpointCaptureRequest' } } } }
+      responses:
+        '200': { description: Capture result, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeCheckpointCaptureResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/gc:
     post:
-      operationId: runtimeRunCheckpointGc
-      description: 'PLAN-0328 M2: retention sweep (decision #10: newest N=50 + TTL 30 days per workspace; unsealed runs are never deleted). Returns the sweep counts.'
+      operationId: runtimeCheckpointGc
+      description: 'Runs the newest-50 plus 30-day TTL slice retention sweep. Abnormal slices participate in the same count.'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
-      responses: { '200': { description: 'Retention counts', content: { application/json: { schema: { type: object, properties: { counts: { type: object, additionalProperties: true } }, additionalProperties: true } } } } }
-  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/{runId}:
+      responses:
+        '200': { description: Retention counts, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeCheckpointGcResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/cleanup:
+    post:
+      operationId: runtimeCheckpointCleanup
+      description: 'Idempotently removes the complete shadow repository for one workspace. User files and the user repository are not touched; capture or restore in progress returns 409 CHECKPOINT_BUSY.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Cleanup result, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointCleanupResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/revert/preview:
+    post:
+      operationId: runtimeCheckpointRevertPreview
+      description: 'Read-only restore plan from one slice to the current workspace. Entries are bounded and `truncated` is explicit; counts cover the complete plan.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertPreviewRequest' } } } }
+      responses:
+        '200': { description: Restore plan, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertPreviewResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/revert:
+    post:
+      operationId: runtimeCheckpointRevert
+      description: 'Restores the workspace to one slice. Only type-change paths need acknowledgement; the restore lock rejects a second concurrent restore.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertRequest' } } } }
+      responses:
+        '200': { description: Restore result, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/blob:
     get:
-      operationId: runtimeRunCheckpointStatus
-      description: 'PLAN-0328 M2: Runtime-side checkpoint status for one Run (authoritative refs; the CP `run_checkpoints` row is the durable projection with the same state set).'
+      operationId: runtimeCheckpointBlob
+      description: 'Serves one regular plain-text file from a slice tree, capped at 1 MiB. Query requires `sliceRef` and workspace-relative `path`.'
       security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } }]
-      responses: { '200': { description: 'Checkpoint status', content: { application/json: { schema: { type: object, properties: { runId: { type: string }, state: { type: string, enum: [base, sealed, unsealed, degraded, expired] }, baseRef: { type: string }, endRef: { type: string }, changedFiles: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } } }, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/Problem' } } }
-  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/{runId}/seal:
-    post:
-      operationId: runtimeSealRunCheckpoint
-      description: 'PLAN-0328 M2: seals the Run (end ref + change set). Idempotent: an existing end ref is returned. CP requests it on every terminal transition and leaves a failed seal in state=base for the Runtime sweep / next startup reconcile.'
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } }]
-      responses: { '200': { description: 'Sealed outcome', content: { application/json: { schema: { type: object, required: [runId, state], properties: { runId: { type: string }, state: { type: string, enum: [sealed] }, changedFiles: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } }, sealedWithLiveJobs: { type: boolean }, sealedAfterAbnormal: { type: boolean } }, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
-  # PLAN-0328 M3 W1b (frozen Runtime contract): revert dry-run/execute, base|end blob
-  # preview and the user-repository git status. The CP public routes proxy these under
-  # the run/session ownership gates; 409 codes are frozen: CHECKPOINT_NOT_SEALED,
-  # CHECKPOINT_LEASE_HELD, CHECKPOINT_HEAD_CHANGED, CHECKPOINT_CONFLICTS_UNACKNOWLEDGED.
-  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/{runId}/revert/preview:
-    post:
-      operationId: runtimeRunCheckpointRevertPreview
-      description: 'PLAN-0328 M3: read-only revert dry-run (no lease): engine plan plus recorded/current HEAD fingerprint triple, bounded entries with truncated, sealedWithLiveJobs. 404 = no refs for the run; 409 = not sealed / lease held / head changed / conflicts unacknowledged; 503 = git unavailable.'
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } }]
-      responses: { '200': { description: 'Revert plan (counts cover the full plan)', content: { application/json: { schema: { type: object, required: [runId, state, counts, entries, headFingerprint, sealedWithLiveJobs, truncated], properties: { runId: { type: string }, state: { type: string, enum: [sealed] }, counts: { type: object, properties: { restore: { type: integer }, delete: { type: integer }, skipConflicts: { type: integer }, noop: { type: integer } } }, entries: { type: array, items: { type: object, properties: { path: { type: string }, oldPath: { type: string }, action: { type: string }, conflictReason: { type: string } } } }, headFingerprint: { type: object, additionalProperties: true }, sealedWithLiveJobs: { type: boolean }, truncated: { type: boolean } }, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
-  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/{runId}/revert:
-    post:
-      operationId: runtimeRunCheckpointRevert
-      description: 'PLAN-0328 M3: executes the revert. Takes the workspace mutation lease (synthetic revert owner, owner-scoped release on every path) before executing, so a live run answers 409 CHECKPOINT_LEASE_HELD. 409 CHECKPOINT_HEAD_CHANGED requires acknowledgeHeadChange; 409 CHECKPOINT_CONFLICTS_UNACKNOWLEDGED requires the preview conflict paths in acknowledgeConflicts. 200 carries per-item results, counts, durationMs and the refs/xihe/<runId>/rollback/<epochMs> audit ref (null when unwritable).'
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } }]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { acknowledgeConflicts: { type: array, items: { type: string } }, acknowledgeHeadChange: { type: boolean } } } } } }
-      responses: { '200': { description: 'Revert execution result', content: { application/json: { schema: { type: object, required: [runId, counts, entries, durationMs], properties: { runId: { type: string }, revertRef: { type: [string, 'null'] }, counts: { type: object, properties: { restored: { type: integer }, deleted: { type: integer }, skippedConflict: { type: integer }, failed: { type: integer }, noop: { type: integer } } }, entries: { type: array, items: { type: object, properties: { path: { type: string }, result: { type: string }, reason: { type: string } } } }, durationMs: { type: integer } }, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
-  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/{runId}/blob:
-    get:
-      operationId: runtimeRunCheckpointBlob
-      description: 'PLAN-0328 M3: serves one regular plain-text file of the run base|end tree (≤ 1 MiB). 400 traversal/binary, 404 missing path or refs, 409 not sealed, 413 CHECKPOINT_BLOB_TOO_LARGE, 503 git unavailable.'
-      security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } }, { in: query, name: path, required: true, schema: { type: string } }, { in: query, name: ref, required: true, schema: { type: string, enum: [base, end] } }]
-      responses: { '200': { description: Plain text, content: { text/plain: { schema: { type: string } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '413': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: query, name: sliceRef, required: true, schema: { type: string } }, { in: query, name: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Plain text, content: { text/plain: { schema: { type: string } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /internal/v1/runtime/workspaces/{workspaceId}/git-status:
     get:
       operationId: runtimeWorkspaceGitStatus
-      description: 'PLAN-0328 M3: read-only porcelain status of the workspace user repository (isolated env, no hooks) for the dual-diff separation; isRepository=false for non-Git workspaces; 503 when git is missing/below minimum.'
+      description: 'Read-only porcelain status of the workspace user repository for the dual-diff separation; isRepository=false for non-Git workspaces; 503 when git is missing/below minimum.'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
-      responses: { '200': { description: 'User repository status', content: { application/json: { schema: { type: object, required: [isRepository, entries], properties: { isRepository: { type: boolean }, entries: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } } } } } } }, '400': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
+      responses:
+        '200':
+          description: User repository status
+          content:
+            application/json:
+              schema: { type: object, required: [isRepository, entries], properties: { isRepository: { type: boolean }, entries: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /internal/v1/runtime/workspaces/{workspaceId}/files/read:
     post: { operationId: runtimeReadFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: File content } } }
   /internal/v1/runtime/workspaces/{workspaceId}/files/list:
@@ -1071,6 +1050,128 @@ components:
     Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     WorkspaceCreateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Sandbox profile for the initial ExecutionSpec. Unknown values are rejected with 400 INVALID_PROFILE.' }, image: { type: string, description: 'Sandbox image for the initial ExecutionSpec. Must be allowlisted; v1 only accepts xihe/workspace:latest. Unknown values are rejected with 400 INVALID_IMAGE.' } } }
     WorkspaceUpdateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
+    CheckpointChangedFile:
+       type: object
+       additionalProperties: false
+       required: [status, path]
+       properties:
+         status: { type: string, enum: [M, A, D] }
+         path: { type: string }
+    CheckpointRevertBookkeeping:
+       type: object
+       additionalProperties: false
+       required: [state, at, counts, ref, attemptCount]
+       properties:
+         state: { type: string, enum: [none, rolled_back, partial, failed] }
+         at: { type: [string, 'null'], format: date-time }
+         counts: { type: [object, 'null'], additionalProperties: true }
+         ref: { type: [string, 'null'], description: Restored slice ref recorded for the attempt }
+         attemptCount: { type: integer, minimum: 0 }
+    CheckpointSlice:
+       type: object
+       additionalProperties: false
+       required: [id, sliceRef, capturedAt, sourceRunId, sourceSessionId, predecessorRef, changedFiles, changedCount, opaqueNestedRepos, state, unrollableReason, revert]
+       properties:
+         id: { type: string, format: uuid }
+         sliceRef: { type: [string, 'null'], description: Null only for a degraded capture projection without a slice }
+         capturedAt: { type: [string, 'null'], format: date-time }
+         sourceRunId: { type: [string, 'null'] }
+         sourceSessionId: { type: [string, 'null'] }
+         predecessorRef: { type: [string, 'null'] }
+          changedFiles: { type: array, items: { $ref: '#/components/schemas/CheckpointChangedFile' } }
+          changedCount: { type: integer, minimum: 0 }
+          truncated: { type: boolean, description: True when the bounded changedFiles list is incomplete }
+          opaqueNestedRepos: { type: array, items: { type: string } }
+         state: { type: string, enum: [captured, abnormal-captured, degraded, expired] }
+         unrollableReason: { type: [string, 'null'], enum: [UNAVAILABLE, null] }
+         revert: { $ref: '#/components/schemas/CheckpointRevertBookkeeping' }
+    CheckpointRevertPreviewRequest:
+       type: object
+       additionalProperties: false
+       required: [sliceRef]
+       properties: { sliceRef: { type: string } }
+    CheckpointRevertRequest:
+       type: object
+       additionalProperties: false
+       required: [sliceRef, acknowledgeTypeChanges]
+       properties:
+         sliceRef: { type: string }
+         acknowledgeTypeChanges: { type: array, items: { type: string }, description: Type-change paths confirmed from the preview }
+    CheckpointRevertPreviewEntry:
+       type: object
+       additionalProperties: false
+       required: [path, action, state]
+       properties:
+         path: { type: string }
+         action: { type: string, enum: [restore, delete] }
+         state: { type: string, enum: [execute, noop, type_conflict] }
+         reason: { type: [string, 'null'] }
+    CheckpointRevertPreviewResponse:
+       type: object
+       additionalProperties: false
+       required: [sliceRef, counts, entries, truncated]
+       properties:
+         sliceRef: { type: string }
+         counts: { type: object, required: [restore, delete, typeConflict], properties: { restore: { type: integer }, delete: { type: integer }, typeConflict: { type: integer } } }
+         entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertPreviewEntry' } }
+         truncated: { type: boolean }
+    CheckpointRevertEntry:
+       type: object
+       additionalProperties: false
+       required: [path, outcome]
+       properties:
+         path: { type: string }
+         outcome: { type: string, enum: [restored, deleted, failed, suspect] }
+         reason: { type: [string, 'null'] }
+    CheckpointRevertResponse:
+       type: object
+       additionalProperties: false
+       required: [sliceRef, counts, entries, durationMs, suspects]
+       properties:
+         sliceRef: { type: string }
+         counts: { type: object, required: [restored, deleted, failed], properties: { restored: { type: integer }, deleted: { type: integer }, failed: { type: integer } } }
+         entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertEntry' } }
+         durationMs: { type: integer, minimum: 0 }
+         suspects: { type: array, items: { type: string } }
+    CheckpointCleanupRequest:
+       type: object
+       additionalProperties: false
+       required: [acknowledge]
+       properties: { acknowledge: { type: boolean, const: true } }
+    CheckpointCleanupResponse:
+       type: object
+       additionalProperties: false
+       required: [removed]
+       properties: { removed: { type: boolean } }
+    RuntimeCheckpointCaptureRequest:
+       type: object
+       additionalProperties: false
+       required: [runId, actor, callId]
+       properties:
+         runId: { type: string }
+         actor: { type: string }
+         callId: { type: string }
+         abnormal: { type: boolean, default: false }
+    RuntimeCheckpointCaptureResponse:
+       type: object
+       additionalProperties: false
+       required: [runId, noChange, sliceRef, commit, capturedAt, state, changedFiles, opaqueNestedRepos, predecessor]
+       properties:
+         runId: { type: string }
+         noChange: { type: boolean }
+         sliceRef: { type: [string, 'null'] }
+         commit: { type: [string, 'null'] }
+         capturedAt: { type: [string, 'null'], format: date-time }
+         state: { type: string, enum: [captured, abnormal-captured] }
+         changedFiles: { type: array, items: { $ref: '#/components/schemas/CheckpointChangedFile' } }
+         opaqueNestedRepos: { type: array, items: { type: string } }
+         predecessor: { type: [string, 'null'] }
+    RuntimeCheckpointGcResponse:
+       type: object
+       additionalProperties: false
+       required: [counts]
+       properties:
+         counts: { type: object, required: [deleted, kept], properties: { deleted: { type: integer }, kept: { type: integer } } }
     Session: { type: object, required: [id, workspaceId, title, archived], properties: { id: { type: string }, workspaceId: { type: string }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
