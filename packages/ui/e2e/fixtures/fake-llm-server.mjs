@@ -37,6 +37,14 @@ async function readBody(request) {
 }
 
 async function sendCompletion(response, provider, requestBody) {
+  // PLAN-0341 T2.2 (mode: overflow): must decide BEFORE the SSE preamble —
+  // first attempt returns HTTP 400 context_length_exceeded (maps to Agent
+  // CONTEXT_OVERFLOW); the post-compact retry (SUM present) streams success.
+  if (mode === 'overflow') {
+    sendOverflowCompletion(response, requestBody)
+    return
+  }
+
   response.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -219,6 +227,49 @@ function sendHistoryMarkerCompletion(response, requestBody) {
   for (const content of chunks) {
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
   }
+  response.end('data: [DONE]\n\n')
+}
+
+// PLAN-0341 T2.2 (mode: overflow): deterministic CONTEXT_OVERFLOW probe.
+// User message carries `XIHE-E2E-OVERFLOW`. Without a compacted SUM system
+// message the fake provider refuses with context_length_exceeded; after CP
+// force-compact + retry the SUM marker is present and the run succeeds.
+function sendOverflowCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+  const text = typeof lastUser?.content === 'string' ? lastUser.content : ''
+  if (!text.includes('XIHE-E2E-OVERFLOW')) {
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    })
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+  const hasCompactedSum = messages.some(
+    (m) => typeof m.content === 'string' && m.content.includes('Conversation summary of compacted history'),
+  )
+  if (!hasCompactedSum) {
+    json(response, 400, {
+      error: {
+        message:
+          `This model's maximum context length is 8192 tokens, however your messages resulted in ${messages.length * 1200} tokens.`,
+        type: 'invalid_request_error',
+        param: 'messages',
+        code: 'context_length_exceeded',
+      },
+    })
+    return
+  }
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  const content = 'OVERFLOW-RETRY-OK after compact SUM present'
+  response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
   response.end('data: [DONE]\n\n')
 }
 
