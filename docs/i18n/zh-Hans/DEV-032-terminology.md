@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-09-16
-updated: 2026-09-16
+updated: 2026-09-17
 ---
 
 # DEV-032: 术语规范（一词多义与多词一义）
@@ -29,6 +29,9 @@ updated: 2026-09-16
 |---|---|---|---|---|
 | **owner** | A. workspace **权限角色**（成员 owner/admin） | `workspace 角色 owner` 或 `角色=owner` | 裸 `owner` 指 lease | 与 RBAC 一致 |
 | | B. 生命周期 **执行租约持有者** | **`execution lease holder`**（中文：**执行租约持有者**；可缩写 **lease holder**） | 裸 `owner`、`active owner` 无 lease 上下文 | PLAN-0345 起；「单 active owner」→「**单 execution lease holder**」 |
+| | C. **资源归属**（连接、工作区、会话挂在谁名下） | **`资源归属 owner`**（英文：*resource owner*；字段写 `owner_type` / `owner_id`） | 用裸 `owner` 指归属；把归属与「workspace 角色 owner」混用 | 连接归属 ≠ 成员角色；目标态 `owner_type` 可含 `AGENT`（见 §1.1） |
+| **role** | A. 平台身份 | **`平台角色`**（*platform role*，值 `ADMIN` / `USER`，来自 JWT `role` claim） | 裸 `role` 指 workspace 角色 | 判定入口 `@PreAuthorize`；见 §1.1 |
+| | B. workspace 内身份 | **`workspace 角色`**（值 `OWNER` / `MEMBER`；`ADMIN` / `VIEWER` 为悬空枚举值，未落库） | 裸 `role` 指平台角色 | 见 §1.1 与 backlog「身份与权限模型」 |
 | **L1 / L2 / L3** | 上下文注入槽 L0–L3 | **`context L1`**（中文：**上下文 L1 槽**） | 裸 `L1` | 0340 模型 |
 | | 诊断分层 L0/L1/L2 | **`diagnostic L0` / `diagnostic L1` / `diagnostic L2`**（中文：**诊断 L0/L1/L2**） | 裸 `L1` | 0342；L1 工具族后置 |
 | | checkpoint 恢复层 L1/L2/L3 | **`checkpoint L1`** 等（中文：**检查点 L1 层**） | 裸 `L1` | 0338 |
@@ -40,6 +43,21 @@ updated: 2026-09-16
 | | 遗留机制 | **`legacy snapshot`**（仅历史/退役叙述） | 与 checkpoint 混用 | 0357 |
 | **收敛 vs 收口** | 多路径 → 单一权威状态/写路径 | **收敛（converge）** | 用「收口」指状态机双路径合并 | Registry/状态机 |
 | | 散入口 → 唯一 seam 出口 | **收口（route-to-seam）** | 用「收敛」指 REST 改走 executor | REST 文件面 |
+
+### 1.1 主体与角色（2026-09-17 增补）
+
+XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账户与角色权限），与开发者**协作**，**不绑定某个 user**。**协作 ≠ 委托**——「Agent 代表某 user 执行」不是目标模型；若确需受托，另立显式 *delegation* 概念。
+
+| 术语 | 正名 | 取值 / 说明 | 禁止写法 |
+|---|---|---|---|
+| 主体 | **principal** | `human`（开发者/用户）、`agent`（独立账户与角色）、`service`（CP/Agent/Runtime 内部管道，非协作者）；`system` = 平台自身触发，非可登录主体 | 把 Agent 说成「代表 user 的 actor」；用 `user` 泛指 principal |
+| 成员 | **membership** | `principal × workspace + 角色`；Agent 与开发者同为 workspace 成员 | 把成员表/字段永久写死为 `user_id` |
+| 角色 | **平台角色 / workspace 角色** | 见 §1 `role` 两义 | 裸 `role` 不带域 |
+| 归属 | **资源归属 owner** | `(owner_type, owner_id)`；目标态可含 `AGENT` | 与「workspace 角色 owner」「execution lease holder」混用 |
+
+历史形态（不阻碍目标，但新代码不得加深）：`sessions.user_id`、`workspace_users.user_id`、`provider_connections.owner_id` 均为 user-only 形态；`session_operations.actor_type` 已含 `agent`（`V2`），方向一致。
+
+不偏离约束与落地入口：workspace internal `xh-backlog-and-debt.md` 的 BL-18「身份与权限模型」（不入库分发）。
 
 ## 2. 多词一义 → 正名与别名
 
@@ -89,6 +107,7 @@ updated: 2026-09-16
 | 阶段 | 动作 |
 |---|---|
 | 本文档发布（2026-09-16） | 未实施 XH PLAN README/spec 按 §1–§3 对齐；完成包不强制回写 |
+| 2026-09-17 增补 | 新增 §1.1（principal / membership / 协作≠委托）、`owner` 第三义（资源归属）、`role` 分域；未实施 PLAN 与 docs 按新正名；实现归 backlog BL-18（不实施） |
 | 已完成 PLAN / archive / review | **不改**历史证据用词；再次编辑该文件时顺带对齐 |
 | 代码标识符 | 不在本文档批量改名；需改名另开 PLAN（参考 0356） |
 
@@ -96,6 +115,7 @@ updated: 2026-09-16
 
 - 契约层正名 `ensure`：DEV-031、PLAN-0329
 - 生命周期 lease / unpause：PLAN-0345 `spec/workspace-lifecycle.md`
+- 主体/成员/归属与 Agent 主体化：workspace internal `xh-backlog-and-debt.md` BL-18（不入库分发）
 - prune / compaction：PLAN-0341
 - checkpoint 命名：PLAN-0356
 - 文档布局：DEV-030
