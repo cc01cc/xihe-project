@@ -428,12 +428,12 @@ erDiagram
 > - `idx_oauth_credentials_server (server_id)`
 > - 唯一约束 `(user_id, workspace_id, server_id)` — 单用户单空间单服单凭证
 
-**provider_connections**（`V18`，Entity `entity/ProviderConnection.java`）：LLM Provider 连接（PLAN-261），三级归属。
+**provider_connections**（`V18`，Entity `entity/ProviderConnection.java`）：LLM Provider 连接（PLAN-261）。归属现为**两级** `USER / WORKSPACE`；`SYSTEM` 归属已退役（PLAN-0364 M2：不再创建/可见/可选），但 **CHECK 保留 `SYSTEM` 值不收紧**——为将来 `AGENT` 等主体类型留扩展位（BL-18，DEV-032 §1.1）。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | VARCHAR(36) | PK | — |
-| owner_type | VARCHAR(16) | NOT NULL CHECK `SYSTEM/WORKSPACE/USER` | 作用域 |
+| owner_type | VARCHAR(16) | NOT NULL CHECK `SYSTEM/WORKSPACE/USER`（现用 `USER/WORKSPACE`；CHECK 不收紧以保留扩展位） | 作用域 |
 | owner_id | VARCHAR(64) | NOT NULL | 作用域 ID |
 | provider_id | VARCHAR(128) | NOT NULL | 如 `openai/deepseek` |
 | label | VARCHAR(128) | NOT NULL | 展示名 |

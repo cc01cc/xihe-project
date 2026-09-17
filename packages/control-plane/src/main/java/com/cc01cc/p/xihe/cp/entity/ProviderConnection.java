@@ -19,7 +19,6 @@ import java.util.UUID;
         columnNames = {"owner_type", "owner_id", "provider_id"}))
 public class ProviderConnection {
 
-    public static final String OWNER_SYSTEM = "SYSTEM";
     public static final String OWNER_WORKSPACE = "WORKSPACE";
     public static final String OWNER_USER = "USER";
 

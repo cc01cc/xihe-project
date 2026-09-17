@@ -13,11 +13,11 @@ updated: 2026-09-12
 
 > 面向开发者与运维：一次讲清配什么、放哪层、怎么改。前置阅读：DEV-002 §3（运行模式）。
 >
-> 现行模型（PLAN-0307 已落地）：**三层 `instance / workspace / user`**（解析链 `workspace > user > instance > 代码默认`）+ 凭证 **BYOK**（`provider_connections` 加密表，两级 `WORKSPACE > USER`，SYSTEM 已废除）+ **env 覆盖锁定**（env 为最高部署权威，UI 显示 env 生效值并禁用该项）。端点以 `docs/api/openapi.yaml` 为准。
+> 现行模型（PLAN-0307 已落地）：**三层 `instance / workspace / user`**（解析链 `workspace > user > instance > 代码默认`）+ 凭证 **BYOK**（`provider_connections` 加密表，两级 `WORKSPACE > USER`；`SYSTEM` 归属已退役，见 PLAN-0364 M2）+ **env 覆盖锁定**（env 为最高部署权威，UI 显示 env 生效值并禁用该项）。端点以 `docs/api/openapi.yaml` 为准。
 
 ## 1. 三层所有权与九域
 
-ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合为 `instance(8)`、`user(7)`、`workspace(6)`——其中 `approval-policy` 由 PLAN-0337 新增且**仅 workspace 层**，故 `workspace ⊄ user`、`user ⊄ workspace`（原「逐层包含」关系自本次新增起不再成立）：
+ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合为 `instance(9)`、`user(7)`、`workspace(6)`。`approval-policy` 自 PLAN-0364 决策 #9 起在 instance 层可写默认、workspace 可覆盖、user 层不可写（唯一的显式例外）；由此 **`instance ⊇ user` 与 `instance ⊇ workspace` 恢复成立**，而 `workspace ⊄ user`、`user ⊄ workspace` 仍成立：
 
 | Domain | instance | user | workspace | 备注 |
 |--------|----------|------|-----------|------|
@@ -59,7 +59,7 @@ flowchart TD
 
 锚点：`ConfigService.resolve()` / `EnvOverlayRegistry`（env↔DB 键映射唯一登记点）。
 
-UI 入口 `/settings/config` 为**三个设置条目**：实例（仅 ADMIN，8 域）、工作区（当前 workspace，6 域，含 `approval-policy`）、个人（user 层 7 域）。读取统一 `GET /api/v1/config/{domain}?layer=<instance|workspace|user>&includeMeta=true`——`envOverridden` 列出被 env 覆盖的键及其 env 生效值，UI 对这些键禁用编辑并展示 env 值；保存体自动剔除锁定键。`includeMeta=true` 在 resolved（不带 layer）与单层视图下都返回该元数据。
+UI 入口 `/settings/config` 为**三个设置条目**：实例（仅 ADMIN，9 域）、工作区（当前 workspace，6 域，含 `approval-policy`）、个人（user 层 7 域）。读取统一 `GET /api/v1/config/{domain}?layer=<instance|workspace|user>&includeMeta=true`——`envOverridden` 列出被 env 覆盖的键及其 env 生效值，UI 对这些键禁用编辑并展示 env 值；保存体自动剔除锁定键。`includeMeta=true` 在 resolved（不带 layer）与单层视图下都返回该元数据。
 
 ## 2. 启动环境变量（.env 文件链 + CLI --set）
 
@@ -80,7 +80,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 
 引导变量（不写文件）：`XIHE_ENV`（dev/test/prod）、`XIHE_LOAD_DOTENV=0`（逃逸开关）、`XIHE_ENV_FILE`（指定单文件）。**禁止 `.env.prod.local`**：生产配置只来自 `.env.prod` 入库基线或部署注入（IaC/CI secret）。
 
-**业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表唯一重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL`（`.env` base 提供默认值）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效），日志记录冲突与胜者。
+**业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表唯一重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL`（`.env` base 提供默认值）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效，`layerEntries` 对锁定键剔除，避免 UI 看到的层值与实际生效值不一致），日志记录冲突与胜者。
 **超时覆盖键**（`XIHE_MCP_TOOL_TIMEOUT_S` Agent / `XIHE_EXEC_COLLECT_TIMEOUT_S` Runtime / `xihe.mcp.forward-timeout-s` CP）登记为**本跳部署者覆盖**类：显式设置时该跳精确取该值并压制 CP 下发值；不参与 DB 域解析，正常路径由 CP 预算派生（PLAN-0308 决策 #21/#25）。
 
 | 变量 | 说明 |

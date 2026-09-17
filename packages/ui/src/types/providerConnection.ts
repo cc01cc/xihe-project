@@ -1,4 +1,4 @@
-export type ProviderScope = 'USER' | 'WORKSPACE' | 'SYSTEM'
+export type ProviderScope = 'USER' | 'WORKSPACE'
 export type ProviderAdapter = 'native-litellm' | 'openai-compatible' | 'manual-model'
 export type ProviderCredentialType = 'api-key' | 'none'
 export type ProviderConnectionStatus =
@@ -51,7 +51,7 @@ export interface ProviderConnection {
 export interface ProviderConnectionInput {
   providerId: string
   label: string
-  scope: Exclude<ProviderScope, 'SYSTEM'>
+  scope: ProviderScope
   apiKey?: string
   baseUrl?: string
   modelDiscovery?: ProviderDefinition['modelDiscovery']

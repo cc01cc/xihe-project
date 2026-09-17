@@ -30,7 +30,6 @@ import java.util.UUID;
 public class ProviderConnectionService {
 
     private static final Logger logger = LoggerFactory.getLogger(ProviderConnectionService.class);
-    private static final String SYSTEM_OWNER = "system";
     private static final Duration VERIFY_TIMEOUT = Duration.ofSeconds(8);
 
     private final ProviderConnectionRepository repository;
@@ -75,8 +74,6 @@ public class ProviderConnectionService {
             connections.addAll(repository.findByOwnerTypeAndOwnerId(
                     ProviderConnection.OWNER_WORKSPACE, workspaceId));
         }
-        connections.addAll(repository.findByOwnerTypeAndOwnerId(
-                ProviderConnection.OWNER_SYSTEM, SYSTEM_OWNER));
         return connections;
     }
 
@@ -229,7 +226,6 @@ public class ProviderConnectionService {
                 && userId.equals(connection.getOwnerId())) return connection;
         if (ProviderConnection.OWNER_WORKSPACE.equals(connection.getOwnerType())
                 && connection.getOwnerId().equals(TenantContext.getWorkspaceId())) return connection;
-        if (ProviderConnection.OWNER_SYSTEM.equals(connection.getOwnerType())) return connection;
         throw new IllegalArgumentException("Provider connection is not accessible");
     }
 
@@ -247,8 +243,7 @@ public class ProviderConnectionService {
         boolean visible = (ProviderConnection.OWNER_USER.equals(connection.getOwnerType())
                 && connection.getOwnerId().equals(userId))
                 || (ProviderConnection.OWNER_WORKSPACE.equals(connection.getOwnerType())
-                && connection.getOwnerId().equals(workspaceId))
-                || ProviderConnection.OWNER_SYSTEM.equals(connection.getOwnerType());
+                && connection.getOwnerId().equals(workspaceId));
         if (!visible || !connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())) {
             throw new IllegalArgumentException("Provider connection is not ready or not accessible");
         }
@@ -275,9 +270,7 @@ public class ProviderConnectionService {
             }
             return;
         }
-        if (!"ADMIN".equals(TenantContext.getUserRole())) {
-            throw new IllegalArgumentException("System provider connection is not writable");
-        }
+        throw new IllegalArgumentException("Provider connection owner type is not writable");
     }
 
     private String resolveOwnerId(String scope, String userId) {
@@ -291,7 +284,7 @@ public class ProviderConnectionService {
             }
             return workspaceId;
         }
-        throw new IllegalArgumentException("System provider connections are not created through this endpoint");
+        throw new IllegalArgumentException("Unsupported provider connection scope");
     }
 
     private String normalizeScope(String scope) {

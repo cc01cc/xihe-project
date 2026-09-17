@@ -96,7 +96,7 @@ export interface ProviderCatalog {
   models: CatalogModel[]
   connectionId?: string
   connectionRevision?: number
-  scope?: 'USER' | 'WORKSPACE' | 'SYSTEM'
+  scope?: 'USER' | 'WORKSPACE'
   displayName?: string
   verifiedAt?: string | null
   configRevision?: string

@@ -19,7 +19,7 @@ import type {
 } from '../../types/providerConnection'
 
 const props = withDefaults(defineProps<{
-  scope: Exclude<ProviderScope, 'SYSTEM'>
+  scope: ProviderScope
   readonly?: boolean
 }>(), {
   readonly: false,
