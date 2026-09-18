@@ -41,9 +41,13 @@ public class EventStoreService {
     // both compute the same sequence and one INSERT died on the unique index —
     // silent event loss. Lock the session row first, mirroring the ledger's
     // operation-row lock (0317 decision #7②). Cross-session writes stay parallel.
+    //
+    // The lock is taken only when the anchor row exists: a missing session has
+    // no sequence timeline to serialize, and on PostgreSQL the insert is
+    // rejected by fk_context_events_session anyway (H2 legacy tests operate
+    // without session rows).
     private void lockSessionForSequence(UUID sessionId) {
-        sessionRepository.findByIdForUpdate(sessionId)
-                .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
+        sessionRepository.findByIdForUpdate(sessionId);
     }
 
     @Transactional
