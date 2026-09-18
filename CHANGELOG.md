@@ -25,6 +25,8 @@
 
 ### Changed
 
+- workspace 沙盒镜像构建基线（PLAN-0344 收尾配套）：builder `rust:1.88-slim` → `rust:1.97.1-slim-bookworm`（与 `rust-toolchain.toml` pin 对齐，消除每次源码变更重建时重下 rustup 工具链）；runtime `node:22-slim` → `node:24-bookworm-slim`（对齐 workspace Node 24 标准；bookworm 与 builder 同族，修复 trixie 新 glibc 2.38/2.39 不兼容——曾实证二进制在运行镜像无法启动）；BuildKit cache mounts（cargo registry + target，target 使用 bookworm 专用 cache id）复用依赖与增量编译——无变更重建 3.6s、仅改 Dockerfile 重编 77s、改 runtime 源码仅增量重编。
+
 - MiMo 按配置调用（PLAN-0364 M3）：移除 Agent `bind_tools` 在 `provider=xiaomi` 且带工具时自动切 `openai/mimo-v2.5` 的隐式行为；native `xiaomi_mimo` 的工具请求由 litellm 报错并映射为 `LLM_TOOL_ROUTE_UNSUPPORTED`；OpenAI wire 路由（`openai`/`custom_openai`/`openai_like`）缺 `baseUrl` 时 fail-fast（`LLM_BASE_URL_MISSING`），不再回落到 OpenAI 默认端点；catalog native `xiaomi` 标 `supports.tools=false`；UI `errorMessages` 增两条文案。
 
 - PLAN-0326：操作账本改为 v3 通道事实模型——中继按 SSE 阶段记录 Agent 侧事实，MCP 网关记录派发事实；`source` 纳入 `operation_items` 唯一键 `(operation_id, source, tool_call_id)`，删除启发式匹配与悬空 `runtime_jobs`（V14）。修复 Runtime attached collector 等待 oneshot EOF 导致正常 `list_directory` 命中 30 秒超时：首个完整 JSON 帧即返回并关闭 stdin。
