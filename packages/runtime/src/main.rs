@@ -70,6 +70,8 @@ pub struct AppState {
     pub device_id: String,
     pub workspace_ensurer: Arc<WorkspaceEnsurer>,
     pub router: Arc<WorkspaceExecutionRouter>,
+    /// PLAN-0345: single authoritative lifecycle write path + execution lease.
+    pub lifecycle: Arc<xihe_runtime::lifecycle::Lifecycle>,
     /// PLAN-0338: Run checkpoint slices (shadow git engine, capture/restore locks).
     pub checkpoints: Arc<CheckpointService>,
     /// Readiness describes the Runtime process, not any particular Workspace.
@@ -822,6 +824,10 @@ fn runtime_error_status(error: &RuntimeError) -> StatusCode {
             StatusCode::FORBIDDEN
         }
         RuntimeError::InvalidPath(_) => StatusCode::BAD_REQUEST,
+        // PLAN-0345 (decision #7/#11): explicit destroy conflict surfaces as 409,
+        // never as 502 collapse.
+        RuntimeError::WorkspaceDestroying { .. } => StatusCode::CONFLICT,
+        RuntimeError::WorkspaceBusy { .. } => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -836,6 +842,8 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::McpBridgeUnavailable { .. } => "MCP_BRIDGE_UNAVAILABLE",
         RuntimeError::InvalidExecutionSpec { .. } => "EXECUTION_SPEC_INVALID",
         RuntimeError::WorkspaceMaterializationFailed { .. } => "WORKSPACE_MATERIALIZATION_FAILED",
+        RuntimeError::WorkspaceDestroying { .. } => "WORKSPACE_DESTROYING",
+        RuntimeError::WorkspaceBusy { .. } => "WORKSPACE_BUSY",
         RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => "FORBIDDEN",
         RuntimeError::InvalidPath(_) => "INVALID_REQUEST",
         _ => "RUNTIME_ERROR",
@@ -1649,10 +1657,37 @@ async fn workspace_materialize_handler(
             detail: "workspaceId contains invalid route characters".to_string(),
         }));
     }
+    // PLAN-0345 (decision #7/#11): destroying window rejects late materialize
+    // synchronously with 409 WORKSPACE_DESTROYING — never a silent 202.
+    if let Some(status) = app.registry.status(&ws_id).await
+        && status.state == xihe_runtime::gateway::MaterializationState::Destroying
+    {
+        return Err(runtime_problem(RuntimeError::WorkspaceDestroying {
+            workspace_id: ws_id.clone(),
+        }));
+    }
     // Fast path: already materialized and in sync with CP spec.
     if let Some(status) = app.registry.status(&ws_id).await
         && status.state == xihe_runtime::gateway::MaterializationState::Ready
     {
+        // PLAN-0365 (root cause D): the C0 baseline is part of a complete
+        // materialization. After a checkpoint cleanup the shadow refs are gone
+        // while the workspace stays Ready, so this fast path must still
+        // bootstrap a fresh C0 slice (best-effort, same as the spawn path).
+        match app.checkpoints.capture(&ws_id, C0_RUN_ID, "materialize", "materialize", false).await
+        {
+            Ok(outcome) => tracing::info!(
+                workspace_id = %ws_id,
+                no_change = outcome.no_change,
+                slice_ref = outcome.slice_ref.as_deref().unwrap_or("none"),
+                "C0 checkpoint capture completed on fast path"
+            ),
+            Err(error) => tracing::warn!(
+                workspace_id = %ws_id,
+                error = ?error,
+                "C0 checkpoint capture skipped on fast path (materialization unaffected)"
+            ),
+        }
         return Ok((
             StatusCode::ACCEPTED,
             AxumJson(serde_json::to_value(status).map_err(|error| {
@@ -1761,6 +1796,23 @@ async fn delete_workspace_handler(
     AxumJson(req): AxumJson<DeleteWorkspaceRequest>,
 ) -> Result<AxumJson<DeleteWorkspaceResponse>, (StatusCode, AxumJson<serde_json::Value>)> {
     let ws_id = &req.ws_id;
+    // PLAN-0345 (decisions #7/#10): mark destroying before any teardown so late
+    // ensure/materialize callers get 409 WORKSPACE_DESTROYING during the window,
+    // and hold the execution lease for the in-flight destroy.
+    app.lifecycle
+        .transition(
+            ws_id,
+            xihe_runtime::lifecycle::LifecycleState::Destroying,
+            None,
+        )
+        .await
+        .map_err(runtime_problem)?;
+    let _lease = app
+        .lifecycle
+        .leases()
+        .acquire(ws_id, "destroy")
+        .await
+        .map_err(runtime_problem)?;
     mcp_manager().cleanup_workspace(ws_id).await;
     let cleanup_result = {
         let mut manager = app.manager.lock().await;
@@ -1771,11 +1823,20 @@ async fn delete_workspace_handler(
         }
     };
     if let Err(error) = cleanup_result {
-        app.registry.mark_failed(ws_id, &error.to_string()).await;
+        // 0329 §4: distinguishable cleanup failure; leave destroying window open
+        // (state -> failed) so operators can retry the destroy.
+        app.lifecycle
+            .transition(
+                ws_id,
+                xihe_runtime::lifecycle::LifecycleState::Failed,
+                Some(&error.to_string()),
+            )
+            .await
+            .map_err(runtime_problem)?;
         return Err(runtime_problem(error));
     }
-    app.registry.unregister(ws_id).await;
-    app.registry.mark_released(ws_id).await;
+    // F2: no resident `destroyed` state — unregister + released marker.
+    app.lifecycle.complete_destroy(ws_id).await;
     tracing::info!(
         "Sandbox deleted: ws_id={}, temporary execution resources cleaned; WorkspaceStorage preserved",
         ws_id
@@ -2402,12 +2463,17 @@ async fn run() -> anyhow::Result<()> {
     }
 
     let readiness = Arc::new(AtomicBool::new(true));
+    let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
+        registry.clone(),
+        Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+    ));
     let app_state = Arc::new(AppState {
         registry: registry.clone(),
         manager: manager.clone(),
         device_id: device_id.clone(),
         workspace_ensurer: workspace_ensurer.clone(),
         router: router.clone(),
+        lifecycle,
         checkpoints: Arc::new(
             CheckpointService::new(runtime_checkpoint_host_root())
                 .with_nested_repo_policy(runtime_checkpoint_nested_repo_policy()),
@@ -2900,27 +2966,24 @@ async fn idle_reaper_loop(
                     };
                     let ws_id = &instance.ws_id;
 
-                    // Tier 4: 7 days idle — Suspended → Released. The Sandbox container is
-                    // already gone in Tier 3; we only mark Released and surface the workspace
-                    // in the per-workspace status map. Physical WorkspaceStorage stays intact.
-                    if elapsed >= Duration::from_secs(604800) && instance.state == InstanceState::Suspended {
-                        registry.set_state(ws_id, InstanceState::Released).await;
-                        registry.unregister(ws_id).await;
-                        tracing::info!(
-                            "Idle reaper: released workspace {} (idle >7d); cache invalidated, WorkspaceStorage preserved at {}",
-                            ws_id,
-                            instance.workspace_path
-                        );
-                        continue;
-                    }
+                    // PLAN-0345 T1.4 (decision #17/F4): 3-tier ladder. The
+                    // legacy Tier 4 (7d `Released`) is deleted — Tier 3 already
+                    // unregisters, so no Suspended/Released value is ever
+                    // written. `reaper::target_tier` is the tested SSOT.
+                    use xihe_runtime::lifecycle::reaper::{target_tier, ReapTier};
+                    let tier = match target_tier(elapsed) {
+                        Some(t) => t,
+                        None => continue,
+                    };
 
                     // Stop & pause must reflect the current Docker state, otherwise a Sandbox
                     // restarted out of band (already exited) would never enter a clean state.
-                    let is_container_already_stopped = matches!(
-                        instance.state,
-                        InstanceState::Stopped | InstanceState::Suspended | InstanceState::Released
-                    );
-                    if is_container_already_stopped {
+                    if tier != ReapTier::Evict
+                        && matches!(
+                            instance.state,
+                            InstanceState::Stopped | InstanceState::Suspended | InstanceState::Released
+                        )
+                    {
                         tracing::debug!(
                             "Idle reaper: workspace {} container already non-running (state={:?}); skipping active tier",
                             ws_id, instance.state
@@ -2928,64 +2991,67 @@ async fn idle_reaper_loop(
                         continue;
                     }
 
-                    // Tier 3: 24 hours idle — remove ephemeral container, keep WorkspaceStorage.
-                    // Tier 3 is idempotent against the suspended state so a Sandbox that was
-                    // already stopped externally still gets its state promoted to Suspended.
-                    if elapsed >= Duration::from_secs(86400)
-                        && (instance.state == InstanceState::Stopped
-                            || matches!(instance.state, InstanceState::Active | InstanceState::Paused))
-                    {
-                        let mut mgr = manager.lock().await;
-                        match mgr.delete_workspace(ws_id).await {
-                            Ok(_) => {
-                                registry.set_state(ws_id, InstanceState::Suspended).await;
-                                registry.unregister(ws_id).await;
-                                tracing::info!(
-                                    "Idle reaper: suspended workspace {} (idle >24h); cache invalidated, WorkspaceStorage preserved",
-                                    ws_id
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Idle reaper: failed to remove container {}: {}; retaining state",
-                                    ws_id, e
-                                );
-                            }
-                        }
-                        continue;
-                    }
-
-                    // Tier 2: 2 hours idle — Active/Paused → Stopped
-                    if elapsed >= Duration::from_secs(7200) && (instance.state == InstanceState::Active || instance.state == InstanceState::Paused) {
-                        let mgr = manager.lock().await;
-                        match mgr.stop_container(ws_id).await {
-                            Ok(_) => {
-                                registry.set_state(ws_id, InstanceState::Stopped).await;
-                                tracing::info!("Idle reaper: stopped container {} (idle >2h)", ws_id);
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Idle reaper: failed to stop container {}: {}; retaining state",
-                                    ws_id, e
-                                );
+                    match tier {
+                        // Tier 3: 24 hours idle — remove ephemeral container,
+                        // unregister, keep WorkspaceStorage. Statuses keep the
+                        // last entry for presentation ("已释放" derivation).
+                        ReapTier::Evict => {
+                            let mut mgr = manager.lock().await;
+                            match mgr.delete_workspace(ws_id).await {
+                                Ok(_) => {
+                                    registry.unregister(ws_id).await;
+                                    tracing::info!(
+                                        workspace_id = %ws_id,
+                                        event = "reap_evict",
+                                        "Idle reaper: evicted workspace (idle >24h); cache invalidated, WorkspaceStorage preserved"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Idle reaper: failed to remove container {}: {}; retaining state",
+                                        ws_id, e
+                                    );
+                                }
                             }
                         }
-                        continue;
-                    }
-
-                    // Tier 1: 15 minutes idle — Active → Paused
-                    if elapsed >= Duration::from_secs(900) && instance.state == InstanceState::Active {
-                        let mgr = manager.lock().await;
-                        match mgr.pause_container(ws_id).await {
-                            Ok(_) => {
-                                registry.set_state(ws_id, InstanceState::Paused).await;
-                                tracing::info!("Idle reaper: paused container {} (idle >15m)", ws_id);
+                        // Tier 2: 2 hours idle — Active/Paused → Stopped
+                        ReapTier::Stop => {
+                            let mgr = manager.lock().await;
+                            match mgr.stop_container(ws_id).await {
+                                Ok(_) => {
+                                    registry.set_state(ws_id, InstanceState::Stopped).await;
+                                    xihe_runtime::lifecycle::reaper::log_transition(
+                                        "reap_stop", ws_id, "active", "stopped", "",
+                                    );
+                                    tracing::info!("Idle reaper: stopped container {} (idle >2h)", ws_id);
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Idle reaper: failed to stop container {}: {}; retaining state",
+                                        ws_id, e
+                                    );
+                                }
                             }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Idle reaper: failed to pause container {}: {}; retaining state",
-                                    ws_id, e
-                                );
+                        }
+                        // Tier 1: 15 minutes idle — Active → Paused
+                        ReapTier::Pause => {
+                            if instance.state == InstanceState::Active {
+                                let mgr = manager.lock().await;
+                                match mgr.pause_container(ws_id).await {
+                                    Ok(_) => {
+                                        registry.set_state(ws_id, InstanceState::Paused).await;
+                                        xihe_runtime::lifecycle::reaper::log_transition(
+                                            "reap_pause", ws_id, "active", "paused", "",
+                                        );
+                                        tracing::info!("Idle reaper: paused container {} (idle >15m)", ws_id);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Idle reaper: failed to pause container {}: {}; retaining state",
+                                            ws_id, e
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -3214,6 +3280,7 @@ mod remote_handler_tests {
 
     pub(super) async fn test_state(cp_url: &str) -> Arc<AppState> {
         let registry = Arc::new(WorkspaceRegistry::new());
+        let registry_for_lifecycle = registry.clone();
         let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
         let client = xihe_runtime::hydrate::ExecutionSpecClient::new(cp_url, "test-token");
         let ensurer = Arc::new(WorkspaceEnsurer::from_env_with_client(
@@ -3232,6 +3299,10 @@ mod remote_handler_tests {
             device_id: "test-device".to_string(),
             workspace_ensurer: ensurer,
             router,
+            lifecycle: Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
+                registry_for_lifecycle,
+                Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+            )),
             // Checkpoint tests replace this with a tempdir-scoped service; other
             // tests never touch the host root.
             checkpoints: Arc::new(CheckpointService::new(std::env::temp_dir())),

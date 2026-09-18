@@ -25,6 +25,9 @@ pub enum MaterializationState {
     Ready,
     Failed,
     Released,
+    /// PLAN-0345 (decision #7): explicit destroy in flight; late ensure gets
+    /// 409 `WORKSPACE_DESTROYING` while this marker is live.
+    Destroying,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -222,6 +225,26 @@ impl WorkspaceRegistry {
 
     pub async fn status(&self, ws_id: &str) -> Option<WorkspaceStatus> {
         self.statuses.read().await.get(ws_id).cloned()
+    }
+
+    /// PLAN-0345 (decision #7): explicit destroy in flight. Late ensure sees
+    /// this marker and rejects with 409 `WORKSPACE_DESTROYING`.
+    pub async fn mark_destroying(&self, ws_id: &str) {
+        let mut statuses = self.statuses.write().await;
+        let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
+        let previous_hash = statuses
+            .get(ws_id)
+            .and_then(|status| status.spec_hash.clone());
+        statuses.insert(
+            ws_id.to_string(),
+            WorkspaceStatus {
+                workspace_id: ws_id.to_string(),
+                state: MaterializationState::Destroying,
+                generation: previous_generation,
+                spec_hash: previous_hash,
+                last_error: None,
+            },
+        );
     }
 
     pub async fn unregister(&self, ws_id: &str) {

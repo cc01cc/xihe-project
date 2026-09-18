@@ -15,6 +15,21 @@ updated: 2026-09-06
 
 本文件收录 AGENTS.md 之外的已知问题，供排查时参考。
 
+## 全量 host E2E 基线口径（PLAN-0365，2026-09-18）
+
+- **入口必须走 `node scripts/e2e-host.mjs [--llm-mode=<mode>] <spec>`**：手动 `npx playwright test` 不注入 baseURL/fake 端口会产生假失败（ERR_CONNECTION_REFUSED / invalid URL）。
+- **Agent 单 workspace MCP 绑定（PLAN-262）**：Agent 进程首个 chat 绑定 workspace 后，其它 workspace 的 chat 将 fail（`MCP workspace context cannot be reused across workspaces`）。全量串行 host E2E 中跨 workspace 的 write_file 审批类 spec（checkpoint-rollback S1、checkpoint-slices S1、journey-a、journey-c）因此**预期失败**；单 spec 复跑（Agent 首绑=本 spec workspace）为验证口径。根治归 PLAN-0348 rebind。
+- llm-mode 是 boot 期属性：external 复用栈时 0365 已补 fixture 启动 + provider 重导入，但**最可靠做法仍是以目标 mode boot**。
+- 视觉基线（toHaveScreenshot）在 UI 结构变更后须重置，重置前先确认 DOM 断言全过。
+
+## PLAN-0345 工作区生命周期 — 行为变化与已知限制（2026-09-18）
+
+- **`destroying` 409 窗口**：destroy 进行中的 workspace，materialize/ensure 立即 409 `WORKSPACE_DESTROYING`；窗口结束（完成注销）后按 404 处理，再次 ensure = 新建。CP 原样透传该 409（不再 collapse 502）。
+- **paused 恢复语义**：`unpause` 失败 fail-closed（`failed` + reason），无 recreate fallback；paused 容器若被外部 `docker kill`，ensure 探测后走正常 reconcile。
+- **reaper 只剩 3 档**（15m pause / 2h stop / 24h 注销）；`Suspended/Released` 不再写入 instances，statuses 保留 `released` 字面仅供 UI「已释放」文案推导。
+- **lease 为进程内存**：Runtime 重启后 lease 全清，依赖 Docker `rebuild` 接管（无跨进程双主防护，单 Runtime v1 场景可接受）。
+- **REST read/list/stat 已走容器 exec**：无 Docker 或容器未启动时这些端点 fail-closed 503（与变更类一致）；binary write 仍 host 直写（JSON 帧 UTF-8 限制，债）。
+
 ## PLAN-0342 诊断回灌 — 已知限制（2026-09-17）
 
 - **历史消息不持久化 toolCalls**：刷新后工具卡不显示，诊断仅本 run 可见（`message.toolCalls` 只在 run 内写入）。

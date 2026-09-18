@@ -716,6 +716,12 @@ async function main() {
     const state = JSON.parse(await readFile(stateFile, 'utf8'))
     uiPort = state.ports.ui; cpPort = state.ports.cp; agentPort = state.ports.agent
     runtimePort = state.ports.runtime; pgPort = state.ports.pg
+    // PLAN-0365 (root cause A): restore fixture ports the same way — without
+    // this the reserved random values point at nothing and fixture-backed
+    // specs (fake OAuth/MCP/LLM) fail with ERR_CONNECTION_REFUSED.
+    if (state.ports.fakeOAuth) fakeOAuthPort = state.ports.fakeOAuth
+    if (state.ports.fakeMcp) fakeMcpPort = state.ports.fakeMcp
+    if (state.ports.fakeLlm) fakeLlmPort = state.ports.fakeLlm
     runIdForTests = state.runId
     console.log(`[e2e-host] persistent stack ${state.runId}: ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort}`)
     // 关键：本进程新生成的 e2eRunId 与栈不同，传给 Playwright 的必须是栈 runId
@@ -726,7 +732,19 @@ async function main() {
   }
 
   if (externalServer) {
-    // reuse path: the persistent stack is already up, skip all boot phases
+    // reuse path: the persistent stack is already up, skip all boot phases.
+    // PLAN-0365 (root cause E): the LLM provider is imported at boot time from
+    // --llm-mode, and the fake-llm fixture only boots in non-mock modes. A
+    // persistent stack booted in mock mode therefore has neither the provider
+    // config nor the fixture process; restore both here so external spec runs
+    // can use a different mode than the boot run.
+    if (llmMode !== 'mock' && !process.env.XIHE_E2E_SKIP_FIXTURES) {
+      const existing = await fetch(`http://127.0.0.1:${fakeLlmPort}/openai/v1/models`, {
+        signal: AbortSignal.timeout(500),
+      }).then((r) => r.ok).catch(() => false)
+      if (!existing) await startFixtures()
+      await configureFakeLlm()
+    }
   } else {
   // PLAN-294 F.5 L1+L2: parallel boot orchestration. Fixtures and PostgreSQL
   // run concurrently; then all four services launch together (Agent's config
@@ -870,7 +888,10 @@ async function main() {
     for (const entry of dockerProcesses) pids[entry.name] = entry.child.pid ?? null
     await writeFile(stateFile, JSON.stringify({
       runId: e2eRunId,
-      ports: { ui: uiPort, cp: cpPort, agent: agentPort, runtime: runtimePort, pg: pgPort },
+      // PLAN-0365 (root cause A): fixture ports must round-trip too — external
+      // spec runs inject them into Playwright, and a stale random port yields
+      // ERR_CONNECTION_REFUSED in the OAuth/MCP fixture flows.
+      ports: { ui: uiPort, cp: cpPort, agent: agentPort, runtime: runtimePort, pg: pgPort, fakeOAuth: fakeOAuthPort, fakeMcp: fakeMcpPort, fakeLlm: fakeLlmPort },
       pgProjectName,
       pids,
       // The service token is otherwise unknowable to the operator; checkpoint-budget.mjs

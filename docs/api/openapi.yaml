@@ -657,7 +657,7 @@ paths:
   /api/v1/workspaces/{workspaceId}/environment:
      get: { operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/materialize:
-      post: { operationId: materializeWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll environment for progress }, '404': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
+      post: { operationId: materializeWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll environment for progress }, '404': { $ref: '#/components/responses/Problem' }, '409': { description: Conflict passed through from Runtime (e.g. WORKSPACE_DESTROYING during destroy window; PLAN-0345) }, '502': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/checkpoints:
       get:
         operationId: listWorkspaceCheckpoints
@@ -897,7 +897,7 @@ paths:
   /internal/v1/runtime/workspaces/{workspaceId}/status:
     get: { operationId: getRuntimeWorkspaceStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Runtime workspace materialization status }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/{workspaceId}/materialize:
-    post: { operationId: triggerRuntimeWorkspaceMaterialize, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll status for progress }, '404': { $ref: '#/components/responses/Problem' } } }
+    post: { operationId: triggerRuntimeWorkspaceMaterialize, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll status for progress }, '404': { $ref: '#/components/responses/Problem' }, '409': { description: WORKSPACE_DESTROYING — workspace is being destroyed (PLAN-0345 decision #7) } } }
   /internal/v1/runtime/heartbeat:
     post: { operationId: runtimeHeartbeat, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeHeartbeatRequest' } } } }, responses: { '200': { description: Accepted }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/delete:

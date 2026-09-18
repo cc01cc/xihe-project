@@ -31,6 +31,20 @@ const STATUS_META: Record<string, { cls: string; recovery: string }> = {
     cls: 'border-sky-500/40 text-sky-700 dark:text-sky-300',
     recovery: '正在准备中（可能拉取沙盒镜像），请稍候并点击刷新查看进度。',
   },
+  // PLAN-0345: explicit 6-state entries — paused/stopped/destroying must not
+  // fall into the unknown fallback (T3.1 UI assertion).
+  paused: {
+    cls: 'border-sky-500/40 text-sky-700 dark:text-sky-300',
+    recovery: '已暂停（沙盒进程冻结保留）。下次使用会自动恢复，文件不会丢失。',
+  },
+  stopped: {
+    cls: 'border-amber-500/40 text-amber-700 dark:text-amber-300',
+    recovery: '已停止（长时间空闲回收）。再次使用会自动重新准备，文件不会丢失。',
+  },
+  destroying: {
+    cls: 'border-red-500/40 text-red-700 dark:text-red-300',
+    recovery: '销毁中：沙盒正在清理。稍后可重新 Prepare workspace。',
+  },
   degraded: {
     cls: 'border-amber-500/40 text-amber-700 dark:text-amber-300',
     recovery: '部分降级：检查 Runtime 日志与 Docker 状态，文件不会丢失。',

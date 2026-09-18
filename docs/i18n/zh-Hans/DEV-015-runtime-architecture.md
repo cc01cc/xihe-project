@@ -66,7 +66,7 @@ sequenceDiagram
 - Runtime 启动只完成自身 liveness/readiness；经受保护的 targeted ExecutionSpec API 按 `workspaceId` 懒加载 Workspace，首次文件/命令/MCP 操作时才物化目标 Sandbox。
 - WorkspaceStorage（host 持久化）与 Sandbox（容器执行面）分离；unknown workspace fail-closed；Docker 不可用与执行超时显式失败。
 - MCP 2026-07-28 无会话协议（SEP-2567）：Runtime 侧全程 stateless；CP 转发 `tools/list`/`tools/call` 必须带 `Mcp-Method` + `Mcp-Name` 头。
-- 技术债：`WorkspaceRegistry` 与 `WorkspaceManager` 双路径收敛进行中（handler 已收敛为单一状态持有，注释为准）；warm pool/microVM/多设备接管仍属后续。
+- 生命周期（PLAN-0345）：六态权威状态机（`creating/ready/paused/stopped/failed/destroying`）经 `lifecycle.rs` `Lifecycle` 单一写路径（lease 绑 in-flight 操作，无心跳/无持久化）；Registry=可重建缓存（`rebuild` 从 Docker 推导）。paused 走 unpause 激活（禁 force recreate，失败 fail-closed）；destroying 窗口内迟到 materialize → 409 `WORKSPACE_DESTROYING`（CP 原样透传，不 collapse 502）；destroy 完成即注销（无常驻 `destroyed` 态）。idle reaper 三档（15m pause / 2h stop / 24h 注销，原 7d `Released` 档删除）。REST read/list/stat 收口 executor router（binary write 仍 host 例外=债）。warm pool/microVM/多设备接管仍属后续。
 
 ## 5. 执行终止语义（PLAN-0317）
 

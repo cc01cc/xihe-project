@@ -459,6 +459,49 @@ impl WorkspaceEnsurer {
         }
 
         self.registry.mark_materializing(workspace_id).await;
+
+        // PLAN-0345 T2.1 (M-2, decision #16): a Paused container must be
+        // unpaused, never force-recreated — recreation would destroy process
+        // state that Docker pause explicitly preserves. Unpause failure is
+        // fail-closed: no silent fallback to recreate.
+        if cached_instance
+            .as_ref()
+            .is_some_and(|i| i.state == InstanceState::Paused)
+        {
+            let unpause_result = {
+                let manager = self.manager.lock().await;
+                manager.unpause_container(workspace_id).await
+            };
+            match unpause_result {
+                Ok(()) => {
+                    info!(
+                        workspace_id,
+                        "paused workspace unpaused during materialization (M-2 activation path)"
+                    );
+                    self.registry
+                        .set_state(workspace_id, InstanceState::Active)
+                        .await;
+                    self.registry
+                        .mark_ready(workspace_id, spec.generation, &spec.sandbox_spec_hash)
+                        .await;
+                    return Ok(cached_instance.expect("paused instance checked above"));
+                }
+                Err(error) => {
+                    return self
+                        .failure(
+                            workspace_id,
+                            RuntimeError::WorkspaceMaterializationFailed {
+                                workspace_id: workspace_id.to_string(),
+                                detail: format!(
+                                    "unpause failed (fail-closed, no recreate fallback): {error}"
+                                ),
+                            },
+                        )
+                        .await;
+                }
+            }
+        }
+
         let force_recreate = cached_instance.is_some();
 
         let container_state = {

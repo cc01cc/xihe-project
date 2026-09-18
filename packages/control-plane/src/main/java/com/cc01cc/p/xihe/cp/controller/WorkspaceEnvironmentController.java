@@ -156,9 +156,15 @@ public class WorkspaceEnvironmentController {
 
     private String mapRuntimeState(Object rawState) {
         String state = rawState == null ? "" : rawState.toString().toLowerCase();
+        // PLAN-0345 (decision #17/F4): 6-state mapping. `creating/paused/
+        // stopped/destroying` must surface as themselves — never fall into
+        // `degraded` (V7 assertion).
         return switch (state) {
             case "ready" -> "ready";
-            case "materializing" -> "materializing";
+            case "creating", "materializing" -> "materializing";
+            case "paused" -> "paused";
+            case "stopped" -> "stopped";
+            case "destroying" -> "destroying";
             case "failed" -> "blocked";
             case "released", "" -> "unbound";
             default -> "degraded";
@@ -202,6 +208,21 @@ public class WorkspaceEnvironmentController {
             }
             Object body = response.getBody();
             return ResponseEntity.accepted().body(body == null ? Map.of("status", "accepted") : body);
+        } catch (HttpClientErrorException e) {
+            // PLAN-0345 (decision #11): pass Runtime Problem status/code/detail
+            // through unchanged — destroying-conflict (409 WORKSPACE_DESTROYING)
+            // must never collapse into 502 RUNTIME_UNAVAILABLE.
+            Map<String, Object> runtimeProblem = e.getResponseBodyAs(Map.class);
+            String code = runtimeProblem != null && runtimeProblem.get("code") instanceof String c
+                    ? c
+                    : "RUNTIME_ERROR";
+            String detail = runtimeProblem != null && runtimeProblem.get("detail") instanceof String d
+                    ? d
+                    : e.getMessage();
+            logger.warn("Runtime materialize problem workspaceId={} status={} code={}",
+                    workspaceId, e.getStatusCode(), code);
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.valueOf(e.getStatusCode().value()), code, detail);
         } catch (Exception e) {
             logger.warn("Runtime materialize failed workspaceId={}: {}", workspaceId, e.getMessage());
             return ProblemDetailsHandler.problemResponse(

@@ -52,6 +52,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const loading = ref(false)
   const treeError = ref<string | null>(null)
   const loadedWorkspaceId = ref<string | null>(null)
+  // PLAN-0365 (root cause C): bumped by refresh requests that arrive while a
+  // load is in flight; the in-flight load re-runs itself instead of the
+  // refresh being swallowed by the `loading` early-return.
+  let loadTreePending = 0
 
   const openFiles = ref<Map<string, OpenFile>>(new Map())
   const activeFilePath = ref<string | null>(null)
@@ -144,7 +148,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     } catch (e) {
       treeError.value = (e as Error).message
     } finally {
+      // PLAN-0365 (root cause C): refresh requests that arrive while a load is
+      // in flight are counted by refreshAfterMutation; drain them here instead
+      // of letting the `loading` early-return swallow the refresh permanently.
       loading.value = false
+      while (loadTreePending > 0) {
+        loadTreePending -= 1
+        if (currentWorkspaceId !== workspaceId.value || !workspaceId.value) break
+        loading.value = true
+        try {
+          fileTree.value = await fetchDirectoryTree('')
+          loadedWorkspaceId.value = workspaceId.value
+        } catch (e) {
+          treeError.value = (e as Error).message
+        } finally {
+          loading.value = false
+        }
+      }
     }
   }
 
@@ -325,6 +345,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         next.add(current)
       }
       expandedPaths.value = next
+    }
+    // PLAN-0365 (root cause C): if a load is already running, its result is
+    // stale by definition (the mutation just landed). Register a pending
+    // reload so the in-flight loadTree re-runs instead of the refresh being
+    // swallowed by the `loading` early-return.
+    if (loading.value) {
+      loadTreePending += 1
+      loadedWorkspaceId.value = null
+      return
     }
     loadedWorkspaceId.value = null
     await loadTree()

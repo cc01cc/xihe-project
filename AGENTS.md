@@ -136,7 +136,7 @@ packages/
 - **Provider 共享**：Agent 不逐层拼装实例密钥；CP `GET /internal/v1/config/effective/{domain}` 提供单份 effective（含 env 覆盖），user/workspace 覆盖随 run payload push；凭证由 `provider_connections` 租约下发，env 兜底仅限离线/无租约路径。
 - **Agent 接口抽象**：`AgentRunner`（`LangGraphRunner` 实现）、`BaseAgentTool`/`ToolSpec`、`EventAdapter`（→ SSE `AgentEvent`）、`LLMProvider`、`EventStore`/`AgentContext`；LangChain/LangGraph 实现必须隔离在接口之后。
 - **Runtime / Sandbox 边界**：控制面（CP：workspace 元数据/授权/健康/降级）与执行面（Runtime：文件/命令/容器/MCP bridge）分离，进程保活由外部 orchestrator（Docker/mise watcher）负责。`/health` 仅进程存活、`/ready` 不等待全部 Sandbox 物化，Workspace 按 `workspaceId` 懒加载。单 Runtime/单设备 v1 不以 registration/heartbeat/generation/warm pool/microVM/多设备接管为前置条件。未知 workspace、Docker 不可用、执行超时必须显式失败，禁止默认目录或静默降级掩盖状态丢失。远程 MCP 仅经 CP logical endpoint，禁止跨 workspace 复用已发现工具。CP→Runtime 调用恒有界（connect 2s / read 10s，超时走既有显式降级，禁 host fallback）；工作区删除以 DB 逻辑删除为权威，Runtime 沙盒清理在事务提交后 best-effort（失败记 `RUNTIME_CLEANUP_FAILED`，孤儿容器由 Runtime 启动期 `cleanup_orphans` 兜底）。**沙盒后端须可替换**：执行层抽象建在能力（execute/session/fs/lifecycle）而非 Docker 传输，禁止把 `docker exec`/容器 IP/端口发布/`network_mode`/容器内 pid 文件/沙盒内 HTTP 服务泄漏到执行层之上（设计原则见 `sandbox-backend-abstraction` skill；**契约与能力声明见 DEV-031**，泄漏审计记录见 PLAN-0329）。
-- **待收敛项**：`WorkspaceRegistry` 与 `WorkspaceManager` 必须收敛为单一可恢复 workspace 状态机（create/exec/MCP/pause/resume/restart/delete），不得在双路径继续堆叠；隔离引擎升级排在生命周期状态机、持久化恢复与 fail-closed 边界之后。详见 DEV-015 / DEV-018。
+- **生命周期（PLAN-0345 已落地）**：六态权威状态机（`creating/ready/paused/stopped/failed/destroying`）经 `runtime/src/lifecycle.rs` `Lifecycle` 单一写路径；Registry 为可重建缓存；paused→unpause 激活（禁 force recreate）；destroying 窗口迟到 materialize → 409 `WORKSPACE_DESTROYING`（CP 透传）。新增生命周期代码必须走 `Lifecycle`，禁止直接写 `WorkspaceRegistry` 状态。隔离引擎升级仍属后续。详见 DEV-015。
 
 ## Code Style
 

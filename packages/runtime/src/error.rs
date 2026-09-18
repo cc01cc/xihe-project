@@ -86,6 +86,27 @@ pub enum RuntimeError {
         server_id: String,
         detail: String,
     },
+
+    /// PLAN-0345 T1.3 (decision #7): the workspace is being destroyed; late
+    /// ensure/materialize calls are rejected with 409 WORKSPACE_DESTROYING.
+    #[error("Workspace {workspace_id} is being destroyed")]
+    WorkspaceDestroying { workspace_id: String },
+
+    /// PLAN-0345 T2.2 (decision #10): another in-flight operation holds the
+    /// workspace execution lease.
+    #[error("Workspace {workspace_id} is busy (held by {holder})")]
+    WorkspaceBusy {
+        workspace_id: String,
+        holder: String,
+    },
+
+    /// PLAN-0345 I3: illegal lifecycle transitions fail loudly.
+    #[error("Illegal workspace transition for {workspace_id}: {from} -> {to}")]
+    InvalidTransition {
+        workspace_id: String,
+        from: &'static str,
+        to: &'static str,
+    },
 }
 
 impl RuntimeError {

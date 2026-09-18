@@ -154,6 +154,46 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
+    void materializePassesThroughRuntime409WorkspaceDestroying() {
+        // PLAN-0345 T2.4b (decision #11): the destroying-conflict must reach the
+        // caller as 409 WORKSPACE_DESTROYING, never collapsed into 502.
+        String ownerId = UUID.randomUUID().toString();
+        createdWorkspace = workspaceService.createWorkspace("mat409-ws", ownerId);
+        String target = createdWorkspace.getId().toString();
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/" + target + "/materialize"))
+                .willReturn(aResponse().withStatus(409)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"type\":\"https://xihe.dev/problems/workspace_destroying\","
+                                + "\"title\":\"Conflict\",\"status\":409,"
+                                + "\"code\":\"WORKSPACE_DESTROYING\","
+                                + "\"detail\":\"Workspace " + target + " is being destroyed\"}")));
+
+        String email = "mat409-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        org.springframework.http.ResponseEntity<java.util.Map> reg = restTemplate.postForEntity(
+                url("/api/v1/auth/register"),
+                java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "Mat409"),
+                java.util.Map.class);
+        String memberUserId = userIdOf(email);
+        workspaceUserRepository.save(new com.cc01cc.p.xihe.cp.entity.WorkspaceUser(
+                target, memberUserId, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER));
+        String token = (String) reg.getBody().get("accessToken");
+
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        // The shared test RestTemplate treats only 5xx as errors, so a 409 comes
+        // back as a normal response entity.
+        org.springframework.http.ResponseEntity<java.util.Map> response = restTemplate.postForEntity(
+                url("/api/v1/workspaces/" + target + "/materialize"),
+                new org.springframework.http.HttpEntity<>(java.util.Map.of(), headers),
+                java.util.Map.class);
+        assertEquals(409, response.getStatusCode().value(),
+                "destroying conflict must pass through, not collapse to 502");
+        assertNotNull(response.getBody());
+        assertEquals("WORKSPACE_DESTROYING", response.getBody().get("code"));
+    }
+
+    @Test
     void materializeReturns502WhenRuntimeUnreachable() {
         String ownerId = UUID.randomUUID().toString();
         createdWorkspace = workspaceService.createWorkspace("mat502-ws", ownerId);

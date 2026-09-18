@@ -133,8 +133,14 @@ watch(
 
 watch(
   () => ws.activeFilePath,
-  () => {
+  (path) => {
     ws.syncActiveFileToSession()
+    // PLAN-0365 (root cause B): selecting a file must surface the editor.
+    // The 0328 M3 layout moved FileEditor into the auxiliary panel, which
+    // defaults to closed — without this the click has no visible effect.
+    if (path && !isMobileViewport.value && auxPanel.value === 'closed') {
+      auxPanel.value = 'code'
+    }
   },
 )
 

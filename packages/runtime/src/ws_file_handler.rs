@@ -58,6 +58,14 @@ fn problem(status: StatusCode, code: &str, detail: &str) -> (StatusCode, Json<Va
     )
 }
 
+fn serde_map_error(e: serde_json::Error) -> (StatusCode, Json<Value>) {
+    problem(
+        StatusCode::BAD_GATEWAY,
+        "EXECUTOR_RESPONSE_INVALID",
+        &format!("executor response deserialization failed: {e}"),
+    )
+}
+
 pub(crate) fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
     let status = match &e {
         RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => {
@@ -93,8 +101,14 @@ pub async fn handle_read_file(
     Path(ws_id): Path<String>,
     Json(req): Json<ReadFileRestRequest>,
 ) -> Result<Json<ReadFileResult>, (StatusCode, Json<Value>)> {
-    let ws = app.ensure_workspace(&ws_id).await.map_err(map_error)?;
-    let mut content = fs::read_file(&req.path, &ws.workspace_path)
+    // PLAN-0345 T2.3 (decision #12): reads go through the Sandbox executor
+    // router like MCP tools, closing the read-side executor-bypass. The
+    // response shape is unchanged for REST consumers.
+    app.ensure_workspace(&ws_id).await.map_err(map_error)?;
+    ensure_workspace_consistent(&app, &ws_id).await?;
+    let mut content = app
+        .router
+        .read_file(&ws_id, &req.path)
         .await
         .map_err(map_error)?;
     let truncated = if let Some(max) = req.max_bytes {
@@ -147,8 +161,17 @@ pub async fn handle_list_directory(
     Path(ws_id): Path<String>,
     Json(req): Json<ListDirectoryRequest>,
 ) -> Result<Json<fs::DirectoryListing>, (StatusCode, Json<Value>)> {
-    let ws = app.ensure_workspace(&ws_id).await.map_err(map_error)?;
-    let entries = fs::list_directory(&req.path, &ws.workspace_path).map_err(map_error)?;
+    // PLAN-0345 T2.3: router.list_directory (executor oneshot), same shape.
+    app.ensure_workspace(&ws_id).await.map_err(map_error)?;
+    ensure_workspace_consistent(&app, &ws_id).await?;
+    let val = app
+        .router
+        .list_directory(&ws_id, &req.path)
+        .await
+        .map_err(map_error)?;
+    let entries: Vec<fs::FileInfo> =
+        serde_json::from_value(val.get("entries").cloned().unwrap_or(val))
+            .map_err(serde_map_error)?;
     Ok(Json(fs::DirectoryListing { entries }))
 }
 
@@ -189,8 +212,15 @@ pub async fn handle_stat(
     Path(ws_id): Path<String>,
     Json(req): Json<GetFileInfoRequest>,
 ) -> Result<Json<fs::FileInfo>, (StatusCode, Json<Value>)> {
-    let ws = app.ensure_workspace(&ws_id).await.map_err(map_error)?;
-    let info = fs::get_file_info(&req.path, &ws.workspace_path).map_err(map_error)?;
+    // PLAN-0345 T2.3: router.get_file_info (executor oneshot), same shape.
+    app.ensure_workspace(&ws_id).await.map_err(map_error)?;
+    ensure_workspace_consistent(&app, &ws_id).await?;
+    let val = app
+        .router
+        .get_file_info(&ws_id, &req.path)
+        .await
+        .map_err(map_error)?;
+    let info: fs::FileInfo = serde_json::from_value(val).map_err(serde_map_error)?;
     Ok(Json(info))
 }
 
@@ -274,10 +304,29 @@ mod tests {
             ExecutionSpecClient::new(&format!("http://{address}"), "test-token"),
             Some(dir.path().to_path_buf()),
         ));
+        // PLAN-0345 T2.3: read/list/stat now go through the executor router,
+        // which runs inside a real Sandbox container. Create the container bound
+        // to the workspace tempdir so the exec-based handlers can serve ops
+        // (V6/V7 want real-container evidence, not host-direct shortcuts).
+        manager
+            .lock()
+            .await
+            .create_workspace(
+                &ws_id,
+                workspace_path.to_str().unwrap(),
+                xihe_runtime::sandbox::SecurityProfile::Strict,
+                "xihe/workspace:latest",
+            )
+            .await
+            .expect("test sandbox container must start");
         let router = Arc::new(WorkspaceExecutionRouter::new(
             workspace_ensurer.clone(),
             manager.clone(),
             registry.clone(),
+        ));
+        let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
+            registry.clone(),
+            Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
         ));
         let app = Arc::new(AppState {
             registry: registry.clone(),
@@ -286,6 +335,7 @@ mod tests {
             ready: Arc::new(AtomicBool::new(true)),
             workspace_ensurer,
             router,
+            lifecycle,
             checkpoints: Arc::new(xihe_runtime::checkpoint_api::CheckpointService::new(
                 dir.path(),
             )),
@@ -409,32 +459,41 @@ mod tests {
             .await
             .unwrap();
 
-        // Delete via handler requires the Sandbox executor; without Docker it
-        // must fail closed instead of falling back to host direct.
+        // Delete via handler goes through the Sandbox executor (PLAN-274); the
+        // test sandbox container is running, so the delete must succeed and the
+        // file be gone afterwards (no host-direct fallback exists).
         let state = State(app);
         let path = Path(ws_id);
         let json = Json(DeleteFileRequest {
             path: "del.txt".into(),
         });
-        match handle_delete_file(state, path, json).await {
-            Err((status, _)) => assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE),
-            Ok(_) => panic!("expected fail-closed 503 without Docker container"),
-        }
+        let _ = handle_delete_file(state, path, json)
+            .await
+            .expect("executor delete must succeed with the test container running");
+        assert!(
+            fs::read_file("del.txt", &ws.workspace_path).await.is_err(),
+            "deleted file must be gone from WorkspaceStorage"
+        );
     }
 
     #[tokio::test]
     async fn test_mkdir_handler() {
         let (app, ws_id, _dir, _cp) = setup_ws().await;
+        let ws = app.registry.get(&ws_id).await.unwrap();
 
         let state = State(app);
         let path = Path(ws_id);
         let json = Json(MkdirRequest {
             path: "sub/dir".into(),
         });
-        match handle_mkdir(state, path, json).await {
-            Err((status, _)) => assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE),
-            Ok(_) => panic!("expected fail-closed 503 without Docker container"),
-        }
+        let _ = handle_mkdir(state, path, json)
+            .await
+            .expect("executor mkdir must succeed with the test container running");
+        let info = fs::get_file_info("sub/dir", &ws.workspace_path).unwrap();
+        assert!(
+            info.is_dir,
+            "created directory must exist in WorkspaceStorage"
+        );
     }
 
     #[tokio::test]
