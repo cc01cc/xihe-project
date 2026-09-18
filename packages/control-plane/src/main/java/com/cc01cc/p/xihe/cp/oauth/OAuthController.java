@@ -83,20 +83,34 @@ public class OAuthController {
                 || !authentication.getAuthorities().stream().anyMatch(a -> "ROLE_INTERNAL_SERVICE".equals(a.getAuthority()))) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Internal service authorization required");
         }
+        // PLAN-0349: caller-side parameter problems are 400 (defensive branch, not a
+        // cross-layer promise; Runtime maps its own 400s into the unavailable tier).
+        if (isBlank(request.userId()) || isBlank(request.workspaceId())
+                || isBlank(request.serverId()) || isBlank(request.scope())) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "OAuth token request is invalid");
+        }
         try {
             OAuthCredentialService.AccessGrant grant = service.issueAccessToken(
-                    required(request.userId(), "userId"),
-                    required(request.workspaceId(), "workspaceId"),
-                    required(request.serverId(), "serverId"),
-                    required(request.scope(), "scope"));
+                    request.userId(), request.workspaceId(), request.serverId(), request.scope());
             return ResponseEntity.ok(Map.of(
                     "access_token", grant.accessToken(),
                     "token_type", "Bearer",
                     "expires_in", grant.expiresIn(),
                     "scope", grant.scope()));
+        } catch (OAuthBrokerException e) {
+            if (e.kind() == OAuthBrokerException.Kind.REAUTH_REQUIRED) {
+                logger.warn("OAuth token broker requires reauthorization: {}", e.getMessage());
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.UNAUTHORIZED, "OAUTH_REAUTH_REQUIRED", "OAuth reauthorization is required");
+            }
+            logger.warn("OAuth token broker temporarily unavailable: {}", e.getMessage());
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.SERVICE_UNAVAILABLE, "OAUTH_TOKEN_UNAVAILABLE", "OAuth token temporarily unavailable");
         } catch (IllegalArgumentException e) {
             logger.warn("OAuth token broker rejected: {}", e.getMessage());
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "OAUTH_TOKEN_UNAVAILABLE", "OAuth token unavailable");
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.UNAUTHORIZED, "OAUTH_REAUTH_REQUIRED", "OAuth reauthorization is required");
         }
     }
 
@@ -111,6 +125,10 @@ public class OAuthController {
     private static String required(String value, String name) {
         if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " must not be blank");
         return value;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     public record StartRequest(String workspaceId, String serverId, String remoteEndpoint, String clientId,

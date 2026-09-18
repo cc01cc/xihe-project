@@ -12,9 +12,15 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.OAuthCredential;
 import com.cc01cc.p.xihe.cp.entity.McpServer;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -29,6 +35,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Service
 public class OAuthCredentialService {
 
+    private static final Logger logger = LoggerFactory.getLogger(OAuthCredentialService.class);
+
     private static final String KEY_VERSION = "v1";
     private final PkceSessionService pkce;
     private final OAuthCredentialRepository repository;
@@ -38,6 +46,9 @@ public class OAuthCredentialService {
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
     private final McpServerRepository mcpServerRepository;
+    private final DbLockTimeout dbLockTimeout;
+    private final OAuthTokenBroker broker;
+    private final OAuthRevocationClient revocationClient;
 
     @org.springframework.beans.factory.annotation.Value("${cp.oauth.allowed-hosts:}")
     private String allowedEndpointHosts;
@@ -49,7 +60,10 @@ public class OAuthCredentialService {
             ObjectMapper objectMapper,
             WorkspaceRepository workspaceRepository,
             WorkspaceUserRepository workspaceUserRepository,
-            McpServerRepository mcpServerRepository) {
+            McpServerRepository mcpServerRepository,
+            DbLockTimeout dbLockTimeout,
+            @Lazy OAuthTokenBroker broker,
+            OAuthRevocationClient revocationClient) {
         this.pkce = pkce;
         this.repository = repository;
         this.encryption = encryption;
@@ -57,6 +71,9 @@ public class OAuthCredentialService {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.mcpServerRepository = mcpServerRepository;
+        this.dbLockTimeout = dbLockTimeout;
+        this.broker = broker;
+        this.revocationClient = revocationClient;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     }
 
@@ -101,51 +118,118 @@ public class OAuthCredentialService {
         credential.setEncryptionKeyVersion(KEY_VERSION);
         credential.setStatus("AUTHORIZED");
         repository.save(credential);
-        return new AccessGrant(token.accessToken(), token.expiresIn(), credential.getScope());
+        // Re-authorization supersedes any token cached before; drop it defensively.
+        broker.invalidate(session.userId(), session.workspaceId(), session.serverId());
+        long expiresIn = token.expiresIn() == null ? OAuthTokenBroker.DEFAULT_TTL_SECONDS : token.expiresIn();
+        return new AccessGrant(token.accessToken(), expiresIn, credential.getScope());
     }
 
-    @Transactional
+    /**
+     * PLAN-0349: broker entry point. Cache hits and same-key single-flight live
+     * in {@link OAuthTokenBroker}; this method only keeps the facade contract
+     * used by {@link OAuthController}.
+     */
     public AccessGrant issueAccessToken(String userId, String workspaceId, String serverId, String requestedScope) {
-        ensureWorkspaceServerAccess(userId, workspaceId, serverId);
-        if (requestedScope == null || requestedScope.isBlank()) {
-            throw new IllegalArgumentException("scope_required");
+        return broker.getAccessToken(userId, workspaceId, serverId, requestedScope);
+    }
+
+    /**
+     * PLAN-0349 decision #7: provider refresh under the credential row lock.
+     * Called by the broker leader (bypassing the single-flight entry only in
+     * the S4 rotation test). Applies the PLAN-0346 lock timeout first; a lock
+     * wait beyond {@code cp.lock-timeout-ms} surfaces as
+     * {@code CannotAcquireLockException} (503 {@code OPERATION_LOCK_TIMEOUT})
+     * and is intentionally not caught here.
+     */
+    @Transactional
+    public RefreshResult refreshLocked(String userId, String workspaceId, String serverId, String requestedScope) {
+        try {
+            ensureWorkspaceServerAccess(userId, workspaceId, serverId);
+        } catch (IllegalArgumentException e) {
+            throw new OAuthBrokerException(OAuthBrokerException.Kind.REAUTH_REQUIRED, e.getMessage(), e);
         }
-        OAuthCredential credential = repository.findByUserIdAndWorkspaceIdAndServerId(userId, workspaceId, serverId)
-                .orElseThrow(() -> new IllegalArgumentException("authorization-required"));
+        if (requestedScope == null || requestedScope.isBlank()) {
+            throw new OAuthBrokerException(OAuthBrokerException.Kind.REAUTH_REQUIRED, "scope_required");
+        }
+        dbLockTimeout.apply();
+        OAuthCredential credential = repository.findForUpdate(userId, workspaceId, serverId)
+                .orElseThrow(() -> new OAuthBrokerException(
+                        OAuthBrokerException.Kind.REAUTH_REQUIRED, "authorization-required"));
         if (!"AUTHORIZED".equals(credential.getStatus())) {
-            throw new IllegalArgumentException("authorization-required");
+            throw new OAuthBrokerException(OAuthBrokerException.Kind.REAUTH_REQUIRED, "authorization-required");
         }
         if (!requestedScope.equals(credential.getScope())) {
-            throw new IllegalArgumentException("scope_mismatch");
+            throw new OAuthBrokerException(OAuthBrokerException.Kind.REAUTH_REQUIRED, "scope_mismatch");
         }
-        String refreshToken = encryption.decrypt(credential.getRefreshTokenCiphertext(), binding(userId, workspaceId, serverId));
+        String refreshToken;
+        try {
+            refreshToken = encryption.decrypt(credential.getRefreshTokenCiphertext(),
+                    binding(userId, workspaceId, serverId));
+        } catch (IllegalArgumentException e) {
+            throw new OAuthBrokerException(
+                    OAuthBrokerException.Kind.REAUTH_REQUIRED, "credential_unreadable", e);
+        }
         TokenPayload token = refresh(credential, refreshToken);
         if (token.refreshToken() != null && !token.refreshToken().isBlank()) {
-            credential.setRefreshTokenCiphertext(encryption.encrypt(token.refreshToken(), binding(userId, workspaceId, serverId)));
+            credential.setRefreshTokenCiphertext(encryption.encrypt(token.refreshToken(),
+                    binding(userId, workspaceId, serverId)));
             repository.save(credential);
         }
-        return new AccessGrant(token.accessToken(), token.expiresIn(), credential.getScope());
+        return new RefreshResult(token.accessToken(), token.expiresIn(), credential.getScope());
     }
 
     @Transactional
     public boolean revoke(String userId, String workspaceId, String serverId) {
         ensureWorkspaceServerAccess(userId, workspaceId, serverId);
-        Optional<OAuthCredential> credential = repository.findByUserIdAndWorkspaceIdAndServerId(userId, workspaceId, serverId);
-        credential.ifPresent(value -> {
-            value.setStatus("REVOKED");
-            value.setRefreshTokenCiphertext("revoked");
-            repository.save(value);
-        });
-        return credential.isPresent();
+        dbLockTimeout.apply();
+        Optional<OAuthCredential> credential = repository.findForUpdate(userId, workspaceId, serverId);
+        // Cache invalidation + revocation epoch happen before any early return so a
+        // stale cache entry can never outlive the revocation.
+        broker.invalidate(userId, workspaceId, serverId);
+        if (credential.isEmpty()) {
+            return false;
+        }
+        OAuthCredential value = credential.get();
+        String refreshToken = null;
+        if ("AUTHORIZED".equals(value.getStatus())) {
+            try {
+                refreshToken = encryption.decrypt(value.getRefreshTokenCiphertext(),
+                        binding(userId, workspaceId, serverId));
+            } catch (IllegalArgumentException e) {
+                logger.warn("service=cp event=oauth_token_revoke reason=credential_unreadable "
+                        + "userId={} workspaceId={} serverId={}", userId, workspaceId, serverId);
+            }
+        }
+        value.setStatus("REVOKED");
+        value.setRefreshTokenCiphertext("revoked");
+        repository.save(value);
+        if (refreshToken != null) {
+            String tokenEndpoint = value.getTokenEndpoint();
+            String clientId = value.getClientId();
+            String revocableToken = refreshToken;
+            // Decision #8: best-effort RFC 7009 after commit; never blocks the local revoke.
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    revocationClient.revoke(tokenEndpoint, clientId, revocableToken);
+                }
+            });
+        }
+        return true;
     }
 
     private TokenPayload exchangeCode(PkceSessionService.PendingSession session, String code) {
-        return postToken(session.tokenEndpoint(), form(
-                "grant_type", "authorization_code",
-                "code", code,
-                "client_id", session.clientId(),
-                "redirect_uri", session.redirectUri(),
-                "code_verifier", session.codeVerifier()));
+        try {
+            return postToken(session.tokenEndpoint(), form(
+                    "grant_type", "authorization_code",
+                    "code", code,
+                    "client_id", session.clientId(),
+                    "redirect_uri", session.redirectUri(),
+                    "code_verifier", session.codeVerifier()));
+        } catch (OAuthBrokerException e) {
+            // The callback is UI-facing and keeps its 400 INVALID_REQUEST semantics.
+            throw new IllegalArgumentException("OAuth token exchange failed", e);
+        }
     }
 
     private TokenPayload refresh(OAuthCredential credential, String refreshToken) {
@@ -155,28 +239,78 @@ public class OAuthCredentialService {
                 "client_id", credential.getClientId()));
     }
 
+    /**
+     * PLAN-0349 decision #12: classify provider outcomes into the two broker
+     * tiers. 4xx (or a parseable OAuth {@code error}) is a definite rejection →
+     * REAUTH; unreachable/timeout/5xx/unparseable 2xx → UNAVAILABLE. Neither
+     * the request form (carries the refresh token) nor the provider response
+     * body is ever logged.
+     */
     private TokenPayload postToken(String endpoint, String body) {
+        HttpRequest request;
         try {
-            HttpRequest request = HttpRequest.newBuilder(URI.create(endpoint))
+            request = HttpRequest.newBuilder(URI.create(endpoint))
                     .timeout(Duration.ofSeconds(15))
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            JsonNode json = objectMapper.readTree(response.body());
-            if (response.statusCode() / 100 != 2 || json.path("access_token").asText().isBlank()) {
-                throw new IllegalArgumentException("OAuth token exchange failed");
-            }
-            return new TokenPayload(
-                    json.path("access_token").asText(),
-                    json.path("refresh_token").asText(null),
-                    json.path("expires_in").asLong(300),
-                    json.path("scope").asText(null));
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+        } catch (IllegalArgumentException e) {
+            throw new OAuthBrokerException(OAuthBrokerException.Kind.TOKEN_UNAVAILABLE,
+                    "OAuth token endpoint is invalid", e);
+        }
+        HttpResponse<String> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalArgumentException("OAuth token exchange interrupted", e);
+            throw new OAuthBrokerException(OAuthBrokerException.Kind.TOKEN_UNAVAILABLE,
+                    "OAuth token exchange interrupted", e);
         } catch (Exception e) {
-            if (e instanceof IllegalArgumentException illegal) throw illegal;
-            throw new IllegalArgumentException("OAuth token exchange failed", e);
+            logger.warn("service=cp event=oauth_token_failure errorKind=unavailable reason=request_failed "
+                    + "exception={}", e.getClass().getSimpleName());
+            throw new OAuthBrokerException(OAuthBrokerException.Kind.TOKEN_UNAVAILABLE,
+                    "OAuth token endpoint request failed", e);
+        }
+        int status = response.statusCode();
+        if (status / 100 == 2) {
+            JsonNode json;
+            try {
+                json = objectMapper.readTree(response.body());
+            } catch (Exception e) {
+                // Jackson messages can embed the response body; wrap with a body-free cause.
+                throw new OAuthBrokerException(OAuthBrokerException.Kind.TOKEN_UNAVAILABLE,
+                        "OAuth token response is not JSON",
+                        new IllegalStateException("OAuth provider response could not be parsed"));
+            }
+            String accessToken = json.path("access_token").asText("");
+            if (accessToken.isBlank()) {
+                throw new OAuthBrokerException(OAuthBrokerException.Kind.TOKEN_UNAVAILABLE,
+                        "OAuth token response has no access token");
+            }
+            Long expiresIn = json.hasNonNull("expires_in") ? json.get("expires_in").asLong() : null;
+            return new TokenPayload(accessToken, json.path("refresh_token").asText(null), expiresIn,
+                    json.path("scope").asText(null));
+        }
+        if (status >= 400 && status < 500) {
+            String providerError = providerErrorCode(response.body());
+            throw new OAuthBrokerException(OAuthBrokerException.Kind.REAUTH_REQUIRED,
+                    providerError == null ? "provider_rejected" : "provider_rejected:" + providerError);
+        }
+        throw new OAuthBrokerException(OAuthBrokerException.Kind.TOKEN_UNAVAILABLE,
+                "OAuth token endpoint failed with status " + status);
+    }
+
+    /** Extracts only the sanitized OAuth {@code error} code; never the raw body. */
+    private String providerErrorCode(String responseBody) {
+        try {
+            String error = objectMapper.readTree(responseBody).path("error").asText("");
+            if (error.isBlank()) {
+                return null;
+            }
+            String sanitized = error.replaceAll("[^a-zA-Z0-9_.-]", "");
+            return sanitized.length() > 40 ? sanitized.substring(0, 40) : sanitized;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -321,5 +455,13 @@ public class OAuthCredentialService {
 
     public record AccessGrant(String accessToken, long expiresIn, String scope) {}
 
-    private record TokenPayload(String accessToken, String refreshToken, long expiresIn, String scope) {}
+    /**
+     * PLAN-0349: provider-fresh token plus the raw {@code expires_in} the
+     * provider returned ({@code null} = omitted). The broker needs the
+     * distinction because a missing value maps to the conservative 300s TTL
+     * while an explicit value subtracts the 60s skew first.
+     */
+    public record RefreshResult(String accessToken, Long expiresInSeconds, String scope) {}
+
+    private record TokenPayload(String accessToken, String refreshToken, Long expiresIn, String scope) {}
 }

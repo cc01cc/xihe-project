@@ -3325,6 +3325,143 @@ mod remote_handler_tests {
         assert_eq!(error.0, StatusCode::NOT_FOUND);
         assert!(app.manager.lock().await.list_workspaces().is_empty());
     }
+
+    /// PLAN-0349 T1.4/T2.1: Runtime classifies broker failures by HTTP status at
+    /// each call site (no problem-code parsing). First fetch: 401/403 →
+    /// authorization_required, other non-2xx → token_broker_unavailable. The
+    /// refetch after a remote 401 goes through remote_mcp_error_response:
+    /// non-2xx → remote_mcp_unavailable.
+    #[tokio::test]
+    async fn oauth_mode_broker_failures_map_per_call_site() {
+        #[allow(unsafe_code)]
+        fn point_cp_at(url: &str) {
+            // Edition 2024: env mutation is unsafe; only the OAuth-mode handler
+            // calls in this module read XIHE_CP_URL.
+            unsafe {
+                std::env::set_var("XIHE_CP_URL", url);
+            }
+        }
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        async fn spec(Path(ws_id): Path<String>) -> impl IntoResponse {
+            AxumJson(spec_json(&ws_id)).into_response()
+        }
+        async fn token(
+            State(counters): State<Arc<Mutex<HashMap<String, usize>>>>,
+            body: String,
+        ) -> axum::response::Response {
+            let payload: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            let user = payload
+                .get("userId")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let call = {
+                let mut counts = counters.lock().expect("token counters");
+                let entry = counts.entry(user.clone()).or_insert(0);
+                *entry += 1;
+                *entry
+            };
+            if user == "u-broker-503" || (user == "u-refetch-503" && call >= 2) {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+                    AxumJson(serde_json::json!({
+                        "type": "https://xihe.dev/problems/oauth_token_unavailable",
+                        "code": "OAUTH_TOKEN_UNAVAILABLE",
+                    })),
+                )
+                    .into_response();
+            }
+            AxumJson(serde_json::json!({
+                "access_token": "initial-token",
+                "token_type": "Bearer",
+                "expires_in": 300,
+                "scope": "mcp:tools",
+            }))
+            .into_response()
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind broker stub");
+        let addr = listener.local_addr().expect("broker stub addr").to_string();
+        let app = Router::new()
+            .route(
+                "/internal/v1/runtime/workspaces/{ws_id}/execution-spec",
+                get(spec),
+            )
+            .route("/internal/v1/oauth/token", post(token))
+            .with_state(Arc::new(Mutex::new(HashMap::<String, usize>::new())));
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve broker stub");
+        });
+        let cp_url = format!("http://{addr}");
+        point_cp_at(&cp_url);
+        allow_local_http();
+
+        async fn fake_mcp_unauthorized() -> String {
+            async fn handler() -> impl IntoResponse {
+                (StatusCode::UNAUTHORIZED, "{\"error\":\"unauthorized\"}")
+            }
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind fake mcp 401");
+            let addr = listener
+                .local_addr()
+                .expect("fake mcp 401 addr")
+                .to_string();
+            let app = Router::new().fallback(any(handler));
+            tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("serve fake mcp 401");
+            });
+            format!("http://{addr}/mcp")
+        }
+
+        let endpoint = fake_mcp_unauthorized().await;
+        let state = test_state(&cp_url).await;
+
+        let mut first_fetch = call_request(&endpoint, true);
+        first_fetch.auth_mode = "oauth".to_string();
+        first_fetch.user_id = "u-broker-503".to_string();
+        let error = remote_mcp_call_handler(
+            Path((TEST_WS.to_string(), "fake".to_string())),
+            State(state.clone()),
+            auth_headers(),
+            AxumJson(first_fetch),
+        )
+        .await
+        .expect_err("broker 503 on the first fetch must fail");
+        assert_eq!(error.0, StatusCode::BAD_GATEWAY);
+        assert_eq!(error.2.0["code"], "TOKEN_BROKER_UNAVAILABLE");
+
+        let mut refetch = call_request(&endpoint, false);
+        refetch.auth_mode = "oauth".to_string();
+        refetch.user_id = "u-refetch-503".to_string();
+        let error = remote_mcp_call_handler(
+            Path((TEST_WS.to_string(), "fake".to_string())),
+            State(state.clone()),
+            auth_headers(),
+            AxumJson(refetch),
+        )
+        .await
+        .expect_err("broker 503 on the refetch must fail");
+        assert_eq!(error.0, StatusCode::BAD_GATEWAY);
+        assert_eq!(error.2.0["code"], "REMOTE_MCP_UNAVAILABLE");
+    }
+
+    /// The refetch path keeps its existing timeout mapping (the 30s wire
+    /// timeout is not reproduced in unit time; the mapping table itself is).
+    #[test]
+    fn refetch_timeout_keeps_the_408_mapping() {
+        let (status, _, body) = remote_mcp_error_response(RemoteMcpError::Timeout);
+        assert_eq!(status, StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(body.0["code"], "TIMEOUT");
+    }
 }
 
 #[cfg(test)]
