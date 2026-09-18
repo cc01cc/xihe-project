@@ -152,7 +152,9 @@ public class OperationController {
                         HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime job read failed");
             }
             if (!result.available()) {
-                boolean expired = archive.terminal();
+                // PLAN-0344：LOST = 容器销毁/job 失联（含 orphaned 收口）；
+                // EXPIRED = 正常终态（succeeded/cancelled/timeout）但文件已被 TTL 清理。
+                boolean expired = archive.terminal() && !"orphaned".equals(archive.status());
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.CONFLICT,
                         expired ? "JOB_OUTPUT_EXPIRED" : "JOB_OUTPUT_LOST",

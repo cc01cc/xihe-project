@@ -170,6 +170,24 @@ class OperationJobOutputIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void destroyOrphanedStaysLostNotExpired() {
+        String jobId = UUID.randomUUID().toString();
+        UUID itemId = newJobItem(jobId);
+        when(runtimeJobClient.jobOutput(eq(workspaceId), eq(jobId), anyString(), any(), any()))
+                .thenReturn(new RuntimeJobClient.JobOutputResult(false, false, null));
+        // destroy 流程把 running 档案收口为 orphaned（decision #4/P1-2）；
+        // 续看必须报 LOST（job 随容器丢失），而不是 EXPIRED。
+        Map<String, Object> orphaned = new LinkedHashMap<>();
+        orphaned.put("status", "orphaned");
+        orphaned.put("cancelReason", "destroy_orphan");
+        jobStateService.upsert(itemId, orphaned);
+
+        ResponseEntity<Map> lost = getOutput(itemId, authToken, "");
+        assertEquals(HttpStatus.CONFLICT, lost.getStatusCode());
+        assertEquals("JOB_OUTPUT_LOST", lost.getBody().get("code"));
+    }
+
+    @Test
     void hidesForeignAndMissingArchives() {
         String jobId = UUID.randomUUID().toString();
         UUID itemId = newJobItem(jobId);
