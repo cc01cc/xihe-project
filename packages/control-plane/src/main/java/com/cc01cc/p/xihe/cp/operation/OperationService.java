@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.operation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationEvent;
 import com.cc01cc.p.xihe.cp.entity.OperationExtension;
@@ -15,6 +16,8 @@ import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -22,6 +25,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -61,10 +65,15 @@ public class OperationService {
     private static final Map<String, List<String>> ITEM_TRANSITIONS = Map.of(
             // 2026-09-13 E2E（V11）：pending → completed 用于"写完即完成"的记录型
             // 条目（llm_usage），避免为它伪造 running 生命周期或残留 pending。
+            // 0346 (gap D)：aborted 对所有活动态开放——reconcileStaleOperation
+            // 对 running/waiting/resolving 的收敛此前必抛 STATE_CONFLICT 被吞，
+            // item 永远停 in running（测试 reconcileStaleOperation_settlesRows...
+            // 实证），修 transition 表而非让对账绕过守卫。
             "pending", List.of("running", "completed", "cancelled", "aborted", "failed"),
             "running", List.of("waiting_for_approval", "completed", "failed", "aborted",
                     "cancelled", "ambiguous"),
-            "waiting_for_approval", List.of("resolving", "cancelled"),
+            "waiting_for_approval", List.of("running", "resolving", "completed", "failed",
+                    "aborted", "cancelled"),
             // 2026-09-13 E2E（决策 #8 补充）：审批通过后的派发窗口 item 处于
             // resolving，此刻取消必须能落 cancelled（否则 item 悬挂在 resolving）。
             "resolving", List.of("completed", "failed", "aborted", "cancelled"));
@@ -74,17 +83,42 @@ public class OperationService {
     private final OperationAttemptRepository attempts;
     private final OperationEventRepository events;
     private final OperationExtensionRepository extensions;
+    // PLAN-0346 T1.8: bounds FOR UPDATE / conditional UPDATE / unique-index
+    // INSERT waits so a stuck writer cannot pin Hikari connections forever.
+    private final DbLockTimeout dbLockTimeout;
+    // PLAN-0346 (gap B): self-injection so the post-unique-violation re-read
+    // can run in a REQUIRES_NEW transaction — inside the aborted transaction
+    // PostgreSQL rejects every further statement.
+    @Autowired
+    private ApplicationContext applicationContext;
 
     public OperationService(SessionOperationRepository operations,
                             OperationItemRepository items,
                             OperationAttemptRepository attempts,
                             OperationEventRepository events,
-                            OperationExtensionRepository extensions) {
+                            OperationExtensionRepository extensions,
+                            DbLockTimeout dbLockTimeout) {
         this.operations = operations;
         this.items = items;
         this.attempts = attempts;
         this.events = events;
         this.extensions = extensions;
+        this.dbLockTimeout = dbLockTimeout;
+    }
+
+    private OperationService self() {
+        return applicationContext.getBean(OperationService.class);
+    }
+
+    /** Re-read an extension in a fresh transaction (aborted-txn escape hatch). */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public OperationExtension findExtensionFresh(UUID itemId, UUID attemptId,
+                                                 String extensionKind, Integer schemaVersion) {
+        return itemId != null
+                ? extensions.findByItemIdAndExtensionKindAndSchemaVersion(
+                        itemId.toString(), extensionKind, schemaVersion).orElse(null)
+                : extensions.findByAttemptIdAndExtensionKindAndSchemaVersion(
+                        attemptId.toString(), extensionKind, schemaVersion).orElse(null);
     }
 
     public record OperationStartResult(UUID operationId, boolean alreadyRecorded) {}
@@ -194,6 +228,7 @@ public class OperationService {
      */
     @Transactional
     public void recordLateTermination(String itemId, boolean confirmed) {
+        dbLockTimeout.apply();
         OperationItem item = items.findById(UUID.fromString(itemId))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
                         "Operation item not found"));
@@ -212,6 +247,7 @@ public class OperationService {
      */
     @Transactional
     public boolean attachPolicySummary(UUID itemId, String policySummaryJson) {
+        dbLockTimeout.apply();
         if (itemId == null || policySummaryJson == null || policySummaryJson.isBlank()) {
             return false;
         }
@@ -247,6 +283,7 @@ public class OperationService {
      */
     @Transactional
     public void settleRemainingOpenItems(UUID operationId) {
+        dbLockTimeout.apply();
         if (operationId == null) {
             return;
         }
@@ -278,6 +315,7 @@ public class OperationService {
      */
     @Transactional
     public void settleCancellation(UUID itemId, UUID attemptId, String itemStatus, String errorCode) {
+        dbLockTimeout.apply();
         if (attemptId != null) {
             int affected = attempts.finishStarted(attemptId, "cancelled", 499, errorCode, null, null,
                     Instant.now());
@@ -302,6 +340,7 @@ public class OperationService {
                                                String runId, String requestId, String kind,
                                                String source, String actorType, String actorId,
                                                String idempotencyKey, String summary) {
+        dbLockTimeout.apply();
         if (kind == null || kind.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "kind is required");
         }
@@ -358,6 +397,7 @@ public class OperationService {
     @Transactional
     public void transitionOperation(UUID operationId, String targetStatus,
                                     String errorCode, String errorRef) {
+        dbLockTimeout.apply();
         SessionOperation operation = operations.findById(operationId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
@@ -400,6 +440,7 @@ public class OperationService {
     public OperationItem appendItem(UUID operationId, String toolCallId, String parentId,
                                     String kind, String toolName, String source,
                                     String argumentsPreview, String normalizedArgv, String cwd) {
+        dbLockTimeout.apply();
         // PLAN-0317 决策 #7②：锁 operation 行串行化序号分配（同一 operation
         // 内的 item/event 追加不再依赖唯一约束失败回滚）。
         SessionOperation operation = operations.findByIdForUpdate(operationId)
@@ -454,6 +495,7 @@ public class OperationService {
     @Transactional
     public void transitionItem(UUID itemId, String targetStatus, String policyDecision,
                                String approvalRequestId, String resultRef, String errorCode) {
+        dbLockTimeout.apply();
         OperationItem item = items.findById(itemId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
                         "Operation item not found"));
@@ -494,9 +536,16 @@ public class OperationService {
     @Transactional
     public OperationAttempt startAttempt(UUID itemId, String stage, String parentAttemptId,
                                          String module, String requestId) {
+        dbLockTimeout.apply();
         OperationItem item = items.findById(itemId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
                         "Operation item not found"));
+        // PLAN-0346 (gap C): take the same operation-row lock as appendItem so
+        // retryNo allocation is serialized per operation (previously unlocked;
+        // concurrent retries hit a 409 instead of an ordered allocation).
+        operations.findByIdForUpdate(UUID.fromString(item.getOperationId()))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
         if (requestId != null && !requestId.isBlank()) {
             OperationAttempt existing = attempts.findByItemIdAndStageAndRequestId(
                     itemId.toString(), stage, requestId).orElse(null);
@@ -534,6 +583,7 @@ public class OperationService {
     @Transactional
     public void finishAttempt(UUID attemptId, String targetStatus, Integer httpStatus,
                                String errorCode, String resultRef, Long durationMs) {
+        dbLockTimeout.apply();
         if (!List.of("succeeded", "failed", "timed_out", "cancelled", "unknown")
                 .contains(targetStatus)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
@@ -587,13 +637,60 @@ public class OperationService {
                 attemptId, targetStatus, computed);
     }
 
-    @Transactional
+    // PLAN-0346 (gap B): a concurrent duplicate delivery hits the unique index
+    // inside the REQUIRES_NEW worker, which aborts ONLY the worker transaction
+    // (the facade has no transaction). The facade then re-reads the winner in a
+    // fresh REQUIRES_NEW transaction — impossible inside the aborted one — and
+    // decides: same payload = idempotent hit, different payload = 409. The race
+    // loser surfaces as DataIntegrityViolationException (the worker lets it
+    // propagate so the aborted transaction rolls back cleanly); pre-existing
+    // different-payload conflicts surface as CpApiException 409.
     public void appendExtension(UUID itemId, UUID attemptId, String extensionKind,
                                 Integer schemaVersion, String payloadJson) {
         if ((itemId == null && attemptId == null) || (itemId != null && attemptId != null)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "Exactly one of itemId or attemptId is required");
         }
+        try {
+            self().appendExtensionInNewTx(itemId, attemptId, extensionKind, schemaVersion, payloadJson);
+        } catch (CpApiException e) {
+            if (!"OPERATION_EXTENSION_CONFLICT".equals(e.getCode())) {
+                throw e;
+            }
+            resolveConcurrentExtension(itemId, attemptId, extensionKind, schemaVersion, payloadJson, e);
+        } catch (DataIntegrityViolationException e) {
+            logger.warn("[LIFECYCLE] service=cp event=operation_extension_race itemId={} attemptId={} kind={} schemaVersion={}",
+                    itemId, attemptId, extensionKind, schemaVersion);
+            resolveConcurrentExtension(itemId, attemptId, extensionKind, schemaVersion, payloadJson,
+                    new CpApiException(HttpStatus.CONFLICT, "OPERATION_EXTENSION_CONFLICT",
+                            "An extension of this kind and schema version already exists with different payload"));
+        }
+        logger.info("[LIFECYCLE] service=cp event=operation_extension_appended itemId={} attemptId={} kind={}",
+                itemId, attemptId, extensionKind);
+    }
+
+    /**
+     * PLAN-0346 (gap B): the loser's insert aborted its own transaction, but the
+     * winner is committed — a fresh read decides between idempotent hit (same
+     * payload) and genuine conflict (different payload / invisible winner).
+     */
+    private void resolveConcurrentExtension(UUID itemId, UUID attemptId, String extensionKind,
+                                            Integer schemaVersion, String payloadJson,
+                                            CpApiException conflict) {
+        OperationExtension winner = self().findExtensionFresh(
+                itemId, attemptId, extensionKind, schemaVersion);
+        if (winner != null && sameJsonPayload(winner.getPayload(), payloadJson)) {
+            logger.info("[LIFECYCLE] service=cp event=operation_extension_idempotent_hit itemId={} attemptId={} kind={} schemaVersion={} path=concurrent",
+                    itemId, attemptId, extensionKind, schemaVersion);
+            return;
+        }
+        throw conflict;
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void appendExtensionInNewTx(UUID itemId, UUID attemptId, String extensionKind,
+                                       Integer schemaVersion, String payloadJson) {
+        dbLockTimeout.apply();
         if (schemaVersion == null) {
             schemaVersion = SCHEMA_VERSION;
         }
@@ -616,16 +713,10 @@ public class OperationService {
                 attemptId == null ? null : attemptId.toString(),
                 extensionKind, schemaVersion, payloadJson);
         extension.setId(UUID.randomUUID());
-        try {
-            extensions.saveAndFlush(extension);
-        } catch (DataIntegrityViolationException e) {
-            logger.warn("[LIFECYCLE] service=cp event=operation_extension_conflict itemId={} attemptId={} kind={} reason={}",
-                    itemId, attemptId, extensionKind, e.getMessage());
-            throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_EXTENSION_CONFLICT",
-                    "An extension of this kind and schema version already exists for the target");
-        }
-        logger.info("[LIFECYCLE] service=cp event=operation_extension_appended itemId={} attemptId={} kind={}",
-                itemId, attemptId, extensionKind);
+        // Any DataIntegrityViolationException here propagates: the worker
+        // transaction is aborted and rolls back (the concurrent winner owns the
+        // row), and the facade's fresh-read retry decides the final outcome.
+        extensions.saveAndFlush(extension);
     }
 
     private static boolean sameJsonPayload(String left, String right) {
@@ -662,7 +753,144 @@ public class OperationService {
         trace.put("items", operationItems);
         trace.put("attempts", operationAttempts);
         trace.put("events", operationEvents);
+        trace.put("toolCallPairs", buildToolCallPairs(operationItems));
         return trace;
+    }
+
+    /**
+     * PLAN-0346 (Q2): read-only pairing of the two channel facts of one tool
+     * call — the agent row and the mcp row share the {@code tool_call_id}.
+     * A missing side is returned as {@code null} instead of hiding the pair;
+     * non-{@code tool_call} kinds stay out (approval/checkpoint ids are not
+     * dispatch pairs).
+     */
+    private static List<Map<String, Object>> buildToolCallPairs(List<OperationItem> operationItems) {
+        Map<String, List<OperationItem>> grouped = new LinkedHashMap<>();
+        for (OperationItem item : operationItems) {
+            if (!"tool_call".equals(item.getKind())
+                    || item.getToolCallId() == null || item.getToolCallId().isBlank()) {
+                continue;
+            }
+            grouped.computeIfAbsent(item.getToolCallId(), key -> new ArrayList<>()).add(item);
+        }
+        List<Map<String, Object>> pairs = new ArrayList<>();
+        for (Map.Entry<String, List<OperationItem>> entry : grouped.entrySet()) {
+            Map<String, Object> pair = new LinkedHashMap<>();
+            pair.put("toolCallId", entry.getKey());
+            pair.put("agentItemId", null);
+            pair.put("mcpItemId", null);
+            for (OperationItem item : entry.getValue()) {
+                if ("agent".equals(item.getSource())) {
+                    pair.put("agentItemId", item.getId().toString());
+                } else if ("mcp".equals(item.getSource())) {
+                    pair.put("mcpItemId", item.getId().toString());
+                }
+            }
+            pairs.add(pair);
+        }
+        return pairs;
+    }
+
+    /**
+     * PLAN-0346 (Q1): minimal read-only replay — re-applies the state-carrying
+     * events in sequence order and diffs the derived state against the current
+     * rows. Only event-derivable fields enter the verdict (operation/item/
+     * attempt status, id sets, sequence continuity); source/kind/toolCallId,
+     * timestamps and extension payloads are out of scope by design
+     * (design「重放是什么」).
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> replayOperation(UUID operationId) {
+        SessionOperation operation = operations.findById(operationId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
+        List<OperationEvent> operationEvents = events.findByOperationIdOrderBySequenceAsc(operationId.toString());
+
+        String expectedOperationStatus = null;
+        Map<String, String> expectedItemStatuses = new LinkedHashMap<>();
+        Map<String, String> expectedAttemptStatuses = new LinkedHashMap<>();
+        List<Map<String, Object>> sequenceGaps = new ArrayList<>();
+        // Ledger sequences are 0-based (findMaxSequence coalesces to -1).
+        long previousSequence = -1L;
+        for (OperationEvent event : operationEvents) {
+            long sequence = event.getSequence() == null ? -1L : event.getSequence();
+            if (sequence != previousSequence + 1) {
+                Map<String, Object> gap = new LinkedHashMap<>();
+                gap.put("expected", previousSequence + 1);
+                gap.put("actual", sequence);
+                sequenceGaps.add(gap);
+            }
+            previousSequence = sequence;
+            String type = event.getEventType();
+            String state = event.getState();
+            if (type == null || state == null) {
+                continue;
+            }
+            if (type.startsWith("operation.")) {
+                expectedOperationStatus = state;
+            } else if (type.startsWith("item.") && event.getItemId() != null) {
+                // Covers item.created / item.<status> and item.terminated.late
+                // (the late marker re-states the current status, never changes it).
+                expectedItemStatuses.put(event.getItemId(), state);
+            } else if (type.startsWith("attempt.") && event.getAttemptId() != null) {
+                expectedAttemptStatuses.put(event.getAttemptId(), state);
+            }
+        }
+
+        List<OperationItem> currentItems = items.findByOperationIdOrderBySequenceAsc(operationId.toString());
+        Map<String, String> actualItemStatuses = new LinkedHashMap<>();
+        Map<String, String> actualAttemptStatuses = new LinkedHashMap<>();
+        for (OperationItem item : currentItems) {
+            actualItemStatuses.put(item.getId().toString(), item.getStatus());
+            for (OperationAttempt attempt : attempts.findByItemIdOrderByStartedAtAsc(item.getId().toString())) {
+                actualAttemptStatuses.put(attempt.getId().toString(), attempt.getStatus());
+            }
+        }
+
+        List<Map<String, Object>> mismatches = new ArrayList<>();
+        if (expectedOperationStatus != null
+                && !expectedOperationStatus.equals(operation.getStatus())) {
+            mismatches.add(replayMismatch("operation", operationId.toString(),
+                    expectedOperationStatus, operation.getStatus()));
+        }
+        diffReplayStatuses(expectedItemStatuses, actualItemStatuses, "item", mismatches);
+        diffReplayStatuses(expectedAttemptStatuses, actualAttemptStatuses, "attempt", mismatches);
+
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("events", operationEvents.size());
+        counts.put("items", currentItems.size());
+        counts.put("attempts", actualAttemptStatuses.size());
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("operationId", operationId.toString());
+        report.put("consistent", mismatches.isEmpty() && sequenceGaps.isEmpty());
+        report.put("mismatches", mismatches);
+        report.put("sequenceGaps", sequenceGaps);
+        report.put("counts", counts);
+        return report;
+    }
+
+    private static void diffReplayStatuses(Map<String, String> expected, Map<String, String> actual,
+                                           String entity, List<Map<String, Object>> mismatches) {
+        for (Map.Entry<String, String> entry : expected.entrySet()) {
+            String actualStatus = actual.get(entry.getKey());
+            if (!Objects.equals(entry.getValue(), actualStatus)) {
+                mismatches.add(replayMismatch(entity, entry.getKey(), entry.getValue(), actualStatus));
+            }
+        }
+        for (Map.Entry<String, String> entry : actual.entrySet()) {
+            if (!expected.containsKey(entry.getKey())) {
+                mismatches.add(replayMismatch(entity, entry.getKey(), null, entry.getValue()));
+            }
+        }
+    }
+
+    private static Map<String, Object> replayMismatch(String entity, String id, String expected, String actual) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("entity", entity);
+        row.put("id", id);
+        row.put("expected", expected);
+        row.put("actual", actual);
+        return row;
     }
 
     @Transactional(readOnly = true)
@@ -705,6 +933,7 @@ public class OperationService {
      */
     @Transactional
     public void reconcileStaleOperation(String runId, String targetStatus) {
+        dbLockTimeout.apply();
         UUID operationId = findOperationIdByRunId(runId);
         if (operationId == null) {
             return;

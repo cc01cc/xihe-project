@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.config;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +23,12 @@ import org.slf4j.LoggerFactory;
 @RestControllerAdvice
 public class ProblemDetailsHandler {
     private static final Logger logger = LoggerFactory.getLogger(ProblemDetailsHandler.class);
+    private final long lockTimeoutMs;
+
+    public ProblemDetailsHandler(@Value("${cp.lock-timeout-ms:5000}") long lockTimeoutMs) {
+        this.lockTimeoutMs = lockTimeoutMs;
+    }
+
     public static ResponseEntity<Map<String, Object>> problemResponse(HttpStatus status, String code, String detail) {
         String requestId = UUID.randomUUID().toString();
         Map<String, Object> body = new LinkedHashMap<>();
@@ -60,6 +68,21 @@ public class ProblemDetailsHandler {
         return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request validation failed", request);
     }
 
+    @ExceptionHandler(CannotAcquireLockException.class)
+    public ResponseEntity<Map<String, Object>> lockTimeout(CannotAcquireLockException exception,
+                                                           HttpServletRequest request) {
+        // PLAN-0346 T1.8: the PostgreSQL lock wait exceeded cp.lock-timeout-ms
+        // (SQLSTATE 55P03). The request fails explicitly and is safe to retry;
+        // best-effort mirror writers catch this upstream and log a warning.
+        String requestId = resolveRequestId(request);
+        Throwable cause = exception.getMostSpecificCause();
+        logger.warn("[LIFECYCLE] service=cp event=operation_lock_timeout path={} requestId={} timeoutMs={} reason={}",
+                request.getRequestURI(), requestId, lockTimeoutMs,
+                cause == null ? exception.getMessage() : cause.getMessage());
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "OPERATION_LOCK_TIMEOUT",
+                "Database lock wait timed out; the request is safe to retry", requestId);
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> forbidden(AccessDeniedException exception, HttpServletRequest request) {
         logger.warn("Forbidden request at {}: {}", request.getRequestURI(), exception);
@@ -85,8 +108,11 @@ public class ProblemDetailsHandler {
 
     private ResponseEntity<Map<String, Object>> problem(
             HttpStatus status, String code, String detail, HttpServletRequest request) {
-        String requestId = request.getHeader("X-Request-Id");
-        if (requestId == null || requestId.isBlank()) requestId = UUID.randomUUID().toString();
+        return problem(status, code, detail, resolveRequestId(request));
+    }
+
+    private ResponseEntity<Map<String, Object>> problem(
+            HttpStatus status, String code, String detail, String requestId) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", "https://xihe.dev/problems/" + code.toLowerCase());
         body.put("title", status.getReasonPhrase());
@@ -98,5 +124,13 @@ public class ProblemDetailsHandler {
                 .contentType(MediaType.parseMediaType("application/problem+json"))
                 .header("X-Request-Id", requestId)
                 .body(body);
+    }
+
+    private static String resolveRequestId(HttpServletRequest request) {
+        String requestId = request.getHeader("X-Request-Id");
+        if (requestId == null || requestId.isBlank()) {
+            requestId = UUID.randomUUID().toString();
+        }
+        return requestId;
     }
 }

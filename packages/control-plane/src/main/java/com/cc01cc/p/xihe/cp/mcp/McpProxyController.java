@@ -32,6 +32,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
@@ -825,7 +826,7 @@ public class McpProxyController {
             String responseBody = unwrapSseToJson(response.body());
             boolean unwrapped = responseBody != response.body();
 
-            finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);
+            finishLedgerAttempt(ledgerAttempt, response.statusCode(), null, responseBody);
             appendMcpExtension(ledgerAttempt, serverId, body, response.statusCode(), responseBody, null,
                     STATELESS_PROTOCOL_VERSION);
 
@@ -1095,7 +1096,19 @@ public class McpProxyController {
         }
     }
 
+    // PLAN-0346 (gap A): the mcp channel row used to stay "running" on a
+    // successful dispatch (only the attempt was finished), letting the run
+    // reconciler wrongly settle it to "aborted". Three-tier settlement:
+    //   HTTP 2xx + MCP result.isError=false → completed
+    //   HTTP 2xx + MCP result.isError=true  → failed (detail=mcp_is_error)
+    //   unparseable body / non-2xx / transport error → previous behaviour
+    // Body parsing is best-effort: failure keeps the row for reconciliation.
     private void finishLedgerAttempt(LedgerAttempt ledgerAttempt, int httpStatus, String errorCode) {
+        finishLedgerAttempt(ledgerAttempt, httpStatus, errorCode, null);
+    }
+
+    private void finishLedgerAttempt(LedgerAttempt ledgerAttempt, int httpStatus, String errorCode,
+                                     String responseBody) {
         if (ledgerAttempt == null) {
             return;
         }
@@ -1107,12 +1120,67 @@ public class McpProxyController {
             if (!succeeded) {
                 operationService.transitionItem(ledgerAttempt.itemId(), unknown ? "ambiguous" : "failed",
                         null, null, null, errorCode);
+                return;
+            }
+            McpResult mcpResult = parseMcpResult(responseBody);
+            if (mcpResult == null) {
+                // Unparseable/absent body: leave the item for the reconciler (no regression).
+                return;
+            }
+            if (mcpResult.kind() == McpResultKind.TOOL_ERROR) {
+                operationService.transitionItem(ledgerAttempt.itemId(), "failed",
+                        null, null, null, "MCP_RESULT_IS_ERROR");
+            } else if (mcpResult.kind() == McpResultKind.PROTOCOL_ERROR) {
+                operationService.transitionItem(ledgerAttempt.itemId(), "failed",
+                        null, null, null, mcpResult.errorCode());
+            } else {
+                operationService.transitionItem(ledgerAttempt.itemId(), "completed",
+                        null, null, null, null);
+            }
+        } catch (CpApiException e) {
+            if (!"OPERATION_STATE_CONFLICT".equals(e.getCode())) {
+                logger.error("[LIFECYCLE] service=cp event=operation_mcp_attempt_finish_failed attemptId={}",
+                        ledgerAttempt.attemptId(), e);
             }
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=operation_mcp_attempt_finish_failed attemptId={}",
                     ledgerAttempt.attemptId(), e);
         }
     }
+
+    /**
+     * PLAN-0346 (gap A) four-way MCP tools/call verdict from a 2xx body:
+     * completed / tool error ({@code result.isError=true}) / protocol error
+     * (JSON-RPC {@code error} object; detail = {@code error.code} only, message
+     * text is never persisted) / {@code null} = undecidable (unparseable body
+     * → leave the item to the reconciler).
+     */
+    private McpResult parseMcpResult(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        try {
+            var root = objectMapper.readTree(responseBody);
+            var error = root.path("error");
+            if (error.isObject()) {
+                String suffix = error.hasNonNull("code") ? ":" + error.get("code").asInt() : "";
+                return new McpResult(McpResultKind.PROTOCOL_ERROR, "MCP_PROTOCOL_ERROR" + suffix);
+            }
+            var result = root.path("result");
+            if (result.isMissingNode() || !result.isObject()) {
+                return null;
+            }
+            return result.path("isError").asBoolean(false)
+                    ? new McpResult(McpResultKind.TOOL_ERROR, "MCP_RESULT_IS_ERROR")
+                    : new McpResult(McpResultKind.COMPLETED, null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private enum McpResultKind { COMPLETED, TOOL_ERROR, PROTOCOL_ERROR }
+
+    private record McpResult(McpResultKind kind, String errorCode) {}
 
     private void appendMcpExtension(LedgerAttempt ledgerAttempt, String serverId, String requestBody,
                                     int responseStatus, String responseBody, String mcpErrorCode,
@@ -1310,7 +1378,7 @@ public class McpProxyController {
                     .timeout(Duration.ofSeconds(waitSeconds > 0 ? waitSeconds : 30))
                     .build();
             HttpResponse<String> response = httpClient.send(forwardRequest, HttpResponse.BodyHandlers.ofString());
-            finishLedgerAttempt(ledgerAttempt, response.statusCode(), null);
+            finishLedgerAttempt(ledgerAttempt, response.statusCode(), null, response.body());
             appendMcpExtension(ledgerAttempt, server.getId().toString(), body,
                     response.statusCode(), response.body(), null, headers.getFirst("MCP-Protocol-Version"));
             HttpHeaders responseHeaders = new HttpHeaders();

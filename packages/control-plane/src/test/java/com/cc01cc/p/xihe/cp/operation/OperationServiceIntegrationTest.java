@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -23,6 +24,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Map;
@@ -38,6 +41,12 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private SessionOperationRepository sessionOperationRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private ChatRunRepository chatRunRepository;
@@ -84,6 +93,12 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
 
     private OperationService.OperationStartResult start(String idempotencyKey) {
         return operationService.startOperation(userId, sessionId, workspaceId, null, null,
+                "chat", "ui", "user", userId, idempotencyKey, "Test operation");
+    }
+
+    /** PLAN-0346: start bound to the setUp run so run-scoped lookups resolve. */
+    private OperationService.OperationStartResult startForRun(String idempotencyKey) {
+        return operationService.startOperation(userId, sessionId, workspaceId, runId, null,
                 "chat", "ui", "user", userId, idempotencyKey, "Test operation");
     }
 
@@ -574,5 +589,224 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         assertTrue(missing instanceof com.cc01cc.p.xihe.cp.config.CpApiException api
                         && "OPERATION_NOT_FOUND".equals(api.getCode()),
                 "expected OPERATION_NOT_FOUND but got: " + missing.getMessage());
+    }
+
+    // ── PLAN-0346 gaps B/C/D: concurrency + reconciliation semantics ────
+
+    @Test
+    void appendExtension_samePayloadFromTwoThreads_isIdempotentNot409() throws Exception {
+        // Gap B: concurrent duplicate delivery hit the unique index and returned
+        // a spurious 409 instead of an idempotent hit. Two threads race the same
+        // (itemId, kind, version, payload): exactly one insert wins, the loser
+        // re-reads, compares, and returns quietly. Final state: one row.
+        var started = start("key-gapb-" + UUID.randomUUID().toString().substring(0, 8));
+        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "probe", "agent", null, null, null);
+        String payload = "{\"k\":\"v\"}";
+
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        var latch = new java.util.concurrent.CountDownLatch(1);
+        var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+        for (int i = 0; i < 2; i++) {
+            futures.add(executor.submit(() -> {
+                latch.await();
+                operationService.appendExtension(item.getId(), null, "job_state", 1, payload);
+                return null;
+            }));
+        }
+        latch.countDown();
+        for (var f : futures) {
+            f.get(30, java.util.concurrent.TimeUnit.SECONDS); // any 409 surfaces here
+        }
+        executor.shutdown();
+
+        Integer rows = jdbcTemplate.queryForObject(
+                "select count(*) from operation_extensions where item_id = ?::uuid and extension_kind = 'job_state'",
+                Integer.class, item.getId().toString());
+        assertEquals(1, rows, "concurrent same-payload delivery must leave exactly one row");
+    }
+
+    @Test
+    void startAttempt_fromTwoThreads_allocatesDistinctRetryNos() throws Exception {
+        // Gap C: retryNo allocation now runs under the operation row lock;
+        // concurrent starts must get distinct, ordered retryNos (previously a
+        // unique-index 409 race).
+        var started = start("key-gapc-" + UUID.randomUUID().toString().substring(0, 8));
+        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "probe", "agent", null, null, null);
+
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        var latch = new java.util.concurrent.CountDownLatch(1);
+        var futures = new java.util.ArrayList<java.util.concurrent.Future<java.util.UUID>>();
+        for (int i = 0; i < 2; i++) {
+            final int idx = i;
+            futures.add(executor.submit(() -> {
+                latch.await();
+                return operationService
+                        .startAttempt(item.getId(), "cp_forward", null, "cp", UUID.randomUUID().toString())
+                        .getId();
+            }));
+        }
+        latch.countDown();
+        java.util.Set<java.util.UUID> ids = new java.util.HashSet<>();
+        for (var f : futures) {
+            ids.add(f.get(30, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        executor.shutdown();
+
+        assertEquals(2, ids.size(), "both attempts must exist (no 409 lost race)");
+        Integer rows = jdbcTemplate.queryForObject(
+                "select count(*) from operation_attempts where item_id = ?::uuid and stage = 'cp_forward'",
+                Integer.class, item.getId().toString());
+        assertEquals(2, rows);
+    }
+
+    @Test
+    void reconcileStaleOperation_settlesRowsAndKeepsTerminalFacts() {
+        // Gap D: row-level reconciliation was implemented but untested —
+        // non-terminal attempts → unknown(RUN_RECONCILED), non-terminal items →
+        // aborted(RUN_RECONCILED), terminal rows keep their facts.
+        var started = startForRun("key-gapd-" + UUID.randomUUID().toString().substring(0, 8));
+        var done = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "done-tool", "agent", null, null, null);
+        operationService.transitionItem(done.getId(), "completed", null, null, null, null);
+        var stuck = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "stuck-tool", "agent", null, null, null);
+        operationService.transitionItem(stuck.getId(), "running", null, null, null, null);
+        var attempt = operationService.startAttempt(stuck.getId(), "cp_forward", null, "cp", UUID.randomUUID().toString());
+
+        operationService.reconcileStaleOperation(runId, "failed");
+
+        var stuckRow = jdbcTemplate.queryForMap(
+                "select status, error_code from operation_items where id = ?::uuid", stuck.getId().toString());
+        assertEquals("aborted", stuckRow.get("status"));
+        assertEquals("RUN_RECONCILED", stuckRow.get("error_code"));
+        var attemptRow = jdbcTemplate.queryForMap(
+                "select status, error_code from operation_attempts where id = ?::uuid", attempt.getId().toString());
+        assertEquals("unknown", attemptRow.get("status"));
+        assertEquals("RUN_RECONCILED", attemptRow.get("error_code"));
+        var doneRow = jdbcTemplate.queryForMap(
+                "select status from operation_items where id = ?::uuid", done.getId().toString());
+        assertEquals("completed", doneRow.get("status"), "terminal rows keep their facts");
+    }
+
+    @Test
+    void getOperationTrace_pairsAgentAndMcpRowsByToolCallId() {
+        // PLAN-0346 gap Q2: the two channel facts of one tool call are paired
+        // read-side by tool_call_id; a missing side stays visible as null.
+        var started = start("key-gapq2-" + UUID.randomUUID().toString().substring(0, 8));
+        String pairedToolCall = UUID.randomUUID().toString();
+        var agentRow = operationService.appendItem(started.operationId(), pairedToolCall, null,
+                "tool_call", "read_file", "agent", null, null, null);
+        var mcpRow = operationService.appendItem(started.operationId(), pairedToolCall, null,
+                "tool_call", "read_file", "mcp", null, null, null);
+        String singleToolCall = UUID.randomUUID().toString();
+        var singleRow = operationService.appendItem(started.operationId(), singleToolCall, null,
+                "tool_call", "write_file", "agent", null, null, null);
+
+        Map<String, Object> trace = operationService.getOperationTrace(started.operationId());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> pairs = (List<Map<String, Object>>) (Object) trace.get("toolCallPairs");
+        assertNotNull(pairs);
+        assertEquals(2, pairs.size(), "one pair per tool_call_id");
+        Map<String, Object> pair = pairs.stream()
+                .filter(p -> pairedToolCall.equals(p.get("toolCallId"))).findFirst().orElseThrow();
+        assertEquals(agentRow.getId().toString(), pair.get("agentItemId"));
+        assertEquals(mcpRow.getId().toString(), pair.get("mcpItemId"));
+        Map<String, Object> singlePair = pairs.stream()
+                .filter(p -> singleToolCall.equals(p.get("toolCallId"))).findFirst().orElseThrow();
+        assertEquals(singleRow.getId().toString(), singlePair.get("agentItemId"));
+        assertNull(singlePair.get("mcpItemId"), "missing side is visible as null");
+
+        // The additive field must survive the API projection (owner endpoint).
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Map> owner = restTemplate.exchange(
+                baseUrl + "/api/v1/operations/" + started.operationId(), HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, owner.getStatusCode());
+        assertNotNull(owner.getBody().get("toolCallPairs"));
+    }
+
+    @Test
+    void replayOperation_isConsistentForLiveFlowAndDetectsTamperedStatus() {
+        // PLAN-0346 gap Q1: replay re-derives statuses from the event stream;
+        // a live flow is homomorphic, and a row changed behind the ledger's
+        // back is reported as a mismatch.
+        var started = start("key-gapq1-" + UUID.randomUUID().toString().substring(0, 8));
+        var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                null, "tool_call", "read_file", "agent", null, null, null);
+        operationService.transitionItem(item.getId(), "running", null, null, null, null);
+        var attempt = operationService.startAttempt(item.getId(), "cp_forward", null, "cp",
+                UUID.randomUUID().toString());
+        operationService.finishAttempt(attempt.getId(), "succeeded", 200, null, null, 5L);
+        operationService.transitionItem(item.getId(), "completed", null, null, null, null);
+
+        Map<String, Object> consistent = operationService.replayOperation(started.operationId());
+        List<Map<String, Object>> rawEvents = jdbcTemplate.queryForList(
+                "select sequence, event_type from operation_events where operation_id = ?::uuid order by sequence",
+                started.operationId().toString());
+        assertEquals(Boolean.TRUE, consistent.get("consistent"),
+                "live flow must replay homomorphically: " + consistent + " raw=" + rawEvents);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> noMismatches = (List<Map<String, Object>>) (Object) consistent.get("mismatches");
+        assertEquals(0, noMismatches.size());
+
+        jdbcTemplate.update("update operation_items set status = 'failed' where id = ?::uuid",
+                item.getId().toString());
+        Map<String, Object> tampered = operationService.replayOperation(started.operationId());
+        assertEquals(Boolean.FALSE, tampered.get("consistent"), "tampered row must be detected: " + tampered);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> mismatches = (List<Map<String, Object>>) (Object) tampered.get("mismatches");
+        assertEquals(1, mismatches.size());
+        assertEquals("item", mismatches.get(0).get("entity"));
+        assertEquals(item.getId().toString(), mismatches.get(0).get("id"));
+        assertEquals("completed", mismatches.get(0).get("expected"));
+        assertEquals("failed", mismatches.get(0).get("actual"));
+    }
+
+    @Test
+    void writesToDifferentOperationsDoNotBlockEachOther() throws Exception {
+        // PLAN-0346 T1.7 scope assertion: the sequence lock is per operation —
+        // while operation A's row lock is held open, a write to operation B
+        // must complete instead of waiting (no global serialization).
+        var opA = start("key-scope-a-" + UUID.randomUUID().toString().substring(0, 8));
+        var opB = start("key-scope-b-" + UUID.randomUUID().toString().substring(0, 8));
+
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        var lockHeld = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.Future<?> holder = executor.submit(() -> new TransactionTemplate(transactionManager)
+                .execute(status -> {
+                    sessionOperationRepository.findByIdForUpdate(opA.operationId()).orElseThrow();
+                    lockHeld.countDown();
+                    try {
+                        release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return null;
+                }));
+        assertTrue(lockHeld.await(10, java.util.concurrent.TimeUnit.SECONDS),
+                "holder must acquire A's row lock");
+
+        var done = new java.util.concurrent.CompletableFuture<java.util.UUID>();
+        Thread writer = new Thread(() -> {
+            try {
+                done.complete(operationService.appendItem(opB.operationId(), UUID.randomUUID().toString(),
+                        null, "tool_call", "probe", "agent", null, null, null).getId());
+            } catch (Throwable e) {
+                done.completeExceptionally(e);
+            }
+        });
+        writer.start();
+        try {
+            assertNotNull(done.get(10, java.util.concurrent.TimeUnit.SECONDS),
+                    "write to another operation must not wait for A's held row lock");
+        } finally {
+            release.countDown();
+            holder.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            executor.shutdown();
+        }
     }
 }

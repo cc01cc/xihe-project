@@ -31,6 +31,9 @@ final class OperationViews {
         view.put("items", items.stream().map(OperationViews::toUserItem).toList());
         view.put("attempts", attempts.stream().map(OperationViews::toAttempt).toList());
         view.put("events", events.stream().map(OperationViews::toEvent).toList());
+        // PLAN-0346 (Q2): additive read-end — the pairing field is passed
+        // through; public consumers (UI) keep working without changes.
+        view.put("toolCallPairs", trace.getOrDefault("toolCallPairs", List.of()));
         return view;
     }
 
@@ -66,6 +69,7 @@ final class OperationViews {
         view.put("items", items.stream().map(OperationViews::toInternalItem).toList());
         view.put("attempts", attempts.stream().map(OperationViews::toInternalAttempt).toList());
         view.put("events", events.stream().map(OperationViews::toEvent).toList());
+        view.put("toolCallPairs", trace.getOrDefault("toolCallPairs", List.of()));
         return view;
     }
 

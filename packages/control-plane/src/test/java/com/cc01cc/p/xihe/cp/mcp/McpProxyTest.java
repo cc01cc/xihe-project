@@ -6,6 +6,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
@@ -1326,6 +1327,164 @@ class McpProxyTest {
             // 无 per-call、无配置 → 预算默认 30，出站 = 预算（Runtime 界）。
             assertEquals("30", outboundTimeout[0]);
             assertEquals("config", outboundOrigin[0]);
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // ── PLAN-0346 gap A: mcp 行成功路径的三段终态判定 ────────────────────
+
+    private OperationItem seedLedgerMocks() {
+        OperationItem item = new OperationItem();
+        item.setId(java.util.UUID.randomUUID());
+        item.setStatus("running");
+        OperationAttempt attempt = new OperationAttempt();
+        attempt.setId(java.util.UUID.randomUUID());
+        when(operationService.appendItem(any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any()))
+                .thenReturn(item);
+        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(attempt);
+        return item;
+    }
+
+    private ResponseEntity<String> callTool(String body) throws Exception {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+        headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
+        headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
+        return (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                accessContext(TEST_WS_UUID, "u-1"));
+    }
+
+    private void seedReadFileAllow(String body) throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("read_file"), eq(body), eq("sess-1"),
+                any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, "{ read, \"*\", allow }",
+                        PolicyLayer.BUILTIN, "manual", "allowed by read rules"));
+        seedToolCache("read_file", "__system__");
+    }
+
+    private com.sun.net.httpserver.HttpServer stubRuntime(String responseJson) throws java.io.IOException {
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] response = responseJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stub.start();
+        return stub;
+    }
+
+    @Test
+    void handleToolsCall_successCompletesMcpItem() throws Exception {
+        // HTTP 200 + result.isError=false → item completed (previously stuck in
+        // "running" and wrongly settled to "aborted" by the run reconciler).
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":21}";
+        seedReadFileAllow(body);
+        OperationItem item = seedLedgerMocks();
+        var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[],\"isError\":false},\"id\":21}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            ResponseEntity<String> response = callTool(body);
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(operationService).transitionItem(eq(item.getId()), eq("completed"),
+                    isNull(), isNull(), isNull(), isNull());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    void handleToolsCall_mcpIsErrorFailsItem() throws Exception {
+        // HTTP 200 + result.isError=true → item failed with MCP_RESULT_IS_ERROR
+        // (transport succeeded but the tool execution failed).
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":22}";
+        seedReadFileAllow(body);
+        OperationItem item = seedLedgerMocks();
+        var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[],\"isError\":true},\"id\":22}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            ResponseEntity<String> response = callTool(body);
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(operationService).transitionItem(eq(item.getId()), eq("failed"),
+                    isNull(), isNull(), isNull(), eq("MCP_RESULT_IS_ERROR"));
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    void handleToolsCall_unparseableBodyLeavesItemForReconciler() throws Exception {
+        // Non-JSON-RPC 2xx body → no item transition (previous behaviour kept;
+        // the reconciler owns settlement when the result is undecidable).
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":23}";
+        seedReadFileAllow(body);
+        OperationItem item = seedLedgerMocks();
+        var stub = stubRuntime("not-json");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            ResponseEntity<String> response = callTool(body);
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(operationService, never()).transitionItem(any(), anyString(), any(), any(), any(), any());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    void handleToolsCall_jsonRpcErrorFailsItemWithCode() throws Exception {
+        // PLAN-0346 gap A (four-way): HTTP 200 + JSON-RPC error object is a
+        // protocol-level rejection → failed, detail carries only the numeric
+        // code (message text is never persisted).
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":24}";
+        seedReadFileAllow(body);
+        OperationItem item = seedLedgerMocks();
+        var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,"
+                + "\"message\":\"Invalid params: secret detail\"},\"id\":24}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            ResponseEntity<String> response = callTool(body);
+            assertEquals(HttpStatus.OK, response.getStatusCode());
+            verify(operationService).transitionItem(eq(item.getId()), eq("failed"),
+                    isNull(), isNull(), isNull(), eq("MCP_PROTOCOL_ERROR:-32602"));
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    void handleToolsCall_replayedDispatchIsIdempotentNot409() throws Exception {
+        // Same-source replay: the item is already terminal (completed on the
+        // first dispatch), so the re-entered finish path raises a state
+        // conflict — it must be swallowed and the caller still gets a 200
+        // (replay stays idempotent instead of surfacing a 409).
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":25}";
+        seedReadFileAllow(body);
+        OperationItem item = seedLedgerMocks();
+        doThrow(new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
+                "Operation item is already terminal (completed)"))
+                .when(operationService).transitionItem(eq(item.getId()), anyString(),
+                        isNull(), isNull(), isNull(), any());
+        var stub = stubRuntime("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[],\"isError\":false},\"id\":25}");
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            ResponseEntity<String> response = callTool(body);
+            assertEquals(HttpStatus.OK, response.getStatusCode());
         } finally {
             stub.stop(0);
         }

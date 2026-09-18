@@ -900,7 +900,7 @@ paths:
   /internal/v1/runtime/workspaces/{workspaceId}/status:
     get: { operationId: getRuntimeWorkspaceStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Runtime workspace materialization status }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/{workspaceId}/materialize:
-    post: { operationId: triggerRuntimeWorkspaceMaterialize, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll status for progress }, '404': { $ref: '#/components/responses/Problem' }, '409': { description: WORKSPACE_DESTROYING — workspace is being destroyed (PLAN-0345 decision #7) } } }
+    post: { operationId: triggerRuntimeWorkspaceMaterialize, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll status for progress }, '404': { $ref: '#/components/responses/Problem' }, '409': { description: WORKSPACE_DESTROYING — workspace is being destroyed (PLAN-0345 decision 7) } } }
   /internal/v1/runtime/heartbeat:
     post: { operationId: runtimeHeartbeat, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeHeartbeatRequest' } } } }, responses: { '200': { description: Accepted }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/delete:
@@ -915,7 +915,7 @@ paths:
   /internal/v1/runtime/workspaces/{workspaceId}/executions/{itemId}/cancel:
     post: { operationId: cancelRuntimeExecution, description: 'PLAN-0317 T2.3: cancels an in-flight execution identified by operationItemId and waits (bounded) for termination confirmation; scope is limited to the workspace in the path.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: itemId, required: true, schema: { type: string } }], responses: { '200': { description: 'Cancellation outcome (cancelled | unconfirmed | already_finished)', content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [cancelled, unconfirmed, already_finished] }, confirmed: { type: boolean } }, required: [status, confirmed] } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/operations/items/{itemId}/late-termination:
-    post: { operationId: recordLateTermination, description: 'PLAN-0317 T2.9: records a late (retried) termination reported by the Runtime after an unconfirmed cancel; appends an item.terminated.late event without rewriting the item terminal state.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: itemId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirmed: { type: boolean } }, required: [confirmed] } } } }, responses: { '200': { description: Recorded }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+    post: { operationId: recordLateTermination, description: 'PLAN-0317 T2.9: records a late (retried) termination reported by the Runtime after an unconfirmed cancel; appends an item.terminated.late event without rewriting the item terminal state.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: itemId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirmed: { type: boolean } }, required: [confirmed] } } } }, responses: { '200': { description: Recorded }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '503': { description: OPERATION_LOCK_TIMEOUT — bounded database lock wait exceeded; safe to retry } } }
   # Runtime shadow-Git slice contract. CP is the caller; failures use RFC 9457
   # Problem Details with a stable `code` and `requestId`.
   /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/capture:
@@ -1042,7 +1042,7 @@ paths:
       operationId: startOperation
       security: [{ bearerAuth: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartRequest' } } } }
-      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartResponse' } } } }, '200': { description: Idempotent replay of an existing operation, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartResponse' } } } }, '409': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartResponse' } } } }, '200': { description: Idempotent replay of an existing operation, content: { application/json: { schema: { $ref: '#/components/schemas/OperationStartResponse' } } } }, '409': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '503': { description: OPERATION_LOCK_TIMEOUT — bounded database lock wait exceeded; safe to retry } }
   /internal/v1/operations/{operationId}/trace:
     get:
       operationId: getInternalOperationTrace
@@ -1091,10 +1091,10 @@ components:
          sourceRunId: { type: [string, 'null'] }
          sourceSessionId: { type: [string, 'null'] }
          predecessorRef: { type: [string, 'null'] }
-          changedFiles: { type: array, items: { $ref: '#/components/schemas/CheckpointChangedFile' } }
-          changedCount: { type: integer, minimum: 0 }
-          truncated: { type: boolean, description: True when the bounded changedFiles list is incomplete }
-          opaqueNestedRepos: { type: array, items: { type: string } }
+         changedFiles: { type: array, items: { $ref: '#/components/schemas/CheckpointChangedFile' } }
+         changedCount: { type: integer, minimum: 0 }
+         truncated: { type: boolean, description: True when the bounded changedFiles list is incomplete }
+         opaqueNestedRepos: { type: array, items: { type: string } }
          state: { type: string, enum: [captured, abnormal-captured, degraded, expired] }
          unrollableReason: { type: [string, 'null'], enum: [UNAVAILABLE, null] }
          revert: { $ref: '#/components/schemas/CheckpointRevertBookkeeping' }
@@ -1122,13 +1122,13 @@ components:
     CheckpointRevertPreviewResponse:
        type: object
        additionalProperties: false
-        required: [sliceRef, counts, entries, truncated, opaqueNestedRepos]
+       required: [sliceRef, counts, entries, truncated, opaqueNestedRepos]
        properties:
          sliceRef: { type: string }
          counts: { type: object, required: [restore, delete, typeConflict], properties: { restore: { type: integer }, delete: { type: integer }, typeConflict: { type: integer } } }
-          entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertPreviewEntry' } }
-          truncated: { type: boolean }
-          opaqueNestedRepos: { type: array, items: { type: string } }
+         entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertPreviewEntry' } }
+         truncated: { type: boolean }
+         opaqueNestedRepos: { type: array, items: { type: string } }
     CheckpointRevertEntry:
        type: object
        additionalProperties: false
@@ -1816,6 +1816,7 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/OperationItemView' } }
         attempts: { type: array, items: { $ref: '#/components/schemas/OperationAttemptView' } }
         events: { type: array, items: { $ref: '#/components/schemas/OperationEventView' } }
+        toolCallPairs: { type: array, items: { $ref: '#/components/schemas/OperationToolCallPair' } }
     InternalOperationTrace:
       type: object
       required: [operation, items, attempts, events]
@@ -1846,6 +1847,18 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/OperationItemView' } }
         attempts: { type: array, items: { $ref: '#/components/schemas/OperationAttemptView' } }
         events: { type: array, items: { $ref: '#/components/schemas/OperationEventView' } }
+        toolCallPairs: { type: array, items: { $ref: '#/components/schemas/OperationToolCallPair' } }
+    OperationToolCallPair:
+      type: object
+      required: [toolCallId]
+      description: >-
+        Read-only pairing (PLAN-0346 Q2) of the agent row and the mcp row of one
+        tool call; both rows share the same tool_call_id. A missing side is null
+        so an unfinished/dropped channel stays visible.
+      properties:
+        toolCallId: { type: string }
+        agentItemId: { type: [string, 'null'], format: uuid, readOnly: true }
+        mcpItemId: { type: [string, 'null'], format: uuid, readOnly: true }
     OperationStartRequest:
       type: object
       required: [kind, source, actorType]

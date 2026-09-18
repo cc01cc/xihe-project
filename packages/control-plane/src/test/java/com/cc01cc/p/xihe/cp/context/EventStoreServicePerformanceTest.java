@@ -2,6 +2,8 @@ package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,11 +31,21 @@ class EventStoreServicePerformanceTest extends AbstractH2Test {
     @Autowired
     private EventStoreService eventStoreService;
 
+    @Autowired
+    private SessionRepository sessionRepository;
+
+    /** PLAN-0346 (gap E): appends now lock the owning session row, so the row must exist. */
+    private String newSession(String workspaceId, String userId) {
+        Session session = new Session(workspaceId, userId, "Event Store Perf Session");
+        session.setId(UUID.randomUUID());
+        return sessionRepository.save(session).getId().toString();
+    }
+
     @Test
     void appendIndividualVsAppendBatchBatchIsFaster() {
-        String sessionId = UUID.randomUUID().toString();
         String workspaceId = UUID.randomUUID().toString();
         String userId = UUID.randomUUID().toString();
+        String sessionId = newSession(workspaceId, userId);
 
         long individualStart = System.nanoTime();
         for (int i = 0; i < EVENT_COUNT; i++) {
@@ -44,7 +56,7 @@ class EventStoreServicePerformanceTest extends AbstractH2Test {
         }
         long individualNanos = System.nanoTime() - individualStart;
 
-        String batchSessionId = UUID.randomUUID().toString();
+        String batchSessionId = newSession(workspaceId, userId);
         List<EventStoreService.EventPayload> payloads = new ArrayList<>(EVENT_COUNT);
         for (int i = 0; i < EVENT_COUNT; i++) {
             payloads.add(new EventStoreService.EventPayload(
