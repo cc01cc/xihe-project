@@ -50,7 +50,7 @@ public class RuntimeJobClient {
             return new JobStatusResult(false, false, null);
         }
 
-        static JobStatusResult unreachable() {
+        static JobStatusResult unreachableResult() {
             return new JobStatusResult(false, true, null);
         }
     }
@@ -62,7 +62,7 @@ public class RuntimeJobClient {
             return new JobOutputResult(false, false, null);
         }
 
-        static JobOutputResult unreachable() {
+        static JobOutputResult unreachableResult() {
             return new JobOutputResult(false, true, null);
         }
     }
@@ -72,7 +72,7 @@ public class RuntimeJobClient {
         body.put("jobId", jobId);
         HttpResponse<String> response = post(workspaceId, "/jobs/status", body);
         if (response == null) {
-            return JobStatusResult.unreachable();
+            return JobStatusResult.unreachableResult();
         }
         if (response.statusCode() == 404) {
             return JobStatusResult.notFound();
@@ -80,10 +80,10 @@ public class RuntimeJobClient {
         if (response.statusCode() / 100 != 2) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_status_http_error workspaceId={} jobId={} status={}",
                     workspaceId, jobId, response.statusCode());
-            return JobStatusResult.unreachable();
+            return JobStatusResult.unreachableResult();
         }
         JsonNode job = readTree(response.body());
-        return job == null ? JobStatusResult.unreachable() : new JobStatusResult(true, false, job);
+        return job == null ? JobStatusResult.unreachableResult() : new JobStatusResult(true, false, job);
     }
 
     public JobOutputResult jobOutput(String workspaceId, String jobId, String stream,
@@ -95,7 +95,7 @@ public class RuntimeJobClient {
         body.put("limit", limit);
         HttpResponse<String> response = post(workspaceId, "/jobs/output", body);
         if (response == null) {
-            return JobOutputResult.unreachable();
+            return JobOutputResult.unreachableResult();
         }
         if (response.statusCode() == 404) {
             return JobOutputResult.unavailable();
@@ -103,11 +103,11 @@ public class RuntimeJobClient {
         if (response.statusCode() / 100 != 2) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_output_http_error workspaceId={} jobId={} status={}",
                     workspaceId, jobId, response.statusCode());
-            return JobOutputResult.unreachable();
+            return JobOutputResult.unreachableResult();
         }
         JsonNode chunk = readTree(response.body());
         if (chunk == null) {
-            return JobOutputResult.unreachable();
+            return JobOutputResult.unreachableResult();
         }
         if (!chunk.path("available").asBoolean(false)) {
             return JobOutputResult.unavailable();
