@@ -266,6 +266,15 @@ impl WorkspaceEnsurer {
         self
     }
 
+    /// PLAN-0344 T1.3：当前缓存实例是否为暂停态（用于 unpause 激活前判定，
+    /// 恢复后折算 job 暂停时长）。纯内存查询，不触发任何 Docker 调用。
+    pub async fn workspace_is_paused(&self, workspace_id: &str) -> bool {
+        self.registry
+            .get(workspace_id)
+            .await
+            .is_some_and(|instance| instance.state == InstanceState::Paused)
+    }
+
     pub fn from_env(
         registry: Arc<WorkspaceRegistry>,
         manager: Arc<Mutex<WorkspaceManager>>,

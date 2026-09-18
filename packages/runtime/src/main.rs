@@ -912,6 +912,12 @@ struct DeleteWorkspaceResponse {
     status: String,
     #[serde(rename = "workspaceId")]
     ws_id: String,
+    /// PLAN-0344 T1.3：destroy 窗口内枚举到的存活 jobId（CP 据此把对应
+    /// running 档案落 orphaned；枚举失败时为 null，CP 走 fail-closed）。
+    #[serde(rename = "jobIds")]
+    job_ids: Option<Vec<String>>,
+    #[serde(rename = "jobsEnumerationFailed")]
+    jobs_enumeration_failed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1643,6 +1649,74 @@ async fn workspace_status_handler(
     }
 }
 
+/// PLAN-0344 T1.2：CP 续看/对账用的内部 job 读路径（不经 MCP 工具面，
+/// 避免向 Agent 暴露字节游标协议）。
+#[derive(Debug, Deserialize)]
+pub struct JobStatusRequest {
+    #[serde(rename = "jobId")]
+    job_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JobOutputRequest {
+    #[serde(rename = "jobId")]
+    job_id: String,
+    #[serde(default)]
+    stream: Option<String>,
+    #[serde(default)]
+    offset: Option<u64>,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+fn job_not_found_problem(ws_id: &str, job_id: &str) -> (StatusCode, AxumJson<serde_json::Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        AxumJson(serde_json::json!({
+            "type": "https://xihe.dev/problems/job-not-found",
+            "title": "Job not found",
+            "status": 404,
+            "code": "JOB_NOT_FOUND",
+            "detail": format!("Job {job_id} not found in workspace {ws_id}"),
+            "requestId": uuid::Uuid::new_v4().to_string(),
+        })),
+    )
+}
+
+fn is_job_not_found(error: &RuntimeError) -> bool {
+    matches!(error, RuntimeError::InvalidPath(message) if message.starts_with("job not found"))
+}
+
+async fn workspace_job_status_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(req): AxumJson<JobStatusRequest>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    match app.router.get_background_process(&ws_id, &req.job_id).await {
+        Ok(value) => Ok(AxumJson(value)),
+        Err(error) if is_job_not_found(&error) => Err(job_not_found_problem(&ws_id, &req.job_id)),
+        Err(error) => Err(runtime_problem(error)),
+    }
+}
+
+async fn workspace_job_output_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(req): AxumJson<JobOutputRequest>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    let stream = req.stream.as_deref().unwrap_or("stdout");
+    let offset = req.offset.map(|value| value as usize);
+    let limit = req.limit.map(|value| value as usize);
+    match app
+        .router
+        .read_job_output(&ws_id, &req.job_id, stream, offset, limit)
+        .await
+    {
+        Ok(value) => Ok(AxumJson(value)),
+        Err(error) => Err(runtime_problem(error)),
+    }
+}
+
 /// PLAN-262 M4 (decision 12): explicit async materialization trigger.
 /// Returns 202 immediately with the current materialization state; the caller
 /// polls GET .../status for progress. Reuses the idempotent per-workspace
@@ -1816,6 +1890,19 @@ async fn delete_workspace_handler(
         .acquire(ws_id, "destroy")
         .await
         .map_err(runtime_problem)?;
+    // PLAN-0344 T1.3（round-1 P1-2）：destroying 标记后、容器 stop 前枚举
+    // 仍存活的 job。枚举失败不回滚 destroy（fail-closed：CP 侧把该 workspace
+    // 全部 running 档案落 orphaned）。
+    let (job_ids, jobs_enumeration_failed) = match app.router.list_running_job_ids(ws_id).await {
+        Ok(ids) => (Some(ids), false),
+        Err(error) => {
+            tracing::warn!(
+                "job enumeration failed during destroy: ws_id={} error={error}",
+                ws_id
+            );
+            (None, true)
+        }
+    };
     mcp_manager().cleanup_workspace(ws_id).await;
     let cleanup_result = {
         let mut manager = app.manager.lock().await;
@@ -1847,6 +1934,8 @@ async fn delete_workspace_handler(
     Ok(AxumJson(DeleteWorkspaceResponse {
         status: "ok".to_string(),
         ws_id: ws_id.clone(),
+        job_ids,
+        jobs_enumeration_failed,
     }))
 }
 
@@ -2342,6 +2431,14 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/diagnostics",
             get(runtime_diagnostics_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/jobs/status",
+            post(workspace_job_status_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/jobs/output",
+            post(workspace_job_output_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/files/read",
@@ -3039,6 +3136,15 @@ async fn idle_reaper_loop(
                         // Tier 1: 15 minutes idle — Active → Paused
                         ReapTier::Pause => {
                             if instance.state == InstanceState::Active {
+                                // PLAN-0344 T1.3（决策 #3）：暂停生效前登记 job 暂停
+                                // 起点，恢复后折算进累计运行时间（避免解冻即 timeout）。
+                                if let Err(error) = router.mark_jobs_paused(ws_id).await {
+                                    tracing::warn!(
+                                        workspace_id = %ws_id,
+                                        error = %error,
+                                        "Idle reaper: job pause marking failed; timeout budget keeps wall clock"
+                                    );
+                                }
                                 let mgr = manager.lock().await;
                                 match mgr.pause_container(ws_id).await {
                                     Ok(_) => {

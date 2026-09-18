@@ -570,11 +570,45 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             let content = read_job_output(artifact_id, offset, limit)?;
             Ok(serde_json::json!({"content": content}))
         }
+        // PLAN-0344 T1.2：CP 续看端点的结构化分页读（字节游标 + UTF-8 边界）。
+        "read_job_output" => {
+            let job_id = req
+                .payload
+                .get("jobId")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing jobId".into()))?;
+            let stream = req
+                .payload
+                .get("stream")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdout");
+            let offset = req
+                .payload
+                .get("offset")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let limit = req
+                .payload
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            read_job_output_json_at(Path::new(JOB_DIR), job_id, stream, offset, limit)
+        }
         "cleanup_jobs" => {
             let cleaned = cleanup_expired_jobs()?;
             // PLAN-0317 T3.3：同一通道顺带落实运行时限（宿主每 5 分钟驱动一次）。
             let timed_out = enforce_job_timeouts()?;
             Ok(serde_json::json!({"cleaned": cleaned, "timedOut": timed_out}))
+        }
+        // PLAN-0344 T1.3（决策 #3）：暂停/恢复时的 job 计时记账。
+        "mark_jobs_paused" => {
+            let marked =
+                mark_jobs_paused_at(Path::new(JOB_DIR), chrono::Utc::now(), process_group_alive)?;
+            Ok(serde_json::json!({"marked": marked}))
+        }
+        "resume_jobs_paused" => {
+            let resumed = resume_jobs_paused_at(Path::new(JOB_DIR), chrono::Utc::now())?;
+            Ok(serde_json::json!({"resumed": resumed}))
         }
         "apply_patch" => {
             let patches = req
@@ -751,10 +785,13 @@ async fn exec_shell_command(
 }
 
 // ── Job management via /tmp/xihe-jobs ────────────────────────────────────
+// PLAN-0344 T1.2：序列化契约对齐 `sandbox::BackgroundProcess`（camelCase）。
+// 此前 field 名混用 snake/camel（`workspace_id` vs `workspaceId`），导致 MCP
+// `get/list_background_process` 解析必然缺字段报错——以本测试钉死契约。
 #[derive(Serialize, Deserialize, Clone)]
-#[allow(non_snake_case)]
+#[serde(rename_all = "camelCase")]
 struct JobInfo {
-    jobId: String,
+    job_id: String,
     workspace_id: String,
     command: String,
     status: String,
@@ -764,6 +801,8 @@ struct JobInfo {
     updated_at: Option<String>,
     stdout_preview: Option<String>,
     stderr_preview: Option<String>,
+    /// PLAN-0344：CP 档案的 `timeoutSecs`（0/缺省 = 不限）。
+    timeout_secs: Option<u64>,
 }
 
 const JOB_PREVIEW_BYTES: usize = 256;
@@ -966,6 +1005,9 @@ fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
     let exit_code = std::fs::read_to_string(job_path.join("exit"))
         .ok()
         .and_then(|s| s.trim().parse::<i32>().ok());
+    let timeout_secs = std::fs::read_to_string(job_path.join("timeout_secs"))
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok());
     let stdout_preview = std::fs::read(job_path.join("stdout")).ok().map(|bytes| {
         let preview =
             String::from_utf8_lossy(&bytes[..bytes.len().min(JOB_PREVIEW_BYTES)]).to_string();
@@ -1014,7 +1056,7 @@ fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
         meta
     };
     Ok(JobInfo {
-        jobId: job_id.to_string(),
+        job_id: job_id.to_string(),
         workspace_id,
         command,
         status,
@@ -1024,6 +1066,7 @@ fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
         updated_at,
         stdout_preview,
         stderr_preview,
+        timeout_secs,
     })
 }
 
@@ -1098,26 +1141,108 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     Ok(status.to_string())
 }
 
+/// PLAN-0344 T1.2：字节游标的 UTF-8 边界判定。
+/// 续看协议约定 `nextOffset` 恒为 rune 边界，客户端回传该值即可无损分页；
+/// 任意畸形 offset 会向前对齐到最近边界并在响应中显式返回实际 `offset`。
+fn is_utf8_boundary(bytes: &[u8], index: usize) -> bool {
+    index >= bytes.len() || (bytes[index] & 0b1100_0000) != 0b1000_0000
+}
+
+/// 把 `[offset, offset+limit)` 收缩到完整 rune 范围：起点向前对齐，终点回退。
+fn utf8_safe_chunk(bytes: &[u8], offset: Option<usize>, limit: Option<usize>) -> (usize, usize) {
+    let mut start = offset.unwrap_or(0).min(bytes.len());
+    while start < bytes.len() && !is_utf8_boundary(bytes, start) {
+        start += 1;
+    }
+    let end_limit = limit.map_or(bytes.len(), |limit| start.saturating_add(limit));
+    let mut end = end_limit.min(bytes.len());
+    while end > start && !is_utf8_boundary(bytes, end) {
+        end -= 1;
+    }
+    (start, end)
+}
+
+/// PLAN-0344 T1.2：结构化 job 输出分页（CP 续看端点的 Runtime 单一修点）。
+///
+/// * `stream` = `stdout`（缺省）或 `stderr`；
+/// * `limit` 按字节，缺省读到文件末尾；
+/// * job 目录/输出文件缺失时返回 `available=false`（由 CP 决定 LOST/EXPIRED，
+///   Runtime 不替调用方下结论）；
+/// * `truncated` = 文件已达 `JOB_CAP`（周期清理用 `head -c` 封顶）。
+fn read_job_output_json_at(
+    job_root: &Path,
+    job_id: &str,
+    stream: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<serde_json::Value, RuntimeError> {
+    if !is_safe_job_id(job_id) {
+        return Err(RuntimeError::InvalidPath(format!(
+            "invalid job id: {job_id}"
+        )));
+    }
+    let stream = match stream {
+        "" | "stdout" => "stdout",
+        "stderr" => "stderr",
+        other => {
+            return Err(RuntimeError::InvalidPath(format!(
+                "invalid stream: {other} (expected stdout|stderr)"
+            )));
+        }
+    };
+    let job_path = job_root.join(job_id);
+    if !job_path.exists() {
+        return Ok(serde_json::json!({
+            "available": false,
+            "jobId": job_id,
+            "stream": stream,
+            "reason": "job_missing",
+        }));
+    }
+    let bytes = match std::fs::read(job_path.join(stream)) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return Ok(serde_json::json!({
+                "available": false,
+                "jobId": job_id,
+                "stream": stream,
+                "reason": "output_missing",
+            }));
+        }
+    };
+    let (start, end) = utf8_safe_chunk(&bytes, offset, limit);
+    let job_status = std::fs::read_to_string(job_path.join("meta"))
+        .map(|value| value.trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    Ok(serde_json::json!({
+        "available": true,
+        "jobId": job_id,
+        "stream": stream,
+        "data": String::from_utf8_lossy(&bytes[start..end]),
+        "offset": start,
+        "nextOffset": end,
+        "sizeBytes": bytes.len(),
+        "truncated": bytes.len() >= JOB_CAP,
+        "jobStatus": job_status,
+    }))
+}
+
 fn read_job_output(
     job_id: &str,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<String, RuntimeError> {
-    let job_path = PathBuf::from(JOB_DIR).join(job_id);
-    let stdout_path = job_path.join("stdout");
-    if !stdout_path.exists() {
-        return Err(RuntimeError::FileNotFound(format!(
-            "output not found for job {job_id}"
-        )));
+    let chunk = read_job_output_json_at(Path::new(JOB_DIR), job_id, "stdout", offset, limit)?;
+    if chunk.get("available").and_then(|value| value.as_bool()) == Some(true) {
+        return Ok(chunk
+            .get("data")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string());
     }
-    let content = std::fs::read_to_string(&stdout_path).map_err(RuntimeError::Io)?;
-    let offset = offset.unwrap_or(0);
-    let limit = limit.unwrap_or(content.len());
-    let end = (offset + limit).min(content.len());
-    if offset >= content.len() {
-        return Ok(String::new());
-    }
-    Ok(content[offset..end].to_string())
+    Err(RuntimeError::FileNotFound(format!(
+        "output not found for job {job_id}"
+    )))
 }
 
 fn cleanup_expired_jobs() -> Result<usize, RuntimeError> {
@@ -1289,8 +1414,15 @@ fn enforce_job_timeouts_with(
             .map(|parsed| parsed.with_timezone(&chrono::Utc));
         let Some(started) = started else { continue };
         let elapsed = (now - started).num_seconds().max(0) as u64;
+        // PLAN-0344 T1.3（决策 #3）：运行时限按**累计运行时间**判定——
+        // 容器暂停（docker pause / 空闲回收）期间冻结的时长从 elapsed 扣除。
+        let paused_total = std::fs::read_to_string(job_path.join("paused_total_secs"))
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        let effective_elapsed = elapsed.saturating_sub(paused_total);
         // 到达时限即终止（`num_seconds` 截断到秒：elapsed==limit 时已到点）。
-        if elapsed < limit {
+        if effective_elapsed < limit {
             continue;
         }
         let pid = std::fs::read_to_string(job_path.join("pid"))
@@ -1305,6 +1437,67 @@ fn enforce_job_timeouts_with(
         enforced.push(entry.file_name().to_string_lossy().to_string());
     }
     Ok(enforced)
+}
+
+/// PLAN-0344 T1.3（决策 #3）：容器暂停前给运行中 job 打 `paused_at` 标记。
+/// 由宿主在 `pause_container` 之前调用（容器尚可 exec）。
+fn mark_jobs_paused_at(
+    job_dir: &Path,
+    now: chrono::DateTime<chrono::Utc>,
+    alive: impl Fn(i32) -> bool,
+) -> Result<usize, RuntimeError> {
+    let mut marked = 0;
+    if !job_dir.exists() {
+        return Ok(0);
+    }
+    for entry in std::fs::read_dir(job_dir).map_err(RuntimeError::Io)? {
+        let entry = entry.map_err(RuntimeError::Io)?;
+        let job_path = entry.path();
+        if !job_path.is_dir() || !job_is_running_with(&job_path, &alive) {
+            continue;
+        }
+        if job_path.join("paused_at").exists() {
+            continue;
+        }
+        let _ = std::fs::write(job_path.join("paused_at"), now.to_rfc3339());
+        marked += 1;
+    }
+    Ok(marked)
+}
+
+/// 容器恢复后把暂停时长累加进 `paused_total_secs` 并清除标记；
+/// 暂停期不要求进程可探活（冻结中的探活必然失败）。
+fn resume_jobs_paused_at(
+    job_dir: &Path,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<usize, RuntimeError> {
+    let mut resumed = 0;
+    if !job_dir.exists() {
+        return Ok(0);
+    }
+    for entry in std::fs::read_dir(job_dir).map_err(RuntimeError::Io)? {
+        let entry = entry.map_err(RuntimeError::Io)?;
+        let job_path = entry.path();
+        if !job_path.is_dir() {
+            continue;
+        }
+        let paused_at_path = job_path.join("paused_at");
+        let Ok(raw) = std::fs::read_to_string(&paused_at_path) else {
+            continue;
+        };
+        let delta = chrono::DateTime::parse_from_rfc3339(raw.trim())
+            .map(|parsed| (now - parsed.with_timezone(&chrono::Utc)).num_seconds().max(0) as u64)
+            .unwrap_or(0);
+        let total = std::fs::read_to_string(job_path.join("paused_total_secs"))
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+            .saturating_add(delta);
+        let _ = std::fs::write(job_path.join("paused_total_secs"), total.to_string());
+        let _ = std::fs::remove_file(&paused_at_path);
+        resumed += 1;
+    }
+    Ok(resumed)
 }
 
 // ── Patch (PLAN-275 M2) ────────────────────────────────────────────────
@@ -2132,6 +2325,89 @@ mod tests {
         job
     }
 
+    // ── T1.2（PLAN-0344）：续看游标与 UTF-8 边界 ──────────────────────────
+
+    #[test]
+    fn utf8_safe_chunk_rolls_back_to_rune_boundary() {
+        let bytes = "你好abc".as_bytes(); // 3 + 3 + 1 + 1 + 1 = 9 bytes
+        assert_eq!(utf8_safe_chunk(bytes, None, Some(4)), (0, 3));
+        assert_eq!(utf8_safe_chunk(bytes, Some(3), Some(4)), (3, 7));
+        // 畸形 offset（落在 rune 中部）向前对齐到最近边界
+        assert_eq!(utf8_safe_chunk(bytes, Some(4), Some(2)), (6, 8));
+        // 越过 EOF
+        assert_eq!(utf8_safe_chunk(bytes, Some(99), None), (9, 9));
+    }
+
+    #[test]
+    fn utf8_safe_chunk_handles_empty_input() {
+        assert_eq!(utf8_safe_chunk(b"", None, None), (0, 0));
+    }
+
+    #[test]
+    fn read_job_output_json_at_pages_without_splitting_runes() {
+        let tmp = TempDir::new().unwrap();
+        let job = write_fake_job(tmp.path(), "job-out", "running", Some("1234"), 0);
+        std::fs::write(job.join("stdout"), "你好世界").unwrap();
+        std::fs::write(job.join("stderr"), "错误").unwrap();
+
+        let first =
+            read_job_output_json_at(tmp.path(), "job-out", "stdout", None, Some(4)).unwrap();
+        assert_eq!(first["available"], true);
+        assert_eq!(first["data"], "你");
+        assert_eq!(first["offset"], 0);
+        assert_eq!(first["nextOffset"], 3);
+        assert_eq!(first["sizeBytes"], 12);
+        assert_eq!(first["jobStatus"], "running");
+
+        let second = read_job_output_json_at(
+            tmp.path(),
+            "job-out",
+            "stdout",
+            first["nextOffset"].as_u64().map(|value| value as usize),
+            Some(4),
+        )
+        .unwrap();
+        assert_eq!(second["data"], "好");
+        assert_eq!(second["nextOffset"], 6);
+
+        let stderr = read_job_output_json_at(tmp.path(), "job-out", "stderr", None, None).unwrap();
+        assert_eq!(stderr["data"], "错误");
+    }
+
+    #[test]
+    fn job_info_serializes_to_background_process_contract() {
+        let info = JobInfo {
+            job_id: "job-1".to_string(),
+            workspace_id: "ws-1".to_string(),
+            command: "sleep 1".to_string(),
+            status: "running".to_string(),
+            pid: Some("42".to_string()),
+            exit_code: None,
+            created_at: "2026-09-18T00:00:00Z".to_string(),
+            updated_at: None,
+            stdout_preview: Some("out".to_string()),
+            stderr_preview: Some("err".to_string()),
+            timeout_secs: Some(600),
+        };
+        let value = serde_json::to_value(&info).unwrap();
+        assert_eq!(value["workspaceId"], "ws-1");
+        assert_eq!(value["timeoutSecs"], 600);
+        let parsed: xihe_runtime::sandbox::BackgroundProcess =
+            serde_json::from_value(value).expect("MCP BackgroundProcess contract must parse");
+        assert_eq!(parsed.job_id, "job-1");
+        assert_eq!(parsed.workspace_id, "ws-1");
+        assert_eq!(parsed.stdout_preview.as_deref(), Some("out"));
+    }
+
+    #[test]
+    fn read_job_output_json_at_reports_missing_job_without_error() {
+        let tmp = TempDir::new().unwrap();
+        let missing =
+            read_job_output_json_at(tmp.path(), "job-missing", "stdout", None, None).unwrap();
+        assert_eq!(missing["available"], false);
+        assert_eq!(missing["reason"], "job_missing");
+    }
+
     #[test]
     fn cleanup_keeps_running_job_even_when_expired() {
         let tmp = TempDir::new().unwrap();
@@ -2266,6 +2542,77 @@ mod tests {
                 .trim(),
             "succeeded",
             "finished jobs are not touched"
+        );
+    }
+
+    // ── T1.3（PLAN-0344 决策 #3）：paused 期间不计入运行时限 ──────────────
+
+    #[test]
+    fn paused_seconds_are_subtracted_from_runtime_budget() {
+        let tmp = TempDir::new().unwrap();
+        let now = chrono::Utc::now();
+
+        let job = write_fake_job(tmp.path(), "job-paused", "running", Some("4321"), 0);
+        std::fs::write(job.join("timeout_secs"), "60").unwrap();
+        std::fs::write(
+            job.join("started_at"),
+            (now - chrono::Duration::seconds(100)).to_rfc3339(),
+        )
+        .unwrap();
+        std::fs::write(job.join("paused_total_secs"), "50").unwrap();
+
+        let killed: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+        let enforced = enforce_job_timeouts_with(tmp.path(), now, |_pid| true, |pid| {
+            killed.lock().unwrap().push(pid)
+        })
+        .unwrap();
+
+        assert!(enforced.is_empty(), "50s of 100s was paused; still inside 60s budget");
+        assert_eq!(
+            std::fs::read_to_string(job.join("meta")).unwrap().trim(),
+            "running"
+        );
+
+        // 清零暂停抵扣后立即到点
+        std::fs::write(job.join("paused_total_secs"), "0").unwrap();
+        let enforced = enforce_job_timeouts_with(tmp.path(), now, |_pid| true, |pid| {
+            killed.lock().unwrap().push(pid)
+        })
+        .unwrap();
+        assert_eq!(enforced, vec!["job-paused".to_string()]);
+    }
+
+    #[test]
+    fn pause_mark_and_resume_accumulate_total_paused_seconds() {
+        let tmp = TempDir::new().unwrap();
+        let job = write_fake_job(tmp.path(), "job-1", "running", Some("4321"), 0);
+        let t0 = chrono::Utc::now();
+
+        let marked = mark_jobs_paused_at(tmp.path(), t0, |_pid| true).unwrap();
+        assert_eq!(marked, 1);
+        assert!(job.join("paused_at").exists());
+        // 重复标记不叠加
+        assert_eq!(mark_jobs_paused_at(tmp.path(), t0, |_pid| true).unwrap(), 0);
+
+        let t1 = t0 + chrono::Duration::seconds(30);
+        assert_eq!(resume_jobs_paused_at(tmp.path(), t1).unwrap(), 1);
+        assert!(!job.join("paused_at").exists());
+        assert_eq!(
+            std::fs::read_to_string(job.join("paused_total_secs"))
+                .unwrap()
+                .trim(),
+            "30"
+        );
+
+        // 再暂停 10s 累计到 40
+        let t2 = t1 + chrono::Duration::seconds(5);
+        mark_jobs_paused_at(tmp.path(), t2, |_pid| true).unwrap();
+        resume_jobs_paused_at(tmp.path(), t2 + chrono::Duration::seconds(10)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(job.join("paused_total_secs"))
+                .unwrap()
+                .trim(),
+            "40"
         );
     }
 }

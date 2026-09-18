@@ -351,9 +351,38 @@ impl WorkspaceExecutionRouter {
     }
 
     async fn ensure(&self, workspace_id: &str) -> Result<crate::gateway::XiheRuntimeInstance> {
-        self.ensurer
+        // PLAN-0344 T1.3（决策 #3）：若本次 ensure 会激活一个暂停容器
+        // （M-2 unpause 路径），恢复后把暂停时长计入 job 计时，避免
+        // 「解冻即 timeout」的误杀。paused 判定为内存态，不产生额外 exec。
+        let was_paused = self.ensurer.workspace_is_paused(workspace_id).await;
+        let instance = self
+            .ensurer
             .ensure_workspace_materialized(workspace_id)
-            .await
+            .await?;
+        if was_paused {
+            match self
+                .exec_oneshot_existing(workspace_id, "resume_jobs_paused", Value::Null)
+                .await
+            {
+                Ok(value) => {
+                    let resumed = value.get("resumed").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if resumed > 0 {
+                        tracing::info!(
+                            workspace_id,
+                            resumed, "job pause clock folded back into runtime budget"
+                        );
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id,
+                        error = %error,
+                        "job pause clock resume failed; timeout budget keeps wall clock"
+                    );
+                }
+            }
+        }
+        Ok(instance)
     }
 
     fn container_name(workspace_id: &str) -> String {
@@ -904,6 +933,38 @@ impl WorkspaceExecutionRouter {
             .await
     }
 
+    /// PLAN-0344 T1.3：容器暂停前给运行中 job 打暂停标记（容器仍可 exec）。
+    pub async fn mark_jobs_paused(&self, workspace_id: &str) -> Result<Value> {
+        self.exec_oneshot_existing(workspace_id, "mark_jobs_paused", Value::Null)
+            .await
+    }
+
+    /// PLAN-0344 T1.3：destroy 前枚举仍存活（status=running）的 jobId。
+    /// 走 existing 通道：不触发 materialize / 活动时间刷新，也不受 destroying
+    /// 闸门影响（容器尚在，最后一次读账）。
+    pub async fn list_running_job_ids(&self, workspace_id: &str) -> Result<Vec<String>> {
+        let value = self
+            .exec_oneshot_existing(workspace_id, "list_background_processes", Value::Null)
+            .await?;
+        let ids = value
+            .get("jobs")
+            .and_then(|jobs| jobs.as_array())
+            .map(|jobs| {
+                jobs.iter()
+                    .filter(|job| {
+                        job.get("status").and_then(|status| status.as_str()) == Some("running")
+                    })
+                    .filter_map(|job| {
+                        job.get("jobId")
+                            .and_then(|job_id| job_id.as_str())
+                            .map(str::to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(ids)
+    }
+
     pub async fn read_command_output(
         &self,
         workspace_id: &str,
@@ -914,6 +975,26 @@ impl WorkspaceExecutionRouter {
         let payload =
             serde_json::json!({"artifact_id": artifact_id, "offset": offset, "limit": limit});
         self.exec_oneshot(workspace_id, "read_command_output", payload)
+            .await
+    }
+
+    /// PLAN-0344 T1.2：CP 续看端点的结构化 job 输出分页（字节游标 / UTF-8 安全）。
+    pub async fn read_job_output(
+        &self,
+        workspace_id: &str,
+        job_id: &str,
+        stream: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) -> Result<Value> {
+        let payload = serde_json::json!({
+            "workspaceId": workspace_id,
+            "jobId": job_id,
+            "stream": stream,
+            "offset": offset,
+            "limit": limit,
+        });
+        self.exec_oneshot(workspace_id, "read_job_output", payload)
             .await
     }
 }
