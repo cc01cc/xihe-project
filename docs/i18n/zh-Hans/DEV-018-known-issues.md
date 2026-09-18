@@ -15,6 +15,12 @@ updated: 2026-09-06
 
 本文件收录 AGENTS.md 之外的已知问题，供排查时参考。
 
+## PLAN-0342 诊断回灌 — 已知限制（2026-09-17）
+
+- **历史消息不持久化 toolCalls**：刷新后工具卡不显示，诊断仅本 run 可见（`message.toolCalls` 只在 run 内写入）。
+- **去重账本为进程内存**：`DiagnosticsLedger` 重启即清空，仅影响去重噪音（可能重复回灌一次），不影响诊断正确性。
+- **Ledger 失败判定**：非零 `exit_code` 的命令结果在 Operation Ledger 仍记 `succeeded`，诊断不参与工具失败判定（失败语义只体现在诊断回灌）。
+
 ## PLAN-0341 上下文管道与 prune — 状态（2026-09-17）
 
 - **已接线**：`CONTEXT_OVERFLOW` relay 白名单 + 至多一次重跑（force-compact → 预检 → 同 runId）；prune 墓碑；摘要 carry-forward + 熔断；SUM 去双写；U3/U4 toast。

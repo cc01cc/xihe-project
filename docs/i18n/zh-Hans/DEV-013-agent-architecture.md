@@ -155,6 +155,16 @@ CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` �
 4. Runtime `GET .../git-facts`（branch+HEAD，无 dirty）变化 → `context.env_updated` 存 epoch；U2 **不**因 env 告警。
 5. Agent `_build_system_messages`：`L0 → L1(l1_rendered) → env 块 → SUM`；不受 20 条历史截断。
 
+### 3.5 诊断回灌（PLAN-0342）
+
+失败命令的原始输出在 Agent 侧转为结构化诊断并回灌（语言知识不下沉 Runtime，决策 #13）：
+
+1. **提取（L0/L2）**：`LCToolAdapter._arun` 经 `extract_command_result` 容错解析 Runtime `CommandResult`（顶层或 `result`/`data`/`tool_result` 嵌套，`exit_code` 不可用即视为非命令结果）；仅非零退出按冻结规则 `path:line[:col]: message` 解析（path 需 path-like 锚定，severity 仅 error/warning/note，kind 由 command 保守推断）。未命中不猜测、原文不改写（L2，`confidence: low`）。
+2. **去重与预算**：会话级 `DiagnosticsLedger` 按位置身份 `(file, line, column)` 做连续重复抑制——上一轮消失、之后复现的诊断重新回灌；解析成功的零退出记观察空集（回归信号）。预算：Top-N 20 / 单条 1k / 命令结果中段 48k 头尾保留（`truncate_middle` 仅作用于命令结果）。
+3. **四通道**：① 模型可见 = 不可信信封内 `<diagnostics>` 文本块（`items` 非空才追加）；② 结构化 = `ToolMessage.artifact = {"diagnostics": bundle}`（`response_format="content_and_artifact"`，不进模型 wire）；③ durable = `tool.result` payload 触发时增 `diagnostics`；④ SSE = `tool_result.data.diagnostics`（`LangGraphEventAdapter` 从 artifact 复制，CP relay 原样透传）。bundle 形状 `{items, total, confidence}`（`items` 为 Top-N 切片，`total` 为截断前计数）。
+4. **UI 呈现**：`ToolCallCard.vue` 有诊断时整卡自动展开，展示前 3 条 +「另有 N 条」；原文回退默认折叠；`useSSE` 兼容 `tool`/`toolCallId` 键名并写入本 run 内 `message.toolCalls`（历史消息不持久化 toolCalls）。
+5. **边界**：只解析命令结果（其他工具内容不改写）；不解析 LLM 层失败；诊断不单独落盘（仅随事件 payload / SSE 透传）；跨 session 诊断账本（L1）后置。
+
 ## 4. 崩溃恢复
 
 Agent 启动恢复流程：
@@ -208,6 +218,7 @@ if recover_ids:
 
 - PLAN-0340 上下文源与注入（L1）
 - PLAN-0341 上下文管道与 prune（overflow/prune/SUM/熔断）— 本节 §3.1b
+- PLAN-0342 诊断回灌与工具卡片呈现（L0/L2 + 四通道）— 本节 §3.5
 - PLAN-294 上下文事件流与自动压缩门
 
 - `PLAN-033-XH-agent-module-decoupling.md`
