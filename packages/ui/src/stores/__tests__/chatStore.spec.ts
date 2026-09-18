@@ -70,6 +70,97 @@ describe('useChatStore', () => {
     expect(store.getSessionRunState('session-b').status).toBe('idle')
   })
 
+  it('upsertToolCall creates the live assistant message and merges by id', () => {
+    const store = useChatStore()
+    store.upsertToolCall('s1', {
+      id: 'tc-1',
+      name: 'run_command',
+      arguments: '{}',
+      status: 'running',
+    })
+
+    let calls = store.getMessages('s1')[0].toolCalls
+    expect(store.getMessages('s1')).toHaveLength(1)
+    expect(store.getStreamingMessageId('s1')).toBe(store.getMessages('s1')[0].id)
+    expect(calls?.[0]).toMatchObject({ id: 'tc-1', name: 'run_command', status: 'running' })
+
+    store.upsertToolCall('s1', {
+      id: 'tc-1',
+      status: 'completed',
+      result: 'src/a.ts:1:2: error: bad',
+      diagnostics: {
+        items: [
+          {
+            file: 'src/a.ts',
+            line: 1,
+            column: 2,
+            severity: 'error',
+            kind: 'compile',
+            message: 'bad',
+            confidence: 'high',
+          },
+        ],
+        total: 1,
+        confidence: 'high',
+      },
+    })
+
+    calls = store.getMessages('s1')[0].toolCalls
+    expect(calls).toHaveLength(1)
+    expect(calls?.[0]).toMatchObject({
+      id: 'tc-1',
+      name: 'run_command',
+      status: 'completed',
+      result: 'src/a.ts:1:2: error: bad',
+    })
+    expect(calls?.[0].diagnostics?.total).toBe(1)
+  })
+
+  it('upsertToolCall keeps tool calls after finalizeStreaming', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.upsertToolCall('s1', { id: 'tc-1', name: 'run_command', arguments: '{}', status: 'running' })
+    store.finalizeStreaming('s1')
+
+    const message = store.getMessages('s1')[0]
+    expect(message.isStreaming).toBe(false)
+    expect(message.toolCalls).toHaveLength(1)
+    expect(message.toolCalls?.[0].id).toBe('tc-1')
+  })
+
+  it('upsertToolCall reuses the active streaming message instead of creating a second', () => {
+    const store = useChatStore()
+    const messageId = store.createStreamingMessage('s1', 'run-1')
+    store.upsertToolCall('s1', { id: 'tc-1', name: 'run_command', arguments: '{}', status: 'running' })
+
+    expect(store.getMessages('s1')).toHaveLength(1)
+    expect(store.getMessages('s1')[0].id).toBe(messageId)
+    expect(store.getStreamingMessageId('s1')).toBe(messageId)
+  })
+
+  it('keeps a tool-only message when the stream fails', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1')
+    store.upsertToolCall('s1', {
+      id: 'tc-1',
+      name: 'run_command',
+      arguments: '{}',
+      status: 'failed',
+      error: 'boom',
+    })
+    store.markStreamingError('s1', {
+      code: 'AGENT_STREAM_FAILED',
+      detail: 'stream failed',
+      outcome: 'error',
+    })
+
+    const message = store.getMessages('s1')[0]
+    expect(message.toolCalls).toHaveLength(1)
+    expect(message.runStatus).toBe('failed')
+    expect(message.terminalOutcome).toBe('error')
+    expect(store.isStreaming('s1')).toBe(false)
+  })
+
   it('loadMessages does not replace an in-flight streaming message', () => {
     const store = useChatStore()
     store.createStreamingMessage('s1')

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ChatSessionRunState, Message, MessagePart } from '../types'
+import type { ChatSessionRunState, Message, MessagePart, ToolCall } from '../types'
 import { ApiError, api } from '../composables/api'
 import { logger } from '../lib/logger'
 import { useAgentStore } from './agent'
@@ -89,7 +89,28 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function findStreamingMessage(sessionId: string): Message | undefined {
+    const messageId = streamingMessageId.value[sessionId]
+    if (!messageId) return undefined
+    return messages.value[sessionId]?.find((msg) => msg.id === messageId)
+  }
+
+  function messageHasRenderableContent(message: Message): boolean {
+    return Boolean(
+      message.content ||
+        message.toolCalls?.length ||
+        message.parts?.some((part) => part.type !== 'citation' && Boolean(part.content)),
+    )
+  }
+
   function createStreamingMessage(sessionId: string, runId?: string): string {
+    // Tool-first runs create the live assistant message from `upsertToolCall`
+    // before any token arrives; reuse it instead of spawning a second bubble.
+    const existing = findStreamingMessage(sessionId)
+    if (existing) {
+      if (runId !== undefined) existing.runId = runId
+      return existing.id
+    }
     const id = crypto.randomUUID()
     const message: Message = {
       id,
@@ -105,6 +126,47 @@ export const useChatStore = defineStore('chat', () => {
     streamingMessageId.value[sessionId] = id
     setSessionRunState(sessionId, 'thinking', runId)
     return id
+  }
+
+  type ToolCallUpsert = Partial<ToolCall> & Pick<ToolCall, 'id'>
+
+  /**
+   * PLAN-0342 T1.5: merge SSE tool events into the live assistant message so
+   * MessageItem/ToolCallCard render the real path. `tool_call` inserts
+   * `running`, `tool_result` moves it to `completed`/`failed` with
+   * result/diagnostics. Tool-first runs have no token yet, so the live
+   * message is created on demand.
+   */
+  function upsertToolCall(sessionId: string, call: ToolCallUpsert) {
+    const messageId = streamingMessageId.value[sessionId] ?? createStreamingMessage(sessionId)
+    const message = messages.value[sessionId]?.find((msg) => msg.id === messageId)
+    if (!message) return
+
+    if (!message.toolCalls) {
+      message.toolCalls = []
+    }
+    const incomingIds = [call.id, call.runId].filter(
+      (value): value is string => typeof value === 'string' && value !== '',
+    )
+    // PLAN-0342 review fix: `tool_call` carries the tool-run id while
+    // `tool_result` carries the model's tool_call_id; both share `run_id`,
+    // so merge on either key to avoid a ghost "running" card.
+    const existing = message.toolCalls.find(
+      (tc) =>
+        incomingIds.includes(tc.id) ||
+        (typeof tc.runId === 'string' && incomingIds.includes(tc.runId)),
+    )
+    if (existing) {
+      // Keep the first-seen id stable so both wire ids keep merging into the
+      // same card; only enrich with the result payload.
+      const { id: _ignoredId, runId: _ignoredRunId, ...rest } = call
+      Object.assign(existing, rest)
+      if (!existing.runId && call.runId) {
+        existing.runId = call.runId
+      }
+      return
+    }
+    message.toolCalls.push({ name: '', arguments: '', status: 'running', ...call })
   }
 
   function appendToParts(sessionId: string, part: MessagePart) {
@@ -197,9 +259,7 @@ export const useChatStore = defineStore('chat', () => {
 
     const message = messages.value[sessionId]?.find((msg) => msg.id === messageId)
     if (message) {
-      const hasContent = Boolean(
-        message.content || message.parts?.some((part) => part.type !== 'citation' && Boolean(part.content)),
-      )
+      const hasContent = messageHasRenderableContent(message)
       if (!hasContent) {
         messages.value[sessionId] = messages.value[sessionId].filter((msg) => msg.id !== messageId)
       } else {
@@ -238,10 +298,14 @@ export const useChatStore = defineStore('chat', () => {
 
     const message = messages.value[sessionId]?.find((msg) => msg.id === messageId)
     if (message) {
-      const hasContent = Boolean(
-        message.content || message.parts?.some((part) => part.type !== 'citation' && Boolean(part.content)),
+      // Tool cards are renderable content: keep a tool-only bubble (with its
+      // diagnostics) alive, but only assistant text counts as "partial".
+      const hasTextContent = Boolean(
+        message.content ||
+          message.parts?.some((part) => part.type !== 'citation' && Boolean(part.content)),
       )
-      if (!hasContent) {
+      const hasRenderableContent = hasTextContent || Boolean(message.toolCalls?.length)
+      if (!hasRenderableContent) {
         messages.value[sessionId] = messages.value[sessionId].filter((msg) => msg.id !== messageId)
         streamingMessageId.value[sessionId] = null
         setSessionRunState(sessionId, 'idle')
@@ -254,7 +318,7 @@ export const useChatStore = defineStore('chat', () => {
       message.retryable = error.retryable ?? true
       message.runId = error.runId ?? message.runId
       const ambiguous = error.outcome === 'ambiguous'
-      const partial = !ambiguous && (hasContent || error.outcome === 'partial')
+      const partial = !ambiguous && (hasTextContent || error.outcome === 'partial')
       message.runStatus = ambiguous ? 'ambiguous' : partial ? 'partial' : 'failed'
       message.terminalOutcome = ambiguous ? 'ambiguous' : partial ? 'partial' : 'error'
       if (message.parts) {
@@ -425,6 +489,7 @@ export const useChatStore = defineStore('chat', () => {
     deleteMessage,
     addMarker,
     createStreamingMessage,
+    upsertToolCall,
     appendToParts,
     replaceStreamingParts,
     finalizeStreaming,

@@ -35,8 +35,35 @@ export interface Session {
     context?: SessionContext;
 }
 
+export type DiagnosticSeverity = "error" | "warning" | "note";
+export type DiagnosticConfidence = "high" | "low";
+
+/**
+ * PLAN-0342 T1.5: structured diagnostic item carried by `tool_result` events.
+ * `file`/`line`/`column`/`kind` are nullable — the parser degrades to raw
+ * output (`confidence: "low"`) when it cannot anchor a location.
+ */
+export interface Diagnostic {
+    file: string | null;
+    line: number | null;
+    column: number | null;
+    severity: DiagnosticSeverity;
+    kind: string | null;
+    message: string;
+    confidence: DiagnosticConfidence;
+}
+
+/** Diagnostics bundle attached to a `tool_result` payload (`items` is the Top-N slice of `total`). */
+export interface DiagnosticsBundle {
+    items: Diagnostic[];
+    total: number;
+    confidence: DiagnosticConfidence;
+}
+
 export interface ToolCall {
     id: string;
+    /** Agent tool-run id; `tool_call` and `tool_result` share it even when `toolCallId` differs (PLAN-0342 review fix). */
+    runId?: string;
     name: string;
     arguments: string;
     status: "running" | "completed" | "failed" | "pending";
@@ -44,6 +71,7 @@ export interface ToolCall {
     error?: string;
     startedAt?: string;
     completedAt?: string;
+    diagnostics?: DiagnosticsBundle;
 }
 
 export type ApprovalPolicyEffect = "allow" | "ask" | "deny";

@@ -2,6 +2,7 @@ import { ref, onUnmounted, getCurrentInstance, toValue, type MaybeRefOrGetter } 
 import { getActivePinia } from "pinia";
 import { useAgentStore } from "../stores/agent";
 import { useCheckpointStore } from "../stores/checkpoint";
+import { useChatStore } from "../stores/chat";
 import { logger } from "../lib/logger";
 import { chatTransport } from "../services/chatTransport";
 import {
@@ -12,7 +13,12 @@ import {
     normalizeWorkspaceCheckpointEvent,
 } from "./api";
 import type { EventSourceMessage } from "@microsoft/fetch-event-source";
-import type { ChatRunResponse } from "../types";
+import type {
+    ChatRunResponse,
+    Diagnostic,
+    DiagnosticsBundle,
+    ToolCall,
+} from "../types";
 
 interface LangChainTextBlock {
     type: string;
@@ -83,6 +89,66 @@ function getAgentStoreOrNull() {
 function getCheckpointStoreOrNull() {
     const pinia = getActivePinia();
     return pinia ? useCheckpointStore(pinia) : null;
+}
+
+function getChatStoreOrNull() {
+    const pinia = getActivePinia();
+    return pinia ? useChatStore(pinia) : null;
+}
+
+/**
+ * PLAN-0342 T1.5: defensive normalization of the optional `diagnostics` bundle
+ * on `tool_result`. Unknown/malformed entries are dropped; an empty item list
+ * counts as "no diagnostics" so the card keeps its legacy collapsed shape.
+ */
+function normalizeDiagnostics(value: unknown): DiagnosticsBundle | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const raw = value as { items?: unknown; total?: unknown; confidence?: unknown };
+    if (!Array.isArray(raw.items)) return undefined;
+
+    const items: Diagnostic[] = [];
+    for (const entry of raw.items) {
+        if (!entry || typeof entry !== "object") continue;
+        const item = entry as Record<string, unknown>;
+        if (typeof item.message !== "string" || item.message.length === 0) continue;
+        items.push({
+            file: typeof item.file === "string" && item.file.length > 0 ? item.file : null,
+            line: typeof item.line === "number" ? item.line : null,
+            column: typeof item.column === "number" ? item.column : null,
+            severity:
+                item.severity === "warning" || item.severity === "note" ? item.severity : "error",
+            kind: typeof item.kind === "string" ? item.kind : null,
+            message: item.message,
+            confidence: item.confidence === "low" ? "low" : "high",
+        });
+    }
+    if (items.length === 0) return undefined;
+
+    const total = typeof raw.total === "number" ? Math.max(raw.total, items.length) : items.length;
+    return {
+        items,
+        total,
+        confidence: raw.confidence === "low" ? "low" : "high",
+    };
+}
+
+const UNTRUSTED_ENVELOPE_RE = /^<untrusted-tool-output>\n[^\n]*\n/;
+
+/**
+ * PLAN-0342 review fix: the MCP client prefixes failures with `Tool error:`
+ * *inside* the untrusted envelope, so match after stripping the wrapper.
+ */
+function stripUntrustedEnvelope(result: string): string {
+    return result.startsWith("<untrusted-tool-output>")
+        ? result
+              .replace(UNTRUSTED_ENVELOPE_RE, "")
+              .replace(/\n?<\/untrusted-tool-output>\s*$/, "")
+        : result;
+}
+
+function toolResultStatus(result: unknown): ToolCall["status"] {
+    if (typeof result !== "string") return "completed";
+    return stripUntrustedEnvelope(result).startsWith("Tool error:") ? "failed" : "completed";
 }
 
 export function useSSE(sessionId: MaybeRefOrGetter<string>) {
@@ -191,19 +257,41 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 resetStreamTimeout();
                 try {
                     const data = JSON.parse(msg.data) as Record<string, unknown>;
-                    if (data.name) {
+                    // Agent payload uses `tool`/`toolCallId`; `name`/`id` remain as fallback.
+                    const name =
+                        typeof data.tool === "string"
+                            ? data.tool
+                            : typeof data.name === "string"
+                              ? data.name
+                              : null;
+                    const rawId = data.toolCallId ?? data.id;
+                    const runId = typeof data.run_id === "string" ? data.run_id : undefined;
+                    if (name) {
+                        const id =
+                            rawId !== undefined && rawId !== null && rawId !== ""
+                                ? String(rawId)
+                                : crypto.randomUUID();
+                        const args =
+                            typeof data.arguments === "string"
+                                ? data.arguments
+                                : JSON.stringify(data.arguments ?? {});
                         agentStore?.addToolCall({
-                            id: String(data.id ?? crypto.randomUUID()),
-                            name: String(data.name),
-                            arguments:
-                                typeof data.arguments === "string"
-                                    ? data.arguments
-                                    : JSON.stringify(data.arguments),
+                            id,
+                            name,
+                            arguments: args,
                             status: "running",
+                        });
+                        getChatStoreOrNull()?.upsertToolCall(activeSessionId ?? toValue(sessionId), {
+                            id,
+                            name,
+                            arguments: args,
+                            status: "running",
+                            startedAt: new Date().toISOString(),
+                            ...(runId ? { runId } : {}),
                         });
                     }
                     currentCallbacks.onToolCall?.(
-                        String(data.name),
+                        name ?? "",
                         (data.arguments ?? {}) as Record<string, unknown>,
                     );
                 } catch {
@@ -215,14 +303,28 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 resetStreamTimeout();
                 try {
                     const data = JSON.parse(msg.data) as Record<string, unknown>;
-                    if (data.id) {
-                        agentStore?.updateToolCall(String(data.id), {
-                            result:
-                                typeof data.result === "string"
-                                    ? data.result
-                                    : JSON.stringify(data.result),
-                            status: "completed",
-                        });
+                    const rawId = data.toolCallId ?? data.id;
+                    if (rawId !== undefined && rawId !== null && rawId !== "") {
+                        const id = String(rawId);
+                        const result =
+                            typeof data.result === "string"
+                                ? data.result
+                                : JSON.stringify(data.result);
+                        const status = toolResultStatus(data.result);
+                        const diagnostics = normalizeDiagnostics(data.diagnostics);
+                        const updates: Partial<ToolCall> = {
+                            status,
+                            completedAt: new Date().toISOString(),
+                            ...(typeof result === "string" ? { result } : {}),
+                            ...(diagnostics ? { diagnostics } : {}),
+                            ...(typeof data.tool === "string" ? { name: data.tool } : {}),
+                            ...(typeof data.run_id === "string" ? { runId: data.run_id } : {}),
+                        };
+                        agentStore?.updateToolCall(id, { result, status });
+                        getChatStoreOrNull()?.upsertToolCall(
+                            activeSessionId ?? toValue(sessionId),
+                            { id, ...updates },
+                        );
                     }
                     currentCallbacks.onToolResult?.(data);
                 } catch {
