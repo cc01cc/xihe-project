@@ -369,7 +369,8 @@ impl WorkspaceExecutionRouter {
                     if resumed > 0 {
                         tracing::info!(
                             workspace_id,
-                            resumed, "job pause clock folded back into runtime budget"
+                            resumed,
+                            "job pause clock folded back into runtime budget"
                         );
                     }
                 }

@@ -1486,7 +1486,11 @@ fn resume_jobs_paused_at(
             continue;
         };
         let delta = chrono::DateTime::parse_from_rfc3339(raw.trim())
-            .map(|parsed| (now - parsed.with_timezone(&chrono::Utc)).num_seconds().max(0) as u64)
+            .map(|parsed| {
+                (now - parsed.with_timezone(&chrono::Utc))
+                    .num_seconds()
+                    .max(0) as u64
+            })
             .unwrap_or(0);
         let total = std::fs::read_to_string(job_path.join("paused_total_secs"))
             .ok()
@@ -2562,12 +2566,18 @@ mod tests {
         std::fs::write(job.join("paused_total_secs"), "50").unwrap();
 
         let killed: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
-        let enforced = enforce_job_timeouts_with(tmp.path(), now, |_pid| true, |pid| {
-            killed.lock().unwrap().push(pid)
-        })
+        let enforced = enforce_job_timeouts_with(
+            tmp.path(),
+            now,
+            |_pid| true,
+            |pid| killed.lock().unwrap().push(pid),
+        )
         .unwrap();
 
-        assert!(enforced.is_empty(), "50s of 100s was paused; still inside 60s budget");
+        assert!(
+            enforced.is_empty(),
+            "50s of 100s was paused; still inside 60s budget"
+        );
         assert_eq!(
             std::fs::read_to_string(job.join("meta")).unwrap().trim(),
             "running"
@@ -2575,9 +2585,12 @@ mod tests {
 
         // 清零暂停抵扣后立即到点
         std::fs::write(job.join("paused_total_secs"), "0").unwrap();
-        let enforced = enforce_job_timeouts_with(tmp.path(), now, |_pid| true, |pid| {
-            killed.lock().unwrap().push(pid)
-        })
+        let enforced = enforce_job_timeouts_with(
+            tmp.path(),
+            now,
+            |_pid| true,
+            |pid| killed.lock().unwrap().push(pid),
+        )
         .unwrap();
         assert_eq!(enforced, vec!["job-paused".to_string()]);
     }
