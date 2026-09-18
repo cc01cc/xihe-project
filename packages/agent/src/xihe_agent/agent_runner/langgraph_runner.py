@@ -5,7 +5,7 @@ import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import litellm
@@ -23,6 +23,19 @@ from pydantic import BaseModel, create_model
 
 from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
+from xihe_agent.context.diagnostics import (
+    TOP_N as DIAGNOSTICS_TOP_N,
+)
+from xihe_agent.context.diagnostics import (
+    Confidence,
+    extract_command_result,
+    extract_diagnostics,
+    format_diagnostics_block,
+    get_diagnostics_ledger,
+    make_bundle,
+    sort_diagnostics,
+    truncate_middle,
+)
 from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunnerConfig
 from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.event import Event
@@ -269,8 +282,31 @@ def _jit_rules_for_input(tool_name: str, kwargs: dict[str, Any], context: AgentC
     return ""
 
 
+def _command_text(kwargs: dict[str, Any]) -> str | None:
+    """Effective command line for `kind` inference: command + argv tokens.
+
+    PLAN-0342 (T0.4 freeze): `kind` maps conservatively from the triggering
+    command; `execute_command` carries the binary in `command` and the rest in
+    `args`, so test/build/lint keywords (`cargo test`, `npm run lint`) are only
+    visible when both parts are joined.
+    """
+    command = kwargs.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    parts = [command]
+    args = kwargs.get("args")
+    if isinstance(args, (list, tuple)):
+        parts.extend(str(arg) for arg in args)
+    return " ".join(parts)
+
+
 class LCToolAdapter(BaseTool):
     """Wraps a `BaseAgentTool` so LangGraph can invoke it."""
+
+    # PLAN-0342 T1.2 / decision #10: structured diagnostics travel on the
+    # ToolMessage artifact channel (never on the model wire); pydantic requires
+    # the annotated override of the inherited field.
+    response_format: Literal["content", "content_and_artifact"] = "content_and_artifact"
 
     def __init__(self, tool: BaseAgentTool, context: AgentContext, event_store: EventStore | None):
         super().__init__(
@@ -282,25 +318,84 @@ class LCToolAdapter(BaseTool):
         self._context = context
         self._event_store = event_store
 
-    async def _arun(self, **kwargs: Any) -> str:
+    async def _arun(self, **kwargs: Any) -> tuple[str, dict[str, Any] | None]:
+        """Execute the tool; return ``(content, artifact)``.
+
+        PLAN-0342 T1.2: a failed, parseable command result yields a diagnostics
+        bundle that is attached to the durable ``tool.result`` payload and the
+        ToolMessage artifact; the formatted block (when there are items) and the
+        middle-truncated raw output stay inside the untrusted envelope.
+        """
         call_id = str(uuid4())
         await self._append_tool_called(call_id, kwargs)
         previous_item_id = self._context.metadata.get("operationItemId")
         self._context.metadata["operationItemId"] = call_id
         try:
             result = await self._tool.execute(kwargs, self._context)
-            await self._append_tool_result(call_id, result)
             content = result.get("content", result)
             if not isinstance(content, str):
                 content = str(content)
-            wrapped = wrap_untrusted_tool_output(content)
+
+            parsed = extract_command_result(content)
+            try:
+                diagnostics = self._build_diagnostics(parsed, kwargs)
+            except Exception as exc:  # diagnostics must never break the run
+                logger.warning(
+                    "diagnostics extraction failed; continuing without bundle",
+                    error=str(exc),
+                    exc_info=True,
+                )
+                diagnostics = None
+            await self._append_tool_result(call_id, result, diagnostics=diagnostics)
+
+            # PLAN-0342 P2-4: the 48k middle truncation applies to command
+            # results only; other tool payloads (read_file, ...) stay intact.
+            body = truncate_middle(content) if parsed is not None else content
+            if diagnostics is not None and diagnostics["items"]:
+                block = format_diagnostics_block(diagnostics["items"], diagnostics["total"])
+                body = f"{body}\n{block}"
+            wrapped = wrap_untrusted_tool_output(body)
             jit = _jit_rules_for_input(self._tool.spec.name, kwargs, self._context)
-            return f"{wrapped}\n{jit}" if jit else wrapped
+            text = f"{wrapped}\n{jit}" if jit else wrapped
+            artifact = {"diagnostics": diagnostics} if diagnostics is not None else None
+            return text, artifact
         finally:
             if previous_item_id is None:
                 self._context.metadata.pop("operationItemId", None)
             else:
                 self._context.metadata["operationItemId"] = previous_item_id
+
+    def _build_diagnostics(
+        self,
+        parsed: tuple[str, str, int] | None,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """PLAN-0342 T1.1/T1.3/T1.4: L0/L2 bundle, or ``None`` when untriggered.
+
+        Only a non-zero, parseable command result yields a bundle; a miss
+        degenerates to an empty-item bundle with ``confidence: low`` (L2)
+        instead of guessing. A parsed zero exit records an observed clean pass
+        so a later reappearance re-injects (decision #3 regression signal).
+        """
+        if parsed is None:
+            return None
+        stdout, stderr, exit_code = parsed
+        session_id = self._context.aggregate_id or "-"
+        if exit_code == 0:
+            get_diagnostics_ledger().new_items(session_id, [])
+            return None
+        items = extract_diagnostics(stdout, stderr, exit_code, command=_command_text(kwargs))
+        new_items = get_diagnostics_ledger().new_items(session_id, items)
+        confidence: Confidence = "high" if items else "low"
+        bundle = make_bundle(sort_diagnostics(new_items)[:DIAGNOSTICS_TOP_N], len(new_items), confidence)
+        logger.debug(
+            "diagnostics: exitCode={} parsed={} new={} attached={}",
+            exit_code,
+            len(items),
+            len(new_items),
+            len(bundle["items"]),
+        )
+        return bundle
 
     def _run(self, **kwargs: Any) -> str:
         raise NotImplementedError("Use async run")
@@ -329,22 +424,31 @@ class LCToolAdapter(BaseTool):
         except Exception as e:
             logger.warning("Failed to append tool.called event: {}", e)
 
-    async def _append_tool_result(self, call_id: str, result: dict[str, Any]) -> None:
+    async def _append_tool_result(
+        self,
+        call_id: str,
+        result: dict[str, Any],
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
         if self._event_store is None:
             return
+        payload: dict[str, Any] = {
+            "call_id": call_id,
+            "tool_name": self._tool.spec.name,
+            "result": result,
+            "operation_id": self._context.metadata.get("operationId"),
+            "operation_item_id": call_id,
+        }
+        # PLAN-0342 T1.2: only a real bundle widens the durable payload.
+        if diagnostics is not None:
+            payload["diagnostics"] = diagnostics
         try:
             await self._event_store.append(
                 Event(
                     aggregate_id=self._context.aggregate_id,
                     sequence=0,
                     type="tool.result",
-                    payload={
-                        "call_id": call_id,
-                        "tool_name": self._tool.spec.name,
-                        "result": result,
-                        "operation_id": self._context.metadata.get("operationId"),
-                        "operation_item_id": call_id,
-                    },
+                    payload=payload,
                     created_at=datetime.now(UTC),
                 )
             )

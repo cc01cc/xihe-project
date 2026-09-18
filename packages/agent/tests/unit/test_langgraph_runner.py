@@ -1,21 +1,26 @@
 """Tests for xihe_agent.agent_runner.langgraph_runner."""
 
 import asyncio
+import json
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.messages import ToolMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.agent_runner import LangGraphRunner
+from xihe_agent.context.diagnostics import get_diagnostics_ledger
 from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
 from xihe_agent.interfaces.context import AgentContext, ContextEpoch
 from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
 from xihe_agent.llm.base import MockChatModel, create_llm
+
+LCToolAdapter = langgraph_runner_module.LCToolAdapter
 
 
 class FakeTool:
@@ -38,6 +43,52 @@ class FakeTool:
 
     async def execute(self, input: dict, context: dict) -> dict:
         return {"content": f"result for {input.get('query', '')}"}
+
+
+class FakeCommandTool:
+    """Fake `execute_command` tool returning a canned Runtime CommandResult."""
+
+    def __init__(self, payload: str, name: str = "execute_command"):
+        self._spec = ToolSpec(
+            name=name,
+            description="Execute a shell command",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "args": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["command"],
+            },
+        )
+        self._payload = payload
+
+    @property
+    def spec(self) -> ToolSpec:
+        return self._spec
+
+    async def execute(self, input: dict, context: dict) -> dict:
+        return {"content": self._payload}
+
+
+def _command_result(exit_code: int, stdout: str = "", stderr: str = "") -> str:
+    return json.dumps(
+        {
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "success": exit_code == 0,
+            "artifact_id": None,
+        }
+    )
+
+
+@pytest.fixture(autouse=True)
+def _reset_diagnostics_ledger():
+    """PLAN-0342: keep the process-level session ledger isolated per test."""
+    get_diagnostics_ledger().reset()
+    yield
+    get_diagnostics_ledger().reset()
 
 
 @pytest.mark.asyncio
@@ -287,3 +338,204 @@ def test_args_schema_accepts_numeric_strings_for_integer_fields():
     )
 
     assert langgraph_runner_module._build_args_schema(spec)(offset="90").offset == 90
+
+
+# ── PLAN-0342 M1：诊断回灌接线（artifact / 信封 / 去重 / 触发边界） ──────────
+
+
+def test_lc_tool_adapter_response_format_is_content_and_artifact():
+    """契约钉：结构化诊断经 ToolMessage artifact 通道，不进模型 wire。"""
+    adapter = LCToolAdapter(FakeTool(), AgentContext.empty("session-diag-format"), None)
+    assert adapter.response_format == "content_and_artifact"
+    assert LCToolAdapter.model_fields["response_format"].default == "content_and_artifact"
+
+
+@pytest.mark.asyncio
+async def test_lc_tool_adapter_arun_via_framework_yields_tool_message_with_artifact():
+    tool = FakeCommandTool(_command_result(1, "src/a.rs:3:1: error: boom", ""))
+    adapter = LCToolAdapter(tool, AgentContext.empty("session-diag-framework"), None)
+
+    message = await adapter.arun({"command": "cargo", "args": ["build"]}, tool_call_id="call-format")
+
+    assert isinstance(message, ToolMessage)
+    assert message.artifact is not None
+    assert message.artifact["diagnostics"]["items"][0]["file"] == "src/a.rs"
+    assert "<diagnostics>" in message.content
+
+
+@pytest.mark.asyncio
+async def test_arun_returns_diagnostics_artifact_and_envelope_block():
+    tool = FakeCommandTool(_command_result(1, "src/a.rs:3:1: error: boom", ""))
+    adapter = LCToolAdapter(tool, AgentContext.empty("session-diag-1"), None)
+
+    text, artifact = await adapter._arun(command="cargo", args=["build"])
+
+    assert isinstance(text, str)
+    assert artifact is not None
+    bundle = artifact["diagnostics"]
+    assert bundle["confidence"] == "high"
+    assert bundle["total"] == 1
+    item = bundle["items"][0]
+    assert (item["file"], item["line"], item["column"]) == ("src/a.rs", 3, 1)
+    assert item["severity"] == "error"
+    # kind 来自触发命令（command + args 合并后含 cargo/build）。
+    assert item["kind"] == "compile"
+
+    # 诊断块必须在不可信信封内部（原文也在信封内）。
+    open_idx = text.index("<untrusted-tool-output>")
+    block_idx = text.index("<diagnostics>")
+    close_idx = text.index("</untrusted-tool-output>")
+    assert open_idx < block_idx < close_idx
+    assert "- src/a.rs:3:1 [error] error: boom" in text
+
+
+@pytest.mark.asyncio
+async def test_arun_suppresses_consecutive_duplicate_diagnostics():
+    tool = FakeCommandTool(_command_result(1, "src/a.rs:3:1: error: boom", ""))
+    adapter = LCToolAdapter(tool, AgentContext.empty("session-diag-dup"), None)
+
+    _, first = await adapter._arun(command="cargo", args=["build"])
+    text, second = await adapter._arun(command="cargo", args=["build"])
+
+    assert first is not None and len(first["diagnostics"]["items"]) == 1
+    assert second is not None
+    assert second["diagnostics"]["items"] == []
+    assert second["diagnostics"]["total"] == 0
+    assert "<diagnostics>" not in text
+
+
+@pytest.mark.asyncio
+async def test_arun_attaches_no_bundle_on_zero_exit():
+    tool = FakeCommandTool(_command_result(0, "src/a.rs:3:1: error: stale", ""))
+    adapter = LCToolAdapter(tool, AgentContext.empty("session-diag-ok"), None)
+
+    text, artifact = await adapter._arun(command="cargo", args=["build"])
+
+    assert artifact is None
+    assert "<diagnostics>" not in text
+
+
+@pytest.mark.asyncio
+async def test_arun_zero_exit_clears_ledger_and_regression_reinjects():
+    """PLAN-0342 V4: fail → fail (suppressed) → success (cleared) → fail (new)."""
+    tool = FakeCommandTool(_command_result(1, "src/a.rs:3:1: error: boom", ""))
+    adapter = LCToolAdapter(tool, AgentContext.empty("session-diag-regress"), None)
+
+    _, first = await adapter._arun(command="cargo", args=["build"])
+    _, second = await adapter._arun(command="cargo", args=["build"])
+    assert first is not None and len(first["diagnostics"]["items"]) == 1
+    assert second is not None and second["diagnostics"]["items"] == []
+
+    clean = LCToolAdapter(
+        FakeCommandTool(_command_result(0, "", "")),
+        AgentContext.empty("session-diag-regress"),
+        None,
+    )
+    _, clean_artifact = await clean._arun(command="cargo", args=["build"])
+    assert clean_artifact is None
+
+    _, third = await adapter._arun(command="cargo", args=["build"])
+    assert third is not None
+    assert len(third["diagnostics"]["items"]) == 1
+    assert third["diagnostics"]["items"][0]["message"] == "error: boom"
+
+
+@pytest.mark.asyncio
+async def test_arun_survives_diagnostics_extraction_failure(monkeypatch):
+    """Review fix: an extractor failure must not break the tool loop."""
+    tool = FakeCommandTool(_command_result(1, "src/a.rs:3:1: error: boom", ""))
+    adapter = LCToolAdapter(tool, AgentContext.empty("session-diag-guard"), None)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("extractor exploded")
+
+    monkeypatch.setattr(langgraph_runner_module, "extract_diagnostics", explode)
+
+    text, artifact = await adapter._arun(command="cargo", args=["build"])
+
+    assert artifact is None
+    assert "boom" in text
+
+
+@pytest.mark.asyncio
+async def test_arun_does_not_truncate_non_command_tool_results():
+    """PLAN-0342 P2-4: the 48k middle truncation is command-result scoped."""
+    giant = json.dumps({"notes": "x" * 60_000})
+    adapter = LCToolAdapter(
+        FakeCommandTool(giant, name="read_file"),
+        AgentContext.empty("session-diag-scope"),
+        None,
+    )
+
+    text, artifact = await adapter._arun(path="big.txt")
+
+    assert artifact is None
+    assert "中段已截断" not in text
+    assert giant[:200] in text
+    assert giant[-200:] in text
+
+
+@pytest.mark.asyncio
+async def test_arun_attaches_no_bundle_for_non_command_content():
+    tool = FakeTool()
+    adapter = LCToolAdapter(tool, AgentContext.empty("session-diag-plain"), None)
+
+    text, artifact = await adapter._arun(query="hello")
+
+    assert artifact is None
+    assert "result for hello" in text
+
+
+@pytest.mark.asyncio
+async def test_arun_l2_bundle_is_empty_with_low_confidence():
+    tool = FakeCommandTool(_command_result(1, "just prose, nothing path-like", ""))
+    adapter = LCToolAdapter(tool, AgentContext.empty("session-diag-l2"), None)
+
+    text, artifact = await adapter._arun(command="make")
+
+    assert artifact == {"diagnostics": {"items": [], "total": 0, "confidence": "low"}}
+    assert "<diagnostics>" not in text
+
+
+@pytest.mark.asyncio
+async def test_tool_result_event_payload_carries_bundle_only_when_triggered():
+    event_store = MagicMock()
+    event_store.append = AsyncMock()
+
+    failing = LCToolAdapter(
+        FakeCommandTool(_command_result(1, "a.rs:1:1: error: x", "")),
+        AgentContext.empty("session-diag-event"),
+        event_store,
+    )
+    await failing._arun(command="make")
+
+    payloads = [
+        call.args[0].payload
+        for call in event_store.append.await_args_list
+        if call.args[0].type == "tool.result"
+    ]
+    assert len(payloads) == 1
+    assert payloads[0]["diagnostics"]["items"][0]["file"] == "a.rs"
+
+    event_store.append.reset_mock()
+    succeeding = LCToolAdapter(
+        FakeCommandTool(_command_result(0, "a.rs:1:1: error: x", "")),
+        AgentContext.empty("session-diag-event"),
+        event_store,
+    )
+    await succeeding._arun(command="make")
+
+    payloads = [
+        call.args[0].payload
+        for call in event_store.append.await_args_list
+        if call.args[0].type == "tool.result"
+    ]
+    assert len(payloads) == 1
+    assert "diagnostics" not in payloads[0]
+
+
+def test_command_text_joins_command_and_args():
+    assert langgraph_runner_module._command_text({"command": "cargo", "args": ["test", "-q"]}) == "cargo test -q"
+    assert langgraph_runner_module._command_text({"command": "make"}) == "make"
+    assert langgraph_runner_module._command_text({}) is None
+    assert langgraph_runner_module._command_text({"command": "   "}) is None

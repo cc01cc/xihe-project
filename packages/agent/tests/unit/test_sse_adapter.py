@@ -337,3 +337,104 @@ def _as_list(value):
     if value is None:
         return []
     return value if isinstance(value, list) else [value]
+
+
+# ── PLAN-0342 T1.2：诊断从 ToolMessage artifact 复制到 SSE tool_result ────────
+
+DIAGNOSTICS_BUNDLE = {
+    "items": [
+        {
+            "file": "src/a.rs",
+            "line": 3,
+            "column": 1,
+            "severity": "error",
+            "kind": "compile",
+            "message": "boom",
+            "confidence": "high",
+        }
+    ],
+    "total": 1,
+    "confidence": "high",
+}
+
+
+@pytest.mark.asyncio
+async def test_tool_end_copies_diagnostics_artifact_into_event_data():
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "execute_command",
+            "data": {
+                "output": ToolMessage(
+                    content="raw output",
+                    tool_call_id="call-diag",
+                    artifact={"diagnostics": DIAGNOSTICS_BUNDLE},
+                )
+            },
+            "run_id": "run-20",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    assert len(results) == 1
+    payload = _parse(results[0])
+    assert payload["result"] == "raw output"
+    assert payload["toolCallId"] == "call-diag"
+    assert payload["diagnostics"] == DIAGNOSTICS_BUNDLE
+
+
+@pytest.mark.asyncio
+async def test_tool_end_without_artifact_has_no_diagnostics_key():
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {"output": ToolMessage(content="file", tool_call_id="call-plain")},
+            "run_id": "run-21",
+        }
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    payload = _parse(results[0])
+    assert "diagnostics" not in payload
+
+
+@pytest.mark.asyncio
+async def test_tool_end_ignores_non_dict_or_empty_diagnostics_artifact():
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {
+                "output": ToolMessage(content="a", tool_call_id="call-a", artifact="not-a-dict")
+            },
+            "run_id": "run-22",
+        },
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {
+                "output": ToolMessage(content="b", tool_call_id="call-b", artifact={"diagnostics": None})
+            },
+            "run_id": "run-23",
+        },
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {
+                "output": ToolMessage(content="c", tool_call_id="call-c", artifact={"diagnostics": {}})
+            },
+            "run_id": "run-24",
+        },
+    ]
+    results = []
+    async for sse in translate_events(async_iter(events)):
+        results.append(sse)
+
+    assert len(results) == 3
+    for result in results:
+        assert "diagnostics" not in _parse(result)

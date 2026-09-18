@@ -116,23 +116,31 @@ class LangGraphEventAdapter(EventAdapter):
                 # 排除清单），抑制孤儿事件，避免 CP 中继 unmatched 噪声。
                 return None
             tool_output = data.get("output")
+            diagnostics: dict[str, Any] | None = None
             if isinstance(tool_output, ToolMessage):
                 formatted = tool_output.content
                 tool_call_id = tool_output.tool_call_id or run_id
+                # PLAN-0342 T1.2: structured diagnostics are copied from the
+                # ToolMessage artifact channel into the SSE payload.
+                artifact = tool_output.artifact
+                if isinstance(artifact, dict):
+                    candidate = artifact.get("diagnostics")
+                    if isinstance(candidate, dict) and candidate:
+                        diagnostics = candidate
             else:
                 formatted = str(tool_output or "")
                 tool_call_id = run_id
-            return AgentEvent(
-                type="tool_result",
-                data={
-                    "tool": name,
-                    "result": formatted,
-                    "type": "tool_result",
-                    "run_id": run_id,
-                    "toolCallId": tool_call_id,
-                    "origin": self._origin(name),
-                },
-            )
+            event_data: dict[str, Any] = {
+                "tool": name,
+                "result": formatted,
+                "type": "tool_result",
+                "run_id": run_id,
+                "toolCallId": tool_call_id,
+                "origin": self._origin(name),
+            }
+            if diagnostics is not None:
+                event_data["diagnostics"] = diagnostics
+            return AgentEvent(type="tool_result", data=event_data)
 
         if event_type == "on_llm_error":
             error = data.get("error", str(data))
