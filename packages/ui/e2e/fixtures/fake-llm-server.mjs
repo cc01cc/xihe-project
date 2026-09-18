@@ -372,7 +372,12 @@ function sendExecCommandCompletion(response, requestBody) {
     return
   }
 
-  const chunks = ['Command completed. ', 'The long command returned successfully.']
+  // PLAN-0342 T2.2: echo whether the tool message carried the injected
+  // diagnostics block so the spec can prove the model-visible channel.
+  const diagSeen = messages.some(
+    (m) => m?.role === 'tool' && typeof m.content === 'string' && m.content.includes('<diagnostics>'),
+  )
+  const chunks = ['Command completed. ', diagSeen ? 'DIAG-VISIBLE' : 'DIAG-ABSENT']
   for (const content of chunks) {
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
   }
