@@ -161,7 +161,11 @@ fn print_stats(label: &str, samples: &[u128], extra: &str) -> Stats {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let p95_note = if stats.p95_is_max { " (n<20, p95:=max)" } else { "" };
+    let p95_note = if stats.p95_is_max {
+        " (n<20, p95:=max)"
+    } else {
+        ""
+    };
     eprintln!(
         "[perf-m0] {label} n={} p50={}ms p95={}ms{p95_note} max={}ms samples=[{samples_joined}] {extra}",
         stats.n, stats.p50_ms, stats.p95_ms, stats.max_ms
@@ -214,7 +218,10 @@ async fn m0_s0_small_100() {
         let started = Instant::now();
         let outcome = fixture.capture(&format!("m0-s0-noop-{sample}")).await;
         noops.push(started.elapsed().as_millis());
-        assert!(outcome.no_change, "unchanged workspace must not write a slice");
+        assert!(
+            outcome.no_change,
+            "unchanged workspace must not write a slice"
+        );
     }
     print_stats("S0.capture_noop", &noops, "");
 
@@ -503,11 +510,7 @@ async fn m0_s2_code_repo_5k() {
         fixture.write_bytes(&format!("src/core/new{index:05}.ts"), 128);
     }
     for index in 0..10 {
-        let _ = std::fs::remove_file(
-            fixture
-                .ws()
-                .join(format!("src/adapters/s{index:05}.ts")),
-        );
+        let _ = std::fs::remove_file(fixture.ws().join(format!("src/adapters/s{index:05}.ts")));
     }
     // 5 more modifies to reach ~100 touched paths in the plan
     for index in 70..75 {
@@ -525,7 +528,10 @@ async fn m0_s2_code_repo_5k() {
     print_stats(
         "S2.restore_preview",
         &[preview_ms],
-        &format!("planned_restore={} delete={}", preview.counts.restore, preview.counts.delete),
+        &format!(
+            "planned_restore={} delete={}",
+            preview.counts.restore, preview.counts.delete
+        ),
     );
 
     let started = Instant::now();
@@ -546,9 +552,7 @@ async fn m0_s2_code_repo_5k() {
         &[execute_ms],
         &format!(
             "planned={planned} restored={} deleted={} ms_per_file={per_file:.1} engine_ms={}",
-            restored.counts.restored,
-            restored.counts.deleted,
-            restored.duration_ms
+            restored.counts.restored, restored.counts.deleted, restored.duration_ms
         ),
     );
 }
