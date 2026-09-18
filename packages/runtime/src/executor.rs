@@ -401,6 +401,17 @@ impl WorkspaceExecutionRouter {
             .await
     }
 
+    /// PLAN-0347 T1.1：`SandboxBackend::execute` 的通用入口（operation + payload）。
+    /// 沿用既有 per-request exec 语义（ensure → 容器内单帧操作）。
+    pub async fn execute_op(
+        &self,
+        workspace_id: &str,
+        operation: &str,
+        payload: Value,
+    ) -> Result<Value> {
+        self.exec_oneshot(workspace_id, operation, payload).await
+    }
+
     /// Executes against the already-materialized container **without**
     /// re-materializing the workspace or refreshing its activity timestamp.
     /// Used by the periodic job cleanup so an idle workspace is neither

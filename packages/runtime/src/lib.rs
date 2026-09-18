@@ -1,3 +1,4 @@
+pub mod backend;
 pub mod capability;
 pub mod channel;
 pub mod channel_proto;

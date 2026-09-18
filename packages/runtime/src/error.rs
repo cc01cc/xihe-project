@@ -107,6 +107,11 @@ pub enum RuntimeError {
         from: &'static str,
         to: &'static str,
     },
+
+    /// PLAN-0347 T1.1（0329 §3 / 不变式 I3）：能力未声明或 `declared/probed`
+    /// 冲突时显式 fail-closed，禁止静默降级。
+    #[error("Capability unsupported: {capability} ({reason})")]
+    Unsupported { capability: String, reason: String },
 }
 
 impl RuntimeError {
