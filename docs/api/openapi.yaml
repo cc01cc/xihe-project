@@ -76,7 +76,7 @@ paths:
       operationId: brokerOAuthToken
       security: [{ bearerAuth: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OAuthTokenRequest' } } } }
-      responses: { '200': { description: OAuth token response }, '401': { $ref: '#/components/responses/Problem' } }
+      responses: { '200': { description: 'OAuth token response (access_token / token_type / expires_in / scope)' }, '400': { $ref: '#/components/responses/Problem' }, '401': { description: 'OAUTH_REAUTH_REQUIRED: missing credential, non-AUTHORIZED status, scope mismatch, or provider rejected the refresh (4xx / OAuth error)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '403': { $ref: '#/components/responses/Problem' }, '503': { description: 'OAUTH_TOKEN_UNAVAILABLE (provider unreachable / timeout / 5xx) or OPERATION_LOCK_TIMEOUT (PLAN-0346 lock wait was bounded)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } }
   /api/v1/mcp:
     post:
       operationId: mcpPost
@@ -657,6 +657,9 @@ paths:
   /api/v1/workspaces/{workspaceId}/stdio-servers:
      get: { operationId: getWorkspaceStdioServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Stdio servers with generation/hash } } }
      put: { operationId: putWorkspaceStdioServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated (optimistic lock) }, '400': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
+  # PLAN-0366 T1.1: stdio MCP session status (0347 Runtime SessionSnapshot proxied with an explicit camelCase key mapping; state keeps Runtime lowercase literals).
+  /api/v1/workspaces/{workspaceId}/mcp/servers:
+     get: { operationId: getWorkspaceMcpServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: 'Stdio MCP session snapshots: servers[{serverId,state,attempt,lastError,sinceMs,epoch}] + count; state literals are starting/ready/restarting/failed/stopped', content: { application/json: { schema: { $ref: '#/components/schemas/McpServerStatusList' } } } }, '404': { description: 'WORKSPACE_NOT_FOUND (CP inaccessible or Runtime passthrough)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'WORKSPACE_DESTROYING or WORKSPACE_BUSY passed through from Runtime', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'RUNTIME_UNAVAILABLE (Runtime unreachable, timeout, unparseable, or unknown error code)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { description: 'WORKSPACE_MATERIALIZATION_FAILED passed through from Runtime (first query may trigger materialization; retry)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/workspaces/{workspaceId}/environment:
      get: { operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/materialize:
@@ -1049,6 +1052,22 @@ paths:
         - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0, description: Byte cursor; pass the nextOffset returned by the previous read }
         - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 1048576, default: 65536 } }
       responses: { '200': { description: Job output chunk, content: { application/json: { schema: { $ref: '#/components/schemas/JobOutputChunk' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: JOB_ARCHIVE_NOT_FOUND or OPERATION_ITEM_NOT_FOUND, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '409': { description: JOB_OUTPUT_LOST (job non-terminal but output gone) or JOB_OUTPUT_EXPIRED (terminal job output cleaned after TTL), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '502': { description: RUNTIME_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } }
+  /api/v1/operations/items/{itemId}/cancel:
+    post:
+      operationId: cancelOperationItemJob
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0366: cancel the durable background job anchored on this operation item
+        (owner-only, same key as job-output). Cancelling a job never changes the run or
+        conversation terminal state. Idempotent for terminal archives: 200 with the
+        original status and `changed=false`. `changed` only reports whether this call
+        moved a `running` archive to a terminal state. 502 JOB_CANCEL_UNCONFIRMED means
+        the Runtime could not confirm termination and the archive is unchanged; 502
+        RUNTIME_UNAVAILABLE means the Runtime call failed and the archive is unchanged.
+        Runtime 404 (job missing) archives the job as `orphaned` (fail-closed).
+      parameters:
+        - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: 'Cancel outcome: itemId/jobId/status/changed', content: { application/json: { schema: { $ref: '#/components/schemas/JobCancelResult' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: 'OPERATION_ITEM_NOT_FOUND (not owner or missing; no 403) or JOB_ARCHIVE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'JOB_CANCEL_UNCONFIRMED (termination unconfirmed; archive unchanged) or RUNTIME_UNAVAILABLE', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } }
   /internal/v1/operations:
     post:
       operationId: startOperation
@@ -1718,6 +1737,33 @@ components:
         truncated: { type: boolean }
         data: { type: string }
         jobStatus: { type: string, enum: [running, succeeded, cancelled, timeout, orphaned] }
+    McpServerStatusList:
+      type: object
+      description: PLAN-0366 stdio MCP session status list. Field names are the CP public camelCase mapping of the Runtime SessionSnapshot wire (server_id/last_error/since_ms); `state` keeps the Runtime lowercase literals, `sinceMs` is Unix milliseconds.
+      required: [servers, count]
+      properties:
+        servers:
+          type: array
+          items:
+            type: object
+            required: [serverId, state, attempt, lastError, sinceMs, epoch]
+            properties:
+              serverId: { type: string }
+              state: { type: string, enum: [starting, ready, restarting, failed, stopped] }
+              attempt: { type: integer }
+              lastError: { type: [string, 'null'] }
+              sinceMs: { type: integer, description: Unix milliseconds when the current state was entered }
+              epoch: { type: integer, description: Session generation counter }
+        count: { type: integer }
+    JobCancelResult:
+      type: object
+      description: PLAN-0366 single-job cancel outcome. `changed` is true only when this call moved a `running` archive to a terminal state; terminal archives return 200 with the original status and changed=false.
+      required: [itemId, jobId, status, changed]
+      properties:
+        itemId: { type: string, format: uuid }
+        jobId: { type: string }
+        status: { type: string, enum: [succeeded, cancelled, timeout, orphaned] }
+        changed: { type: boolean }
     OperationItemView:
       type: object
       required: [id, operationId, sequence, kind, source, status]

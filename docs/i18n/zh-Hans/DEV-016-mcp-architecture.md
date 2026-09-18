@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 16
 status: active
 created: 2026-06-03
-updated: 2026-09-12
+updated: 2026-09-18
 ---
 
 # DEV-016: MCP 三层路由架构
@@ -126,6 +126,24 @@ sequenceDiagram
 ```
 
 stdio 配置的公开/内部契约（`generation` 乐观锁 + `hash`）见 `docs/api/openapi.yaml` 与 `docs/api/inventory.md`；remote server 走 `mcp_remote_servers` 表（类名 `McpServer.java` 保留，决策 #38②）：`workspaceId/name/endpoint/authConfig/enabled/authMode`，CP 按表判定分流，Runtime 经 CP broker 取短期 token（no-auth 跳过）。混合入口读侧只回传非敏感字段（remote 仅 `url`/`type`，OAuth 元数据不回传）。
+
+### 6.1 OAuth token broker（PLAN-0349）
+
+`POST /internal/v1/oauth/token` 由 CP `OAuthCredentialService` + `OAuthTokenBroker` 提供，Runtime 只消费短期 access token：
+
+- **缓存与单飞**：按 `(userId, workspaceId, serverId)` 进程内缓存 access token，TTL = `clamp(expires_in − 60, 0, 300)` 秒（provider 缺 `expires_in` 用 300s 保守默认；`ttl = 0` 则返回但不缓存）；同键并发只触发一次 provider 刷新，等待方共享同一结果或同一失败。
+- **轮换写回**：刷新在凭据行锁内执行（`SELECT ... FOR UPDATE` + PLAN-0346 `SET LOCAL lock_timeout`），并发刷新串行消费轮换链，不互相失效；锁等待超时 → 503 `OPERATION_LOCK_TIMEOUT`。
+- **错误两档**：401 `OAUTH_REAUTH_REQUIRED`（缺凭据 / 状态非 AUTHORIZED / scope 不符 / provider 明确拒绝，如 4xx、`invalid_grant`）；503 `OAUTH_TOKEN_UNAVAILABLE`（provider 不可达 / 超时 / 5xx）。Runtime 按 HTTP 状态消费，不解析 problem code。
+- **撤销**：本地置 `REVOKED` + 缓存立即失效，并在提交后 best-effort 通知 provider（RFC 7009；经 RFC 8414 / OpenID metadata 发现撤回端点，无端点或失败仅记日志）。
+- **观测**：结构化事件 `oauth_token_hit` / `oauth_token_miss` / `oauth_token_refresh` / `oauth_token_merge` / `oauth_token_revoke` / `oauth_token_failure`（含 `requestId` 与三元组 id）；token 明文与 provider 响应体不落日志。
+
+### 6.2 stdio 会话状态可见（PLAN-0366）
+
+`GET /api/v1/workspaces/{workspaceId}/mcp/servers` 为 CP 薄代理（成员可见）：调用 Runtime `GET /internal/v1/runtime/workspaces/{ws_id}/mcp/servers`，在 CP 侧做**唯一一次显式键名映射**（`server_id/state/attempt/last_error/since_ms/epoch` → `serverId/state/attempt/lastError/sinceMs/epoch`；`state` 保持 Runtime 小写字面量），不重算状态语义、不反向改 Runtime（决策 #2/#13）。错误表：Runtime 404 `WORKSPACE_NOT_FOUND` / 409 `WORKSPACE_DESTROYING|WORKSPACE_BUSY` / 503 `WORKSPACE_MATERIALIZATION_FAILED` 白名单透传；不可达、超时、响应不可解析、未知码 → 502 `RUNTIME_UNAVAILABLE`。Runtime handler 先 `ensure_workspace`，首次查询可能触发物化（接受该副作用；后续为注册表纯读）。
+
+UI 设置页 workspace 标签以 `stdio-servers`（配置 name）∪ 本端点（快照 `server_id`）合并出行集合：五态徽章（starting/ready/restarting/failed/stopped）+「无记录」行 + 失败原因；打开拉取 + 手动刷新 + 30s 轮询（页面不可见暂停；失败保留上次状态并标注「状态可能过期」，不自动重试风暴）。
+
+同一波次修复 CP `toolServerCache` 失效处理：stdio `tools/list` 转发非 2xx 时移除该 serverId 的**全部旧映射**（warn 记录 wsId/serverId/status），部分失败不影响其他 server 的映射或工具合并——避免 `tools/call` 仍路由到不可用 server（调用侧宁可「未知工具」）。
 
 ## 7. 测试策略
 

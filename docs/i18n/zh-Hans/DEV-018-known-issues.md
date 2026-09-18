@@ -51,9 +51,15 @@ updated: 2026-09-06
 
 ## 已修复 — Chat SSE 生命周期与真实流式（PLAN-230 已完成 M1-M4）
 
-- **会话 SSE 一次性连接导致连续消息 409**：已修复。原因有二：CP 在每轮末尾无条件 `complete(sessionId)` 使会话 SSE 一次性，且旧 emitter `onCompletion` 按 sessionId 清理可能误删新连接；UI 侧 `onclose` 未重连。修复：CP 改持久会话 SSE（`SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储 + `removeIfCurrent` 身份比对，误删记 `stale_cleanup_ignored`；`complete` 仅在客户端断开/session 删除/不可写时调用）；UI `chatTransport` 单飞 + 指数退避重连，`SSEStream` 发送前手工确认连接。验证：同一页面连续两条 `POST /api/v1/chat` 均 202 且助手回复不空；多 `token` 事件在 `done` 前多次增长。
+- **会话 SSE 一次性连接导致连续消息 409**：已修复。原因有二：CP 在每轮末尾无条件 `complete(sessionId)` 使会话 SSE 一次性，且旧 emitter `onCompletion` 按 sessionId 清理可能误删新连接；UI 侧 `onclose` 未重连。修复：CP 改持久会话 SSE（`SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储 + `removeIfCurrent` 身份比对，误删记 `stale_cleanup_ignored`；`complete` 由客户端断开/发送失败等内部清理触发，服务端主动收尾仅会话删除成功路径，见下节 PLAN-0352）；UI `chatTransport` 单飞 + 指数退避重连，`SSEStream` 发送前手工确认连接。验证：同一页面连续两条 `POST /api/v1/chat` 均 202 且助手回复不空；多 `token` 事件在 `done` 前多次增长。
 - **真实模型流式未生效（stream=False 单 token）**：已修复。`XiheLiteLLM` 未实现 `_astream()` 导致 `astream_events` 仅产生 `on_chat_model_end` 单包。修复：显式 `streaming=True` 使 `on_chat_model_stream` 产生多 token，`sse_adapter` 按 `run_id` 去重使 `on_chat_model_end` 仅作无流 fallback。
 - **日志泄露与关联缺失**：已修复。main.py 前记录消息前缀、ChatController 记录完整 Agent error body、litellm curl debug 的 Authorization: Be****、Spring Using generated security password。修复：litellm.suppress_debug_info=True、log_redact 掩码 Authorization:、pplication.properties 占位密码、scan-log-secrets.mjs 读取失败即失败并扩展 pattern（门禁 clean 20 files）。
+
+## PLAN-0352 会话删除 SSE 与在飞 run 收尾（2026-09-19）
+
+- **会话删除不收尾 SSE、不处置在飞 run**：已修复。`SessionController.delete` 在删除事务外先取消该会话全部非终态 run（`ChatRunCancellationService`，与 `POST /api/v1/chat/runs/{runId}/cancel` 共用编排），再有界等待终态投递（上界 N=2s，等待信号 = relay 终结 `releaseRun`/`lease_owner` 置空；超时记 `session_delete_sse_wait_timeout` 后继续），然后执行删除事务，成功后 `complete(sessionId)` 关闭 SSE；无在飞 run 时删除后立即收尾。删除失败保留连接并记 `session_delete_failed`。
+- **已知前置（阻断，非本计划范围）**：含 `operation_extensions` 行（`llm_usage`/`job_state`/`mcp_call`）的会话硬删会被 `ck_operation_extensions_target`（`V2__session_operation_ledger.sql:181-192`）阻断；登记 backlog `DDL-13`，去向 PLAN-0351。
+- **残余**：会话硬删时 `scope=session` 存活 job 无处置入口（依赖 BL-21 单 job 取消入口）；承接登记 PLAN-0353。
 
 ## 环境 / Docker
 

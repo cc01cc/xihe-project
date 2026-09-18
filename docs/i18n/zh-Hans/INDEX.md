@@ -48,7 +48,7 @@ sidebar_order: 0
 ## PLAN-0328 / 合同入口
 
 - [API OpenAPI](../../api/openapi.yaml) 与 [API inventory](../../api/inventory.md) 是当前公共/内部路由和 JSON 字段的 canonical contract。
-- PLAN-0328 的审批、checkpoint、revert 证据见 [M3 证据](../../../../plans/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md)；本索引不复制设计细节。
+- PLAN-0328 的审批、checkpoint、revert 证据见 [M3 证据](../../../../plans/archive/20260918/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md)；本索引不复制设计细节。
 - DEV-031 沙盒后端契约、DEV-032 术语规范见「规范」小节；PLAN 叙述用词以 DEV-032 为准。
 
 ## 用户手册
