@@ -112,6 +112,30 @@ pub enum RuntimeError {
     /// 冲突时显式 fail-closed，禁止静默降级。
     #[error("Capability unsupported: {capability} ({reason})")]
     Unsupported { capability: String, reason: String },
+
+    /// PLAN-0347 T1.3：会话无可用进程且无法启动（spec `MCP_SESSION_UNAVAILABLE`）。
+    #[error("MCP session unavailable for {workspace_id}/{server_id}: {detail}")]
+    McpSessionUnavailable {
+        workspace_id: String,
+        server_id: String,
+        detail: String,
+    },
+
+    /// PLAN-0347 T1.3：会话预算耗尽/冷却中（spec `MCP_SESSION_FAILED`）。
+    #[error("MCP session failed for {workspace_id}/{server_id}: {reason}")]
+    McpSessionFailed {
+        workspace_id: String,
+        server_id: String,
+        reason: String,
+    },
+
+    /// PLAN-0347 T1.3：同 server 排队/等待超上限（spec `MCP_SESSION_BUSY`）。
+    #[error("MCP session busy for {workspace_id}/{server_id}: {detail}")]
+    McpSessionBusy {
+        workspace_id: String,
+        server_id: String,
+        detail: String,
+    },
 }
 
 impl RuntimeError {

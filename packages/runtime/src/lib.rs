@@ -20,6 +20,7 @@ pub mod inventory;
 pub mod lifecycle;
 pub mod log_redact;
 pub mod mcp_process;
+pub mod mcp_session;
 pub mod remote_mcp;
 pub mod sandbox;
 pub mod security_defaults;
