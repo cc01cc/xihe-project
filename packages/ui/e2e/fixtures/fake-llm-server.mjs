@@ -71,6 +71,11 @@ async function sendCompletion(response, provider, requestBody) {
     return
   }
 
+  if (mode === 'job') {
+    sendJobCompletion(response, requestBody)
+    return
+  }
+
   if (mode === 'history-marker') {
     sendHistoryMarkerCompletion(response, requestBody)
     return
@@ -378,6 +383,57 @@ function sendExecCommandCompletion(response, requestBody) {
     (m) => m?.role === 'tool' && typeof m.content === 'string' && m.content.includes('<diagnostics>'),
   )
   const chunks = ['Command completed. ', diagSeen ? 'DIAG-VISIBLE' : 'DIAG-ABSENT']
+  for (const content of chunks) {
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+  }
+  response.end('data: [DONE]\n\n')
+}
+
+// PLAN-0344 (mode: job): deterministic durable-job flow. The user message
+// carries the XIHE-E2E-JOB marker; the first completion starts a background
+// job that prints two lines and stays alive (>page TTL is irrelevant here),
+// and the follow-up streams a plain answer so the run reaches done(success).
+// The job card therefore survives the run and can be resumed/destroy-tested.
+function sendJobCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const last = messages.at(-1) ?? {}
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+  const lastUserHasMarker =
+    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-JOB')
+  const followUp = last.role === 'tool' || (last.role === 'user' && !lastUserHasMarker)
+
+  if (!followUp) {
+    const toolCallDelta = {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call-job-e2e-1',
+                type: 'function',
+                function: {
+                  name: 'start_background_process',
+                  arguments: JSON.stringify({
+                    command: 'echo job-line-1; echo job-line-2; sleep 120',
+                    timeout: 600,
+                  }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    }
+    const finishDelta = { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
+    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  const chunks = ['Background job started. ', 'Resume its output from the job card.']
   for (const content of chunks) {
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
   }
