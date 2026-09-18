@@ -12,10 +12,6 @@ name = "xihe-container-runtime"
 path = "src/container_runtime.rs"
 
 [[bin]]
-name = "xihe-mcp-bridge"
-path = "src/mcp_bridge.rs"
-
-[[bin]]
 name = "xihe-stdio-fixture"
 path = "src/stdio_fixture.rs"
 
@@ -120,16 +116,12 @@ name = "background_test"
 path = "tests/background_test.rs"
 
 [[test]]
-name = "bridge_integration_test"
-path = "tests/bridge_integration_test.rs"
-
-[[test]]
 name = "escape_test"
 path = "tests/escape_test.rs"
 
 [[test]]
-name = "mcp_multi_workspace_test"
-path = "tests/mcp_multi_workspace_test.rs"
+name = "mcp_session_test"
+path = "tests/mcp_session_test.rs"
 
 [[test]]
 name = "mcp_tools_test"

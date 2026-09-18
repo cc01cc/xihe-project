@@ -1,6 +1,6 @@
 # =============================================================================
 # xihe/workspace — 多阶段构建
-# Stage 1: 编译 xihe-container-runtime + xihe-mcp-bridge
+# Stage 1: 编译 xihe-container-runtime（PLAN-0347：xihe-mcp-bridge 已退役）
 # Stage 2: 运行时镜像 (node:22-slim + python3 + xihe binaries)
 # =============================================================================
 
@@ -17,9 +17,9 @@ COPY packages/runtime/ .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target,id=workspace-target-bookworm \
     cargo build --release --bin xihe-container-runtime \
- && cargo build --release --bin xihe-mcp-bridge \
+
  && mkdir -p /build/out \
- && cp target/release/xihe-container-runtime target/release/xihe-mcp-bridge /build/out/
+ && cp target/release/xihe-container-runtime /build/out/
 
 # Stage 2: Runtime image
 # node:24-bookworm-slim = debian:bookworm-slim + 官方 Node.js 24（对齐 workspace
@@ -38,7 +38,6 @@ RUN groupadd -r xihe-executor && useradd -r -g xihe-executor -m -d /home/xihe-ex
 
 # xihe binaries (stage 1 artifacts)
 COPY --from=builder /build/out/xihe-container-runtime /usr/local/bin/
-COPY --from=builder /build/out/xihe-mcp-bridge /usr/local/bin/
 
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

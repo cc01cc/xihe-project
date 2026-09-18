@@ -5,7 +5,6 @@ use std::time::{Duration, SystemTime};
 use serde::Serialize;
 use tokio::sync::RwLock;
 
-use crate::mcp_process::BridgeInfo;
 use crate::sandbox::SecurityProfile;
 
 /// Lifecycle state of a per-workspace runtime instance.
@@ -62,7 +61,6 @@ pub struct XiheRuntimeInstance {
     pub generation: u64,
     pub spec_hash: String,
     pub file_service_pid: Option<u32>,
-    pub mcp_bridges: HashMap<String, BridgeInfo>,
     pub last_active: SystemTime,
     pub state: InstanceState,
 }
@@ -86,7 +84,6 @@ impl XiheRuntimeInstance {
             generation,
             spec_hash: spec_hash.to_string(),
             file_service_pid: None,
-            mcp_bridges: HashMap::new(),
             last_active: SystemTime::now(),
             state: InstanceState::Active,
         }

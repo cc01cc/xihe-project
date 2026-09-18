@@ -1,23 +1,22 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bollard::Docker;
-use bollard::exec::CreateExecOptions;
-use bollard::models::{ContainerCreateBody, HostConfig, PortBinding};
+use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{
     CreateContainerOptions, ListContainersOptions, RemoveContainerOptions, StartContainerOptions,
     StopContainerOptions,
 };
 use tokio::fs;
+use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
 use crate::error::{Result, RuntimeError};
 use crate::sandbox::SecurityProfile;
 
-pub const CONTAINER_RUNTIME_PORT: u16 = 39001;
-
-fn container_name(ws_id: &str) -> String {
+pub(crate) fn container_name(ws_id: &str) -> String {
     format!("xihe-workspace-ws_{ws_id}")
 }
 
@@ -107,21 +106,9 @@ impl WorkspaceManager {
             }
         }
 
-        // Native Windows hosts cannot route to Docker Desktop's Linux bridge IP.
-        // Publish the private container-runtime port on a Docker-assigned
-        // loopback port so the host gateway can reach it. Strict sandboxes use
-        // host-side file operations and do not need a published port.
-        let port_bindings = match profile {
-            SecurityProfile::Strict => None,
-            SecurityProfile::Coding | SecurityProfile::Isolated => Some(HashMap::from([(
-                format!("{CONTAINER_RUNTIME_PORT}/tcp"),
-                Some(vec![PortBinding {
-                    host_ip: Some("127.0.0.1".to_string()),
-                    host_port: Some(String::new()),
-                }]),
-            )])),
-        };
-
+        // PLAN-0347 T1.5: no published container-runtime port any more; workspace
+        // operations and MCP sessions flow through Docker exec, so Docker network
+        // reachability is not required (and never worked on native Windows hosts).
         let labels = std::env::var("XIHE_E2E_RUN_ID")
             .ok()
             .map(|run_id| HashMap::from([(String::from("xihe.e2e.run-id"), run_id)]));
@@ -134,7 +121,6 @@ impl WorkspaceManager {
             cap_drop: Some(vec!["ALL".to_string()]),
             security_opt: Some(vec!["no-new-privileges:true".to_string()]),
             binds: Some(vec![format!("{}:/workspace:rw", workspace_path)]),
-            port_bindings,
             network_mode: match profile {
                 SecurityProfile::Strict => Some("none".to_string()),
                 SecurityProfile::Coding => Some("bridge".to_string()),
@@ -187,7 +173,7 @@ impl WorkspaceManager {
         };
 
         // Start xihe-container-runtime inside the container.
-        if let Err(error) = self.start_container_runtime(&state).await {
+        if let Err(error) = self.probe_container_ready(&state).await {
             self.remove_container_best_effort(&state.container_name)
                 .await;
             return Err(error);
@@ -313,119 +299,85 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    pub async fn start_container(&mut self, ws_id: &str) -> Result<()> {
-        let state = self
-            .workspaces
-            .get(ws_id)
-            .ok_or_else(|| RuntimeError::SandboxNotFound(ws_id.to_string()))?;
+    /// PLAN-0347 T1.5：容器就绪探针（替代 `xihe-container-runtime` HTTP daemon
+    /// 的 `/health` 创建门）。oneshot exec `true`：退出码 0 即就绪；失败 fail-closed。
+    async fn probe_container_ready(&self, state: &WorkspaceState) -> Result<()> {
         let docker = self
             .docker
             .as_ref()
             .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
-        docker
-            .start_container(&state.container_name, None::<StartContainerOptions>)
-            .await
-            .map_err(|e| RuntimeError::Docker(format!("start container: {e}")))?;
-
-        self.start_container_runtime(state).await?;
-        info!(
-            "Container started and container-runtime restarted: ws_id={}",
-            ws_id
-        );
-        Ok(())
-    }
-
-    async fn start_container_runtime(&self, state: &WorkspaceState) -> Result<()> {
-        let docker = self
-            .docker
-            .as_ref()
-            .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
-
-        let setup_cmd = "nohup /usr/local/bin/xihe-container-runtime \
-             > /workspace/.xihe-container-runtime.log 2>&1 & \
-             echo $! > /workspace/.xihe-container-runtime.pid"
-            .to_string();
-
-        let exec = docker
-            .create_exec(
-                &state.container_name,
-                CreateExecOptions {
-                    cmd: Some(vec!["sh".to_string(), "-c".to_string(), setup_cmd]),
-                    attach_stdout: Some(false),
-                    attach_stderr: Some(false),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| RuntimeError::Docker(format!("create exec: {e}")))?;
-
-        docker
-            .start_exec(
-                &exec.id,
-                Some(bollard::exec::StartExecOptions {
-                    detach: true,
-                    tty: false,
-                    output_capacity: None,
-                }),
-            )
-            .await
-            .map_err(|e| RuntimeError::Docker(format!("start exec: {e}")))?;
-
-        // Wait for xihe-container-runtime to become healthy (max 5s, 500ms intervals)
-        for i in 0..10 {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            let check = docker
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut last_error = String::from("probe exec never ran");
+        while Instant::now() < deadline {
+            let exec = match docker
                 .create_exec(
                     &state.container_name,
                     CreateExecOptions {
-                        cmd: Some(vec![
-                            "sh".to_string(),
-                            "-c".to_string(),
-                            format!(
-                                "wget -qO- http://127.0.0.1:{CONTAINER_RUNTIME_PORT}/health 2>/dev/null || curl -sf http://127.0.0.1:{CONTAINER_RUNTIME_PORT}/health 2>/dev/null"
-                            ),
-                        ]),
+                        cmd: Some(vec!["sh".to_string(), "-c".to_string(), "true".to_string()]),
                         attach_stdout: Some(true),
                         attach_stderr: Some(true),
                         ..Default::default()
                     },
                 )
-                .await;
-
-            if let Ok(exec) = check {
-                // Use a detached exec and just check the exit code via inspect
-                let _ = docker
-                    .start_exec(
-                        &exec.id,
-                        Some(bollard::exec::StartExecOptions {
-                            detach: false,
-                            tty: false,
-                            output_capacity: Some(64),
-                        }),
-                    )
-                    .await;
-                // Small delay to let inspect populate exit_code (bollard quirk on Windows):
-                // inspect_exec immediately after start_exec returns Running (exit_code None).
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                if let Ok(info) = docker.inspect_exec(&exec.id).await
-                    && info.exit_code == Some(0)
-                {
+                .await
+            {
+                Ok(exec) => exec,
+                Err(error) => {
+                    last_error = format!("create_exec: {error}");
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
+            };
+            match docker
+                .start_exec(
+                    &exec.id,
+                    Some(StartExecOptions {
+                        detach: false,
+                        tty: false,
+                        output_capacity: Some(64),
+                    }),
+                )
+                .await
+            {
+                Ok(StartExecResults::Attached { mut output, .. }) => {
+                    while output.next().await.is_some() {}
+                }
+                Ok(StartExecResults::Detached) => {
+                    warn!(
+                        workspace_id = %state.ws_id,
+                        "probe exec unexpectedly detached"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        workspace_id = %state.ws_id,
+                        error = %error,
+                        "probe start_exec failed"
+                    );
+                }
+            }
+            match docker.inspect_exec(&exec.id).await {
+                Ok(info) if info.exit_code == Some(0) => {
                     info!(
-                        "xihe-container-runtime ready for workspace {} (attempt {})",
-                        state.ws_id,
-                        i + 1
+                        workspace_id = %state.ws_id,
+                        "workspace container ready (exec probe)"
                     );
                     return Ok(());
                 }
+                Ok(info) => {
+                    last_error = format!(
+                        "probe exit_code={:?} running={:?}",
+                        info.exit_code, info.running
+                    );
+                }
+                Err(error) => {
+                    last_error = format!("inspect_exec: {error}");
+                }
             }
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
-
-        warn!(
-            "xihe-container-runtime health check timeout for workspace {}",
-            state.ws_id
-        );
         Err(RuntimeError::Docker(format!(
-            "xihe-container-runtime health check timeout for workspace {}",
+            "workspace container not ready for {}: {last_error}",
             state.ws_id
         )))
     }
@@ -575,195 +527,6 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    async fn resolve_mcp_bridge_endpoint(
-        &self,
-        ws_id: &str,
-        server_id: &str,
-        container_name: &str,
-        container_port: u16,
-    ) -> Result<(String, u16)> {
-        let unavailable = |detail: String| RuntimeError::McpBridgeUnavailable {
-            workspace_id: ws_id.to_string(),
-            server_id: server_id.to_string(),
-            detail,
-        };
-        let docker = self
-            .docker
-            .as_ref()
-            .ok_or_else(|| unavailable("Docker is not connected".to_string()))?;
-        let inspect = docker
-            .inspect_container(container_name, None)
-            .await
-            .map_err(|error| unavailable(format!("inspect container failed: {error}")))?;
-
-        if let Some(bindings) = inspect
-            .network_settings
-            .as_ref()
-            .and_then(|settings| settings.ports.as_ref())
-            .and_then(|ports| ports.get(&format!("{container_port}/tcp")))
-            .and_then(|bindings| bindings.as_ref())
-            && let Some(binding) = bindings.iter().find(|binding| {
-                binding
-                    .host_port
-                    .as_ref()
-                    .is_some_and(|port| !port.is_empty())
-            })
-        {
-            let host_port = binding
-                .host_port
-                .as_deref()
-                .and_then(|port| port.parse::<u16>().ok())
-                .ok_or_else(|| {
-                    unavailable(format!(
-                        "published bridge host port is invalid for container port {container_port}"
-                    ))
-                })?;
-            let host = binding
-                .host_ip
-                .as_deref()
-                .filter(|ip| !ip.is_empty() && *ip != "0.0.0.0")
-                .unwrap_or("127.0.0.1")
-                .to_string();
-            return Ok((host, host_port));
-        }
-
-        if cfg!(windows) {
-            return Err(unavailable(format!(
-                "bridge container port {container_port} is not published for native Windows Runtime"
-            )));
-        }
-
-        let container_ip = inspect
-            .network_settings
-            .and_then(|settings| settings.networks)
-            .and_then(|networks| {
-                networks
-                    .values()
-                    .find_map(|endpoint| endpoint.ip_address.clone().filter(|ip| !ip.is_empty()))
-            })
-            .ok_or_else(|| unavailable("container has no reachable network address".to_string()))?;
-        Ok((container_ip, container_port))
-    }
-
-    fn bridge_pid_file(server_id: &str) -> String {
-        format!("/workspace/.xihe-bridge-{server_id}.pid")
-    }
-
-    /// Shell command that starts the in-container STDIO bridge.
-    ///
-    /// Any stale process recorded in the pid file is terminated first. After a
-    /// Runtime restart the in-memory bridge registry is empty while the previous
-    /// bridge process can still be alive inside the container; spawning over the
-    /// old pid file would make that orphan unkillable forever (CHN-3b).
-    fn bridge_start_command(server_id: &str, port: u16) -> String {
-        let pid_file = Self::bridge_pid_file(server_id);
-        format!(
-            "kill $(cat {pid_file} 2>/dev/null) 2>/dev/null; rm -f {pid_file}; \
-             /usr/local/bin/xihe-mcp-bridge --port {port} & echo $! > {pid_file}"
-        )
-    }
-
-    pub async fn start_mcp_bridge(
-        &self,
-        ws_id: &str,
-        server_id: &str,
-        command: &str,
-        args: &[String],
-        port: u16,
-    ) -> Result<(String, u16)> {
-        let state = self
-            .workspaces
-            .get(ws_id)
-            .cloned()
-            .ok_or_else(|| RuntimeError::SandboxNotFound(ws_id.to_string()))?;
-        let (bridge_host, bridge_port) = self
-            .resolve_mcp_bridge_endpoint(ws_id, server_id, &state.container_name, port)
-            .await?;
-        let docker = self
-            .docker
-            .as_ref()
-            .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
-
-        let bridge_cmd = Self::bridge_start_command(server_id, port);
-
-        let exec = docker
-            .create_exec(
-                &state.container_name,
-                CreateExecOptions {
-                    cmd: Some(vec!["sh".to_string(), "-c".to_string(), bridge_cmd]),
-                    attach_stdout: Some(false),
-                    attach_stderr: Some(false),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| RuntimeError::Docker(format!("create bridge exec: {e}")))?;
-
-        docker
-            .start_exec(
-                &exec.id,
-                Some(bollard::exec::StartExecOptions {
-                    detach: true,
-                    ..Default::default()
-                }),
-            )
-            .await
-            .map_err(|e| RuntimeError::Docker(format!("start bridge exec: {e}")))?;
-
-        info!(
-            "MCP bridge started: ws={ws_id} server={server_id} cmd={command} args={} at {bridge_host}:{bridge_port} (container_port={port})",
-            args.len()
-        );
-
-        Ok((bridge_host, bridge_port))
-    }
-
-    pub async fn stop_mcp_bridge(&self, ws_id: &str, server_id: &str) -> Result<()> {
-        let state = self
-            .workspaces
-            .get(ws_id)
-            .ok_or_else(|| RuntimeError::SandboxNotFound(ws_id.to_string()))?;
-        let docker = self
-            .docker
-            .as_ref()
-            .ok_or_else(|| RuntimeError::Docker("Docker not connected".to_string()))?;
-
-        let pid_file = Self::bridge_pid_file(server_id);
-        let kill_cmd = format!("kill $(cat {pid_file} 2>/dev/null) 2>/dev/null; rm -f {pid_file}");
-
-        let exec = docker
-            .create_exec(
-                &state.container_name,
-                CreateExecOptions {
-                    cmd: Some(vec![
-                        "sh".to_string(),
-                        "-c".to_string(),
-                        kill_cmd.to_string(),
-                    ]),
-                    attach_stdout: Some(false),
-                    attach_stderr: Some(false),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| RuntimeError::Docker(format!("create bridge stop exec: {e}")))?;
-
-        docker
-            .start_exec(
-                &exec.id,
-                Some(bollard::exec::StartExecOptions {
-                    detach: true,
-                    tty: false,
-                    output_capacity: None,
-                }),
-            )
-            .await
-            .map_err(|e| RuntimeError::Docker(format!("start bridge stop exec: {e}")))?;
-
-        info!("MCP bridge stopped: ws={ws_id} server={server_id}");
-        Ok(())
-    }
-
     pub fn get_state(&self, ws_id: &str) -> Option<&WorkspaceState> {
         self.workspaces.get(ws_id)
     }
@@ -891,36 +654,5 @@ impl WorkspaceManager {
                 container_name, error
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// CHN-3b: the bridge start command must terminate any stale process recorded
-    /// in the pid file *before* spawning, so a bridge left over from a previous
-    /// Runtime lifetime cannot be orphaned by the pid file being overwritten.
-    #[test]
-    fn bridge_start_command_kills_stale_pid_before_spawn() {
-        let cmd = WorkspaceManager::bridge_start_command("filesystem", 39001);
-        let pid_file = "/workspace/.xihe-bridge-filesystem.pid";
-        let kill_at = cmd
-            .find("kill $(cat ")
-            .expect("start command must kill the stale pid");
-        let spawn_at = cmd
-            .find("/usr/local/bin/xihe-mcp-bridge --port 39001")
-            .expect("start command must spawn the bridge on the requested port");
-        assert!(kill_at < spawn_at, "kill must precede spawn: {cmd}");
-        assert!(cmd.contains(&format!("rm -f {pid_file}")), "{cmd}");
-        assert!(cmd.contains(&format!("echo $! > {pid_file}")), "{cmd}");
-    }
-
-    #[test]
-    fn bridge_pid_file_is_workspace_scoped_by_server_id() {
-        assert_eq!(
-            WorkspaceManager::bridge_pid_file("github"),
-            "/workspace/.xihe-bridge-github.pid"
-        );
     }
 }

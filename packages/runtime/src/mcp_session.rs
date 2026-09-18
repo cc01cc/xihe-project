@@ -26,6 +26,8 @@ use crate::error::{Result, RuntimeError};
 
 /// 双向帧上限（spec §5）。
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// 配置轮询周期（沿用 30s，CHN-2 语义）。
+pub const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// 会话层读超时兜底；调用方（CP/Agent）工具等待值优先。
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 /// 同一故障周期最多重启次数（决策 #8）。
@@ -63,6 +65,67 @@ pub struct StdioServerSpec {
     pub args: Vec<String>,
     /// CP 配置 hash（变化视为新故障周期并重建会话）。
     pub spec_hash: String,
+}
+
+/// CP stdio 配置拉取：`Err` 与「空配置」必须可区分（CHN-2），调用方在错误时保留现有会话。
+pub async fn fetch_stdio_specs(
+    cp_url: &str,
+    api_token: &str,
+    workspace_id: &str,
+) -> std::result::Result<(String, Vec<StdioServerSpec>), String> {
+    let url = format!("{cp_url}/internal/v1/workspaces/{workspace_id}/stdio-servers");
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(api_token)
+        .send()
+        .await
+        .map_err(|error| format!("stdio-servers request failed: {error}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("stdio-servers returned {}", resp.status()));
+    }
+    let config = resp
+        .json::<Value>()
+        .await
+        .map_err(|error| format!("failed to parse stdio-servers: {error}"))?;
+    let hash = config
+        .get("hash")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let mut specs = Vec::new();
+    if let Some(servers) = config.get("servers").and_then(Value::as_array) {
+        for server in servers {
+            let server_id = server.get("name").and_then(Value::as_str).unwrap_or("");
+            if server_id.is_empty() {
+                continue;
+            }
+            let config_obj = server.get("config");
+            let command = config_obj
+                .and_then(|c| c.get("command"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if command.is_empty() {
+                continue;
+            }
+            let args: Vec<String> = config_obj
+                .and_then(|c| c.get("args"))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            specs.push(StdioServerSpec {
+                server_id: server_id.to_string(),
+                command: command.to_string(),
+                args,
+                spec_hash: hash.clone(),
+            });
+        }
+    }
+    Ok((hash, specs))
 }
 
 /// 纯重启策略：预算 / 退避 / 冷却（决策 #8），可单测。
@@ -173,6 +236,8 @@ struct SessionHandle {
 pub struct McpSessionManager {
     docker: Docker,
     sessions: RwLock<HashMap<(String, String), SessionHandle>>,
+    /// CP 期望配置（reconcile 写入；调用路径在缓存未命中时惰性补齐）。
+    specs: RwLock<HashMap<(String, String), StdioServerSpec>>,
     capability: Arc<RwLock<Capability>>,
 }
 
@@ -184,8 +249,49 @@ impl McpSessionManager {
         Ok(Self {
             docker,
             sessions: RwLock::new(HashMap::new()),
+            specs: RwLock::new(HashMap::new()),
             capability: Arc::new(RwLock::new(Capability::declared())),
         })
+    }
+
+    /// 当前缓存的会话规格（调用路径惰性补齐用）。
+    pub async fn spec(&self, workspace_id: &str, server_id: &str) -> Option<StdioServerSpec> {
+        self.specs
+            .read()
+            .await
+            .get(&(workspace_id.to_string(), server_id.to_string()))
+            .cloned()
+    }
+
+    /// 用 CP 期望配置对账本地 spec 表；返回需停止的 server（被删除或 spec hash 变化的）。
+    pub async fn reconcile_specs(
+        &self,
+        workspace_id: &str,
+        specs: Vec<StdioServerSpec>,
+    ) -> Vec<String> {
+        let mut store = self.specs.write().await;
+        let mut to_stop = Vec::new();
+        let desired: std::collections::HashSet<&str> =
+            specs.iter().map(|spec| spec.server_id.as_str()).collect();
+        let stale: Vec<(String, String)> = store
+            .iter()
+            .filter(|((ws, _), _)| ws == workspace_id)
+            .filter(|((_, sid), existing)| {
+                !desired.contains(sid.as_str())
+                    || specs
+                        .iter()
+                        .any(|spec| spec.server_id == *sid && spec.spec_hash != existing.spec_hash)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in stale {
+            store.remove(&key);
+            to_stop.push(key.1);
+        }
+        for spec in specs {
+            store.insert((workspace_id.to_string(), spec.server_id.clone()), spec);
+        }
+        to_stop
     }
 
     /// `session` 能力观测：首次成功 attach → probed ok；create/start 失败 → probed false + reason。
@@ -310,6 +416,12 @@ impl McpSessionManager {
     }
 
     async fn ensure_session(&self, workspace_id: &str, spec: &StdioServerSpec) -> SessionHandle {
+        // Keep the expected-spec table current even on the direct request path
+        // (config reconcile prunes/rebuilds from this table).
+        self.specs.write().await.insert(
+            (workspace_id.to_string(), spec.server_id.clone()),
+            spec.clone(),
+        );
         let key = (workspace_id.to_string(), spec.server_id.clone());
         // 命中且 spec 未变 → 复用（hash 变化视为新周期，重建）。
         {
@@ -521,7 +633,7 @@ impl SessionDriver {
     }
 
     async fn start_process(&mut self) -> std::result::Result<(), String> {
-        let container = format!("xihe-workspace-ws_{}", self.workspace_id);
+        let container = crate::workspace::container_name(&self.workspace_id);
         let mut cmd = Vec::with_capacity(self.spec.args.len() + 1);
         cmd.push(self.spec.command.clone());
         cmd.extend(self.spec.args.iter().cloned());
@@ -677,7 +789,7 @@ impl SessionDriver {
         };
         let _ = running.input.shutdown().await;
         let marker = process_marker(&self.spec);
-        let container = format!("xihe-workspace-ws_{}", self.workspace_id);
+        let container = crate::workspace::container_name(&self.workspace_id);
         for force in [false, true] {
             if !exec_running(&self.docker, &running.exec_id).await {
                 break;

@@ -1,5 +1,4 @@
 pub mod backend;
-pub mod capability;
 pub mod channel;
 pub mod channel_proto;
 pub mod checkpoint;
@@ -19,7 +18,6 @@ pub mod hydrate;
 pub mod inventory;
 pub mod lifecycle;
 pub mod log_redact;
-pub mod mcp_process;
 pub mod mcp_session;
 pub mod remote_mcp;
 pub mod sandbox;

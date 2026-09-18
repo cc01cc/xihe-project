@@ -311,4 +311,107 @@ mod tests {
         );
         assert!(Capability::unsupported("x").reason.is_some());
     }
+
+    /// PLAN-0347 Q7-A：`cfg(test)` 内存假后端驱动完整接缝周期，证明"可替换实现
+    /// 而不改调用方"（不发布、不建 factory）。
+    #[tokio::test]
+    async fn seam_drives_ensure_execute_destroy_through_in_memory_backend() {
+        use std::sync::Mutex as StdMutex;
+
+        #[derive(Debug, PartialEq)]
+        enum Op {
+            Ensure(String),
+            Execute(String),
+            Destroy(String),
+        }
+
+        struct InMemoryBackend {
+            ops: StdMutex<Vec<Op>>,
+        }
+
+        impl InMemoryBackend {
+            fn new() -> Self {
+                Self {
+                    ops: StdMutex::new(Vec::new()),
+                }
+            }
+
+            fn recorded(&self) -> Vec<String> {
+                self.ops
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|op| match op {
+                        Op::Ensure(id) | Op::Execute(id) | Op::Destroy(id) => id.clone(),
+                    })
+                    .collect()
+            }
+        }
+
+        impl SandboxBackend for InMemoryBackend {
+            fn capabilities(&self) -> Capabilities {
+                docker_backend_capabilities()
+            }
+
+            fn ensure<'a>(&'a self, spec: &'a SandboxSpec) -> BoxFuture<'a, Result<SandboxHandle>> {
+                self.ops
+                    .lock()
+                    .unwrap()
+                    .push(Op::Ensure(spec.workspace_id.clone()));
+                Box::pin(async move {
+                    Ok(SandboxHandle {
+                        workspace_id: spec.workspace_id.clone(),
+                    })
+                })
+            }
+
+            fn destroy<'a>(&'a self, handle: &'a SandboxHandle) -> BoxFuture<'a, Result<()>> {
+                self.ops
+                    .lock()
+                    .unwrap()
+                    .push(Op::Destroy(handle.workspace_id.clone()));
+                Box::pin(async { Ok(()) })
+            }
+
+            fn execute<'a>(
+                &'a self,
+                handle: &'a SandboxHandle,
+                operation: &'a str,
+                _payload: Value,
+            ) -> BoxFuture<'a, Result<Value>> {
+                self.ops
+                    .lock()
+                    .unwrap()
+                    .push(Op::Execute(format!("{operation}:{}", handle.workspace_id)));
+                Box::pin(async { Ok(serde_json::json!({"ok": true})) })
+            }
+        }
+
+        let memory = Arc::new(InMemoryBackend::new());
+        let backend: Arc<dyn SandboxBackend> = memory.clone();
+        let spec = SandboxSpec {
+            workspace_id: "ws_seam".to_string(),
+            image: "xihe/workspace:latest".to_string(),
+            profile: SecurityProfile::Strict,
+        };
+        let handle = backend.ensure(&spec).await.unwrap();
+        let value = backend
+            .execute(
+                &handle,
+                "read_file",
+                serde_json::json!({"path": "/workspace/a"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(value["ok"], serde_json::json!(true));
+        backend.destroy(&handle).await.unwrap();
+        assert_eq!(
+            memory.recorded(),
+            vec![
+                "ws_seam".to_string(),
+                "read_file:ws_seam".to_string(),
+                "ws_seam".to_string()
+            ]
+        );
+    }
 }

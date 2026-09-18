@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Json as AxumJson;
 use axum::extract::State;
@@ -31,6 +31,7 @@ use tracing_subscriber::prelude::*;
 
 mod ws_file_handler;
 use tokio::sync::Mutex;
+use xihe_runtime::backend::{DockerBackend, SandboxBackend, SandboxHandle};
 use xihe_runtime::checkpoint::NestedRepoPolicy;
 use xihe_runtime::checkpoint_api::{
     C0_RUN_ID, CaptureFailure, CheckpointService, CleanupFailure, GcFailure,
@@ -49,8 +50,7 @@ use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::heartbeat;
 use xihe_runtime::hydrate::WorkspaceEnsurer;
 use xihe_runtime::lifecycle::LifecycleState;
-use xihe_runtime::mcp_process;
-use xihe_runtime::mcp_process::McpProcessManager;
+use xihe_runtime::mcp_session::{self, McpSessionManager, StdioServerSpec};
 use xihe_runtime::remote_mcp::{
     RemoteMcpConnector, RemoteMcpError, RequestStateBinding, RequestStateStore,
     validate_endpoint_dns, validate_endpoint_with_allowlist,
@@ -71,6 +71,12 @@ pub struct AppState {
     pub device_id: String,
     pub workspace_ensurer: Arc<WorkspaceEnsurer>,
     pub router: Arc<WorkspaceExecutionRouter>,
+    /// PLAN-0347 T1.3: stdio MCP sessions (`exec attach`), replacing the
+    /// in-container HTTP bridge (Q2-A).
+    pub mcp_sessions: Arc<McpSessionManager>,
+    /// PLAN-0347 T1.1/T1.2: execution seam (`SandboxBackend`) used by the
+    /// destroy path; the ensure path still resolves the CP spec first.
+    pub sandbox_backend: Arc<dyn SandboxBackend>,
     /// PLAN-0345: single authoritative lifecycle write path + execution lease.
     pub lifecycle: Arc<xihe_runtime::lifecycle::Lifecycle>,
     /// PLAN-0338: Run checkpoint slices (shadow git engine, capture/restore locks).
@@ -114,11 +120,6 @@ fn http_client() -> &'static reqwest::Client {
 
 use xihe_runtime::sandbox::CommandResult;
 use xihe_runtime::sandbox::SecurityProfile;
-
-fn mcp_manager() -> &'static McpProcessManager {
-    static MANAGER: OnceLock<McpProcessManager> = OnceLock::new();
-    MANAGER.get_or_init(McpProcessManager::new)
-}
 
 tokio::task_local! {
     static CURRENT_WS_ID: String;
@@ -814,12 +815,13 @@ fn runtime_error_status(error: &RuntimeError) -> StatusCode {
     match error {
         RuntimeError::ExecutionSpecNotFound(_)
         | RuntimeError::WorkspaceNotFound(_)
-        | RuntimeError::SandboxNotFound(_)
-        | RuntimeError::McpBridgeNotFound { .. } => StatusCode::NOT_FOUND,
+        | RuntimeError::SandboxNotFound(_) => StatusCode::NOT_FOUND,
         RuntimeError::ExecutionSpecUnavailable { .. }
         | RuntimeError::WorkspaceMaterializationFailed { .. }
-        | RuntimeError::McpBridgeUnavailable { .. }
+        | RuntimeError::McpSessionUnavailable { .. }
         | RuntimeError::Docker(_) => StatusCode::SERVICE_UNAVAILABLE,
+        RuntimeError::McpSessionFailed { .. } => StatusCode::BAD_GATEWAY,
+        RuntimeError::McpSessionBusy { .. } => StatusCode::TOO_MANY_REQUESTS,
         RuntimeError::InvalidExecutionSpec { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => {
             StatusCode::FORBIDDEN
@@ -837,10 +839,11 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
     match error {
         RuntimeError::ExecutionSpecNotFound(_)
         | RuntimeError::WorkspaceNotFound(_)
-        | RuntimeError::SandboxNotFound(_)
-        | RuntimeError::McpBridgeNotFound { .. } => "WORKSPACE_NOT_FOUND",
+        | RuntimeError::SandboxNotFound(_) => "WORKSPACE_NOT_FOUND",
         RuntimeError::ExecutionSpecUnavailable { .. } => "EXECUTION_SPEC_UNAVAILABLE",
-        RuntimeError::McpBridgeUnavailable { .. } => "MCP_BRIDGE_UNAVAILABLE",
+        RuntimeError::McpSessionUnavailable { .. } => "MCP_SESSION_UNAVAILABLE",
+        RuntimeError::McpSessionFailed { .. } => "MCP_SESSION_FAILED",
+        RuntimeError::McpSessionBusy { .. } => "MCP_SESSION_BUSY",
         RuntimeError::InvalidExecutionSpec { .. } => "EXECUTION_SPEC_INVALID",
         RuntimeError::WorkspaceMaterializationFailed { .. } => "WORKSPACE_MATERIALIZATION_FAILED",
         RuntimeError::WorkspaceDestroying { .. } => "WORKSPACE_DESTROYING",
@@ -919,23 +922,6 @@ struct DeleteWorkspaceResponse {
     job_ids: Option<Vec<String>>,
     #[serde(rename = "jobsEnumerationFailed")]
     jobs_enumeration_failed: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct McpSpawnRequest {
-    #[serde(rename = "serverId")]
-    server_id: String,
-    command: String,
-    #[serde(default)]
-    args: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct McpSpawnResponse {
-    status: String,
-    #[serde(rename = "serverId")]
-    server_id: String,
-    url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1354,244 +1340,129 @@ async fn fetch_remote_mcp_token(
         .ok_or_else(|| RemoteMcpError::JsonRpc("token broker response has no access token".into()))
 }
 
-static NEXT_BRIDGE_PORT: AtomicU16 = AtomicU16::new(39000);
-
-fn allocate_bridge_port() -> u16 {
-    // Grill Q10 C: dynamic probing — ask OS for a free port, fallback to atomic increment
-    if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0")
-        && let Ok(addr) = listener.local_addr()
-    {
-        let port = addr.port();
-        // Keep atomic in sync to avoid reuse on fallback path
-        NEXT_BRIDGE_PORT.store(port.wrapping_add(1), Ordering::Relaxed);
-        return port;
-    }
-    let port = NEXT_BRIDGE_PORT.fetch_add(1, Ordering::Relaxed);
-    if port >= 40000 {
-        NEXT_BRIDGE_PORT.store(39000, Ordering::Relaxed);
-        39000
-    } else {
-        port
-    }
-}
-
-async fn spawn_bridge_server(
-    workspace_id: &str,
-    base_url: &str,
-    server_id: &str,
-    command: &str,
-    args: &[String],
-) -> Result<(), RuntimeError> {
-    let url = mcp_process::bridge_spawn_url(base_url);
-    let mut last_error = None;
-    for attempt in 0..10 {
-        match http_client()
-            .post(&url)
-            .json(&serde_json::json!({
-                "server_id": server_id,
-                "command": command,
-                "args": args,
-            }))
-            .send()
-            .await
-        {
-            Ok(response) if response.status().is_success() => return Ok(()),
-            Ok(response) => {
-                let status = response.status();
-                let detail = match response.text().await {
-                    Ok(body) if !body.is_empty() => {
-                        format!("bridge returned {status}: {body}")
-                    }
-                    Ok(_) => format!("bridge returned {status}"),
-                    Err(error) => format!("bridge returned {status}; body read failed: {error}"),
-                };
-                return Err(RuntimeError::McpBridgeUnavailable {
-                    workspace_id: workspace_id.to_string(),
-                    server_id: server_id.to_string(),
-                    detail,
-                });
-            }
-            Err(error) => {
-                last_error = Some(error.to_string());
-                if attempt < 9 {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            }
-        }
-    }
-
-    Err(RuntimeError::McpBridgeUnavailable {
-        workspace_id: workspace_id.to_string(),
-        server_id: server_id.to_string(),
-        detail: format!(
-            "bridge spawn endpoint {} was unreachable: {}",
-            url,
-            last_error.unwrap_or_else(|| "unknown connection error".to_string())
-        ),
-    })
-}
-
-async fn mcp_spawn_handler(
+/// PLAN-0347 T1.3（spec §6）：会话状态查询（只读宿主注册表）。
+async fn mcp_servers_handler(
     Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
-    AxumJson(req): AxumJson<McpSpawnRequest>,
-) -> Result<AxumJson<McpSpawnResponse>, (StatusCode, AxumJson<serde_json::Value>)> {
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
     app.ensure_workspace(&ws_id)
         .await
         .map_err(runtime_problem)?;
-
-    let port = allocate_bridge_port();
-    let (bridge_host, bridge_port) = {
-        let manager = app.manager.lock().await;
-        manager
-            .start_mcp_bridge(&ws_id, &req.server_id, &req.command, &req.args, port)
-            .await
-            .map_err(runtime_problem)?
-    };
-    let bridge_base_url = mcp_process::bridge_base_url(&bridge_host, bridge_port);
-    if let Err(error) = spawn_bridge_server(
-        &ws_id,
-        &bridge_base_url,
-        &req.server_id,
-        &req.command,
-        &req.args,
-    )
-    .await
-    {
-        let cleanup_result = {
-            let manager = app.manager.lock().await;
-            manager.stop_mcp_bridge(&ws_id, &req.server_id).await
-        };
-        if let Err(cleanup_error) = cleanup_result {
-            tracing::warn!(
-                "MCP bridge cleanup failed after spawn error: ws={} server={} error={}",
-                ws_id,
-                req.server_id,
-                cleanup_error
-            );
-        }
-        return Err(runtime_problem(error));
-    }
-
-    let manager = mcp_manager();
-    manager
-        .spawn(
-            &ws_id,
-            &req.server_id,
-            &req.command,
-            &req.args,
-            &bridge_host,
-            bridge_port,
-        )
-        .await;
-
-    let url = mcp_process::bridge_server_url(&bridge_base_url, &req.server_id);
-    tracing::info!(
-        "MCP bridge spawned: ws={ws_id} server={} at {url}",
-        req.server_id
-    );
-    Ok(AxumJson(McpSpawnResponse {
-        status: "ok".into(),
-        server_id: req.server_id,
-        url,
-    }))
+    let servers = app.mcp_sessions.servers(&ws_id).await;
+    Ok(AxumJson(serde_json::json!({
+        "servers": servers,
+        "count": servers.len(),
+    })))
 }
-async fn mcp_kill_handler(
+
+/// PLAN-0347 T1.3：停止单个 stdio 会话（配置删除/排障入口）。
+async fn mcp_session_stop_handler(
     Path((ws_id, server_id)): Path<(String, String)>,
     State(app): State<Arc<AppState>>,
 ) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
     app.ensure_workspace(&ws_id)
         .await
         .map_err(runtime_problem)?;
-    let manager = mcp_manager();
-    if !manager
-        .list(&ws_id)
-        .await
-        .iter()
-        .any(|bridge| bridge.server_id == server_id)
-    {
-        return Err(runtime_problem(RuntimeError::McpBridgeNotFound {
-            workspace_id: ws_id,
-            server_id,
-        }));
-    }
-    {
-        let workspace_manager = app.manager.lock().await;
-        workspace_manager
-            .stop_mcp_bridge(&ws_id, &server_id)
+    let known = app.mcp_sessions.spec(&ws_id, &server_id).await.is_some()
+        || app
+            .mcp_sessions
+            .servers(&ws_id)
             .await
-            .map_err(runtime_problem)?;
-    }
-    let removed = manager.stop(&ws_id, &server_id).await;
-    if !removed {
-        return Err(runtime_problem(RuntimeError::McpBridgeNotFound {
+            .iter()
+            .any(|snapshot| snapshot.server_id == server_id);
+    if !known {
+        return Err(runtime_problem(RuntimeError::McpSessionUnavailable {
             workspace_id: ws_id,
             server_id,
+            detail: "server not configured".to_string(),
         }));
     }
+    app.mcp_sessions.stop_server(&ws_id, &server_id).await;
     Ok(AxumJson(serde_json::json!({"status": "ok"})))
 }
 
-async fn mcp_list_handler(
-    Path(ws_id): Path<String>,
-    State(app): State<Arc<AppState>>,
-) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
-    app.ensure_workspace(&ws_id)
-        .await
-        .map_err(runtime_problem)?;
-    let manager = mcp_manager();
-    let bridges = manager.list(&ws_id).await;
-    Ok(AxumJson(serde_json::json!({
-        "servers": bridges,
-        "count": bridges.len()
-    })))
+/// PLAN-0347 T1.3：`/mcp/spawn` 已退役（会话由配置轮询 + 调用惰性管理）。
+fn mcp_spawn_retired(ws_id: &str) -> (StatusCode, AxumJson<serde_json::Value>) {
+    (
+        StatusCode::GONE,
+        AxumJson(serde_json::json!({
+            "type": "https://xihe.dev/problems/mcp-session-endpoint-retired",
+            "title": "Endpoint retired",
+            "status": 410,
+            "code": "MCP_SESSION_ENDPOINT_RETIRED",
+            "detail": format!(
+                "stdio MCP sessions for {ws_id} are managed lazily; call /mcp/stdio/{{server_id}} or inspect /mcp/servers"
+            ),
+            "requestId": uuid::Uuid::new_v4().to_string(),
+        })),
+    )
 }
 
+async fn mcp_spawn_retired_handler(
+    Path(ws_id): Path<String>,
+) -> (StatusCode, AxumJson<serde_json::Value>) {
+    mcp_spawn_retired(&ws_id)
+}
+
+/// 惰性补齐 spec：缓存未命中时单次拉取 CP 配置（≤30s 轮询窗口内首次调用不再失败）。
+async fn stdio_spec_for(
+    app: &Arc<AppState>,
+    ws_id: &str,
+    server_id: &str,
+) -> Result<StdioServerSpec, RuntimeError> {
+    if let Some(spec) = app.mcp_sessions.spec(ws_id, server_id).await {
+        return Ok(spec);
+    }
+    let cp_url = std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://localhost:12631".into());
+    let cp_api_token =
+        std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-not-secure".into());
+    let (_hash, specs) = mcp_session::fetch_stdio_specs(&cp_url, &cp_api_token, ws_id)
+        .await
+        .map_err(|detail| RuntimeError::McpSessionUnavailable {
+            workspace_id: ws_id.to_string(),
+            server_id: server_id.to_string(),
+            detail,
+        })?;
+    for removed in app.mcp_sessions.reconcile_specs(ws_id, specs).await {
+        app.mcp_sessions.stop_server(ws_id, &removed).await;
+    }
+    app.mcp_sessions
+        .spec(ws_id, server_id)
+        .await
+        .ok_or_else(|| RuntimeError::McpSessionUnavailable {
+            workspace_id: ws_id.to_string(),
+            server_id: server_id.to_string(),
+            detail: "server is not configured for this workspace".to_string(),
+        })
+}
+
+/// PLAN-0347 T1.3：stdio 调用直达会话（不再经容器内 HTTP bridge）。
 async fn mcp_stdio_handler(
     Path((ws_id, server_id)): Path<(String, String)>,
     State(app): State<Arc<AppState>>,
     body: axum::body::Bytes,
-) -> Result<axum::response::Response, (StatusCode, AxumJson<serde_json::Value>)> {
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
     app.ensure_workspace(&ws_id)
         .await
         .map_err(runtime_problem)?;
-    let manager = mcp_manager();
-    let bridge_base_url = manager
-        .get_bridge_url(&ws_id, &server_id)
+    let spec = stdio_spec_for(&app, &ws_id, &server_id)
         .await
-        .ok_or_else(|| {
-            runtime_problem(RuntimeError::McpBridgeNotFound {
-                workspace_id: ws_id.clone(),
-                server_id: server_id.clone(),
-            })
-        })?;
-    let bridge_url = mcp_process::bridge_server_url(&bridge_base_url, &server_id);
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{bridge_url}/{server_id}"))
-        .header("Content-Type", "application/json")
-        .body(body.to_vec())
-        .send()
+        .map_err(runtime_problem)?;
+    let frame = if body.is_empty() {
+        return Err(runtime_problem(RuntimeError::McpSessionUnavailable {
+            workspace_id: ws_id,
+            server_id,
+            detail: "empty request body".to_string(),
+        }));
+    } else {
+        body.to_vec()
+    };
+    let response = app
+        .mcp_sessions
+        .request(&ws_id, &spec, frame, mcp_session::DEFAULT_REQUEST_TIMEOUT)
         .await
-        .map_err(|error| {
-            runtime_problem(RuntimeError::Docker(format!(
-                "MCP bridge request failed: {error}"
-            )))
-        })?;
-
-    let status = resp.status();
-    let body = resp.bytes().await.map_err(|error| {
-        runtime_problem(RuntimeError::Docker(format!(
-            "MCP bridge response failed: {error}"
-        )))
-    })?;
-
-    Ok(axum::response::Response::builder()
-        .status(status)
-        .header(axum::http::header::CONTENT_TYPE, "application/json")
-        .body(axum::body::Body::from(body))
-        .unwrap())
+        .map_err(runtime_problem)?;
+    Ok(AxumJson(response))
 }
 
 async fn workspace_mcp_handler(
@@ -1904,11 +1775,16 @@ async fn delete_workspace_handler(
             (None, true)
         }
     };
-    mcp_manager().cleanup_workspace(ws_id).await;
+    app.mcp_sessions.cleanup_workspace(ws_id).await;
     let cleanup_result = {
-        let mut manager = app.manager.lock().await;
+        let manager = app.manager.lock().await;
         if manager.get_state(ws_id).is_some() {
-            manager.delete_workspace(ws_id).await
+            drop(manager);
+            app.sandbox_backend
+                .destroy(&SandboxHandle {
+                    workspace_id: ws_id.to_string(),
+                })
+                .await
         } else {
             Ok(())
         }
@@ -2379,15 +2255,15 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn",
-            post(mcp_spawn_handler),
+            post(mcp_spawn_retired_handler),
         )
         .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn/{server_id}",
-            delete(mcp_kill_handler),
+            "/internal/v1/runtime/workspaces/{ws_id}/mcp/servers",
+            get(mcp_servers_handler),
         )
         .route(
-            "/internal/v1/runtime/workspaces/{ws_id}/mcp/spawn",
-            get(mcp_list_handler),
+            "/internal/v1/runtime/workspaces/{ws_id}/mcp/servers/{server_id}",
+            delete(mcp_session_stop_handler),
         )
         .route(
             "/internal/v1/runtime/remote-mcp/{workspace_id}/{server_id}/call",
@@ -2542,6 +2418,18 @@ async fn run() -> anyhow::Result<()> {
         manager.clone(),
         registry.clone(),
     ));
+    // PLAN-0347 T1.3: stdio MCP sessions (exec attach directly into the
+    // workspace container; no in-container HTTP bridge).
+    let mcp_sessions = Arc::new(
+        McpSessionManager::new()
+            .map_err(|error| anyhow::anyhow!("mcp session manager init failed: {error}"))?,
+    );
+    // PLAN-0347 T1.1/T1.2: execution seam object (single Docker implementation).
+    let sandbox_backend: Arc<dyn SandboxBackend> = Arc::new(DockerBackend::new(
+        workspace_ensurer.clone(),
+        manager.clone(),
+        router.clone(),
+    ));
     // M2-3.1: device_id persistence (grill A random UUID file)
     let state_dir = device::resolve_state_dir();
     let device_id = match device::ensure_device_id(&state_dir).await {
@@ -2574,6 +2462,8 @@ async fn run() -> anyhow::Result<()> {
         device_id: device_id.clone(),
         workspace_ensurer: workspace_ensurer.clone(),
         router: router.clone(),
+        mcp_sessions: mcp_sessions.clone(),
+        sandbox_backend: sandbox_backend.clone(),
         lifecycle: lifecycle.clone(),
         checkpoints: Arc::new(
             CheckpointService::new(runtime_checkpoint_host_root())
@@ -2615,6 +2505,7 @@ async fn run() -> anyhow::Result<()> {
 
     let reaper_registry = registry.clone();
     let reaper_lifecycle = lifecycle.clone();
+    let reaper_sessions = mcp_sessions.clone();
     let reaper_manager = manager.clone();
     let reaper_router = router.clone();
     let reaper_cp_url =
@@ -2624,29 +2515,30 @@ async fn run() -> anyhow::Result<()> {
     let reaper_ct = ct.child_token();
     tokio::spawn(async move {
         idle_reaper_loop(
-            reaper_registry,
-            reaper_lifecycle,
-            reaper_manager,
-            reaper_router,
-            reaper_cp_url,
-            reaper_api_token,
+            ReaperContext {
+                registry: reaper_registry,
+                lifecycle: reaper_lifecycle,
+                sessions: reaper_sessions,
+                manager: reaper_manager,
+                router: reaper_router,
+                cp_url: reaper_cp_url,
+                api_token: reaper_api_token,
+            },
             reaper_ct,
         )
         .await;
     });
 
-    let mcp_manager = mcp_manager();
     let cp_poll_registry = registry.clone();
     let cp_poll_lifecycle = lifecycle.clone();
-    let cp_poll_workspace_manager = manager.clone();
+    let cp_poll_sessions = mcp_sessions.clone();
     let poll_ct = ct.child_token();
     tokio::spawn(async move {
         mcp_config_poll_loop(
-            mcp_manager,
+            cp_poll_sessions,
             cp_poll_registry,
             cp_poll_lifecycle,
             cp_poll_ensurer,
-            cp_poll_workspace_manager,
             poll_ct,
         )
         .await;
@@ -2738,6 +2630,7 @@ async fn run() -> anyhow::Result<()> {
     // Cold shutdown: stop all managed sandboxes (keep host storage). PLAN-201 M2.6 / M3.6.
     // This is bounded: each stop has 10s timeout inside WorkspaceManager::stop_container.
     tracing::info!("runtime_shutdown_started: draining and stopping managed sandboxes");
+    app_state.mcp_sessions.shutdown_all().await;
     {
         let ids: Vec<String> = {
             let mgr = app_state.manager.lock().await;
@@ -2777,18 +2670,21 @@ async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// PLAN-0347 T1.3/T1.4：配置轮询改为会话 reconcile（不再管理 bridge）。
+/// - 仅处理 `Active`（ready）实例：暂停/停止态跳过，避免轮询解除暂停（Q5 缺口 D）；
+/// - 拉取失败保持现状（CHN-2：Err ≠ 空配置），不动已有会话；
+/// - spec 变化/删除 → 停对应会话（下次调用惰性重建）。
 async fn mcp_config_poll_loop(
-    manager: &'static mcp_process::McpProcessManager,
+    sessions: Arc<McpSessionManager>,
     registry: Arc<WorkspaceRegistry>,
     lifecycle: Arc<xihe_runtime::lifecycle::Lifecycle>,
     ensurer: Arc<WorkspaceEnsurer>,
-    workspace_manager: Arc<Mutex<WorkspaceManager>>,
     ct: tokio_util::sync::CancellationToken,
 ) {
     let cp_url = std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://localhost:12631".into());
     let cp_api_token =
         std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-not-secure".into());
-    let mut interval = tokio::time::interval(mcp_process::CONFIG_POLL_INTERVAL);
+    let mut interval = tokio::time::interval(mcp_session::CONFIG_POLL_INTERVAL);
     loop {
         tokio::select! {
             _ = ct.cancelled() => break,
@@ -2796,6 +2692,9 @@ async fn mcp_config_poll_loop(
                 let instances = registry.all_instances().await;
                 for instance in &instances {
                     let ws_id = &instance.ws_id;
+                    if instance.state != InstanceState::Active {
+                        continue;
+                    }
                     // ensure_workspace_materialized performs one targeted CP lookup even
                     // for a Registry hit, so a local hash is never compared only with
                     // itself.
@@ -2820,208 +2719,23 @@ async fn mcp_config_poll_loop(
                         continue;
                     }
                     // CHN-2: a failed poll must never be mistaken for "no servers
-                    // configured". On error, skip this workspace's reconcile entirely
-                    // and keep the currently running bridges untouched.
-                    let (generation, hash, servers) = match manager
-                        .poll_config_with_generation(ws_id, &cp_url, &cp_api_token)
-                        .await
-                    {
-                        Ok(polled) => polled,
-                        Err(error) => {
-                            tracing::warn!(
-                                "config poll: stdio-servers fetch failed for {ws_id}: {error}; keeping current bridges"
-                            );
-                            continue;
-                        }
-                    };
-                    let existing = manager.list(ws_id).await;
-                    for (server_id, command, args) in &servers {
-                        if let Some(existing_info) =
-                            existing.iter().find(|b| &b.server_id == server_id)
-                        {
-                            if existing_info.generation == generation
-                                && existing_info.hash == hash
-                            {
-                                continue;
-                            }
-                            // Q9 A: generation/hash changed → rebuild (kill old, spawn new)
-                            tracing::info!(
-                                "config poll: generation/hash changed for {}/{} ({}->{}, {}->{}) rebuilding",
-                                ws_id, server_id, existing_info.generation, generation, existing_info.hash, hash
-                            );
-                            let stop_result = {
-                                let workspace_manager = workspace_manager.lock().await;
-                                workspace_manager
-                                    .stop_mcp_bridge(ws_id, server_id)
-                                    .await
-                            };
-                            if let Err(error) = stop_result {
-                                tracing::warn!(
-                                    "config poll: failed to stop changed bridge for {}/{}: {}",
-                                    ws_id,
-                                    server_id,
-                                    error
-                                );
-                                if let Err(transition_error) = lifecycle
-                                    .transition(
-                                        ws_id,
-                                        LifecycleState::Failed,
-                                        Some(&format!("config poll stop failed: {error}")),
-                                    )
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        workspace_id = %ws_id,
-                                        error = %transition_error,
-                                        "config poll: failed to record stop failure"
-                                    );
-                                }
-                                continue;
-                            }
-                            manager.stop(ws_id, server_id).await;
-                        }
-                        tracing::info!(
-                            "config poll: spawning {}/{} ({})",
-                            ws_id, server_id, command
-                        );
-
-                        let port = allocate_bridge_port();
-                        let endpoint = {
-                            let workspace_manager = workspace_manager.lock().await;
-                            workspace_manager
-                                .start_mcp_bridge(ws_id, server_id, command, args, port)
-                                .await
-                        };
-                        let (bridge_host, bridge_port) = match endpoint {
-                            Ok(endpoint) => endpoint,
+                    // configured". On error, keep the currently running sessions.
+                    let (_hash, specs) =
+                        match mcp_session::fetch_stdio_specs(&cp_url, &cp_api_token, ws_id).await {
+                            Ok(polled) => polled,
                             Err(error) => {
                                 tracing::warn!(
-                                    "config poll: bridge {}/{} is unavailable: {}",
-                                    ws_id,
-                                    server_id,
-                                    error
+                                    "config poll: stdio-servers fetch failed for {ws_id}: {error}; keeping current sessions"
                                 );
-                                if let Err(transition_error) = lifecycle
-                                    .transition(
-                                        ws_id,
-                                        LifecycleState::Failed,
-                                        Some(&format!("config poll bridge unavailable: {error}")),
-                                    )
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        workspace_id = %ws_id,
-                                        error = %transition_error,
-                                        "config poll: failed to record bridge unavailability"
-                                    );
-                                }
                                 continue;
                             }
                         };
-                        let bridge_base_url =
-                            mcp_process::bridge_base_url(&bridge_host, bridge_port);
-                        if let Err(error) =
-                            spawn_bridge_server(ws_id, &bridge_base_url, server_id, command, args)
-                                .await
-                        {
-                            tracing::warn!(
-                                "config poll: failed to spawn {}/{} through bridge: {}",
-                                ws_id,
-                                server_id,
-                                error
-                            );
-                            let cleanup_result = {
-                                let workspace_manager = workspace_manager.lock().await;
-                                workspace_manager.stop_mcp_bridge(ws_id, server_id).await
-                            };
-                            if let Err(cleanup_error) = cleanup_result {
-                                tracing::warn!(
-                                    "config poll: bridge cleanup failed for {}/{}: {}",
-                                    ws_id,
-                                    server_id,
-                                    cleanup_error
-                                );
-                            }
-                            if let Err(transition_error) = lifecycle
-                                .transition(
-                                    ws_id,
-                                    LifecycleState::Failed,
-                                    Some(&format!("config poll bridge spawn failed: {error}")),
-                                )
-                                .await
-                            {
-                                tracing::warn!(
-                                    workspace_id = %ws_id,
-                                    error = %transition_error,
-                                    "config poll: failed to record bridge spawn failure"
-                                );
-                            }
-                            continue;
-                        }
-
-                        manager
-                            .spawn_with_generation(
-                                ws_id,
-                                server_id,
-                                command,
-                                args,
-                                &bridge_host,
-                                bridge_port,
-                                generation,
-                                &hash,
-                            )
-                            .await;
+                    for server_id in sessions.reconcile_specs(ws_id, specs).await {
                         tracing::info!(
-                            "config poll: bridge {}/{} spawned at {}:{}",
-                            ws_id,
-                            server_id,
-                            bridge_host,
-                            bridge_port
+                            "config poll: stopping changed/removed server {ws_id}/{server_id}"
                         );
+                        sessions.stop_server(ws_id, &server_id).await;
                     }
-
-                    // Remove servers no longer in config
-                    let configured_ids: std::collections::HashSet<&str> = servers.iter().map(|(id, _, _)| id.as_str()).collect();
-                    for bridge_info in &existing {
-                        if !configured_ids.contains(bridge_info.server_id.as_str()) {
-                            tracing::info!("config poll: stopping removed server {}/{}", ws_id, bridge_info.server_id);
-                            let stop_result = {
-                                let workspace_manager = workspace_manager.lock().await;
-                                workspace_manager
-                                    .stop_mcp_bridge(ws_id, &bridge_info.server_id)
-                                    .await
-                            };
-                            match stop_result {
-                                Ok(()) => {
-                                    manager.stop(ws_id, &bridge_info.server_id).await;
-                                }
-                                Err(error) => {
-                                    tracing::warn!(
-                                        "config poll: failed to stop removed bridge for {}/{}: {}",
-                                        ws_id,
-                                        bridge_info.server_id,
-                                        error
-                                    );
-                                    if let Err(transition_error) = lifecycle
-                                        .transition(
-                                            ws_id,
-                                            LifecycleState::Failed,
-                                            Some(&format!("config poll stop failed: {error}")),
-                                        )
-                                        .await
-                                    {
-                                        tracing::warn!(
-                                            workspace_id = %ws_id,
-                                            error = %transition_error,
-                                            "config poll: failed to record stop failure"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // M4-5.3 minimal observed report (log only for v1)
-                    manager.log_observed(ws_id).await;
                 }
             }
         }
@@ -3086,15 +2800,27 @@ fn should_cleanup_jobs(ticks: u64) -> bool {
     ticks == 1 || ticks.is_multiple_of(JOB_CLEANUP_EVERY_TICKS)
 }
 
-async fn idle_reaper_loop(
+/// PLAN-0347 T1.4: idle reaper dependency bundle (keeps the loop signature sane).
+struct ReaperContext {
     registry: Arc<WorkspaceRegistry>,
     lifecycle: Arc<xihe_runtime::lifecycle::Lifecycle>,
+    sessions: Arc<McpSessionManager>,
     manager: Arc<Mutex<WorkspaceManager>>,
     router: Arc<WorkspaceExecutionRouter>,
     cp_url: String,
     api_token: String,
-    ct: tokio_util::sync::CancellationToken,
-) {
+}
+
+async fn idle_reaper_loop(ctx: ReaperContext, ct: tokio_util::sync::CancellationToken) {
+    let ReaperContext {
+        registry,
+        lifecycle,
+        sessions,
+        manager,
+        router,
+        cp_url,
+        api_token,
+    } = ctx;
     let mut ticker = interval(Duration::from_secs(60));
     let mut ticks: u64 = 0;
 
@@ -3162,6 +2888,7 @@ async fn idle_reaper_loop(
                             match mgr.delete_workspace(ws_id).await {
                                 Ok(_) => {
                                     lifecycle.evict(ws_id).await;
+                                    sessions.cleanup_workspace(ws_id).await;
                                     tracing::info!(
                                         workspace_id = %ws_id,
                                         event = "reap_evict",
@@ -3191,6 +2918,7 @@ async fn idle_reaper_loop(
                                             "Idle reaper: stop transition rejected"
                                         );
                                     }
+                                    sessions.cleanup_workspace(ws_id).await;
                                     xihe_runtime::lifecycle::reaper::log_transition(
                                         "reap_stop", ws_id, "active", "stopped", "",
                                     );
@@ -3486,11 +3214,19 @@ mod remote_handler_tests {
             registry.clone(),
         ));
         Arc::new(AppState {
-            registry,
-            manager,
+            registry: registry.clone(),
+            manager: manager.clone(),
             device_id: "test-device".to_string(),
-            workspace_ensurer: ensurer,
-            router,
+            workspace_ensurer: ensurer.clone(),
+            router: router.clone(),
+            mcp_sessions: Arc::new(
+                McpSessionManager::new().expect("mcp session manager (docker) for tests"),
+            ),
+            sandbox_backend: Arc::new(DockerBackend::new(
+                ensurer.clone(),
+                manager.clone(),
+                router.clone(),
+            )),
             lifecycle: lifecycle.clone(),
             // Checkpoint tests replace this with a tempdir-scoped service; other
             // tests never touch the host root.

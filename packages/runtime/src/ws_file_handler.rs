@@ -73,12 +73,12 @@ pub(crate) fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
         }
         RuntimeError::FileNotFound(_) => StatusCode::NOT_FOUND,
         RuntimeError::WorkspaceNotFound(_) => StatusCode::NOT_FOUND,
-        RuntimeError::ExecutionSpecNotFound(_) | RuntimeError::McpBridgeNotFound { .. } => {
+        RuntimeError::ExecutionSpecNotFound(_) | RuntimeError::McpSessionUnavailable { .. } => {
             StatusCode::NOT_FOUND
         }
         RuntimeError::ExecutionSpecUnavailable { .. }
         | RuntimeError::WorkspaceMaterializationFailed { .. }
-        | RuntimeError::McpBridgeUnavailable { .. }
+        | RuntimeError::McpSessionFailed { .. }
         | RuntimeError::Docker(_) => StatusCode::SERVICE_UNAVAILABLE,
         RuntimeError::InvalidExecutionSpec { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         RuntimeError::InvalidPath(_) => StatusCode::BAD_REQUEST,
@@ -338,8 +338,17 @@ mod tests {
             manager: manager.clone(),
             device_id: "test-device".to_string(),
             ready: Arc::new(AtomicBool::new(true)),
-            workspace_ensurer,
-            router,
+            workspace_ensurer: workspace_ensurer.clone(),
+            router: router.clone(),
+            mcp_sessions: Arc::new(
+                xihe_runtime::mcp_session::McpSessionManager::new()
+                    .expect("session manager for tests"),
+            ),
+            sandbox_backend: Arc::new(xihe_runtime::backend::DockerBackend::new(
+                workspace_ensurer.clone(),
+                manager.clone(),
+                router.clone(),
+            )),
             lifecycle,
             checkpoints: Arc::new(xihe_runtime::checkpoint_api::CheckpointService::new(
                 dir.path(),

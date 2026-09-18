@@ -74,19 +74,6 @@ pub enum RuntimeError {
         detail: String,
     },
 
-    #[error("MCP bridge not found for workspace {workspace_id}: {server_id}")]
-    McpBridgeNotFound {
-        workspace_id: String,
-        server_id: String,
-    },
-
-    #[error("MCP bridge unavailable for workspace {workspace_id}: {server_id}: {detail}")]
-    McpBridgeUnavailable {
-        workspace_id: String,
-        server_id: String,
-        detail: String,
-    },
-
     /// PLAN-0345 T1.3 (decision #7): the workspace is being destroyed; late
     /// ensure/materialize calls are rejected with 409 WORKSPACE_DESTROYING.
     #[error("Workspace {workspace_id} is being destroyed")]
