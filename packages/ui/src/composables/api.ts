@@ -1113,8 +1113,40 @@ export const api = {
                 error?: string;
                 retryable?: boolean;
                 attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
+                jobSummary?: Array<{
+                    itemId: string;
+                    toolCallId?: string;
+                    toolName?: string;
+                    jobId?: string;
+                    status: string;
+                    scope?: string;
+                    startedAt?: string | null;
+                    endedAt?: string | null;
+                }>;
             }>
         >(`/sessions/${encodeURIComponent(sessionId)}/messages`);
+    },
+    getJobOutput(
+        itemId: string,
+        options?: { stream?: "stdout" | "stderr"; offset?: number; limit?: number },
+    ): Promise<{
+        jobId: string;
+        stream: string;
+        offset: number;
+        nextOffset: number;
+        sizeBytes: number;
+        truncated: boolean;
+        data: string;
+        jobStatus: string;
+    }> {
+        const params = new URLSearchParams();
+        if (options?.stream) params.set("stream", options.stream);
+        if (options?.offset !== undefined) params.set("offset", String(options.offset));
+        if (options?.limit !== undefined) params.set("limit", String(options.limit));
+        const query = params.toString();
+        return request(
+            `/operations/items/${encodeURIComponent(itemId)}/job-output${query ? `?${query}` : ""}`,
+        );
     },
     deleteMessage(sessionId: string, messageId: string) {
         return apiDelete(

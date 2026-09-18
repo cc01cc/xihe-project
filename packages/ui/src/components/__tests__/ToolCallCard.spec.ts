@@ -1,12 +1,21 @@
-import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ToolCallCard from '../chat/ToolCallCard.vue'
+
+const getJobOutput = vi.fn()
+vi.mock('../../composables/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../composables/api')>()
+  return {
+    ...actual,
+    api: { ...actual.api, getJobOutput: (...args: unknown[]) => getJobOutput(...args) },
+  }
+})
 
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { toolStatus: { pending: 'Pending', running: 'Running', completed: 'Completed', failed: 'Failed', approved: 'Approved', rejected: 'Rejected' }, approve: 'Approve', reject: 'Reject', toolDiagnosticsTitle: 'Diagnostics', toolDiagnosticsSummary: '{total} total, {shown} shown', toolDiagnosticsMore: '{count} more', toolRawOutput: 'Raw output' } } },
+  messages: { en: { chat: { toolStatus: { pending: 'Pending', running: 'Running', completed: 'Completed', failed: 'Failed', approved: 'Approved', rejected: 'Rejected' }, approve: 'Approve', reject: 'Reject', toolDiagnosticsTitle: 'Diagnostics', toolDiagnosticsSummary: '{total} total, {shown} shown', toolDiagnosticsMore: '{count} more', toolRawOutput: 'Raw output', jobOutputTitle: 'Background job output', jobOutputLoad: 'View output', jobOutputReload: 'Reload', jobOutputMore: 'Load more', jobOutputEmpty: '(no output yet)', jobOutputTruncated: 'Output reached the 1 MiB cap', jobOutputLost: 'Job output is no longer available', jobOutputExpired: 'Job output expired', jobOutputUnavailable: 'Runtime unavailable', jobStatus: { running: 'Running', succeeded: 'Succeeded', cancelled: 'Cancelled', timeout: 'Timeout', orphaned: 'Orphaned' } } } },
 })
 
 function mountCard(props: any) {
@@ -149,5 +158,87 @@ describe('ToolCallCard', () => {
     expect(wrapper.find('[data-testid="diagnostic-item-0"] .text-destructive').exists()).toBe(true)
     expect(wrapper.find('[data-testid="diagnostic-item-1"] .text-muted-foreground').exists()).toBe(true)
     expect(wrapper.find('[data-testid="diagnostic-item-2"] .text-muted-foreground').exists()).toBe(true)
+  })
+})
+
+describe('ToolCallCard job output (PLAN-0344)', () => {
+  beforeEach(() => {
+    getJobOutput.mockReset()
+  })
+
+  function jobToolCall(overrides = {}) {
+    return makeToolCall({
+      name: 'start_background_process',
+      status: 'running',
+      jobSummary: {
+        itemId: 'item-1',
+        jobId: 'job-1',
+        status: 'running',
+        toolName: 'start_background_process',
+        scope: 'session',
+      },
+      ...overrides,
+    })
+  }
+
+  it('renders job panel and pages output by byte cursor', async () => {
+    getJobOutput
+      .mockResolvedValueOnce({
+        jobId: 'job-1', stream: 'stdout', offset: 0, nextOffset: 6,
+        sizeBytes: 12, truncated: false, data: 'line1\n', jobStatus: 'running',
+      })
+      .mockResolvedValueOnce({
+        jobId: 'job-1', stream: 'stdout', offset: 6, nextOffset: 12,
+        sizeBytes: 12, truncated: false, data: 'line2\n', jobStatus: 'running',
+      })
+
+    const wrapper = mountCard({ toolCall: jobToolCall() })
+    await wrapper.find('[data-testid="tool-card-toggle"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="job-output-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="job-status"]').text()).toBe('Running')
+
+    await wrapper.find('[data-testid="job-output-load"]').trigger('click')
+    await flushPromises()
+    expect(getJobOutput).toHaveBeenCalledWith('item-1', expect.objectContaining({ offset: 0 }))
+    expect(wrapper.find('[data-testid="job-output-data"]').text()).toContain('line1')
+
+    await wrapper.find('[data-testid="job-output-more"]').trigger('click')
+    await flushPromises()
+    expect(getJobOutput).toHaveBeenLastCalledWith('item-1', expect.objectContaining({ offset: 6 }))
+    expect(wrapper.find('[data-testid="job-output-data"]').text()).toContain('line2')
+    expect(wrapper.find('[data-testid="job-output-more"]').exists()).toBe(false)
+  })
+
+  it('maps terminal failures to explicit messages', async () => {
+    const { ApiError } = await import('../../composables/api')
+    getJobOutput.mockRejectedValueOnce(
+      new ApiError({
+        type: 'https://xihe.dev/problems/output-expired',
+        title: 'Conflict',
+        status: 409,
+        detail: 'output expired',
+        code: 'JOB_OUTPUT_EXPIRED',
+        requestId: 'req-1',
+      }),
+    )
+
+    const wrapper = mountCard({
+      toolCall: jobToolCall({
+        status: 'completed',
+        jobSummary: { itemId: 'item-1', jobId: 'job-1', status: 'succeeded', toolName: 'start_background_process' },
+      }),
+    })
+    await wrapper.find('[data-testid="tool-card-toggle"]').trigger('click')
+    await wrapper.find('[data-testid="job-output-load"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="job-output-error"]').text()).toContain('expired')
+  })
+
+  it('hides the panel for non-job tools without a summary', async () => {
+    const wrapper = mountCard({ toolCall: makeToolCall({ status: 'completed' }) })
+    await wrapper.find('[data-testid="tool-card-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="job-output-panel"]').exists()).toBe(false)
   })
 })

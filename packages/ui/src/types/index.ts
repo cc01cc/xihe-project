@@ -60,6 +60,17 @@ export interface DiagnosticsBundle {
     confidence: DiagnosticConfidence;
 }
 
+export interface JobSummary {
+    /** Operation ledger item id; resume key for the job-output endpoint. */
+    itemId: string;
+    toolCallId?: string;
+    toolName?: string;
+    jobId?: string;
+    status: string;
+    scope?: string;
+    startedAt?: string | null;
+    endedAt?: string | null;
+}
 export interface ToolCall {
     id: string;
     /** Agent tool-run id; `tool_call` and `tool_result` share it even when `toolCallId` differs (PLAN-0342 review fix). */
@@ -72,6 +83,8 @@ export interface ToolCall {
     startedAt?: string;
     completedAt?: string;
     diagnostics?: DiagnosticsBundle;
+    /** PLAN-0344: durable job archival summary restored from the messages DTO after refresh. */
+    jobSummary?: JobSummary;
 }
 
 export type ApprovalPolicyEffect = "allow" | "ask" | "deny";

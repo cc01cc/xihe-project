@@ -171,6 +171,7 @@ public class MessageController {
                 Map<String, Object> summary = new LinkedHashMap<>();
                 summary.put("itemId", item.getId());
                 summary.put("toolCallId", item.getToolCallId());
+                summary.put("toolName", item.getToolName());
                 summary.put("jobId", archive.jobId());
                 summary.put("status", archive.status());
                 summary.put("scope", archive.scope());

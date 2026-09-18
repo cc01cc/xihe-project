@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Diagnostic, ToolCall } from '../../types'
+import { ApiError, api } from '../../composables/api'
 import {
   LoaderCircle,
   CheckCircle,
@@ -92,6 +93,60 @@ const duration = computed(() => {
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(1)}s`
 })
+
+// PLAN-0344：durable job 卡片——档案（jobSummary）给状态与 jobId，
+// 输出按字节游标从 CP 续看端点分页拉取（真源仍是容器文件）。
+const JOB_TOOL_NAMES = [
+  'start_background_process',
+  'get_background_process',
+  'cancel_background_process',
+]
+const isJobCard = computed(
+  () => JOB_TOOL_NAMES.includes(props.toolCall.name) || !!props.toolCall.jobSummary,
+)
+const jobSummary = computed(() => props.toolCall.jobSummary)
+const jobOutput = ref('')
+const jobNextOffset = ref(0)
+const jobSizeBytes = ref(0)
+const jobTruncated = ref(false)
+const jobLoaded = ref(false)
+const jobLoading = ref(false)
+const jobError = ref<string | null>(null)
+const jobHasMore = computed(() => jobLoaded.value && jobNextOffset.value < jobSizeBytes.value)
+
+async function loadJobOutput(reset: boolean) {
+  const itemId = jobSummary.value?.itemId
+  if (!itemId || jobLoading.value) return
+  jobLoading.value = true
+  jobError.value = null
+  try {
+    const chunk = await api.getJobOutput(itemId, {
+      stream: 'stdout',
+      offset: reset ? 0 : jobNextOffset.value,
+      limit: 64 * 1024,
+    })
+    jobOutput.value = reset ? chunk.data : jobOutput.value + chunk.data
+    jobNextOffset.value = chunk.nextOffset
+    jobSizeBytes.value = chunk.sizeBytes
+    jobTruncated.value = chunk.truncated
+    jobLoaded.value = true
+  } catch (err) {
+    if (err instanceof ApiError) {
+      jobError.value =
+        err.problem.code === 'JOB_OUTPUT_LOST'
+          ? t('chat.jobOutputLost')
+          : err.problem.code === 'JOB_OUTPUT_EXPIRED'
+            ? t('chat.jobOutputExpired')
+            : err.problem.code === 'RUNTIME_UNAVAILABLE'
+              ? t('chat.jobOutputUnavailable')
+              : (err.problem.title ?? err.message)
+    } else {
+      jobError.value = String(err)
+    }
+  } finally {
+    jobLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -164,6 +219,48 @@ const duration = computed(() => {
         >
           {{ t('chat.toolDiagnosticsMore', { count: hiddenDiagnosticsCount }) }}
         </button>
+      </div>
+
+      <div v-if="isJobCard" class="space-y-1.5" data-testid="job-output-panel">
+        <div class="flex items-center gap-2">
+          <span class="font-medium text-foreground">{{ t('chat.jobOutputTitle') }}</span>
+          <span
+            v-if="jobSummary?.status"
+            class="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground"
+            data-testid="job-status"
+          >{{ t(`chat.jobStatus.${jobSummary.status}`) }}</span>
+          <button
+            type="button"
+            class="ml-auto rounded border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
+            :disabled="jobLoading"
+            data-testid="job-output-load"
+            @click="loadJobOutput(true)"
+          >
+            {{ jobLoaded ? t('chat.jobOutputReload') : t('chat.jobOutputLoad') }}
+          </button>
+        </div>
+        <p
+          v-if="jobSummary?.jobId"
+          class="truncate font-mono text-muted-foreground"
+          :title="jobSummary.jobId"
+        >{{ jobSummary.jobId }}</p>
+        <pre
+          v-if="jobLoaded"
+          data-testid="job-output-data"
+          class="max-h-64 overflow-auto rounded bg-muted/30 p-2 font-mono whitespace-pre-wrap break-all"
+        >{{ jobOutput || t('chat.jobOutputEmpty') }}</pre>
+        <p v-if="jobTruncated" class="text-muted-foreground">{{ t('chat.jobOutputTruncated') }}</p>
+        <button
+          v-if="jobHasMore"
+          type="button"
+          class="rounded border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
+          :disabled="jobLoading"
+          data-testid="job-output-more"
+          @click="loadJobOutput(false)"
+        >
+          {{ t('chat.jobOutputMore') }}
+        </button>
+        <p v-if="jobError" class="text-destructive" data-testid="job-output-error">{{ jobError }}</p>
       </div>
 
       <div v-if="hasDiagnostics">

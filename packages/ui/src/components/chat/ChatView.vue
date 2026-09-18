@@ -7,7 +7,7 @@ import { useAuthStore } from '../../stores/auth'
 import { ApiError, api } from '../../composables/api'
 import { parseRawToParts } from '../../composables/useStreamParser'
 import { logger } from '../../lib/logger'
-import type { Message } from '../../types'
+import type { Message, ToolCall } from '../../types'
 import ChatPanel from './ChatPanel.vue'
 
 const route = useRoute()
@@ -80,6 +80,28 @@ async function ensureSession(): Promise<string | null> {
   }
 }
 
+// PLAN-0344: job 卡片在刷新后的重建源——tool_result 不持久化，只回填
+// jobSummary（账本档案投影），续看内容点开时再按 itemId 拉取。
+function jobStatusToToolStatus(status: string): ToolCall['status'] {
+  if (status === 'running') return 'running'
+  if (status === 'succeeded') return 'completed'
+  return 'failed'
+}
+
+function jobSummariesToToolCalls(
+  summaries: NonNullable<Awaited<ReturnType<typeof api.getMessages>>[number]['jobSummary']>,
+): ToolCall[] {
+  return summaries.map((job) => ({
+    id: job.toolCallId ?? job.itemId,
+    name: job.toolName ?? 'background_job',
+    arguments: '',
+    status: jobStatusToToolStatus(job.status),
+    startedAt: job.startedAt ?? undefined,
+    completedAt: job.endedAt ?? undefined,
+    jobSummary: job,
+  }))
+}
+
 async function loadSessionMessages(sessionId: string) {
   try {
     const rawMessages = await api.getMessages(sessionId)
@@ -109,6 +131,9 @@ async function loadSessionMessages(sessionId: string) {
         url: `/api/v1/files/${att.fileId}`,
         state: 'done' as const,
       })),
+      toolCalls: msg.jobSummary?.length
+        ? jobSummariesToToolCalls(msg.jobSummary)
+        : undefined,
     }))
     chatStore.loadMessages(sessionId, normalized)
   } catch (err) {
