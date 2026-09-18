@@ -73,9 +73,7 @@ class ConfigClient:
         # transient failure of a non-required domain keeps its last known-good
         # values. The old code replaced the cache wholesale, silently dropping
         # (e.g.) rag/embedding/agent-runtime settings on a single blip.
-        staged: dict[str, dict[str, str]] = {
-            domain: dict(entries) for domain, entries in self._effective_cache.items()
-        }
+        staged: dict[str, dict[str, str]] = {domain: dict(entries) for domain, entries in self._effective_cache.items()}
         domain_results: dict[str, DomainSyncResult] = {}
         revisions: list[str] = []
         degraded: list[str] = []
@@ -84,7 +82,9 @@ class ConfigClient:
             headers = {"Authorization": f"Bearer {self.api_token}"}
             for domain in CONFIG_DOMAINS:
                 status, data, revision, source = await self._fetch_effective(
-                    client, domain, headers,
+                    client,
+                    domain,
+                    headers,
                 )
                 domain_results[domain] = {
                     "status": status,
@@ -103,13 +103,9 @@ class ConfigClient:
                 if revision:
                     revisions.append(revision)
 
-        required_statuses = [
-            domain_results.get(domain, {}).get("status", "missing")
-            for domain in REQUIRED_DOMAINS
-        ]
+        required_statuses = [domain_results.get(domain, {}).get("status", "missing") for domain in REQUIRED_DOMAINS]
         transport_failure = any(
-            status in {"unreachable", "unauthorized", "invalid_response"}
-            for status in required_statuses
+            status in {"unreachable", "unauthorized", "invalid_response"} for status in required_statuses
         )
         revision = self._calculate_revision(staged, revisions)
         report: SyncReport = {
@@ -209,8 +205,7 @@ class ConfigClient:
             return "invalid_response", None, "", ""
         entries = payload.get("entries") if isinstance(payload, dict) else None
         if not isinstance(entries, dict) or not all(
-            isinstance(key, str) and isinstance(value, str)
-            for key, value in entries.items()
+            isinstance(key, str) and isinstance(value, str) for key, value in entries.items()
         ):
             logger.warning(
                 "ConfigClient: effective domain={} status=invalid_response reason=entries_object_of_strings_required",
@@ -253,7 +248,9 @@ class ConfigClient:
             except Exception as e:
                 logger.warning(
                     "ConfigClient: sync attempt %d/%d failed: %s",
-                    attempt + 1, max_retries, e,
+                    attempt + 1,
+                    max_retries,
+                    e,
                 )
             if attempt < max_retries - 1:
                 await asyncio.sleep(2**attempt)
@@ -291,7 +288,9 @@ class ConfigClient:
             logger.warning(
                 "ConfigClient: provider lease redeem failed status={} code={}",
                 response.status_code,
-                response.json().get("code") if response.headers.get("content-type", "").startswith("application/json") else "unknown",
+                response.json().get("code")
+                if response.headers.get("content-type", "").startswith("application/json")
+                else "unknown",
             )
             raise RuntimeError("Provider credential lease is unavailable")
         data = response.json()

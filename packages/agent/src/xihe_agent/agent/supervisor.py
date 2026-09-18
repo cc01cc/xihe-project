@@ -66,12 +66,13 @@ def build_supervisor(
             tools = _get_tools_for_worker(config, all_mcp_tools, custom_tools)
             sub_agents.append(
                 create_react_agent(
-                    model, tools=_adapt(tools), name=config.id, system_prompt=config.system_prompt,
+                    model,
+                    tools=_adapt(tools),
+                    name=config.id,
+                    system_prompt=config.system_prompt,
                 )
             )
-        descriptions = "\n".join(
-            f"- **{w.id}**: {w.description}" for w in workers
-        )
+        descriptions = "\n".join(f"- **{w.id}**: {w.description}" for w in workers)
     else:
         if registry is not None:
             logger.info("Registry has no enabled workers, using built-in agents")
@@ -79,13 +80,13 @@ def build_supervisor(
         for w in _BUILTIN_WORKERS:
             sub_agents.append(
                 create_react_agent(
-                    model, tools=_adapt(list(all_mcp_tools) + list(custom_tools)),
-                    name=w["id"], system_prompt=w["prompt"],
+                    model,
+                    tools=_adapt(list(all_mcp_tools) + list(custom_tools)),
+                    name=w["id"],
+                    system_prompt=w["prompt"],
                 )
             )
-        descriptions = "\n".join(
-            f"- **{w['id']}**: {w['description']}" for w in _BUILTIN_WORKERS
-        )
+        descriptions = "\n".join(f"- **{w['id']}**: {w['description']}" for w in _BUILTIN_WORKERS)
 
     supervisor_prompt = (
         "You are a supervisor managing specialized agents.\n\n"

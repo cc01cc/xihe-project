@@ -186,7 +186,9 @@ Original
         model = MagicMock()
         reg.register(
             WorkerConfig(id="r", name="R", description="", file_path=str(md_path)),
-            model, [], [],
+            model,
+            [],
+            [],
         )
         assert len(reg.list_workers()) == 1
 

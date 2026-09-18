@@ -23,14 +23,9 @@ _FORBIDDEN_LOCAL_DECISION_SYMBOLS = (
 
 def test_agent_holds_no_local_approval_decision_symbols():
     present = [name for name in _FORBIDDEN_LOCAL_DECISION_SYMBOLS if hasattr(mcp_client_module, name)]
-    assert present == [], (
-        f"Agent dispatch 层不得持有本地审批判定符号 {present}；"
-        "审批触发权只在 CP（PLAN-0337 M2）"
-    )
+    assert present == [], f"Agent dispatch 层不得持有本地审批判定符号 {present}；审批触发权只在 CP（PLAN-0337 M2）"
 
 
 def test_agent_dispatch_source_has_no_local_pre_flight_call_site():
     source = inspect.getsource(mcp_client_module)
-    assert "request_approval(" not in source, (
-        "dispatch 路径不得调用本地前置审批；工具调用必须直达 CP 闸门"
-    )
+    assert "request_approval(" not in source, "dispatch 路径不得调用本地前置审批；工具调用必须直达 CP 闸门"

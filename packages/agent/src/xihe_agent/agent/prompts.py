@@ -49,4 +49,3 @@ def build_prompt() -> str:
     and ``{instructions}`` before sending the prompt to an LLM.
     """
     return XIHE_SYSTEM_PROMPT
-

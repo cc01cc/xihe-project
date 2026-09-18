@@ -80,12 +80,8 @@ def test_derive_llm_ready_is_ready_without_instance_fallback_credentials():
 
 def test_instance_fallback_credentials_requires_key_or_mock():
     assert _has_instance_fallback_credentials(LLMConfig(provider="mock")) is True
-    assert _has_instance_fallback_credentials(
-        LLMConfig(provider="xiaomi", api_key="sk-env")
-    ) is True
-    assert _has_instance_fallback_credentials(
-        LLMConfig(provider="xiaomi", api_key="")
-    ) is False
+    assert _has_instance_fallback_credentials(LLMConfig(provider="xiaomi", api_key="sk-env")) is True
+    assert _has_instance_fallback_credentials(LLMConfig(provider="xiaomi", api_key="")) is False
 
 
 # ---------------------------------------------------------------------------
@@ -95,12 +91,8 @@ def test_instance_fallback_credentials_requires_key_or_mock():
 
 def test_configure_log_level_is_idempotent(monkeypatch):
     calls: list[str] = []
-    monkeypatch.setattr(
-        main_module.logger, "remove", lambda *args, **kwargs: calls.append("remove")
-    )
-    monkeypatch.setattr(
-        main_module.logger, "add", lambda *args, **kwargs: calls.append("add")
-    )
+    monkeypatch.setattr(main_module.logger, "remove", lambda *args, **kwargs: calls.append("remove"))
+    monkeypatch.setattr(main_module.logger, "add", lambda *args, **kwargs: calls.append("add"))
     monkeypatch.setattr(main_module, "_APPLIED_LOG_LEVEL", "info")
 
     main_module._configure_log_level("info")
@@ -113,9 +105,7 @@ def test_configure_log_level_is_idempotent(monkeypatch):
 @pytest.mark.asyncio
 async def test_apply_cp_log_level_reads_logging_domain(monkeypatch):
     applied: list[str] = []
-    monkeypatch.setattr(
-        main_module, "_configure_log_level", lambda level: applied.append(level)
-    )
+    monkeypatch.setattr(main_module, "_configure_log_level", lambda level: applied.append(level))
     monkeypatch.setattr(
         main_module.config_client,
         "get",

@@ -43,13 +43,18 @@ class TestRegistrySupervisorIntegration:
     def _setup(self):
         self.model = MagicMock()
         self.model.agenerate = MagicMock()
-        self.mcp_tools = [FakeAgentTool("mock_web_fetch", "Fetch a web page."), FakeAgentTool("mock_edit_file", "Edit a file.")]
+        self.mcp_tools = [
+            FakeAgentTool("mock_web_fetch", "Fetch a web page."),
+            FakeAgentTool("mock_edit_file", "Edit a file."),
+        ]
         self.custom_tools = [FakeAgentTool("generate_image", "Generate an image")]
 
     def test_registry_load_and_build_supervisor(self):
         """创建 markdown 文件 → load_all → build_supervisor_from_registry 成功."""
         with tempfile.TemporaryDirectory() as tmp:
-            _write_md(Path(tmp) / "research.md", """\
+            _write_md(
+                Path(tmp) / "research.md",
+                """\
 ---
 id: research
 name: 研究助手
@@ -59,8 +64,11 @@ tool_keys:
 ---
 
 You are a research assistant.
-""")
-            _write_md(Path(tmp) / "code.md", """\
+""",
+            )
+            _write_md(
+                Path(tmp) / "code.md",
+                """\
 ---
 id: code
 name: 代码助手
@@ -70,7 +78,8 @@ tool_keys:
 ---
 
 You are a code specialist.
-""")
+""",
+            )
             reg = WorkerRegistry(workers_dir=tmp)
             reg.load_all(self.model, self.mcp_tools, self.custom_tools)
 
@@ -96,7 +105,9 @@ You are a code specialist.
     def test_registry_all_disabled_fallback(self):
         """所有 worker 被禁用 → fallback."""
         with tempfile.TemporaryDirectory() as tmp:
-            _write_md(Path(tmp) / "a.md", """\
+            _write_md(
+                Path(tmp) / "a.md",
+                """\
 ---
 id: a
 enabled: false
@@ -104,7 +115,8 @@ description: disabled
 ---
 
 You are A.
-""")
+""",
+            )
             reg = WorkerRegistry(workers_dir=tmp)
             reg.load_all(self.model, self.mcp_tools, self.custom_tools)
 
@@ -117,7 +129,9 @@ You are A.
     def test_enable_disable_lifecycle(self):
         """enable/disable 影响 list_enabled 和 get_worker."""
         with tempfile.TemporaryDirectory() as tmp:
-            _write_md(Path(tmp) / "w.md", """\
+            _write_md(
+                Path(tmp) / "w.md",
+                """\
 ---
 id: w
 enabled: false
@@ -125,7 +139,8 @@ description: test
 ---
 
 Worker W
-""")
+""",
+            )
             reg = WorkerRegistry(workers_dir=tmp)
             reg.load_all(self.model, self.mcp_tools, self.custom_tools)
 
@@ -144,26 +159,32 @@ Worker W
         """修改 .md 文件 → reload → prompt 更新."""
         with tempfile.TemporaryDirectory() as tmp:
             md = Path(tmp) / "r.md"
-            _write_md(md, """\
+            _write_md(
+                md,
+                """\
 ---
 id: r
 description: original
 ---
 
 Original prompt
-""")
+""",
+            )
             reg = WorkerRegistry(workers_dir=tmp)
             reg.load_all(self.model, self.mcp_tools, self.custom_tools)
             assert len(reg.list_workers()) == 1
 
-            _write_md(md, """\
+            _write_md(
+                md,
+                """\
 ---
 id: r
 description: updated
 ---
 
 Updated prompt
-""")
+""",
+            )
             ok = reg.reload("r", self.model, self.mcp_tools, self.custom_tools)
             assert ok is True
             status = reg.list_workers()[0]
@@ -173,14 +194,17 @@ Updated prompt
         """删除 .md 文件 → unregister → registry 中移除."""
         with tempfile.TemporaryDirectory() as tmp:
             md = Path(tmp) / "d.md"
-            _write_md(md, """\
+            _write_md(
+                md,
+                """\
 ---
 id: d
 description: to-delete
 ---
 
 Delete me
-""")
+""",
+            )
             reg = WorkerRegistry(workers_dir=tmp)
             reg.load_all(self.model, self.mcp_tools, self.custom_tools)
             assert len(reg.list_workers()) == 1
@@ -192,7 +216,9 @@ Delete me
     def test_tool_mapping_with_keys(self):
         """tool_keys 白名单过滤正确."""
         with tempfile.TemporaryDirectory() as tmp:
-            _write_md(Path(tmp) / "a.md", """\
+            _write_md(
+                Path(tmp) / "a.md",
+                """\
 ---
 id: a
 tool_keys:
@@ -200,7 +226,8 @@ tool_keys:
 ---
 
 You are A.
-""")
+""",
+            )
             reg = WorkerRegistry(workers_dir=tmp)
             reg.load_all(self.model, self.mcp_tools, self.custom_tools)
 
@@ -208,6 +235,7 @@ You are A.
             assert len(workers) == 1
 
             from xihe_agent.registry.registry import _get_tools_for_worker
+
             tools = _get_tools_for_worker(workers[0], self.mcp_tools, self.custom_tools)
             tool_names = [t.spec.name for t in tools]
             assert "mock_web_fetch" in tool_names

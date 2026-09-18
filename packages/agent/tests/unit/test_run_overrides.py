@@ -11,24 +11,22 @@ class TestRunOverrideValidation:
         assert main._validate_run_overrides(None, "userOverrides") is None
 
     def test_non_object_is_rejected(self):
-        assert main._validate_run_overrides(["x"], "userOverrides") == (
-            "userOverrides must be an object"
-        )
+        assert main._validate_run_overrides(["x"], "userOverrides") == ("userOverrides must be an object")
 
     def test_non_object_domain_is_rejected(self):
-        assert main._validate_run_overrides(
-            {"llm-provider": ["x"]}, "userOverrides"
-        ) == "userOverrides.llm-provider must be an object"
+        assert (
+            main._validate_run_overrides({"llm-provider": ["x"]}, "userOverrides")
+            == "userOverrides.llm-provider must be an object"
+        )
 
     def test_non_string_value_is_rejected(self):
-        assert main._validate_run_overrides(
-            {"llm-provider": {"timeout": 60}}, "userOverrides"
-        ) == "userOverrides.llm-provider.timeout must be a string"
+        assert (
+            main._validate_run_overrides({"llm-provider": {"timeout": 60}}, "userOverrides")
+            == "userOverrides.llm-provider.timeout must be a string"
+        )
 
     def test_valid_shape_passes(self):
-        assert main._validate_run_overrides(
-            {"llm-provider": {"defaultModel": "mimo-v2.5"}}, "userOverrides"
-        ) is None
+        assert main._validate_run_overrides({"llm-provider": {"defaultModel": "mimo-v2.5"}}, "userOverrides") is None
 
 
 class TestRunOverrideNormalize:
@@ -38,9 +36,9 @@ class TestRunOverrideNormalize:
         assert main._normalize_run_overrides({"llm-provider": "nope"}) == {}
 
     def test_valid_shape_passes_through(self):
-        assert main._normalize_run_overrides(
-            {"llm-provider": {"defaultModel": "mimo-v2.5"}}
-        ) == {"llm-provider": {"defaultModel": "mimo-v2.5"}}
+        assert main._normalize_run_overrides({"llm-provider": {"defaultModel": "mimo-v2.5"}}) == {
+            "llm-provider": {"defaultModel": "mimo-v2.5"}
+        }
 
 
 class TestMergeRunDomain:
@@ -48,11 +46,7 @@ class TestMergeRunDomain:
         monkeypatch.setattr(
             main.config_client,
             "get_domain",
-            lambda domain: (
-                {"defaultProvider": "deepseek", "timeout": "30"}
-                if domain == "llm-provider"
-                else {}
-            ),
+            lambda domain: {"defaultProvider": "deepseek", "timeout": "30"} if domain == "llm-provider" else {},
         )
 
         merged = main._merge_run_domain(
@@ -70,9 +64,7 @@ class TestMergeRunDomain:
         monkeypatch.setattr(main.config_client, "get_domain", lambda domain: snapshot)
         before = main.llm_config
 
-        merged = main._merge_run_domain(
-            "llm-provider", {"llm-provider": {"defaultProvider": "xiaomi"}}, {}
-        )
+        merged = main._merge_run_domain("llm-provider", {"llm-provider": {"defaultProvider": "xiaomi"}}, {})
         merged["defaultProvider"] = "mutated"
 
         assert snapshot == {"defaultProvider": "deepseek"}
@@ -88,13 +80,15 @@ class TestLLMConfigFromEntries:
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
 
-        cfg = LLMConfig.from_entries({
-            "defaultProvider": "openai",
-            "defaultModel": "gpt-4o-mini",
-            "timeout": "120",
-            "maxTokens": "2048",
-            "temperature": "0.1",
-        })
+        cfg = LLMConfig.from_entries(
+            {
+                "defaultProvider": "openai",
+                "defaultModel": "gpt-4o-mini",
+                "timeout": "120",
+                "maxTokens": "2048",
+                "temperature": "0.1",
+            }
+        )
 
         assert cfg.provider == "openai"
         assert cfg.model == "gpt-4o-mini"
@@ -102,9 +96,7 @@ class TestLLMConfigFromEntries:
         assert cfg.max_tokens == 2048
         assert cfg.temperature == 0.1
 
-    def test_user_override_switches_provider_and_uses_env_fallback_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_user_override_switches_provider_and_uses_env_fallback_key(self, monkeypatch: pytest.MonkeyPatch):
         for env_name in ENV_PROVIDER_KEY_MAP.values():
             monkeypatch.delenv(env_name, raising=False)
         monkeypatch.setenv("XIHE_XIAOMI_API_KEY", "sk-mimo")

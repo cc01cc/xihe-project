@@ -21,15 +21,17 @@ def chunk_document(
         if not chunk_text.strip():
             continue
 
-        chunks.append({
-            "text": chunk_text,
-            "metadata": {
-                "chunk_index": len(chunks),
-                "start_char": i,
-                "end_char": end,
-                **(metadata or {}),
-            },
-        })
+        chunks.append(
+            {
+                "text": chunk_text,
+                "metadata": {
+                    "chunk_index": len(chunks),
+                    "start_char": i,
+                    "end_char": end,
+                    **(metadata or {}),
+                },
+            }
+        )
 
         if end >= len(text):
             break

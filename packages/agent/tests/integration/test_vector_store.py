@@ -6,6 +6,7 @@ Uses the same skip-if-unavailable pattern as test_agent_cp_integration.py.
 Run with: uv run pytest tests/integration/test_vector_store.py -v
 Or all integration: uv run pytest tests/integration/ -v
 """
+
 import os
 
 import pytest
@@ -22,6 +23,7 @@ PG_DSN = os.getenv(
 def is_pg_available() -> bool:
     try:
         import subprocess
+
         # Extract host from DSN
         dsn = PG_DSN.replace("postgresql+psycopg://", "")
         host = dsn.split("@")[1].split(":")[0] if "@" in dsn else dsn.split(":")[0]
@@ -29,7 +31,9 @@ def is_pg_available() -> bool:
 
         result = subprocess.run(
             ["pg_isready", "-h", host, "-p", port, "-t", "3"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.returncode == 0
     except Exception:
@@ -41,13 +45,16 @@ pg_available = is_pg_available()
 
 @pytest.fixture
 async def vector_store():
-    store = VectorStore(dsn=PG_DSN, embedding_service=LiteLLMEmbeddings(
-        service=EmbeddingService(
-            model=os.getenv("XIHE_EMBEDDING_MODEL", "text-embedding-3-small"),
-            api_key=os.getenv("XIHE_EMBEDDING_API_KEY", ""),
-            api_base=os.getenv("XIHE_EMBEDDING_API_BASE", ""),
-        )
-    ))
+    store = VectorStore(
+        dsn=PG_DSN,
+        embedding_service=LiteLLMEmbeddings(
+            service=EmbeddingService(
+                model=os.getenv("XIHE_EMBEDDING_MODEL", "text-embedding-3-small"),
+                api_key=os.getenv("XIHE_EMBEDDING_API_KEY", ""),
+                api_base=os.getenv("XIHE_EMBEDDING_API_BASE", ""),
+            )
+        ),
+    )
     await store._ensure_store()
     await store.clear()
     yield store

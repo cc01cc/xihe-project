@@ -1,4 +1,5 @@
 """Tests for registry/watcher.py - file monitoring with watchdog."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest

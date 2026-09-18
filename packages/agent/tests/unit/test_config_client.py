@@ -193,9 +193,7 @@ class TestConfigClientSync:
 
         async def mock_get(url, **kwargs):
             if url.endswith("/effective/llm-provider"):
-                return _mock_response(
-                    200, _effective({"openaiApiKey": "sk-test"}, source="workspace")
-                )
+                return _mock_response(200, _effective({"openaiApiKey": "sk-test"}, source="workspace"))
             return _mock_response(404)
 
         mock_client.get = mock_get
@@ -313,9 +311,7 @@ class TestConfigClientSync:
         report = await c.sync()
 
         assert report["ok"] is True
-        assert c.get("rag", "chunkSize") == "512", (
-            "transient non-required failure must keep the last known-good value"
-        )
+        assert c.get("rag", "chunkSize") == "512", "transient non-required failure must keep the last known-good value"
         assert report["domains"]["rag"]["status"] == "unreachable"
         assert "rag" in report["degraded"]
 

@@ -34,8 +34,7 @@ class LocalCPFixture:
             lines = head.decode("latin1").split("\r\n")
             method, path, _ = lines[0].split(" ", 2)
             headers = {
-                key.lower(): value.strip()
-                for key, value in (line.split(":", 1) for line in lines[1:] if ":" in line)
+                key.lower(): value.strip() for key, value in (line.split(":", 1) for line in lines[1:] if ":" in line)
             }
             length = int(headers.get("content-length", "0"))
             raw_body = await reader.readexactly(length) if length else b"{}"
@@ -66,9 +65,7 @@ class LocalCPFixture:
                 status = "200 OK"
             payload = json.dumps(response_body).encode()
             response = (
-                f"HTTP/1.1 {status}\r\n"
-                "Content-Type: application/json\r\n"
-                f"Content-Length: {len(payload)}\r\n\r\n"
+                f"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {len(payload)}\r\n\r\n"
             ).encode() + payload
             writer.write(response)
             await writer.drain()
@@ -94,9 +91,7 @@ async def test_agent_uses_only_the_cp_http_boundary() -> None:
         assert manager.initialized is True
         assert [tool.spec.name for tool in manager.tools] == ["cp_echo"]
         assert fixture.requests
-        assert {request[2]["host"] for request in fixture.requests} == {
-            cp_url.removeprefix("http://").split("/", 1)[0]
-        }
+        assert {request[2]["host"] for request in fixture.requests} == {cp_url.removeprefix("http://").split("/", 1)[0]}
         methods = {request[0] for request in fixture.requests}
         # 决策 #34（2026-07-28 无会话世代）：客户端不建会话，SDK 不再发 GET
         # 服务器流，也不发 DELETE 终止会话——Agent 线上只应有 POST。

@@ -1,4 +1,5 @@
 """Tests for adapters/mcp_client.py - MCP client manager."""
+
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
@@ -103,9 +104,7 @@ def test_client_pins_stateless_protocol_generation():
 
 
 def test_request_headers_merges_static_and_dynamic():
-    manager = MCPClientManager(
-        cp_url="http://localhost:12631", workspace_id="ws-1", api_token="tok"
-    )
+    manager = MCPClientManager(cp_url="http://localhost:12631", workspace_id="ws-1", api_token="tok")
     headers = manager.request_headers({"X-Session-Id": "s1"})
     assert headers == {
         "X-Workspace-Id": "ws-1",
@@ -138,9 +137,7 @@ class TestMCPClientManager:
 
     @pytest.mark.asyncio
     async def test_initialize_sets_initialized(self, manager):
-        with patch(
-            "xihe_agent.adapters.mcp_client.Client", _FakeDiscoveryClient
-        ):
+        with patch("xihe_agent.adapters.mcp_client.Client", _FakeDiscoveryClient):
             await manager.initialize()
 
         assert manager.initialized is True
@@ -219,9 +216,7 @@ class TestMCPClientManager:
         manager.retry_interval = 0.0
         manager.max_retries = 1
 
-        with patch(
-            "xihe_agent.adapters.mcp_client.Client", _FailingDiscoveryClient
-        ):
+        with patch("xihe_agent.adapters.mcp_client.Client", _FailingDiscoveryClient):
             # ensure_ready now returns (gives up) instead of raising
             await manager.ensure_ready()
 
@@ -248,12 +243,14 @@ class TestMCPAgentToolApproval:
     @pytest.fixture
     def context(self):
         context = AgentContext.empty("session-1")
-        context.metadata.update({
-            "sessionId": "session-1",
-            "workspaceId": "workspace-1",
-            "runId": "run-1",
-            "operationId": "operation-1",
-        })
+        context.metadata.update(
+            {
+                "sessionId": "session-1",
+                "workspaceId": "workspace-1",
+                "runId": "run-1",
+                "operationId": "operation-1",
+            }
+        )
         return context
 
     @pytest.fixture
@@ -537,13 +534,15 @@ async def _await_pending(
 
 def _publishing_context(session_id: str = "session-gate") -> tuple[AgentContext, list[dict]]:
     context = AgentContext.empty(session_id)
-    context.metadata.update({
-        "sessionId": session_id,
-        "workspaceId": "workspace-1",
-        "runId": "run-1",
-        "operationId": "operation-1",
-        "operationItemId": "item-1",
-    })
+    context.metadata.update(
+        {
+            "sessionId": session_id,
+            "workspaceId": "workspace-1",
+            "runId": "run-1",
+            "operationId": "operation-1",
+            "operationItemId": "item-1",
+        }
+    )
     published: list[dict] = []
 
     async def publish(payload):
@@ -557,13 +556,15 @@ class TestMCPAgentToolPostGateApproval:
     @pytest.fixture
     def context(self):
         context = AgentContext.empty("session-gate")
-        context.metadata.update({
-            "sessionId": "session-gate",
-            "workspaceId": "workspace-1",
-            "runId": "run-1",
-            "operationId": "operation-1",
-            "operationItemId": "item-1",
-        })
+        context.metadata.update(
+            {
+                "sessionId": "session-gate",
+                "workspaceId": "workspace-1",
+                "runId": "run-1",
+                "operationId": "operation-1",
+                "operationItemId": "item-1",
+            }
+        )
         return context
 
     @pytest.fixture
@@ -765,9 +766,7 @@ class TestMCPAgentToolPostGateApproval:
     async def test_gate_409_without_structured_payload_fails_closed(self, context):
         approval_tool = ApprovalAgentTool(timeout_seconds=5)
         manager = _fake_manager(approval_tool=approval_tool)
-        manager.call_tool = AsyncMock(
-            side_effect=MCPError(-32003, "APPROVAL_REQUIRED", data=None)
-        )
+        manager.call_tool = AsyncMock(side_effect=MCPError(-32003, "APPROVAL_REQUIRED", data=None))
         tool = MCPAgentTool(_stub_tool("read_file"), manager)
 
         with pytest.raises(ApprovalProtocolError):
@@ -782,9 +781,7 @@ class TestMCPAgentToolPostGateApproval:
         synthesizes a generic -32603 with no data; the Agent must not wait or retry."""
         approval_tool = ApprovalAgentTool(timeout_seconds=5)
         manager = _fake_manager(approval_tool=approval_tool)
-        manager.call_tool = AsyncMock(
-            side_effect=MCPError(-32603, "Server returned an error response", data=None)
-        )
+        manager.call_tool = AsyncMock(side_effect=MCPError(-32603, "Server returned an error response", data=None))
         tool = MCPAgentTool(_stub_tool("read_file"), manager)
 
         result = await asyncio.wait_for(tool.execute({}, context), timeout=5)
@@ -826,9 +823,7 @@ class TestMCPAgentToolPostGateApproval:
         manager.call_tool = AsyncMock(side_effect=_call)
         tool = MCPAgentTool(_stub_tool("read_file"), manager)
 
-        task = asyncio.create_task(
-            tool.execute({"path": "a.md", "content": secret}, context)
-        )
+        task = asyncio.create_task(tool.execute({"path": "a.md", "content": secret}, context))
         request_id = await _await_pending(approval_tool)
         assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
         await asyncio.wait_for(task, timeout=5)
@@ -859,9 +854,7 @@ class TestApprovalGateClassifier:
     def test_returns_none_for_unrelated_failures(self):
         assert classify_approval_gate_failure(RuntimeError("boom"), "read_file") is None
         assert classify_approval_gate_failure(TimeoutError("slow"), "read_file") is None
-        other_code = MCPError(
-            -32002, "FORBIDDEN", data={"status": 403, "code": "FORBIDDEN"}
-        )
+        other_code = MCPError(-32002, "FORBIDDEN", data={"status": 403, "code": "FORBIDDEN"})
         assert classify_approval_gate_failure(other_code, "read_file") is None
         generic = MCPError(-32603, "Server returned an error response", data=None)
         assert classify_approval_gate_failure(generic, "read_file") is None

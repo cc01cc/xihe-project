@@ -77,8 +77,8 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder;
     private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
-    private final com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient;
     private final RunCheckpointService runCheckpointService;
+    private final ChatRunCancellationService chatRunCancellationService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
@@ -127,8 +127,8 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder,
             com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
-            com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient runtimeExecutionClient,
             RunCheckpointService runCheckpointService,
+            ChatRunCancellationService chatRunCancellationService,
             com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -151,8 +151,8 @@ public class ChatController {
         this.ledgerToolRecorder = ledgerToolRecorder;
         this.mcpProxyController = mcpProxyController;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
-        this.runtimeExecutionClient = runtimeExecutionClient;
         this.runCheckpointService = runCheckpointService;
+        this.chatRunCancellationService = chatRunCancellationService;
         this.contextSourceRefreshService = contextSourceRefreshService;
 
         // Wire drain callback: when agent recovers, drain queued requests
@@ -458,16 +458,6 @@ public class ChatController {
 
     // ── PLAN-275 M1 Task 1.3: Cancel contract ──────────────────────────────
 
-    /**
-     * Agent 取消转发的目标 URL。2026-09-13 E2E 实测：旧的
-     * {@code agentUrl.replace("/chat", "")} 会产出
-     * {@code .../internal/v1/agent/internal/v1/agent/runs/...} 双前缀导致 404，
-     * Agent 侧从未收到取消信号；改为 URI.resolve 以 origin 为基准。
-     */
-    String buildAgentCancelUrl(String runId) {
-        return URI.create(agentUrl).resolve("/internal/v1/agent/runs/" + runId + "/cancel").toString();
-    }
-
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @PostMapping("/api/v1/chat/runs/{runId}/cancel")
     public ResponseEntity<Map<String, Object>> cancelRun(
@@ -501,83 +491,13 @@ public class ChatController {
         run.setStatus("cancelling");
         chatRunRepository.save(run);
 
-        // Forward cancel to Agent
-        String reason = request != null ? (String) request.getOrDefault("reason", "user_requested") : "user_requested";
-        try {
-            String cancelUrl = buildAgentCancelUrl(runId);
-            var agentRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(cancelUrl))
-                    .header("Authorization", "Bearer " + agentApiToken)
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(
-                            objectMapper.writeValueAsString(Map.of("reason", reason, "workspaceId", workspaceId))))
-                    .timeout(Duration.ofSeconds(5))
-                    .build();
-            agentHttpClient.send(agentRequest, HttpResponse.BodyHandlers.ofString());
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=cancel_forward_failed runId={} error={}", runId, e.getMessage());
-        }
-
-        logger.info("[LIFECYCLE] service=cp event=run_cancel_requested runId={} reason={}", runId, reason);
-
+        // Agent 转发 + CP 自主收敛（共享编排，PLAN-0352 T1.2）；
         // PLAN-0317 T2.4/T2.5/T2.6：CP 自主收敛——终止 Runtime 在途执行、落账本
         // 终态并把 run/operation 推到 cancelled，不再等待 Agent 回音。
-        try {
-            settleRunCancellation(runId, workspaceId);
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_cancel_settle_failed runId={} error={}",
-                    runId, e.getMessage(), e);
-        }
+        String reason = request != null ? (String) request.getOrDefault("reason", "user_requested") : "user_requested";
+        chatRunCancellationService.cancel(runId, workspaceId, reason);
 
         return ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
-    }
-
-    /**
-     * PLAN-0317 T2.4/T2.5/T2.6：取消的 CP 侧收口。
-     *
-     * <p>对每个仍在途的 CP→Runtime 转发：按规范化 operationItemId 调 Runtime
-     * 取消端点；确认终止 → item {@code cancelled}，未确认/不可达 → {@code aborted}
-     * （对齐 spec S4 三分映射）；执行已自然结束（未命中）→ 不改 item。
-     * 最后把 run 与 operation 收敛为 {@code cancelled}——成功/失败路径的转换
-     * 期望集不含 {@code cancelling}，因此不会被回音路径覆盖。
-     */
-    private void settleRunCancellation(String runId, String workspaceId) {
-        UUID operationId = operationService.findOperationIdByRunId(runId);
-        if (operationId != null) {
-            for (com.cc01cc.p.xihe.cp.entity.OperationAttempt attempt
-                    : operationService.findStartedForwards(operationId)) {
-                com.cc01cc.p.xihe.cp.entity.OperationItem item =
-                        operationService.findItem(attempt.getItemId());
-                if (item == null || item.getToolCallId() == null || item.getToolCallId().isBlank()) {
-                    continue;
-                }
-                com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient.CancelOutcome outcome =
-                        runtimeExecutionClient.cancel(workspaceId, item.getToolCallId());
-                if (outcome.found() && "already_finished".equals(outcome.status())) {
-                    logger.info("[LIFECYCLE] service=cp event=runtime_cancel_already_finished runId={} itemId={}",
-                            runId, item.getId());
-                    continue;
-                }
-                boolean cancelled = outcome.found() && "cancelled".equals(outcome.status());
-                String itemStatus = cancelled ? "cancelled" : "aborted";
-                String errorCode = cancelled ? null : "CANCEL_UNCONFIRMED";
-                operationService.settleCancellation(item.getId(), attempt.getId(), itemStatus, errorCode);
-                logger.info("[LIFECYCLE] service=cp event=runtime_cancel_settled runId={} itemId={} status={} confirmed={} unreachable={}",
-                        runId, item.getId(), itemStatus, outcome.confirmed(), outcome.unreachable());
-            }
-            // 决策 #8 补充（2026-09-13 E2E）：在途 forward 结算后收口其余非终态
-            // item/attempt（中继重复建项、审批遗留），保证四层终态一次落定。
-            operationService.settleRemainingOpenItems(operationId);
-        }
-        int runUpdated = chatRunRepository.transition(UUID.fromString(runId), List.of("cancelling"),
-                "cancelled", "cancelled", null, null, 0, 0);
-        if (runUpdated == 0) {
-            logger.warn("[LIFECYCLE] service=cp event=run_cancel_transition_ignored runId={}", runId);
-        }
-        operationService.transitionOperationForRun(runId, "cancelled", null, null);
-        // PLAN-0338: cancellation bypasses transitionRun; capture the slice explicitly.
-        runCheckpointService.requestCapture(runId);
-        logger.info("[LIFECYCLE] service=cp event=run_cancelled runId={}", runId);
     }
 
     @GetMapping("/api/v1/health")
@@ -1110,6 +1030,8 @@ public class ChatController {
     private void releaseRun(String sessionId, String runId, String reason) {
         boolean dbReleased = chatRunRepository.releaseLease(UUID.fromString(runId), instanceId()) > 0;
         boolean memoryReleased = activeRuns.remove(sessionId, runId);
+        // PLAN-0352 T1.2：唤醒会话删除路径的 release 等待位（终态投递在此之后已完成）。
+        chatRunCancellationService.onRunReleased(runId);
         if (dbReleased || memoryReleased) {
             logger.info("[LIFECYCLE] service=cp event=chat_run_lease_released sessionId={} runId={} reason={} dbReleased={} memoryReleased={}",
                     sessionId, runId, reason, dbReleased, memoryReleased);

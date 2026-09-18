@@ -34,6 +34,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -410,6 +411,80 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
+     * PLAN-0352 T1.2：删除路径的取消面——会话下非终态 run 全部纳入等待清单；
+     * `running` 走完整取消编排收敛为 `cancelled`；`cancelling` 复用端点语义
+     * （不重复转发/结算，仅等待）；已终态 run 不在面内。
+     */
+    @Test
+    void cancelInFlightForSessionMarksRunsCancelledAndReturnsIds() {
+        ChatRun running = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
+        ChatRun cancelling = runWithLease("cancelling", null, null);
+        ChatRun finished = runWithLease("succeeded", null, null);
+
+        List<String> ids = chatRunCancellationService.cancelInFlightForSession(
+                sessionId, workspaceId, "session_deleted");
+
+        assertEquals(2, ids.size());
+        assertTrue(ids.contains(running.getId().toString()));
+        assertTrue(ids.contains(cancelling.getId().toString()));
+        assertEquals("cancelled", chatRunRepository.findById(running.getId()).orElseThrow().getStatus());
+        assertEquals("cancelling", chatRunRepository.findById(cancelling.getId()).orElseThrow().getStatus(),
+                "an already-cancelling run keeps the endpoint semantics (no duplicate settle)");
+        assertEquals("succeeded", chatRunRepository.findById(finished.getId()).orElseThrow().getStatus(),
+                "terminal runs are outside the cancellation surface");
+    }
+
+    /**
+     * PLAN-0352 T1.2 / V1：release 信号（`releaseRun`，终态投递之后）唤醒有界等待。
+     */
+    @Test
+    void awaitTerminalDeliveryReturnsTrueAfterReleaseSignal() {
+        ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
+        List<String> ids = chatRunCancellationService.cancelInFlightForSession(
+                sessionId, workspaceId, "session_deleted");
+
+        chatRunCancellationService.onRunReleased(run.getId().toString());
+
+        assertTrue(chatRunCancellationService.awaitTerminalDelivery(
+                sessionId, ids, java.time.Duration.ofSeconds(2)));
+    }
+
+    /**
+     * PLAN-0352 T1.2 / V1：等待上界到点后返回 false，并记
+     * `session_delete_sse_wait_timeout`（含 sessionId/runId/N）。
+     */
+    @Test
+    void awaitTerminalDeliveryTimesOutWithExplicitLog() {
+        ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
+        List<String> ids = chatRunCancellationService.cancelInFlightForSession(
+                sessionId, workspaceId, "session_deleted");
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
+                        ChatRunCancellationService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        boolean delivered;
+        try {
+            delivered = chatRunCancellationService.awaitTerminalDelivery(
+                    sessionId, ids, java.time.Duration.ofMillis(200));
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertFalse(delivered, "wait must report the timeout branch");
+        String messages = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .collect(java.util.stream.Collectors.joining("\n"));
+        assertTrue(messages.contains("session_delete_sse_wait_timeout"), messages);
+        assertTrue(messages.contains(sessionId), messages);
+        assertTrue(messages.contains(run.getId().toString()), messages);
+        assertTrue(messages.contains("waitTimeoutMs=200"), messages);
+    }
+
+    /**
      * PLAN-0326 决策 #9（v3 通道事实模型）：同一 (operationId, toolCallId) 下，
      * 中继（agent）与网关（mcp）各建己行、互不复用——"跨源命中同一行"的旧语义
      * 被决策 #9 否决；同源重放才幂等命中。
@@ -560,7 +635,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void agentCancelUrlHasNoDuplicatedPrefix() {
         String runId = UUID.randomUUID().toString();
-        String url = chatController.buildAgentCancelUrl(runId);
+        String url = chatRunCancellationService.buildAgentCancelUrl(runId);
         assertTrue(url.endsWith("/internal/v1/agent/runs/" + runId + "/cancel"), url);
         assertEquals(url.indexOf("/internal/v1/agent/runs/"),
                 url.lastIndexOf("/internal/v1/agent/runs/"), url);
@@ -568,6 +643,9 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatController chatController;
+
+    @Autowired
+    private ChatRunCancellationService chatRunCancellationService;
 
     @MockitoBean
     private ApprovalAgentClient approvalAgentClient;

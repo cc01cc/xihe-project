@@ -35,10 +35,7 @@ def _history(tool_contents: list[str], tail_human_turns: int = 14) -> list[TextM
     for content in tool_contents:
         messages.append(TextMessage(role="human", content="ask"))
         messages.append(TextMessage(role="tool", content=content))
-    messages.extend(
-        TextMessage(role="human", content=f"post filler {i}")
-        for i in range(tail_human_turns)
-    )
+    messages.extend(TextMessage(role="human", content=f"post filler {i}") for i in range(tail_human_turns))
     return messages
 
 
@@ -126,10 +123,7 @@ def test_prune_window_chars_prunes_oldest_beyond_budget() -> None:
     history = _history(["aaa-result-1", "bbb-result-2", "ccc-result-3"], tail_human_turns=14)
     result = prune_history_tool_results(history, prune_window_chars=20)
 
-    pruned_contents = [
-        m.content for m in result.messages
-        if m.role == "tool" and m.content == MASK_PLACEHOLDER
-    ]
+    pruned_contents = [m.content for m in result.messages if m.role == "tool" and m.content == MASK_PLACEHOLDER]
     assert len(pruned_contents) >= 1, "oldest tool results fall outside the window budget"
     reasons = {t.reason for t in result.tombstones}
     assert "window" in reasons

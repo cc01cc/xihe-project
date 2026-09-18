@@ -46,12 +46,9 @@ class VectorStore:
 
     async def search(self, query_embedding: list[float], top_k: int = 5, min_score: float = 0.0):
         await self._ensure_store()
-        results = await self._store.asimilarity_search_with_score_by_vector(
-            query_embedding, k=top_k
-        )
+        results = await self._store.asimilarity_search_with_score_by_vector(query_embedding, k=top_k)
         return [
-            {"id": doc.id, "text": doc.page_content,
-             "metadata": doc.metadata, "score": round(score, 4)}
+            {"id": doc.id, "text": doc.page_content, "metadata": doc.metadata, "score": round(score, 4)}
             for doc, score in results
             if score >= min_score
         ]

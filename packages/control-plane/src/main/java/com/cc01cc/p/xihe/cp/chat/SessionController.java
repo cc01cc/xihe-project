@@ -6,11 +6,14 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,15 +22,26 @@ import java.util.Map;
 @RequestMapping("/api/v1/sessions")
 public class SessionController {
 
+    private static final Logger logger = LoggerFactory.getLogger(SessionController.class);
+
+    /** PLAN-0352 决策 #2：删除路径等待终态投递的上界 N=2s。 */
+    private static final Duration SESSION_DELETE_SSE_WAIT = Duration.ofSeconds(2);
+
     private final SessionService sessionService;
     private final ContextService contextService;
     private final ChatController chatController;
+    private final ChatRunCancellationService chatRunCancellationService;
+    private final SseEmitterManager sseEmitterManager;
 
     public SessionController(SessionService sessionService, ContextService contextService,
-                             ChatController chatController) {
+                             ChatController chatController,
+                             ChatRunCancellationService chatRunCancellationService,
+                             SseEmitterManager sseEmitterManager) {
         this.sessionService = sessionService;
         this.contextService = contextService;
         this.chatController = chatController;
+        this.chatRunCancellationService = chatRunCancellationService;
+        this.sseEmitterManager = sseEmitterManager;
     }
 
     @GetMapping
@@ -129,10 +143,24 @@ public class SessionController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         try {
+            // PLAN-0352 LIF-1（决策 #1/#2/#3）：授权校验 → 删除事务外取消在飞 run +
+            // 有界等待终态投递 → 删除事务 → 成功后 complete（删除失败保留连接）。
+            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            List<String> inFlightRuns = chatRunCancellationService.cancelInFlightForSession(
+                    sessionId, workspaceId, "session_deleted");
+            chatRunCancellationService.awaitTerminalDelivery(
+                    sessionId, inFlightRuns, SESSION_DELETE_SSE_WAIT);
             sessionService.delete(sessionId, userId, workspaceId);
+            sseEmitterManager.complete(sessionId);
+            logger.info("[LIFECYCLE] service=cp event=session_deleted sessionId={} inFlightRuns={} outcome=ok",
+                    sessionId, inFlightRuns.size());
             return ResponseEntity.noContent().build();
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=session_delete_failed sessionId={} error={}",
+                    sessionId, e.getMessage(), e);
+            throw e;
         }
     }
 

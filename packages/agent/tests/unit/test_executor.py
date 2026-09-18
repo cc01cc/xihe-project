@@ -37,6 +37,7 @@ class FakeAgentTool:
     def __init__(self, tool: BaseTool):
         self._tool = tool
         from xihe_agent.interfaces.tool import ToolSpec
+
         self._spec = ToolSpec(
             name=tool.name,
             description=tool.description,

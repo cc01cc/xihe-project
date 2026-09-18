@@ -1,4 +1,5 @@
 """Tests for llm/models.py - routing + httpx logic."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -115,16 +116,18 @@ async def test_scoped_catalog_redeems_lease_and_fetches_models():
 
     config_client = MagicMock()
     config_client.config_revision = "connection-rev"
-    config_client.redeem_provider_lease = AsyncMock(return_value={
-        "provider": "deepseek",
-        "routeProvider": "deepseek",
-        "model": "*",
-        "baseUrl": "https://provider.test/v1",
-        "apiKey": "sk-scoped",
-        "connectionRevision": 4,
-        "modelDiscovery": "remote-models",
-        "manualModels": [],
-    })
+    config_client.redeem_provider_lease = AsyncMock(
+        return_value={
+            "provider": "deepseek",
+            "routeProvider": "deepseek",
+            "model": "*",
+            "baseUrl": "https://provider.test/v1",
+            "apiKey": "sk-scoped",
+            "connectionRevision": 4,
+            "modelDiscovery": "remote-models",
+            "manualModels": [],
+        }
+    )
     response = MagicMock(status_code=200)
     response.json.return_value = {"data": [{"id": "deepseek-chat"}]}
 
@@ -133,15 +136,20 @@ async def test_scoped_catalog_redeems_lease_and_fetches_models():
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         mock_client.get.return_value = response
 
-        result = await fetch_connection_catalog(config_client, [{
-            "lease": "pl-test",
-            "runId": "catalog-run",
-            "connectionId": "conn-1",
-            "providerId": "deepseek",
-            "scope": "USER",
-            "displayName": "DeepSeek",
-            "connectionRevision": 4,
-        }])
+        result = await fetch_connection_catalog(
+            config_client,
+            [
+                {
+                    "lease": "pl-test",
+                    "runId": "catalog-run",
+                    "connectionId": "conn-1",
+                    "providerId": "deepseek",
+                    "scope": "USER",
+                    "displayName": "DeepSeek",
+                    "connectionRevision": 4,
+                }
+            ],
+        )
 
     config_client.redeem_provider_lease.assert_awaited_once()
     assert result["models"]["deepseek"] == ["deepseek-chat"]

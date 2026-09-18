@@ -96,11 +96,13 @@ class AgentContext:
         elif event_type == "tool.result":
             self._add_message_from_payload(payload, "tool")
         elif event_type == "tool.called":
-            self.runtime_state.setdefault("tool_calls", []).append({
-                "call_id": payload.get("call_id"),
-                "tool_name": payload.get("tool_name"),
-                "tool_input": payload.get("tool_input", {}),
-            })
+            self.runtime_state.setdefault("tool_calls", []).append(
+                {
+                    "call_id": payload.get("call_id"),
+                    "tool_name": payload.get("tool_name"),
+                    "tool_input": payload.get("tool_input", {}),
+                }
+            )
         elif event_type == "context.source_changed":
             # PLAN-0340: replace L1 half of epoch; never append into messages.
             self._apply_source_changed(payload)
@@ -187,12 +189,14 @@ class AgentContext:
         elif event_type == "taskplan.item_added":
             tp = self.metadata.get("task_plan", {"items": []})
             items = tp.get("items", [])
-            items.append({
-                "id": payload.get("item_id"),
-                "title": payload.get("title", ""),
-                "status": "pending",
-                "position": len(items),
-            })
+            items.append(
+                {
+                    "id": payload.get("item_id"),
+                    "title": payload.get("title", ""),
+                    "status": "pending",
+                    "position": len(items),
+                }
+            )
             tp["items"] = items
             self.metadata["task_plan"] = tp
         elif event_type == "taskplan.item_updated":
@@ -217,11 +221,13 @@ class AgentContext:
             self.metadata["task_plan"] = tp
         elif event_type == "question.asked":
             questions = self.metadata.setdefault("questions", [])
-            questions.append({
-                "id": payload.get("question_id"),
-                "text": payload.get("text", ""),
-                "status": "pending",
-            })
+            questions.append(
+                {
+                    "id": payload.get("question_id"),
+                    "text": payload.get("text", ""),
+                    "status": "pending",
+                }
+            )
         elif event_type == "question.answered":
             question_id = payload.get("question_id")
             for q in self.metadata.get("questions", []):
@@ -252,11 +258,7 @@ class AgentContext:
         tombstones = payload.get("tombstones") or []
         if not tombstones:
             return
-        pruned_hashes = {
-            t.get("content_hash", "")
-            for t in tombstones
-            if isinstance(t, dict) and t.get("content_hash")
-        }
+        pruned_hashes = {t.get("content_hash", "") for t in tombstones if isinstance(t, dict) and t.get("content_hash")}
         if not pruned_hashes:
             return
         placeholder = "[old tool result cleared]"
@@ -327,10 +329,7 @@ class AgentContext:
         return {
             "aggregate_id": self.aggregate_id,
             "latest_sequence": self.latest_sequence,
-            "messages": [
-                {"role": m.role, "content": m.content}
-                for m in self.messages
-            ],
+            "messages": [{"role": m.role, "content": m.content} for m in self.messages],
             "epoch": self._epoch_to_dict() if self.epoch else None,
             "runtime_state": self.runtime_state,
             "metadata": self.metadata,

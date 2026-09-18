@@ -158,21 +158,27 @@ async def test_translate_end_falls_back_once_without_stream_chunk():
 
 def test_streamed_state_is_isolated_by_run_id():
     adapter = LangGraphEventAdapter()
-    streamed = adapter.translate({
-        "event": "on_chat_model_stream",
-        "data": {"chunk": FakeChunk("streamed")},
-        "run_id": "run-1",
-    })
-    fallback = adapter.translate({
-        "event": "on_chat_model_end",
-        "data": {"output": AIMessage(content="fallback")},
-        "run_id": "run-2",
-    })
-    streamed_end = adapter.translate({
-        "event": "on_chat_model_end",
-        "data": {"output": AIMessage(content="streamed")},
-        "run_id": "run-1",
-    })
+    streamed = adapter.translate(
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": FakeChunk("streamed")},
+            "run_id": "run-1",
+        }
+    )
+    fallback = adapter.translate(
+        {
+            "event": "on_chat_model_end",
+            "data": {"output": AIMessage(content="fallback")},
+            "run_id": "run-2",
+        }
+    )
+    streamed_end = adapter.translate(
+        {
+            "event": "on_chat_model_end",
+            "data": {"output": AIMessage(content="streamed")},
+            "run_id": "run-1",
+        }
+    )
 
     assert streamed is not None
     # PLAN-294 M1: translate() returns a list for on_chat_model_end (usage
@@ -285,6 +291,7 @@ async def test_unknown_event_passthrough():
 
 # ── PLAN-0326 决策 #9：事件 origin 判别 + 审批原语孤儿事件抑制 ──────────────────
 
+
 def _parse(result: str) -> dict[str, Any]:
     prefix = result.split("\ndata: ", 1)[0]
     return json.loads(result.removeprefix(prefix + "\ndata: ").strip())
@@ -295,8 +302,12 @@ async def test_tool_events_default_origin_mcp():
     adapter = LangGraphEventAdapter()
     events = [
         {"event": "on_tool_start", "name": "read_file", "data": {"input": {}}, "run_id": "run-9"},
-        {"event": "on_tool_end", "name": "read_file",
-         "data": {"output": ToolMessage(content="ok", tool_call_id="call-9")}, "run_id": "run-9"},
+        {
+            "event": "on_tool_end",
+            "name": "read_file",
+            "data": {"output": ToolMessage(content="ok", tool_call_id="call-9")},
+            "run_id": "run-9",
+        },
     ]
     translated = [e for raw in events for e in _as_list(adapter.translate(raw))]
     assert [e.data["origin"] for e in translated] == ["mcp", "mcp"]
@@ -307,8 +318,12 @@ async def test_tool_events_local_origin_for_custom_tools():
     adapter = LangGraphEventAdapter(local_tool_names={"request_approval", "generate_image"})
     events = [
         {"event": "on_tool_start", "name": "generate_image", "data": {"input": {}}, "run_id": "run-10"},
-        {"event": "on_tool_end", "name": "generate_image",
-         "data": {"output": ToolMessage(content="img", tool_call_id="call-10")}, "run_id": "run-10"},
+        {
+            "event": "on_tool_end",
+            "name": "generate_image",
+            "data": {"output": ToolMessage(content="img", tool_call_id="call-10")},
+            "run_id": "run-10",
+        },
     ]
     translated = [e for raw in events for e in _as_list(adapter.translate(raw))]
     assert [e.data["origin"] for e in translated] == ["local", "local"]
@@ -318,8 +333,12 @@ async def test_tool_events_local_origin_for_custom_tools():
 async def test_request_approval_tool_result_suppressed():
     adapter = LangGraphEventAdapter(local_tool_names={"request_approval", "generate_image"})
     events = [
-        {"event": "on_tool_end", "name": "request_approval",
-         "data": {"output": ToolMessage(content="approved", tool_call_id="call-a")}, "run_id": "run-11"},
+        {
+            "event": "on_tool_end",
+            "name": "request_approval",
+            "data": {"output": ToolMessage(content="approved", tool_call_id="call-a")},
+            "run_id": "run-11",
+        },
     ]
     assert [e for raw in events for e in _as_list(adapter.translate(raw))] == []
 
@@ -409,25 +428,19 @@ async def test_tool_end_ignores_non_dict_or_empty_diagnostics_artifact():
         {
             "event": "on_tool_end",
             "name": "read_file",
-            "data": {
-                "output": ToolMessage(content="a", tool_call_id="call-a", artifact="not-a-dict")
-            },
+            "data": {"output": ToolMessage(content="a", tool_call_id="call-a", artifact="not-a-dict")},
             "run_id": "run-22",
         },
         {
             "event": "on_tool_end",
             "name": "read_file",
-            "data": {
-                "output": ToolMessage(content="b", tool_call_id="call-b", artifact={"diagnostics": None})
-            },
+            "data": {"output": ToolMessage(content="b", tool_call_id="call-b", artifact={"diagnostics": None})},
             "run_id": "run-23",
         },
         {
             "event": "on_tool_end",
             "name": "read_file",
-            "data": {
-                "output": ToolMessage(content="c", tool_call_id="call-c", artifact={"diagnostics": {}})
-            },
+            "data": {"output": ToolMessage(content="c", tool_call_id="call-c", artifact={"diagnostics": {}})},
             "run_id": "run-24",
         },
     ]

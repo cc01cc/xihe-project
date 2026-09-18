@@ -35,10 +35,7 @@ def redact_value(value: Any, depth: int = 0) -> Any:
     if isinstance(value, str):
         return redact_text(value)
     if isinstance(value, dict):
-        return {
-            k: REDACTED if _SENSITIVE_KEY.match(str(k)) else redact_value(v, depth + 1)
-            for k, v in value.items()
-        }
+        return {k: REDACTED if _SENSITIVE_KEY.match(str(k)) else redact_value(v, depth + 1) for k, v in value.items()}
     if isinstance(value, list):
         return [redact_value(v, depth + 1) for v in value]
     if isinstance(value, tuple):

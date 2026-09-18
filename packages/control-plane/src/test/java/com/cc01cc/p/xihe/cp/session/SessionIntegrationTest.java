@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -13,6 +14,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -68,6 +70,9 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SseEmitterManager sseEmitterManager;
+
+    @Autowired
+    private ChatRunRepository chatRunRepository;
 
     private String authToken;
     private String userId;
@@ -165,6 +170,56 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
                 HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
         assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
         assertFalse(sessionRepository.findById(session.getId()).isPresent());
+    }
+
+    /**
+     * PLAN-0352 T1.1 / V1：删除成功后服务端收尾 SSE（`complete`），连接不驻留。
+     */
+    @Test
+    void deleteSession_endpointCompletesSseSubscription() {
+        Session session = sessionService.create(userId, workspaceId, "Delete SSE", null, null);
+        String sessionId = session.getId().toString();
+        when(sseEmitterManager.hasEmitter(sessionId)).thenReturn(true);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        ResponseEntity<Void> response = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + sessionId,
+                HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
+
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+        Mockito.verify(sseEmitterManager).complete(sessionId);
+    }
+
+    /**
+     * PLAN-0352 T1.2 / V1：在飞 run 先取消 + 有界等待（上界 N=2s）后删除；
+     * 等待无法满足（无 worker release）也必须返回并完成删除，由
+     * `session_delete_sse_wait_timeout` 日志留证（超时分支见 ChatRunLeaseIntegrationTest）。
+     */
+    @Test
+    void deleteSession_endpointCancelsInFlightRunWithBoundedWait() {
+        Session session = sessionService.create(userId, workspaceId, "Delete In-Flight", null, null);
+        String sessionId = session.getId().toString();
+        ChatRun run = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,
+                "idem-" + UUID.randomUUID(), "hash", "openai", "gpt-test", "none", "running");
+        run.setLeaseOwner("cp-instance-test");
+        run.setLeaseExpiresAt(java.time.Instant.now().plusSeconds(600));
+        chatRunRepository.save(run);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        long startNanos = System.nanoTime();
+        ResponseEntity<Void> response = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + sessionId,
+                HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+        assertFalse(sessionRepository.findById(UUID.fromString(sessionId)).isPresent(),
+                "session delete must proceed after the bounded wait");
+        assertTrue(elapsedMs >= 1900, "wait must use the bounded terminal-delivery window, elapsedMs=" + elapsedMs);
+        assertTrue(elapsedMs < 5000, "wait must stay bounded (N=2s), elapsedMs=" + elapsedMs);
+        Mockito.verify(sseEmitterManager).complete(sessionId);
     }
 
     @Test

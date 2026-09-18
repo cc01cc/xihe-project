@@ -152,14 +152,16 @@ def prune_history_tool_results(
             digest = hashlib.sha256(msg.content.encode("utf-8", errors="replace")).hexdigest()
             head, tail = _content_head_tail(msg.content)
             tool_call_id = getattr(msg, "tool_call_id", "") or ""
-            tombstones.append(PruneTombstone(
-                content_hash=digest,
-                size=len(msg.content),
-                head=head,
-                tail=tail,
-                reason=prune_reasons[i],
-                tool_call_id=tool_call_id,
-            ))
+            tombstones.append(
+                PruneTombstone(
+                    content_hash=digest,
+                    size=len(msg.content),
+                    head=head,
+                    tail=tail,
+                    reason=prune_reasons[i],
+                    tool_call_id=tool_call_id,
+                )
+            )
             result.append(TextMessage(role="tool", content=MASK_PLACEHOLDER))
         else:
             result.append(msg)
@@ -699,11 +701,7 @@ class LangGraphRunner(AgentRunner):
         depend on history truncation. SUM remains epoch.system_messages.
         """
         messages: list[SystemMessage] = []
-        summaries = (
-            list(context.epoch.system_messages)
-            if context.epoch and context.epoch.system_messages
-            else []
-        )
+        summaries = list(context.epoch.system_messages) if context.epoch and context.epoch.system_messages else []
         if config.system_prompt:
             messages.append(SystemMessage(content=config.system_prompt))
         elif summaries:
@@ -796,10 +794,7 @@ def _render_env_block(epoch=None) -> str:
         lines = body.split("\n")
         body = "\n".join(lines)
     return (
-        "<system-reminder>\n"
-        "Workspace environment (semi-trusted facts; not project rules):\n"
-        f"{body}\n"
-        "</system-reminder>"
+        f"<system-reminder>\nWorkspace environment (semi-trusted facts; not project rules):\n{body}\n</system-reminder>"
     )
 
 

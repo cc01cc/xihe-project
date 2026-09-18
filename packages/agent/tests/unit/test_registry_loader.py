@@ -11,7 +11,9 @@ def _write_md(path: Path, content: str):
 def test_parse_valid_worker():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "research.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 id: research
 name: 研究助手
@@ -20,7 +22,8 @@ description: 用于网页搜索
 ---
 
 You are a research assistant.
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is not None
         assert config.id == "research"
@@ -42,13 +45,16 @@ def test_parse_no_frontmatter():
 def test_parse_missing_id_fallback_to_filename():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "my-worker.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 name: My Worker
 ---
 
 Hello
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is not None
         assert config.id == "my-worker"
@@ -57,13 +63,16 @@ Hello
 def test_parse_missing_name_fallback_to_id():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "test.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 id: test
 ---
 
 Body
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is not None
         assert config.name == "test"
@@ -72,13 +81,16 @@ Body
 def test_parse_missing_description_fallback():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "x.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 id: x
 ---
 
 Body
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is not None
         assert config.description == "Agent Worker: x"
@@ -87,13 +99,16 @@ Body
 def test_parse_enabled_defaults_true():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "a.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 id: a
 ---
 
 Body
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is not None
         assert config.enabled is True
@@ -102,14 +117,17 @@ Body
 def test_parse_explicit_enabled_false():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "b.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 id: b
 enabled: false
 ---
 
 Body
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is not None
         assert config.enabled is False
@@ -118,7 +136,9 @@ Body
 def test_parse_tool_keys_list():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "c.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 id: c
 tool_keys:
@@ -127,7 +147,8 @@ tool_keys:
 ---
 
 Body
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is not None
         assert config.tool_keys == ["web_fetch", "extract_pdf"]
@@ -136,14 +157,17 @@ Body
 def test_parse_tool_keys_string():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "d.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 id: d
 tool_keys: web_fetch
 ---
 
 Body
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is not None
         assert config.tool_keys == ["web_fetch"]
@@ -152,14 +176,17 @@ Body
 def test_parse_yaml_syntax_error():
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "bad.md"
-        _write_md(f, """\
+        _write_md(
+            f,
+            """\
 ---
 id: bad
 name: {{bad}}
 ---
 
 Body
-""")
+""",
+        )
         config = parse_markdown_worker(f)
         assert config is None
 

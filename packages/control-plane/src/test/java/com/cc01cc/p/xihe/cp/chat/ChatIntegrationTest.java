@@ -61,6 +61,11 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         thread.setDaemon(true);
         return thread;
     });
+    /** PLAN-0352：假 Agent 可被切到“持有流直到取消”模式（删除在飞 run 的终态投递证据）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean HOLD_CHAT_STREAM =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private static volatile java.util.concurrent.CountDownLatch cancelSignal =
+            new java.util.concurrent.CountDownLatch(1);
 
     @Autowired
     private MessageRepository messageRepository;
@@ -83,6 +88,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private HealthMonitor healthMonitor;
 
+    @Autowired
+    private SseEmitterManager sseEmitterManager;
+
     private String authToken;
     private String userId;
     private String workspaceId;
@@ -90,6 +98,8 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private Future<?> sseReader;
     private final AtomicInteger doneEvents = new AtomicInteger();
     private final StringBuilder sseTranscript = new StringBuilder();
+    private final java.util.concurrent.atomic.AtomicBoolean sseClosed =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     @DynamicPropertySource
     static void configureAgent(DynamicPropertyRegistry registry) {
@@ -97,6 +107,26 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
             agentServer = HttpServer.create(new InetSocketAddress(0), 0);
             agentPort = agentServer.getAddress().getPort();
             agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+                if (HOLD_CHAT_STREAM.get()) {
+                    exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                    exchange.sendResponseHeaders(200, 0);
+                    try (OutputStream output = exchange.getResponseBody()) {
+                        output.write("event: token\ndata: {\"content\":\"holding\"}\n\n"
+                                .getBytes(StandardCharsets.UTF_8));
+                        output.flush();
+                        try {
+                            cancelSignal.await(15, TimeUnit.SECONDS);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        output.write(("event: error\n"
+                                + "data: {\"code\":\"cancelled\",\"detail\":\"Run cancelled\",\"retryable\":false,\"outcome\":\"error\",\"type\":\"error\"}\n\n"
+                                + "event: done\n"
+                                + "data: {\"type\":\"done\",\"outcome\":\"error\",\"errorCode\":\"cancelled\"}\n\n")
+                                .getBytes(StandardCharsets.UTF_8));
+                    }
+                    return;
+                }
                 byte[] response = ("event: token\n"
                         + "data: {\"content\":\"integration-reply\"}\n\n"
                         + "event: done\n"
@@ -104,6 +134,15 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
                         .getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
                 exchange.sendResponseHeaders(200, response.length);
+                try (OutputStream output = exchange.getResponseBody()) {
+                    output.write(response);
+                }
+            });
+            agentServer.createContext("/internal/v1/agent/runs", exchange -> {
+                cancelSignal.countDown();
+                byte[] response = "{\"status\":\"accepted\"}".getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+                exchange.sendResponseHeaders(202, response.length);
                 try (OutputStream output = exchange.getResponseBody()) {
                     output.write(response);
                 }
@@ -117,6 +156,12 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
                     output.write(response);
                 }
             });
+            // 默认 executor 为单线程（start() 线程）：持有的流会阻塞取消请求，必须并发处理。
+            agentServer.setExecutor(Executors.newCachedThreadPool(runnable -> {
+                Thread thread = new Thread(runnable, "chat-integration-agent");
+                thread.setDaemon(true);
+                return thread;
+            }));
             agentServer.start();
         } catch (IOException e) {
             throw new ExceptionInInitializerError(e);
@@ -143,6 +188,8 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void closeSse() throws IOException {
+        HOLD_CHAT_STREAM.set(false);
+        cancelSignal.countDown();
         if (sseResponse != null) {
             sseResponse.body().close();
             sseResponse = null;
@@ -260,6 +307,67 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         }
     }
 
+    /**
+     * PLAN-0352 V1（无在飞 run）：删除成功后服务端 `complete`，会话 SSE 连接结束、
+     * 无重连所需的错误事件、emitter 注销。
+     */
+    @Test
+    void deleteSessionWithoutInFlightRunClosesSse() {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        openSse(sessionId);
+        assertTrue(awaitSseEventCount("connected", 1, 3000), "SSE must be connected first");
+
+        ResponseEntity<Void> response = deleteSession(sessionId);
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+
+        assertTrue(awaitSseClosed(3000), "server must complete the session SSE after delete");
+        assertFalse(sseEmitterManager.hasEmitter(sessionId), "emitter must be unregistered");
+        synchronized (sseTranscript) {
+            assertEquals(0, countSseEvents("error"), "active delete must not emit error events");
+        }
+        assertTrue(sessionRepository.findById(UUID.fromString(sessionId)).isEmpty());
+    }
+
+    /**
+     * PLAN-0352 V1（有在飞 run）：删除先取消 → 终态序列（error code=cancelled + done）
+     * 投递到会话 SSE → relay 终结（releaseRun）后删除事务 → complete；客户端先收到
+     * 终态再看到连接结束，不产生悬挂流式状态。
+     */
+    @Test
+    void deleteSessionWithInFlightRunDeliversCancelledTerminalThenClosesSse() {
+        HOLD_CHAT_STREAM.set(true);
+        cancelSignal = new java.util.concurrent.CountDownLatch(1);
+        try {
+            String sessionId = UUID.randomUUID().toString();
+            createSession(sessionId);
+            openSse(sessionId);
+            ResponseEntity<Map> chat = postChat(sessionId, "hold this run");
+            assertEquals(HttpStatus.ACCEPTED, chat.getStatusCode());
+            assertTrue(awaitSseEventCount("token", 1, 5000), "relay must be in-flight before delete");
+
+            ResponseEntity<Void> response = deleteSession(sessionId);
+            assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+
+            assertTrue(awaitSseEventCount("error", 1, 5000),
+                    "cancelled terminal error must reach the session SSE before close");
+            assertTrue(awaitSseEventCount("done", 1, 5000),
+                    "terminal done must reach the session SSE before close");
+            assertTrue(awaitSseClosed(5000), "connection must end after terminal delivery");
+            assertFalse(sseEmitterManager.hasEmitter(sessionId), "emitter must be unregistered");
+            synchronized (sseTranscript) {
+                String transcript = sseTranscript.toString();
+                assertTrue(transcript.contains("\"code\":\"cancelled\""), transcript);
+                assertTrue(transcript.indexOf("event:error") < transcript.indexOf("event:done"),
+                        "terminal sequence must be error before done: " + transcript);
+            }
+            assertTrue(sessionRepository.findById(UUID.fromString(sessionId)).isEmpty());
+        } finally {
+            HOLD_CHAT_STREAM.set(false);
+            cancelSignal.countDown();
+        }
+    }
+
     private int countSseEvents(String expectedName) {
         int count = 0;
         for (String line : sseTranscript.toString().split("\\R")) {
@@ -269,6 +377,50 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
             }
         }
         return count;
+    }
+
+    private ResponseEntity<Void> deleteSession(String sessionId) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        return restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + sessionId,
+                HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
+    }
+
+    private boolean awaitSseEventCount(String eventName, int expected, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            synchronized (sseTranscript) {
+                if (countSseEvents(eventName) >= expected) {
+                    return true;
+                }
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while waiting for SSE event " + eventName, e);
+            }
+        }
+        synchronized (sseTranscript) {
+            return countSseEvents(eventName) >= expected;
+        }
+    }
+
+    private boolean awaitSseClosed(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (sseClosed.get()) {
+                return true;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while waiting for SSE close", e);
+            }
+        }
+        return sseClosed.get();
     }
 
     private void createSession(String sessionId) {
@@ -295,6 +447,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private void openSse(String sessionId) {
         try {
             doneEvents.set(0);
+            sseClosed.set(false);
             synchronized (sseTranscript) {
                 sseTranscript.setLength(0);
             }
@@ -323,6 +476,8 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
                     }
                 } catch (IOException ignored) {
                     // The test closes the stream after assertions.
+                } finally {
+                    sseClosed.set(true);
                 }
             });
         } catch (Exception e) {

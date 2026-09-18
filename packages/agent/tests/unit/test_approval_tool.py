@@ -47,6 +47,7 @@ async def test_approval_pending(tool):
 
     async def resolve_later(tool, action, details):
         import asyncio
+
         await asyncio.sleep(0.01)
         for rid, payload in list(tool.pending_payloads.items()):
             tool.resolve_approval(rid, True)
@@ -279,9 +280,7 @@ async def test_coordinator_reject_transition_preserves_payload_and_raises():
     published: list[dict] = []
     context = _make_context("session-reject-state")
 
-    request_task = asyncio.create_task(
-        coordinator.request("rm -rf", None, context, _publishing_sink(published))
-    )
+    request_task = asyncio.create_task(coordinator.request("rm -rf", None, context, _publishing_sink(published)))
     await _wait_for_published(published)
     request_id = published[0]["requestId"]
 
@@ -303,9 +302,7 @@ async def test_coordinator_reject_carries_bounded_feedback_to_terminal_error():
     published: list[dict] = []
     context = _make_context("session-reject-feedback")
 
-    request_task = asyncio.create_task(
-        coordinator.request("rm -rf", None, context, _publishing_sink(published))
-    )
+    request_task = asyncio.create_task(coordinator.request("rm -rf", None, context, _publishing_sink(published)))
     await _wait_for_published(published)
     request_id = published[0]["requestId"]
 
@@ -348,9 +345,7 @@ async def test_duplicate_same_decision_returns_already_decided_and_consistent_re
     published: list[dict] = []
     context = _make_context("session-dup-approve")
 
-    request_task = asyncio.create_task(
-        coordinator.request("deploy", None, context, _publishing_sink(published))
-    )
+    request_task = asyncio.create_task(coordinator.request("deploy", None, context, _publishing_sink(published)))
     await _wait_for_published(published)
     request_id = published[0]["requestId"]
 
@@ -371,9 +366,7 @@ async def test_duplicate_same_rejection_is_idempotent_after_completion():
     published: list[dict] = []
     context = _make_context("session-dup-reject")
 
-    request_task = asyncio.create_task(
-        coordinator.request("drop table", None, context, _publishing_sink(published))
-    )
+    request_task = asyncio.create_task(coordinator.request("drop table", None, context, _publishing_sink(published)))
     await _wait_for_published(published)
     request_id = published[0]["requestId"]
 
@@ -396,9 +389,7 @@ async def test_opposite_decisions_report_conflict():
     published: list[dict] = []
     context = _make_context("session-conflict")
 
-    request_task = asyncio.create_task(
-        coordinator.request("scale cluster", None, context, _publishing_sink(published))
-    )
+    request_task = asyncio.create_task(coordinator.request("scale cluster", None, context, _publishing_sink(published)))
     await _wait_for_published(published)
     request_id = published[0]["requestId"]
 
@@ -428,9 +419,7 @@ async def test_completed_outcome_survives_within_ttl(monkeypatch):
     published: list[dict] = []
     context = _make_context("session-ttl")
 
-    request_task = asyncio.create_task(
-        coordinator.request("cleanup cache", None, context, _publishing_sink(published))
-    )
+    request_task = asyncio.create_task(coordinator.request("cleanup cache", None, context, _publishing_sink(published)))
     await _wait_for_published(published)
     request_id = published[0]["requestId"]
 
@@ -455,9 +444,7 @@ async def test_completed_outcome_is_purged_after_ttl(monkeypatch):
     published: list[dict] = []
     context = _make_context("session-ttl-purge")
 
-    request_task = asyncio.create_task(
-        coordinator.request("cleanup cache", None, context, _publishing_sink(published))
-    )
+    request_task = asyncio.create_task(coordinator.request("cleanup cache", None, context, _publishing_sink(published)))
     await _wait_for_published(published)
     request_id = published[0]["requestId"]
 
@@ -497,9 +484,7 @@ async def test_new_coordinator_instance_cannot_see_old_requests():
     published_first: list[dict] = []
     context = _make_context("session-restart")
 
-    request_task = asyncio.create_task(
-        first.request("restart probe", None, context, _publishing_sink(published_first))
-    )
+    request_task = asyncio.create_task(first.request("restart probe", None, context, _publishing_sink(published_first)))
     await _wait_for_published(published_first)
     request_id = published_first[0]["requestId"]
     first.resolve_status(request_id, True)
@@ -552,9 +537,7 @@ async def test_reject_raises_and_produces_no_new_pending():
     published: list[dict] = []
     context = _make_context("session-no-downstream")
 
-    request_task = asyncio.create_task(
-        coordinator.request("delete file", None, context, _publishing_sink(published))
-    )
+    request_task = asyncio.create_task(coordinator.request("delete file", None, context, _publishing_sink(published)))
     await _wait_for_published(published)
     request_id = published[0]["requestId"]
 
@@ -606,6 +589,7 @@ async def test_event_sink_is_called_before_entering_wait():
 
 # --- PLAN-292 M1: canonical arguments hash (CP grant matching) ---
 
+
 def test_canonical_hash_matches_cp_vector():
     """Cross-language fixture: the hash below is asserted by the CP test
     ApprovalServiceTest.consumeApprovedGrantCrossLanguageCanonicalVector,
@@ -632,11 +616,14 @@ def test_canonical_hash_is_input_format_independent():
     """Same logical object, different key order / spacing -> same hash."""
     compact = json.dumps(
         {"tool": "write_file", "arguments": {"path": "a.md", "content": "hi"}},
-        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
     spaced = json.dumps(
         {"arguments": {"content": "hi", "path": "a.md"}, "tool": "write_file"},
-        ensure_ascii=False, indent=2,
+        ensure_ascii=False,
+        indent=2,
     )
     _, hash_compact = redact_approval_details(compact)
     _, hash_spaced = redact_approval_details(spaced)
@@ -649,15 +636,15 @@ def test_hash_covers_full_arguments_beyond_preview_limit():
     big_content = "x" * 2000
     details = json.dumps(
         {"tool": "write_file", "arguments": {"path": "big.md", "content": big_content}},
-        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
     preview, arguments_hash = redact_approval_details(details)
     assert preview.endswith("…[truncated]")
     full_hash = hashlib.sha256(details.encode("utf-8")).hexdigest()
     assert arguments_hash == full_hash
-    truncated_hash = hashlib.sha256(
-        (details[:500] + "…[truncated]").encode("utf-8")
-    ).hexdigest()
+    truncated_hash = hashlib.sha256((details[:500] + "…[truncated]").encode("utf-8")).hexdigest()
     assert arguments_hash != truncated_hash
 
 
@@ -700,9 +687,7 @@ async def test_cancellation_during_publish_cleans_pending_state():
         entered.set()
         await asyncio.sleep(30)
 
-    request_task = asyncio.create_task(
-        coordinator.request("deploy", None, context, blocking_sink)
-    )
+    request_task = asyncio.create_task(coordinator.request("deploy", None, context, blocking_sink))
     await asyncio.wait_for(entered.wait(), timeout=1)
     assert coordinator.pending_requests != {}
 
@@ -732,9 +717,7 @@ async def test_await_external_registers_waiter_before_resolving_and_approves():
         {"runId": "run-9", "operationId": "op-9", "workspaceId": "ws-9"},
     )
 
-    task = asyncio.create_task(
-        coordinator.await_external("apr-ext-1", "read_file", _external_deadline(), context)
-    )
+    task = asyncio.create_task(coordinator.await_external("apr-ext-1", "read_file", _external_deadline(), context))
     await asyncio.sleep(0)
 
     pending = coordinator.get_status("apr-ext-1")
@@ -765,9 +748,7 @@ async def test_await_external_registers_waiter_before_resolving_and_approves():
 async def test_await_external_rejection_carries_feedback_and_clears_state():
     coordinator = ApprovalCoordinator(timeout_seconds=5)
 
-    task = asyncio.create_task(
-        coordinator.await_external("apr-ext-2", "delete_file", _external_deadline())
-    )
+    task = asyncio.create_task(coordinator.await_external("apr-ext-2", "delete_file", _external_deadline()))
     await asyncio.sleep(0)
 
     assert coordinator.resolve_status("apr-ext-2", False, "not this file") == ("accepted", False)
@@ -835,15 +816,11 @@ async def test_await_external_malformed_expiry_leaves_no_partial_state():
 async def test_await_external_duplicate_request_id_fails_closed_without_clobbering():
     coordinator = ApprovalCoordinator(timeout_seconds=60)
 
-    task = asyncio.create_task(
-        coordinator.await_external("apr-ext-6", "read_file", _external_deadline())
-    )
+    task = asyncio.create_task(coordinator.await_external("apr-ext-6", "read_file", _external_deadline()))
     await asyncio.sleep(0)
 
     with pytest.raises(ApprovalProtocolError):
-        await asyncio.wait_for(
-            coordinator.await_external("apr-ext-6", "read_file", _external_deadline()), timeout=2
-        )
+        await asyncio.wait_for(coordinator.await_external("apr-ext-6", "read_file", _external_deadline()), timeout=2)
 
     assert "apr-ext-6" in coordinator.pending_requests
     coordinator.resolve_status("apr-ext-6", True)
@@ -854,9 +831,7 @@ async def test_await_external_duplicate_request_id_fails_closed_without_clobberi
 async def test_await_external_cancellation_cleans_pending():
     coordinator = ApprovalCoordinator(timeout_seconds=60)
 
-    task = asyncio.create_task(
-        coordinator.await_external("apr-ext-7", "read_file", _external_deadline())
-    )
+    task = asyncio.create_task(coordinator.await_external("apr-ext-7", "read_file", _external_deadline()))
     await asyncio.sleep(0)
     assert "apr-ext-7" in coordinator.pending_requests
 
@@ -887,9 +862,7 @@ async def test_await_external_far_future_deadline_is_clamped_fail_closed(monkeyp
 async def test_agent_tool_await_external_approval_delegates_to_coordinator():
     tool = ApprovalAgentTool(timeout_seconds=5)
 
-    task = asyncio.create_task(
-        tool.await_external_approval("apr-facade-1", "write_file", _external_deadline())
-    )
+    task = asyncio.create_task(tool.await_external_approval("apr-facade-1", "write_file", _external_deadline()))
     await asyncio.sleep(0)
 
     assert tool.resolve_approval_status("apr-facade-1", True) == ("accepted", True)

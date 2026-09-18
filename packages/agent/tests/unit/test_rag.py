@@ -1,4 +1,3 @@
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -51,9 +50,7 @@ class TestRagConfigDefaults:
             ("rag", "topK"): "9",
             ("rag", "minScore"): "0.42",
         }
-        monkeypatch.setattr(
-            main.config_client, "get", lambda domain, key: values.get((domain, key))
-        )
+        monkeypatch.setattr(main.config_client, "get", lambda domain, key: values.get((domain, key)))
 
         assert main._rag_config_defaults() == {
             "chunkSize": 2048,

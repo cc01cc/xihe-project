@@ -160,8 +160,7 @@ def test_agent_context_apply_compaction():
     )
     ctx.apply_event(event)
     # PLAN-0341 T1.4 (V4): summary is SUM-only — never injected into messages.
-    assert all(m.role != "system" or "summary of conversation" not in m.content
-               for m in ctx.messages)
+    assert all(m.role != "system" or "summary of conversation" not in m.content for m in ctx.messages)
     assert all(m.content != "summary of conversation" for m in ctx.messages)
     # Keep-recent tail is retained verbatim.
     assert any(m.content == "turn-11" for m in ctx.messages)

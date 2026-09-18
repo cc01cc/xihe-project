@@ -45,9 +45,10 @@ async def stream_agent_events(
         except Exception as e:
             last_error = e
             if attempt < retry_count - 1:
-                delay = retry_delay * (2 ** attempt)
-                logger.warning("Agent stream failed (attempt %d/%d), retrying in %.1fs: %s",
-                               attempt + 1, retry_count, delay, e)
+                delay = retry_delay * (2**attempt)
+                logger.warning(
+                    "Agent stream failed (attempt %d/%d), retrying in %.1fs: %s", attempt + 1, retry_count, delay, e
+                )
                 await asyncio.sleep(delay)
             else:
                 logger.error("Agent stream failed after %d attempts", retry_count, exc_info=e)

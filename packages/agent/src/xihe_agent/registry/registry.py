@@ -29,7 +29,6 @@ def _adapt_tools(tools: list[BaseAgentTool]) -> list[BaseTool]:
     return adapted
 
 
-
 class WorkerRegistry:
     _entries: dict[str, RegistryEntry]
     _workers_dir: str
@@ -67,11 +66,7 @@ class WorkerRegistry:
         ]
 
     def list_enabled(self) -> list[WorkerConfig]:
-        return [
-            entry.config
-            for entry in self._entries.values()
-            if entry.config.enabled and entry.graph is not None
-        ]
+        return [entry.config for entry in self._entries.values() if entry.config.enabled and entry.graph is not None]
 
     def get_worker(self, worker_id: str) -> Any | None:
         entry = self._entries.get(worker_id)
@@ -142,8 +137,11 @@ class WorkerRegistry:
             logger.warning("Overwriting existing worker '%s'", config.id)
         graph = _build_worker_graph(config, model, all_mcp_tools, custom_tools)
         self._entries[config.id] = RegistryEntry(config=config, graph=graph)
-        logger.info("Worker '%s' registered (%d tool(s))", config.id,
-                     len(_get_tools_for_worker(config, all_mcp_tools, custom_tools)))
+        logger.info(
+            "Worker '%s' registered (%d tool(s))",
+            config.id,
+            len(_get_tools_for_worker(config, all_mcp_tools, custom_tools)),
+        )
 
     def unregister(self, worker_id: str) -> bool:
         if worker_id not in self._entries:
@@ -194,6 +192,7 @@ def _persist_enabled(config: WorkerConfig) -> None:
     try:
         text = path.read_text(encoding="utf-8")
         import re
+
         new_text = re.sub(
             r"^enabled:\s*(true|false)",
             f"enabled: {str(config.enabled).lower()}",

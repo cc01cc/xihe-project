@@ -68,7 +68,7 @@ APPROVAL_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,128}$")
 EXTERNAL_WAIT_CEILING_S = 3600.0
 
 _SECRET_PATTERNS = (
-    re.compile(r'(?i)(bearer\s+[A-Za-z0-9\-._~+/=]+)'),
+    re.compile(r"(?i)(bearer\s+[A-Za-z0-9\-._~+/=]+)"),
     re.compile(r'(?i)(api[_-]?key\s*[:=]\s*[^\s",}]+)'),
     re.compile(r'(?i)(secret\s*[:=]\s*[^\s",}]+)'),
     re.compile(r'(?i)(password\s*[:=]\s*[^\s",}]+)'),
@@ -343,9 +343,7 @@ class ApprovalCoordinator:
         self.pending_payloads.pop(request_id, None)
         self.approval_feedback.pop(request_id, None)
 
-    def resolve_status(
-        self, request_id: str, approved: bool, feedback: str | None = None
-    ) -> tuple[str, bool | None]:
+    def resolve_status(self, request_id: str, approved: bool, feedback: str | None = None) -> tuple[str, bool | None]:
         """Resolve one pending request; PLAN-0328 M1 adds optional rejection feedback."""
         self._purge_completed()
         event = self.pending_requests.get(request_id)

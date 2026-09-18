@@ -49,7 +49,8 @@ def parse_markdown_worker(file_path: str | Path) -> WorkerConfig | None:
     if fm.get("id") and fm["id"] != path.stem:
         logger.debug(
             "Worker id '%s' differs from filename '%s' (using id)",
-            fm["id"], path.stem,
+            fm["id"],
+            path.stem,
         )
 
     return WorkerConfig(

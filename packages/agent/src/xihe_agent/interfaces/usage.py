@@ -48,9 +48,7 @@ class RunUsage:
 
     def finish(self) -> None:
         self.finished_at = datetime.now(UTC)
-        self.duration_ms = int(
-            (self.finished_at - self.started_at).total_seconds() * 1000
-        )
+        self.duration_ms = int((self.finished_at - self.started_at).total_seconds() * 1000)
 
     def to_dict(self) -> dict[str, Any]:
         return {

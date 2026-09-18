@@ -29,10 +29,12 @@ class TestConfigClientStubIntegration:
             if re.search(r"/effective/llm-provider", str(request.url)):
                 return httpx.Response(
                     200,
-                    json=_effective({
-                        "defaultProvider": "openai",
-                        "baseUrl": "https://api.openai.com/v1",
-                    }),
+                    json=_effective(
+                        {
+                            "defaultProvider": "openai",
+                            "baseUrl": "https://api.openai.com/v1",
+                        }
+                    ),
                 )
             return httpx.Response(404)
 
@@ -80,10 +82,7 @@ class TestConfigClientStubIntegration:
         )
         await client.sync()
 
-        reqs = [
-            r for r in httpx_mock.get_requests()
-            if re.search(r"/effective/llm-provider", str(r.url))
-        ]
+        reqs = [r for r in httpx_mock.get_requests() if re.search(r"/effective/llm-provider", str(r.url))]
         assert reqs and reqs[0].url.params.get("workspaceId") == "ws-77"
 
     async def test_sync_handles_500_gracefully(self, httpx_mock):
@@ -121,9 +120,7 @@ class TestConfigClientStubIntegration:
         await client.sync()
 
         requests = httpx_mock.get_requests()
-        llm_reqs = [
-            r for r in requests if re.search(r"/effective/llm-provider", str(r.url))
-        ]
+        llm_reqs = [r for r in requests if re.search(r"/effective/llm-provider", str(r.url))]
         assert len(llm_reqs) >= 1
         assert llm_reqs[0].headers.get("Authorization") == "Bearer my-secret-token"
 

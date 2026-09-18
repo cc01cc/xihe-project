@@ -37,9 +37,7 @@ def collect_violations(environ: Mapping[str, str] | None = None) -> list[str]:
             "(generate a random secret, e.g. `openssl rand -base64 48`)"
         )
     if env.get("XIHE_CP_API_TOKEN") == DEV_TOKEN:
-        violations.append(
-            "XIHE_CP_API_TOKEN: dev token `dev-token-not-secure` is in use (set a strong service token)"
-        )
+        violations.append("XIHE_CP_API_TOKEN: dev token `dev-token-not-secure` is in use (set a strong service token)")
     if env.get("XIHE_AGENT_API_TOKEN") == DEV_TOKEN:
         violations.append(
             "XIHE_AGENT_API_TOKEN: dev token `dev-token-not-secure` is in use (set a strong service token)"

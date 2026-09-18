@@ -130,11 +130,7 @@ async def test_langgraph_runner_uses_custom_event_adapter():
     async for event in runner.stream(messages, config):
         events.append(event)
 
-    assert all(
-        e.type == "token" and e.data.get("content") == "custom"
-        for e in events
-        if e.type != "usage"
-    )
+    assert all(e.type == "token" and e.data.get("content") == "custom" for e in events if e.type != "usage")
     assert any(e.type == "usage" for e in events)
 
 
@@ -510,9 +506,7 @@ async def test_tool_result_event_payload_carries_bundle_only_when_triggered():
     await failing._arun(command="make")
 
     payloads = [
-        call.args[0].payload
-        for call in event_store.append.await_args_list
-        if call.args[0].type == "tool.result"
+        call.args[0].payload for call in event_store.append.await_args_list if call.args[0].type == "tool.result"
     ]
     assert len(payloads) == 1
     assert payloads[0]["diagnostics"]["items"][0]["file"] == "a.rs"
@@ -526,9 +520,7 @@ async def test_tool_result_event_payload_carries_bundle_only_when_triggered():
     await succeeding._arun(command="make")
 
     payloads = [
-        call.args[0].payload
-        for call in event_store.append.await_args_list
-        if call.args[0].type == "tool.result"
+        call.args[0].payload for call in event_store.append.await_args_list if call.args[0].type == "tool.result"
     ]
     assert len(payloads) == 1
     assert "diagnostics" not in payloads[0]

@@ -145,8 +145,8 @@ async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
 
 
 async def fetch_connection_catalog(
-        config_client: Any,
-        connections: list[dict[str, Any]],
+    config_client: Any,
+    connections: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Fetch a user-scoped catalog using CP-issued credential leases."""
     results: dict[str, list[str]] = {}
@@ -159,14 +159,16 @@ async def fetch_connection_catalog(
             if not provider_id or not connection_id or catalog_key in provider_catalog:
                 continue
             try:
-                grant = await config_client.redeem_provider_lease({
-                    "lease": descriptor.get("lease"),
-                    "runId": descriptor.get("runId", ""),
-                    "providerConnectionId": connection_id,
-                    "providerId": provider_id,
-                    "model": "*",
-                    "connectionRevision": int(descriptor.get("connectionRevision", 0)),
-                })
+                grant = await config_client.redeem_provider_lease(
+                    {
+                        "lease": descriptor.get("lease"),
+                        "runId": descriptor.get("runId", ""),
+                        "providerConnectionId": connection_id,
+                        "providerId": provider_id,
+                        "model": "*",
+                        "connectionRevision": int(descriptor.get("connectionRevision", 0)),
+                    }
+                )
                 status = "ready"
                 reason_code = None
                 models: list[dict[str, Any]] = []
@@ -211,10 +213,12 @@ async def fetch_connection_catalog(
                                     reason_code = "LLM_MODEL_CATALOG_INVALID"
                                     models = []
                                     break
-                                models.append({
-                                    "name": model_id,
-                                    "capabilities": _model_capabilities(provider_id, model_id),
-                                })
+                                models.append(
+                                    {
+                                        "name": model_id,
+                                        "capabilities": _model_capabilities(provider_id, model_id),
+                                    }
+                                )
                 results[catalog_key] = [model["name"] for model in models]
                 provider_catalog[catalog_key] = {
                     "connectionId": connection_id,
@@ -288,9 +292,11 @@ async def list_embedding_models(_token: None = Depends(verify_service_token)):
         provider = info.get("litellm_provider")
         if provider not in providers:
             continue
-        result.append({
-            "model": model_key,
-            "provider": provider,
-            "dimensions": info.get("output_vector_size"),
-        })
+        result.append(
+            {
+                "model": model_key,
+                "provider": provider,
+                "dimensions": info.get("output_vector_size"),
+            }
+        )
     return {"models": result}

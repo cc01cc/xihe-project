@@ -3,6 +3,7 @@ Agent → CP integration tests using real backend.
 Requires CP running at localhost:8080 (Docker Compose or H2 mode).
 Run with: uv run pytest tests/integration/ -v
 """
+
 import time
 
 import httpx
@@ -59,9 +60,7 @@ class TestAgentCPIntegration:
 
     def test_chat_endpoint_requires_auth(self):
         """CP /v1/chat returns 401 without auth token."""
-        r = httpx.post(
-            f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5
-        )
+        r = httpx.post(f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5)
         assert r.status_code == 401
 
     def test_chat_endpoint_accepts_authenticated_request(self):
@@ -78,9 +77,7 @@ class TestAgentCPIntegration:
 
     def test_chat_endpoint_requires_auth(self):
         """CP /v1/chat returns 401 without auth token."""
-        r = httpx.post(
-            f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5
-        )
+        r = httpx.post(f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5)
         assert r.status_code == 401
 
     def test_chat_endpoint_accepts_authenticated_request(self):

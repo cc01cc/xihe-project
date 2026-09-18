@@ -59,9 +59,7 @@ class TokenCounter:
         self._ensure_tokenizer()
         try:
             if self._tokenizer is not None:
-                return litellm.token_counter(
-                    model=self._model, text=text, custom_tokenizer=self._tokenizer
-                )
+                return litellm.token_counter(model=self._model, text=text, custom_tokenizer=self._tokenizer)
             return litellm.token_counter(model=self._model, text=text)
         except Exception as e:
             logger.debug("token_counter failed ({}); o200k estimate", e)
@@ -72,9 +70,7 @@ class TokenCounter:
         self._ensure_tokenizer()
         try:
             if self._tokenizer is not None:
-                return litellm.token_counter(
-                    model=self._model, messages=messages, custom_tokenizer=self._tokenizer
-                )
+                return litellm.token_counter(model=self._model, messages=messages, custom_tokenizer=self._tokenizer)
             return litellm.token_counter(model=self._model, messages=messages)
         except Exception as e:
             logger.debug("messages token_counter failed ({}); char/4 estimate", e)

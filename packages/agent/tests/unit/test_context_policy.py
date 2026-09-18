@@ -24,9 +24,7 @@ def test_falls_back_to_defaults_then_code() -> None:
     assert policy.prune_window_chars == DEFAULT_PRUNE_WINDOW_CHARS
     assert policy.source == "default"
 
-    policy2 = resolve_context_policy(
-        "m", {"defaults": '{"maxInputTokens": 200000}'}
-    )
+    policy2 = resolve_context_policy("m", {"defaults": '{"maxInputTokens": 200000}'})
     assert policy2.max_input_tokens == 200000
     assert policy2.source == "config"
 

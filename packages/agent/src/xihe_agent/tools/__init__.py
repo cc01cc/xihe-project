@@ -152,7 +152,9 @@ class GenerateImageAgentTool(BaseAgentTool):
         provider = self._provider_manager.get()
         logger.info(
             "Generating image: provider=%s, prompt=%s, size=%s",
-            type(provider).__name__, prompt[:60], size,
+            type(provider).__name__,
+            prompt[:60],
+            size,
         )
         try:
             image_bytes = await provider.generate(prompt, size, quality)

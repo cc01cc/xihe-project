@@ -114,11 +114,7 @@ def resolve_provider_base_url(
     fallback: str = "",
 ) -> str:
     """Shared precedence for a provider endpoint: `{provider}ApiBase` > `baseUrl` > caller fallback."""
-    return (
-        llm_entries.get(f"{provider}ApiBase")
-        or llm_entries.get("baseUrl")
-        or fallback
-    )
+    return llm_entries.get(f"{provider}ApiBase") or llm_entries.get("baseUrl") or fallback
 
 
 def fallback_provider_configs(llm_entries: Mapping[str, str]) -> dict[str, dict[str, Any]]:
@@ -132,9 +128,7 @@ def fallback_provider_configs(llm_entries: Mapping[str, str]) -> dict[str, dict[
         api_key = os.getenv(env_name, "")
         if not api_key:
             continue
-        base_url = resolve_provider_base_url(
-            llm_entries, provider, default_api_base(provider)
-        )
+        base_url = resolve_provider_base_url(llm_entries, provider, default_api_base(provider))
         registry[provider] = {
             "provider": provider,
             "apiKey": api_key,
@@ -275,11 +269,7 @@ class LLMConfig(BaseModel):
         api_key = env_api_key(provider)
 
         defaults = PROVIDER_DEFAULTS.get(provider, {})
-        api_base = (
-            entries.get(f"{provider}ApiBase")
-            or entries.get("baseUrl")
-            or defaults.get("api_base", "")
-        )
+        api_base = entries.get(f"{provider}ApiBase") or entries.get("baseUrl") or defaults.get("api_base", "")
         provider_model = entries.get(f"{provider}Model")
         model = provider_model or model or defaults.get("model", "")
 
@@ -327,16 +317,10 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
     ):
         cfg = config or LLMConfig.from_env()
         model = cfg.model
-        route_provider = cfg.route_provider or (
-            "xiaomi_mimo" if cfg.provider == "xiaomi" else cfg.provider
-        )
-        if (
-            route_provider in _WIRE_SLUGS_REQUIRING_EXPLICIT_BASE
-            and not (cfg.api_base or "").strip()
-        ):
+        route_provider = cfg.route_provider or ("xiaomi_mimo" if cfg.provider == "xiaomi" else cfg.provider)
+        if route_provider in _WIRE_SLUGS_REQUIRING_EXPLICIT_BASE and not (cfg.api_base or "").strip():
             raise LLMRouteConfigError(
-                f"Base URL is required for route '{route_provider}'; "
-                "refusing the implicit OpenAI default endpoint"
+                f"Base URL is required for route '{route_provider}'; refusing the implicit OpenAI default endpoint"
             )
         if "/" not in model and cfg.provider and cfg.provider != "mock":
             # Route slug comes from the CP-issued grant (catalog `litellmProvider`).

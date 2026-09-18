@@ -98,18 +98,18 @@ def resolve_python_log_level(level_name: str) -> int:
     return getattr(logging, normalized.upper(), logging.INFO)
 
 
-AGENT_LOG_LEVEL = normalize_agent_log_level(
-    get_log_level_env("XIHE_LOG_LEVEL_AGENT", "XIHE_LOG_LEVEL", default="info")
-)
+AGENT_LOG_LEVEL = normalize_agent_log_level(get_log_level_env("XIHE_LOG_LEVEL_AGENT", "XIHE_LOG_LEVEL", default="info"))
 
 _log_dir = get_env("XIHE_LOG_DIR") or "logs"
 os.makedirs(_log_dir, exist_ok=True)
+
 
 # Route stdlib logging from libraries (uvicorn, langchain, etc.) to loguru
 class _InterceptHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         logger_opt = logger.opt(depth=6, exception=record.exc_info)
         logger_opt.log(record.levelno, record.getMessage())
+
 
 logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
 
@@ -181,9 +181,7 @@ def get_int_env(name: str, default: int) -> int:
         raise RuntimeError(f"{name} must be an integer, got: {value}") from exc
 
 
-CP_URL = (
-    get_env("XIHE_CP_URL") or f"http://localhost:{get_int_env('XIHE_CP_PORT', 12631)}"
-)
+CP_URL = get_env("XIHE_CP_URL") or f"http://localhost:{get_int_env('XIHE_CP_PORT', 12631)}"
 MCP_URL = f"{CP_URL}/api/v1/mcp"
 AGENT_HOST = get_env("XIHE_AGENT_HOST") or "0.0.0.0"
 AGENT_PORT = get_int_env("XIHE_AGENT_PORT", 12632)
@@ -203,6 +201,7 @@ def verify_api_token(request: Request) -> None:
         logger.warning("Agent API token mismatch")
         raise HTTPException(status_code=403, detail="Forbidden: invalid API token")
 
+
 approval_tool = ApprovalAgentTool()
 mcp_manager = MCPClientManager(
     cp_url=MCP_URL,
@@ -221,9 +220,7 @@ config_client = ConfigClient(
 _models_router.bind(config_client)
 
 llm_config = LLMConfig.from_config_client(config_client)
-image_provider_manager = ProviderManager.from_env(
-    config_client.get("llm-provider", "imageProvider")
-)
+image_provider_manager = ProviderManager.from_env(config_client.get("llm-provider", "imageProvider"))
 generate_image_tool = GenerateImageAgentTool(provider_manager=image_provider_manager)
 legacy_generate_image_tool = GenerateImageTool(provider_manager=image_provider_manager)
 
@@ -231,16 +228,15 @@ cp_context_service_client = CPContextServiceClient(base_url=CP_URL, api_token=CP
 cp_event_store_client = CPEventStoreClient(base_url=CP_URL, api_token=CP_API_TOKEN)
 context_provider = EventSourcedContextProvider(cp_context_service_client)
 crash_recovery = CrashRecovery(cp_event_store_client)
-agent_runner = LangGraphRunner(model_factory=lambda model: create_llm(llm_config.with_model(model)), event_store=cp_event_store_client)
+agent_runner = LangGraphRunner(
+    model_factory=lambda model: create_llm(llm_config.with_model(model)), event_store=cp_event_store_client
+)
 # PLAN-290 M0.3: active-run cancel registry shared by /chat stream and
 # POST /internal/v1/agent/runs/{runId}/cancel (CP forwards from chat cancel).
 run_cancel_registry = RunCancelRegistry()
 
 # RAG
-PG_DSN = (
-    get_env("XIHE_PG_DSN")
-    or "postgresql+psycopg://xihe:@localhost:12634/xihe"
-)
+PG_DSN = get_env("XIHE_PG_DSN") or "postgresql+psycopg://xihe:@localhost:12634/xihe"
 embedding_model: str | None = None
 _embedding_api_key: str | None = None
 _embedding_api_base: str | None = None
@@ -290,6 +286,7 @@ def _refresh_embedding_config() -> None:
         vector_size=int(dimensions) if dimensions else None,
     )
 
+
 _refresh_embedding_config()
 
 AGENT_INSTRUCTIONS = (
@@ -298,10 +295,7 @@ AGENT_INSTRUCTIONS = (
     "Use the provided tools whenever the user asks about workspace files, directories, "
     "or commands, then answer with the tool results."
 )
-AGENT_USER_NAME = (
-    config_client.get("agent-profile", "userName")
-    or "User"
-)
+AGENT_USER_NAME = config_client.get("agent-profile", "userName") or "User"
 USE_SUPERVISOR = config_client.get_bool("agent-runtime", "useSupervisor")
 USE_REGISTRY = config_client.get_bool("agent-runtime", "useRegistry")
 
@@ -322,10 +316,12 @@ def _log_token_usage(result: Any) -> None:
     try:
         if hasattr(result, "usage_metadata") and result.usage_metadata:
             meta = result.usage_metadata
-            logger.info("Token usage: input={} output={} total={}",
-                        meta.get("input_tokens", "?"),
-                        meta.get("output_tokens", "?"),
-                        meta.get("total_tokens", "?"))
+            logger.info(
+                "Token usage: input={} output={} total={}",
+                meta.get("input_tokens", "?"),
+                meta.get("output_tokens", "?"),
+                meta.get("total_tokens", "?"),
+            )
     except Exception:
         logger.debug("Token usage metadata not available")
 
@@ -335,11 +331,7 @@ def _derive_llm_ready(
     catalog: dict[str, Any],
     config: LLMConfig,
 ) -> tuple[str, str | None]:
-    required_status = (
-        report.get("domains", {})
-        .get("llm-provider", {})
-        .get("status", "unknown")
-    )
+    required_status = report.get("domains", {}).get("llm-provider", {}).get("status", "unknown")
     if required_status in {"unreachable", "unauthorized", "invalid_response"}:
         return "unknown", None
     if config.provider == "mock":
@@ -372,15 +364,12 @@ def _derive_llm_ready(
 
     model_entries = provider_info.get("models", [])
     model_names = {
-        item.get("name")
-        for item in model_entries
-        if isinstance(item, dict) and isinstance(item.get("name"), str)
+        item.get("name") for item in model_entries if isinstance(item, dict) and isinstance(item.get("name"), str)
     }
     chat_models = {
         item.get("name")
         for item in model_entries
-        if isinstance(item, dict)
-        and item.get("capabilities", {}).get("chat") is True
+        if isinstance(item, dict) and item.get("capabilities", {}).get("chat") is True
     }
     if config.model and config.model not in model_names:
         return "model_unavailable", provider_info.get("verifiedAt")
@@ -517,9 +506,7 @@ async def reload_runtime_config(reason: str) -> dict[str, Any]:
         report = await config_client.sync_with_retry()
         if report.get("refreshed"):
             staged_llm_config = LLMConfig.from_config_client(config_client)
-            staged_image_manager = ProviderManager.from_env(
-                config_client.get("llm-provider", "imageProvider")
-            )
+            staged_image_manager = ProviderManager.from_env(config_client.get("llm-provider", "imageProvider"))
             staged_catalog = await fetch_model_catalog(config_client)
             # PLAN-0307 T2.15 (decision #23): `logging.levelAgent` is hot-applied
             # on every refreshed snapshot; env stays the startup bootstrap only.
@@ -557,9 +544,7 @@ async def reload_runtime_config(reason: str) -> dict[str, Any]:
             default_model = staged_llm_config.model if staged_llm_config else None
             policy = _resolve_policy_for_model(default_model)
             if policy.tokenizer_ref:
-                _token_counter = TokenCounter(
-                    tokenizer_ref=policy.tokenizer_ref, model=default_model
-                )
+                _token_counter = TokenCounter(tokenizer_ref=policy.tokenizer_ref, model=default_model)
                 logger.info(
                     "[LIFECYCLE] service=agent event=tokenizer_ref_applied ref={} model={}",
                     policy.tokenizer_ref,
@@ -706,7 +691,10 @@ async def lifespan(app: FastAPI):
         worker_registry = WorkerRegistry(workers_dir=_workers_dir)
         worker_registry.load_all(model, mcp_tools, custom_tools)
         _watcher_observer, _watcher_event_handler = start_watcher(
-            worker_registry, model, mcp_tools, custom_tools,
+            worker_registry,
+            model,
+            mcp_tools,
+            custom_tools,
         )
         logger.info("Worker registry initialized with {} worker(s)", len(worker_registry.list_workers()))
 
@@ -971,14 +959,16 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     request_config: LLMConfig
     if credential_lease:
         try:
-            grant = await config_client.redeem_provider_lease({
-                "lease": credential_lease,
-                "runId": run_id,
-                "providerConnectionId": provider_connection_id or "",
-                "providerId": provider_override or "",
-                "model": model_override or "",
-                "connectionRevision": int(connection_revision or 0),
-            })
+            grant = await config_client.redeem_provider_lease(
+                {
+                    "lease": credential_lease,
+                    "runId": run_id,
+                    "providerConnectionId": provider_connection_id or "",
+                    "providerId": provider_override or "",
+                    "model": model_override or "",
+                    "connectionRevision": int(connection_revision or 0),
+                }
+            )
         except Exception as exc:
             logger.warning(
                 "Provider credential lease unavailable runId={} connectionId={} errorType={}",
@@ -1116,9 +1106,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
         try:
             mcp_tools = await _get_tools_for_mode(tool_mode, workspace_id)
             if USE_SUPERVISOR and tool_mode == "workspace":
-                raise ApprovalExecutorUnsupportedError(
-                    "Approval is not supported by the buffered supervisor executor"
-                )
+                raise ApprovalExecutorUnsupportedError("Approval is not supported by the buffered supervisor executor")
                 # Supervisor path remains on legacy tools until full migration.
                 from langchain_core.messages import HumanMessage
 
@@ -1126,12 +1114,14 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
 
                 custom_tools = [approval_tool, generate_image_tool]
                 supervisor = build_supervisor(
-                    model, mcp_tools, custom_tools,
+                    model,
+                    mcp_tools,
+                    custom_tools,
                     registry=worker_registry if USE_REGISTRY else None,
                 )
-                result = await supervisor.ainvoke({
-                    "messages": _to_langchain_messages(chat_history) + [HumanMessage(content=content)]
-                })
+                result = await supervisor.ainvoke(
+                    {"messages": _to_langchain_messages(chat_history) + [HumanMessage(content=content)]}
+                )
                 for msg in result["messages"]:
                     if hasattr(msg, "content") and msg.content:
                         token_count += 1
@@ -1157,13 +1147,15 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 context.runtime_state["toolWaitOrigins"] = tool_wait_origins
                 context.runtime_state["systemToolWait"] = system_tool_wait
                 context.runtime_state["toolTimeouts"] = tool_timeouts
-                context.metadata.update({
-                    "requestId": request_id,
-                    "runId": run_id,
-                    "sessionId": session_id,
-                    "workspaceId": workspace_id,
-                    "operationId": operation_id,
-                })
+                context.metadata.update(
+                    {
+                        "requestId": request_id,
+                        "runId": run_id,
+                        "sessionId": session_id,
+                        "workspaceId": workspace_id,
+                        "operationId": operation_id,
+                    }
+                )
 
                 all_tools = [] if tool_mode == "none" else [approval_tool, generate_image_tool]
                 if mcp_tools:
@@ -1215,18 +1207,26 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                             )
                         terminal_outcome = (
                             "ambiguous"
-                            if llm_request_started and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
-                            else "partial" if assistant_chars > 0 else "error"
+                            if llm_request_started
+                            and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
+                            else "partial"
+                            if assistant_chars > 0
+                            else "error"
                         )
                         if not error_sent:
                             error_sent = True
-                            yield render_sse("error", correlated_data({
-                                "code": terminal_error_code,
-                                "detail": error_detail,
-                                "retryable": retryable,
-                                "outcome": terminal_outcome,
-                                "type": "error",
-                            }))
+                            yield render_sse(
+                                "error",
+                                correlated_data(
+                                    {
+                                        "code": terminal_error_code,
+                                        "detail": error_detail,
+                                        "retryable": retryable,
+                                        "outcome": terminal_outcome,
+                                        "type": "error",
+                                    }
+                                ),
+                            )
                     elif event.type == "done":
                         if terminal_sent:
                             continue
@@ -1281,20 +1281,27 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             )
             if not error_sent:
                 error_sent = True
-                yield render_sse("error", correlated_data({
-                    "code": terminal_error_code,
-                    "detail": error_detail,
-                    "retryable": retryable,
-                    "outcome": terminal_outcome,
-                    "type": "error",
-                }))
+                yield render_sse(
+                    "error",
+                    correlated_data(
+                        {
+                            "code": terminal_error_code,
+                            "detail": error_detail,
+                            "retryable": retryable,
+                            "outcome": terminal_outcome,
+                            "type": "error",
+                        }
+                    ),
+                )
         except Exception as exc:
             error_seen = True
             terminal_error_code, error_detail, retryable = _classify_llm_exception(exc)
             terminal_outcome = (
                 "ambiguous"
                 if llm_request_started and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
-                else "partial" if assistant_chars > 0 else "error"
+                else "partial"
+                if assistant_chars > 0
+                else "error"
             )
             logger.exception(
                 "[LIFECYCLE] service=agent event=chat_stream_failed requestId={} sessionId={} workspaceId={} runId={} errorCode={}",
@@ -1306,13 +1313,18 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
             )
             if not error_sent:
                 error_sent = True
-                yield render_sse("error", correlated_data({
-                    "code": terminal_error_code,
-                    "detail": error_detail,
-                    "retryable": retryable,
-                    "outcome": terminal_outcome,
-                    "type": "error",
-                }))
+                yield render_sse(
+                    "error",
+                    correlated_data(
+                        {
+                            "code": terminal_error_code,
+                            "detail": error_detail,
+                            "retryable": retryable,
+                            "outcome": terminal_outcome,
+                            "type": "error",
+                        }
+                    ),
+                )
         finally:
             # Always drop the cancel handle when the run body ends (terminal,
             # abort, or client disconnect) so later cancels report unknown.
@@ -1415,7 +1427,12 @@ def _rag_config_defaults() -> dict[str, float | int]:
 
 
 @app.post("/internal/v1/agent/rag/ingest")
-async def rag_ingest(file: UploadFile = File(...), chunk_size: int | None = Form(None, alias="chunkSize"), chunk_overlap: int | None = Form(None, alias="chunkOverlap"), _token: None = Depends(verify_api_token)):
+async def rag_ingest(
+    file: UploadFile = File(...),
+    chunk_size: int | None = Form(None, alias="chunkSize"),
+    chunk_overlap: int | None = Form(None, alias="chunkOverlap"),
+    _token: None = Depends(verify_api_token),
+):
     if not embedding_enabled:
         raise HTTPException(status_code=503, detail="RAG embedding provider is not configured")
     defaults = _rag_config_defaults()
@@ -1424,7 +1441,9 @@ async def rag_ingest(file: UploadFile = File(...), chunk_size: int | None = Form
     if chunk_overlap is None:
         chunk_overlap = defaults["chunkOverlap"]
     content = (await file.read()).decode("utf-8", errors="replace")
-    chunks = rag_chunk(content, chunk_size=chunk_size, chunk_overlap=chunk_overlap, metadata={"filename": file.filename})
+    chunks = rag_chunk(
+        content, chunk_size=chunk_size, chunk_overlap=chunk_overlap, metadata={"filename": file.filename}
+    )
     doc_ids = []
     for chunk in chunks:
         doc_id = await vector_store.add(chunk["text"], chunk["metadata"])
@@ -1433,7 +1452,12 @@ async def rag_ingest(file: UploadFile = File(...), chunk_size: int | None = Form
 
 
 @app.post("/internal/v1/agent/rag/search")
-async def rag_search(query: str = Form(...), top_k: int | None = Form(None, alias="topK"), min_score: float | None = Form(None, alias="minScore"), _token: None = Depends(verify_api_token)):
+async def rag_search(
+    query: str = Form(...),
+    top_k: int | None = Form(None, alias="topK"),
+    min_score: float | None = Form(None, alias="minScore"),
+    _token: None = Depends(verify_api_token),
+):
     if not embedding_enabled:
         raise HTTPException(status_code=503, detail="RAG embedding provider is not configured")
     defaults = _rag_config_defaults()
@@ -1612,13 +1636,8 @@ async def health():
 @app.get("/internal/v1/agent/tools")
 async def list_tools(_token: None = Depends(verify_api_token)):
     return {
-        "tools": [
-            {"name": t.spec.name, "description": t.spec.description}
-            for t in mcp_manager.tools
-        ],
-        "customTools": [
-            {"name": approval_tool.name, "description": approval_tool.description}
-        ],
+        "tools": [{"name": t.spec.name, "description": t.spec.description} for t in mcp_manager.tools],
+        "customTools": [{"name": approval_tool.name, "description": approval_tool.description}],
     }
 
 

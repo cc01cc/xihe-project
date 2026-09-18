@@ -37,24 +37,26 @@ class InMemoryEventStore(EventStore):
 
 @pytest.fixture
 def event_store():
-    return InMemoryEventStore({
-        "session-1": [
-            Event(
-                aggregate_id="session-1",
-                sequence=1,
-                type="prompt.admitted",
-                payload={"message": {"role": "human", "content": "hello"}},
-                created_at=datetime.now(UTC),
-            ),
-            Event(
-                aggregate_id="session-1",
-                sequence=2,
-                type="llm.token",
-                payload={"message": {"role": "ai", "content": "hi"}},
-                created_at=datetime.now(UTC),
-            ),
-        ],
-    })
+    return InMemoryEventStore(
+        {
+            "session-1": [
+                Event(
+                    aggregate_id="session-1",
+                    sequence=1,
+                    type="prompt.admitted",
+                    payload={"message": {"role": "human", "content": "hello"}},
+                    created_at=datetime.now(UTC),
+                ),
+                Event(
+                    aggregate_id="session-1",
+                    sequence=2,
+                    type="llm.token",
+                    payload={"message": {"role": "ai", "content": "hi"}},
+                    created_at=datetime.now(UTC),
+                ),
+            ],
+        }
+    )
 
 
 async def test_crash_recovery_recovers_session(event_store):

@@ -60,9 +60,7 @@ def _parse_timeout_s(raw: str | None, default: float) -> float:
     return value
 
 
-DEFAULT_MCP_TOOL_TIMEOUT_S = _parse_timeout_s(
-    os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S"), default=30.0
-)
+DEFAULT_MCP_TOOL_TIMEOUT_S = _parse_timeout_s(os.environ.get("XIHE_MCP_TOOL_TIMEOUT_S"), default=30.0)
 
 # PLAN-0308 M1（spec S1/S2）：本模块只做三条判断，不做任何计算——
 # 下发值性质为 per-call → 用下发值（压过本模块 ENV）；
@@ -335,12 +333,7 @@ class MCPAgentTool(BaseAgentTool):
             # Workspace-relative paths only: models often send "/file.md".
             for key in ("path", "file_path"):
                 val = payload.get(key)
-                if (
-                    isinstance(val, str)
-                    and val.startswith("/")
-                    and not val.startswith("//")
-                    and ".." not in val
-                ):
+                if isinstance(val, str) and val.startswith("/") and not val.startswith("//") and ".." not in val:
                     payload[key] = val[1:]
             headers = _context_headers(context, self._tool.name)
             # PLAN-0337 M2：单一派发路径。是否弹窗由 CP 闸门判定；本模块不预判、不预取 grant，
@@ -470,12 +463,9 @@ class MCPAgentTool(BaseAgentTool):
                 signal.request_id,
                 type(exc).__name__,
             )
-            raise ApprovalRetryFailedError(
-                f"Approval gate retry failed after grant {signal.request_id}"
-            ) from exc
+            raise ApprovalRetryFailedError(f"Approval gate retry failed after grant {signal.request_id}") from exc
         logger.info(
-            "[LIFECYCLE] service=agent event=mcp_tool_gate_retry_ok tool={} toolCallId={}"
-            + " approvalRequestId={}",
+            "[LIFECYCLE] service=agent event=mcp_tool_gate_retry_ok tool={} toolCallId={}" + " approvalRequestId={}",
             self._tool.name,
             tool_call_id or "-",
             signal.request_id,
@@ -541,9 +531,7 @@ class MCPClientManager:
         """静态头（workspace/服务鉴权）+ 逐调用动态头的合并结果。"""
         return {**self._static_headers(), **dynamic}
 
-    def new_client(
-        self, headers: dict[str, str], timeout: float = SESSION_READ_HANG_BACKSTOP_S
-    ) -> Client:
+    def new_client(self, headers: dict[str, str], timeout: float = SESSION_READ_HANG_BACKSTOP_S) -> Client:
         """构造一个携带指定头集合的 fastmcp 客户端（跨调用不复用，见决策 #34）。
 
         `timeout` = 传输层读超时兜底：逐调用路径用 3600s（位于授权值之外）；
@@ -606,16 +594,25 @@ class MCPClientManager:
         while True:
             try:
                 await self.initialize()
-                logger.info("[LIFECYCLE] service=agent event=mcp_init_ok toolsCount={} attempt={}", len(self._tools), attempt + 1)
+                logger.info(
+                    "[LIFECYCLE] service=agent event=mcp_init_ok toolsCount={} attempt={}",
+                    len(self._tools),
+                    attempt + 1,
+                )
                 return
             except Exception as exc:
                 attempt += 1
                 if attempt > max_retries:
-                    logger.warning("[LIFECYCLE] service=agent event=mcp_giving_up maxRetries={} lastError={}", max_retries, exc)
+                    logger.warning(
+                        "[LIFECYCLE] service=agent event=mcp_giving_up maxRetries={} lastError={}", max_retries, exc
+                    )
                     return
                 logger.warning(
                     "[LIFECYCLE] service=agent event=mcp_init_failed error={} attempt={}/{} retryIn={:.1f}s",
-                    exc, attempt, max_retries, backoff,
+                    exc,
+                    attempt,
+                    max_retries,
+                    backoff,
                 )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)

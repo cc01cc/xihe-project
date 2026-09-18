@@ -40,9 +40,7 @@ _MAX_SESSIONS = 512
 # L0 shape (T0.4 freeze): anchored ``path:line[:col]: message``. The path
 # segment excludes ``:`` and whitespace so timestamps / URLs / prefixed log
 # lines cannot masquerade as a location.
-_L0_PATTERN = re.compile(
-    r"^(?P<path>[^:\s]+):(?P<line>[1-9]\d{0,8})(?::(?P<col>[1-9]\d{0,8}))?:\s?(?P<message>.*)$"
-)
+_L0_PATTERN = re.compile(r"^(?P<path>[^:\s]+):(?P<line>[1-9]\d{0,8})(?::(?P<col>[1-9]\d{0,8}))?:\s?(?P<message>.*)$")
 _EXTENSION_PATTERN = re.compile(r"\.[A-Za-z0-9]{1,8}$")
 _SEVERITY_PATTERN = re.compile(r"^(error|warning|warn|note)\b", re.IGNORECASE)
 _KIND_PATTERNS: tuple[tuple[DiagnosticKind, re.Pattern[str]], ...] = (
