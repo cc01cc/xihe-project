@@ -62,8 +62,28 @@ test.describe('@host PLAN-0344 durable job resume', () => {
     await expect(page.getByText('Background job started.')).toBeVisible({ timeout: 60000 })
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'job-started-live.png'), fullPage: false })
 
-    // 刷新：卡片只能从 messages DTO 的 jobSummary 重建（tool_result 不持久化）
-    await page.reload({ waitUntil: 'load' })
+    // 刷新恢复：整页重载后重新进入会话（/chat/{sid}）。workspace 视图重载后
+    // 默认落在文件树，不承载聊天面板；卡片只能从 messages DTO 的 jobSummary
+    // 重建（tool_result 不持久化）——这里同时以 API 断言该数据源存在。
+    const sessionsRes = await page.request.get(`${CP_URL}/api/v1/sessions`, { headers: sharedHeaders })
+    expect(sessionsRes.ok(), `sessions list ${sessionsRes.status()}`).toBeTruthy()
+    const sessions = (await sessionsRes.json()) as { sessions?: Array<{ id: string }> }
+    const sessionId = sessions.sessions?.[0]?.id
+    expect(sessionId, 'session created by the workspace chat').toBeTruthy()
+    const messagesRes = await page.request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages`, {
+      headers: sharedHeaders,
+    })
+    expect(messagesRes.ok(), `messages ${messagesRes.status()}`).toBeTruthy()
+    const messages = (await messagesRes.json()) as Array<{
+      jobSummary?: Array<{ itemId?: string; toolName?: string }>
+    }>
+    const summary = messages
+      .flatMap((message) => message.jobSummary ?? [])
+      .find((job) => job.toolName === 'start_background_process')
+    expect(summary?.itemId, 'jobSummary archived in the messages DTO').toBeTruthy()
+    const itemId = summary?.itemId ?? ''
+
+    await page.goto('/chat/' + sessionId, { waitUntil: 'load' })
     const card = page
       .locator('[data-testid="tool-card-toggle"]')
       .filter({ hasText: 'start_background_process' })
@@ -78,23 +98,6 @@ test.describe('@host PLAN-0344 durable job resume', () => {
     await expect(output).toContainText('job-line-1', { timeout: 30000 })
     await expect(output).toContainText('job-line-2')
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'resume-after-reload.png'), fullPage: false })
-
-    // 从账本取 job item id（destroy 后按 API 契约断言 409）
-    const opsRes = await page.request.get(`${CP_URL}/api/v1/operations?size=5`, { headers: sharedHeaders })
-    expect(opsRes.ok(), `operations list ${opsRes.status()}`).toBeTruthy()
-    const ops = (await opsRes.json()) as { operations?: Array<{ id: string }> }
-    let itemId = ''
-    for (const op of ops.operations ?? []) {
-      const traceRes = await page.request.get(`${CP_URL}/api/v1/operations/${op.id}`, { headers: sharedHeaders })
-      if (!traceRes.ok()) continue
-      const trace = (await traceRes.json()) as { items?: Array<{ id?: string; toolName?: string }> }
-      const item = (trace.items ?? []).find((entry) => entry.toolName === 'start_background_process')
-      if (item?.id) {
-        itemId = item.id
-        break
-      }
-    }
-    expect(itemId, 'ledger item for the started job').toBeTruthy()
 
     // destroy workspace：Runtime destroying 窗口枚举存活 job → 档案落 orphaned
     const del = await page.request.delete(`${CP_URL}/api/v1/workspaces/${sharedWs}`, {
