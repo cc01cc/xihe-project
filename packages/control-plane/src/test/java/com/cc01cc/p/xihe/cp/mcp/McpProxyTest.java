@@ -82,6 +82,7 @@ class McpProxyTest {
                 auditLogger, approvalService, objectMapper, sseEmitterManager, stdioServerRepository,
                 mcpServerRepository, aliasRepository,
                 workspaceService, sessionRepository, operationService,
+                mock(com.cc01cc.p.xihe.cp.operation.JobStateService.class),
                 mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
                 new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy(),
                 environment

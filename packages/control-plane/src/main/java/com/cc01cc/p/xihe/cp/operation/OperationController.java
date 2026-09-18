@@ -4,6 +4,8 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.SessionOperation;
+import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -31,11 +33,20 @@ import java.util.UUID;
 public class OperationController {
 
     private static final int MAX_PAGE_SIZE = 100;
+    /** PLAN-0344 T1.2：续看分页缺省 64KiB、上限 1MiB（与 Runtime JOB_CAP 一致）。 */
+    private static final long DEFAULT_OUTPUT_LIMIT = 64 * 1024;
+    private static final long MAX_OUTPUT_LIMIT = 1024 * 1024;
 
     private final OperationService operationService;
+    private final JobStateService jobStateService;
+    private final RuntimeJobClient runtimeJobClient;
 
-    public OperationController(OperationService operationService) {
+    public OperationController(OperationService operationService,
+                               JobStateService jobStateService,
+                               RuntimeJobClient runtimeJobClient) {
         this.operationService = operationService;
+        this.jobStateService = jobStateService;
+        this.runtimeJobClient = runtimeJobClient;
     }
 
     @GetMapping
@@ -88,6 +99,78 @@ public class OperationController {
             operationService.requireOwnedOperation(id, userId);
             Map<String, Object> trace = operationService.getOperationTrace(id);
             return ResponseEntity.ok(OperationViews.toUserTrace(trace));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * PLAN-0344 T1.2：durable job 输出续看（字节游标分页）。
+     * 输出真源在容器文件；此处按 item 归属校验后经 Runtime 代理读取。
+     * 不可读时显式区分：job 仍有 running 档案 → {@code JOB_OUTPUT_LOST}；
+     * 已有终态但文件被 TTL 清理 → {@code JOB_OUTPUT_EXPIRED}（fail-visible）。
+     */
+    @GetMapping("/items/{itemId}/job-output")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> jobOutput(
+            @PathVariable String itemId,
+            @RequestParam(name = "stream", required = false, defaultValue = "stdout") String stream,
+            @RequestParam(name = "offset", required = false) Long offset,
+            @RequestParam(name = "limit", required = false) Long limit) {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication context is required");
+        }
+        if (!"stdout".equals(stream) && !"stderr".equals(stream)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "stream must be stdout or stderr");
+        }
+        if (offset != null && offset < 0) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "offset must be >= 0");
+        }
+        long effectiveLimit = Math.min(Math.max(limit == null ? DEFAULT_OUTPUT_LIMIT : limit, 1L),
+                MAX_OUTPUT_LIMIT);
+        UUID itemUuid;
+        try {
+            itemUuid = UUID.fromString(itemId);
+        } catch (IllegalArgumentException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "itemId must be a UUID");
+        }
+        try {
+            operationService.requireOwnedItem(itemUuid, userId);
+            JobStateService.JobArchive archive = jobStateService.find(itemUuid)
+                    .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "JOB_ARCHIVE_NOT_FOUND",
+                            "No job archive for this operation item"));
+            RuntimeJobClient.JobOutputResult result = runtimeJobClient.jobOutput(
+                    archive.workspaceId(), archive.jobId(), stream, offset == null ? 0L : offset,
+                    effectiveLimit);
+            if (result.unreachable()) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime job read failed");
+            }
+            if (!result.available()) {
+                boolean expired = archive.terminal();
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.CONFLICT,
+                        expired ? "JOB_OUTPUT_EXPIRED" : "JOB_OUTPUT_LOST",
+                        expired
+                                ? "Job output has expired (cleaned after TTL)"
+                                : "Job output is no longer available (container destroyed or job missing)");
+            }
+            JsonNode chunk = result.chunk();
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("jobId", archive.jobId());
+            body.put("stream", stream);
+            body.put("offset", chunk.path("offset").asLong());
+            body.put("nextOffset", chunk.path("nextOffset").asLong());
+            body.put("sizeBytes", chunk.path("sizeBytes").asLong());
+            body.put("truncated", chunk.path("truncated").asBoolean(false));
+            body.put("data", chunk.path("data").asText(""));
+            body.put("jobStatus", archive.status());
+            return ResponseEntity.ok(body);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

@@ -1037,6 +1037,17 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: operationId, required: true, schema: { type: string, format: uuid } }]
       responses: { '200': { description: Owner-only operation trace (redacted), content: { application/json: { schema: { $ref: '#/components/schemas/OperationTrace' } } } }, '404': { $ref: '#/components/responses/Problem' } }
+  /api/v1/operations/items/{itemId}/job-output:
+    get:
+      operationId: getJobOutput
+      security: [{ bearerAuth: [] }]
+      description: Durable job output resume (PLAN-0344). Byte-cursor pagination over the container-side job output file; UTF-8 boundaries are guaranteed by the Runtime. Owner-only (item -> operation.userId).
+      parameters:
+        - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: stream, schema: { type: string, enum: [stdout, stderr], default: stdout } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0, description: Byte cursor; pass the nextOffset returned by the previous read }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 1048576, default: 65536 } }
+      responses: { '200': { description: Job output chunk, content: { application/json: { schema: { $ref: '#/components/schemas/JobOutputChunk' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: JOB_ARCHIVE_NOT_FOUND or OPERATION_ITEM_NOT_FOUND, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '409': { description: JOB_OUTPUT_LOST (job non-terminal but output gone) or JOB_OUTPUT_EXPIRED (terminal job output cleaned after TTL), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '502': { description: RUNTIME_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } }
   /internal/v1/operations:
     post:
       operationId: startOperation
@@ -1693,6 +1704,19 @@ components:
         size: { type: integer }
         totalElements: { type: integer }
         totalPages: { type: integer }
+    JobOutputChunk:
+      type: object
+      description: PLAN-0344 durable job output chunk. `nextOffset` is always a UTF-8 rune boundary; clients must pass it back as `offset`. `truncated` = the output file hit the 1 MiB JOB_CAP (head kept).
+      required: [jobId, stream, offset, nextOffset, sizeBytes, truncated, data, jobStatus]
+      properties:
+        jobId: { type: string }
+        stream: { type: string, enum: [stdout, stderr] }
+        offset: { type: integer, description: Actual byte offset (malformed input offsets are advanced to the nearest boundary) }
+        nextOffset: { type: integer }
+        sizeBytes: { type: integer }
+        truncated: { type: boolean }
+        data: { type: string }
+        jobStatus: { type: string, enum: [running, succeeded, cancelled, timeout, orphaned] }
     OperationItemView:
       type: object
       required: [id, operationId, sequence, kind, source, status]

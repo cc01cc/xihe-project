@@ -4,10 +4,14 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Message;
+import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,17 +42,26 @@ public class MessageController {
     private final FileRepository fileRepository;
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
+    private final SessionOperationRepository sessionOperationRepository;
+    private final OperationItemRepository operationItemRepository;
+    private final JobStateService jobStateService;
 
     public MessageController(MessageRepository messageRepository,
                              ChatRunRepository chatRunRepository,
                              FileRepository fileRepository,
                              SessionService sessionService,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             SessionOperationRepository sessionOperationRepository,
+                             OperationItemRepository operationItemRepository,
+                             JobStateService jobStateService) {
         this.messageRepository = messageRepository;
         this.chatRunRepository = chatRunRepository;
         this.fileRepository = fileRepository;
         this.sessionService = sessionService;
         this.objectMapper = objectMapper;
+        this.sessionOperationRepository = sessionOperationRepository;
+        this.operationItemRepository = operationItemRepository;
+        this.jobStateService = jobStateService;
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
@@ -119,6 +132,9 @@ public class MessageController {
                 dto.put("errorDetail", run.getErrorDetail());
                 dto.put("partial", "partial".equals(run.getStatus()));
             });
+            // PLAN-0344 T1.4：刷新后 job 卡片与续看入口的数据源
+            // （tool_result 本身不持久化，jobSummary 从账本档案还原）。
+            dto.put("jobSummary", jobSummariesForRun(message.getRunId()));
         }
         if (message.getAttachments() != null && !message.getAttachments().isBlank()) {
             try {
@@ -133,5 +149,36 @@ public class MessageController {
             dto.put("attachments", new ArrayList<>());
         }
         return dto;
+    }
+
+    /**
+     * PLAN-0344 T1.4：run 的 operation → job 工具 items → job_state 档案，
+     * 给出可重建 job 卡片的摘要（toolCallId 为 UI 关联键，itemId 为续看键）。
+     */
+    private List<Map<String, Object>> jobSummariesForRun(String runId) {
+        List<Map<String, Object>> summaries = new ArrayList<>();
+        var operation = sessionOperationRepository.findByRunId(runId).orElse(null);
+        if (operation == null) {
+            return summaries;
+        }
+        List<OperationItem> items =
+                operationItemRepository.findByOperationIdOrderBySequenceAsc(operation.getId().toString());
+        for (OperationItem item : items) {
+            if (!JobStateService.isJobTool(item.getToolName())) {
+                continue;
+            }
+            jobStateService.find(item.getId()).ifPresent(archive -> {
+                Map<String, Object> summary = new LinkedHashMap<>();
+                summary.put("itemId", item.getId());
+                summary.put("toolCallId", item.getToolCallId());
+                summary.put("jobId", archive.jobId());
+                summary.put("status", archive.status());
+                summary.put("scope", archive.scope());
+                summary.put("startedAt", archive.startedAt());
+                summary.put("endedAt", archive.endedAt());
+                summaries.add(summary);
+            });
+        }
+        return summaries;
     }
 }

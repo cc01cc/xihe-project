@@ -32,6 +32,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.operation.OperationPolicySummary;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
@@ -81,6 +82,9 @@ public class McpProxyController {
     /** PLAN-0308（spec S2.2 规则 5 + 决策 #31）：只由 CP 写入的出站策略头。 */
     private static final List<String> OUTBOUND_POLICY_HEADERS = List.of(
             "X-Xihe-Tool-Timeout-S", "X-Xihe-Tool-Timeout-Origin", "X-Xihe-Tool-Output-Limit");
+    /** PLAN-0344 T1.2：job 工具集（结果需同步到 job_state 档案）。 */
+    private static final Set<String> JOB_TOOLS = Set.of(
+            "start_background_process", "get_background_process", "cancel_background_process");
 
     private final HttpClient httpClient;
 
@@ -119,6 +123,7 @@ public class McpProxyController {
     private final WorkspaceService workspaceService;
     private final SessionRepository sessionRepository;
     private final OperationService operationService;
+    private final JobStateService jobStateService;
 
     public McpProxyController(
             RequestRewriter rewriter,
@@ -133,6 +138,7 @@ public class McpProxyController {
             WorkspaceService workspaceService,
             SessionRepository sessionRepository,
             OperationService operationService,
+            JobStateService jobStateService,
             ConfigService configService,
             ToolTimeoutPolicy toolTimeoutPolicy,
             org.springframework.core.env.Environment environment) {
@@ -151,6 +157,7 @@ public class McpProxyController {
         this.workspaceService = workspaceService;
         this.sessionRepository = sessionRepository;
         this.operationService = operationService;
+        this.jobStateService = jobStateService;
         this.configService = configService;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.environment = environment;
@@ -829,6 +836,7 @@ public class McpProxyController {
             finishLedgerAttempt(ledgerAttempt, response.statusCode(), null, responseBody);
             appendMcpExtension(ledgerAttempt, serverId, body, response.statusCode(), responseBody, null,
                     STATELESS_PROTOCOL_VERSION);
+            recordJobState(ledgerAttempt, wsId, body, responseBody);
 
             audit.record(sessionId, extractMethod(body), "allow", responseBody);
 
@@ -872,6 +880,22 @@ public class McpProxyController {
             audit.record(sessionId, extractMethod(body), "error", e.getMessage());
             return problem(HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime MCP request failed");
         }
+    }
+
+    /**
+     * PLAN-0344 T1.2 来源①②：把 start/get/cancel 的工具结果同步到 job_state 档案。
+     * best-effort（JobStateService 内部兜底异常），不影响工具派发链路。
+     */
+    private void recordJobState(LedgerAttempt ledgerAttempt, String wsId, String requestBody,
+                                String responseBody) {
+        if (ledgerAttempt == null || responseBody == null) {
+            return;
+        }
+        String toolName = extractToolName(requestBody);
+        if (toolName == null || !JOB_TOOLS.contains(toolName)) {
+            return;
+        }
+        jobStateService.applyToolResult(ledgerAttempt.itemId(), wsId, toolName, responseBody);
     }
 
     private static boolean isUserDirectMutation(HttpHeaders headers) {

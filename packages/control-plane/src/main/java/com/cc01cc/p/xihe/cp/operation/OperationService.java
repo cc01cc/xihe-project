@@ -905,6 +905,19 @@ public class OperationService {
         return operation;
     }
 
+    /**
+     * PLAN-0344 T1.2：按 item 归属校验（item → operation.userId）。
+     * 供 job-output 续看端点使用；无权与不存在同样返回 404（不泄露存在性）。
+     */
+    @Transactional(readOnly = true)
+    public OperationItem requireOwnedItem(UUID itemId, String userId) {
+        OperationItem item = items.findById(itemId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
+                        "Operation item not found"));
+        requireOwnedOperation(UUID.fromString(item.getOperationId()), userId);
+        return item;
+    }
+
     private void appendEvent(UUID operationId, String itemId, String attemptId,
                              String eventType, String state, String actor, String payload) {
         // PLAN-0317 决策 #7②：与 appendItem 相同，序号分配必须在 operation 行锁下

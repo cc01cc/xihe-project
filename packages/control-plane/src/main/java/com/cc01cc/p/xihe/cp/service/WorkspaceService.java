@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
@@ -24,8 +25,10 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.Optional;
 
@@ -51,6 +54,8 @@ public class WorkspaceService {
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
     private final String serviceToken;
+    private final JobStateService jobStateService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceUserRepository workspaceUserRepository,
@@ -58,7 +63,9 @@ public class WorkspaceService {
                             WorkspaceExecutionSpecService executionSpecService,
                             @Qualifier("runtimeCleanupRestTemplate") RestTemplate restTemplate,
                             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
-                            @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
+                            @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken,
+                            JobStateService jobStateService,
+                            com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.userRepository = userRepository;
@@ -66,6 +73,8 @@ public class WorkspaceService {
         this.restTemplate = restTemplate;
         this.runtimeUrl = runtimeUrl;
         this.serviceToken = serviceToken;
+        this.jobStateService = jobStateService;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -205,7 +214,19 @@ public class WorkspaceService {
         // delete is authoritative, and the Runtime reconciles orphan containers at
         // startup (cleanup_orphans).
         String storageRef = workspace.getStorageRef();
-        Runnable cleanup = () -> notifyRuntimeDeleteBestEffort(workspaceId, storageRef);
+        Runnable cleanup = () -> {
+            // PLAN-0344 T1.3：Runtime 在 destroying 窗口内枚举存活 job；
+            // 枚举失败（null）→ CP 把该 workspace 全部 running 档案落 orphaned
+            // （fail-closed），不留悬空 running。
+            Set<String> aliveJobIds = notifyRuntimeDeleteBestEffort(workspaceId, storageRef);
+            try {
+                jobStateService.markOrphanedForWorkspace(workspaceId, aliveJobIds);
+            } catch (RuntimeException e) {
+                logger.error(
+                        "JOB_ORPHAN_MARK_FAILED workspaceId={} reason={} (running archives stay for reconciliation)",
+                        workspaceId, e.getMessage(), e);
+            }
+        };
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
@@ -287,8 +308,11 @@ public class WorkspaceService {
      * has committed. It never throws and never blocks rollback; failures are
      * recorded with an explicit code and reconciled later by the Runtime's
      * startup orphan cleanup.
+     *
+     * @return Runtime 枚举到的存活 jobId 集合；枚举失败/调用失败时为 {@code null}
+     *         （调用方按 fail-closed 处理）
      */
-    private void notifyRuntimeDeleteBestEffort(String workspaceId, String storageRef) {
+    private Set<String> notifyRuntimeDeleteBestEffort(String workspaceId, String storageRef) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -306,11 +330,24 @@ public class WorkspaceService {
                 logger.error(
                         "RUNTIME_CLEANUP_FAILED workspaceId={} status={} (deferred to Runtime orphan reconciliation)",
                         workspaceId, response.getStatusCode());
+                return null;
             }
+            var root = objectMapper.readTree(response.getBody());
+            if (root.path("jobsEnumerationFailed").asBoolean(false)) {
+                return null;
+            }
+            Set<String> aliveJobIds = new LinkedHashSet<>();
+            for (var node : root.path("jobIds")) {
+                if (node.isTextual()) {
+                    aliveJobIds.add(node.asText());
+                }
+            }
+            return aliveJobIds;
         } catch (Exception e) {
             logger.error(
                     "RUNTIME_CLEANUP_FAILED workspaceId={} storageRef={} reason={} (deferred to Runtime orphan reconciliation)",
                     workspaceId, storageRef, e.getMessage(), e);
+            return null;
         }
     }
 
