@@ -11,17 +11,16 @@ updated: 2026-09-17
 
 # DEV-015: Runtime 架构
 
-> Rust 1.97.1（edition 2024）+ rmcp 3.1.4 + Axum + Tokio + bollard。Runtime 负责实际文件、命令、容器和 MCP bridge 执行；CP 负责元数据、授权与健康。端口：宿主 12633（Docker 内 8001）；`/health` = liveness，`/ready` = readiness（不等全部 Sandbox 物化）。
+> Rust 1.97.1（edition 2024）+ rmcp 3.1.4 + Axum + Tokio + bollard。Runtime 负责实际文件、命令、容器和 stdio MCP 会话执行；CP 负责元数据、授权与健康。端口：宿主 12633（Docker 内 8001）；`/health` = liveness，`/ready` = readiness（不等全部 Sandbox 物化）。
 
-## 1. 三 binary
+## 1. 两 binary
 
 | Binary | 位置 | 职责 |
 |--------|------|------|
-| `xihe-runtime` | host Gateway 主进程 | 注册 `/workspace/{ws_id}/mcp` 等路由；Workspace 操作经 `WorkspaceExecutionRouter` 转 per-request Docker exec |
-| `xihe-container-runtime` | 容器内（镜像预装） | `--oneshot` 模式：stdin 单 operation JSON → stdout 单 result JSON；宿主读取首个完整 result JSON 后关闭 stdin，EOF 是清理边界；处理文件/命令工具与 `/tmp/xihe-jobs` 后台任务 |
-| `xihe-mcp-bridge` | 容器内（镜像预装） | STDIO bridge：用户 STDIO MCP server ↔ HTTP（`POST /{server_id}`，30s 超时 / 1MB 缓冲；`/_spawn`、`/_kill/{id}`、`/_health` 管理端点） |
+| `xihe-runtime` | host Gateway 主进程 | 注册 `/workspace/{ws_id}/mcp` 等路由；Workspace 操作经 `WorkspaceExecutionRouter` 转 per-request Docker exec；stdio MCP 会话经 `mcp_session.rs`（exec attach 直连，PLAN-0347） |
+| `xihe-container-runtime` | 容器内（镜像预装） | `--oneshot` 模式：stdin 单 operation JSON → stdout 单 result JSON；宿主读取首个完整 result JSON 后关闭 stdin，EOF 是清理边界；处理文件/命令工具与 `/tmp/xihe-jobs` 后台任务（HTTP daemon 已退役） |
 
-> 两者平行无调用：bridge 不调 container-runtime，container-runtime 无 HTTP server，唯一交集是同住一个容器（端到端工具路径见 DEV-016）。remote MCP 不进容器，走 host 出网（身份校验，不建容器）。
+> `xihe-mcp-bridge` 已随 PLAN-0347 退役（容器内 HTTP 服务 + 发布端口/容器 IP 全部删除）：stdio MCP 改为宿主 `exec attach` 长驻会话直连（状态机/预算/按 id 配对/kill 回收见 `mcp_session.rs` 与 `spec/session-lifecycle.md`）。remote MCP 不进容器，走 host 出网（身份校验，不建容器）。
 
 ## 2. 执行边界（PLAN-235）
 

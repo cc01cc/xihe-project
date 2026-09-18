@@ -20,7 +20,7 @@
 | CP 框架 | Spring Boot 4 + Spring Security + Spring Data JPA | 4.0.6 |
 | Agent 框架 | FastAPI + LangChain + LangGraph + litellm | — |
 | Runtime 框架 | rmcp + Axum + Tokio + bollard | 3.1.4 / 0.8.9 / 1.53.1 / 0.21.1 |
-| Runtime binary | `xihe-runtime`（Gateway）、`xihe-container-runtime`（容器内文件服务）、`xihe-mcp-bridge`（容器内 STDIO bridge） | 统一 `xihe-` 前缀 |
+| Runtime binary | `xihe-runtime`（Gateway）、`xihe-container-runtime`（容器内文件服务，oneshot CLI） | 统一 `xihe-` 前缀；`xihe-mcp-bridge` 已随 PLAN-0347 退役 |
 | 数据库 | PostgreSQL 17 + pgvector | — |
 | 工具链 | Node 24 / pnpm 10 / Maven 3.9 / uv / task 3 / Docker | — |
 
@@ -135,7 +135,7 @@ packages/
 - **配置（ConfigService）**：三层作用域 `instance / workspace / user`（域集合 `instance ⊇ user ⊇ workspace`），解析链 `workspace > user > instance > 代码默认`，env 为部署权威（命中即锁定并显式暴露）。凭证 BYOK 两级 `WORKSPACE > USER`（`provider_connections` 加密表；`SYSTEM` 归属已退役，见 PLAN-0364 M2）；config 层任何 `*ApiKey` 写入一律 `rejectProviderSecrets` 403。`mcp` 域拆 `mcp_stdio_servers` / `mcp_remote_servers` 两载体；`infrastructure` / `workspace-config` 域已撤。`pricing` 域（PLAN-0343）为 instance-only 计价权威（per-MTok；user/workspace 层写入即 400）。
 - **Provider 共享**：Agent 不逐层拼装实例密钥；CP `GET /internal/v1/config/effective/{domain}` 提供单份 effective（含 env 覆盖），user/workspace 覆盖随 run payload push；凭证由 `provider_connections` 租约下发，env 兜底仅限离线/无租约路径。
 - **Agent 接口抽象**：`AgentRunner`（`LangGraphRunner` 实现）、`BaseAgentTool`/`ToolSpec`、`EventAdapter`（→ SSE `AgentEvent`）、`LLMProvider`、`EventStore`/`AgentContext`；LangChain/LangGraph 实现必须隔离在接口之后。
-- **Runtime / Sandbox 边界**：控制面（CP：workspace 元数据/授权/健康/降级）与执行面（Runtime：文件/命令/容器/MCP bridge）分离，进程保活由外部 orchestrator（Docker/mise watcher）负责。`/health` 仅进程存活、`/ready` 不等待全部 Sandbox 物化，Workspace 按 `workspaceId` 懒加载。单 Runtime/单设备 v1 不以 registration/heartbeat/generation/warm pool/microVM/多设备接管为前置条件。未知 workspace、Docker 不可用、执行超时必须显式失败，禁止默认目录或静默降级掩盖状态丢失。远程 MCP 仅经 CP logical endpoint，禁止跨 workspace 复用已发现工具。CP→Runtime 调用恒有界（connect 2s / read 10s，超时走既有显式降级，禁 host fallback）；工作区删除以 DB 逻辑删除为权威，Runtime 沙盒清理在事务提交后 best-effort（失败记 `RUNTIME_CLEANUP_FAILED`，孤儿容器由 Runtime 启动期 `cleanup_orphans` 兜底）。**沙盒后端须可替换**：执行层抽象建在能力（execute/session/fs/lifecycle）而非 Docker 传输，禁止把 `docker exec`/容器 IP/端口发布/`network_mode`/容器内 pid 文件/沙盒内 HTTP 服务泄漏到执行层之上（设计原则见 `sandbox-backend-abstraction` skill；**契约与能力声明见 DEV-031**，泄漏审计记录见 PLAN-0329）。
+- **Runtime / Sandbox 边界**：控制面（CP：workspace 元数据/授权/健康/降级）与执行面（Runtime：文件/命令/容器/stdio MCP 会话）分离，进程保活由外部 orchestrator（Docker/mise watcher）负责。`/health` 仅进程存活、`/ready` 不等待全部 Sandbox 物化，Workspace 按 `workspaceId` 懒加载。单 Runtime/单设备 v1 不以 registration/heartbeat/generation/warm pool/microVM/多设备接管为前置条件。未知 workspace、Docker 不可用、执行超时必须显式失败，禁止默认目录或静默降级掩盖状态丢失。远程 MCP 仅经 CP logical endpoint，禁止跨 workspace 复用已发现工具。CP→Runtime 调用恒有界（connect 2s / read 10s，超时走既有显式降级，禁 host fallback）；工作区删除以 DB 逻辑删除为权威，Runtime 沙盒清理在事务提交后 best-effort（失败记 `RUNTIME_CLEANUP_FAILED`，孤儿容器由 Runtime 启动期 `cleanup_orphans` 兜底）。**沙盒后端须可替换**：执行层抽象建在能力（execute/session/fs/lifecycle）而非 Docker 传输，禁止把 `docker exec`/容器 IP/端口发布/`network_mode`/容器内 pid 文件/沙盒内 HTTP 服务泄漏到执行层之上（设计原则见 `sandbox-backend-abstraction` skill；**契约与能力声明见 DEV-031**，泄漏审计记录见 PLAN-0329）。**PLAN-0347 已落地首版接缝**：`backend.rs` 的 `SandboxBackend`（Docker 单实现、资源能力声明 + fail-closed）与生命周期唯一写入口；stdio MCP 会话见 `mcp_session.rs`（会话按 `(workspace, serverId)` 共享、执行层之上零 Docker 概念）。
 - **生命周期（PLAN-0345 已落地）**：六态权威状态机（`creating/ready/paused/stopped/failed/destroying`）经 `runtime/src/lifecycle.rs` `Lifecycle` 单一写路径；Registry 为可重建缓存；paused→unpause 激活（禁 force recreate）；destroying 窗口迟到 materialize → 409 `WORKSPACE_DESTROYING`（CP 透传）。新增生命周期代码必须走 `Lifecycle`，禁止直接写 `WorkspaceRegistry` 状态。隔离引擎升级仍属后续。详见 DEV-015。
 
 ## Code Style
@@ -218,7 +218,7 @@ Route/SSE/Flyway/tool-surface changes must update the OpenAPI contract or route/
 
 ## MCP/OAuth Boundary
 
-- Agent 只连接 CP logical MCP endpoint，不直接访问 Runtime、workspace bridge 或远程 MCP。
+- Agent 只连接 CP logical MCP endpoint，不直接访问 Runtime、stdio MCP 会话或远程 MCP。
 - Canonical HTTP contract is `docs/api/openapi.yaml`; public routes use `/api/v1`, service routes use `/internal/v1`, and all service calls use `Authorization: Bearer`.
 - Xihe-owned JSON uses camelCase and RFC 9457 Problem Details (`code` and `requestId`); MCP JSON-RPC and OAuth wire fields remain protocol-defined.
 - CP 负责 OAuth Authorization Code + PKCE、workspace/server 授权、refresh token envelope encryption、refresh/revoke 和 token broker。

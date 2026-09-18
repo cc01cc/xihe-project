@@ -61,6 +61,8 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | Runtime | job status / job output read (internal) | `/internal/v1/runtime/workspaces/{workspaceId}/jobs/status`, `/internal/v1/runtime/workspaces/{workspaceId}/jobs/output` | service Bearer | CP job 续看端点与 running 对账（PLAN-0344；字节游标 + UTF-8 边界由 Runtime 保证，`available=false` 表示 job/输出缺失） |
 | Runtime | `/runtime/heartbeat` | `/internal/v1/runtime/heartbeat` | service Bearer | Runtime heartbeat |
 | Runtime | `/remote-mcp/{workspaceId}/{serverId}/call` | `/internal/v1/runtime/remote-mcp/{workspaceId}/{serverId}/call` | service Bearer | CP |
+| Runtime | stdio MCP session call | `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}` | service Bearer | CP MCP 代理（PLAN-0347：exec attach 直连会话；错误码 `MCP_SESSION_UNAVAILABLE/FAILED/BUSY`） |
+| Runtime | stdio MCP session snapshots | `GET /internal/v1/runtime/workspaces/{workspaceId}/mcp/servers`、`DELETE .../servers/{serverId}` | service Bearer | 运维/测试与后续 CP/UI 状态面（PLAN-0347；spawn 端点已退役 410） |
 | CP | `/workspaces/{workspaceId}/environment` | `/api/v1/workspaces/{workspaceId}/environment` | user Bearer | UI environment status view |
 | CP | `/workspaces/{workspaceId}/materialize` (proxy, 202) | `/api/v1/workspaces/{workspaceId}/materialize` | user Bearer | UI Prepare button (PLAN-262 M4) |
 | Agent | `/chat`, `/rag/**`, `/approval/**`, `/mcp/reinit`, `/registry/**` | `/internal/v1/agent/...` equivalent | service Bearer | CP/admin service; approval response/status are never browser routes; chat payload carries CP-resolved `userOverrides`/`workspaceOverrides` (PLAN-0307 T2.7, env-locked keys excluded, merged per run without side effects) |

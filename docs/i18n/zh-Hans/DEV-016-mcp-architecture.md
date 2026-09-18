@@ -1,6 +1,6 @@
 ---
 title: DEV-016 - MCP 三层路由架构设计
-description: MCP 请求从 Agent 到 Runtime 的三层路由设计，含 CP 路由、Gateway 分发、容器内 bridge 执行。
+description: MCP 请求从 Agent 到 Runtime 的路由设计，含 CP 路由、Gateway 分发与 stdio 会话执行（PLAN-0347 起容器内 bridge 退役）。
 category: dev-guide
 lang: zh-Hans
 sidebar_group: "开发指南"
@@ -14,11 +14,11 @@ updated: 2026-09-12
 
 ## 1. 概述
 
-MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整路径经过三层路由：
+MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整路径经过路由：
 
 1. **CP McpProxyController** — 认证 + tool-name-based 路由
 2. **Runtime Gateway** — per-workspace 分发
-3. **容器内 bridge** — STDIO 子进程管理
+3. **stdio 会话（PLAN-0347）** — 宿主 `exec attach` 直连容器内 MCP server 进程（无容器内 HTTP bridge；会话 = 状态机 + 预算 + FIFO 单飞）
 
 > **协议版本说明**：当前采用 MCP `Protocol-Version: 2026-07-28`（rmcp 3.1.4，SEP-2567），Runtime 侧按该协议全程**无会话（stateless）**。因此 CP 转发 `tools/list` / `tools/call` 到 Runtime 时必须携带 `Mcp-Method` 与 `Mcp-Name` HTTP 头（见提交 `a9923e3`）；缺失会导致系统工具列表为空、`UNKNOWN_TOOL`。会话态仍存在的是 CP↔Agent 之间的 `mcp-session-id` HMAC 签名（见 §2 与根 `AGENTS.md` Known Issues），二者不冲突。
 
@@ -39,18 +39,18 @@ flowchart TD
     subgraph GW["Runtime Gateway (Rust / Axum)"]
         G1["/mcp (any): 系统工具调用"]
         G2["/remote-mcp/{ws}/{server}/call (POST): 远程 MCP (身份校验, 不建容器)"]
-        G3["/mcp/spawn (HTTP 预留 deprecated, 实际由轮询驱动)<br/>/mcp/stdio/{id} (POST 调用)"]
-        G4["配置轮询 30s: GET /internal/v1/workspaces/{wsId}/stdio-servers, diff 后管理"]
+        G3["/mcp/servers (GET 快照) · /mcp/servers/{id} (DELETE 停会话)<br/>/mcp/stdio/{id} (POST 调用，exec attach 转发)"]
+        G4["配置轮询 30s: GET /internal/v1/workspaces/{wsId}/stdio-servers, reconcile 会话"]
     end
     subgraph SB["容器 xihe-workspace-ws_{id}"]
         S1["container-runtime --oneshot<br/>stdin 单 operation JSON → stdout 单 result JSON<br/>首帧响应后宿主关闭 stdin，EOF 为清理边界 · 文件操作 + 显式 Shell + /tmp/xihe-jobs<br/>无 HTTP server / 无端口发布 / 无 instance token"]
-        S2["mcp-bridge: POST /{server_id} → STDIN → STDOUT<br/>streaming resp · 30s 超时 / 1MB 缓冲<br/>health check · auto-restart"]
+        S2["stdio MCP 会话：exec attach (非 TTY, 换行 JSON-RPC)<br/>状态机 · 预算退避冷却 · FIFO 单飞 · ps 固定串 kill<br/>无 HTTP server / 无端口发布 / 无 pid 文件"]
         S3["STDIO 子进程 (npx, docker, python 等)"]
     end
     A1 --> C1 --> C2 --> C3 --> C4 --> G1 & G2 & G3 --> S1 & S2 --> S3
 ```
 
-锚点：`McpProxyController.java`、`main.rs: 路由注册`、`mcp_bridge.rs`、`mcp_process.rs: CONFIG_POLL_INTERVAL`。无 HTTP container-runtime 通道、无 instance token（exec 本身即认证边界，PLAN-235）。
+锚点：`McpProxyController.java`、`main.rs: 路由注册`、`mcp_session.rs`（CONFIG_POLL_INTERVAL / 状态机）、`spec/session-lifecycle.md`。无 HTTP container-runtime 通道、无 instance token（exec 本身即认证边界，PLAN-235）；无容器内 bridge、无发布端口/容器 IP（PLAN-0347）。
 
 ## 3. 数据传输流
 
@@ -78,7 +78,7 @@ sequenceDiagram
   alt 系统工具
     CP->>RT: /mcp → exec 进 Sandbox 执行
   else STDIO 用户工具
-    CP->>RT: /mcp/stdio/{id} → bridge STDIN/STDOUT
+    CP->>RT: /mcp/stdio/{id} → 会话 exec attach STDIN/STDOUT（按 id 配对；无 id 通知旁路）
   else remote 工具
     CP->>RT: /remote-mcp/{ws}/{server}/call → host 出网 (身份校验, 不建容器)
   end
@@ -90,30 +90,31 @@ sequenceDiagram
 | 决策 | 选择 | 理由 |
 |------|------|------|
 | MCP transport | Streamable HTTP | MCP 社区已废弃 SSE |
-| STDIO 桥接方式 | Rust bridge binary | shell 无法处理 JSON-RPC streaming |
-| Bridge 部署 | 多阶段构建进 workspace 镜像（builder 编译双 binary + COPY） | 无 bind mount |
+| STDIO 承载方式 | 宿主 `exec attach` 长驻会话（PLAN-0347） | 桥 HTTP+端口是 Docker-only 泄漏且 native Windows 不可达；会话层对 MCP 协议透明 |
+| STDIO 部署 | 无容器内组件（会话直连 MCP server 进程） | 少一个镜像内 binary 与一层跳转 |
 | 路由策略 | tool-name based（三路：系统 / stdio / remote，`McpServer` 表命中即 remote） | Agent 无需感知 server_id |
 | 工具冲突 | sticky：system 裸名优先，冲突仅新者加 `serverId__` 前缀，映射落盘永不晋升 | 无冲突零改名；历史按 `(serverId, backendName, generation)` 回放 |
 | serverId 来源 | 双源：STDIO 为用户配置键透传，remote 为 `mcp_remote_servers` 表行 | 无 id 生成器；表命中优先于 JSON key |
 | remote 执行 | 身份校验（Spec 存在性 + 授权），不建容器；unknown 显式失败 | 防越权/计费逃逸；SSRF 靠 allowlist + DNS |
 | remote 认证 | `authMode: oauth/no-auth`；no-auth 跳过 broker（多余 Bearer 经实测被忽略） | 公开 server 免 OAuth |
-| spawn 状态 | HTTP 三端点 deprecated 预留，实际由 30s 轮询自同步驱动 | 删逻辑前需确认 admin/排障依赖 |
+| spawn 状态 | 已退役（410 `MCP_SESSION_ENDPOINT_RETIRED`）；会话由 30s 轮询 + 调用惰性管理 | PLAN-0347 决策 #12/#18；无已知调用方 |
 | 配置格式 | Claude Desktop JSON textarea（混合入口 `mcp-config` 按字段拆分：stdio / remote） | 业界标准，用户直接复制粘贴 |
 | 配置存储 | `mcp_stdio_servers`（workspace_id + name + config JSONB，决策 #27） | 类型校验 + 索引支持；与 config 三层解耦 |
 | workspace 隔离 | task-local（非 env var） | 支持多 workspace 单进程 |
 | 向后兼容 | 无 | 所有组件同步升级 |
 | LLM 可见性 | workspace_id 透明 | 基础设施关注点不泄漏到 LLM 层 |
 
-## 5. bridge binary 设计要点
+## 5. stdio 会话设计要点（PLAN-0347）
 
-`xihe-mcp-bridge` 是容器内的轻量 HTTP 服务器，负责将 STDIO 子进程暴露为 HTTP 端点。
+`mcp_session.rs` 为每个 `(workspace, serverId)` 维护一条长驻 `exec attach` 会话，直接运行 MCP server 进程。
 
-- 每个子进程由一个 `Mutex` 保护，串行化 STDIO 访问
-- 响应为 streaming（`tokio::sync::mpsc` + `Body::from_stream`），逐行 flush
-- 30s 读取超时（超时后丢弃 reader，pipe 关闭后子进程收到 SIGPIPE）
-- 1MB 缓冲区上限
-- 管理端点：`/_spawn`、`/_kill/{id}`、`/_health`
-- 用户端点：`POST /{server_id}`
+- 状态机：`starting / ready / restarting(n) / failed / stopped`；迁移写结构化日志 `mcp_session_transition`
+- 重试：同一故障周期预算 3 次、退避 1/5/15s；超限 `failed` + 冷却 5 分钟（半开）
+- 并发：同 key FIFO 单飞；排队超上限 `MCP_SESSION_BUSY`；调用取消只作用于自身，不杀会话（决策 #20）
+- 配对：响应按 JSON-RPC `id`；无 id 通知（如 `notifications/tools/list_changed`）旁路记录
+- 终止：容器内 `ps` 固定串匹配 + `kill`（SIGTERM → SIGKILL）；`inspect_exec` pid 属宿主命名空间不可用于容器内 kill；EOF 不保证退出
+- 回收：容器重建/evict/destroy → `cleanup_workspace`；Runtime 启动期 `cleanup_orphans` 兜底
+- 边界：帧上限双向 1MiB；stderr 脱敏进日志；会话不跨 workspace 复用
 
 ## 6. 配置同步
 
@@ -121,7 +122,7 @@ sequenceDiagram
 用户 → UI workspace 层 MCP 编辑器 → PUT /api/v1/workspaces/{wsId}/mcp-config（混合入口）
   → CP: 校验 JSON → 按字段拆分：stdio 写入 mcp_stdio_servers；remote 走 mcp_remote_servers
   → Runtime 每 30s: GET /internal/v1/workspaces/{wsId}/stdio-servers（generation/hash/servers，Bearer service token）
-  → Runtime: diff 当前 bridge 列表 → spawn/stop
+  → Runtime: reconcile 会话（spec 变化/删除 → 停；首次调用惰性建会话）
 ```
 
 stdio 配置的公开/内部契约（`generation` 乐观锁 + `hash`）见 `docs/api/openapi.yaml` 与 `docs/api/inventory.md`；remote server 走 `mcp_remote_servers` 表（类名 `McpServer.java` 保留，决策 #38②）：`workspaceId/name/endpoint/authConfig/enabled/authMode`，CP 按表判定分流，Runtime 经 CP broker 取短期 token（no-auth 跳过）。混合入口读侧只回传非敏感字段（remote 仅 `url`/`type`，OAuth 元数据不回传）。
@@ -130,11 +131,11 @@ stdio 配置的公开/内部契约（`generation` 乐观锁 + `hash`）见 `docs
 
 | 层级 | 内容 | 命令 |
 |------|------|------|
-| Unit | bridge spawn/conflict/kill | `cargo test --bin xihe-mcp-bridge` |
+| Unit | 会话状态机/预算/配对/kill 命令 | `cargo test --lib -- mcp_session::` |
 | Unit | Gateway 路由转发 | `cargo test --lib`（计数以实测为准） |
 | Unit | CP McpProxyController | `mvn test -Dtest=McpProxyTest` |
 | Unit | MCP 配置（ConfigSettings） | `pnpm vitest run` |
-| Integration | 真实 bridge 进程 | `cargo test --test bridge_integration_test` |
+| Integration | 真容器会话（惰性建/自愈/清理） | `cargo test --test mcp_session_test` |
 | E2E | Settings 页截图 | `npx playwright test e2e/real/settings-visual.spec.ts` |
 
 ### 7.1. Agent 手动验证 runbook（PLAN-242 补充）
@@ -153,11 +154,10 @@ stdio 配置的公开/内部契约（`generation` 乐观锁 + `hash`）见 `docs
 | 文件 | 说明 |
 |------|------|
 | `packages/agent/.../mcp_client.py` | Agent MCP client（StreamableHttpConnection） |
-| `packages/runtime/src/mcp_bridge.rs` | 容器内 xihe-mcp-bridge binary |
-| `packages/runtime/src/container_runtime.rs` | 容器内 xihe-container-runtime binary（文件操作 + 命令执行） |
-| `docker/images/workspace/Dockerfile` | xihe/workspace 容器镜像多阶段构建 |
-| `packages/runtime/src/mcp_process.rs` | Gateway 侧 STDIO 管理 |
-| `packages/runtime/src/workspace.rs` | 容器 + bridge 生命周期 |
+| `packages/runtime/src/mcp_session.rs` | stdio MCP 会话（exec attach 直连；替代已退役的 bridge） |
+| `packages/runtime/src/container_runtime.rs` | 容器内 xihe-container-runtime binary（文件操作 + 命令执行，oneshot） |
+| `docker/images/workspace/Dockerfile` | xihe/workspace 容器镜像多阶段构建（PLAN-0347 起不再构建 bridge） |
+| `packages/runtime/src/workspace.rs` | 容器生命周期（bridge 相关机制已删除） |
 | `packages/runtime/src/main.rs` | 路由注册 + 配置轮询 |
 | `packages/control-plane/.../McpProxyController.java` | CP 层路由代理（三路分流 + sticky 合并） |
 | `packages/control-plane/.../entity/McpServer.java`（表 `mcp_remote_servers`，`authMode`） | remote server 行（含 no-auth 标记；类名保留，决策 #38②） |

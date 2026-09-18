@@ -37,10 +37,10 @@ src/
 ├── fs.rs              # 文件系统操作（rustix openat2 helper）
 ├── sandbox.rs         # 沙盒实现（artifact store，BackgroundProcess frozen v1 schema）
 ├── workspace.rs       # 容器 + bridge 生命周期（Strict network-none + per-request exec）
-├── container_runtime.rs # 容器内 xihe-container-runtime（oneshot CLI + /tmp/xihe-jobs）
+├── container_runtime.rs # 容器内 xihe-container-runtime（oneshot CLI + /tmp/xihe-jobs；HTTP daemon 已退役）
 ├── inventory.rs       # 启动时 negative fallback 扫描
-├── mcp_process.rs     # Gateway 侧 STDIO 管理
-├── mcp_bridge.rs      # 容器内 xihe-mcp-bridge binary
+├── backend.rs         # SandboxBackend 接缝（ensure/destroy/execute/capabilities；Docker 单实现）
+├── mcp_session.rs     # stdio MCP 会话（exec attach 直连；状态机/预算/kill 回收）
 ├── remote_mcp.rs      # 远程 MCP 出网
 ├── ws_file_handler.rs # workspace 文件处理
 ├── fetch.rs           # HTTP 出网
@@ -61,10 +61,10 @@ src/
 - 捕获锁与恢复锁均为短锁（fail-fast，不排队），**无 run 长租约**；恢复期间不锁写，与目标切片不符的路径在结果中标注 `suspects`；排除路径在捕获与恢复中零触碰。host Git 不可用、版本过旧或 workspace 不明时返回显式 degraded/unavailable（不静默回退）；捕获后仅 best-effort retention GC（按切片数 N=50 + TTL 30 天）。嵌套仓库按不透明 gitlink 声明；可选硬限制开关 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS`（默认关，开启时 `NESTED_REPO_LIMIT` 显式降级）。
 - 容器内的 `create_snapshot`/`revert_snapshot` legacy snapshot 操作已随 PLAN-0357 删除；Run checkpoint 只由 host-side shadow Git 提供。
 - FS 写路径在容器内经 `rustix::fs::openat2`（`RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`）包住 create/open/rename/copy；内核不支持时 blocked。
-- STDIO MCP 传输按 newline-delimited JSON-RPC 分帧：bridge 转发 HTTP body 时必须补写 `\n` 完成帧，按单行读取响应（不能读到 EOF——STDIO server 调用间不退出），stdout 句柄持久持有供后续调用复用（`take()` 会让第二次调用永久失败）。MCP 2026-07-28（SEP-2567）为无会话协议，上游不返回 `Mcp-Session-Id`，网关侧不得强制要求 session。
+- STDIO MCP 传输（PLAN-0347）：宿主经 `exec attach` 与容器内 MCP server 直连（非 TTY、换行分隔 JSON-RPC），无容器内 HTTP bridge、无发布端口/容器 IP。会话按 `(workspace, serverId)` 共享（不绑定调用者），v1 FIFO 单飞；响应按 JSON-RPC `id` 配对，无 id 通知旁路记录；帧上限双向 1MiB；调用间不能读到 EOF（server 不退出），进程终止用容器内 `ps` 固定串匹配 + `kill`（`inspect_exec` pid 属宿主命名空间、EOF/关写端不保证退出）。MCP 2026-07-28（SEP-2567）为无会话协议，上游不返回 `Mcp-Session-Id`，网关侧不得强制要求 session。
 - 启动时只完成 Runtime 自身 liveness/readiness；通过 Bearer 按 `workspaceId` 定向获取 `WorkspaceExecutionSpec`，首次文件/命令/MCP 操作时再 materialize Workspace Sandbox。
 - Sandbox Container 创建、重建和删除只处理临时执行实体，必须保留 WorkspaceStorage 文件。
-- Strict Sandbox 使用 `network_mode=none`，不发布端口，Workspace 操作同样经 per-request exec；Coding/Isolated 的 loopback 端口仅保留用于健康检查，不用于 Workspace 操作。
+- Strict Sandbox 使用 `network_mode=none`；所有 Workspace 操作与 stdio MCP 会话都经 per-request exec / exec attach，不发布任何端口（PLAN-0347 后 39001/39000 全部退役）。
 - Handler 级 Fake 门：`main.rs` 内 `#[cfg(test)]` 模块直调 handler，stub CP（execution-spec）+ stub Fake MCP（127.0.0.1 随机端口，需 `XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL=true`），断言结果 + 注册表无容器 + `list_workspaces()` 为空；无 Docker 下最强的完成证据（见 `remote_handler_tests`）。
 
 ## Permissions

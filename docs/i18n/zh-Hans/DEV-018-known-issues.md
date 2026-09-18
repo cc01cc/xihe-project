@@ -68,7 +68,7 @@ updated: 2026-09-06
 - **Playwright 视觉审查规则**: 在推进 UI 截图前必须先完成一轮真实 chat（发送 → assistant 回复 → 截图）；视觉审查不能只看 accessibility snapshot，必须人工复核截图。
 - **Agent MCP lazy init**: Agent 启动阶段不会连接 CP MCP；纯 chat 即使带 current workspace 也不触发工具发现，只有明确需要 Workspace tool 的请求才触发 MCP/Sandbox。当前最小边界按单默认 workspace，其他 workspace 不复用已发现的远程工具。
 - **RAG embedding 未配置**: `embedding` provider 没有 API key 时，chat 会跳过 RAG enrichment；RAG ingest/search 明确返回 `503`，不会为每条 chat 发送无凭据的 embedding 请求。
-- **Runtime 日志**: host 侧 `logs/runtime.log.<YYYY-MM-DD>`（按日滚动）；容器内 `xihe-container-runtime` / `xihe-mcp-bridge` 各写自有按日文件；CP/Agent/UI 用稳定 `logs/<module>.log`，host watcher 用 `logs/host.log`。
+- **Runtime 日志**: host 侧 `logs/runtime.log.<YYYY-MM-DD>`（按日滚动）；容器内 `xihe-container-runtime` 按日文件（`xihe-mcp-bridge` 已随 PLAN-0347 退役）；CP/Agent/UI 用稳定 `logs/<module>.log`，host watcher 用 `logs/host.log`。
 - **Host E2E data/readiness**: `test:e2e:host` 每轮使用独立 PostgreSQL 和 host root，在 Playwright 前等待 Runtime `/ready`。成功、失败和中断都必须 teardown 并反向确认无本轮用户、Workspace、Session、ExecutionSpec、Sandbox 或文件残留；不得把长期 dev DB 作为 Host E2E 数据源。
 - **Screenshot reproducibility**: A03 当前忽略 `*-snapshots/*.png`，本地 baseline 需要预先生成；`toHaveScreenshot()` 通过不等于人工 UI 审查通过，也不等于 fresh checkout 能复现视觉结果。
 - **Runtime CWD 测试**: `dotenv_loader` 测试会临时切换 process CWD，测试 helper 已用 mutex 串行化；默认并行 `cargo test --lib` 可稳定运行。
@@ -84,7 +84,7 @@ updated: 2026-09-06
 
 ## PLAN-0327 已修复边界
 
-- **STDIO bridge 生命周期（CHN-2/3/4）**：配置轮询失败（连接错/非 2xx/解析失败）现返回 `Err` 并跳过该 workspace 的 reconcile，**不再被当作"配置为空"停掉在跑 bridge**；删除失效的空闲回收（只删内存记账、不杀容器进程）与零调用宿主健康循环；起 bridge 前先按 pid 文件终止残留进程，消除宿主重启后的孤儿 bridge。
+- **stdio MCP 会话（PLAN-0347 起，替代 bridge）**：配置轮询失败（连接错/非 2xx/解析失败）返回 `Err` 并跳过该 workspace reconcile，**不得被当作"配置为空"停会话**；会话按 `(workspace, serverId)` 共享、FIFO 单飞，预算 3 次 + 退避 1/5/15s + 冷却 5 分钟（半开）；终止用容器内 `ps` 固定串 kill（`inspect_exec` pid 属宿主命名空间、EOF 不保证退出）；容器重建/evict 后会话表清理，首调/轮询惰性重建。原 bridge 生命周期问题（CHN-2/3/4）随之关闭。
 - **CP→Runtime 调用超时（CHN-5）**：CP 端 `RestTemplate` 加 connect 2s / read 10s（该 bean 仅 CP→Runtime 调用点消费），Runtime 半死（TCP 可连不响应）不再悬挂 CP 请求线程；超时走各调用点既有显式降级（状态 `blocked`、文件/上下文 `Optional.empty`/`false`），无 host fallback。
 - **工作区删除语义（STO-1）**：Runtime 清理移出事务、在提交后 best-effort 执行；失败记 `RUNTIME_CLEANUP_FAILED` 日志（含 stacktrace），DB 逻辑删除为权威，接口恒返回 `204`（与 OpenAPI 一致；旧实现返回未文档化的 `502`）。孤儿沙盒容器由 Runtime 启动期 `cleanup_orphans` 兜底。
 - **Agent 配置（CFG-1/2/3）**：修复 llm-ready 守卫读死键 `effective`（改读 `status`），fail-closed 恢复生效；非必需域瞬断保留上一份有效值并在 `SyncReport.degraded` + 日志上报，不再整体替换缓存导致静默丢配置；user 层 `embedding`/`rag`/`agent-runtime` 覆盖随 run payload（`userOverrides`/`workspaceOverrides`）送达 Agent（`context-policy`/`user-preference` 无 Agent 读取点，不纳入）。
