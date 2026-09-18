@@ -48,6 +48,7 @@ use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
 use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::heartbeat;
 use xihe_runtime::hydrate::WorkspaceEnsurer;
+use xihe_runtime::lifecycle::LifecycleState;
 use xihe_runtime::mcp_process;
 use xihe_runtime::mcp_process::McpProcessManager;
 use xihe_runtime::remote_mcp::{
@@ -1778,7 +1779,7 @@ async fn workspace_materialize_handler(
     // PLAN-262 M4 P0 / PLAN-274: state is written before spawn so the 202
     // response never races a missing status. Failures mark Failed instead of
     // leaving Materializing forever.
-    app.registry.mark_materializing(&ws_id).await;
+    app.lifecycle.begin_materialize(&ws_id).await;
     let app_clone = Arc::clone(&app);
     let ws_id_clone = ws_id.clone();
     tokio::spawn(async move {
@@ -1815,8 +1816,8 @@ async fn workspace_materialize_handler(
                     error
                 );
                 app_clone
-                    .registry
-                    .mark_failed(&ws_id_clone, &error.to_string())
+                    .lifecycle
+                    .fail_materialization(&ws_id_clone, &error.to_string())
                     .await;
             }
         }
@@ -2528,8 +2529,12 @@ async fn run() -> anyhow::Result<()> {
 
     let registry = Arc::new(WorkspaceRegistry::new());
     let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
-    let workspace_ensurer = Arc::new(WorkspaceEnsurer::from_env(
+    let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
         registry.clone(),
+        Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+    ));
+    let workspace_ensurer = Arc::new(WorkspaceEnsurer::from_env(
+        lifecycle.clone(),
         manager.clone(),
     ));
     let router = Arc::new(WorkspaceExecutionRouter::new(
@@ -2563,17 +2568,13 @@ async fn run() -> anyhow::Result<()> {
     }
 
     let readiness = Arc::new(AtomicBool::new(true));
-    let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
-        registry.clone(),
-        Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
-    ));
     let app_state = Arc::new(AppState {
         registry: registry.clone(),
         manager: manager.clone(),
         device_id: device_id.clone(),
         workspace_ensurer: workspace_ensurer.clone(),
         router: router.clone(),
-        lifecycle,
+        lifecycle: lifecycle.clone(),
         checkpoints: Arc::new(
             CheckpointService::new(runtime_checkpoint_host_root())
                 .with_nested_repo_policy(runtime_checkpoint_nested_repo_policy()),
@@ -2613,6 +2614,7 @@ async fn run() -> anyhow::Result<()> {
     }
 
     let reaper_registry = registry.clone();
+    let reaper_lifecycle = lifecycle.clone();
     let reaper_manager = manager.clone();
     let reaper_router = router.clone();
     let reaper_cp_url =
@@ -2623,6 +2625,7 @@ async fn run() -> anyhow::Result<()> {
     tokio::spawn(async move {
         idle_reaper_loop(
             reaper_registry,
+            reaper_lifecycle,
             reaper_manager,
             reaper_router,
             reaper_cp_url,
@@ -2634,12 +2637,14 @@ async fn run() -> anyhow::Result<()> {
 
     let mcp_manager = mcp_manager();
     let cp_poll_registry = registry.clone();
+    let cp_poll_lifecycle = lifecycle.clone();
     let cp_poll_workspace_manager = manager.clone();
     let poll_ct = ct.child_token();
     tokio::spawn(async move {
         mcp_config_poll_loop(
             mcp_manager,
             cp_poll_registry,
+            cp_poll_lifecycle,
             cp_poll_ensurer,
             cp_poll_workspace_manager,
             poll_ct,
@@ -2775,6 +2780,7 @@ async fn run() -> anyhow::Result<()> {
 async fn mcp_config_poll_loop(
     manager: &'static mcp_process::McpProcessManager,
     registry: Arc<WorkspaceRegistry>,
+    lifecycle: Arc<xihe_runtime::lifecycle::Lifecycle>,
     ensurer: Arc<WorkspaceEnsurer>,
     workspace_manager: Arc<Mutex<WorkspaceManager>>,
     ct: tokio_util::sync::CancellationToken,
@@ -2797,9 +2803,20 @@ async fn mcp_config_poll_loop(
                         tracing::warn!(
                             "config poll: ensure_workspace failed for {ws_id}: {error}"
                         );
-                        registry
-                            .mark_failed(ws_id, &format!("config poll: {error}"))
-                            .await;
+                        if let Err(transition_error) = lifecycle
+                            .transition(
+                                ws_id,
+                                LifecycleState::Failed,
+                                Some(&format!("config poll: {error}")),
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                workspace_id = %ws_id,
+                                error = %transition_error,
+                                "config poll: failed to record workspace failure"
+                            );
+                        }
                         continue;
                     }
                     // CHN-2: a failed poll must never be mistaken for "no servers
@@ -2845,9 +2862,20 @@ async fn mcp_config_poll_loop(
                                     server_id,
                                     error
                                 );
-                                registry
-                                    .mark_failed(ws_id, &format!("config poll stop failed: {error}"))
-                                    .await;
+                                if let Err(transition_error) = lifecycle
+                                    .transition(
+                                        ws_id,
+                                        LifecycleState::Failed,
+                                        Some(&format!("config poll stop failed: {error}")),
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        workspace_id = %ws_id,
+                                        error = %transition_error,
+                                        "config poll: failed to record stop failure"
+                                    );
+                                }
                                 continue;
                             }
                             manager.stop(ws_id, server_id).await;
@@ -2873,9 +2901,20 @@ async fn mcp_config_poll_loop(
                                     server_id,
                                     error
                                 );
-                                registry
-                                    .mark_failed(ws_id, &format!("config poll bridge unavailable: {error}"))
-                                    .await;
+                                if let Err(transition_error) = lifecycle
+                                    .transition(
+                                        ws_id,
+                                        LifecycleState::Failed,
+                                        Some(&format!("config poll bridge unavailable: {error}")),
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        workspace_id = %ws_id,
+                                        error = %transition_error,
+                                        "config poll: failed to record bridge unavailability"
+                                    );
+                                }
                                 continue;
                             }
                         };
@@ -2903,9 +2942,20 @@ async fn mcp_config_poll_loop(
                                     cleanup_error
                                 );
                             }
-                            registry
-                                .mark_failed(ws_id, &format!("config poll bridge spawn failed: {error}"))
-                                .await;
+                            if let Err(transition_error) = lifecycle
+                                .transition(
+                                    ws_id,
+                                    LifecycleState::Failed,
+                                    Some(&format!("config poll bridge spawn failed: {error}")),
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    workspace_id = %ws_id,
+                                    error = %transition_error,
+                                    "config poll: failed to record bridge spawn failure"
+                                );
+                            }
                             continue;
                         }
 
@@ -2952,9 +3002,20 @@ async fn mcp_config_poll_loop(
                                         bridge_info.server_id,
                                         error
                                     );
-                                    registry
-                                        .mark_failed(ws_id, &format!("config poll stop failed: {error}"))
-                                        .await;
+                                    if let Err(transition_error) = lifecycle
+                                        .transition(
+                                            ws_id,
+                                            LifecycleState::Failed,
+                                            Some(&format!("config poll stop failed: {error}")),
+                                        )
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            workspace_id = %ws_id,
+                                            error = %transition_error,
+                                            "config poll: failed to record stop failure"
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -3027,6 +3088,7 @@ fn should_cleanup_jobs(ticks: u64) -> bool {
 
 async fn idle_reaper_loop(
     registry: Arc<WorkspaceRegistry>,
+    lifecycle: Arc<xihe_runtime::lifecycle::Lifecycle>,
     manager: Arc<Mutex<WorkspaceManager>>,
     router: Arc<WorkspaceExecutionRouter>,
     cp_url: String,
@@ -3099,7 +3161,7 @@ async fn idle_reaper_loop(
                             let mut mgr = manager.lock().await;
                             match mgr.delete_workspace(ws_id).await {
                                 Ok(_) => {
-                                    registry.unregister(ws_id).await;
+                                    lifecycle.evict(ws_id).await;
                                     tracing::info!(
                                         workspace_id = %ws_id,
                                         event = "reap_evict",
@@ -3119,7 +3181,16 @@ async fn idle_reaper_loop(
                             let mgr = manager.lock().await;
                             match mgr.stop_container(ws_id).await {
                                 Ok(_) => {
-                                    registry.set_state(ws_id, InstanceState::Stopped).await;
+                                    if let Err(error) = lifecycle
+                                        .transition(ws_id, LifecycleState::Stopped, None)
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            workspace_id = %ws_id,
+                                            error = %error,
+                                            "Idle reaper: stop transition rejected"
+                                        );
+                                    }
                                     xihe_runtime::lifecycle::reaper::log_transition(
                                         "reap_stop", ws_id, "active", "stopped", "",
                                     );
@@ -3148,7 +3219,16 @@ async fn idle_reaper_loop(
                                 let mgr = manager.lock().await;
                                 match mgr.pause_container(ws_id).await {
                                     Ok(_) => {
-                                        registry.set_state(ws_id, InstanceState::Paused).await;
+                                        if let Err(error) = lifecycle
+                                            .transition(ws_id, LifecycleState::Paused, None)
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                workspace_id = %ws_id,
+                                                error = %error,
+                                                "Idle reaper: pause transition rejected"
+                                            );
+                                        }
                                         xihe_runtime::lifecycle::reaper::log_transition(
                                             "reap_pause", ws_id, "active", "paused", "",
                                         );
@@ -3389,11 +3469,14 @@ mod remote_handler_tests {
 
     pub(super) async fn test_state(cp_url: &str) -> Arc<AppState> {
         let registry = Arc::new(WorkspaceRegistry::new());
-        let registry_for_lifecycle = registry.clone();
         let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+        let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
+            registry.clone(),
+            Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+        ));
         let client = xihe_runtime::hydrate::ExecutionSpecClient::new(cp_url, "test-token");
         let ensurer = Arc::new(WorkspaceEnsurer::from_env_with_client(
-            registry.clone(),
+            lifecycle.clone(),
             manager.clone(),
             client,
         ));
@@ -3408,10 +3491,7 @@ mod remote_handler_tests {
             device_id: "test-device".to_string(),
             workspace_ensurer: ensurer,
             router,
-            lifecycle: Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
-                registry_for_lifecycle,
-                Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
-            )),
+            lifecycle: lifecycle.clone(),
             // Checkpoint tests replace this with a tempdir-scoped service; other
             // tests never touch the host root.
             checkpoints: Arc::new(CheckpointService::new(std::env::temp_dir())),

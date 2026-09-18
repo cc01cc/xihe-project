@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 
 use crate::error::{Result, RuntimeError};
 use crate::gateway::{InstanceState, WorkspaceRegistry, XiheRuntimeInstance};
+use crate::lifecycle::Lifecycle;
 use crate::sandbox::SecurityProfile;
 use crate::storage;
 use crate::workspace::{WorkspaceManager, WorkspaceState};
@@ -212,7 +213,11 @@ impl ExecutionSpecClient {
 }
 
 pub struct WorkspaceEnsurer {
+    /// Read-side cache access; every write goes through `lifecycle`
+    /// (PLAN-0347 T1.2, invariant I2).
     registry: Arc<WorkspaceRegistry>,
+    /// Single authoritative write path for lifecycle state.
+    lifecycle: Arc<Lifecycle>,
     manager: Arc<Mutex<WorkspaceManager>>,
     client: ExecutionSpecClient,
     host_root: Option<PathBuf>,
@@ -224,11 +229,12 @@ pub struct WorkspaceEnsurer {
 
 impl WorkspaceEnsurer {
     pub fn new(
-        registry: Arc<WorkspaceRegistry>,
+        lifecycle: Arc<Lifecycle>,
         manager: Arc<Mutex<WorkspaceManager>>,
         client: ExecutionSpecClient,
         host_root: Option<PathBuf>,
     ) -> Self {
+        let registry = lifecycle.registry().clone();
         // PLAN-0323 M-1: total materialization bound (queue wait excluded).
         let default_timeout = Duration::from_secs(600);
         let (materialize_timeout, materialize_timeout_source) = match std::env::var(
@@ -248,6 +254,7 @@ impl WorkspaceEnsurer {
         };
         Self {
             registry,
+            lifecycle,
             manager,
             client,
             host_root,
@@ -275,15 +282,12 @@ impl WorkspaceEnsurer {
             .is_some_and(|instance| instance.state == InstanceState::Paused)
     }
 
-    pub fn from_env(
-        registry: Arc<WorkspaceRegistry>,
-        manager: Arc<Mutex<WorkspaceManager>>,
-    ) -> Self {
+    pub fn from_env(lifecycle: Arc<Lifecycle>, manager: Arc<Mutex<WorkspaceManager>>) -> Self {
         let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT")
             .ok()
             .map(PathBuf::from);
         Self::new(
-            registry,
+            lifecycle,
             manager,
             ExecutionSpecClient::from_env(),
             host_root,
@@ -292,14 +296,14 @@ impl WorkspaceEnsurer {
 
     /// Test/embedding entry point: explicit spec client (no env reads).
     pub fn from_env_with_client(
-        registry: Arc<WorkspaceRegistry>,
+        lifecycle: Arc<Lifecycle>,
         manager: Arc<Mutex<WorkspaceManager>>,
         client: ExecutionSpecClient,
     ) -> Self {
         let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT")
             .ok()
             .map(PathBuf::from);
-        Self::new(registry, manager, client, host_root)
+        Self::new(lifecycle, manager, client, host_root)
     }
 
     async fn lock_for(&self, workspace_id: &str) -> Arc<Mutex<()>> {
@@ -312,8 +316,9 @@ impl WorkspaceEnsurer {
 
     async fn failure<T>(&self, workspace_id: &str, error: RuntimeError) -> Result<T> {
         let detail = error.to_string();
-        self.registry.mark_failed(workspace_id, &detail).await;
-        self.registry.unregister(workspace_id).await;
+        self.lifecycle
+            .fail_materialization(workspace_id, &detail)
+            .await;
         error!(workspace_id, error = %detail, "workspace materialization failed");
         Err(error)
     }
@@ -431,9 +436,13 @@ impl WorkspaceEnsurer {
             && instance.state == InstanceState::Active
         {
             self.registry.update_last_active(workspace_id).await;
-            self.registry
+            if let Err(error) = self
+                .lifecycle
                 .mark_ready(workspace_id, spec.generation, &spec.sandbox_spec_hash)
-                .await;
+                .await
+            {
+                warn!(workspace_id, error = %error, "cache-hit revalidation: mark_ready failed");
+            }
             info!(
                 workspace_id,
                 generation = spec.generation,
@@ -467,7 +476,7 @@ impl WorkspaceEnsurer {
             }
         }
 
-        self.registry.mark_materializing(workspace_id).await;
+        self.lifecycle.begin_materialize(workspace_id).await;
 
         // PLAN-0345 T2.1 (M-2, decision #16): a Paused container must be
         // unpaused, never force-recreated — recreation would destroy process
@@ -487,12 +496,13 @@ impl WorkspaceEnsurer {
                         workspace_id,
                         "paused workspace unpaused during materialization (M-2 activation path)"
                     );
-                    self.registry
-                        .set_state(workspace_id, InstanceState::Active)
-                        .await;
-                    self.registry
+                    if let Err(error) = self
+                        .lifecycle
                         .mark_ready(workspace_id, spec.generation, &spec.sandbox_spec_hash)
-                        .await;
+                        .await
+                    {
+                        return self.failure(workspace_id, error).await;
+                    }
                     return Ok(cached_instance.expect("paused instance checked above"));
                 }
                 Err(error) => {
@@ -538,15 +548,19 @@ impl WorkspaceEnsurer {
             }
         };
 
-        self.registry
-            .register_with_spec(
+        if let Err(error) = self
+            .lifecycle
+            .register_ready(
                 workspace_id,
                 &workspace_path_string,
                 profile,
                 spec.generation,
                 &spec.sandbox_spec_hash,
             )
-            .await;
+            .await
+        {
+            return self.failure(workspace_id, error).await;
+        }
         let instance = self
             .registry
             .get(workspace_id)
@@ -569,9 +583,17 @@ impl WorkspaceEnsurer {
 #[cfg(test)]
 mod tests {
     use crate::gateway::MaterializationState;
+    use crate::lifecycle::{ExecutionLease, Lifecycle};
     use mockito::Server;
 
     use super::*;
+
+    fn test_lifecycle(registry: &Arc<WorkspaceRegistry>) -> Arc<Lifecycle> {
+        Arc::new(Lifecycle::new(
+            registry.clone(),
+            Arc::new(ExecutionLease::new()),
+        ))
+    }
 
     fn valid_spec() -> WorkspaceExecutionSpec {
         WorkspaceExecutionSpec {
@@ -654,7 +676,7 @@ mod tests {
             .await;
         let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
         let ensurer = WorkspaceEnsurer::new(
-            registry.clone(),
+            test_lifecycle(&registry),
             manager,
             ExecutionSpecClient::new(&server.url(), "test-token"),
             Some(host_root.path().to_path_buf()),
@@ -699,7 +721,7 @@ mod tests {
             )
             .await;
         let ensurer = WorkspaceEnsurer::new(
-            registry.clone(),
+            test_lifecycle(&registry),
             Arc::new(Mutex::new(WorkspaceManager::new())),
             ExecutionSpecClient::new(&server.url(), "test-token"),
             Some(host_root.path().to_path_buf()),
@@ -733,7 +755,7 @@ mod tests {
         let host_root = tempfile::tempdir().unwrap();
         let registry = Arc::new(WorkspaceRegistry::new());
         let ensurer = WorkspaceEnsurer::new(
-            registry.clone(),
+            test_lifecycle(&registry),
             Arc::new(Mutex::new(WorkspaceManager::new())),
             ExecutionSpecClient::new(&server.url(), "test-token"),
             Some(host_root.path().to_path_buf()),
@@ -757,8 +779,9 @@ mod tests {
             .create_async()
             .await;
 
+        let registry = Arc::new(WorkspaceRegistry::new());
         let ensurer = WorkspaceEnsurer::new(
-            Arc::new(WorkspaceRegistry::new()),
+            test_lifecycle(&registry),
             Arc::new(Mutex::new(WorkspaceManager::new())),
             ExecutionSpecClient::new(&server.url(), "test-token"),
             None,
@@ -778,8 +801,9 @@ mod tests {
     /// PLAN-242 M2: unsafe workspace ids are rejected before any CP lookup.
     #[tokio::test]
     async fn identity_check_rejects_unsafe_workspace_id() {
+        let registry = Arc::new(WorkspaceRegistry::new());
         let ensurer = WorkspaceEnsurer::new(
-            Arc::new(WorkspaceRegistry::new()),
+            test_lifecycle(&registry),
             Arc::new(Mutex::new(WorkspaceManager::new())),
             ExecutionSpecClient::new("http://127.0.0.1:9", "test-token"),
             None,
@@ -819,7 +843,7 @@ mod tests {
         let host_root = tempfile::tempdir().unwrap();
         let registry = Arc::new(WorkspaceRegistry::new());
         let ensurer = WorkspaceEnsurer::new(
-            registry.clone(),
+            test_lifecycle(&registry),
             Arc::new(Mutex::new(WorkspaceManager::new())),
             ExecutionSpecClient::new(&server.url(), "test-token"),
             Some(host_root.path().to_path_buf()),

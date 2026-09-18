@@ -288,18 +288,23 @@ mod tests {
                 .await
                 .unwrap();
         tokio::fs::create_dir_all(&workspace_path).await.unwrap();
-        registry
-            .register_with_spec(
+        let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
+            registry.clone(),
+            Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+        ));
+        lifecycle
+            .register_ready(
                 &ws_id,
                 workspace_path.to_str().unwrap(),
                 xihe_runtime::sandbox::SecurityProfile::Strict,
                 1,
                 &hash,
             )
-            .await;
+            .await
+            .expect("seed workspace as ready");
         let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
         let workspace_ensurer = Arc::new(WorkspaceEnsurer::new(
-            registry.clone(),
+            lifecycle,
             manager.clone(),
             ExecutionSpecClient::new(&format!("http://{address}"), "test-token"),
             Some(dir.path().to_path_buf()),

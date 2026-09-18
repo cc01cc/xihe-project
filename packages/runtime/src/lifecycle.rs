@@ -15,6 +15,7 @@ use tracing::{info, warn};
 
 use crate::error::RuntimeError;
 use crate::gateway::{InstanceState, MaterializationState, WorkspaceRegistry};
+use crate::sandbox::SecurityProfile;
 
 /// Canonical lifecycle states (DEV-032; PLAN-0345 decision #9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,19 +198,7 @@ impl Lifecycle {
         to: LifecycleState,
         reason: Option<&str>,
     ) -> Result<(), RuntimeError> {
-        let from = self.current(ws_id).await;
-        if let Some(from) = from {
-            if from == to || (from == LifecycleState::Creating && to == LifecycleState::Creating) {
-                // Same-state writes are idempotent no-ops (e.g. duplicate
-                // ensure marking Creating again).
-            } else if !from.allows(to) {
-                return Err(RuntimeError::InvalidTransition {
-                    workspace_id: ws_id.to_string(),
-                    from: from.as_str(),
-                    to: to.as_str(),
-                });
-            }
-        }
+        let from = self.ensure_legal(ws_id, to).await?;
         self.write_through(ws_id, to, reason).await;
         info!(
             workspace_id = %ws_id,
@@ -219,6 +208,27 @@ impl Lifecycle {
             "workspace lifecycle transition"
         );
         Ok(())
+    }
+
+    /// Legality gate (spec §2 table): same-state writes are idempotent no-ops;
+    /// anything not in `allows()` fails loudly. Returns the derived from-state.
+    async fn ensure_legal(
+        &self,
+        ws_id: &str,
+        to: LifecycleState,
+    ) -> Result<Option<LifecycleState>, RuntimeError> {
+        let from = self.current(ws_id).await;
+        if let Some(from) = from
+            && from != to
+            && !from.allows(to)
+        {
+            return Err(RuntimeError::InvalidTransition {
+                workspace_id: ws_id.to_string(),
+                from: from.as_str(),
+                to: to.as_str(),
+            });
+        }
+        Ok(from)
     }
 
     /// Current canonical state, deriving from the registry dual maps.
@@ -260,6 +270,82 @@ impl Lifecycle {
             self.write_through(&ws_id, target, None).await;
             info!(workspace_id = %ws_id, to = target.as_str(), "workspace lifecycle rebuilt");
         }
+    }
+
+    /// Progress marker: materialization started. This is NOT a canonical state
+    /// transition (`Creating` is derived from `instance + status=Materializing`),
+    /// so it is allowed to re-enter from Ready/Paused; it exists so UI and the
+    /// consistency checker can see an operation in flight.
+    pub async fn begin_materialize(&self, ws_id: &str) {
+        let _guard = self.transitions.lock().await;
+        self.registry.mark_materializing(ws_id).await;
+        info!(workspace_id = %ws_id, "workspace lifecycle: materializing");
+    }
+
+    /// Register (or replace) the instance and mark Ready with spec
+    /// generation/hash. Used by the materialize success path.
+    pub async fn register_ready(
+        &self,
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        generation: u64,
+        spec_hash: &str,
+    ) -> Result<(), RuntimeError> {
+        let _guard = self.transitions.lock().await;
+        self.ensure_legal(ws_id, LifecycleState::Ready).await?;
+        self.registry
+            .register_with_spec(ws_id, workspace_path, profile, generation, spec_hash)
+            .await;
+        info!(
+            workspace_id = %ws_id,
+            generation, "workspace lifecycle: registered ready"
+        );
+        Ok(())
+    }
+
+    /// Mark Ready without re-registering: instance flips Active + status ready
+    /// carries generation/hash. Used by cache-hit revalidation and unpause.
+    pub async fn mark_ready(
+        &self,
+        ws_id: &str,
+        generation: u64,
+        spec_hash: &str,
+    ) -> Result<(), RuntimeError> {
+        let _guard = self.transitions.lock().await;
+        self.ensure_legal(ws_id, LifecycleState::Ready).await?;
+        if self.registry.get(ws_id).await.is_some() {
+            self.registry.set_state(ws_id, InstanceState::Active).await;
+        }
+        self.registry.mark_ready(ws_id, generation, spec_hash).await;
+        info!(
+            workspace_id = %ws_id,
+            generation, "workspace lifecycle: ready"
+        );
+        Ok(())
+    }
+
+    /// Materialize failed midway: `Failed(reason)` + instance entry removed
+    /// (I1 cache semantics). Failure recording must never be interrupted by a
+    /// legality check, so this writes unconditionally.
+    pub async fn fail_materialization(&self, ws_id: &str, detail: &str) {
+        let _guard = self.transitions.lock().await;
+        self.registry.mark_failed(ws_id, detail).await;
+        self.registry.unregister(ws_id).await;
+        warn!(
+            workspace_id = %ws_id,
+            error = %detail,
+            "workspace lifecycle: materialization failed"
+        );
+    }
+
+    /// Reaper evict: drop the instance record and keep a `released` marker
+    /// (fixes the 0345 gap where evict only unregistered, leaving stale status).
+    pub async fn evict(&self, ws_id: &str) {
+        let _guard = self.transitions.lock().await;
+        self.registry.unregister(ws_id).await;
+        self.registry.mark_released(ws_id).await;
+        info!(workspace_id = %ws_id, "workspace lifecycle: evicted (record released)");
     }
 
     async fn write_through(&self, ws_id: &str, to: LifecycleState, reason: Option<&str>) {
@@ -602,5 +688,91 @@ mod tests {
             .rebuild_from_instances(vec![("ws-a".to_string(), InstanceState::Active)])
             .await;
         assert_eq!(lifecycle.current("ws-a").await, Some(LifecycleState::Ready));
+    }
+
+    #[tokio::test]
+    async fn begin_materialize_marks_progress_and_derives_creating() {
+        let (registry, lifecycle) = seeded().await;
+        lifecycle.begin_materialize("ws-1").await;
+        assert_eq!(
+            lifecycle.current("ws-1").await,
+            Some(LifecycleState::Creating)
+        );
+        assert_eq!(
+            registry.status("ws-1").await.unwrap().state,
+            MaterializationState::Materializing
+        );
+    }
+
+    #[tokio::test]
+    async fn register_ready_replaces_instance_with_spec() {
+        let (registry, lifecycle) = seeded().await;
+        lifecycle
+            .transition("ws-1", LifecycleState::Failed, Some("boom"))
+            .await
+            .unwrap();
+        lifecycle
+            .register_ready("ws-1", "/tmp/ws-1", SecurityProfile::Coding, 7, "hash-7")
+            .await
+            .unwrap();
+        assert_eq!(lifecycle.current("ws-1").await, Some(LifecycleState::Ready));
+        let instance = registry.get("ws-1").await.unwrap();
+        assert_eq!(instance.generation, 7);
+        assert_eq!(instance.spec_hash, "hash-7");
+        assert_eq!(instance.state, InstanceState::Active);
+    }
+
+    #[tokio::test]
+    async fn mark_ready_flips_paused_instance_active() {
+        let (registry, lifecycle) = seeded().await;
+        lifecycle
+            .transition("ws-1", LifecycleState::Paused, None)
+            .await
+            .unwrap();
+        lifecycle.begin_materialize("ws-1").await;
+        lifecycle.mark_ready("ws-1", 3, "hash-3").await.unwrap();
+        assert_eq!(lifecycle.current("ws-1").await, Some(LifecycleState::Ready));
+        let instance = registry.get("ws-1").await.unwrap();
+        assert_eq!(instance.state, InstanceState::Active);
+        assert_eq!(registry.status("ws-1").await.unwrap().generation, Some(3));
+    }
+
+    #[tokio::test]
+    async fn fail_materialization_unregisters_and_keeps_failed_status() {
+        let (registry, lifecycle) = seeded().await;
+        lifecycle.begin_materialize("ws-1").await;
+        lifecycle.fail_materialization("ws-1", "docker down").await;
+        assert!(registry.get("ws-1").await.is_none());
+        let status = registry.status("ws-1").await.unwrap();
+        assert_eq!(status.state, MaterializationState::Failed);
+        assert_eq!(status.last_error.as_deref(), Some("docker down"));
+        assert_eq!(
+            lifecycle.current("ws-1").await,
+            Some(LifecycleState::Failed)
+        );
+    }
+
+    #[tokio::test]
+    async fn evict_unregisters_and_marks_released() {
+        let (registry, lifecycle) = seeded().await;
+        lifecycle.evict("ws-1").await;
+        assert!(registry.get("ws-1").await.is_none());
+        assert_eq!(
+            registry.status("ws-1").await.unwrap().state,
+            MaterializationState::Released
+        );
+    }
+
+    #[tokio::test]
+    async fn destroying_marker_is_visible_on_status_map() {
+        let (registry, lifecycle) = seeded().await;
+        lifecycle
+            .transition("ws-1", LifecycleState::Destroying, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            registry.status("ws-1").await.unwrap().state,
+            MaterializationState::Destroying
+        );
     }
 }

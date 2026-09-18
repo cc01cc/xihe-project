@@ -119,22 +119,14 @@ impl WorkspaceRegistry {
         Self::default()
     }
 
-    pub async fn register(&self, ws_id: &str, workspace_path: &str) {
+    // PLAN-0347 T1.2: state-mutating methods are crate-private; every write
+    // goes through `Lifecycle` (single authoritative write path, invariant I2).
+    pub(crate) async fn register(&self, ws_id: &str, workspace_path: &str) {
         self.register_with_spec(ws_id, workspace_path, SecurityProfile::Strict, 0, "")
             .await;
     }
 
-    pub async fn register_with_profile(
-        &self,
-        ws_id: &str,
-        workspace_path: &str,
-        profile: SecurityProfile,
-    ) {
-        self.register_with_spec(ws_id, workspace_path, profile, 0, "")
-            .await;
-    }
-
-    pub async fn register_with_spec(
+    pub(crate) async fn register_with_spec(
         &self,
         ws_id: &str,
         workspace_path: &str,
@@ -156,7 +148,7 @@ impl WorkspaceRegistry {
         self.mark_ready(ws_id, generation, spec_hash).await;
     }
 
-    pub async fn mark_materializing(&self, ws_id: &str) {
+    pub(crate) async fn mark_materializing(&self, ws_id: &str) {
         let mut statuses = self.statuses.write().await;
         let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
         let previous_hash = statuses
@@ -174,7 +166,7 @@ impl WorkspaceRegistry {
         );
     }
 
-    pub async fn mark_ready(&self, ws_id: &str, generation: u64, spec_hash: &str) {
+    pub(crate) async fn mark_ready(&self, ws_id: &str, generation: u64, spec_hash: &str) {
         self.statuses.write().await.insert(
             ws_id.to_string(),
             WorkspaceStatus {
@@ -187,7 +179,7 @@ impl WorkspaceRegistry {
         );
     }
 
-    pub async fn mark_failed(&self, ws_id: &str, error: &str) {
+    pub(crate) async fn mark_failed(&self, ws_id: &str, error: &str) {
         let mut statuses = self.statuses.write().await;
         let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
         let previous_hash = statuses
@@ -205,7 +197,7 @@ impl WorkspaceRegistry {
         );
     }
 
-    pub async fn mark_released(&self, ws_id: &str) {
+    pub(crate) async fn mark_released(&self, ws_id: &str) {
         let mut statuses = self.statuses.write().await;
         let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
         let previous_hash = statuses
@@ -229,7 +221,7 @@ impl WorkspaceRegistry {
 
     /// PLAN-0345 (decision #7): explicit destroy in flight. Late ensure sees
     /// this marker and rejects with 409 `WORKSPACE_DESTROYING`.
-    pub async fn mark_destroying(&self, ws_id: &str) {
+    pub(crate) async fn mark_destroying(&self, ws_id: &str) {
         let mut statuses = self.statuses.write().await;
         let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
         let previous_hash = statuses
@@ -247,7 +239,7 @@ impl WorkspaceRegistry {
         );
     }
 
-    pub async fn unregister(&self, ws_id: &str) {
+    pub(crate) async fn unregister(&self, ws_id: &str) {
         self.instances.write().await.remove(ws_id);
     }
 
@@ -263,7 +255,7 @@ impl WorkspaceRegistry {
         self.instances.read().await.contains_key(ws_id)
     }
 
-    pub async fn update_last_active(&self, ws_id: &str) {
+    pub(crate) async fn update_last_active(&self, ws_id: &str) {
         if let Some(instance) = self.instances.write().await.get_mut(ws_id) {
             instance.last_active = SystemTime::now();
         }
@@ -278,7 +270,7 @@ impl WorkspaceRegistry {
             .unwrap_or(false)
     }
 
-    pub async fn set_state(&self, ws_id: &str, state: InstanceState) {
+    pub(crate) async fn set_state(&self, ws_id: &str, state: InstanceState) {
         if let Some(instance) = self.instances.write().await.get_mut(ws_id) {
             instance.state = state;
         }
@@ -401,7 +393,7 @@ mod tests {
     async fn test_register_with_profile() {
         let registry = WorkspaceRegistry::new();
         registry
-            .register_with_profile("ws-2", "/tmp/ws-2", SecurityProfile::Isolated)
+            .register_with_spec("ws-2", "/tmp/ws-2", SecurityProfile::Isolated, 0, "")
             .await;
         let instance = registry.get("ws-2").await.unwrap();
         assert_eq!(instance.profile, SecurityProfile::Isolated);
