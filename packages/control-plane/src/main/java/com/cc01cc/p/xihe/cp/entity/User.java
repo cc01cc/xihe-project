@@ -30,9 +30,6 @@ public class User {
     @Column(length = 512)
     private String avatar;
 
-    @Column(columnDefinition = "TEXT")
-    private String settings;
-
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -76,9 +73,6 @@ public class User {
 
     public String getAvatar() { return avatar; }
     public void setAvatar(String avatar) { this.avatar = avatar; }
-
-    public String getSettings() { return settings; }
-    public void setSettings(String settings) { this.settings = settings; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

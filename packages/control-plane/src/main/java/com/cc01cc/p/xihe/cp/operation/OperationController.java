@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.operation;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.SessionOperation;
+import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.data.domain.Page;
@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -66,7 +67,7 @@ public class OperationController {
             int clampedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
             Pageable pageable = PageRequest.of(Math.max(page, 0), clampedSize,
                     Sort.by(Sort.Direction.DESC, "createdAt"));
-            Page<SessionOperation> result = operationService.listUserOperations(
+            Page<LedgerOperation> result = operationService.listUserOperations(
                     userId, sessionId, workspaceId, status, pageable);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("operations", result.getContent().stream().map(OperationController::toSummary).toList());
@@ -178,7 +179,7 @@ public class OperationController {
         }
     }
 
-    static Map<String, Object> toSummary(SessionOperation operation) {
+    static Map<String, Object> toSummary(LedgerOperation operation) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", operation.getId().toString());
         view.put("sessionId", operation.getSessionId());

@@ -25,12 +25,6 @@ public class Workspace {
     @Convert(converter = UuidStringConverter.class)
     private String ownerId;
 
-    @Column(columnDefinition = "TEXT")
-    private String settings;
-
-    @Column(name = "storage_path", length = 512)
-    private String storagePath;
-
     @Column(name = "storage_backend", length = 32)
     private String storageBackend = "host_directory";
 
@@ -85,12 +79,6 @@ public class Workspace {
 
     public String getOwnerId() { return ownerId; }
     public void setOwnerId(String ownerId) { this.ownerId = ownerId; }
-
-    public String getSettings() { return settings; }
-    public void setSettings(String settings) { this.settings = settings; }
-
-    public String getStoragePath() { return storagePath; }
-    public void setStoragePath(String storagePath) { this.storagePath = storagePath; }
 
     public String getStorageBackend() { return storageBackend; }
     public void setStorageBackend(String storageBackend) { this.storageBackend = storageBackend; }

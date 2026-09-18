@@ -9,10 +9,14 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.OperationEventRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import jakarta.persistence.EntityManagerFactory;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +31,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,6 +41,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class OperationServiceIntegrationTest extends AbstractIntegrationTest {
 
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger(OperationServiceIntegrationTest.class);
+
     @Autowired
     private OperationService operationService;
 
@@ -43,7 +51,7 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
-    private SessionOperationRepository sessionOperationRepository;
+    private LedgerOperationRepository ledgerOperationRepository;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -62,6 +70,9 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private EntityManagerFactory entityManagerFactory;
 
     private String authToken;
     private String userId;
@@ -142,8 +153,8 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         UUID operationId = start(null).operationId();
         operationService.transitionOperation(operationId, "failed", "AGENT_FAILED", "ref-1");
         Map<String, Object> trace = operationService.getOperationTrace(operationId);
-        com.cc01cc.p.xihe.cp.entity.SessionOperation operation =
-                (com.cc01cc.p.xihe.cp.entity.SessionOperation) trace.get("operation");
+        com.cc01cc.p.xihe.cp.entity.LedgerOperation operation =
+                (com.cc01cc.p.xihe.cp.entity.LedgerOperation) trace.get("operation");
         assertEquals("failed", operation.getStatus());
         assertEquals("AGENT_FAILED", operation.getErrorCode());
         assertEquals("ref-1", operation.getErrorRef());
@@ -220,8 +231,8 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         operationService.transitionOperation(operationId, "running", null, null);
         operationService.transitionOperation(operationId, "waiting_for_approval", null, null);
         operationService.transitionOperation(operationId, "failed", "APPROVAL_REJECTED", null);
-        com.cc01cc.p.xihe.cp.entity.SessionOperation aggregate =
-                (com.cc01cc.p.xihe.cp.entity.SessionOperation) operationService
+        com.cc01cc.p.xihe.cp.entity.LedgerOperation aggregate =
+                (com.cc01cc.p.xihe.cp.entity.LedgerOperation) operationService
                         .getOperationTrace(operationId).get("operation");
         assertEquals("failed", aggregate.getStatus());
         assertNotNull(aggregate.getFinishedAt());
@@ -239,8 +250,8 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
 
         operationService.transitionOperation(operationId, "completed", null, null);
 
-        com.cc01cc.p.xihe.cp.entity.SessionOperation aggregate =
-                (com.cc01cc.p.xihe.cp.entity.SessionOperation) operationService
+        com.cc01cc.p.xihe.cp.entity.LedgerOperation aggregate =
+                (com.cc01cc.p.xihe.cp.entity.LedgerOperation) operationService
                         .getOperationTrace(operationId).get("operation");
         assertEquals("completed", aggregate.getStatus());
         assertNotNull(aggregate.getFinishedAt());
@@ -365,21 +376,64 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void operationEventsExposeNoUnguardedDeleteOrUpdatePath() {
+        // PLAN-0351 DDL-2 / decision #6: append-only is pinned by test instead
+        // of a DB trigger. Any application-declared mutating repository method
+        // must fail this guard.
+        List<String> mutators = Arrays.stream(OperationEventRepository.class.getDeclaredMethods())
+                .map(java.lang.reflect.Method::getName)
+                .filter(name -> name.startsWith("delete") || name.startsWith("remove")
+                        || name.startsWith("update") || name.startsWith("save"))
+                .sorted()
+                .toList();
+        assertEquals(List.of(), mutators,
+                "operation_events repository must stay append-only (no delete/update/save surface)");
+    }
+
+    @Test
+    void operationEventsStayImmutableAfterLaterTransitions() {
+        UUID operationId = start(null).operationId();
+        operationService.transitionOperation(operationId, "running", null, null);
+
+        List<com.cc01cc.p.xihe.cp.entity.OperationEvent> before = traceEvents(operationId);
+        assertEquals(2, before.size());
+
+        operationService.transitionOperation(operationId, "completed", null, null);
+        List<com.cc01cc.p.xihe.cp.entity.OperationEvent> after = traceEvents(operationId);
+
+        assertEquals(3, after.size(), "later transitions must append, not rewrite");
+        for (int i = 0; i < before.size(); i++) {
+            assertEquals(before.get(i).getId(), after.get(i).getId());
+            assertEquals(before.get(i).getSequence(), after.get(i).getSequence());
+            assertEquals(before.get(i).getEventType(), after.get(i).getEventType());
+            assertEquals(before.get(i).getState(), after.get(i).getState());
+            assertEquals(before.get(i).getActor(), after.get(i).getActor());
+            assertEquals(before.get(i).getCreatedAt(), after.get(i).getCreatedAt());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<com.cc01cc.p.xihe.cp.entity.OperationEvent> traceEvents(UUID operationId) {
+        Map<String, Object> trace = operationService.getOperationTrace(operationId);
+        return (List<com.cc01cc.p.xihe.cp.entity.OperationEvent>) (Object) trace.get("events");
+    }
+
+    @Test
     void listUserOperations_filtersBySessionAndStatus() {
         start(null);
         UUID operationId = start(null).operationId();
         operationService.transitionOperation(operationId, "completed", null, null);
 
-        Page<com.cc01cc.p.xihe.cp.entity.SessionOperation> all = operationService.listUserOperations(
+        Page<com.cc01cc.p.xihe.cp.entity.LedgerOperation> all = operationService.listUserOperations(
                 userId, sessionId, null, null, PageRequest.of(0, 10, Sort.by("createdAt").descending()));
         assertEquals(2, all.getTotalElements());
 
-        Page<com.cc01cc.p.xihe.cp.entity.SessionOperation> completed = operationService.listUserOperations(
+        Page<com.cc01cc.p.xihe.cp.entity.LedgerOperation> completed = operationService.listUserOperations(
                 userId, sessionId, null, "completed", PageRequest.of(0, 10));
         assertEquals(1, completed.getTotalElements());
         assertEquals(operationId, completed.getContent().get(0).getId());
 
-        Page<com.cc01cc.p.xihe.cp.entity.SessionOperation> otherSession = operationService.listUserOperations(
+        Page<com.cc01cc.p.xihe.cp.entity.LedgerOperation> otherSession = operationService.listUserOperations(
                 userId, UUID.randomUUID().toString(), null, null, PageRequest.of(0, 10));
         assertEquals(0, otherSession.getTotalElements());
     }
@@ -582,6 +636,42 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void getOperationTrace_selectCountDoesNotGrowWithItemCount() {
+        // PLAN-0351 T1.3 (DDL-8): measurement per spec §3 — the same fixture
+        // shape with K=1 and K=10 items; Hibernate's prepare-statement count
+        // must be identical (no per-item attempt query) and stay within the
+        // frozen budget of 4 (operation + items + batched attempts + events).
+        Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true);
+
+        long singleItem = measureTracePrepareStatements(statistics, 1);
+        long tenItems = measureTracePrepareStatements(statistics, 10);
+        LOGGER.info("[PLAN-0351 DDL-8] getOperationTrace prepareStatementCount: K=1 -> {}, K=10 -> {}",
+                singleItem, tenItems);
+
+        assertTrue(singleItem > 0, "statistics must be collecting prepared statements");
+        assertEquals(singleItem, tenItems,
+                "SELECT count must be independent of the item count (N+1 regression)");
+        assertTrue(singleItem <= 4, "trace must stay within the frozen statement budget: " + singleItem);
+    }
+
+    private long measureTracePrepareStatements(Statistics statistics, int itemCount) {
+        var started = start("n1-" + UUID.randomUUID());
+        for (int i = 0; i < itemCount; i++) {
+            var item = operationService.appendItem(started.operationId(), UUID.randomUUID().toString(),
+                    null, "tool_call", "probe", "agent", null, null, null);
+            operationService.startAttempt(item.getId(), "runtime_exec", null, "runtime", null);
+        }
+        statistics.clear();
+        Map<String, Object> trace = operationService.getOperationTrace(started.operationId());
+        @SuppressWarnings("unchecked")
+        List<com.cc01cc.p.xihe.cp.entity.OperationItem> items =
+                (List<com.cc01cc.p.xihe.cp.entity.OperationItem>) (Object) trace.get("items");
+        assertEquals(itemCount, items.size(), "fixture sanity: all items must be in the trace");
+        return statistics.getPrepareStatementCount();
+    }
+
+    @Test
     void getOperationTrace_returns404ForUnknownOperation() {
         UUID unknown = UUID.randomUUID();
         var missing = assertThrows(IllegalArgumentException.class,
@@ -778,7 +868,7 @@ class OperationServiceIntegrationTest extends AbstractIntegrationTest {
         var release = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.Future<?> holder = executor.submit(() -> new TransactionTemplate(transactionManager)
                 .execute(status -> {
-                    sessionOperationRepository.findByIdForUpdate(opA.operationId()).orElseThrow();
+                    ledgerOperationRepository.findByIdForUpdate(opA.operationId()).orElseThrow();
                     lockHeld.countDown();
                     try {
                         release.await(30, java.util.concurrent.TimeUnit.SECONDS);

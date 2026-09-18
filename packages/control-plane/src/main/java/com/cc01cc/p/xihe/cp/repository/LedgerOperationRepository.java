@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.repository;
 
-import com.cc01cc.p.xihe.cp.entity.SessionOperation;
+import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -17,25 +17,25 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface SessionOperationRepository extends JpaRepository<SessionOperation, UUID> {
+public interface LedgerOperationRepository extends JpaRepository<LedgerOperation, UUID> {
 
-    Optional<SessionOperation> findByRunId(String runId);
+    Optional<LedgerOperation> findByRunId(String runId);
 
     boolean existsByUserIdAndSessionIdAndIdempotencyKey(
             String userId, String sessionId, String idempotencyKey);
 
-    Optional<SessionOperation> findByUserIdAndSessionIdAndIdempotencyKey(
+    Optional<LedgerOperation> findByUserIdAndSessionIdAndIdempotencyKey(
             String userId, String sessionId, String idempotencyKey);
 
-    List<SessionOperation> findBySessionIdOrderByCreatedAtDesc(String sessionId);
+    List<LedgerOperation> findBySessionIdOrderByCreatedAtDesc(String sessionId);
 
-    List<SessionOperation> findByWorkspaceIdOrderByCreatedAtDesc(String workspaceId);
+    List<LedgerOperation> findByWorkspaceIdOrderByCreatedAtDesc(String workspaceId);
 
-    @Query("select o from SessionOperation o where o.userId = :userId "
+    @Query("select o from LedgerOperation o where o.userId = :userId "
             + "and (:sessionId is null or o.sessionId = :sessionId) "
             + "and (:workspaceId is null or o.workspaceId = :workspaceId) "
             + "and (:status is null or o.status = :status)")
-    Page<SessionOperation> searchByUserId(@Param("userId") String userId,
+    Page<LedgerOperation> searchByUserId(@Param("userId") String userId,
             @Param("sessionId") String sessionId,
             @Param("workspaceId") String workspaceId,
             @Param("status") String status,
@@ -46,14 +46,14 @@ public interface SessionOperationRepository extends JpaRepository<SessionOperati
      * operation 内的序号分配（并发时不再靠唯一约束回滚）。
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select o from SessionOperation o where o.id = :id")
-    Optional<SessionOperation> findByIdForUpdate(@Param("id") UUID id);
+    @Query("select o from LedgerOperation o where o.id = :id")
+    Optional<LedgerOperation> findByIdForUpdate(@Param("id") UUID id);
 
     // PLAN-0317 决策 #7①：批量状态转换必须显式刷新 updated_at（JPQL 绕过
     // @PreUpdate，此前时间戳停在插入值）。
     @Modifying
     @Transactional
-    @Query("update SessionOperation o set o.status = :status, o.errorCode = :errorCode, "
+    @Query("update LedgerOperation o set o.status = :status, o.errorCode = :errorCode, "
             + "o.errorRef = :errorRef, o.finishedAt = :finishedAt, "
             + "o.updatedAt = CURRENT_INSTANT "
             + "where o.id = :id and o.status in :expectedStatuses")

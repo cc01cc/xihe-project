@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.operation;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationEvent;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
-import com.cc01cc.p.xihe.cp.entity.SessionOperation;
+import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,7 +19,7 @@ final class OperationViews {
     private OperationViews() {}
 
     static Map<String, Object> toUserTrace(Map<String, Object> trace) {
-        SessionOperation operation = (SessionOperation) trace.get("operation");
+        LedgerOperation operation = (LedgerOperation) trace.get("operation");
         @SuppressWarnings("unchecked")
         List<OperationItem> items = (List<OperationItem>) trace.get("items");
         @SuppressWarnings("unchecked")
@@ -38,7 +38,7 @@ final class OperationViews {
     }
 
     static Map<String, Object> toInternalTrace(Map<String, Object> trace) {
-        SessionOperation operation = (SessionOperation) trace.get("operation");
+        LedgerOperation operation = (LedgerOperation) trace.get("operation");
         @SuppressWarnings("unchecked")
         List<OperationItem> items = (List<OperationItem>) trace.get("items");
         @SuppressWarnings("unchecked")

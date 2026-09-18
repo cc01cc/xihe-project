@@ -28,9 +28,6 @@ public class Message {
     @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
 
-    @Column(columnDefinition = "TEXT")
-    private String metadata;
-
     @Column(name = "attachments", columnDefinition = "TEXT")
     private String attachments;
 
@@ -64,9 +61,6 @@ public class Message {
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
-
-    public String getMetadata() { return metadata; }
-    public void setMetadata(String metadata) { this.metadata = metadata; }
 
     public String getAttachments() { return attachments; }
     public void setAttachments(String attachments) { this.attachments = attachments; }

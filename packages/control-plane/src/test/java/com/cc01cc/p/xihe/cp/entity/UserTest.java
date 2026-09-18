@@ -68,14 +68,12 @@ class UserTest {
         user.setRole(UserRole.ADMIN);
         user.setName("New Name");
         user.setAvatar("avatar.png");
-        user.setSettings("{\"theme\":\"dark\"}");
 
         assertEquals("new@test.com", user.getEmail());
         assertEquals("newhash", user.getPasswordHash());
         assertEquals(UserRole.ADMIN, user.getRole());
         assertEquals("New Name", user.getName());
         assertEquals("avatar.png", user.getAvatar());
-        assertEquals("{\"theme\":\"dark\"}", user.getSettings());
     }
 
     @Test

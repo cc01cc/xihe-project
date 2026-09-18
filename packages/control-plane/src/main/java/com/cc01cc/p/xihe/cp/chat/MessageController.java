@@ -11,7 +11,7 @@ import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,7 +42,7 @@ public class MessageController {
     private final FileRepository fileRepository;
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
-    private final SessionOperationRepository sessionOperationRepository;
+    private final LedgerOperationRepository ledgerOperationRepository;
     private final OperationItemRepository operationItemRepository;
     private final JobStateService jobStateService;
 
@@ -51,7 +51,7 @@ public class MessageController {
                              FileRepository fileRepository,
                              SessionService sessionService,
                              ObjectMapper objectMapper,
-                             SessionOperationRepository sessionOperationRepository,
+                             LedgerOperationRepository ledgerOperationRepository,
                              OperationItemRepository operationItemRepository,
                              JobStateService jobStateService) {
         this.messageRepository = messageRepository;
@@ -59,7 +59,7 @@ public class MessageController {
         this.fileRepository = fileRepository;
         this.sessionService = sessionService;
         this.objectMapper = objectMapper;
-        this.sessionOperationRepository = sessionOperationRepository;
+        this.ledgerOperationRepository = ledgerOperationRepository;
         this.operationItemRepository = operationItemRepository;
         this.jobStateService = jobStateService;
     }
@@ -157,7 +157,7 @@ public class MessageController {
      */
     private List<Map<String, Object>> jobSummariesForRun(String runId) {
         List<Map<String, Object>> summaries = new ArrayList<>();
-        var operation = sessionOperationRepository.findByRunId(runId).orElse(null);
+        var operation = ledgerOperationRepository.findByRunId(runId).orElse(null);
         if (operation == null) {
             return summaries;
         }

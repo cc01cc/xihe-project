@@ -7,7 +7,7 @@ import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
-import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -65,7 +65,7 @@ class LedgerLockTimeoutIntegrationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
-    private SessionOperationRepository sessionOperationRepository;
+    private LedgerOperationRepository ledgerOperationRepository;
 
     @Autowired
     private UserRepository userRepository;
@@ -118,7 +118,7 @@ class LedgerLockTimeoutIntegrationTest extends AbstractIntegrationTest {
     void appendItemFailsFastOnLockedOperationRowAndRecovers() throws Exception {
         UUID operationId = startOperation();
         long start = System.nanoTime();
-        try (LockHolder ignored = holdLock(() -> sessionOperationRepository.findByIdForUpdate(operationId))) {
+        try (LockHolder ignored = holdLock(() -> ledgerOperationRepository.findByIdForUpdate(operationId))) {
             assertThrows(CannotAcquireLockException.class, () -> operationService.appendItem(
                     operationId, UUID.randomUUID().toString(), null,
                     "tool_call", "probe", "agent", null, null, null));
@@ -158,7 +158,7 @@ class LedgerLockTimeoutIntegrationTest extends AbstractIntegrationTest {
                 "tool_call", "probe", "agent", null, null, null);
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth("dev-token-not-secure");
-        try (LockHolder ignored = holdLock(() -> sessionOperationRepository.findByIdForUpdate(operationId))) {
+        try (LockHolder ignored = holdLock(() -> ledgerOperationRepository.findByIdForUpdate(operationId))) {
             long start = System.nanoTime();
             HttpServerErrorException error = assertThrows(HttpServerErrorException.class, () ->
                     restTemplate.exchange(

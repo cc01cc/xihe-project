@@ -12,11 +12,12 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * One logical user/system operation (PLAN-281 Operation Ledger root).
+ * One logical user/system operation (PLAN-281 Operation Ledger root;
+ * table renamed to ledger_operations by PLAN-0351 M2 / DDL-12).
  */
 @Entity
-@Table(name = "session_operations")
-public class SessionOperation {
+@Table(name = "ledger_operations")
+public class LedgerOperation {
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")
@@ -84,7 +85,7 @@ public class SessionOperation {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    public SessionOperation() {}
+    public LedgerOperation() {}
 
     @PrePersist
     protected void onCreate() {

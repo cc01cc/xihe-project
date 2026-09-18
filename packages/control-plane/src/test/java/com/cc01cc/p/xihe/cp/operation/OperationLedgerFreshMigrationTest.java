@@ -69,17 +69,21 @@ class OperationLedgerFreshMigrationTest {
 
     private static void insertOperation(UUID id, UUID userId, UUID sessionId, String idempotencyKey)
             throws SQLException {
+        // PLAN-0351 DDL-3: 'chat' rows must carry a session; session-less
+        // fixture rows use kind='system' to stay legal under the new CHECK.
+        String kind = sessionId == null ? "system" : "chat";
         String sql = """
-                INSERT INTO session_operations (id, session_id, workspace_id, user_id, run_id, request_id,
+                INSERT INTO ledger_operations (id, session_id, workspace_id, user_id, run_id, request_id,
                     kind, source, actor_type, actor_id, status, idempotency_key)
-                VALUES (?::uuid, ?::uuid, NULL, ?::uuid, NULL, NULL, 'chat', 'ui', 'user', ?, 'accepted', ?)
+                VALUES (?::uuid, ?::uuid, NULL, ?::uuid, NULL, NULL, ?, 'ui', 'user', ?, 'accepted', ?)
                 """;
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, id.toString());
             ps.setString(2, sessionId == null ? null : sessionId.toString());
             ps.setString(3, userId == null ? null : userId.toString());
-            ps.setString(4, userId == null ? null : userId.toString());
-            ps.setString(5, idempotencyKey);
+            ps.setString(4, kind);
+            ps.setString(5, userId == null ? null : userId.toString());
+            ps.setString(6, idempotencyKey);
             ps.executeUpdate();
         }
     }
@@ -154,7 +158,7 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
@@ -376,7 +380,7 @@ class OperationLedgerFreshMigrationTest {
                         + "AND table_name = 'flyway_schema_history'"),
                 "flyway_schema_history must record the applied chain");
         for (String table : new String[]{
-                "session_operations", "operation_items", "operation_attempts",
+                "ledger_operations", "operation_items", "operation_attempts",
                 "operation_events", "operation_extensions", "diagnostic_artifacts",
                 "users", "workspaces", "sessions", "chat_runs", "messages",
                 "approval_requests", "workspace_execution_specs", "context_events"}) {
@@ -393,14 +397,14 @@ class OperationLedgerFreshMigrationTest {
     @Test
     void v2ConstraintsAndIndexesExist() throws SQLException {
         String idempotencyDef = scalarString(
-                "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_session_operations_idempotency'");
+                "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_ledger_operations_idempotency'");
         assertTrue(idempotencyDef.contains("idempotency_key IS NOT NULL"),
                 "idempotency index must be partial: " + idempotencyDef);
         assertTrue(idempotencyDef.contains("user_id") && idempotencyDef.contains("session_id")
                 && idempotencyDef.contains("idempotency_key"), idempotencyDef);
 
         String runDef = scalarString(
-                "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_session_operations_run'");
+                "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_ledger_operations_run'");
         assertTrue(runDef.contains("run_id IS NOT NULL"), "run index must be partial: " + runDef);
 
         String attemptDef = scalarString(
@@ -417,6 +421,107 @@ class OperationLedgerFreshMigrationTest {
                 "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_operation_extensions_attempt_kind_version'");
         assertTrue(extAttemptDef.contains("attempt_id IS NOT NULL") && extAttemptDef.contains("item_id IS NULL"),
                 "attempt extension index must be complementary partial: " + extAttemptDef);
+    }
+
+    @Test
+    void ddl3ChatKindRequiresSessionId() throws SQLException {
+        // Positive: a chat row with a session is accepted (fixture helper path).
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = insertUserWithSession(userId);
+        UUID chatOperation = UUID.randomUUID();
+        insertOperation(chatOperation, userId, sessionId, null);
+        assertEquals(1, scalarInt("SELECT count(*) FROM ledger_operations WHERE id = '"
+                + chatOperation + "'::uuid AND kind = 'chat'"));
+
+        // Negative: inserting a chat row without a session must be rejected.
+        SQLException insert = assertThrows(SQLException.class, () -> executeUpdate(
+                "INSERT INTO ledger_operations (id, kind, source, actor_type, status) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, 'chat', 'ui', 'user', 'accepted')"));
+        assertTrue(insert.getMessage().contains("ck_ledger_operations_chat_session"), insert.getMessage());
+
+        // Negative: updating a session-less row into a chat row must be rejected.
+        UUID systemOperation = UUID.randomUUID();
+        insertOperation(systemOperation, null, null, null);
+        SQLException update = assertThrows(SQLException.class, () -> executeUpdate(
+                "UPDATE ledger_operations SET kind = 'chat' WHERE id = '" + systemOperation + "'::uuid"));
+        assertTrue(update.getMessage().contains("ck_ledger_operations_chat_session"), update.getMessage());
+    }
+
+    @Test
+    void m2RenameLeavesNoOldPrefixResidue() throws SQLException {
+        // PLAN-0351 M2 (DDL-12): V33 renames the table plus all 14 prefixed
+        // objects on the fresh chain; the historical prefix must be gone while
+        // the child-side FK names stay unchanged (their target moves with the
+        // table rename).
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '33' AND success = true"),
+                "V33 must be recorded as applied");
+        assertNull(scalarString("SELECT to_regclass('public.session_operations')"),
+                "historical table name must be gone after V33");
+        assertNotNull(scalarString("SELECT to_regclass('public.ledger_operations')"),
+                "renamed table must exist after V33");
+
+        for (String con : new String[]{
+                "ledger_operations_pkey",
+                "fk_ledger_operations_session", "fk_ledger_operations_workspace",
+                "fk_ledger_operations_user", "fk_ledger_operations_run",
+                "ck_ledger_operations_kind", "ck_ledger_operations_source",
+                "ck_ledger_operations_actor_type", "ck_ledger_operations_status",
+                "ck_ledger_operations_chat_session"}) {
+            assertNotNull(scalarString("SELECT conname FROM pg_constraint WHERE conname = '" + con + "'"),
+                    "missing constraint after rename: " + con);
+        }
+        for (String index : new String[]{
+                "uq_ledger_operations_idempotency", "uq_ledger_operations_run",
+                "idx_ledger_operations_session_time", "idx_ledger_operations_workspace_time"}) {
+            assertNotNull(scalarString("SELECT indexname FROM pg_indexes WHERE indexname = '" + index + "'"),
+                    "missing index after rename: " + index);
+        }
+
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM pg_constraint WHERE conname LIKE '%session_operations%'"),
+                "no constraint may keep the historical prefix");
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE indexname LIKE '%session_operations%'"),
+                "no index may keep the historical prefix");
+        assertEquals("uuid", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'ledger_operations' AND column_name = 'session_id'"),
+                "renamed table must keep the V2 column contract (rename only, no rewrite)");
+
+        // Child-side names are intentionally unchanged and now reference the
+        // renamed table.
+        String childFk = scalarString(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        + "WHERE conname = 'fk_operation_items_operation'");
+        assertTrue(childFk.contains("ledger_operations"), childFk);
+    }
+
+    @Test
+    void ddl5FkChildIndexesExist() throws SQLException {
+        for (String index : new String[]{
+                "idx_chat_runs_workspace_id",
+                "idx_operation_events_item_sequence",
+                "idx_operation_events_attempt_sequence"}) {
+            assertNotNull(scalarString("SELECT indexname FROM pg_indexes WHERE indexname = '" + index + "'"),
+                    "missing index: " + index);
+        }
+    }
+
+    @Test
+    void ddl9DeadColumnsRemoved() throws SQLException {
+        for (String[] column : new String[][]{
+                {"workspaces", "settings"}, {"workspaces", "storage_path"}, {"users", "settings"},
+                {"messages", "metadata"}, {"mcp_remote_servers", "auth_config"}}) {
+            assertEquals(0, scalarInt("SELECT count(*) FROM information_schema.columns "
+                            + "WHERE table_schema = 'public' AND table_name = '" + column[0]
+                            + "' AND column_name = '" + column[1] + "'"),
+                    "dead column must be removed: " + column[0] + "." + column[1]);
+        }
+        // files.storage_path is a different, live column and must survive.
+        assertNotNull(scalarString("SELECT column_name FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'files' AND column_name = 'storage_path'"),
+                "files.storage_path must remain");
     }
 
     @Test
@@ -455,7 +560,7 @@ class OperationLedgerFreshMigrationTest {
         insertExtension(itemId, null, "llm_usage", 1);
 
         assertEquals(1, scalarInt(
-                "SELECT count(*) FROM session_operations WHERE id = '" + operationId + "'::uuid"));
+                "SELECT count(*) FROM ledger_operations WHERE id = '" + operationId + "'::uuid"));
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM operation_items WHERE operation_id = '" + operationId + "'::uuid"));
         assertEquals(1, scalarInt(
@@ -513,7 +618,7 @@ class OperationLedgerFreshMigrationTest {
         insertOperation(first, userId, sessionId, "idem-key-1");
         SQLException conflict = assertThrows(SQLException.class,
                 () -> insertOperation(second, userId, sessionId, "idem-key-1"));
-        assertTrue(conflict.getMessage().contains("uq_session_operations_idempotency"),
+        assertTrue(conflict.getMessage().contains("uq_ledger_operations_idempotency"),
                 conflict.getMessage());
         insertOperation(UUID.randomUUID(), userId, sessionId, "idem-key-2");
         insertOperation(UUID.randomUUID(), null, null, null);

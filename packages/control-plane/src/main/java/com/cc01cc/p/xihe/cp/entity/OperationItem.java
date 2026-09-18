@@ -12,7 +12,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * An auditable logical action / tool call within a {@link SessionOperation}.
+ * An auditable logical action / tool call within a {@link LedgerOperation}.
  */
 @Entity
 @Table(name = "operation_items")

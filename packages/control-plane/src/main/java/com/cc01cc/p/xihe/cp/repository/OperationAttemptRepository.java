@@ -17,6 +17,13 @@ public interface OperationAttemptRepository extends JpaRepository<OperationAttem
 
     List<OperationAttempt> findByItemIdOrderByStartedAtAsc(String itemId);
 
+    /**
+     * PLAN-0351 T1.3 (DDL-8): one batch fetch for all items of an operation —
+     * the trace must not issue one attempt query per item (N+1). Callers group
+     * the result by itemId to keep the per-item startedAt ordering.
+     */
+    List<OperationAttempt> findByItemIdInOrderByStartedAtAsc(Collection<String> itemIds);
+
     Optional<OperationAttempt> findByItemIdAndStageAndRetryNo(String itemId, String stage, Integer retryNo);
 
     Optional<OperationAttempt> findByItemIdAndStageAndRequestId(

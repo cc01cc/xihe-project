@@ -8,12 +8,12 @@ import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationEvent;
 import com.cc01cc.p.xihe.cp.entity.OperationExtension;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
-import com.cc01cc.p.xihe.cp.entity.SessionOperation;
+import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
 import com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationEventRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -78,7 +78,7 @@ public class OperationService {
             // resolving，此刻取消必须能落 cancelled（否则 item 悬挂在 resolving）。
             "resolving", List.of("completed", "failed", "aborted", "cancelled"));
 
-    private final SessionOperationRepository operations;
+    private final LedgerOperationRepository operations;
     private final OperationItemRepository items;
     private final OperationAttemptRepository attempts;
     private final OperationEventRepository events;
@@ -92,7 +92,7 @@ public class OperationService {
     @Autowired
     private ApplicationContext applicationContext;
 
-    public OperationService(SessionOperationRepository operations,
+    public OperationService(LedgerOperationRepository operations,
                             OperationItemRepository items,
                             OperationAttemptRepository attempts,
                             OperationEventRepository events,
@@ -132,7 +132,7 @@ public class OperationService {
         if (runId == null || runId.isBlank()) {
             return null;
         }
-        return operations.findByRunId(runId).map(SessionOperation::getId).orElse(null);
+        return operations.findByRunId(runId).map(LedgerOperation::getId).orElse(null);
     }
 
     /**
@@ -351,7 +351,7 @@ public class OperationService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "actorType is required");
         }
         if (idempotencyKey != null && !idempotencyKey.isBlank() && userId != null && sessionId != null) {
-            SessionOperation existing = operations
+            LedgerOperation existing = operations
                     .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
                     .orElse(null);
             if (existing != null) {
@@ -360,7 +360,7 @@ public class OperationService {
                 return new OperationStartResult(existing.getId(), true);
             }
         }
-        SessionOperation operation = new SessionOperation();
+        LedgerOperation operation = new LedgerOperation();
         operation.setId(UUID.randomUUID());
         operation.setUserId(userId);
         operation.setSessionId(sessionId);
@@ -381,7 +381,7 @@ public class OperationService {
             logger.warn("[LIFECYCLE] service=cp event=operation_start_conflict sessionId={} runId={} reason={}",
                     sessionId, runId, e.getMessage());
             String reason = e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage();
-            if (reason != null && reason.contains("uq_session_operations_run")) {
+            if (reason != null && reason.contains("uq_ledger_operations_run")) {
                 throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_RUN_CONFLICT",
                         "An operation already exists for this run");
             }
@@ -398,7 +398,7 @@ public class OperationService {
     public void transitionOperation(UUID operationId, String targetStatus,
                                     String errorCode, String errorRef) {
         dbLockTimeout.apply();
-        SessionOperation operation = operations.findById(operationId)
+        LedgerOperation operation = operations.findById(operationId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
         if (isTerminal(operation.getStatus())) {
@@ -443,7 +443,7 @@ public class OperationService {
         dbLockTimeout.apply();
         // PLAN-0317 决策 #7②：锁 operation 行串行化序号分配（同一 operation
         // 内的 item/event 追加不再依赖唯一约束失败回滚）。
-        SessionOperation operation = operations.findByIdForUpdate(operationId)
+        LedgerOperation operation = operations.findByIdForUpdate(operationId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
         // PLAN-0326 决策 #9：行身份 = (operation_id, source, tool_call_id)。
@@ -731,7 +731,7 @@ public class OperationService {
     }
 
     @Transactional(readOnly = true)
-    public Page<SessionOperation> listUserOperations(String userId, String sessionId,
+    public Page<LedgerOperation> listUserOperations(String userId, String sessionId,
                                                      String workspaceId, String status,
                                                      Pageable pageable) {
         return operations.searchByUserId(userId, sessionId, workspaceId, status, pageable);
@@ -739,13 +739,26 @@ public class OperationService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> getOperationTrace(UUID operationId) {
-        SessionOperation operation = operations.findById(operationId)
+        LedgerOperation operation = operations.findById(operationId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
         List<OperationItem> operationItems = items.findByOperationIdOrderBySequenceAsc(operationId.toString());
+        // PLAN-0351 T1.3 (DDL-8): one batched attempt fetch for the whole
+        // operation instead of one query per item (N+1); grouping restores the
+        // per-item startedAt ordering while keeping the flat response shape.
         List<OperationAttempt> operationAttempts = new ArrayList<>();
-        for (OperationItem item : operationItems) {
-            operationAttempts.addAll(attempts.findByItemIdOrderByStartedAtAsc(item.getId().toString()));
+        if (!operationItems.isEmpty()) {
+            List<String> itemIds = new ArrayList<>();
+            for (OperationItem item : operationItems) {
+                itemIds.add(item.getId().toString());
+            }
+            Map<String, List<OperationAttempt>> attemptsByItem = new LinkedHashMap<>();
+            for (OperationAttempt attempt : attempts.findByItemIdInOrderByStartedAtAsc(itemIds)) {
+                attemptsByItem.computeIfAbsent(attempt.getItemId(), key -> new ArrayList<>()).add(attempt);
+            }
+            for (OperationItem item : operationItems) {
+                operationAttempts.addAll(attemptsByItem.getOrDefault(item.getId().toString(), List.of()));
+            }
         }
         List<OperationEvent> operationEvents = events.findByOperationIdOrderBySequenceAsc(operationId.toString());
         Map<String, Object> trace = new LinkedHashMap<>();
@@ -801,7 +814,7 @@ public class OperationService {
      */
     @Transactional(readOnly = true)
     public Map<String, Object> replayOperation(UUID operationId) {
-        SessionOperation operation = operations.findById(operationId)
+        LedgerOperation operation = operations.findById(operationId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
         List<OperationEvent> operationEvents = events.findByOperationIdOrderBySequenceAsc(operationId.toString());
@@ -894,8 +907,8 @@ public class OperationService {
     }
 
     @Transactional(readOnly = true)
-    public SessionOperation requireOwnedOperation(UUID operationId, String userId) {
-        SessionOperation operation = operations.findById(operationId)
+    public LedgerOperation requireOwnedOperation(UUID operationId, String userId) {
+        LedgerOperation operation = operations.findById(operationId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
         if (userId == null || !userId.equals(operation.getUserId())) {

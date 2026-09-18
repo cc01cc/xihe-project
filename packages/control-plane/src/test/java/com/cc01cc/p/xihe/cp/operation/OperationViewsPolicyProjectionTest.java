@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.operation;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationEvent;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
-import com.cc01cc.p.xihe.cp.entity.SessionOperation;
+import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -41,7 +41,7 @@ class OperationViewsPolicyProjectionTest {
     }
 
     private static Map<String, Object> trace(OperationItem item) {
-        SessionOperation operation = new SessionOperation();
+        LedgerOperation operation = new LedgerOperation();
         operation.setId(UUID.randomUUID());
         operation.setKind("chat");
         operation.setSource("agent");

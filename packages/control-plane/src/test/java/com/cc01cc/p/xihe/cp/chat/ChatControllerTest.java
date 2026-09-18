@@ -38,7 +38,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 
@@ -91,7 +91,7 @@ class ChatControllerTest extends AbstractH2Test {
     private ChatRunRepository chatRunRepository;
 
     @Autowired
-    private SessionOperationRepository sessionOperationRepository;
+    private LedgerOperationRepository ledgerOperationRepository;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.OperationItemRepository operationItemRepository;
@@ -289,8 +289,8 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(assistantMsg.getId().toString(), run.getAssistantMessageId());
         String operationId = (String) response.getBody().get("operationId");
         assertNotNull(operationId);
-        assertEquals(operationId, sessionOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getId().toString());
-        assertEquals("completed", sessionOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getStatus());
+        assertEquals(operationId, ledgerOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getId().toString());
+        assertEquals("completed", ledgerOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getStatus());
     }
 
     @Test
@@ -844,7 +844,7 @@ class ChatControllerTest extends AbstractH2Test {
             // Real totalTokens (150), not the SSE chunk count (1 token event).
             assertEquals(150, run.getTokenCount());
 
-            UUID operationId = sessionOperationRepository.findByRunId(runId).orElseThrow().getId();
+            UUID operationId = ledgerOperationRepository.findByRunId(runId).orElseThrow().getId();
             var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
             var usageItem = items.stream()
                     .filter(i -> "llm_usage".equals(i.getKind()))
@@ -901,7 +901,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         String runId = (String) response.getBody().get("runId");
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
-            UUID operationId = sessionOperationRepository.findByRunId(runId).orElseThrow().getId();
+            UUID operationId = ledgerOperationRepository.findByRunId(runId).orElseThrow().getId();
             var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
             var usageItem = items.stream()
                     .filter(i -> "llm_usage".equals(i.getKind()))
@@ -952,7 +952,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         String runId = (String) response.getBody().get("runId");
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
-            UUID operationId = sessionOperationRepository.findByRunId(runId).orElseThrow().getId();
+            UUID operationId = ledgerOperationRepository.findByRunId(runId).orElseThrow().getId();
             var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
             var usageItem = items.stream()
                     .filter(i -> "llm_usage".equals(i.getKind()))
