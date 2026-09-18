@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
+import { useChatStore } from '../../stores/chat'
 import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
@@ -27,8 +28,28 @@ const router = useRouter()
 const ws = useWorkspaceStore()
 const sessionStore = useSessionStore()
 const auth = useAuthStore()
+const chatStore = useChatStore()
 const { t } = useI18n()
 const isMobileViewport = useMediaQuery('(max-width: 767px)')
+
+// PLAN-0343: run-terminal usage line in the workspace conversation header.
+const usageLineSessionId = computed(() => route.params.workspaceId ? sessionStore.currentSessionId : '')
+const lastUsage = computed(() =>
+  usageLineSessionId.value ? chatStore.getSessionLastUsage(usageLineSessionId.value) : null)
+const usageInput = computed(() => lastUsage.value?.inputTokens)
+const usageOutput = computed(() => lastUsage.value?.outputTokens)
+const usageSource = computed(() => lastUsage.value?.source)
+const usageCost = computed(() => {
+  const usage = lastUsage.value
+  if (!usage) return null
+  if (usage.cost == null) return usage.source === 'fallback' ? '—' : '未映射'
+  return `$${usage.cost}`
+})
+const usageCostTitle = computed(() => {
+  const usage = lastUsage.value
+  if (!usage || usage.cost != null) return ''
+  return usage.costNote ?? 'no pricing entry'
+})
 
 const routeWorkspaceId = computed(() => (route.params.workspaceId as string | undefined) ?? '')
 
@@ -230,6 +251,23 @@ onMounted(() => {
           >
             <span class="font-medium text-foreground/80">{{ auth.workspace?.name ?? t('workspace.chatHeader') }}</span>
             <span class="text-muted-foreground/60">{{ t('workspace.chatHeader') }}</span>
+            <!-- PLAN-0343: run-terminal usage line (tokens · cost/unmapped · source badge) -->
+            <div
+              v-if="lastUsage && usageInput !== undefined"
+              class="ml-auto flex items-center gap-2 tabular-nums"
+            >
+              <span>in {{ usageInput }} · out {{ usageOutput ?? 0 }}</span>
+              <span :title="usageCostTitle" :class="lastUsage.cost == null && usageCost !== '—' ? 'text-amber-500' : ''">
+                {{ usageCost }}
+              </span>
+              <span
+                v-if="usageSource"
+                class="rounded border px-1 py-0.5 text-[10px] leading-none"
+                :class="usageSource === 'real' ? 'border-emerald-500/40 text-emerald-600' : 'border-amber-500/40 text-amber-600'"
+              >
+                {{ usageSource }}
+              </span>
+            </div>
           </div>
           <ChatPanel v-if="sessionId" :session-id="sessionId" tool-mode="workspace" />
           <div v-else class="flex flex-1 flex-col items-center justify-center gap-2">

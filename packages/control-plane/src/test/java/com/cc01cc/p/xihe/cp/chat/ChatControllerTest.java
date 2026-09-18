@@ -100,6 +100,9 @@ class ChatControllerTest extends AbstractH2Test {
     private com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository operationExtensionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository configJpaRepository;
+
+    @Autowired
     private OperationService operationService;
 
     @Autowired
@@ -852,6 +855,117 @@ class ChatControllerTest extends AbstractH2Test {
             assertTrue(extension.getPayload().contains("source"), "usage extension payload must carry source tag");
             // 2026-09-13 E2E（V11）：usage 条目写完即 completed，不得残留 pending。
             assertEquals("completed", usageItem.getStatus());
+        });
+    }
+
+    @Test
+    void chat_withUsageEvent_mapsCostFromPricingAndRelaysToUi() throws IOException {
+        // PLAN-0343 T1.2 (decisions #7/#9/#11): the relay must map cost at the
+        // run-terminal snapshot (persistUsageExtension), store the enriched
+        // payload verbatim, and relay the mapped usage event to the UI SSE.
+        com.cc01cc.p.xihe.cp.entity.ConfigEntity pricing = new com.cc01cc.p.xihe.cp.entity.ConfigEntity();
+        pricing.setLayer("instance");
+        pricing.setDomain("pricing");
+        pricing.setConfigKey("models");
+        pricing.setConfigValue("{\"deepseek/deepseek-v4-flash\":{\"inputPerMTok\":0.27,\"outputPerMTok\":1.10,\"currency\":\"USD\"}}");
+        configJpaRepository.save(pricing);
+
+        String sseBody = "event: token\ndata: {\"content\":\"hi\"}\n\n"
+                + "event: usage\ndata: {\"usage\":{\"inputTokens\":120,\"outputTokens\":30,\"totalTokens\":150,"
+                + "\"estimatedInputTokens\":0,\"source\":\"real\",\"model\":\"deepseek/deepseek-v4-flash\"}}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, 0);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(sseBody.getBytes());
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "usage cost mapping probe",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+
+        String runId = (String) response.getBody().get("runId");
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            UUID operationId = sessionOperationRepository.findByRunId(runId).orElseThrow().getId();
+            var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
+            var usageItem = items.stream()
+                    .filter(i -> "llm_usage".equals(i.getKind()))
+                    .findFirst().orElseThrow();
+            var extension = operationExtensionRepository
+                    .findByItemIdAndExtensionKindAndSchemaVersion(usageItem.getId().toString(), "llm_usage", 1)
+                    .orElseThrow();
+            assertTrue(extension.getPayload().contains("\"costSource\":\"price_table\""),
+                    "mapped payload must carry costSource=price_table");
+            assertTrue(extension.getPayload().contains("\"cost\":0.0"), "mapped payload must carry computed cost");
+            assertTrue(extension.getPayload().contains("deepseek/deepseek-v4-flash"),
+                    "mapped payload must carry the model key");
+        });
+    }
+
+    @Test
+    void chat_withUnmappedModel_writesNullCostAndUnmappedSource() throws IOException {
+        // PLAN-0343 V2 (I2): no pricing entry → cost stays null (never 0),
+        // costSource=unmapped; the row is still persisted (never dropped).
+        String sseBody = "event: token\ndata: {\"content\":\"hi\"}\n\n"
+                + "event: usage\ndata: {\"usage\":{\"inputTokens\":10,\"outputTokens\":5,\"totalTokens\":15,"
+                + "\"estimatedInputTokens\":0,\"source\":\"estimated\",\"model\":\"openai/gpt-4o\"}}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            try {
+                exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+                exchange.sendResponseHeaders(200, 0);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(sseBody.getBytes());
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "usage unmapped probe",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+
+        String runId = (String) response.getBody().get("runId");
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            UUID operationId = sessionOperationRepository.findByRunId(runId).orElseThrow().getId();
+            var items = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId.toString());
+            var usageItem = items.stream()
+                    .filter(i -> "llm_usage".equals(i.getKind()))
+                    .findFirst().orElseThrow();
+            var extension = operationExtensionRepository
+                    .findByItemIdAndExtensionKindAndSchemaVersion(usageItem.getId().toString(), "llm_usage", 1)
+                    .orElseThrow();
+            assertTrue(extension.getPayload().contains("\"costSource\":\"unmapped\""),
+                    "unmapped model must carry costSource=unmapped");
+            assertTrue(extension.getPayload().contains("\"cost\":null"),
+                    "unmapped model must carry cost=null (never 0)");
+            assertTrue(extension.getPayload().contains("model not in pricing config"),
+                    "unmapped row must carry a costNote reason");
         });
     }
 

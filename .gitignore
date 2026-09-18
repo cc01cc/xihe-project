@@ -82,3 +82,5 @@ data/
 .local/
 # Playwright journey screenshot dumps at package root
 packages/ui/journey-a-*.png
+# PLAN-0343 usage-line spec screenshot dump at package root (evidence copy lives in one/plans)
+packages/ui/usage-line-*.png

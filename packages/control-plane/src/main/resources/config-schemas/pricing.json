@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "models": {
+      "type": ["object", "string"],
+      "description": "model key (provider/model as carried by the usage event) -> pricing entry"
+    }
+  },
+  "additionalProperties": false
+}

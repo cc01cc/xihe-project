@@ -1265,10 +1265,15 @@ public class ChatController {
                     if ("usage".equals(eventName)) {
                         // PLAN-294 decisions #13/#14: persist the agent's usage
                         // payload (estimated + real token counts with source
-                        // tagging) as an operation extension and stop relaying
-                        // it to the UI (no UI consumer; audit-only channel).
+                        // tagging) as an operation extension. PLAN-0343
+                        // decision #9: after cost mapping the event IS relayed
+                        // to the UI (single event, before done) for the
+                        // session-header usage line.
                         Object usagePayload = parsePayload(eventName, data.toString());
-                        persistUsageExtension(sessionId, runId, usagePayload);
+                        Map<?, ?> enriched = persistUsageExtension(sessionId, runId, usagePayload);
+                        if (enriched != null) {
+                            sseManager.send(sessionId, "usage", enriched);
+                        }
                         Map<?, ?> usage = asMap(usagePayload).get("usage") instanceof Map<?, ?> u ? u : null;
                         if (usage != null) {
                             usageData = usage;
@@ -1394,19 +1399,25 @@ public class ChatController {
     }
 
     // PLAN-294 M1 (decision #13): the usage event carries estimated + real
-    // token counts and the source tag; store it verbatim on the run's
-    // operation as an llm_usage extension (audit + calibration baseline).
-    private void persistUsageExtension(String sessionId, String runId, Object parsedPayload) {
+    // token counts and the source tag; store it on the run's operation as an
+    // llm_usage extension (audit + calibration baseline). PLAN-0343 decision
+    // #7: the cost mapping happens ONLY here (run-terminal snapshot, one per
+    // run) so the ledger item, the extension, the context-event mirror and
+    // the UI relay all carry the same cost fields (spec §4 单一计算点).
+    // Returns the enriched payload for UI relay (decision #9), or null when
+    // nothing was persisted (no operation).
+    private Map<?, ?> persistUsageExtension(String sessionId, String runId, Object parsedPayload) {
         UUID operationId = operationService.findOperationIdByRunId(runId);
         if (operationId == null) {
             logger.debug("[LIFECYCLE] service=cp event=usage_extension_skipped runId={} reason=no_operation", runId);
-            return;
+            return null;
         }
         try {
+            Object enriched = mapUsageCost(runId, parsedPayload);
             OperationItem item = operationService.appendItem(
                     operationId, null, null, "llm_usage", "chat", "agent", null, null, null);
             operationService.appendExtension(item.getId(), null, "llm_usage", 1,
-                    objectMapper.writeValueAsString(parsedPayload));
+                    objectMapper.writeValueAsString(enriched));
             // 2026-09-13 E2E（V11）：usage 条目写完即终态，避免账本残留 pending 中间态。
             operationService.transitionItem(item.getId(), "completed", null, null, null, null);
             // PLAN-294 M3 (decision #5 signal bridge): mirror the usage into
@@ -1416,19 +1427,109 @@ public class ChatController {
             ChatRun usageRun = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
             if (usageRun != null) {
                 Map<String, Object> usageEnvelope = new java.util.HashMap<>();
-                usageEnvelope.put("usage", asMap(parsedPayload).get("usage"));
+                usageEnvelope.put("usage", asMap(enriched).get("usage"));
                 eventStoreService.append(sessionId, usageRun.getWorkspaceId().toString(),
                         usageRun.getUserId().toString(), "llm.usage", usageEnvelope);
             }
             // PLAN-294 ①2: success visibility — the estimated/real token
             // counts reaching the ledger is the calibration baseline; without
             // this line a silent CHECK-constraint rejection is undetectable.
-            Map<?, ?> usage = asMap(asMap(parsedPayload).get("usage"));
-            logger.info("[LIFECYCLE] service=cp event=usage_extension_persisted runId={} source={} inputTokens={} totalTokens={}",
-                    runId, usage.get("source"), usage.get("inputTokens"), usage.get("totalTokens"));
+            Map<?, ?> usage = asMap(asMap(enriched).get("usage"));
+            logger.info("[LIFECYCLE] service=cp event=usage_extension_persisted runId={} source={} inputTokens={} totalTokens={} cost={} costSource={}",
+                    runId, usage.get("source"), usage.get("inputTokens"), usage.get("totalTokens"),
+                    usage.get("cost"), usage.get("costSource"));
+            return asMap(enriched);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=usage_extension_failed runId={} error={}", runId, e.getMessage());
+            return null;
         }
+    }
+
+    /**
+     * PLAN-0343 decision #7: single cost computation point. Looks the model up
+     * in the pricing config domain (decision #11, per-MTok) and injects
+     * cost/costCurrency/costSource/costNote into the usage snapshot. Unmapped
+     * → cost=null + warn (I2: never fabricate 0). source=fallback rows are not
+     * priceable (I4: no provider_reported impersonation) → unmapped without
+     * pricing warn noise being wrong, still null.
+     */
+    private Object mapUsageCost(String runId, Object parsedPayload) {
+        try {
+            Map<?, ?> envelope = asMap(parsedPayload);
+            Map<?, ?> usage = asMap(envelope.get("usage"));
+            if (usage.isEmpty()) {
+                return parsedPayload;
+            }
+            String model = stringValue(usage, "model");
+            String source = stringValue(usage, "source");
+            if (model == null) {
+                // Pre-0343 payloads without a model key stay verbatim (spec
+                // §2.2 legacy rows: aggregation handles them, no alert).
+                return parsedPayload;
+            }
+            if (!"real".equals(source) && !"estimated".equals(source)) {
+                // fallback: no counts → not priceable, cost stays absent-null.
+                return withCostFields(usage, envelope, null, null, "unmapped", "no token counts");
+            }
+            java.math.BigDecimal[] rates = pricingRates(model);
+            if (rates == null) {
+                logger.warn("[LIFECYCLE] service=cp event=usage_cost_unmapped runId={} model={} reason=no_pricing_entry", runId, model);
+                return withCostFields(usage, envelope, null, null, "unmapped", "model not in pricing config");
+            }
+            long in = usage.get("inputTokens") instanceof Number n ? n.longValue() : 0L;
+            long out = usage.get("outputTokens") instanceof Number n ? n.longValue() : 0L;
+            java.math.BigDecimal cost = rates[0]
+                    .multiply(java.math.BigDecimal.valueOf(in))
+                    .divide(java.math.BigDecimal.valueOf(1_000_000))
+                    .add(rates[1]
+                            .multiply(java.math.BigDecimal.valueOf(out))
+                            .divide(java.math.BigDecimal.valueOf(1_000_000)));
+            return withCostFields(usage, envelope, cost, "USD", "price_table", null);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=usage_cost_mapping_failed runId={} error={}", runId, e.getMessage());
+            return parsedPayload;
+        }
+    }
+
+    /** per-MTok rates for {@code model} from the pricing domain, or null. [0]=input, [1]=output. */
+    private java.math.BigDecimal[] pricingRates(String model) {
+        Map<String, String> domain = configService.resolveDomain("pricing", null, null);
+        String modelsJson = domain.get("models");
+        if (modelsJson == null || modelsJson.isBlank()) {
+            return null;
+        }
+        try {
+            var models = objectMapper.readTree(modelsJson);
+            var entry = models.path(model);
+            if (entry.hasNonNull("inputPerMTok") && entry.hasNonNull("outputPerMTok")) {
+                return new java.math.BigDecimal[]{
+                        entry.get("inputPerMTok").decimalValue(),
+                        entry.get("outputPerMTok").decimalValue()};
+            }
+            return null;
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=pricing_config_unreadable model={} error={}", model, e.getMessage());
+            return null;
+        }
+    }
+
+    private Object withCostFields(Map<?, ?> usage, Map<?, ?> envelope,
+                                  java.math.BigDecimal cost, String currency,
+                                  String costSource, String costNote) {
+        java.util.Map<String, Object> usageOut = new java.util.HashMap<>();
+        for (Map.Entry<?, ?> entry : usage.entrySet()) {
+            usageOut.put(String.valueOf(entry.getKey()), entry.getValue());
+        }
+        usageOut.put("cost", cost);
+        usageOut.put("costCurrency", cost != null ? currency : "USD");
+        usageOut.put("costSource", costSource);
+        usageOut.put("costNote", costNote);
+        java.util.Map<String, Object> envelopeOut = new java.util.HashMap<>();
+        for (Map.Entry<?, ?> entry : envelope.entrySet()) {
+            envelopeOut.put(String.valueOf(entry.getKey()), entry.getValue());
+        }
+        envelopeOut.put("usage", usageOut);
+        return envelopeOut;
     }
 
     private Map<?, ?> asMap(Object value) {

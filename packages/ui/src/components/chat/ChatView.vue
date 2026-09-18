@@ -25,6 +25,25 @@ const currentSessionId = computed(() => routeSessionId.value || sessionStore.cur
 
 const isStreaming = computed(() => chatStore.isStreaming(currentSessionId.value))
 const currentRunState = computed(() => chatStore.getSessionRunState(currentSessionId.value))
+// PLAN-0343: run-terminal usage line in the session info header.
+const lastUsage = computed(() => chatStore.getSessionLastUsage(currentSessionId.value))
+
+const usageInput = computed(() => lastUsage.value?.inputTokens)
+const usageOutput = computed(() => lastUsage.value?.outputTokens)
+const usageSource = computed(() => lastUsage.value?.source)
+const usageCost = computed(() => {
+  const usage = lastUsage.value
+  if (!usage) return null
+  if (usage.cost == null) {
+    return usage.source === 'fallback' ? '—' : '未映射'
+  }
+  return `$${usage.cost}`
+})
+const usageCostTitle = computed(() => {
+  const usage = lastUsage.value
+  if (!usage || usage.cost != null) return ''
+  return usage.costNote ?? 'no pricing entry'
+})
 
 async function ensureSession(): Promise<string | null> {
   const fromRoute = routeSessionId.value
@@ -134,6 +153,23 @@ onMounted(async () => {
       <h2 class="text-sm font-medium truncate">
         {{ sessionStore.currentSession?.title || 'xihe' }}
       </h2>
+      <!-- PLAN-0343: run-terminal usage line (tokens · cost/unmapped · source badge) -->
+      <div
+        v-if="lastUsage && usageInput !== undefined"
+        class="flex items-center gap-2 text-xs text-muted-foreground tabular-nums"
+      >
+        <span>in {{ usageInput }} · out {{ usageOutput ?? 0 }}</span>
+        <span :title="usageCostTitle" :class="lastUsage.cost == null && usageCost !== '—' ? 'text-amber-500' : ''">
+          {{ usageCost }}
+        </span>
+        <span
+          v-if="usageSource"
+          class="rounded border px-1 py-0.5 text-[10px] leading-none"
+          :class="usageSource === 'real' ? 'border-emerald-500/40 text-emerald-600' : 'border-amber-500/40 text-amber-600'"
+        >
+          {{ usageSource }}
+        </span>
+      </div>
       <div v-if="isStreaming" class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <span class="relative flex size-3">
           <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />

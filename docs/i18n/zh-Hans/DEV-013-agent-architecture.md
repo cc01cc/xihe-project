@@ -111,7 +111,7 @@ flowchart TD
 | `context.compaction_circuit` | 恢复带熔断开/关（PLAN-0341 T1.3：`state=open|closed`；overflow 强制压缩绕过熔断） |
 | `context.overflow_retry` | 溢出重跑审计（PLAN-0341 T1.1：runId + 预检 maxInputTokens） |
 | `assistant.responded` | assistant 回复持久化（PLAN-294 M1；runner 流成功终态 append，投影映射为 ai 消息） |
-| `llm.usage` | run 用量镜像（PLAN-294 M3；CP relay 写入，压缩门信号源） |
+| `llm.usage` | run 用量镜像（PLAN-294 M3；CP relay 写入，压缩门信号源。PLAN-0343：payload 增 `model`（`provider/model`，pricing 查表键）与 `cost/costCurrency/costSource/costNote`（CP 终态一次映射；unmapped→`cost=null`+告警，禁 0） |
 
 两套事件命名空间不同，映射由 `LangGraphEventAdapter` 维护：
 
@@ -219,6 +219,7 @@ if recover_ids:
 - PLAN-0340 上下文源与注入（L1）
 - PLAN-0341 上下文管道与 prune（overflow/prune/SUM/熔断）— 本节 §3.1b
 - PLAN-0342 诊断回灌与工具卡片呈现（L0/L2 + 四通道）— 本节 §3.5
+- PLAN-0343 用量与成本契约（usage 事件注入 `model`=`provider/model`；CP 终态一次映射 cost，unmapped→`cost=null`+log warn；schemaVersion 仍 1）— 本节 §3 事件表 `llm.usage`
 - PLAN-294 上下文事件流与自动压缩门
 
 - `PLAN-033-XH-agent-module-decoupling.md`

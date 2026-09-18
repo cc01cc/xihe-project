@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ChatSessionRunState, Message, MessagePart, ToolCall } from '../types'
+import type { ChatRunUsage, ChatSessionRunState, Message, MessagePart, ToolCall } from '../types'
 import { ApiError, api } from '../composables/api'
 import { logger } from '../lib/logger'
 import { useAgentStore } from './agent'
@@ -25,6 +25,10 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<Record<string, Message[]>>({})
   const streamingMessageId = ref<Record<string, string | null>>({})
   const sessionRunStates = ref<Record<string, ChatSessionRunState>>({})
+  // PLAN-0343: last run-terminal usage snapshot per session (CP relays the
+  // mapped usage event once per run). Not persisted across reloads — the
+  // ledger is the durable record; the header line is live-run visibility.
+  const sessionLastUsage = ref<Record<string, ChatRunUsage>>({})
 
   function getMessages(sessionId: string): Message[] {
     return messages.value[sessionId] ?? []
@@ -36,6 +40,14 @@ export const useChatStore = defineStore('chat', () => {
 
   function getSessionRunState(sessionId: string): ChatSessionRunState {
     return sessionRunStates.value[sessionId] ?? { status: 'idle' }
+  }
+
+  function getSessionLastUsage(sessionId: string): ChatRunUsage | null {
+    return sessionLastUsage.value[sessionId] ?? null
+  }
+
+  function setSessionLastUsage(sessionId: string, usage: ChatRunUsage) {
+    sessionLastUsage.value[sessionId] = usage
   }
 
   function getSessionRunId(sessionId: string): string | undefined {
@@ -457,6 +469,7 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = {}
     streamingMessageId.value = {}
     sessionRunStates.value = {}
+    sessionLastUsage.value = {}
     runRecovery.value = {}
     recoveryGeneration += 1
     recoveryGenerations.clear()
@@ -467,6 +480,7 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = {}
     streamingMessageId.value = {}
     sessionRunStates.value = {}
+    sessionLastUsage.value = {}
     runRecovery.value = {}
     recoveryGeneration += 1
     recoveryGenerations.clear()
@@ -483,6 +497,8 @@ export const useChatStore = defineStore('chat', () => {
     getSessionRunState,
     getSessionRunId,
     setSessionRunState,
+    getSessionLastUsage,
+    setSessionLastUsage,
     isStreaming,
     addMessage,
     loadMessages,

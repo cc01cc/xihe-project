@@ -1253,6 +1253,15 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         usage_data["windowTokens"] = _model_window_tokens(
                             request_config.model, user_overrides, workspace_overrides
                         )
+                        # PLAN-0343 decision #10: the model string is the
+                        # aggregation key and the CP pricing lookup key.
+                        # Spec key shape is provider/model; request_config.model
+                        # is the bare model name, so prefix the CP provider id
+                        # (matches pricing.models keys, e.g. deepseek/deepseek-v4-flash).
+                        usage_model = model_override or request_config.model
+                        if usage_model and request_config.provider and "/" not in usage_model:
+                            usage_model = f"{request_config.provider}/{usage_model}"
+                        usage_data["model"] = usage_model
                         yield render_sse("usage", correlated_data({"usage": usage_data}))
                     else:
                         yield render_sse(event.type, correlated_data(event.data))

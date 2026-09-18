@@ -54,6 +54,8 @@ export interface SSECallbacks {
     onContextOverflowRetry?: (data: { runId?: string; requestId?: string; message?: string }) => void;
     /** PLAN-0341 U4: auto-compaction circuit open/closed. */
     onContextCompactionCircuit?: (data: { state?: string; reason?: string }) => void;
+    /** PLAN-0343: run-terminal usage snapshot (cost-mapped by CP, once per run). */
+    onUsage?: (data: Record<string, unknown>) => void;
     onError?: (error: SSEErrorPayload) => void;
     onDone?: (outcome?: string) => void;
 }
@@ -434,6 +436,18 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     currentCallbacks.onContextSourcesChanged?.(data);
                 } catch {
                     logger.warn("Failed to parse context_sources_changed payload");
+                }
+                break;
+
+            case "usage":
+                // PLAN-0343: CP relays the cost-mapped usage snapshot once per
+                // run, before done; the chat store keeps the latest per session.
+                try {
+                    const data = JSON.parse(msg.data) as { usage?: Record<string, unknown> };
+                    const usage = data.usage ?? data;
+                    currentCallbacks.onUsage?.(usage);
+                } catch {
+                    logger.warn("Failed to parse usage event payload");
                 }
                 break;
 

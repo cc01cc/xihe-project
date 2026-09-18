@@ -470,6 +470,22 @@ export interface ChatSessionRunState {
     status: AgentState["status"];
 }
 
+// ── PLAN-0343: run-terminal usage snapshot (single event, before done) ───────
+// cost=null + costSource="unmapped" means the model has no pricing entry; the
+// UI renders an explicit "unmapped" marker instead of a fabricated zero.
+export interface ChatRunUsage {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    estimatedInputTokens?: number;
+    source?: "real" | "estimated" | "fallback";
+    model?: string;
+    cost?: number | null;
+    costCurrency?: string;
+    costSource?: "price_table" | "provider_reported" | "unmapped";
+    costNote?: string | null;
+}
+
 // ── PLAN-0339: workspace checkpoint slices ───────────────────────────────────
 // The workspace owns one append-only slice timeline. A Run is only source metadata;
 // restore operations always target an opaque `sliceRef`.

@@ -68,6 +68,18 @@
     "minScore": 0.0
   },
 
+  // pricing — 用量计价唯一权威（PLAN-0343 决策 #11，instance-only：用户/工作区层不可写）。
+  // 键 = usage 事件的 model 串（provider/model 全串）；金额单位 = 每百万 token（per-MTok）；
+  // 代码只乘算不舍入；未登记模型 → cost=null + unmapped 告警（不回退任何第二价格源）。
+  "pricing": {
+    "models": {
+      "deepseek/deepseek-v4-flash": { "inputPerMTok": 0.27, "outputPerMTok": 1.10, "currency": "USD" },
+      "openai/gpt-4o":              { "inputPerMTok": 2.50, "outputPerMTok": 10.00, "currency": "USD" },
+      "anthropic/claude-sonnet-4":  { "inputPerMTok": 3.00, "outputPerMTok": 15.00, "currency": "USD" },
+      "xiaomi/mimo-v2.5":           { "inputPerMTok": 0.00, "outputPerMTok": 0.00, "currency": "CNY" }
+    }
+  },
+
   // agent-runtime — Agent 实例级行为（instructions 仅 instance 层可写）
   "agent-runtime": {
     "instructions": "你是 xihe Agent，一个通用的 AI 助手。请用中文回答。你可以使用各种工具来帮助用户完成任务。",

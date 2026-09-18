@@ -490,6 +490,9 @@ paths:
                 event: tool_result
                 data: {"tool":"execute_command","toolCallId":"call-2","origin":"mcp","type":"tool_result","runId":"run-abc","result":"...","diagnostics":{"items":[{"file":"src/app.ts","line":12,"column":3,"severity":"error","kind":"compile","message":"TS2345: Argument of type 'string' is not assignable to parameter of type 'number'","confidence":"high"}],"total":5,"confidence":"high"}}
 
+                event: usage
+                data: {"usage":{"inputTokens":372,"outputTokens":56,"totalTokens":428,"estimatedInputTokens":0,"source":"real","windowTokens":131072,"model":"deepseek/deepseek-v4-flash","cost":0.1620,"costCurrency":"USD","costSource":"price_table","costNote":null}}
+
                 event: done
                 data: {"type":"done","runId":"run-abc"}
 

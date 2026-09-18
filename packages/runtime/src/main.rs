@@ -1674,7 +1674,10 @@ async fn workspace_materialize_handler(
         // materialization. After a checkpoint cleanup the shadow refs are gone
         // while the workspace stays Ready, so this fast path must still
         // bootstrap a fresh C0 slice (best-effort, same as the spawn path).
-        match app.checkpoints.capture(&ws_id, C0_RUN_ID, "materialize", "materialize", false).await
+        match app
+            .checkpoints
+            .capture(&ws_id, C0_RUN_ID, "materialize", "materialize", false)
+            .await
         {
             Ok(outcome) => tracing::info!(
                 workspace_id = %ws_id,

@@ -45,7 +45,7 @@ public class ConfigService {
     public static final Set<String> DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
         "agent-runtime", "agent-profile", "user-preference", "logging",
-        "approval-policy");
+        "approval-policy", "pricing");
 
     private static final Set<String> USER_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
@@ -58,6 +58,12 @@ public class ConfigService {
     /** Decision #17: instructions is instance-level behaviour, never user/workspace writable. */
     private static final Map<String, Set<String>> INSTANCE_ONLY_KEYS = Map.of(
         "agent-runtime", Set.of("instructions"));
+
+    /**
+     * PLAN-0343 decision #11: pricing is the single cost authority and is an
+     * instance-level operations concern (bill rates), not user/workspace tunable.
+     */
+    private static final Set<String> INSTANCE_ONLY_DOMAINS = Set.of("pricing");
 
     /**
      * Decision #24: resolved/effective include code defaults so the UI and the
@@ -295,20 +301,27 @@ public class ConfigService {
                 // workspace-only 拒绝——approval-policy 在 instance 层可写默认，审计来源层
                 // 由 DbPolicyContextProvider 按 effective(...).source 回填。
             }
-            case "user" -> {
-                if (userId == null) {
-                    throw new ConfigAccessException("User scope requires a user_id");
+            case "user", "workspace" -> {
+                // PLAN-0343 decision #11: pricing is instance-only (bill rates
+                // are an operations concern; user/workspace layers never carry them).
+                if (INSTANCE_ONLY_DOMAINS.contains(domain)) {
+                    throw new ConfigAccessException(
+                        "Domain is instance-only and cannot be written at layer " + layer + ": " + domain);
                 }
-                if (!USER_WRITABLE_DOMAINS.contains(domain)) {
-                    throw new ConfigAccessException("Domain is not writable at the user layer: " + domain);
-                }
-            }
-            case "workspace" -> {
-                if (workspaceId == null) {
-                    throw new ConfigAccessException("Workspace scope requires a workspace_id");
-                }
-                if (!WORKSPACE_WRITABLE_DOMAINS.contains(domain)) {
-                    throw new ConfigAccessException("Domain is not writable at the workspace layer: " + domain);
+                if ("user".equals(layer)) {
+                    if (userId == null) {
+                        throw new ConfigAccessException("User scope requires a user_id");
+                    }
+                    if (!USER_WRITABLE_DOMAINS.contains(domain)) {
+                        throw new ConfigAccessException("Domain is not writable at the user layer: " + domain);
+                    }
+                } else {
+                    if (workspaceId == null) {
+                        throw new ConfigAccessException("Workspace scope requires a workspace_id");
+                    }
+                    if (!WORKSPACE_WRITABLE_DOMAINS.contains(domain)) {
+                        throw new ConfigAccessException("Domain is not writable at the workspace layer: " + domain);
+                    }
                 }
             }
             default -> throw new IllegalArgumentException("Unknown config layer: " + layer);

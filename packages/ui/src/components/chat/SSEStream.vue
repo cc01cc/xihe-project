@@ -11,7 +11,7 @@ import { toast } from 'vue-sonner'
 import { logger } from '../../lib/logger'
 import { chatErrorToastText } from '../../lib/errorMessages'
 import { api } from '../../composables/api'
-import type { ChatRunResponse } from '../../types'
+import type { ChatRunResponse, ChatRunUsage } from '../../types'
 
 const props = withDefaults(defineProps<{
   sessionId: string
@@ -143,6 +143,12 @@ function connectSession(id: string) {
       } else if (data.state === 'closed') {
         toast.info(t('chat.contextCompactionCircuitClosed'))
       }
+    },
+    onUsage: (data) => {
+      if (!isCurrentSession()) return
+      // PLAN-0343: keep the latest run-terminal usage snapshot for the
+      // session-header usage line (live-run visibility; ledger is durable).
+      chatStore.setSessionLastUsage(id, data as ChatRunUsage)
     },
     onToolCall: (name: string, args: Record<string, unknown>) => {
       if (!isCurrentSession()) return
