@@ -67,6 +67,22 @@ public class RuntimeJobClient {
         }
     }
 
+    /**
+     * reachable=false：调用失败（不可达/超时/非 2xx/响应不可解析）；
+     * found=false：Runtime 明确没有该 job（404 `JOB_NOT_FOUND`）；
+     * status：`cancelled` 或 `failed`（终止未确认，由 CP 折叠 502）。
+     */
+    public record JobCancelResult(boolean reachable, boolean found, String status) {
+
+        static JobCancelResult unreachableResult() {
+            return new JobCancelResult(false, false, null);
+        }
+
+        static JobCancelResult notFound() {
+            return new JobCancelResult(true, false, null);
+        }
+    }
+
     public JobStatusResult jobStatus(String workspaceId, String jobId) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("jobId", jobId);
@@ -113,6 +129,35 @@ public class RuntimeJobClient {
             return JobOutputResult.unavailable();
         }
         return new JobOutputResult(true, false, chunk);
+    }
+
+    /**
+     * PLAN-0366 T1.3：取消单个 job（Runtime internal `jobs/cancel`，复用四阶段终止）。
+     * 找不到 job → notFound（由 CP 决定落 orphaned，不臆造已取消）。
+     */
+    public JobCancelResult cancelJob(String workspaceId, String jobId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("jobId", jobId);
+        HttpResponse<String> response = post(workspaceId, "/jobs/cancel", body);
+        if (response == null) {
+            return JobCancelResult.unreachableResult();
+        }
+        if (response.statusCode() == 404) {
+            return JobCancelResult.notFound();
+        }
+        if (response.statusCode() / 100 != 2) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_job_cancel_http_error workspaceId={} jobId={} status={}",
+                    workspaceId, jobId, response.statusCode());
+            return JobCancelResult.unreachableResult();
+        }
+        JsonNode node = readTree(response.body());
+        String status = node == null ? null : node.path("status").asText(null);
+        if (!"cancelled".equals(status) && !"failed".equals(status)) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_job_cancel_unexpected_status workspaceId={} jobId={} status={}",
+                    workspaceId, jobId, status);
+            return JobCancelResult.unreachableResult();
+        }
+        return new JobCancelResult(true, true, status);
     }
 
     private HttpResponse<String> post(String workspaceId, String suffix, Map<String, Object> body) {

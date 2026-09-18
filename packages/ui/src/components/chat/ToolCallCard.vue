@@ -114,6 +114,58 @@ const jobLoading = ref(false)
 const jobError = ref<string | null>(null)
 const jobHasMore = computed(() => jobLoaded.value && jobNextOffset.value < jobSizeBytes.value)
 
+// PLAN-0366 T2.2：单 job 取消（owner-only；二次确认；pending 防重复提交；
+// 失败不改卡片状态、可重试）。成功/失联后就地更新徽章，不改 run 状态区。
+const cancelConfirming = ref(false)
+const cancelPending = ref(false)
+const cancelError = ref<string | null>(null)
+const cancelOutcome = ref<'cancelled' | 'orphaned' | null>(null)
+const displayJobStatus = computed(() => cancelOutcome.value ?? jobSummary.value?.status)
+const canCancelJob = computed(
+  () =>
+    isJobCard.value &&
+    jobSummary.value?.status === 'running' &&
+    !!jobSummary.value?.itemId &&
+    !cancelOutcome.value,
+)
+
+async function submitJobCancel() {
+  const itemId = jobSummary.value?.itemId
+  if (!itemId || cancelPending.value) return
+  cancelPending.value = true
+  cancelError.value = null
+  try {
+    const result = await api.cancelJob(itemId)
+    cancelOutcome.value = result.status === 'orphaned' ? 'orphaned' : 'cancelled'
+    cancelConfirming.value = false
+  } catch (err) {
+    // 失败不改卡片状态；回到可重试入口（与预览稿一致）
+    cancelConfirming.value = false
+    if (err instanceof ApiError) {
+      cancelError.value =
+        err.problem.code === 'JOB_CANCEL_UNCONFIRMED'
+          ? t('chat.jobCancelUnconfirmed')
+          : err.problem.code === 'RUNTIME_UNAVAILABLE'
+            ? t('chat.jobCancelUnavailable')
+            : (err.problem.title ?? err.message)
+    } else {
+      cancelError.value = String(err)
+    }
+  } finally {
+    cancelPending.value = false
+  }
+}
+
+function jobStatusClass(status?: string): string {
+  if (status === 'running') {
+    return 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+  }
+  if (status === 'failed') {
+    return 'bg-destructive/10 text-destructive'
+  }
+  return 'bg-muted text-muted-foreground'
+}
+
 async function loadJobOutput(reset: boolean) {
   const itemId = jobSummary.value?.itemId
   if (!itemId || jobLoading.value) return
@@ -225,10 +277,11 @@ async function loadJobOutput(reset: boolean) {
         <div class="flex items-center gap-2">
           <span class="font-medium text-foreground">{{ t('chat.jobOutputTitle') }}</span>
           <span
-            v-if="jobSummary?.status"
-            class="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground"
+            v-if="displayJobStatus"
+            class="rounded px-1.5 py-0.5 text-[10px] uppercase"
+            :class="jobStatusClass(displayJobStatus)"
             data-testid="job-status"
-          >{{ t(`chat.jobStatus.${jobSummary.status}`) }}</span>
+          >{{ t(`chat.jobStatus.${displayJobStatus}`) }}</span>
           <button
             type="button"
             class="ml-auto rounded border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
@@ -261,6 +314,53 @@ async function loadJobOutput(reset: boolean) {
           {{ t('chat.jobOutputMore') }}
         </button>
         <p v-if="jobError" class="text-destructive" data-testid="job-output-error">{{ jobError }}</p>
+
+        <div class="flex flex-wrap items-center gap-2 border-t pt-2" data-testid="job-cancel-row">
+          <template v-if="cancelOutcome">
+            <span class="text-green-600 dark:text-green-400" data-testid="job-cancel-success">
+              {{ cancelOutcome === 'orphaned' ? t('chat.jobCancelOrphaned') : t('chat.jobCancelDone') }}
+            </span>
+          </template>
+          <template v-else-if="cancelPending">
+            <span class="text-muted-foreground" data-testid="job-cancel-pending">{{ t('chat.jobCancelPending') }}</span>
+            <button
+              type="button"
+              class="ml-auto rounded border px-2 py-1 text-xs disabled:opacity-50"
+              disabled
+              data-testid="job-cancel-button"
+            >{{ t('chat.jobCancelButton') }}</button>
+          </template>
+          <template v-else-if="cancelConfirming">
+            <span class="text-muted-foreground" data-testid="job-cancel-confirm-hint">
+              {{ t('chat.jobCancelConfirmHint', { jobId: jobSummary?.jobId ?? '' }) }}
+            </span>
+            <span class="ml-auto flex gap-2">
+              <button
+                type="button"
+                class="rounded border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                data-testid="job-cancel-confirm"
+                @click="submitJobCancel"
+              >{{ t('chat.jobCancelConfirm') }}</button>
+              <button
+                type="button"
+                class="rounded border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
+                data-testid="job-cancel-back"
+                @click="cancelConfirming = false"
+              >{{ t('chat.jobCancelBack') }}</button>
+            </span>
+          </template>
+          <template v-else>
+            <span class="text-muted-foreground">{{ t('chat.jobCancelHint') }}</span>
+            <button
+              type="button"
+              class="ml-auto rounded border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
+              :disabled="!canCancelJob"
+              data-testid="job-cancel-button"
+              @click="cancelConfirming = true"
+            >{{ t('chat.jobCancelButton') }}</button>
+          </template>
+          <p v-if="cancelError" class="w-full text-destructive" data-testid="job-cancel-error">{{ cancelError }}</p>
+        </div>
       </div>
 
       <div v-if="hasDiagnostics">

@@ -1153,6 +1153,34 @@ export const api = {
             `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
         );
     },
+    /** PLAN-0366：stdio 服务器配置名单（name → config；公开响应不暴露 enabled）。 */
+    getStdioServers(wsId: string) {
+        return request<{
+            generation?: number;
+            hash?: string;
+            servers?: Record<string, unknown>;
+        }>(`/workspaces/${encodeURIComponent(wsId)}/stdio-servers`);
+    },
+    /** PLAN-0366：stdio MCP 会话状态快照（CP 显式映射 camelCase；state 为小写字面量）。 */
+    getMcpServerStatus(wsId: string) {
+        return request<{
+            servers: Array<{
+                serverId: string;
+                state: string;
+                attempt: number;
+                lastError: string | null;
+                sinceMs: number;
+                epoch: number;
+            }>;
+            count: number;
+        }>(`/workspaces/${encodeURIComponent(wsId)}/mcp/servers`);
+    },
+    /** PLAN-0366：取消单个 durable job（owner-only；幂等；不改 run/对话终态）。 */
+    cancelJob(itemId: string) {
+        return apiPost<{ itemId: string; jobId: string; status: string; changed: boolean }>(
+            `/operations/items/${encodeURIComponent(itemId)}/cancel`,
+        );
+    },
     decideChatApproval(
         requestId: string,
         decision: ApprovalDecision | boolean,

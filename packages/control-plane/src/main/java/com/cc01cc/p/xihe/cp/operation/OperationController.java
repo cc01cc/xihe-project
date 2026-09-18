@@ -179,6 +179,96 @@ public class OperationController {
         }
     }
 
+    /**
+     * PLAN-0366 T1.3：用户直连取消单个 durable job（owner-only；与 job-output 同键位）。
+     *
+     * <p>语义冻结（spec §二）：取消 job ≠ run 终态；已终态幂等 200 + `changed:false`；
+     * 终止未确认 → 502 `JOB_CANCEL_UNCONFIRMED`（不改档案）；Runtime 404 → 档案落
+     * `orphaned`（`cancelReason=job_missing`）；Runtime 不可达 → 502。带档案的每次
+     * 调用写 `operation_events`（`job.cancel` / `actor=user`，决策 #14）。
+     */
+    @PostMapping("/items/{itemId}/cancel")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> cancelJob(@PathVariable String itemId) {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication context is required");
+        }
+        UUID itemUuid;
+        try {
+            itemUuid = UUID.fromString(itemId);
+        } catch (IllegalArgumentException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "itemId must be a UUID");
+        }
+        try {
+            operationService.requireOwnedItem(itemUuid, userId);
+            JobStateService.JobArchive archive = jobStateService.find(itemUuid)
+                    .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "JOB_ARCHIVE_NOT_FOUND",
+                            "No job archive for this operation item"));
+            if (archive.terminal()) {
+                // 已终态：不改写事实、不调 Runtime（幂等 200 + 原状态）。
+                operationService.recordJobCancel(itemId, archive.workspaceId(), archive.jobId(),
+                        archive.status(), "rejected_terminal", false);
+                return ResponseEntity.ok(cancelBody(itemId, archive.jobId(), archive.status(), false));
+            }
+            RuntimeJobClient.JobCancelResult result =
+                    runtimeJobClient.cancelJob(archive.workspaceId(), archive.jobId());
+            if (!result.reachable()) {
+                operationService.recordJobCancel(itemId, archive.workspaceId(), archive.jobId(),
+                        archive.status(), "unreachable", false);
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime job cancel failed");
+            }
+            if (!result.found()) {
+                // Runtime 已无该 job（失联/容器重建）：fail-closed 落 orphaned（不臆造已取消）。
+                Map<String, Object> incoming = new LinkedHashMap<>();
+                incoming.put("status", "orphaned");
+                incoming.put("cancelReason", "job_missing");
+                jobStateService.upsert(itemUuid, incoming);
+                operationService.recordJobCancel(itemId, archive.workspaceId(), archive.jobId(),
+                        "orphaned", "orphaned", true);
+                return ResponseEntity.ok(cancelBody(itemId, archive.jobId(), "orphaned", true));
+            }
+            if ("failed".equals(result.status())) {
+                // 四阶段后进程仍存活：终止未确认，不改档案（job 可能仍在运行）。
+                operationService.recordJobCancel(itemId, archive.workspaceId(), archive.jobId(),
+                        archive.status(), "unconfirmed", false);
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.BAD_GATEWAY, "JOB_CANCEL_UNCONFIRMED",
+                        "Job termination was not confirmed");
+            }
+            Map<String, Object> incoming = new LinkedHashMap<>();
+            incoming.put("status", "cancelled");
+            incoming.put("cancelReason", "user_cancel");
+            jobStateService.upsert(itemUuid, incoming);
+            operationService.recordJobCancel(itemId, archive.workspaceId(), archive.jobId(),
+                    "cancelled", "cancelled", true);
+            return ResponseEntity.ok(cancelBody(itemId, archive.jobId(), "cancelled", true));
+        } catch (CpApiException e) {
+            // spec 冻结：非归属/不存在一律 404 OPERATION_ITEM_NOT_FOUND（不泄露存在性）。
+            // requireOwnedItem 对「item 存在但归属不符」抛出的是 OPERATION_NOT_FOUND，
+            // 这里只收敛该码（JOB_ARCHIVE_NOT_FOUND 等保持原码）。
+            if (HttpStatus.NOT_FOUND.equals(e.getStatus())
+                    && "OPERATION_NOT_FOUND".equals(e.getCode())) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND", "Operation item not found");
+            }
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    private static Map<String, Object> cancelBody(String itemId, String jobId, String status,
+                                                  boolean changed) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("itemId", itemId);
+        body.put("jobId", jobId);
+        body.put("status", status);
+        body.put("changed", changed);
+        return body;
+    }
+
     static Map<String, Object> toSummary(LedgerOperation operation) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", operation.getId().toString());

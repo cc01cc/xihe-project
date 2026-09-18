@@ -1589,6 +1589,35 @@ async fn workspace_job_output_handler(
     }
 }
 
+/// PLAN-0366 T1.3：CP 取消端点直连的 internal 取消通道（与 `/jobs/status` 同形）。
+/// 复用既有四阶段终止（SIGTERM → ≤3s 等待 → SIGKILL → 复核）；`failed` = 复核仍存活
+/// （终止未确认），由 CP 折叠为 502 `JOB_CANCEL_UNCONFIRMED`，不臆造成功。
+async fn workspace_job_cancel_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(req): AxumJson<JobStatusRequest>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    match app
+        .router
+        .cancel_background_process(&ws_id, &req.job_id)
+        .await
+    {
+        Ok(value) => Ok(AxumJson(job_cancel_response(&req.job_id, &value))),
+        Err(error) if is_job_not_found(&error) => Err(job_not_found_problem(&ws_id, &req.job_id)),
+        Err(error) => Err(runtime_problem(error)),
+    }
+}
+
+/// 取消结果折叠：容器侧返回 `{"status":"cancelled"|"failed"}`；
+/// 缺失/未知状态一律按 `failed`（终止未确认）上报。
+fn job_cancel_response(job_id: &str, value: &serde_json::Value) -> serde_json::Value {
+    let status = match value.get("status").and_then(|value| value.as_str()) {
+        Some("cancelled") => "cancelled",
+        _ => "failed",
+    };
+    serde_json::json!({"jobId": job_id, "status": status})
+}
+
 /// PLAN-262 M4 (decision 12): explicit async materialization trigger.
 /// Returns 202 immediately with the current materialization state; the caller
 /// polls GET .../status for progress. Reuses the idempotent per-workspace
@@ -2316,6 +2345,10 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/jobs/output",
             post(workspace_job_output_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/jobs/cancel",
+            post(workspace_job_cancel_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/files/read",
@@ -3083,6 +3116,35 @@ mod cancel_endpoint_tests {
         )
         .await;
         assert_eq!(cross.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[cfg(test)]
+mod job_cancel_tests {
+    use super::job_cancel_response;
+
+    /// PLAN-0366 T1.3：容器状态折叠——cancelled 原样；failed/缺失/未知一律
+    /// failed（终止未确认，CP 折叠 502）。
+    #[test]
+    fn cancel_response_folds_container_status() {
+        let cancelled = job_cancel_response("job-1", &serde_json::json!({"status": "cancelled"}));
+        assert_eq!(cancelled["jobId"], "job-1");
+        assert_eq!(cancelled["status"], "cancelled");
+
+        let failed = job_cancel_response("job-2", &serde_json::json!({"status": "failed"}));
+        assert_eq!(failed["jobId"], "job-2");
+        assert_eq!(failed["status"], "failed");
+
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"status": "weird"}),
+        ] {
+            assert_eq!(
+                job_cancel_response("job-3", &value)["status"],
+                "failed",
+                "missing or unknown container status must never be reported as cancelled"
+            );
+        }
     }
 }
 

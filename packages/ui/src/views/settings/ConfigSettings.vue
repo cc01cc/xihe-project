@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import { useConfigStore, LAYER_DOMAINS, type ConfigLayer } from '../../stores/config'
 import ConfigDomainPanel, { type DomainField } from '../../components/settings/ConfigDomainPanel.vue'
+import McpStdioServerList from '../../components/settings/McpStdioServerList.vue'
 import ProviderHub from '../../components/settings/ProviderHub.vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
 import BackToChatButton from '../../components/settings/BackToChatButton.vue'
@@ -541,6 +542,7 @@ async function handleImportFile(event: Event) {
               {{ t('settings.domainMcp') }}
             </div>
             <div class="px-4 pb-3 space-y-3">
+              <McpStdioServerList :workspace-id="currentWorkspaceId()" />
               <div class="space-y-2">
                 <div class="flex flex-wrap gap-2 mb-3">
                   <span

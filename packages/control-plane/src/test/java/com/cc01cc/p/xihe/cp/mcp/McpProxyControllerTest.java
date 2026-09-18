@@ -1,8 +1,16 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
@@ -187,5 +195,44 @@ class McpProxyControllerTest {
 
         assertTrue(aliasRepository.findByWorkspaceIdAndIssuedName(UUID.fromString(wsId), "ask_question").isPresent());
         assertEquals(2, aliasRepository.findByWorkspaceId(wsUuid).size());
+    }
+
+    // ── PLAN-0366 T1.2：toolServerCache 非 2xx 失效 ────────────────────────
+
+    @Test
+    void stdioToolsFailureEvictsOnlyThatServerMappings() {
+        Map<String, String> mapping = new ConcurrentHashMap<>();
+        mapping.put("sys_tool", "__system__");
+        mapping.put("a_tool", "server-a");
+        mapping.put("b_tool", "server-b");
+        List<Map<String, Object>> allTools = new ArrayList<>();
+        Set<String> seenNames = new HashSet<>(Set.of("sys_tool", "a_tool", "b_tool"));
+
+        controller.mergeStdioServerTools("ws-1", "server-a",
+                ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{\"error\":\"boom\"}"),
+                mapping, allTools, seenNames);
+
+        assertFalse(mapping.containsKey("a_tool"), "failed server must not keep stale mappings");
+        assertEquals("server-b", mapping.get("b_tool"), "other servers keep their mappings");
+        assertEquals("__system__", mapping.get("sys_tool"));
+        assertTrue(seenNames.contains("b_tool"));
+        assertTrue(allTools.isEmpty(), "a failed server contributes no tools");
+    }
+
+    @Test
+    void stdioToolsSuccessMergesAndKeepsOtherServers() {
+        Map<String, String> mapping = new ConcurrentHashMap<>();
+        mapping.put("b_tool", "server-b");
+        List<Map<String, Object>> allTools = new ArrayList<>();
+        Set<String> seenNames = new HashSet<>(Set.of("b_tool"));
+        String body = "{\"result\":{\"tools\":[{\"name\":\"a_new\",\"description\":\"x\"}]}}";
+
+        controller.mergeStdioServerTools("ws-1", "server-a",
+                ResponseEntity.ok(body), mapping, allTools, seenNames);
+
+        assertEquals("server-a", mapping.get("a_new"));
+        assertEquals("server-b", mapping.get("b_tool"));
+        assertEquals(1, allTools.size());
+        assertEquals("a_new", allTools.get(0).get("name"));
     }
 }

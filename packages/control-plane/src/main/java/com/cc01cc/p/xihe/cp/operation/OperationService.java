@@ -240,6 +240,52 @@ public class OperationService {
     }
 
     /**
+     * PLAN-0366 T1.3（决策 #14）：用户直连取消 job 的账本事件（`job.cancel`）。
+     *
+     * <p>只追加 operation ledger 事件，**不改写** `ledger_operations.actor_type`
+     * （那是 run 的发起事实）。调用方保证：归属校验通过且存在 job 档案（无档案分支
+     * 不写，`state` NOT NULL 且无 job 事实，不造占位值——R3-2 处置）。
+     *
+     * @param state  写入事件时的档案状态（成功分支为终态；未确认/不可达分支保持现值）
+     * @param result {@code cancelled|unconfirmed|orphaned|rejected_terminal|unreachable}
+     */
+    @Transactional
+    public void recordJobCancel(String itemId, String workspaceId, String jobId,
+                                String state, String result, boolean changed) {
+        dbLockTimeout.apply();
+        if (itemId == null || itemId.isBlank() || state == null) {
+            return;
+        }
+        OperationItem item = items.findById(UUID.fromString(itemId)).orElse(null);
+        if (item == null) {
+            logger.warn("[LIFECYCLE] service=cp event=job_cancel_audit_skipped itemId={} reason=item_missing",
+                    itemId);
+            return;
+        }
+        UUID operationId = UUID.fromString(item.getOperationId());
+        String runId = operations.findById(operationId)
+                .map(LedgerOperation::getRunId)
+                .orElse(null);
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("jobId", jobId);
+        fields.put("workspaceId", workspaceId);
+        fields.put("runId", runId);
+        fields.put("result", result);
+        fields.put("changed", changed);
+        String payload;
+        try {
+            payload = OBJECT_MAPPER.writeValueAsString(fields);
+        } catch (JsonProcessingException e) {
+            logger.warn("[LIFECYCLE] service=cp event=job_cancel_audit_failed itemId={} error={}",
+                    itemId, e.getMessage());
+            return;
+        }
+        appendEvent(operationId, itemId, null, "job.cancel", state, "user", payload);
+        logger.info("[LIFECYCLE] service=cp event=job_cancel_recorded itemId={} jobId={} result={} changed={} state={}",
+                itemId, jobId, result, changed, state);
+    }
+
+    /**
      * PLAN-0328 T1.15：把当次派发的安全 Verdict 快照挂到**既有**账本条目上
      * （绝不新建第二个条目）。条目缺失 → 安全跳过并记生命周期事件；已有快照
      * 保持不变（同键重放幂等，不重写首次派发时的事实）。快照内容由

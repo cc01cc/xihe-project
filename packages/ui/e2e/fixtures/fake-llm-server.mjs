@@ -76,6 +76,11 @@ async function sendCompletion(response, provider, requestBody) {
     return
   }
 
+  if (mode === 'job-cancel') {
+    sendJobCancelCompletion(response, requestBody)
+    return
+  }
+
   if (mode === 'history-marker') {
     sendHistoryMarkerCompletion(response, requestBody)
     return
@@ -434,6 +439,69 @@ function sendJobCompletion(response, requestBody) {
   }
 
   const chunks = ['Background job started. ', 'Resume its output from the job card.']
+  for (const content of chunks) {
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+  }
+  response.end('data: [DONE]\n\n')
+}
+
+// PLAN-0366 (mode: job-cancel): deterministic two-job flow for single-job cancel.
+// The marker message emits TWO start_background_process calls in one completion
+// (target A `cancel-target-a` + control B `keep-running-b`, each through the
+// approval gate); the tool-result follow-up closes the run. A later user message
+// without the marker streams a plain answer, proving the session continues
+// after the cancel; the still-running B job must be unaffected.
+function sendJobCancelCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const last = messages.at(-1) ?? {}
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+  const lastUserHasMarker =
+    typeof lastUser?.content === 'string' && lastUser.content.includes('XIHE-E2E-JOB-CANCEL')
+  const followUp = last.role === 'tool'
+
+  if (!lastUserHasMarker) {
+    const chunks = ['Session continues after cancel. ', 'The other job is still running.']
+    for (const content of chunks) {
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
+    }
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  if (!followUp) {
+    const toolCalls = [
+      {
+        index: 0,
+        id: 'call-job-cancel-a',
+        type: 'function',
+        function: {
+          name: 'start_background_process',
+          arguments: JSON.stringify({
+            command: 'echo cancel-target-a; sleep 300',
+            timeout: 600,
+          }),
+        },
+      },
+      {
+        index: 1,
+        id: 'call-job-cancel-b',
+        type: 'function',
+        function: {
+          name: 'start_background_process',
+          arguments: JSON.stringify({
+            command: 'echo keep-running-b; sleep 300',
+            timeout: 600,
+          }),
+        },
+      },
+    ]
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: toolCalls }, finish_reason: null }] })}\n\n`)
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  const chunks = ['Two jobs started. ', 'Cancel one from its job card.']
   for (const content of chunks) {
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
   }

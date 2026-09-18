@@ -262,21 +262,7 @@ public class McpProxyController {
                 String serverId = server.getName();
                 ResponseEntity<String> stdioResp = forwardToRuntime(
                         wsId, serverId, body, headers, sessionId, access);
-                if (stdioResp.getStatusCode().is2xxSuccessful()) {
-                    List<Map<String, Object>> stdioTools = extractToolsFromResponse(stdioResp.getBody());
-                    if (stdioTools != null) {
-                        for (Map<String, Object> tool : stdioTools) {
-                            String name = (String) tool.get("name");
-                            if (name != null && !seenNames.contains(name)) {
-                                mapping.put(name, serverId);
-                                allTools.add(tool);
-                                seenNames.add(name);
-                            } else if (name != null && seenNames.contains(name)) {
-                                logger.warn("Tool '{}' from server '{}' conflicts with built-in, skipped", name, serverId);
-                            }
-                        }
-                    }
-                }
+                mergeStdioServerTools(wsId, serverId, stdioResp, mapping, allTools, seenNames);
             }
 
             // PLAN-242 M2: merge enabled remote servers (sorted for determinism),
@@ -360,6 +346,45 @@ public class McpProxyController {
         } catch (Exception e) {
             logger.error("tools/list merge failed: {}", e.getMessage(), e);
             return problem(HttpStatus.BAD_GATEWAY, "MCP_TOOLS_UNAVAILABLE", "MCP tools unavailable");
+        }
+    }
+
+    /**
+     * PLAN-0366 T1.2（Q7/决策 #10）：单个 stdio server 的 `tools/list` 合并。
+     *
+     * <p>非 2xx 时**移除该 serverId 的全部旧映射**（否则 `tools/call` 仍可能路由到
+     * 不可用 server），warn 记录 wsId/serverId/status；按 server 独立处理，部分失败
+     * 不得影响其他 server 的映射或工具合并（调用侧宁可「未知工具」，不误路由）。
+     */
+    void mergeStdioServerTools(String wsId, String serverId, ResponseEntity<String> stdioResp,
+                               Map<String, String> mapping, List<Map<String, Object>> allTools,
+                               Set<String> seenNames) {
+        if (!stdioResp.getStatusCode().is2xxSuccessful()) {
+            int removed = 0;
+            for (Iterator<Map.Entry<String, String>> it = mapping.entrySet().iterator(); it.hasNext(); ) {
+                Map.Entry<String, String> entry = it.next();
+                if (serverId.equals(entry.getValue())) {
+                    it.remove();
+                    removed++;
+                }
+            }
+            logger.warn("Stdio tools/list failed, evicted stale mappings: wsId={} serverId={} status={} evicted={}",
+                    wsId, serverId, stdioResp.getStatusCode().value(), removed);
+            return;
+        }
+        List<Map<String, Object>> stdioTools = extractToolsFromResponse(stdioResp.getBody());
+        if (stdioTools == null) {
+            return;
+        }
+        for (Map<String, Object> tool : stdioTools) {
+            String name = (String) tool.get("name");
+            if (name != null && !seenNames.contains(name)) {
+                mapping.put(name, serverId);
+                allTools.add(tool);
+                seenNames.add(name);
+            } else if (name != null && seenNames.contains(name)) {
+                logger.warn("Tool '{}' from server '{}' conflicts with built-in, skipped", name, serverId);
+            }
         }
     }
 

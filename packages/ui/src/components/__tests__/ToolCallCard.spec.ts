@@ -4,18 +4,23 @@ import { createI18n } from 'vue-i18n'
 import ToolCallCard from '../chat/ToolCallCard.vue'
 
 const getJobOutput = vi.fn()
+const cancelJob = vi.fn()
 vi.mock('../../composables/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../composables/api')>()
   return {
     ...actual,
-    api: { ...actual.api, getJobOutput: (...args: unknown[]) => getJobOutput(...args) },
+    api: {
+      ...actual.api,
+      getJobOutput: (...args: unknown[]) => getJobOutput(...args),
+      cancelJob: (...args: unknown[]) => cancelJob(...args),
+    },
   }
 })
 
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { toolStatus: { pending: 'Pending', running: 'Running', completed: 'Completed', failed: 'Failed', approved: 'Approved', rejected: 'Rejected' }, approve: 'Approve', reject: 'Reject', toolDiagnosticsTitle: 'Diagnostics', toolDiagnosticsSummary: '{total} total, {shown} shown', toolDiagnosticsMore: '{count} more', toolRawOutput: 'Raw output', jobOutputTitle: 'Background job output', jobOutputLoad: 'View output', jobOutputReload: 'Reload', jobOutputMore: 'Load more', jobOutputEmpty: '(no output yet)', jobOutputTruncated: 'Output reached the 1 MiB cap', jobOutputLost: 'Job output is no longer available', jobOutputExpired: 'Job output expired', jobOutputUnavailable: 'Runtime unavailable', jobStatus: { running: 'Running', succeeded: 'Succeeded', cancelled: 'Cancelled', timeout: 'Timeout', orphaned: 'Orphaned' } } } },
+  messages: { en: { chat: { toolStatus: { pending: 'Pending', running: 'Running', completed: 'Completed', failed: 'Failed', approved: 'Approved', rejected: 'Rejected' }, approve: 'Approve', reject: 'Reject', toolDiagnosticsTitle: 'Diagnostics', toolDiagnosticsSummary: '{total} total, {shown} shown', toolDiagnosticsMore: '{count} more', toolRawOutput: 'Raw output', jobOutputTitle: 'Background job output', jobOutputLoad: 'View output', jobOutputReload: 'Reload', jobOutputMore: 'Load more', jobOutputEmpty: '(no output yet)', jobOutputTruncated: 'Output reached the 1 MiB cap', jobOutputLost: 'Job output is no longer available', jobOutputExpired: 'Job output expired', jobOutputUnavailable: 'Runtime unavailable', jobCancelButton: 'Cancel this job', jobCancelHint: 'Only this job is terminated; the conversation continues', jobCancelConfirmHint: 'Cancel this job ({jobId})? Its output is kept and the run continues.', jobCancelConfirm: 'Confirm cancel', jobCancelBack: 'Back', jobCancelPending: 'Cancelling…', jobCancelDone: 'Cancelled: the job was terminated; this conversation continues.', jobCancelOrphaned: 'The job is gone; the archive was closed as orphaned.', jobCancelUnconfirmed: 'Cancellation unconfirmed: the process may still be running; retry later', jobCancelUnavailable: 'Runtime is temporarily unavailable; try again later', jobStatus: { running: 'Running', succeeded: 'Succeeded', cancelled: 'Cancelled', timeout: 'Timeout', orphaned: 'Orphaned' } } } },
 })
 
 function mountCard(props: any) {
@@ -240,5 +245,124 @@ describe('ToolCallCard job output (PLAN-0344)', () => {
     const wrapper = mountCard({ toolCall: makeToolCall({ status: 'completed' }) })
     await wrapper.find('[data-testid="tool-card-toggle"]').trigger('click')
     expect(wrapper.find('[data-testid="job-output-panel"]').exists()).toBe(false)
+  })
+})
+
+describe('ToolCallCard job cancel (PLAN-0366 T2.2)', () => {
+  beforeEach(() => {
+    cancelJob.mockReset()
+    getJobOutput.mockReset()
+  })
+
+  function jobToolCall(overrides = {}) {
+    return makeToolCall({
+      name: 'start_background_process',
+      status: 'running',
+      jobSummary: {
+        itemId: 'item-1',
+        jobId: 'job-1',
+        status: 'running',
+        toolName: 'start_background_process',
+        scope: 'session',
+      },
+      ...overrides,
+    })
+  }
+
+  async function expandJobCard(props: any) {
+    const wrapper = mountCard(props)
+    await wrapper.find('[data-testid="tool-card-toggle"]').trigger('click')
+    return wrapper
+  }
+
+  it('only enables the cancel button for a running job', async () => {
+    const running = await expandJobCard({ toolCall: jobToolCall() })
+    expect(running.find('[data-testid="job-cancel-button"]').attributes('disabled')).toBeUndefined()
+
+    const terminal = await expandJobCard({
+      toolCall: jobToolCall({
+        status: 'completed',
+        jobSummary: { itemId: 'item-1', jobId: 'job-1', status: 'succeeded' },
+      }),
+    })
+    expect(terminal.find('[data-testid="job-cancel-button"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('requires a second confirmation before calling the endpoint', async () => {
+    cancelJob.mockResolvedValue({ itemId: 'item-1', jobId: 'job-1', status: 'cancelled', changed: true })
+    const wrapper = await expandJobCard({ toolCall: jobToolCall() })
+
+    await wrapper.find('[data-testid="job-cancel-button"]').trigger('click')
+    expect(cancelJob).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="job-cancel-confirm-hint"]').text()).toContain('job-1')
+
+    await wrapper.find('[data-testid="job-cancel-back"]').trigger('click')
+    expect(wrapper.find('[data-testid="job-cancel-confirm"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="job-cancel-button"]').trigger('click')
+    await wrapper.find('[data-testid="job-cancel-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(cancelJob).toHaveBeenCalledWith('item-1')
+    expect(wrapper.find('[data-testid="job-status"]').text()).toBe('Cancelled')
+    expect(wrapper.find('[data-testid="job-cancel-success"]').text()).toContain('Cancelled')
+  })
+
+  it('blocks repeat submissions while the request is pending', async () => {
+    cancelJob.mockReturnValue(new Promise(() => {}))
+    const wrapper = await expandJobCard({ toolCall: jobToolCall() })
+
+    await wrapper.find('[data-testid="job-cancel-button"]').trigger('click')
+    await wrapper.find('[data-testid="job-cancel-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="job-cancel-pending"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="job-cancel-button"]').attributes('disabled')).toBeDefined()
+    expect(cancelJob).toHaveBeenCalledTimes(1)
+  })
+
+  it('maps JOB_CANCEL_UNCONFIRMED to an explicit retryable message and keeps the status', async () => {
+    const { ApiError } = await import('../../composables/api')
+    cancelJob.mockRejectedValueOnce(
+      new ApiError({
+        type: 'https://xihe.dev/problems/job-cancel-unconfirmed',
+        title: 'Bad Gateway',
+        status: 502,
+        detail: 'unconfirmed',
+        code: 'JOB_CANCEL_UNCONFIRMED',
+        requestId: 'req-1',
+      }),
+    )
+    const wrapper = await expandJobCard({ toolCall: jobToolCall() })
+
+    await wrapper.find('[data-testid="job-cancel-button"]').trigger('click')
+    await wrapper.find('[data-testid="job-cancel-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="job-cancel-error"]').text()).toContain('unconfirmed')
+    expect(wrapper.find('[data-testid="job-status"]').text()).toBe('Running')
+    // 失败后按钮回到可重试状态
+    expect(wrapper.find('[data-testid="job-cancel-button"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('maps RUNTIME_UNAVAILABLE to the unavailable message', async () => {
+    const { ApiError } = await import('../../composables/api')
+    cancelJob.mockRejectedValueOnce(
+      new ApiError({
+        type: 'https://xihe.dev/problems/runtime-unavailable',
+        title: 'Bad Gateway',
+        status: 502,
+        detail: 'unreachable',
+        code: 'RUNTIME_UNAVAILABLE',
+        requestId: 'req-2',
+      }),
+    )
+    const wrapper = await expandJobCard({ toolCall: jobToolCall() })
+
+    await wrapper.find('[data-testid="job-cancel-button"]').trigger('click')
+    await wrapper.find('[data-testid="job-cancel-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="job-cancel-error"]').text()).toContain('temporarily unavailable')
   })
 })

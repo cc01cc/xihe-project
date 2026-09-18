@@ -1038,15 +1038,7 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
     let mut terminated = false;
     for _ in 0..6 {
         std::thread::sleep(Duration::from_millis(500));
-        let still_running = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"
-            ))
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !still_running {
+        if !process_group_alive(pid_num) {
             terminated = true;
             break;
         }
@@ -1063,15 +1055,8 @@ fn cancel_job(job_id: &str) -> Result<String, RuntimeError> {
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    // Phase 4: Verify process is gone
-    let still_alive = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!(
-            "/bin/kill -0 -- -{pid_num} 2>/dev/null || kill -0 {pid_num} 2>/dev/null"
-        ))
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    // Phase 4: Verify process is gone (zombies do not count as alive)
+    let still_alive = process_group_alive(pid_num);
 
     let status = if still_alive { "failed" } else { "cancelled" };
     std::fs::write(job_path.join("meta"), status).map_err(RuntimeError::Io)?;
@@ -1264,10 +1249,13 @@ fn job_is_running_with(job_path: &Path, alive: &impl Fn(i32) -> bool) -> bool {
 }
 
 fn process_group_alive(pid: i32) -> bool {
+    // PLAN-0366 T1.3 实证：容器 PID1 不回收子进程，退出后的 `<defunct>` 会让
+    // `kill -0` 继续成功 → 真实取消恒报 `failed`（终止未确认）。按 PGID 匹配
+    // 非 Z 状态进程才算存活。
     std::process::Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "/bin/kill -0 -- -{pid} 2>/dev/null || kill -0 {pid} 2>/dev/null"
+            "ps -eo pgid=,stat= 2>/dev/null | awk -v pgid={pid} '$1==pgid && $2 !~ /^Z/ {{found=1}} END {{exit found?0:1}}'"
         ))
         .status()
         .map(|s| s.success())
@@ -1805,6 +1793,37 @@ mod tests {
                 .trim(),
             "0"
         );
+    }
+
+    // ── PLAN-0366 T1.3：僵尸不得被判定为存活（真实取消恒 failed 的根因） ──
+
+    #[cfg(unix)]
+    #[test]
+    fn process_group_alive_ignores_zombies() {
+        use std::os::unix::process::CommandExt;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sleep in its own process group");
+        let pid = child.id() as i32;
+        assert!(
+            process_group_alive(pid),
+            "live process group must read alive"
+        );
+
+        let _ = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("/bin/kill -9 -- -{pid} 2>/dev/null"))
+            .status();
+        std::thread::sleep(Duration::from_millis(200));
+        // 未 wait() 的子进程此刻是僵尸：`kill -0` 会成功，但必须判为已终止。
+        assert!(
+            !process_group_alive(pid),
+            "zombie process group must not read alive"
+        );
+        let _ = child.wait();
     }
 
     // ── T3.4（决策 #31②）：字节上限截断必须 UTF-8 安全 ──────────────────────
