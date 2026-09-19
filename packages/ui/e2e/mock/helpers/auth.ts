@@ -2,6 +2,12 @@ import type { Page } from '@playwright/test'
 
 export interface MockSSEStream {
   tokens: string[]
+  usage?: {
+    inputTokens: number
+    outputTokens: number
+    cost?: number
+    source: string
+  }
   retryTokens?: string[]
   errorAfterTokens?: {
     code: string
@@ -43,7 +49,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
   })
 
   if (options.sse) {
-    await page.addInitScript(({ tokens, retryTokens, errorAfterTokens, delayMs }) => {
+    await page.addInitScript(({ tokens, retryTokens, errorAfterTokens, delayMs, optionsUsage }) => {
       const originalFetch = window.fetch.bind(window)
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null
       let streamClosed = false
@@ -70,6 +76,9 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             shouldFail = false
             streamEmitted = false
             return
+          }
+          if (!streamClosed && optionsUsage) {
+            streamController.enqueue(encode(event('usage', optionsUsage)))
           }
           if (!streamClosed) {
             streamController.enqueue(encode(event('done', {})))
@@ -115,6 +124,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
       }
     }, {
       tokens: options.sse.tokens,
+      optionsUsage: options.sse.usage,
       retryTokens: options.sse.retryTokens,
       errorAfterTokens: options.sse.errorAfterTokens,
       delayMs: options.sse.delayMs ?? 0,

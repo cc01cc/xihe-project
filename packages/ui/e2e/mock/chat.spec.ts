@@ -107,6 +107,41 @@ test.describe('Chat', () => {
     await expect(page).toHaveScreenshot('chat-streaming-markdown.png')
   })
 
+  test('renders context source metadata without exposing the source body', async ({ page }) => {
+    await setupMockAuth(page, { sse: { tokens: ['Mock response'] } })
+    await setupMockSessions(page, { sessions: [{ id: 'context-session', title: 'Context sources' }] })
+    await page.route('**/api/v1/context/context-session/sources', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ sourceKey: 'AGENTS.md', status: 'updated', hashPrefix: 'abc12345' }),
+    }))
+
+    await page.goto('/chat/context-session')
+    await expect(page.getByTestId('u1-toggle')).toBeVisible()
+    await page.getByTestId('u1-toggle').click()
+    await expect(page.getByTestId('u1-source-line')).toContainText('AGENTS.md')
+    await expect(page.getByTestId('u1-source-line')).toContainText('abc12345')
+    await expect(page.getByTestId('u1-body')).not.toContainText('Be concise.')
+
+  })
+
+  test('renders usage tokens, cost, and source from a deterministic SSE event', async ({ page }) => {
+    await setupMockAuth(page, {
+      sse: {
+        tokens: ['Usage response'],
+        usage: { inputTokens: 120, outputTokens: 30, cost: 0.012, source: 'real' },
+      },
+    })
+    await setupMockSessions(page, { sessions: [{ id: 'usage-session', title: 'Usage line' }] })
+
+    await page.goto('/chat/usage-session')
+    await page.getByTestId('chat-input').fill('show usage')
+    await page.getByTestId('chat-input').press('Enter')
+    await expect(page.getByText('in 120 · out 30')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('$0.012')).toBeVisible()
+    await expect(page.getByText('real', { exact: true })).toBeVisible()
+  })
+
   test('stops streaming on user request', async ({ page }) => {
     await setupMockAuth(page, {
       sse: {
