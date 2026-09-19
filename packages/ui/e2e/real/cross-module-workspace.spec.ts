@@ -5,7 +5,12 @@ import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 
-async function registerAndGetToken(name: string): Promise<string> {
+interface RegisteredUser {
+  token: string
+  workspaceId: string
+}
+
+async function registerUser(name: string): Promise<RegisteredUser> {
   const email = `${name}-${Date.now()}@test.com`
   const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
     method: 'POST',
@@ -13,15 +18,15 @@ async function registerAndGetToken(name: string): Promise<string> {
     body: JSON.stringify({ email, password: SHARED_PASSWORD, name }),
   })
   const body = await reg.json()
-  return body.accessToken
+  return { token: body.accessToken, workspaceId: body.workspaceId }
 }
 
 test.describe('Cross-Module — Workspace', () => {
   test('@host workspace page shows file panel and editor after login', async ({ page }) => {
-    const token = await registerAndGetToken('ws')
+    const { token, workspaceId } = await registerUser('ws')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
-    await page.goto('/workspace/ws-e2e-1')
+    await page.goto(`/workspace/${workspaceId}`)
     await page.waitForTimeout(2000)
 
     await expect(page.getByTestId('workspace-toolbar-settings')).toBeVisible({ timeout: 5000 })
@@ -29,10 +34,10 @@ test.describe('Cross-Module — Workspace', () => {
   })
 
   test('@host workspace page shows empty state when no files exist', async ({ page }) => {
-    const token = await registerAndGetToken('ws-empty')
+    const { token, workspaceId } = await registerUser('ws-empty')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
-    await page.goto('/workspace/ws-e2e-1')
+    await page.goto(`/workspace/${workspaceId}`)
     await page.waitForTimeout(3000)
 
     await expect(page.getByTestId('workspace-toolbar-settings')).toBeVisible({ timeout: 5000 })
@@ -40,7 +45,8 @@ test.describe('Cross-Module — Workspace', () => {
   })
 
   test('unauthenticated user is redirected to login', async ({ page }) => {
-    await page.goto('/workspace/ws-e2e-1')
+    const { workspaceId } = await registerUser('ws-anon')
+    await page.goto(`/workspace/${workspaceId}`)
     await page.waitForURL(/\/login/, { timeout: 5000 })
     expect(page.url()).toContain('/login')
   })
