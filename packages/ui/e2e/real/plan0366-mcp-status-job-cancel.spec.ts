@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
+import { ensureAgentWorkspaceBinding } from './helpers/journey'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -244,6 +245,8 @@ test.describe('@host PLAN-0366 MCP status + single job cancel', () => {
 
   test('S2/S4/S5: cancel one of two same-run jobs; the run and the other job survive; audit lands', async ({ page, request }) => {
     test.skip(LLM_MODE !== 'job-cancel', 'requires XIHE_E2E_LLM_MODE=job-cancel fake LLM marker mode')
+    // PLAN-0369: single-binding Agent — rebind before the workspace-tool chat.
+    await ensureAgentWorkspaceBinding(sharedWs)
     mkdirSync(EVIDENCE_DIR, { recursive: true })
     seedPage(page, sharedAuth, sharedWs)
     await page.goto('/workspace/' + sharedWs, { waitUntil: 'load' })

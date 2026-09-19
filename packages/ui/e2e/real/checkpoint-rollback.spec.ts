@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
+import { ensureAgentWorkspaceBinding } from "./helpers/journey";
 import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
 /**
@@ -45,6 +46,8 @@ const HOST_ROOT =
         : path.resolve(process.cwd(), "../../.xihe-workspaces"));
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/checkpoint-rollback");
+// PLAN-0369: workspace this file's Agent binding was ensured for.
+let agentBindingWorkspaceId = "";
 const BASELINE_FILE = ".xihe-checkpoint-rollback-baseline.txt";
 const BASELINE_CONTENT = "checkpoint rollback baseline\n";
 
@@ -165,6 +168,9 @@ function listSliceRefs(workspaceId: string): string[] {
  * Send a chat message and wait for the real request plus visible user bubble.
  */
 async function sendChat(page: Page, text: string): Promise<void> {
+    // PLAN-0369: workspace-tool chats need the Agent bound to THIS spec's
+    // workspace (single-binding product rule); no-op when already bound.
+    if (agentBindingWorkspaceId) await ensureAgentWorkspaceBinding(agentBindingWorkspaceId);
     const input = page.locator('[data-testid="chat-input"]');
     const send = page.locator('[data-testid="chat-send-button"]');
     await input.fill(text);
@@ -506,6 +512,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         const auth = (await reg.json()) as { accessToken: string; workspaceId: string };
         sharedAuth = auth.accessToken;
         sharedWs = auth.workspaceId;
+        agentBindingWorkspaceId = auth.workspaceId;
         sharedHeaders = {
             Authorization: `Bearer ${auth.accessToken}`,
             "Content-Type": "application/json",

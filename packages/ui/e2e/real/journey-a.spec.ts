@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
-import { awaitLastOperationCompleted, sendChat } from './helpers/journey'
+import { awaitLastOperationCompleted, ensureAgentWorkspaceBinding, sendChat } from './helpers/journey'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? 'mock'
 const HOST_ROOT =
   process.env.XIHE_WORKSPACE_HOST_ROOT ??
   (process.env.XIHE_E2E_RUN_ID
@@ -22,6 +23,13 @@ test.describe('@host Journey A — AI write_file approve/reject', () => {
     page,
     request,
   }) => {
+    // PLAN-0369: the deterministic write_file tool call only exists in the
+    // fake-LLM `write_file` marker mode; the built-in `mock` provider answers
+    // with plain text, so this flow can never produce an approval modal there.
+    test.skip(
+      LLM_MODE !== 'write_file',
+      `requires XIHE_E2E_LLM_MODE=write_file fake LLM marker mode (current: ${LLM_MODE})`,
+    )
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
     const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
       data: {
@@ -37,6 +45,10 @@ test.describe('@host Journey A — AI write_file approve/reject', () => {
     const authToken: string = auth.accessToken
     const wsId: string = auth.workspaceId
     const authHeaders = { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' }
+
+    // PLAN-0369: the Agent owns one MCP workspace per process — rebind it to
+    // this spec's fresh workspace before the first workspace-tool chat.
+    await ensureAgentWorkspaceBinding(wsId)
 
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
     await page.addInitScript(
@@ -163,6 +175,8 @@ test.describe('@host Journey A — AI write_file approve/reject', () => {
     expect([200, 201]).toContain(reg.status())
     const auth = await reg.json()
     const wsId: string = auth.workspaceId
+
+    await ensureAgentWorkspaceBinding(wsId)
 
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), auth.accessToken)
     await page.addInitScript(

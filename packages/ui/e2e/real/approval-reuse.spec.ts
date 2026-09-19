@@ -32,7 +32,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { CP_URL, registerJourneyUser, seedPage, type JourneyContext } from "./helpers/journey";
+import { CP_URL, ensureAgentWorkspaceBinding, registerJourneyUser, seedPage, type JourneyContext } from "./helpers/journey";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "";
@@ -289,6 +289,8 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
 
     await test.step("准备：注册单 workspace + 单会话（Agent 单 workspace 绑定）", async () => {
         ctx = await registerJourneyUser(request, "ApprovalReuseGuard");
+        // PLAN-0369: single-binding Agent — rebind before the workspace chats.
+        await ensureAgentWorkspaceBinding(ctx.workspaceId);
         const created = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers: ctx.headers,
             data: { title: "PLAN-0337 approval reuse guard" },

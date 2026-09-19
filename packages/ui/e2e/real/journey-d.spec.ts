@@ -4,6 +4,7 @@ import { test, expect } from '@playwright/test'
 import {
   CP_URL,
   awaitLastOperationCompleted,
+  ensureAgentWorkspaceBinding,
   ensureChatReady,
   evidenceDir,
   registerJourneyUser,
@@ -42,6 +43,8 @@ test.describe('@host Journey D — context pipeline', () => {
 
   test('D1: turn-2 LLM sees turn-1 marker (multi-turn memory reaches the provider)', async ({ page }) => {
     test.skip(LLM_MODE !== 'history-marker', 'requires XIHE_E2E_LLM_MODE=history-marker fake LLM marker mode')
+    // PLAN-0369: single-binding Agent — rebind before the workspace chat.
+    await ensureAgentWorkspaceBinding(sharedWs)
     // The fake-marker envelope assertions only hold against the fixture; a
     // real-provider smoke run (D1-real) must not execute them.
     test.skip(!!process.env.XIHE_E2E_REAL_XIAOMI_KEY, 'fixture marker envelope is fixture-only; real runs use D1-real')
@@ -128,6 +131,8 @@ test.describe('@host Journey D — context pipeline', () => {
 
   test('D2: manual compaction keeps summary visible to the LLM (epoch injection)', async ({ page }) => {
     test.skip(LLM_MODE !== 'history-marker', 'requires XIHE_E2E_LLM_MODE=history-marker fake LLM marker mode')
+    // PLAN-0369: single-binding Agent — rebind before the workspace chat.
+    await ensureAgentWorkspaceBinding(sharedWs)
     // The marker envelope is a fixture contract; a real model treats it as
     // prompt injection and refuses (observed with mimo, PLAN-301 M3).
     test.skip(!!process.env.XIHE_E2E_REAL_XIAOMI_KEY, 'fixture marker envelope is fixture-only; real runs use D1-real')

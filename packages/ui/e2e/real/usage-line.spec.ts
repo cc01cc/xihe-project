@@ -9,7 +9,10 @@ import {
   seedPage,
   ensureChatReady,
   awaitLastOperationCompleted,
+  ensureAgentWorkspaceBinding,
 } from './helpers/journey'
+
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? 'mock'
 
 test.describe('@host PLAN-0343 — usage line in session header', () => {
   test.describe.configure({ mode: 'serial' })
@@ -26,12 +29,21 @@ test.describe('@host PLAN-0343 — usage line in session header', () => {
     page,
     request,
   }) => {
+    // PLAN-0369: the deterministic write_file marker only exists in the fake-LLM
+    // `write_file` mode; the built-in `mock` provider never emits a tool call.
+    test.skip(
+      LLM_MODE !== 'write_file',
+      `requires XIHE_E2E_LLM_MODE=write_file fake LLM marker mode (current: ${LLM_MODE})`,
+    )
     const consoleErrors: string[] = []
     page.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(msg.text())
     })
 
     seedPage(page, ctx)
+    // PLAN-0369: this spec's workspace may differ from the previously bound
+    // one — restart the Agent so its MCP context matches before the chat.
+    await ensureAgentWorkspaceBinding(ctx.workspaceId)
     await page.goto('/workspace/' + ctx.workspaceId, { waitUntil: 'load' })
     await ensureChatReady(page)
 

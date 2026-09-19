@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { test, expect } from '@playwright/test'
 import {
   CP_URL,
+  ensureAgentWorkspaceBinding,
   ensureChatReady,
   evidenceDir,
   registerJourneyUser,
@@ -52,6 +53,8 @@ test.describe('@host PLAN-0340 U1/U2 context sources', () => {
     request,
   }) => {
     await writeAgents(request, `# Workspace rules\nBe concise.\n`)
+    // PLAN-0369: rebind the Agent to this spec's workspace before the chat.
+    await ensureAgentWorkspaceBinding(sharedWs)
 
     page.addInitScript((t) => localStorage.setItem('xihe-token', t), sharedAuth)
     page.addInitScript(

@@ -20,7 +20,10 @@ const pages: HealthPage[] = [
   { path: '/settings/knowledge', name: 'settings-knowledge', requiresAuth: true, keySelector: '[data-testid="settings-knowledge-heading"]', benign: ['status of 502'] },
   { path: '/settings/data', name: 'settings-data', requiresAuth: true, keySelector: '[data-testid="settings-data-heading"]', benign: [] as string[] },
   { path: '/settings/monitoring', name: 'settings-monitoring', requiresAuth: true, keySelector: '[data-testid="settings-monitoring-heading"]', benign: [] as string[] },
-  { path: '/workspace/ws-e2e-1', name: 'workspace', requiresAuth: true, keySelector: null, benign: [] as string[], hostOnly: true },
+  // PLAN-0369: was a hardcoded `/workspace/ws-e2e-1` (a foreign workspace id)
+  // → `/api/v1/mcp` answered 400. Use the freshly registered user's own
+  // workspace id, resolved in the test body.
+  { path: '/workspace/{workspaceId}', name: 'workspace', requiresAuth: true, keySelector: null, benign: [] as string[], hostOnly: true },
   { path: '/login', name: 'login', requiresAuth: false, keySelector: 'input[type="password"]', benign: [] as string[] },
   { path: '/register', name: 'register', requiresAuth: false, keySelector: 'input[type="password"]', benign: [] as string[] },
 ]
@@ -40,6 +43,7 @@ test.describe('UI Health — Console, Overflow, Hit-Test', () => {
 
   for (const p of pages) {
     test(`${p.hostOnly ? '@host ' : ''}${p.name}: zero console errors, zero pageerrors, no horizontal overflow`, async ({ page }) => {
+      const path = p.path.replace('{workspaceId}', workspaceId)
       const consoleErrors: string[] = []
       const pageErrors: string[] = []
       const failedResponses: string[] = []
@@ -53,26 +57,26 @@ test.describe('UI Health — Console, Overflow, Hit-Test', () => {
           localStorage.setItem('xihe-user', JSON.stringify({ workspaceId: wsId }))
         }, { token: authToken, wsId: workspaceId })
       }
-      const resp = await page.goto(p.path, { waitUntil: 'load', timeout: 15000 })
+      const resp = await page.goto(path, { waitUntil: 'load', timeout: 15000 })
       expect(resp?.status()).toBe(200)
       if (p.keySelector) {
         await page.locator(p.keySelector).first().waitFor({ state: 'visible', timeout: 10000 })
       }
       await page.waitForTimeout(1500)
 
-      expect(pageErrors, `pageerrors on ${p.path}: ${pageErrors.join('; ')}`).toHaveLength(0)
+      expect(pageErrors, `pageerrors on ${path}: ${pageErrors.join('; ')}`).toHaveLength(0)
 
       const benign = consoleErrors.filter((e) =>
         !e.includes('favicon') && !e.includes('net::ERR_ABORTED') && !e.includes('404') &&
         !p.benign.some((b) => e.includes(b)),
       )
-      expect(benign, `console errors on ${p.path}: ${benign.join('; ')} | failed responses: ${failedResponses.join('; ')}`).toHaveLength(0)
+      expect(benign, `console errors on ${path}: ${benign.join('; ')} | failed responses: ${failedResponses.join('; ')}`).toHaveLength(0)
 
       const overflow = await page.evaluate(() => {
         const doc = document.scrollingElement
         return doc ? doc.scrollWidth - doc.clientWidth : 0
       })
-      expect(overflow, `horizontal overflow on ${p.path}: ${overflow}px`).toBeLessThanOrEqual(2)
+      expect(overflow, `horizontal overflow on ${path}: ${overflow}px`).toBeLessThanOrEqual(2)
     })
   }
 

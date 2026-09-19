@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
+import { ensureAgentWorkspaceBinding } from './helpers/journey'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -99,6 +100,9 @@ test.describe('@host Journey C — post-290 hash/preview/recovery', () => {
 
   test('H2: >500-char write_file approves and lands the FULL content (argumentsHash)', async ({ page, request }) => {
     test.skip(LLM_MODE !== 'write_file', 'requires XIHE_E2E_LLM_MODE=write_file fake LLM marker mode')
+    // PLAN-0369: rebind the Agent when this spec's workspace differs from the
+    // previously bound one (no-op when it already matches).
+    await ensureAgentWorkspaceBinding(sharedWs)
     const authToken = sharedAuth
     const wsId = sharedWs
     const headers = sharedHeaders
@@ -146,6 +150,9 @@ test.describe('@host Journey C — post-290 hash/preview/recovery', () => {
 
   test('C1-C3: refresh mid-approval recovers banner + modal; decide still lands', async ({ page, request }) => {
     test.skip(LLM_MODE !== 'write_file', 'requires XIHE_E2E_LLM_MODE=write_file fake LLM marker mode')
+    // PLAN-0369: rebind the Agent when this spec's workspace differs from the
+    // previously bound one (no-op when it already matches).
+    await ensureAgentWorkspaceBinding(sharedWs)
     const authToken = sharedAuth
     const wsId = sharedWs
     const headers = sharedHeaders
@@ -195,6 +202,9 @@ test.describe('@host Journey C — post-290 hash/preview/recovery', () => {
 
   test('C2-reject: recovered approval can be rejected with a terminal outcome', async ({ page, request }) => {
     test.skip(LLM_MODE !== 'write_file', 'requires XIHE_E2E_LLM_MODE=write_file fake LLM marker mode')
+    // PLAN-0369: rebind the Agent when this spec's workspace differs from the
+    // previously bound one (no-op when it already matches).
+    await ensureAgentWorkspaceBinding(sharedWs)
     const authToken = sharedAuth
     const wsId = sharedWs
     const headers = sharedHeaders

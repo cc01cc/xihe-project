@@ -4,8 +4,12 @@
 //
 // Host profile only. Run via:
 //   node scripts/e2e-host.mjs --retries=0 e2e/real/journey-b.spec.ts
-// The spec kills and restarts the isolated Runtime process itself; the restarted
-// process is stopped again in afterAll so the runner's teardown probes stay clean.
+// The spec kills the isolated Runtime process itself and restarts it in
+// B1-recover. PLAN-0369: the restarted process is intentionally LEFT RUNNING so
+// the remaining specs in a full @host run keep a working Runtime (the previous
+// afterAll kill cascaded into every later Runtime-dependent spec); the isolated
+// runner reaps it by port during teardown. On a dev stack, restart the runtime
+// afterwards with `mise run dev:runtime`.
 import { execSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, closeSync } from 'node:fs'
 import path from 'node:path'
@@ -26,14 +30,15 @@ const HOST_ROOT = path.resolve(
   '../../.tmp/e2e-host',
   process.env.XIHE_E2E_RUN_ID ?? 'unknown-run',
 )
+// PLAN-0369: evidence lands in the current PLAN, never in an archived one —
+// pointing at plans/archive made every full run rewrite frozen归档 PNGs.
 const EVIDENCE_DIR = path.resolve(
   process.cwd(),
-  '../../../plans/archive/20260919/PLAN-0353-XH-docs-evidence-sync/evidence',
+  '../../../plans/PLAN-0369-XH-host-e2e-harness-closure/evidence',
 )
 const HUMAN_RUNTIME_DOWN = '沙盒未就绪'
 
 let ctx: JourneyContext
-let restartedRuntimePid: number | null = null
 
 function evidencePath(name: string): string {
   mkdirSync(EVIDENCE_DIR, { recursive: true })
@@ -128,7 +133,6 @@ async function startRuntime(request: APIRequestContext): Promise<void> {
       } as Record<string, string>,
     })
     child.unref()
-    restartedRuntimePid = child.pid ?? null
   } finally {
     closeSync(fd)
   }
@@ -213,17 +217,6 @@ test.describe('@host Journey B — manual workspace mutations (PLAN-0353 D1)', (
       },
     })
     expect(seed.status(), `seed write failed: ${seed.status()} ${await seed.text()}`).toBe(200)
-  })
-
-  test.afterAll(() => {
-    if (restartedRuntimePid !== null) {
-      try {
-        killPidTree(restartedRuntimePid)
-      } catch {
-        // best effort: teardown reverse-assertion will surface a leftover runtime
-      }
-      restartedRuntimePid = null
-    }
   })
 
   test('B2-audit-user: UI manual mutation lands in the ledger as actorType=user', async ({

@@ -45,7 +45,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { CP_URL, registerJourneyUser, seedPage, type JourneyContext } from "./helpers/journey";
+import { CP_URL, ensureAgentWorkspaceBinding, registerJourneyUser, seedPage, type JourneyContext } from "./helpers/journey";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
@@ -56,6 +56,8 @@ const PROJECT_DIR = path.resolve(process.cwd(), "../..");
 const HOST_ROOT =
     process.env.XIHE_WORKSPACE_HOST_ROOT ?? path.join(PROJECT_DIR, ".tmp", "e2e-host", RUN_ID);
 const EVIDENCE_DIR = path.join(PROJECT_DIR, ".local", "evidence", "checkpoint-slices");
+// PLAN-0369: workspace this file's Agent binding was ensured for.
+let agentBindingWorkspaceId = "";
 
 const NONCE = Date.now().toString(36);
 const SEED_FILE = `s0-seed-${NONCE}.md`;
@@ -382,6 +384,8 @@ async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
  * component hydrates that never POSTs (PLAN-294 M1).
  */
 async function startRun(page: Page, text: string): Promise<string> {
+    // PLAN-0369: keep the Agent's single MCP workspace bound to this spec.
+    if (agentBindingWorkspaceId) await ensureAgentWorkspaceBinding(agentBindingWorkspaceId);
     const input = page.locator('[data-testid="chat-input"]');
     const send = page.locator('[data-testid="chat-send-button"]');
     await expect(input).toBeVisible({ timeout: 30000 });
@@ -455,6 +459,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
             "requires the isolated host stack (XIHE_E2E_RUN_ID); never runs against a dev stack",
         );
         ctx = await registerJourneyUser(request, "checkpoint-slices");
+        agentBindingWorkspaceId = ctx.workspaceId;
         hostDir = path.join(HOST_ROOT, ctx.workspaceId);
     });
 

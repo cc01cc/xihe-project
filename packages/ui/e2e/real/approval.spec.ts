@@ -1,4 +1,5 @@
 import { generateE2EPassword } from './helpers/password'
+import { ensureAgentWorkspaceBinding } from './helpers/journey'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -24,6 +25,9 @@ test('@host Chat approval — approve, reject and persistence in one flow', asyn
   const authToken: string = auth.accessToken
   const wsId: string = auth.workspaceId
   const authHeaders = { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' }
+
+  // PLAN-0369: single-binding Agent — rebind before the workspace-tool chat.
+  await ensureAgentWorkspaceBinding(wsId)
 
   await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
   await page.addInitScript((raw) => localStorage.setItem('xihe-user', raw), JSON.stringify({ workspaceId: wsId }))

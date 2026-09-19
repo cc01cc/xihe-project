@@ -242,6 +242,57 @@ async function stopProcess(child) {
   }
 }
 
+// PLAN-0369: specs may restart stack processes themselves (journey-b restarts
+// Runtime; `ensureAgentWorkspaceBinding` restarts Agent). Those detached
+// processes have no runner handle, so reap leftover listeners on the run's own
+// (uniquely reserved) ports before teardown reverse assertions and before the
+// host root is recycled (their log handles live under it).
+async function listLeftoverListeners(ports) {
+  if (process.platform !== 'win32') {
+    const found = []
+    for (const port of ports) {
+      const listing = await runCapture('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN']).catch(() => null)
+      if (listing && listing.code === 0) {
+        for (const pid of listing.stdout.split(/\s+/).filter(Boolean)) {
+          found.push({ port, pid: Number(pid) })
+        }
+      }
+    }
+    return found
+  }
+  const listing = await runCapture('netstat.exe', ['-ano', '-p', 'tcp'])
+  if (listing.code !== 0) return []
+  const found = []
+  for (const line of listing.stdout.split(/\r?\n/)) {
+    const match = line.match(/^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/i)
+    if (!match) continue
+    const port = Number(match[1])
+    const pid = Number(match[2])
+    if (ports.includes(port) && pid !== process.pid) found.push({ port, pid })
+  }
+  return found
+}
+
+async function killPortListeners(ports) {
+  const targets = [...new Set(ports.map(Number).filter((port) => Number.isInteger(port) && port > 0))]
+  if (targets.length === 0) return
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const found = await listLeftoverListeners(targets)
+    if (found.length === 0) return
+    for (const { port, pid } of found) {
+      if (process.platform === 'win32') {
+        await run('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+      } else {
+        await run('kill', ['-TERM', String(pid)], { stdio: 'ignore' })
+      }
+      console.log(`[e2e-host] killed leftover listener on port ${port} (pid=${pid})`)
+    }
+    // Give the OS a moment to release file handles (host root recycle follows).
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  console.warn(`[e2e-host] leftover listeners still answering on ports: ${targets.join(', ')}`)
+}
+
 async function dockerCompose(args, options = {}) {
   // Windows Docker Desktop may ship compose v1 as docker-compose.exe without
   // the `docker compose` plugin — prefer the standalone binary then.
@@ -471,6 +522,23 @@ async function recycleHostRoot() {
 async function runPlaywright() {
   const testArgs = process.argv.slice(2).filter((arg) => !['--keep', '--skip-runtime'].includes(arg) && !arg.startsWith('--llm-mode='))
   const playwrightTestArgs = testArgs.length > 0 ? testArgs : ['e2e/real']
+  // PLAN-0369: the Agent binds one MCP workspace per process. Specs that move
+  // between workspaces restart the Agent through `ensureAgentWorkspaceBinding`
+  // and need the exact provider/credential env the Agent was launched with.
+  // The real-provider lane deliberately keeps its key out of the Playwright
+  // process, so it receives a disabled sentinel instead (restart is skipped
+  // with a warning; single-spec real runs keep the pre-0369 behavior).
+  const agentRestartEnv = realXiaomiKey
+    ? { disabled: 'real-provider' }
+    : {
+        XIHE_LLM_PROVIDER: llmMode === 'mock' ? 'mock' : 'openai',
+        ...(llmMode === 'missing' || llmMode === 'mock'
+          ? {}
+          : {
+              XIHE_OPENAI_API_KEY: llmMode === 'invalid' ? 'sk-fake-invalid-key' : 'sk-fake-openai-key',
+              XIHE_DEEPSEEK_API_KEY: 'fake-deepseek-key',
+            }),
+      }
   return run(pnpmCommand, [
     'exec',
     'playwright',
@@ -498,6 +566,7 @@ async function runPlaywright() {
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
       XIHE_E2E_LLM_MODE: llmMode,
       XIHE_E2E_ADMIN_PASSWORD: e2eAdminPassword,
+      XIHE_E2E_AGENT_RESTART_ENV: JSON.stringify(agentRestartEnv),
       XIHE_E2E_HEADED: process.env.XIHE_E2E_HEADED ?? '0',
       XIHE_E2E_BROWSER_CHANNEL: process.env.XIHE_E2E_BROWSER_CHANNEL ?? 'chrome-beta',
     },
@@ -522,6 +591,11 @@ async function collectIsolatedResources(preserveRunDir = false) {
   }
 
   if (!externalServer) {
+    // PLAN-0369: reap spec-restarted detached processes (Runtime/Agent) first —
+    // they are outside `dockerProcesses`, their log handles live under the host
+    // root being recycled, and ports are run-unique.
+    await killPortListeners([uiPort, cpPort, agentPort, runtimePort])
+
     // 2. Remove only Sandbox containers labeled for this run.
     try {
       const removed = await removeRunSandboxContainers()
@@ -682,6 +756,9 @@ async function teardownPersistent() {
       : ['-p', state.pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), 'down', '--volumes', '--remove-orphans']
     await run(cmd, args, { stdio: 'inherit' })
   }
+  // PLAN-0369: spec-restarted Runtime/Agent processes are detached; port 扫尾
+  // keeps `--teardown` from leaking them.
+  await killPortListeners([state.ports?.ui, state.ports?.cp, state.ports?.agent, state.ports?.runtime])
   await rm(stateFile, { force: true })
   console.log('[e2e-host] persistent stack torn down')
 }

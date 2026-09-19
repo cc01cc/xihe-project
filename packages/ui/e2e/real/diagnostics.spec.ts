@@ -18,6 +18,7 @@ import path from "node:path"
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test"
 import {
   CP_URL,
+  ensureAgentWorkspaceBinding,
   evidenceDir,
   registerJourneyUser,
   seedPage,
@@ -83,6 +84,8 @@ async function awaitRunTerminal(
 // ── Browser helpers (no fixed sleeps) ───────────────────────────────────────
 
 async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
+  // PLAN-0369: single-binding Agent — rebind before the workspace-tool chat.
+  await ensureAgentWorkspaceBinding(ctx.workspaceId)
   seedPage(page, ctx)
   await page.goto(`/workspace/${ctx.workspaceId}`, { waitUntil: "load" })
   await expect(page.locator('[data-testid="chat-input"]'), "workspace chat input").toBeVisible({
