@@ -237,6 +237,10 @@ export const useSessionStore = defineStore("session", () => {
         currentSessionId.value = id;
     }
 
+    function clearCurrentSession() {
+        currentSessionId.value = null;
+    }
+
     async function updateSessionTitle(id: string, title: string): Promise<Session> {
         return renameSession(id, title);
     }
@@ -310,6 +314,7 @@ export const useSessionStore = defineStore("session", () => {
         deleteSession,
         renameSession,
         selectSession,
+        clearCurrentSession,
         updateSessionTitle,
         updateSession,
         updateSessionContext,

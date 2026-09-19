@@ -1445,6 +1445,10 @@ export const api = {
     async getCurrentWorkspace(): Promise<ApiWorkspace> {
         return normalizeWorkspaceResponse(await request<unknown>("/workspaces/current"));
     },
+    async listWorkspaces(): Promise<ApiWorkspace[]> {
+        const response = await request<unknown[]>("/workspaces");
+        return Array.isArray(response) ? response.map(normalizeWorkspaceResponse) : [];
+    },
     async getWorkspace(wsId: string): Promise<ApiWorkspace> {
         return normalizeWorkspaceResponse(
             await request<unknown>(`/workspaces/${encodeURIComponent(wsId)}`, {

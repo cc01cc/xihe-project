@@ -97,28 +97,39 @@ function handleWorkspaceDeleted() {
 }
 
 const sessionId = computed(() => {
-  if (sessionStore.currentSessionId) return sessionStore.currentSessionId
+  const current = sessionStore.currentSession
+  if (current?.workspaceId === workspaceId.value) return current.id
   return null
 })
 
 const workspaceId = computed(() => routeWorkspaceId.value || auth.currentWorkspaceId || '')
 
-async function ensureSessionForWorkspace() {
-  if (!auth.currentWorkspaceId) return null
-  if (sessionStore.currentSessionId) return sessionStore.currentSessionId
+async function selectSessionForWorkspace() {
+  if (!workspaceId.value) return null
   try {
-    // Direct workspace navigation can race App/ChatView session hydration.
-    // Finish the canonical server projection before deciding to create one;
-    // createSession itself is single-flight for the remaining empty case.
+    await auth.selectWorkspace(workspaceId.value)
     await sessionStore.loadSessions()
-    if (sessionStore.currentSessionId) return sessionStore.currentSessionId
     const existing = sessionStore.sessions.find(
-      (session) => session.workspaceId === auth.currentWorkspaceId,
+      (session) => session.workspaceId === workspaceId.value,
     )
     if (existing) {
       sessionStore.selectSession(existing.id)
       return existing.id
     }
+    sessionStore.clearCurrentSession()
+    return null
+  } catch (cause) {
+    const message = cause instanceof ApiError ? cause.message : 'Failed to load workspace'
+    logger.error('Load workspace failed', cause)
+    toast.error(message)
+    return null
+  }
+}
+
+async function createSessionForWorkspace() {
+  if (!workspaceId.value) return null
+  try {
+    await auth.selectWorkspace(workspaceId.value)
     const session = await sessionStore.createSession()
     return session.id
   } catch (cause) {
@@ -170,7 +181,11 @@ function handleUpload() {
 }
 
 onMounted(() => {
-  void ensureSessionForWorkspace()
+  void selectSessionForWorkspace()
+})
+
+watch(routeWorkspaceId, () => {
+  void selectSessionForWorkspace()
 })
 </script>
 
@@ -275,7 +290,7 @@ onMounted(() => {
             <button
               class="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90"
               data-testid="workspace-create-session"
-              @click="ensureSessionForWorkspace()"
+              @click="createSessionForWorkspace()"
             >
               {{ t('workspace.createSession') }}
             </button>

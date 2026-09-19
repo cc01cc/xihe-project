@@ -22,7 +22,7 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `/workspaces/{id}/mcp-config` | `/api/v1/workspaces/{workspaceId}/mcp-config`（混合 JSON，字段拆分）与 `/api/v1/workspaces/{workspaceId}/stdio-servers`（结构化） | user Bearer | UI |
 | CP | `/workspaces/{id}/mcp-config` | `/internal/v1/workspaces/{workspaceId}/stdio-servers`（原 `/internal/v1/config/workspaces/{id}/mcp-config` 改名） | service Bearer | Runtime stdio 声明同步 |
 | CP | Runtime stdio session snapshots | `GET /api/v1/workspaces/{workspaceId}/mcp/servers` | user Bearer（成员可见） | UI 设置页 stdio 服务器状态徽章（PLAN-0366；CP 显式映射 camelCase `serverId/state/attempt/lastError/sinceMs/epoch`，state 保持 Runtime 小写字面量；错误表：404 `WORKSPACE_NOT_FOUND`、409 `WORKSPACE_DESTROYING/BUSY`、503 `WORKSPACE_MATERIALIZATION_FAILED`、其余 502 `RUNTIME_UNAVAILABLE`） |
-| CP | `/workspaces/current`, `/workspaces`, `/workspaces/{workspaceId}` | unchanged under `/api/v1/workspaces/...` | user Bearer | UI, Runtime lifecycle |
+| CP | `/workspaces/current`, `/workspaces`, `/workspaces/{workspaceId}` | unchanged under `/api/v1/workspaces/...`; `GET /api/v1/workspaces` lists all active Workspace memberships, `POST` creates another active Workspace | user Bearer | UI Workspace selector, Runtime lifecycle |
 | CP | `/sessions`, `/sessions/{sessionId}` | unchanged under `/api/v1/sessions/...` | user Bearer + current workspace | UI |
 | CP | `/sessions/{sessionId}/compact` | `POST /api/v1/sessions/{sessionId}/compact`（`upToSequence` 可选；活跃 run 409 `CHAT_IN_PROGRESS`） | user Bearer + session ownership | UI 手动压缩（PLAN-294/0341；行为不变，openapi 已补登） |
 | CP | `/files/**`, `/rag/**` | `/api/v1/...` equivalent | user Bearer | UI |

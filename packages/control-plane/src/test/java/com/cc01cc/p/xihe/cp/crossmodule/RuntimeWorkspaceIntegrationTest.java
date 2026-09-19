@@ -261,6 +261,36 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
+    void listWorkspacesReturnsAllActiveMemberships() {
+        String email = "list-workspaces-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(
+                url("/api/v1/auth/register"),
+                java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "List Workspaces"),
+                java.util.Map.class);
+        assertEquals(201, registration.getStatusCode().value());
+        String token = (String) registration.getBody().get("accessToken");
+
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        org.springframework.http.ResponseEntity<java.util.Map> created = restTemplate.postForEntity(
+                url("/api/v1/workspaces"),
+                new org.springframework.http.HttpEntity<>(java.util.Map.of("name", "Second Workspace"), headers),
+                java.util.Map.class);
+        assertEquals(201, created.getStatusCode().value());
+
+        org.springframework.http.ResponseEntity<java.util.List> response = restTemplate.exchange(
+                url("/api/v1/workspaces"),
+                org.springframework.http.HttpMethod.GET,
+                new org.springframework.http.HttpEntity<>(headers),
+                java.util.List.class);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertNotNull(response.getBody());
+        assertEquals(2, response.getBody().size());
+    }
+
+    @Test
     void environmentUsesPerWorkspaceStatusInsteadOfGlobalHeartbeat() {
         String email = "env-status-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(

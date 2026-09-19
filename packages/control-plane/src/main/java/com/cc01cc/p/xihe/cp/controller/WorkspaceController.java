@@ -37,6 +37,17 @@ public class WorkspaceController {
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found"));
     }
 
+    @GetMapping
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> list() {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
+        }
+        return ResponseEntity.ok(workspaceService.getWorkspacesByUser(userId).stream().map(this::toMap).toList());
+    }
+
     @GetMapping("/{workspaceId}")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     public ResponseEntity<?> get(@PathVariable String workspaceId) {

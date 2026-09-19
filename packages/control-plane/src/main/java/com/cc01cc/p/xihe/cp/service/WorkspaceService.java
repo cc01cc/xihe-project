@@ -93,7 +93,7 @@ public class WorkspaceService {
         return createWorkspaceLocked("Default Workspace", null, user.getId().toString());
     }
 
-    /** Creates the one active workspace allowed for a user. */
+    /** Creates an active workspace for a user; users may own multiple active workspaces. */
     @Transactional
     public Workspace createWorkspace(String name, String ownerId) {
         return createWorkspace(name, null, ownerId, "coding", null);
@@ -108,13 +108,6 @@ public class WorkspaceService {
     public Workspace createWorkspace(String name, String description, String ownerId,
             String profile, String image) {
         requireNonBlank(ownerId, "ownerId");
-        if (userRepository.findByIdForUpdate(UUID.fromString(ownerId)).isPresent()
-                && !workspaceRepository.findActiveByMemberUserId(UUID.fromString(ownerId)).isEmpty()) {
-            throw workspaceAlreadyExists();
-        }
-        if (!workspaceRepository.findActiveByMemberUserId(UUID.fromString(ownerId)).isEmpty()) {
-            throw workspaceAlreadyExists();
-        }
         return createWorkspaceLocked(name, description, ownerId,
                 normalizeProfile(profile), normalizeImage(image));
     }
@@ -294,13 +287,6 @@ public class WorkspaceService {
                     "WORKSPACE_NOT_FOUND",
                     "Workspace not found");
         }
-    }
-
-    private CpApiException workspaceAlreadyExists() {
-        return new CpApiException(
-                org.springframework.http.HttpStatus.CONFLICT,
-                "WORKSPACE_ALREADY_EXISTS",
-                "An active workspace already exists for this user");
     }
 
     /**

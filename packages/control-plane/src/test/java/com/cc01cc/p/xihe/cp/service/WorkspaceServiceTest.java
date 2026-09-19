@@ -42,13 +42,12 @@ class WorkspaceServiceTest {
     }
 
     @Test
-    void createWorkspace_secondCallForSameOwnerReturns409() {
+    void createWorkspace_secondCallForSameOwnerCreatesAnotherWorkspace() {
         String userId = java.util.UUID.randomUUID().toString();
-        workspaceService.createWorkspace("only-one", userId);
-        com.cc01cc.p.xihe.cp.config.CpApiException e = assertThrows(
-                com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> workspaceService.createWorkspace("again", userId));
-        assertEquals("WORKSPACE_ALREADY_EXISTS", e.getCode());
+        Workspace first = workspaceService.createWorkspace("first", userId);
+        Workspace second = workspaceService.createWorkspace("second", userId);
+        assertNotEquals(first.getId(), second.getId());
+        assertEquals(2, workspaceService.getWorkspacesByUser(userId).size());
     }
 
     @Test

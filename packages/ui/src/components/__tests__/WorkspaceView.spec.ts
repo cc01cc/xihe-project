@@ -72,6 +72,12 @@ beforeEach(() => {
   localStorage.setItem('xihe-user', JSON.stringify({ id: 'user-1', email: 'test@xihe.local' }))
   localStorage.setItem('xihe-workspace', JSON.stringify({ id: 'workspace-1', name: 'Mock Workspace', ownerId: 'user-1' }))
   setActivePinia(createPinia())
+  mockedApi.getSessions.mockResolvedValue({
+    sessions: [
+      { id: SESSION_A, title: 'A', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), workspaceId: 'workspace-1', archived: false },
+      { id: SESSION_B, title: 'B', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), workspaceId: 'workspace-1', archived: false },
+    ],
+  })
 })
 
 describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
@@ -79,6 +85,7 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
     useSessionStore().currentSessionId = SESSION_A
     const wrapper = mountView()
     await settle()
+    await flushPromises()
 
     expect(wrapper.find('[data-testid="workspace-conversation"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="workspace-conversation"]').find('[data-testid="chat-panel-stub"]').exists()).toBe(true)
@@ -91,6 +98,7 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
     useSessionStore().currentSessionId = SESSION_A
     const wrapper = mountView()
     await settle()
+    await flushPromises()
 
     await wrapper.find('[data-testid="workspace-toolbar-toggle-tree"]').trigger('click')
     expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false)
@@ -105,6 +113,7 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
     useSessionStore().currentSessionId = SESSION_A
     const wrapper = mountView()
     await settle()
+    await flushPromises()
 
     await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger('click')
     expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true)
@@ -121,6 +130,7 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
     useSessionStore().currentSessionId = SESSION_A
     const wrapper = mountView()
     await settle()
+    await flushPromises()
 
     await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger('click')
     await wrapper.find('[data-testid="workspace-aux-close"]').trigger('click')
@@ -132,6 +142,7 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
     sessionStore.currentSessionId = SESSION_A
     const wrapper = mountView()
     await settle()
+    await flushPromises()
 
     await wrapper.find('[data-testid="workspace-toolbar-toggle-tree"]').trigger('click')
     await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger('click')
@@ -150,7 +161,7 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
     expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true)
   })
 
-  it('falls back to the new-chat entry when no session is active', async () => {
+  it('keeps the workspace usable without auto-creating a session', async () => {
     mockedApi.getSessions.mockResolvedValue({ sessions: [] })
     mockedApi.createSession.mockResolvedValue({
       id: SESSION_A,
@@ -164,6 +175,10 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
     await nextTick()
     expect(wrapper.find('[data-testid="workspace-create-session"]').text()).toBe('New chat')
 
+    await flushPromises()
+    expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="workspace-create-session"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(true)
   })

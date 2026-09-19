@@ -165,11 +165,19 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function selectWorkspace(workspaceId: string): Promise<ApiWorkspace> {
+    if (workspace.value?.id === workspaceId) return workspace.value
+    workspace.value = null
+    const selected = await api.getWorkspace(workspaceId)
+    workspace.value = selected
+    return selected
+  }
+
   const currentWorkspaceId = computed(() => workspace.value?.id ?? null)
 
   return {
     token, user, workspace, loading, error, isAuthenticated, userName, isAdmin,
     canClassifyTools, currentWorkspaceId,
-    login, register, logout, hydrateWorkspace,
+    login, register, logout, hydrateWorkspace, selectWorkspace,
   }
 })
