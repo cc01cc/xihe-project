@@ -71,6 +71,7 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | Agent | `/chat`, `/rag/**`, `/approval/**`, `/mcp/reinit`, `/registry/**` | `/internal/v1/agent/...` equivalent | service Bearer | CP/admin service; approval response/status are never browser routes; chat payload carries CP-resolved `userOverrides`/`workspaceOverrides` (PLAN-0307 T2.7, env-locked keys excluded, merged per run without side effects) |
 | Agent | `/v1/models`, `/v1/embedding-models` | `/internal/v1/agent/models`, `/internal/v1/agent/embedding-models` | service Bearer | UI through CP proxy |
 | Agent | `/internal/v1/agent/health`, `/internal/v1/agent/tools` | unchanged `/internal/v1/agent/...` | health public/tools service Bearer | probes/admin |
+| Agent | `/summarize` | `/internal/v1/agent/summarize` | service Bearer | CP `LlmSummaryProvider`（PLAN-0354）：CP 签发 2 分钟短租约，Agent 经既有 `/internal/v1/provider-leases/redeem` 兑换后单次调用 provider；`credentialLease`/`text` 必填（缺 → 400 `INVALID_REQUEST`），兑换失败 → 503 `PROVIDER_CONNECTION_UNAVAILABLE`，provider 调用失败 → 502 + `_classify_llm_exception` 细分码；200 `{summary, usage}`（六节摘要不含 `[Constraints]`，0343 同名 usage）；无事件/无持久化；CP 对任何非 2xx 一律记回退原因 `agent_error` |
 
 ## MCP Tool Surface
 

@@ -837,6 +837,17 @@ paths:
       security: [{ bearerAuth: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentChatRequest' } } } }
       responses: { '200': { description: SSE stream, content: { text/event-stream: {} } }, '400': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } }
+  /internal/v1/agent/summarize:
+    post:
+      operationId: agentSummarize
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentSummarizeRequest' } } } }
+      responses:
+        '200': { description: Sectioned summary plus 0343-shaped usage, content: { application/json: { schema: { $ref: '#/components/schemas/AgentSummarizeResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/rag/ingest:
     post: { operationId: agentRagIngest, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { multipart/form-data: { schema: { $ref: '#/components/schemas/RagIngestRequest' } } } }, responses: { '200': { description: RAG result, content: { application/json: { schema: { $ref: '#/components/schemas/RagIngestResponse' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/rag/search:
@@ -1673,6 +1684,26 @@ components:
           enum: [full, partial]
           description: "PLAN-0308 M1 (decision #23): `partial` when the CP tool→server cache was cold at payload time, so some tools have no per-tool wait entry."
         attachments: { type: array, items: { type: object, additionalProperties: true } }
+    AgentSummarizeRequest:
+      type: object
+      required: [credentialLease, text]
+      description: "PLAN-0354 spec §8: CP → Agent summary hop. CP issues a short (2 min TTL) provider credential lease and strips [Constraints] from priorSummary (I3); the Agent redeems the lease and clamps output tokens to min(config.maxTokens, 2048). maxOutputTokens is not a request field."
+      properties:
+        sessionId: { type: string }
+        runId: { type: string, description: "Empty for manual compaction (CP passes runId=null)." }
+        provider: { type: string }
+        model: { type: string }
+        credentialLease: { type: string, writeOnly: true }
+        providerConnectionId: { type: string, format: uuid }
+        connectionRevision: { type: integer, minimum: 1 }
+        text: { type: string, description: "role: content lines bounded by CP (per-message 4000 chars, pruneWindowChars budget; oldest dropped with an explicit omitted marker)." }
+        priorSummary: { type: string, description: "Previous sectioned summary with [Constraints] stripped by CP." }
+    AgentSummarizeResponse:
+      type: object
+      required: [summary, usage]
+      properties:
+        summary: { type: string, description: "Six sectioned summary ([Goal]/[Work State]/[Next Move]/[Files&Artifacts]/[Errors]/[Recent]); never carries [Constraints] (CP appends the code-extracted section)." }
+        usage: { type: object, additionalProperties: true, description: "0343-named usage: inputTokens/outputTokens/totalTokens/estimatedInputTokens/source (real|estimated|fallback)/model (provider/model)." }
     OAuthBindingRequest: { type: object, required: [workspaceId, serverId], properties: { workspaceId: { type: string }, serverId: { type: string } } }
     OAuthTokenRequest: { type: object, required: [userId, workspaceId, serverId, scope], properties: { userId: { type: string }, workspaceId: { type: string }, serverId: { type: string }, scope: { type: string } } }
     StatusResponse: { type: object, required: [status], properties: { status: { type: string } }, additionalProperties: true }
