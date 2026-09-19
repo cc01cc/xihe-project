@@ -52,6 +52,7 @@ from xihe_agent.llm.base import (
 )
 from xihe_agent.llm.models import _models_router, fetch_model_catalog
 from xihe_agent.llm.models import router as models_router
+from xihe_agent.llm.summarize import summarize_with_llm
 from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.rag import EmbeddingService, LiteLLMEmbeddings, VectorStore
 from xihe_agent.rag import chunk_document as rag_chunk
@@ -1414,6 +1415,111 @@ async def cancel_run(run_id: str, request: Request, _token: None = Depends(verif
         status_code=500,
         content={"status": "failed", "runId": run_id, "code": "CANCEL_FAILED"},
     )
+
+
+def _problem_response(request_id: str, status_code: int, code: str, detail: str,
+                      retryable: bool = False) -> JSONResponse:
+    """RFC 9457 problem+json used by the summarize endpoint (spec §8)."""
+    return JSONResponse(
+        status_code=status_code,
+        media_type="application/problem+json",
+        headers={"X-Request-Id": request_id},
+        content={
+            "type": f"https://xihe.dev/problems/{code.lower()}",
+            "title": code,
+            "status": status_code,
+            "code": code,
+            "detail": detail,
+            "retryable": retryable,
+            "requestId": request_id,
+        },
+    )
+
+
+@app.post("/internal/v1/agent/summarize")
+async def summarize(request: Request, _token: None = Depends(verify_api_token)):
+    """PLAN-0354 spec §8: one bounded semantic-summary call for CP compaction.
+
+    The CP issues a short credential lease for this hop; the Agent redeems it
+    and calls the provider once. No events, no persistence, no [Constraints]
+    data: CP owns fallback, cost accounting and the SC section (I3/I4).
+    """
+    data = await request.json()
+    request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
+    session_id: str = str(data.get("sessionId") or "")
+    run_id: str = str(data.get("runId") or "")
+    provider_override: str | None = data.get("provider") or None
+    model_override: str | None = data.get("model") or None
+    credential_lease: str | None = data.get("credentialLease") or None
+    provider_connection_id: str | None = data.get("providerConnectionId") or None
+    connection_revision = data.get("connectionRevision")
+    text: str = data.get("text") or ""
+    prior_summary: str | None = data.get("priorSummary") or None
+
+    if not credential_lease:
+        return _problem_response(request_id, 400, "INVALID_REQUEST", "credentialLease is required")
+    if not text.strip():
+        return _problem_response(request_id, 400, "INVALID_REQUEST", "text is required")
+
+    try:
+        grant = await config_client.redeem_provider_lease(
+            {
+                "lease": credential_lease,
+                "runId": run_id,
+                "providerConnectionId": provider_connection_id or "",
+                "providerId": provider_override or "",
+                "model": model_override or "",
+                "connectionRevision": int(connection_revision or 0),
+            }
+        )
+    except Exception as exc:
+        logger.warning(
+            "Provider credential lease unavailable for summarize sessionId={} errorType={}",
+            session_id,
+            type(exc).__name__,
+        )
+        return _problem_response(
+            request_id, 503, "PROVIDER_CONNECTION_UNAVAILABLE",
+            "The selected provider connection is unavailable", retryable=True)
+
+    run_llm_entries = config_client.get_domain("llm-provider")
+    run_llm_config = LLMConfig.from_entries(run_llm_entries)
+    request_config = LLMConfig(
+        provider=str(grant.get("provider", provider_override or "")),
+        route_provider=str(grant.get("routeProvider", grant.get("provider", ""))),
+        api_key=str(grant.get("apiKey") or ""),
+        api_base=str(grant.get("baseUrl") or ""),
+        model=str(grant.get("model") or model_override or ""),
+        timeout=run_llm_config.timeout,
+        max_tokens=min(run_llm_config.max_tokens, 2048),
+        temperature=run_llm_config.temperature,
+    )
+    summarizer = create_llm(request_config)
+    try:
+        summary, usage = await summarize_with_llm(summarizer, text, prior_summary)
+    except Exception as exc:
+        error_code, error_detail, retryable = _classify_llm_exception(exc)
+        logger.warning(
+            "[LIFECYCLE] service=agent event=summarize_failed requestId={} sessionId={} errorCode={}",
+            request_id,
+            session_id,
+            error_code,
+        )
+        return _problem_response(request_id, 502, error_code, error_detail, retryable=retryable)
+
+    # PLAN-0343 decision #10: pricing lookup key is provider/model.
+    usage_model = request_config.model
+    if usage_model and request_config.provider and "/" not in usage_model:
+        usage_model = f"{request_config.provider}/{usage_model}"
+    usage["model"] = usage_model
+    logger.info(
+        "[LIFECYCLE] service=agent event=summarize_completed requestId={} sessionId={} summaryChars={} source={}",
+        request_id,
+        session_id,
+        len(summary),
+        usage.get("source"),
+    )
+    return JSONResponse(content={"summary": summary, "usage": usage})
 
 
 def _rag_config_defaults() -> dict[str, float | int]:
