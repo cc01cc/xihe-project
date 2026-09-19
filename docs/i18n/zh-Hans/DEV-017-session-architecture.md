@@ -6,14 +6,14 @@ sidebar_group: "开发指南"
 status: active
 sidebar_order: 17
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-19
 ---
 
 # DEV-017: Session 架构
 
 > 面向前端与会话逻辑开发者：一页讲清状态归属、同步机制与嵌入约定。UI 实现细节见 DEV-010。
 >
-> chat 与 workspace 是同一 Session 的不同视图。与 DEV-010 以"Session 领域 vs UI 实现"分界：状态归属、同步机制、嵌入约定归本文；路由表、组件树、传输层实现归 DEV-010。
+> Chat 与 Workspace 可以在同一工作界面协作，但领域依赖方向是 Workspace 独立存在、Session 可选绑定 Workspace。与 DEV-010 以"Session 领域 vs UI 实现"分界：状态归属、同步机制、嵌入约定归本文；路由表、组件树、传输层实现归 DEV-010。
 
 ## 1. Session 领域模型
 
@@ -27,6 +27,8 @@ Session 是用户一次连贯工作上下文，独立于视图：
 | File | 物理文件归 Runtime；Session 经 `fileContext` 存引用（workspaceFiles/activeFilePath） |
 | 上下文 | `SessionContext{agents, ragContext?, mcpContext?, fileContext?}`；RAG/MCP 配置源为 `configStore` |
 
+Workspace 是独立资源，可以在没有 Session 时创建、导入、浏览和编辑。Session 创建时可以绑定一个 Workspace；Session 内的 `fileContext` 只是对该 Workspace 文件的引用，不反向决定 Workspace 生命周期。
+
 Chat 用 `sessionId`，Workspace 用 `workspaceId`，禁止互充（PLAN-222）。
 
 状态机：Active（可交互）→ Archived（前端不加载，数据按服务端契约保留/清理）→ 删除（服务端 API）。
@@ -39,7 +41,7 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 
 - **useSessionStore**（`stores/session.ts`，跨视图）：`sessions`、`currentSessionId`、`searchQuery`、附件投影、`fileContext`；独占创建/删除/重命名 Session；`setFileContext`/`setSessionAgents`/`setRAGContext`/`setMCPContext`。
 - **useChatStore**（`stores/chat.ts`，视图层）：按 Session 分组 `messages`、`streamingMessageId`；`getMessages/addMessage/addMarker`；流式三件套 `createStreamingMessage` / `replaceStreamingParts`（整量替换 MessagePart[]，PLAN-230）/ `finalizeStreaming`；不存 Session 元数据与 Agent/RAG/MCP 配置。
-- **useWorkspaceStore**（`stores/workspace.ts`，视图层）：`fileTree`、`expandedPaths`、`openFiles`、`activeFilePath`、`uploadQueue`；`syncActiveFileToSession()` 回写文件上下文；不存 Session 元数据。文件变更操作（`renameNode/moveNode/duplicateNode/createDirectory`）返回 `Promise<boolean>`，调用方按结果分支 toast（禁假成功，PLAN-262 M1/B-2）；`refreshAfterMutation` 保持展开态；上传按 MIME 分派（文本 `write_file` MCP / 二进制 `POST /api/v1/files/upload`，PLAN-262 M0/B-3）。v1 无导入入口。
+- **useWorkspaceStore**（`stores/workspace.ts`，视图层）：`fileTree`、`expandedPaths`、`openFiles`、`activeFilePath`、`uploadQueue`；可选地通过 `syncActiveFileToSession()` 回写当前 Session 的文件上下文；不存 Session 元数据。没有当前 Session 时，Workspace 文件操作和 Workspace 事件订阅仍可工作，不能伪造 Session。文件变更操作（`renameNode/moveNode/duplicateNode/createDirectory`）返回 `Promise<boolean>`，调用方按结果分支 toast（禁假成功，PLAN-262 M1/B-2）；`refreshAfterMutation` 保持展开态；上传按 MIME 分派（文本 `write_file` MCP / 二进制 `POST /api/v1/files/upload`，PLAN-262 M0/B-3）。v1 无导入入口。
 
 ## 3. 跨 Store 同步
 
@@ -50,9 +52,16 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 ## 4. 视图嵌入与切换约定
 
 - `ChatPanel` 是唯一允许的内嵌对话组件（消息列表 + 输入框 + SSEStream，无全屏布局头）；`ChatView` 与 `WorkspaceView` 共用其消息流逻辑，禁止别处直接嵌入 `ChatView`。
-- 同一 Session 切换（约定）：chat→workspace 经 Sidebar Workspace 按钮（`/workspace/:workspaceId`，缺失时不跳转）；workspace→chat 回到 `/chat/:currentSessionId`；WorkspaceToolbar 的 Session 下拉切换 Session 时保留 workspace route。
+- 视图切换约定：chat→workspace 经 Sidebar Workspace 按钮（`/workspace/:workspaceId`，缺失时不跳转）；Workspace 路由可以没有 Session；workspace→chat 时选择已有 Session 或创建 Session，不把 Workspace 切换误写成 Session 切换；WorkspaceToolbar 的 Session 下拉切换 Session 时保留 workspace route。
 - 消息历史一律经 `chatStore.getMessages(sessionId)` 读取，跨视图一致；附件经 `currentSessionAttachments` 共享。
 - 路由表与组件分层见 DEV-010 §1-2；SSE 传输层见 DEV-010 §4。
+
+### 4.1 Workspace 级事件订阅
+
+- Workspace 文件/状态事件按 `workspaceId` 订阅，不依赖 `sessionId`。
+- Chat SSE 继续按 Session 承载 ChatRun；Workspace SSE 只承载状态和文件变化摘要。
+- 文件内容、目录树和大数据继续走 HTTP；事件丢失通过 sequence gap 与 Workspace snapshot 补偿。
+- 详细传输分层和 Runtime WebSocket 控制面见 PLAN-0350 / BL-43。
 
 ## 5. 开发约定与扩展
 

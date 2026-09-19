@@ -5,7 +5,7 @@ lang: en
 status: active
 sidebar_order: 101
 created: 2026-07-06
-updated: 2026-09-02
+updated: 2026-09-19
 ---
 
 # ADR-001: Session Store Boundary
@@ -14,7 +14,7 @@ updated: 2026-09-02
 
 ## 1. Decision Topic
 
-PLAN-029 needs to introduce a unified Session layer between chat and workspace while preserving the rendering-state autonomy of both views. The core decisions are:
+PLAN-029 needs a Session layer for chat context while preserving the rendering-state autonomy of Chat and the independent Workspace resource. The core decisions are:
 
 - How should state be layered?
 - Where does cross-view state live?
@@ -35,7 +35,7 @@ Choose **B**: `useSessionStore` carries cross-view core state; `useChatStore` an
 
 ### 3.1. Rationale
 
-- The chat conversation flow and the workspace file editor are different interaction paradigms and should not be degraded into each other.
+- The chat conversation flow and the workspace file editor are different interaction paradigms; a Workspace can exist without a Session and should not be degraded into a Session-owned resource.
 - The view layer needs autonomy over scroll position, editor tabs, file tree expansion, etc.
 - The Session layer should only contain state that is still needed when switching to another view.
 - Avoids a single bloated store and preserves testability.
@@ -105,7 +105,7 @@ Located at `packages/ui/src/stores/workspace.ts`.
 - `createFile(parentDir, name)` / `deleteNode(path)` / `splitPdf(path)` / `loadFullContent(path)`
 - `syncActiveFileToSession()`: syncs current file context to `useSessionStore`
 
-**Boundary**: the workspace store does not store Session metadata or Agent state. It binds to the current Session via `sessionStore.currentSessionId` and writes file context back to the Session layer via `setFileContext`.
+**Boundary**: the workspace store does not store Session metadata or Agent state. When a Session is selected it may write file context back to that Session via `setFileContext`; Workspace file state and Workspace-level event subscriptions remain valid without a Session.
 
 ## 5. Cross-Store Synchronization Mechanism
 

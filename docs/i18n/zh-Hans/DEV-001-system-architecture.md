@@ -5,7 +5,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 sidebar_order: 1
 created: 2026-05-28
-updated: 2026-09-03
+updated: 2026-09-19
 status: active
 ---
 
@@ -196,9 +196,10 @@ sequenceDiagram
 
 ## 4. 统一 Session 与附件（摘要，详见 DEV-017）
 
-chat 与 workspace 是同一 Session 的不同视图：
+chat 与 workspace 可以在同一工作界面协作，但 Workspace 是独立资源，Session 只是可选绑定与上下文层：
 
 - Chat 用 `/chat/:sessionId`，Workspace 用 `/workspace/:workspaceId`。
+- Workspace 可以没有 Session；需要聊天时再选择或创建绑定该 Workspace 的 Session。
 - `useSessionStore` 承载服务端 Session 投影；`useChatStore`/`useWorkspaceStore` 为视图层状态。
 - 附件持久化到后端 Session 专属空间（`{base}/{sessionId}/{fileId}`），刷新仍可渲染。
 

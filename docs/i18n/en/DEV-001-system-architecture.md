@@ -379,7 +379,8 @@ As chat and workspace capabilities converge, Xihe introduces a **cross-view unif
 
 ### 7.1 Unified Session Layer
 
-- chat and workspace share Session views within the current Workspace: Chat uses `/chat/:sessionId`, while Workspace uses `/workspace/:workspaceId`; a Session ID must not be used as a Workspace ID.
+- Chat and Workspace can coexist in one work surface, but Workspace is an independent resource and may exist without a Session. Chat uses `/chat/:sessionId`, while Workspace uses `/workspace/:workspaceId`; a Session ID must not be used as a Workspace ID.
+- A Session may optionally bind to a Workspace for Chat/Agent context; Workspace lifecycle and Workspace-level events do not depend on a Session.
 - `useSessionStore` carries server-projected Session metadata and view references; Agent/RAG/MCP context, attachments, and file content follow their CP/Runtime API contracts, and business Session/Message data is not persisted in localStorage.
 - `useChatStore` and `useWorkspaceStore` are reduced to view-layer state: the former retains message flow and UI state; the latter retains file tree, editor, and upload queue.
 - workspace reuses chat conversation capabilities through the embeddable `ChatPanel.vue` without duplicating the component tree.
