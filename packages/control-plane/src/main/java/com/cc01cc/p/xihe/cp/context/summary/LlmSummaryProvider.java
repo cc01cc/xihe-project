@@ -268,7 +268,7 @@ public class LlmSummaryProvider implements SummaryProvider {
 
         // PLAN-0355 M2 (2026-09-19): gate outcome = reject → shipped default is
         // the deterministic rule summary; explicit "llm" re-enables the seam.
-        // Evidence: plans/PLAN-0355-XH-quality-cost-gate/evidence/gate-decision.md
+        // Evidence: plans/archive/20260919/PLAN-0355-XH-quality-cost-gate/evidence/gate-decision.md
         String providerMode = pick(modelCfg, defaults, "summaryProvider", "rule");
         String modelOverride = pick(modelCfg, defaults, "summaryModel", null);
         String model = !isBlank(modelOverride) ? modelOverride : baseModel;

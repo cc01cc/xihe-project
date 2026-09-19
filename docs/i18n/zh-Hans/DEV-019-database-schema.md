@@ -168,8 +168,8 @@ erDiagram
     ledger_operations ||--o{ operation_events : "appends (cascade)"
     operation_items |o--o{ operation_events : "logs (set null)"
     operation_attempts |o--o{ operation_events : "logs (set null)"
-    operation_items |o--o{ operation_extensions : "payload (set null)"
-    operation_attempts |o--o{ operation_extensions : "payload (set null)"
+    operation_items |o--o{ operation_extensions : "payload (cascade)"
+    operation_attempts |o--o{ operation_extensions : "payload (cascade)"
     ledger_operations ||--o{ diagnostic_artifacts : "artifacts (cascade)"
     operation_items |o--o{ diagnostic_artifacts : "origin (set null)"
     chat_runs ||--o{ task_plans : "plans (cascade)"
@@ -178,7 +178,7 @@ erDiagram
 ```
 
 - `ledger_operations` 是审计根，`operation_items` 是通道事实总表，`operation_attempts/operation_events/operation_extensions/diagnostic_artifacts` 依次挂在 item/attempt 上（字段与约束见 §3.7）。
-- `operation_extensions` 对 item/attempt 为 `ON DELETE SET NULL`，与 `ck_operation_extensions_target`（至少一目标非空）的组合在删除路径上的已知阻断见 §3.7 与 [DEV-018](DEV-018-known-issues.md)（DDL-13）。
+- `operation_extensions` 对 item/attempt 为 `ON DELETE CASCADE`（V34，PLAN-0367 DDL-13；此前 `SET NULL` 与 `ck_operation_extensions_target`（至少一目标非空）的组合使含 extension 行的会话硬删整事务回滚，见 §3.7 与 [DEV-018](DEV-018-known-issues.md)）。
 - `task_plans`/`task_items` 为 run 任务连续性（`V6`，见 §3.8）；`task_plans.session_id` 无 FK，仅 run/workspace 建 FK。
 
 ## 3. 按域表详情
@@ -682,7 +682,7 @@ erDiagram
 
 ### 3.7 操作账本（ledger_operations / operation_items / operation_attempts / operation_events / operation_extensions / diagnostic_artifacts）
 
-> PLAN-0326（v3 通道事实模型，2026-09-14）后的行身份与写者语义；PLAN-0351（V33，2026-09-19）把审计根表 `session_operations` 改名为 `ledger_operations`——旧名→新名 14 项映射登记在 `plans/PLAN-0351-XH-schema-cleanup/spec/migration-contract.md` §5，`V2__session_operation_ledger.sql` 等历史迁移文件名保留旧名不改写。本节为项目侧速查。
+> PLAN-0326（v3 通道事实模型，2026-09-14）后的行身份与写者语义；PLAN-0351（V33，2026-09-19）把审计根表 `session_operations` 改名为 `ledger_operations`——旧名→新名 14 项映射登记在 `plans/archive/20260919/PLAN-0351-XH-schema-cleanup/spec/migration-contract.md` §5，`V2__session_operation_ledger.sql` 等历史迁移文件名保留旧名不改写。本节为项目侧速查。
 
 **职责分层**：`ledger_operations` = 一次用户/系统动作的审计根（谁/何时/终态）；`operation_items` = 通道事实总表（**每通道事实一行**，`kind` 区分事实种类，`source` 是行身份位）；`operation_attempts` = 实际执行尝试（`agent_tool` 中继 / `cp_forward` 网关）；`operation_events` = append-only 状态流转流水；`operation_extensions` = 通道个性载荷（`mcp_call`/`llm_usage`/`job_state` 等）；`diagnostic_artifacts` = 诊断工件元数据（内容在受保护存储，仅存 hash/ref/acl）。
 
@@ -795,8 +795,8 @@ erDiagram
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | UUID | PK | — |
-| item_id | UUID | nullable FK `operation_items(id) ON DELETE SET NULL` | 目标事实行 |
-| attempt_id | UUID | nullable FK `operation_attempts(id) ON DELETE SET NULL` | 目标尝试 |
+| item_id | UUID | nullable FK `operation_items(id) ON DELETE CASCADE`（V34，PLAN-0367） | 目标事实行 |
+| attempt_id | UUID | nullable FK `operation_attempts(id) ON DELETE CASCADE`（V34，PLAN-0367） | 目标尝试 |
 | extension_kind | VARCHAR(40) | NOT NULL | 载荷种类（开放域） |
 | schema_version | INTEGER | NOT NULL | 载荷版本 |
 | payload | JSONB | NOT NULL | 载荷 |
@@ -806,7 +806,7 @@ erDiagram
 > - `ck_operation_extensions_target`：`item_id IS NOT NULL OR attempt_id IS NOT NULL`
 > - `uq_operation_extensions_item_kind_version (item_id, extension_kind, schema_version) WHERE item_id IS NOT NULL AND attempt_id IS NULL`
 > - `uq_operation_extensions_attempt_kind_version (attempt_id, extension_kind, schema_version) WHERE attempt_id IS NOT NULL AND item_id IS NULL`
-> - 删除语义：目标行删除时 `SET NULL`；若另一目标也为空则触发 CHECK——含 extension 行的会话硬删当前因此被阻断（DDL-13，见 [DEV-018](DEV-018-known-issues.md) 已知问题）
+> - 删除语义：目标行删除时 `CASCADE`（V34，PLAN-0367 DDL-13；此前 `SET NULL` 与 CHECK 的组合使含 extension 行的会话硬删整事务回滚）。硬删随账本一并删除 `llm_usage`/`job_state`/`mcp_call` 档案（接受的取舍）
 
 **diagnostic_artifacts**（`V2`，Entity `entity/DiagnosticArtifact.java`）：诊断工件元数据（内容在受保护工件存储）。
 
@@ -878,9 +878,9 @@ erDiagram
 
 > 索引：`idx_task_items_plan (task_plan_id)`；`idx_task_items_status (status)`
 
-## 4. 迁移对照（当前 active 链 V1~V33）
+## 4. 迁移对照（当前 active 链 V1~V34）
 
-> PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V33 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
+> PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V34 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
 
 | 版本 | 文件 | 变更 | 影响表 |
 |------|------|------|--------|
@@ -917,6 +917,7 @@ erDiagram
 | V31 | `V31__ledger_fk_child_indexes.sql` | 补 FK 子列索引：`chat_runs.workspace_id`、`operation_events.item_id/attempt_id`（PLAN-0351 DDL-5） | `chat_runs/operation_events` |
 | V32 | `V32__drop_dead_json_columns.sql` | 删死列：`workspaces.settings/storage_path`、`users.settings`、`messages.metadata`、`mcp_remote_servers.auth_config`（PLAN-0351 DDL-9/10；JSON 新列一律 JSONB） | `workspaces/users/messages/mcp_remote_servers` |
 | V33 | `V33__rename_session_operations_to_ledger_operations.sql` | `session_operations` RENAME `ledger_operations` + 14 项跟随改名（PK ×1、FK ×4、CHECK ×5、唯一索引 ×2、普通索引 ×2；PLAN-0351 DDL-12） | `ledger_operations` 及其约束/索引 |
+| V34 | `V34__operation_extensions_cascade.sql` | `operation_extensions` 两目标 FK `SET NULL` → `CASCADE`（CHECK 保留；PLAN-0367 DDL-13） | `operation_extensions` |
 
 ## 5. 本地查看与运维
 
@@ -932,11 +933,11 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slice projection，不做旧格式数据迁移；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象（空表纯清理，V4/V5 原文保留为不可变历史）；V29 清空遗留单键源哈希（无 schema 变更）；V30–V33 为 PLAN-0351 的 schema 清理与 `ledger_operations` 改名（V33，见 §4）。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slice projection，不做旧格式数据迁移；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象（空表纯清理，V4/V5 原文保留为不可变历史）；V29 清空遗留单键源哈希（无 schema 变更）；V30–V33 为 PLAN-0351 的 schema 清理与 `ledger_operations` 改名（V33，见 §4）；V34 为 PLAN-0367 的 `operation_extensions` 目标 FK CASCADE 修复（读路径无改动）。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 
-> 「active 首次迁移」指当前 V1~V33 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
+> 「active 首次迁移」指当前 V1~V34 链中的出处；rebaseline 前的旧链编号仅作溯源备注，编号与 active 链不通用（见 §1 版本标注约定）。
 
 | 表 | Entity | active 首次迁移 |
 |----|--------|-----------------|
@@ -980,7 +981,7 @@ erDiagram
 
 | 约定 | 内容 |
 |------|------|
-| 级联删 | `sessions` → `messages/context_events/context_projections/files(session)`；`workspaces` → `workspace_execution_specs/run_checkpoints`；`provider_connections` → `provider_credential_leases`；账本链：`ledger_operations` → `operation_items`（CASCADE）→ `operation_attempts/operation_events/diagnostic_artifacts`（CASCADE）；`task_plans` → `task_items`（CASCADE）。`operation_extensions` 对 item/attempt 为 `SET NULL`（与 `ck_operation_extensions_target` 的组合见 §3.7 与 DEV-018 DDL-13） |
+| 级联删 | `sessions` → `messages/context_events/context_projections/files(session)`；`workspaces` → `workspace_execution_specs/run_checkpoints`；`provider_connections` → `provider_credential_leases`；账本链：`ledger_operations` → `operation_items`（CASCADE）→ `operation_attempts/operation_events/diagnostic_artifacts`（CASCADE）；`operation_extensions` 对 item/attempt 为 `CASCADE`（V34，PLAN-0367；CHECK 保留，见 §3.7）；`task_plans` → `task_items`（CASCADE） |
 | 置空 | `messages` 删后 `files.message_id` 置空，文件行保留待 orphan 清理 |
 | 软删 | 仅 `workspaces.deleted_at`，查询须带 `WHERE deleted_at IS NULL`，唯一约束用部分索引实现 |
 | 只追加 | `context_events/provider_connection_audit/operation_events` 禁 UPDATE/DELETE（服务/仓储层测试钉住，无 DB 触发器——PLAN-0351 决策 #6），`context_projections` 是唯一可重建的物化 |

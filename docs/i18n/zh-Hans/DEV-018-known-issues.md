@@ -32,7 +32,7 @@ updated: 2026-09-06
 
 ## PLAN-0354 LLM 摘要 — 适用前提、租约与回退排障（2026-09-19；0355 裁定：默认关）
 
-- **默认关（PLAN-0355 质量门，2026-09-19）**：`context-policy.summaryProvider` 默认 `rule`（LLM 摘要需显式 `llm` 开启）；裁定 reject——失败率 35.2%、延迟 p95 44.4s（阈值 10s）、约束保留 96.97% 低于规则式基线（`plans/PLAN-0355-XH-quality-cost-gate/evidence/gate-decision.md`）。重开先决：修复 F1（`shrink_failed` 截断摘要丢 `[Constraints]`）并以 p95 ≤10s 的 provider/model 按冻结判据复测。
+- **默认关（PLAN-0355 质量门，2026-09-19）**：`context-policy.summaryProvider` 默认 `rule`（LLM 摘要需显式 `llm` 开启）；裁定 reject——失败率 35.2%、延迟 p95 44.4s（阈值 10s）、约束保留 96.97% 低于规则式基线（`plans/archive/20260919/PLAN-0355-XH-quality-cost-gate/evidence/gate-decision.md`）。重开先决：修复 F1（`shrink_failed` 截断摘要丢 `[Constraints]`）并以 p95 ≤10s 的 provider/model 按冻结判据复测。
 - **BYOK 前提（显式 `llm` 时）**：LLM 摘要仅在会话绑定 provider connection（`sessions.provider_connection_id`）且 canonical pair（provider+model）完整、provider ≠ `mock` 时发起；env-only / 无连接用户回退规则式（`fallbackReason=no_credential`），属设计内回退而非故障，压缩与 run 均不受影响（I1）。默认 `rule` 时为直属规则式、无 `fallbackReason`。
 - **租约 2 分钟 TTL**：摘要跳使用 `ProviderCredentialLeaseService.issue(..., 2min)` 新重载（既有调用方保持 5 分钟默认），窗口覆盖 `summaryTimeoutMs` 上限 60s；兑换仍走既有 `/internal/v1/provider-leases/redeem` 通道，租约行以 `sessionId` 落审计、不新增 purpose 列，租约 token/apiKey 不入日志。
 - **回退原因对照（排障）**：
@@ -71,7 +71,7 @@ updated: 2026-09-06
 ## PLAN-0352 会话删除 SSE 与在飞 run 收尾（2026-09-19）
 
 - **会话删除不收尾 SSE、不处置在飞 run**：已修复。`SessionController.delete` 在删除事务外先取消该会话全部非终态 run（`ChatRunCancellationService`，与 `POST /api/v1/chat/runs/{runId}/cancel` 共用编排），再有界等待终态投递（上界 N=2s，等待信号 = relay 终结 `releaseRun`/`lease_owner` 置空；超时记 `session_delete_sse_wait_timeout` 后继续），然后执行删除事务，成功后 `complete(sessionId)` 关闭 SSE；无在飞 run 时删除后立即收尾。删除失败保留连接并记 `session_delete_failed`。
-- **已知前置（阻断，非本计划范围）**：含 `operation_extensions` 行（`llm_usage`/`job_state`/`mcp_call`）的会话硬删会被 `ck_operation_extensions_target`（`V2__session_operation_ledger.sql:181-192`）阻断；登记 backlog `DDL-13`，去向 PLAN-0351。
+- **已知前置（阻断，非本计划范围）**：含 `operation_extensions` 行（`llm_usage`/`job_state`/`mcp_call`）的会话硬删会被 `ck_operation_extensions_target`（`V2__session_operation_ledger.sql:181-192`）阻断；登记 backlog `DDL-13`。**已修复（PLAN-0367 V34，2026-09-19）**：两目标 FK 改 `ON DELETE CASCADE`（CHECK 保留），硬删随账本删除 extension 档案（接受的取舍，登记于 backlog DDL-13）。
 - **残余**：会话硬删时 `scope=session` 存活 job 无处置入口（依赖 BL-21 单 job 取消入口）；承接登记 PLAN-0353。
 
 ## 环境 / Docker

@@ -28,7 +28,7 @@ const HOST_ROOT = path.resolve(
 )
 const EVIDENCE_DIR = path.resolve(
   process.cwd(),
-  '../../../plans/PLAN-0353-XH-docs-evidence-sync/evidence',
+  '../../../plans/archive/20260919/PLAN-0353-XH-docs-evidence-sync/evidence',
 )
 const HUMAN_RUNTIME_DOWN = '沙盒未就绪'
 
