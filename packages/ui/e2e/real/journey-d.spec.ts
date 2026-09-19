@@ -154,6 +154,50 @@ test.describe("@host Journey D — context pipeline", () => {
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         await ensureChatReady(page);
 
+        // Pin the session binding to the native route explicitly (chat-availability
+        // real uses the same popover flow) so "no silent route switch" has a
+        // concrete before/after: the session must stay on xiaomi/mimo-v2.5 after
+        // the refusal.
+        const trigger = page.getByTestId("model-popover-trigger");
+        await expect(trigger).toBeVisible();
+        await trigger.click();
+        const modelSearch = page.getByTestId("model-popover-search");
+        await modelSearch.fill("mimo-v2.5");
+        await expect(page.getByTestId("model-item-xiaomi/mimo-v2.5")).toBeVisible({
+            timeout: 15000,
+        });
+        await modelSearch.press("Enter");
+
+        let sessionId = "";
+        await expect
+            .poll(
+                async () => {
+                    const res = await request.get(`${CP_URL}/api/v1/sessions`, { headers });
+                    if (!res.ok()) return "";
+                    const body = (await res.json()) as { sessions?: Array<{ id?: string }> };
+                    sessionId = body.sessions?.[0]?.id ?? "";
+                    return sessionId;
+                },
+                { timeout: 30000 },
+            )
+            .not.toBe("");
+        await expect
+            .poll(
+                async () => {
+                    const res = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}`, {
+                        headers,
+                    });
+                    if (!res.ok()) return "";
+                    const body = (await res.json()) as {
+                        modelProvider?: string;
+                        modelName?: string;
+                    };
+                    return `${body.modelProvider ?? ""}/${body.modelName ?? ""}`;
+                },
+                { timeout: 15000 },
+            )
+            .toBe("xiaomi/mimo-v2.5");
+
         // Any workspace chat binds the MCP tool surface, so the native route's
         // refusal happens at the provider call — before any tool can run.
         await sendChat(
@@ -198,12 +242,6 @@ test.describe("@host Journey D — context pipeline", () => {
         // 3) No silent route switch: the canonical pair stays native xiaomi, no
         //    assistant content is produced, no write_file item completes, and the
         //    requested file never lands in the workspace host root.
-        const sessionsRes = await request.get(`${CP_URL}/api/v1/sessions`, { headers });
-        expect(sessionsRes.ok(), `sessions list ${sessionsRes.status()}`).toBeTruthy();
-        const sessionId =
-            ((await sessionsRes.json()) as { sessions?: Array<{ id?: string }> }).sessions?.[0]
-                ?.id ?? "";
-        expect(sessionId, "session id resolvable").not.toBe("");
         const sessRes = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}`, { headers });
         expect(sessRes.ok(), `session ${sessRes.status()}`).toBeTruthy();
         const sess = (await sessRes.json()) as { modelProvider?: string; modelName?: string };
