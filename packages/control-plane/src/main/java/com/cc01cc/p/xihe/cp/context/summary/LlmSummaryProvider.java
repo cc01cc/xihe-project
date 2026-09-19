@@ -22,13 +22,17 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * PLAN-0354 T1.3 / spec §2–§5: default LLM summarizer with rule fallback.
+ * PLAN-0354 T1.3 / spec §2–§5: LLM summarizer with rule fallback.
  *
- * <p>Default provider is LLM (Q6-A). Every failure path (no credential, lease,
- * timeout, upstream error, unusable output) degrades to the rule implementation
- * with a frozen {@code fallbackReason} — never throws, never blocks a run
- * (invariant I1). Input is bounded before the hop (invariant I2) and
- * {@code [Constraints]} never reaches the LLM (invariant I3).
+ * <p>Default provider is rule since PLAN-0355 M2 (2026-09-19): the quality/cost
+ * gate measured 35% timeout fallback, p95 44.4s latency and constraint loss
+ * under {xiaomi}/{mimo-v2.5}, so the shipped default keeps the deterministic
+ * rule summary. Explicit {@code summaryProvider=llm} still enables the seam.
+ * Every failure path (no credential, lease, timeout, upstream error, unusable
+ * output) degrades to the rule implementation with a frozen
+ * {@code fallbackReason} — never throws, never blocks a run (invariant I1).
+ * Input is bounded before the hop (invariant I2) and {@code [Constraints]}
+ * never reaches the LLM (invariant I3).
  */
 @Service
 @Primary
@@ -262,7 +266,10 @@ public class LlmSummaryProvider implements SummaryProvider {
         }
         JsonNode modelCfg = !isBlank(baseModel) ? models.path(baseModel) : objectMapper.createObjectNode();
 
-        String providerMode = pick(modelCfg, defaults, "summaryProvider", "llm");
+        // PLAN-0355 M2 (2026-09-19): gate outcome = reject → shipped default is
+        // the deterministic rule summary; explicit "llm" re-enables the seam.
+        // Evidence: plans/PLAN-0355-XH-quality-cost-gate/evidence/gate-decision.md
+        String providerMode = pick(modelCfg, defaults, "summaryProvider", "rule");
         String modelOverride = pick(modelCfg, defaults, "summaryModel", null);
         String model = !isBlank(modelOverride) ? modelOverride : baseModel;
         int timeoutMs = clampTimeout(pickInt(modelCfg, defaults, "summaryTimeoutMs", DEFAULT_TIMEOUT_MS), baseModel);
