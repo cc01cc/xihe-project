@@ -30,12 +30,9 @@ const HOST_ROOT = path.resolve(
   '../../.tmp/e2e-host',
   process.env.XIHE_E2E_RUN_ID ?? 'unknown-run',
 )
-// PLAN-0369: evidence lands in the current PLAN, never in an archived one —
-// pointing at plans/archive made every full run rewrite frozen归档 PNGs.
-const EVIDENCE_DIR = path.resolve(
-  process.cwd(),
-  '../../../plans/PLAN-0369-XH-host-e2e-harness-closure/evidence',
-)
+// 运行证据写 .local（已 gitignore）；需要入册时再把摘要/截图拷入对应 PLAN evidence。
+// 2026-09-19: PLAN-0369 归档后此前的 plans/PLAN-0369-.../evidence 落点会在旧路径重建目录。
+const EVIDENCE_DIR = path.resolve(process.cwd(), '../../.local/evidence/journey-b')
 const HUMAN_RUNTIME_DOWN = '沙盒未就绪'
 
 let ctx: JourneyContext
