@@ -30,9 +30,10 @@ updated: 2026-09-06
 - **lease 为进程内存**：Runtime 重启后 lease 全清，依赖 Docker `rebuild` 接管（无跨进程双主防护，单 Runtime v1 场景可接受）。
 - **REST read/list/stat 已走容器 exec**：无 Docker 或容器未启动时这些端点 fail-closed 503（与变更类一致）；binary write 仍 host 直写（JSON 帧 UTF-8 限制，债）。
 
-## PLAN-0354 LLM 摘要 — 适用前提、租约与回退排障（2026-09-19）
+## PLAN-0354 LLM 摘要 — 适用前提、租约与回退排障（2026-09-19；0355 裁定：默认关）
 
-- **BYOK 前提**：LLM 摘要仅在会话绑定 provider connection（`sessions.provider_connection_id`）且 canonical pair（provider+model）完整、provider ≠ `mock` 时发起；env-only / 无连接用户恒走规则式（`fallbackReason=no_credential`），属设计内回退而非故障，压缩与 run 均不受影响（I1）。
+- **默认关（PLAN-0355 质量门，2026-09-19）**：`context-policy.summaryProvider` 默认 `rule`（LLM 摘要需显式 `llm` 开启）；裁定 reject——失败率 35.2%、延迟 p95 44.4s（阈值 10s）、约束保留 96.97% 低于规则式基线（`plans/PLAN-0355-XH-quality-cost-gate/evidence/gate-decision.md`）。重开先决：修复 F1（`shrink_failed` 截断摘要丢 `[Constraints]`）并以 p95 ≤10s 的 provider/model 按冻结判据复测。
+- **BYOK 前提（显式 `llm` 时）**：LLM 摘要仅在会话绑定 provider connection（`sessions.provider_connection_id`）且 canonical pair（provider+model）完整、provider ≠ `mock` 时发起；env-only / 无连接用户回退规则式（`fallbackReason=no_credential`），属设计内回退而非故障，压缩与 run 均不受影响（I1）。默认 `rule` 时为直属规则式、无 `fallbackReason`。
 - **租约 2 分钟 TTL**：摘要跳使用 `ProviderCredentialLeaseService.issue(..., 2min)` 新重载（既有调用方保持 5 分钟默认），窗口覆盖 `summaryTimeoutMs` 上限 60s；兑换仍走既有 `/internal/v1/provider-leases/redeem` 通道，租约行以 `sessionId` 落审计、不新增 purpose 列，租约 token/apiKey 不入日志。
 - **回退原因对照（排障）**：
   - `no_credential`：会话未绑定 provider connection（BYOK 前提）→ 在会话中重选连接。
