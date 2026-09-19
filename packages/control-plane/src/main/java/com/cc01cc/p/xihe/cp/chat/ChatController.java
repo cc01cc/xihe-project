@@ -80,6 +80,7 @@ public class ChatController {
     private final RunCheckpointService runCheckpointService;
     private final ChatRunCancellationService chatRunCancellationService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
+    private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
@@ -129,7 +130,8 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
             RunCheckpointService runCheckpointService,
             ChatRunCancellationService chatRunCancellationService,
-            com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService) {
+            com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
+            com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -154,6 +156,7 @@ public class ChatController {
         this.runCheckpointService = runCheckpointService;
         this.chatRunCancellationService = chatRunCancellationService;
         this.contextSourceRefreshService = contextSourceRefreshService;
+        this.usageCostMapper = usageCostMapper;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -527,7 +530,7 @@ public class ChatController {
                 // service owns the cooldown/anti-thrash rules.
                 try {
                     if (contextService.shouldAutoCompact(sessionId)) {
-                        contextService.compact(sessionId, workspaceId, userId, null);
+                        contextService.compact(sessionId, workspaceId, userId, null, "auto", runId);
                         logger.info("[LIFECYCLE] service=cp event=chat_pre_run_compaction sessionId={} runId={}", sessionId, runId);
                     }
                 } catch (Exception gateError) {
@@ -792,7 +795,7 @@ public class ChatController {
                                         AtomicBoolean terminalSent) {
         try {
             Long maxInputTokens = resolveMaxInputTokens(userId, workspaceId, model);
-            contextService.compactForOverflow(sessionId, workspaceId, userId);
+            contextService.compactForOverflow(sessionId, workspaceId, userId, runId);
             contextService.appendEvent(sessionId, workspaceId, userId, "context.overflow_retry", Map.of(
                     "runId", runId == null ? "" : runId,
                     "requestId", requestId == null ? "" : requestId,
@@ -1368,12 +1371,10 @@ public class ChatController {
     }
 
     /**
-     * PLAN-0343 decision #7: single cost computation point. Looks the model up
-     * in the pricing config domain (decision #11, per-MTok) and injects
-     * cost/costCurrency/costSource/costNote into the usage snapshot. Unmapped
-     * → cost=null + warn (I2: never fabricate 0). source=fallback rows are not
-     * priceable (I4: no provider_reported impersonation) → unmapped without
-     * pricing warn noise being wrong, still null.
+     * PLAN-0343 decision #7: single cost computation point (now shared with
+     * compaction summaries via {@link com.cc01cc.p.xihe.cp.usage.UsageCostMapper},
+     * PLAN-0354 Q5-A). Legacy payloads without a model key and empty usage stay
+     * verbatim; everything else gets cost/costCurrency/costSource/costNote.
      */
     private Object mapUsageCost(String runId, Object parsedPayload) {
         try {
@@ -1383,75 +1384,26 @@ public class ChatController {
                 return parsedPayload;
             }
             String model = stringValue(usage, "model");
-            String source = stringValue(usage, "source");
             if (model == null) {
                 // Pre-0343 payloads without a model key stay verbatim (spec
                 // §2.2 legacy rows: aggregation handles them, no alert).
                 return parsedPayload;
             }
-            if (!"real".equals(source) && !"estimated".equals(source)) {
-                // fallback: no counts → not priceable, cost stays absent-null.
-                return withCostFields(usage, envelope, null, null, "unmapped", "no token counts");
+            Map<String, Object> usageCopy = new java.util.HashMap<>();
+            for (Map.Entry<?, ?> entry : usage.entrySet()) {
+                usageCopy.put(String.valueOf(entry.getKey()), entry.getValue());
             }
-            java.math.BigDecimal[] rates = pricingRates(model);
-            if (rates == null) {
-                logger.warn("[LIFECYCLE] service=cp event=usage_cost_unmapped runId={} model={} reason=no_pricing_entry", runId, model);
-                return withCostFields(usage, envelope, null, null, "unmapped", "model not in pricing config");
+            Map<String, Object> mapped = usageCostMapper.withCost(model, usageCopy, runId);
+            Map<String, Object> envelopeOut = new java.util.HashMap<>();
+            for (Map.Entry<?, ?> entry : envelope.entrySet()) {
+                envelopeOut.put(String.valueOf(entry.getKey()), entry.getValue());
             }
-            long in = usage.get("inputTokens") instanceof Number n ? n.longValue() : 0L;
-            long out = usage.get("outputTokens") instanceof Number n ? n.longValue() : 0L;
-            java.math.BigDecimal cost = rates[0]
-                    .multiply(java.math.BigDecimal.valueOf(in))
-                    .divide(java.math.BigDecimal.valueOf(1_000_000))
-                    .add(rates[1]
-                            .multiply(java.math.BigDecimal.valueOf(out))
-                            .divide(java.math.BigDecimal.valueOf(1_000_000)));
-            return withCostFields(usage, envelope, cost, "USD", "price_table", null);
+            envelopeOut.put("usage", mapped);
+            return envelopeOut;
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=usage_cost_mapping_failed runId={} error={}", runId, e.getMessage());
             return parsedPayload;
         }
-    }
-
-    /** per-MTok rates for {@code model} from the pricing domain, or null. [0]=input, [1]=output. */
-    private java.math.BigDecimal[] pricingRates(String model) {
-        Map<String, String> domain = configService.resolveDomain("pricing", null, null);
-        String modelsJson = domain.get("models");
-        if (modelsJson == null || modelsJson.isBlank()) {
-            return null;
-        }
-        try {
-            var models = objectMapper.readTree(modelsJson);
-            var entry = models.path(model);
-            if (entry.hasNonNull("inputPerMTok") && entry.hasNonNull("outputPerMTok")) {
-                return new java.math.BigDecimal[]{
-                        entry.get("inputPerMTok").decimalValue(),
-                        entry.get("outputPerMTok").decimalValue()};
-            }
-            return null;
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=pricing_config_unreadable model={} error={}", model, e.getMessage());
-            return null;
-        }
-    }
-
-    private Object withCostFields(Map<?, ?> usage, Map<?, ?> envelope,
-                                  java.math.BigDecimal cost, String currency,
-                                  String costSource, String costNote) {
-        java.util.Map<String, Object> usageOut = new java.util.HashMap<>();
-        for (Map.Entry<?, ?> entry : usage.entrySet()) {
-            usageOut.put(String.valueOf(entry.getKey()), entry.getValue());
-        }
-        usageOut.put("cost", cost);
-        usageOut.put("costCurrency", cost != null ? currency : "USD");
-        usageOut.put("costSource", costSource);
-        usageOut.put("costNote", costNote);
-        java.util.Map<String, Object> envelopeOut = new java.util.HashMap<>();
-        for (Map.Entry<?, ?> entry : envelope.entrySet()) {
-            envelopeOut.put(String.valueOf(entry.getKey()), entry.getValue());
-        }
-        envelopeOut.put("usage", usageOut);
-        return envelopeOut;
     }
 
     private Map<?, ?> asMap(Object value) {

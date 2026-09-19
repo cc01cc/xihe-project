@@ -70,6 +70,27 @@ public class ProviderCredentialLeaseService {
             String providerId,
             String model,
             Long expectedRevision) {
+        return issue(userId, workspaceId, sessionId, runId, providerConnectionId,
+                providerId, model, expectedRevision, DEFAULT_TTL);
+    }
+
+    /**
+     * PLAN-0354 spec §3: callers with a shorter window (e.g. the summary hop,
+     * bounded by summaryTimeoutMs ≤ 60s) pass an explicit TTL. The lease row
+     * keeps its existing bindings (session/run/connection/provider/model);
+     * no purpose column is added.
+     */
+    @Transactional
+    public IssuedLease issue(
+            String userId,
+            String workspaceId,
+            String sessionId,
+            String runId,
+            String providerConnectionId,
+            String providerId,
+            String model,
+            Long expectedRevision,
+            Duration ttl) {
         ProviderConnection connection = connectionService.requireUsableForOwner(
                 providerConnectionId, userId, workspaceId);
         if (!connection.getProviderId().equals(providerId)) {
@@ -89,7 +110,7 @@ public class ProviderCredentialLeaseService {
         lease.setRunId(runId);
         lease.setProviderId(providerId);
         lease.setModel(model);
-        lease.setExpiresAt(Instant.now().plus(DEFAULT_TTL));
+        lease.setExpiresAt(Instant.now().plus(ttl == null ? DEFAULT_TTL : ttl));
         repository.save(lease);
         return new IssuedLease(token, lease.getExpiresAt());
     }

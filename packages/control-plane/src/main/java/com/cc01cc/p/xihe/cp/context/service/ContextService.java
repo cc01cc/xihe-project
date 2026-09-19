@@ -1,6 +1,9 @@
 package com.cc01cc.p.xihe.cp.context.service;
 
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
+import com.cc01cc.p.xihe.cp.context.summary.SummaryProvider;
+import com.cc01cc.p.xihe.cp.context.summary.SummarySections;
+import com.cc01cc.p.xihe.cp.usage.UsageCostMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -11,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,19 +26,22 @@ public class ContextService {
     private final EventStoreService eventStoreService;
     private final ContextProjectionService projectionService;
     private final ObjectMapper objectMapper;
-    private final com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository approvalRepository;
     private final com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager;
+    private final SummaryProvider summaryProvider;
+    private final UsageCostMapper usageCostMapper;
 
     public ContextService(EventStoreService eventStoreService,
                           ContextProjectionService projectionService,
                           ObjectMapper objectMapper,
-                          com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository approvalRepository,
-                          com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager) {
+                          com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager,
+                          SummaryProvider summaryProvider,
+                          UsageCostMapper usageCostMapper) {
         this.eventStoreService = eventStoreService;
         this.objectMapper = objectMapper;
         this.projectionService = projectionService;
-        this.approvalRepository = approvalRepository;
         this.sseManager = sseManager;
+        this.summaryProvider = summaryProvider;
+        this.usageCostMapper = usageCostMapper;
     }
 
     @Transactional
@@ -89,9 +96,18 @@ public class ContextService {
     // verbatim in the projection and excluded from summarization.
     static final int KEEP_RECENT_MESSAGES = 10;
 
-    @Transactional
+    // PLAN-0354 spec §7: compaction is intentionally NOT @Transactional — the
+    // summary hop may spend up to summaryTimeoutMs (60s max) on an external
+    // HTTP call, which must never hold a DB transaction/connection (0346 lock
+    // timeout is 5s). Projection reads and event appends keep their own short
+    // transactions inside the collaborators.
     public ContextEvent compact(String sessionId, String workspaceId, String userId, Long upToSequence) {
-        return compact(sessionId, workspaceId, userId, upToSequence, "auto");
+        return compact(sessionId, workspaceId, userId, upToSequence, "auto", null);
+    }
+
+    public ContextEvent compact(String sessionId, String workspaceId, String userId, Long upToSequence,
+                                String trigger) {
+        return compact(sessionId, workspaceId, userId, upToSequence, trigger, null);
     }
 
     /**
@@ -99,19 +115,22 @@ public class ContextService {
      * auto-compact cooldown gate and tags the event with trigger=overflow so
      * the next shouldAutoCompact call clears the cooldown window (冷却门清零).
      */
-    @Transactional
     public ContextEvent compactForOverflow(String sessionId, String workspaceId, String userId) {
+        return compactForOverflow(sessionId, workspaceId, userId, null);
+    }
+
+    public ContextEvent compactForOverflow(String sessionId, String workspaceId, String userId, String runId) {
         logger.info("[LIFECYCLE] service=cp event=context_overflow_compaction sessionId={}", sessionId);
         // Overflow bypasses the recovery-band circuit (I4) and the cooldown gate.
         // Shrink failure still records the attempt; preflight decides the retry.
-        return compact(sessionId, workspaceId, userId, null, "overflow");
+        return compact(sessionId, workspaceId, userId, null, "overflow", runId);
     }
 
-    @Transactional
     public ContextEvent compact(String sessionId, String workspaceId, String userId, Long upToSequence,
-                                String trigger) {
+                                String trigger, String runId) {
         long latestSequence = eventStoreService.getLatestSequence(sessionId);
         long effectiveUpTo = upToSequence != null ? Math.min(upToSequence, latestSequence) : latestSequence;
+        String effectiveTrigger = trigger == null || trigger.isBlank() ? "auto" : trigger;
 
         // PLAN-294 decision #16 (appendix D.3): resume from the previous
         // compaction cursor instead of re-summarizing from sequence 0 — the
@@ -123,18 +142,37 @@ public class ContextService {
                 ? previous.get("summary").asText() : null;
 
         ObjectNode context = projectionService.projectUpTo(sessionId, effectiveUpTo);
-        String summary = summarizeMessages(sessionId, context, previousSummary, previousCursor);
+
+        // PLAN-0354 Q4/Q5: statistical observation fields around the provider
+        // hop; summary text remains in the existing `summary` field only.
+        long beforeTokens = estimateInputTokens(context);
+        SummaryProvider.SummaryResult result = summaryProvider.summarize(new SummaryProvider.SummaryRequest(
+                sessionId, workspaceId, userId, context, previousSummary, previousCursor, effectiveTrigger, runId));
+        String summary = result.summary();
+        String provider = result.provider();
+        String model = result.model() == null ? "" : result.model();
+        long durationMs = result.durationMs();
+        String source = result.source();
+        String fallbackReason = result.fallbackReason();
+        Map<String, Object> usage = result.usage();
 
         // PLAN-0341 T1.3 shrink validation (I2): a summary that does not shrink
         // its source is abandoned — never write back a bloated summary.
         // Degradation: truncation-only summary (keep-recent, no prior carry).
+        // PLAN-0354 §6: the applied summary is report as provider=rule with
+        // fallbackReason=shrink_failed; the LLM usage stays (cost incurred).
         if (!passesShrinkValidation(context, previousSummary, summary)) {
             logger.warn("[LIFECYCLE] service=cp event=compaction_shrink_failed sessionId={} trigger={} summaryChars={} priorChars={}",
-                    sessionId, trigger, summary.length(),
+                    sessionId, effectiveTrigger, summary.length(),
                     previousSummary == null ? 0 : previousSummary.length());
             recordIneffectiveCompaction(sessionId, workspaceId, userId);
             summary = buildTruncationOnlySummary(context);
+            provider = "rule";
+            model = "";
+            fallbackReason = "shrink_failed";
         }
+
+        long afterTokens = estimateAfterCompaction(context, summary);
 
         // Compute summary hash for integrity verification
         String summaryHash = computeSha256(summary);
@@ -155,21 +193,59 @@ public class ContextService {
         }
 
         int keptRecent = countRecentWindow(context);
-        ContextEvent applied = eventStoreService.append(sessionId, workspaceId, userId, "compaction.applied", Map.of(
-                "up_to_sequence", effectiveUpTo,
-                "summary", summary,
-                "summaryHash", summaryHash,
-                "contextEpoch", newEpochId,
-                "keptItemIds", keptItemIds,
-                "compacted_message_count", context.get("messages").size(),
-                "kept_recent_count", keptRecent,
-                "trigger", trigger == null || trigger.isBlank() ? "auto" : trigger
-        ));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("up_to_sequence", effectiveUpTo);
+        payload.put("summary", summary);
+        payload.put("summaryHash", summaryHash);
+        payload.put("contextEpoch", newEpochId);
+        payload.put("keptItemIds", keptItemIds);
+        payload.put("compacted_message_count", context.get("messages").size());
+        payload.put("kept_recent_count", keptRecent);
+        payload.put("trigger", effectiveTrigger);
+        payload.put("provider", provider);
+        payload.put("model", model);
+        payload.put("durationMs", durationMs);
+        payload.put("beforeTokens", beforeTokens);
+        payload.put("afterTokens", afterTokens);
+        payload.put("source", source == null ? "estimated" : source);
+        if (fallbackReason != null) {
+            payload.put("fallbackReason", fallbackReason);
+        }
+        if (usage != null) {
+            // PLAN-0354 Q5-A: cost mapping happens here, inside the event that
+            // carries the usage (single pricing implementation, 0343 names).
+            // The pricing key is the usage model (survives a shrink_failed
+            // degradation that blanks the event-level model field).
+            String usageModel = usage.get("model") instanceof String s && !s.isBlank() ? s : model;
+            payload.put("usage", usageCostMapper.withCost(usageModel, usage, sessionId));
+        }
+        ContextEvent applied = eventStoreService.append(sessionId, workspaceId, userId, "compaction.applied", payload);
 
         // PLAN-0341 T1.3 recovery band (I3): residual must fall below
         // recoveryBand × window, else pause auto compaction (event, no table).
-        applyRecoveryBand(sessionId, workspaceId, userId, context, trigger);
+        applyRecoveryBand(sessionId, workspaceId, userId, context, effectiveTrigger);
         return applied;
+    }
+
+    /**
+     * PLAN-0354 spec §6: post-compaction estimate = new summary + keep-recent
+     * window + L1 (same chars/4 estimator as beforeTokens).
+     */
+    private long estimateAfterCompaction(ObjectNode context, String summary) {
+        int chars = summary == null ? 0 : summary.length();
+        ArrayNode messages = (ArrayNode) context.get("messages");
+        if (messages != null) {
+            int size = messages.size();
+            int recentStart = Math.max(0, size - KEEP_RECENT_MESSAGES);
+            for (int i = recentStart; i < size; i++) {
+                chars += messages.get(i).path("content").asText("").length();
+            }
+        }
+        com.fasterxml.jackson.databind.JsonNode epoch = context.get("epoch");
+        if (epoch != null) {
+            chars += epoch.path("l1_rendered").asText("").length();
+        }
+        return Math.max(1, chars / 4);
     }
 
     /**
@@ -199,8 +275,8 @@ public class ContextService {
     private String buildTruncationOnlySummary(ObjectNode context) {
         ArrayNode messages = (ArrayNode) context.get("messages");
         StringBuilder sb = new StringBuilder();
-        sb.append(SECTION_GOAL).append(" (compacted by truncation)\n");
-        sb.append(SECTION_RECENT).append(' ');
+        sb.append(SummarySections.GOAL).append(" (compacted by truncation)\n");
+        sb.append(SummarySections.RECENT).append(' ');
         if (messages != null) {
             int size = messages.size();
             int recentStart = Math.max(0, size - KEEP_RECENT_MESSAGES);
@@ -522,271 +598,4 @@ public class ContextService {
         }
     }
 
-    // PLAN-294 decision #3 / appendix E.3 + PLAN-0341 T1.3: structured sectioned
-    // summary with carry-forward. Prior sections are parsed and explicitly
-    // re-emitted (not blob-appended); same-section items are deduped; completed
-    // task items are archived out of Active.
-    private static final int GOAL_MAX_CHARS = 500;
-    private static final int ERRORS_KEPT = 3;
-    private static final int NEXT_MOVE_MAX_CHARS = 300;
-
-    private static final String SECTION_GOAL = "[Goal]";
-    private static final String SECTION_WORK = "[Work State]";
-    private static final String SECTION_NEXT = "[Next Move]";
-    private static final String SECTION_FILES = "[Files&Artifacts]";
-    private static final String SECTION_ERRORS = "[Errors]";
-    private static final String SECTION_RECENT = "[Recent]";
-    private static final String SECTION_CONSTRAINTS = "[Constraints]";
-
-    private String summarizeMessages(String sessionId, ObjectNode context, String previousSummary, long previousCursor) {
-        ArrayNode messages = (ArrayNode) context.get("messages");
-        if (messages == null || messages.isEmpty()) {
-            return previousSummary != null ? previousSummary : "No messages to compact.";
-        }
-
-        // Parse prior summary into sections (carry-forward source).
-        Map<String, String> prior = parseSummarySections(previousSummary);
-
-        StringBuilder goal = new StringBuilder();
-        java.util.Set<String> files = new java.util.LinkedHashSet<>();
-        List<String> errors = new ArrayList<>();
-        List<String> recent = new ArrayList<>();
-        List<String> active = new ArrayList<>();
-        List<String> completed = new ArrayList<>();
-        StringBuilder nextMove = new StringBuilder();
-
-        int size = messages.size();
-        int recentStart = Math.max(0, size - KEEP_RECENT_MESSAGES);
-        for (int i = 0; i < size; i++) {
-            JsonNode msg = messages.get(i);
-            String role = msg.path("role").asText("");
-            String content = msg.path("content").asText("");
-            if (content.isBlank()) continue;
-
-            if ("human".equals(role) && goal.length() == 0) {
-                goal.append(content, 0, Math.min(content.length(), GOAL_MAX_CHARS));
-            }
-            // File-path extraction (verbatim): workspace-relative POSIX paths.
-            java.util.regex.Matcher m = FILE_PATH_PATTERN.matcher(content);
-            while (m.find()) {
-                files.add(m.group());
-            }
-            if (content.contains("error") || content.contains("Error") || content.contains("ERROR")) {
-                errors.add(content.length() > 300 ? content.substring(0, 300) : content);
-            }
-            if (i >= recentStart) {
-                recent.add("[" + role + "] " + (content.length() > 200 ? content.substring(0, 200) : content));
-            }
-            // Lightweight work-state signals from task_plan metadata below.
-        }
-
-        // Task-plan driven Work State (Completed archived out of Active).
-        JsonNode taskPlan = context.path("metadata").path("task_plan");
-        if (taskPlan.has("items")) {
-            for (JsonNode item : taskPlan.get("items")) {
-                String title = item.path("title").asText(item.path("id").asText(""));
-                String status = item.path("status").asText("pending");
-                if (title.isBlank()) continue;
-                if ("completed".equals(status)) {
-                    completed.add(title);
-                } else {
-                    active.add(title + " (" + status + ")");
-                }
-            }
-        }
-        if (nextMove.length() == 0 && !active.isEmpty()) {
-            nextMove.append(active.get(0), 0, Math.min(active.get(0).length(), NEXT_MOVE_MAX_CHARS));
-        } else if (nextMove.length() == 0) {
-            String priorNext = prior.get(SECTION_NEXT);
-            if (priorNext != null && !priorNext.isBlank()) {
-                nextMove.append(priorNext, 0, Math.min(priorNext.length(), NEXT_MOVE_MAX_CHARS));
-            }
-        }
-
-        // Carry-forward: union prior files/errors with dedup.
-        String priorFiles = prior.get(SECTION_FILES);
-        if (priorFiles != null && !priorFiles.isBlank()) {
-            for (String f : priorFiles.split(",")) {
-                String trimmed = f.trim();
-                if (!trimmed.isEmpty()) {
-                    files.add(trimmed);
-                }
-            }
-        }
-        String priorErrors = prior.get(SECTION_ERRORS);
-        if (priorErrors != null && !priorErrors.isBlank()) {
-            for (String err : priorErrors.split("\\|")) {
-                String trimmed = err.trim();
-                if (!trimmed.isEmpty() && !errors.contains(trimmed)) {
-                    errors.add(0, trimmed);
-                }
-            }
-        }
-        String priorActive = prior.get(SECTION_WORK);
-        if (priorActive != null && !active.isEmpty()) {
-            // Prior Active items that are not in the current plan stay carried.
-            for (String line : priorActive.split(";")) {
-                String trimmed = line.trim();
-                if (trimmed.isEmpty() || trimmed.startsWith("Completed:")) {
-                    continue;
-                }
-                boolean already = active.stream().anyMatch(a -> trimmed.contains(a) || a.contains(trimmed));
-                if (!already && !trimmed.startsWith("(")) {
-                    active.add(trimmed);
-                }
-            }
-        }
-
-        StringBuilder sb = new StringBuilder();
-        // Goal: keep prior if present (first human is often just "hi"), else extract.
-        String priorGoal = prior.get(SECTION_GOAL);
-        if (priorGoal != null && !priorGoal.isBlank() && !"(not stated)".equals(priorGoal)) {
-            sb.append(SECTION_GOAL).append(' ').append(priorGoal).append('\n');
-        } else {
-            sb.append(SECTION_GOAL).append(' ').append(goal.length() > 0 ? goal : "(not stated)").append('\n');
-        }
-        if (!active.isEmpty() || !completed.isEmpty()) {
-            sb.append(SECTION_WORK).append(' ');
-            if (!active.isEmpty()) {
-                sb.append("Active: ").append(String.join("; ", active));
-            }
-            if (!completed.isEmpty()) {
-                if (!active.isEmpty()) sb.append(" | ");
-                sb.append("Completed: ").append(String.join("; ", completed));
-            }
-            sb.append('\n');
-        } else if (prior.containsKey(SECTION_WORK) && !prior.get(SECTION_WORK).isBlank()) {
-            sb.append(SECTION_WORK).append(' ').append(prior.get(SECTION_WORK)).append('\n');
-        }
-        if (nextMove.length() > 0) {
-            sb.append(SECTION_NEXT).append(' ').append(nextMove).append('\n');
-        }
-        // PLAN-0341 T1.5 (I6): code-extracted constraints — verbatim, never
-        // summarized away. Prior Constraints are carried forward; new ones from
-        // this window and decided approvals are merged with dedup.
-        List<String> constraints = extractConstraints(sessionId, messages, prior.get(SECTION_CONSTRAINTS));
-        if (!constraints.isEmpty()) {
-            sb.append(SECTION_CONSTRAINTS).append(' ').append(String.join(" | ", constraints)).append('\n');
-        }
-        if (!files.isEmpty()) {
-            sb.append(SECTION_FILES).append(' ').append(String.join(", ", files)).append('\n');
-        }
-        if (!errors.isEmpty()) {
-            sb.append(SECTION_ERRORS).append(' ');
-            int from = Math.max(0, errors.size() - ERRORS_KEPT);
-            for (int i = from; i < errors.size(); i++) {
-                sb.append(errors.get(i)).append(i < errors.size() - 1 ? " | " : "");
-            }
-            sb.append('\n');
-        }
-        sb.append(SECTION_RECENT).append(' ');
-        for (int i = 0; i < recent.size(); i++) {
-            sb.append(recent.get(i)).append(i < recent.size() - 1 ? " ; " : "");
-        }
-        return sb.toString();
-    }
-
-    /** Parse a sectioned summary into a map of section header → body. */
-    private Map<String, String> parseSummarySections(String summary) {
-        Map<String, String> sections = new java.util.LinkedHashMap<>();
-        if (summary == null || summary.isBlank()) {
-            return sections;
-        }
-        String[] lines = summary.split("\n");
-        String current = null;
-        StringBuilder body = new StringBuilder();
-        for (String line : lines) {
-            if (line.startsWith("[") && line.contains("]")) {
-                if (current != null) {
-                    sections.put(current, body.toString().trim());
-                }
-                int end = line.indexOf(']');
-                current = line.substring(0, end + 1);
-                body = new StringBuilder();
-                String rest = line.substring(end + 1).trim();
-                if (!rest.isEmpty()) {
-                    body.append(rest);
-                }
-            } else if (current != null) {
-                if (body.length() > 0) body.append(' ');
-                body.append(line.trim());
-            }
-        }
-        if (current != null) {
-            sections.put(current, body.toString().trim());
-        }
-        return sections;
-    }
-
-    // PLAN-0341 T1.5 (decision #31): rule-based SC subset. Approval decisions
-    // and user explicit constraints are code-extracted and kept verbatim in
-    // [Constraints]; they never participate in the summarizer's take-data.
-    private static final int CONSTRAINTS_MAX = 12;
-    private static final int CONSTRAINT_MAX_CHARS = 240;
-    private static final java.util.regex.Pattern CONSTRAINT_PATTERN = java.util.regex.Pattern.compile(
-            "(?:不要动|不要改|不要提交|禁止|必须先|务必先|不要删除|别动|别改|"
-                    + "do not|don't|never|must always|must not|forbid|stop)\\b[^.\\n。！!？?]{0,120}",
-            java.util.regex.Pattern.CASE_INSENSITIVE);
-
-    private List<String> extractConstraints(String sessionId, ArrayNode messages, String priorConstraints) {
-        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
-        if (priorConstraints != null && !priorConstraints.isBlank()) {
-            for (String part : priorConstraints.split("\\|")) {
-                String trimmed = part.trim();
-                if (!trimmed.isEmpty()) {
-                    out.add(trimmed);
-                }
-            }
-        }
-        // ① User explicit constraints from human messages (verbatim match span).
-        if (messages != null) {
-            for (var msg : messages) {
-                if (!"human".equals(msg.path("role").asText(""))) {
-                    continue;
-                }
-                String content = msg.path("content").asText("");
-                if (content.isBlank()) {
-                    continue;
-                }
-                var matcher = CONSTRAINT_PATTERN.matcher(content);
-                while (matcher.find() && out.size() < CONSTRAINTS_MAX) {
-                    String span = matcher.group().trim();
-                    if (span.length() > CONSTRAINT_MAX_CHARS) {
-                        span = span.substring(0, CONSTRAINT_MAX_CHARS);
-                    }
-                    out.add(span);
-                }
-            }
-        }
-        // ② Decided approvals (verbatim tool/action + decision).
-        try {
-            var decided = approvalRepository.findBySessionIdAndStateInOrderByCreatedAtDesc(
-                    sessionId, List.of("approved", "rejected", "expired"));
-            for (var approval : decided) {
-                if (out.size() >= CONSTRAINTS_MAX) {
-                    break;
-                }
-                String decision = Boolean.TRUE.equals(approval.getApproved()) ? "approved"
-                        : Boolean.FALSE.equals(approval.getApproved()) ? "denied"
-                        : approval.getState();
-                String line = "[" + decision + "] " + approval.getTool() + ": "
-                        + truncate(approval.getAction(), 120);
-                out.add(line);
-            }
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=constraint_approval_extract_failed sessionId={} error={}",
-                    sessionId, e.getMessage());
-        }
-        return new ArrayList<>(out);
-    }
-
-    private static String truncate(String s, int max) {
-        if (s == null) {
-            return "";
-        }
-        return s.length() <= max ? s : s.substring(0, max);
-    }
-
-    private static final java.util.regex.Pattern FILE_PATH_PATTERN = java.util.regex.Pattern.compile(
-            "[A-Za-z0-9_\\-./]+\\.[A-Za-z0-9]{1,8}");
 }

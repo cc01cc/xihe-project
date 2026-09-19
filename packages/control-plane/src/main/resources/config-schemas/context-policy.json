@@ -13,7 +13,10 @@
         "maxInputTokens": { "type": "integer", "minimum": 8192, "maximum": 10000000 },
         "pruneWindowChars": { "type": "integer", "minimum": 2000, "maximum": 2000000 },
         "recoveryBand": { "type": "number", "minimum": 0.5, "maximum": 0.95 },
-        "maxConsecutiveIneffective": { "type": "integer", "minimum": 1, "maximum": 10 }
+        "maxConsecutiveIneffective": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "summaryProvider": { "type": "string", "enum": ["llm", "rule"] },
+        "summaryModel": { "type": "string" },
+        "summaryTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 60000 }
       }
     },
     "models": {
@@ -31,7 +34,10 @@
           "envMaxBytes": { "type": "integer", "minimum": 256, "maximum": 65536 },
           "pruneWindowChars": { "type": "integer", "minimum": 2000, "maximum": 2000000 },
           "recoveryBand": { "type": "number", "minimum": 0.5, "maximum": 0.95 },
-          "maxConsecutiveIneffective": { "type": "integer", "minimum": 1, "maximum": 10 }
+          "maxConsecutiveIneffective": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "summaryProvider": { "type": "string", "enum": ["llm", "rule"] },
+          "summaryModel": { "type": "string" },
+          "summaryTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 60000 }
         }
       }
     }
