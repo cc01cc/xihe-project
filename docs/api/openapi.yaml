@@ -1060,7 +1060,7 @@ paths:
       parameters:
         - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
         - { in: query, name: stream, schema: { type: string, enum: [stdout, stderr], default: stdout } }
-        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0, description: Byte cursor; pass the nextOffset returned by the previous read }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0, description: Byte cursor; pass the nextOffset returned by the previous read } }
         - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 1048576, default: 65536 } }
       responses: { '200': { description: Job output chunk, content: { application/json: { schema: { $ref: '#/components/schemas/JobOutputChunk' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: JOB_ARCHIVE_NOT_FOUND or OPERATION_ITEM_NOT_FOUND, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '409': { description: JOB_OUTPUT_LOST (job non-terminal but output gone) or JOB_OUTPUT_EXPIRED (terminal job output cleaned after TTL), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '502': { description: RUNTIME_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } }
   /api/v1/operations/items/{itemId}/cancel:
