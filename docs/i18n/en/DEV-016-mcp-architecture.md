@@ -1,16 +1,16 @@
 ---
-title: DEV-005 - MCP Three-Layer Routing Architecture
+title: DEV-016 - MCP Three-Layer Routing Architecture
 description: Three-layer routing design for MCP requests from Agent to Runtime, including CP routing, Gateway dispatch, and in-container bridge execution.
 category: dev-guide
 lang: en
 sidebar_group: "Developer Guide"
-sidebar_order: 5
+sidebar_order: 16
 status: active
 created: 2026-06-03
-updated: 2026-08-29
+updated: 2026-09-19
 ---
 
-# DEV-005: MCP Three-Layer Routing Architecture
+# DEV-016: MCP Three-Layer Routing Architecture
 
 ## 1. Overview
 

@@ -1,12 +1,12 @@
 ---
-title: DEV-011 - E2E Test Strategy and Screenshot Plan
+title: DEV-020 - E2E Test Strategy and Screenshot Plan
 category: dev-guide
-sidebar_order: 11
+sidebar_order: 20
 lang: en
 sidebar_group: "Developer Guide"
 ---
 
-# DEV-011: E2E Test Strategy and Screenshot Plan
+# DEV-020: E2E Test Strategy and Screenshot Plan
 
 > Persistent documentation for xihe project E2E test architecture design, Playwright configuration, screenshot strategy, and directory standards.
 

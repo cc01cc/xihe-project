@@ -63,7 +63,7 @@ xihe adopts a **four-module Hub-Module architecture**. The core design philosoph
 - Tool selection: Obtains the tool list registered by Runtime through Control Plane, then sends instructions to Control Plane after making decisions
 - Multi-Agent: Supports delegation, parallel execution, and result merging between Agents
 - Memory/Context: Session management (Control Plane assisted / self-owned storage)
-- MCP Integration: Agent uses `langchain-mcp-adapters`'s `StreamableHTTPConnection` to treat CP as a unified MCP entry point. All tool calls (Runtime built-in tools + user-configured STDIO MCP servers) go through CP's three-layer routing (CP authentication → Runtime Gateway per-workspace dispatch → in-container `xihe-mcp-bridge` STDIO bridging). Agent only needs to configure one MCP endpoint (CP address) and is unaware of backend tool distribution. See [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md)
+- MCP Integration: Agent uses `langchain-mcp-adapters`'s `StreamableHTTPConnection` to treat CP as a unified MCP entry point. All tool calls (Runtime built-in tools + user-configured STDIO MCP servers) go through CP's three-layer routing (CP authentication → Runtime Gateway per-workspace dispatch → in-container `xihe-mcp-bridge` STDIO bridging). Agent only needs to configure one MCP endpoint (CP address) and is unaware of backend tool distribution. See [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md)
 - **LLM Provider Management**: Unified encapsulation via `langchain-litellm` (`ChatLiteLLM(BaseChatModel)`), with `litellm` automatically routing to 100+ Providers (OpenAI, DeepSeek, Anthropic, Xiaomi MiMo, Ollama, etc.) at the bottom layer. Adding new Providers requires no Agent code changes — just add a record to the frontend `BUILTIN_PROVIDERS`.
 - **Internal Freedom**: LangChain ecosystem, custom Agents, new framework replacements — none affect other modules
 
@@ -120,7 +120,7 @@ Both interfaces share underlying core functions like `fs.rs` — the same busine
 - `xihe-container-runtime`: In-container executor with `--oneshot` CLI mode (single operation JSON on stdin → single result JSON on stdout, EOF-delimited); handles built-in file/command tools and `/tmp/xihe-jobs` state-file background jobs
 - `xihe-mcp-bridge`: In-container STDIO bridge, exposes user-configured STDIO MCP servers as HTTP endpoints
 
-Tool names are mapped by CP reverse proxy when building the tool→server mapping table. When Agent calls a tool, CP looks up the table for routing. See [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md).
+Tool names are mapped by CP reverse proxy when building the tool→server mapping table. When Agent calls a tool, CP looks up the table for routing. See [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md).
 
 | Tool Category | Examples |
 |---------------|----------|
@@ -162,7 +162,7 @@ Tool names are mapped by CP reverse proxy when building the tool→server mappin
   - **Layer 1 (CP)**: Authentication + tool-name routing, system tools → Runtime `/internal/v1/runtime/workspaces/{ws_id}/mcp`, user STDIO tools → `/internal/v1/runtime/workspaces/{ws_id}/mcp/stdio/{server_id}`
   - **Layer 2 (Runtime Gateway)**: Per-workspace dispatch, `CURRENT_WS_ID` task-local injection
   - **Layer 3 (In-container bridge)**: `xihe-mcp-bridge` manages STDIO subprocesses, HTTP ↔ STDIN/STDOUT bridging
-  - See [DEV-005-mcp-architecture.md](DEV-005-mcp-architecture.md)
+  - See [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md)
 - **State Distribution Channel**: Runtime MCP notifications distributed through CP to UI (SSE) and Agent (MCP notification passthrough)
 
 See Sprint 1 `DESIGN-007-mcp-gateway-reverse-proxy.md`.
@@ -387,7 +387,7 @@ As chat and workspace capabilities converge, Xihe introduces a **cross-view unif
 See detailed design in:
 - [RFC-001-session-domain-model.md](RFC-001-session-domain-model.md)
 - [ADR-001-session-store-boundary.md](ADR-001-session-store-boundary.md)
-- [DEV-015-session-views.md](DEV-015-session-views.md)
+- [DEV-017-session-architecture.md](DEV-017-session-architecture.md)
 - `plans/PLAN-029-XH-unified-session-architecture.md`
 
 ### 7.2 Message Attachment Persistence

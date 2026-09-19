@@ -1,15 +1,15 @@
 ---
-title: DEV-003 - Logging System Design
+title: DEV-004 - Logging System Design
 category: dev-guide
 lang: en
 sidebar_group: "Developer Guide"
-sidebar_order: 3
+sidebar_order: 4
 created: 2026-06-03
 status: active
-updated: 2026-08-28
+updated: 2026-09-19
 ---
 
-# DEV-003: Logging System Design
+# DEV-004: Logging System Design
 
 ## 1. Architecture Overview
 

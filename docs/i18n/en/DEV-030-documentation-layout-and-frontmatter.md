@@ -1,12 +1,12 @@
 ---
-title: DEV-010 - Documentation Layout and Frontmatter Requirements
+title: DEV-030 - Documentation Layout and Frontmatter Requirements
 category: dev-guide
-sidebar_order: 10
+sidebar_order: 30
 lang: en
 sidebar_group: "Developer Guide"
 ---
 
-# DEV-010: Documentation Layout and Frontmatter Requirements
+# DEV-030: Documentation Layout and Frontmatter Requirements
 
 ## 1. Documentation Location Overview
 
@@ -88,7 +88,7 @@ The `skip_doc_render` field remains effective as a per-file override switch, but
 
 | File Pattern | Strategy |
 | ---------------------- | ----------- |
-| `docs/i18n/{lang}/DEV-NNN` | By number: DEV-001=1, ..., DEV-005=5 |
+| `docs/i18n/{lang}/DEV-NNN` | By number: DEV-001=1, DEV-002=2, … |
 | `docs/i18n/{lang}/USER-NNN` | =1 |
 
 ## 3. Document Numbering Convention

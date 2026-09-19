@@ -57,10 +57,13 @@ xihe/
 │       └── en/
 │           ├── DEV-001-system-architecture.md
 │           ├── DEV-002-developer-guide.md
-│           ├── DEV-003-logging.md
-│           ├── DEV-004-ui-checklist.md
-│           ├── DEV-005-mcp-architecture.md
-│           ├── DEV-010-documentation-layout-and-frontmatter.md
+│           ├── DEV-004-logging.md
+│           ├── DEV-011-ui-checklist.md
+│           ├── DEV-016-mcp-architecture.md
+│           ├── DEV-020-e2e-test-strategy.md
+│           ├── DEV-021-integration-test-strategy.md
+│           ├── DEV-022-unit-test-strategy.md
+│           ├── DEV-030-documentation-layout-and-frontmatter.md
 │           └── USER-001-user-guide.md
 ├── internal/
 │   └── SPRINTS/                      # Sprint design documents

@@ -1,11 +1,11 @@
 ---
-title: DEV-004 - UI Visual Checklist
+title: DEV-011 - UI Visual Checklist
 category: dev-guide
 lang: en
 sidebar_group: "Developer Guide"
-sidebar_order: 4
+sidebar_order: 11
 created: 2026-05-31
-updated: 2026-06-15
+updated: 2026-09-19
 status: active
 ---
 

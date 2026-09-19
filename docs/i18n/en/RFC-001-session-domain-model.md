@@ -180,4 +180,4 @@ stateDiagram-v2
 
 - PLAN-029-XH-unified-session-architecture
 - ADR-001-session-store-boundary.md
-- DEV-015-session-views.md
+- DEV-017-session-architecture.md

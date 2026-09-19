@@ -1,14 +1,14 @@
 ---
-title: DEV-013 - Unit Test Strategy and Coverage Standards
+title: DEV-022 - Unit Test Strategy and Coverage Standards
 category: dev-guide
-sidebar_order: 13
+sidebar_order: 22
 lang: en
 sidebar_group: "Developer Guide"
 created: 2026-06-17
 tags: [testing, unit, vitest, pytest, junit, cargo]
 ---
 
-# DEV-013: Unit Test Strategy
+# DEV-022: Unit Test Strategy
 
 > Persistent documentation for xihe project four-module unit test architecture design, Mock strategy, coverage targets, and PLAN-020 status tracking.
 

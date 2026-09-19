@@ -1,12 +1,12 @@
 ---
-title: DEV-012 - Integration Test Strategy
+title: DEV-021 - Integration Test Strategy
 category: dev-guide
-sidebar_order: 12
+sidebar_order: 21
 lang: en
 sidebar_group: "Developer Guide"
 ---
 
-# DEV-012: Integration Test Strategy
+# DEV-021: Integration Test Strategy
 
 > Persistent documentation for xihe project three-layer integration test architecture, directory standards, cross-module contract test patterns, and run guide.
 
@@ -16,7 +16,7 @@ Integration tests are split into three layers, consistent with E2E's mock/real s
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    E2E (DEV-011)                     │
+│                    E2E (DEV-020)                     │
 │    Browser + full stack Docker, verifies complete user flows │
 ├─────────────────────────────────────────────────────┤
 │  T3: Cross-module Real  ← New                       │
@@ -375,7 +375,7 @@ T3 doesn't run in PRs because: Docker partial stack startup + test ≈ 2min, whi
 ## 7. References
 
 - `plans/PLAN-049-integration-test-design.md` — Implementation PLAN
-- `docs/i18n/en/DEV-011-e2e-test-strategy.md` — E2E test strategy
+- `docs/i18n/en/DEV-020-e2e-test-strategy.md` — E2E test strategy
 - Test strategy decision framework is maintained as a workspace skill.
 - WireMock documentation: `http://wiremock.org/docs/`
 - pytest-httpx documentation: `https://github.com/Colin-b/pytest_httpx`

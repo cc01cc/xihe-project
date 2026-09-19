@@ -177,5 +177,5 @@ graph TD
 ## 8. References
 
 - RFC-001-session-domain-model.md
-- DEV-015-session-views.md
+- DEV-017-session-architecture.md
 - PLAN-029-XH-unified-session-architecture
