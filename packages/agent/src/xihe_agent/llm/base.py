@@ -59,6 +59,42 @@ def _normalize_message_dict(message: Mapping[str, Any]) -> Mapping[str, Any]:
     return message
 
 
+# PLAN-0371 (BL-19): only Anthropic needs the replayed thinking chain on tool turns;
+# every other wire route gets assistant reasoning stripped before it leaves the process.
+_ANTHROPIC_ROUTE_MARKERS = ("anthropic/", "claude/", "claude-")
+
+
+def _keeps_reasoning(model: str, *route_values: str) -> bool:
+    """Whether replayed ``reasoning_content`` must be retained for this route.
+
+    Anthropic requires the same-chain thinking blocks across tool turns; the replay
+    is delivered as ``additional_kwargs["reasoning_content"]`` (the only outbound
+    channel — ``thinking`` content blocks are already skipped by ``langchain_litellm``).
+    """
+    for value in route_values:
+        if value.strip().lower() in {"anthropic", "claude"}:
+            return True
+    return model.strip().lower().startswith(_ANTHROPIC_ROUTE_MARKERS)
+
+
+def _strip_reasoning_content(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+    """Drop replayed reasoning from assistant messages (PLAN-0371 / BL-19).
+
+    Only the ``reasoning_content`` key is removed; every other ``additional_kwargs``
+    entry, the message order and the content shape stay untouched.
+    """
+    stripped: list[BaseMessage] = []
+    for message in messages:
+        if isinstance(message, AIMessage) and "reasoning_content" in message.additional_kwargs:
+            additional_kwargs = {
+                key: value for key, value in message.additional_kwargs.items() if key != "reasoning_content"
+            }
+            stripped.append(message.model_copy(update={"additional_kwargs": additional_kwargs}))
+        else:
+            stripped.append(message)
+    return stripped
+
+
 def _install_wire_normalizer() -> None:
     """Normalize provider payloads at the litellm boundary (idempotent).
 
@@ -352,7 +388,12 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
         messages: list[BaseMessage],
         stop: list[str] | None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        return super()._create_message_dicts(_normalize_outbound_messages(messages), stop)
+        prepared = _normalize_outbound_messages(messages)
+        # PLAN-0371 (BL-19): reasoning replay is an Anthropic contract requirement only;
+        # non-Anthropic routes shed the token cost (and the cross-provider acceptance risk).
+        if not _keeps_reasoning(self.model, self._config.provider, self._config.route_provider):
+            prepared = _strip_reasoning_content(prepared)
+        return super()._create_message_dicts(prepared, stop)
 
     async def complete(self, request: LLMRequest) -> str:
         messages = _to_langchain_messages(request.messages)

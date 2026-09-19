@@ -400,6 +400,115 @@ class TestCreateLLM:
         assert _normalize_message_dict({"role": "user", "content": [block]})["content"] == [block]
 
 
+class TestReasoningReplayPolicy:
+    """PLAN-0371 / BL-19: outbound reasoning_content is stripped unless the route is Anthropic."""
+
+    @staticmethod
+    def _assistant_with_reasoning():
+        from langchain_core.messages import AIMessage
+
+        return AIMessage(
+            content="",
+            additional_kwargs={
+                "reasoning_content": "hidden chain of thought",
+                "tools_available": ["write_file"],
+            },
+        )
+
+    @staticmethod
+    def _outbound(model: XiheLiteLLM, messages: list) -> list[dict]:
+        dicts, _ = model._create_message_dicts(messages, None)
+        return dicts
+
+    def test_non_anthropic_routes_strip_replayed_reasoning(self):
+        model = create_llm(
+            LLMConfig(
+                provider="xiaomi",
+                api_key="sk-test-key",
+                api_base="https://api.xiaomimimo.com/v1",
+                model="mimo-v2.5",
+            )
+        )
+
+        dicts = self._outbound(model, [self._assistant_with_reasoning()])
+
+        assert "reasoning_content" not in dicts[0]
+        assert dicts[0]["content"] == ""
+
+    def test_deepseek_route_also_strips(self):
+        model = create_llm(LLMConfig(provider="deepseek", api_key="sk-test-key", model="deepseek-chat"))
+
+        dicts = self._outbound(model, [self._assistant_with_reasoning()])
+
+        assert "reasoning_content" not in dicts[0]
+
+    def test_anthropic_routes_keep_replayed_reasoning(self):
+        model = create_llm(
+            LLMConfig(
+                provider="anthropic",
+                api_key="sk-test-key",
+                model="claude-sonnet-4-20250514",
+            )
+        )
+
+        dicts = self._outbound(model, [self._assistant_with_reasoning()])
+
+        assert dicts[0]["reasoning_content"] == "hidden chain of thought"
+
+    def test_anthropic_detection_uses_explicit_route_provider(self):
+        model = create_llm(
+            LLMConfig(
+                provider="custom-anthropic",
+                route_provider="anthropic",
+                api_key="sk-test-key",
+                api_base="https://anthropic-proxy.example.test/v1",
+                model="claude-sonnet-4-20250514",
+            )
+        )
+
+        assert getattr(model, "model") == "anthropic/claude-sonnet-4-20250514"
+        dicts = self._outbound(model, [self._assistant_with_reasoning()])
+
+        assert dicts[0]["reasoning_content"] == "hidden chain of thought"
+
+    def test_strip_removes_only_reasoning_and_keeps_other_kwargs(self):
+        from xihe_agent.llm.base import _strip_reasoning_content
+
+        message = self._assistant_with_reasoning()
+        stripped = _strip_reasoning_content([message])
+
+        assert "reasoning_content" not in stripped[0].additional_kwargs
+        assert stripped[0].additional_kwargs["tools_available"] == ["write_file"]
+        # Copy-on-write: the caller's message object stays untouched.
+        assert message.additional_kwargs["reasoning_content"] == "hidden chain of thought"
+
+    def test_messages_without_reasoning_pass_through_unchanged(self):
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        model = create_llm(
+            LLMConfig(
+                provider="xiaomi",
+                api_key="sk-test-key",
+                api_base="https://api.xiaomimimo.com/v1",
+                model="mimo-v2.5",
+            )
+        )
+        messages = [
+            HumanMessage(content="hello"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "write_file", "args": {"path": "a.txt"}, "id": "call-1"}],
+            ),
+            ToolMessage(content="ok", tool_call_id="call-1"),
+        ]
+
+        dicts = self._outbound(model, messages)
+
+        assert [entry["role"] for entry in dicts] == ["user", "assistant", "tool"]
+        assert dicts[1]["tool_calls"][0]["function"]["name"] == "write_file"
+        assert "reasoning_content" not in dicts[1]
+
+
 class TestMockChatModel:
     """MockChatModel for testing."""
 
