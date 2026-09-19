@@ -353,6 +353,7 @@ mod tests {
             checkpoints: Arc::new(xihe_runtime::checkpoint_api::CheckpointService::new(
                 dir.path(),
             )),
+            imports: Arc::new(crate::import_job::ImportManager::new()),
         });
         (app, ws_id, dir, TestCp { task })
     }

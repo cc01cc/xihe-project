@@ -29,7 +29,9 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
+mod import_job;
 mod ws_file_handler;
+use crate::import_job::{ImportManager, ImportRequest};
 use tokio::sync::Mutex;
 use xihe_runtime::backend::{DockerBackend, SandboxBackend, SandboxHandle};
 use xihe_runtime::checkpoint::NestedRepoPolicy;
@@ -83,6 +85,7 @@ pub struct AppState {
     pub checkpoints: Arc<CheckpointService>,
     /// Readiness describes the Runtime process, not any particular Workspace.
     pub ready: Arc<AtomicBool>,
+    pub imports: Arc<ImportManager>,
 }
 
 impl AppState {
@@ -1521,6 +1524,52 @@ async fn workspace_status_handler(
     }
 }
 
+async fn workspace_import_start_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(request): AxumJson<ImportRequest>,
+) -> Result<(StatusCode, AxumJson<serde_json::Value>), (StatusCode, AxumJson<serde_json::Value>)> {
+    if !xihe_runtime::hydrate::is_safe_workspace_id(&ws_id) {
+        return Err(runtime_problem(RuntimeError::InvalidPath(
+            "workspaceId contains invalid route characters".to_string(),
+        )));
+    }
+    let host_root = std::env::var("XIHE_WORKSPACE_HOST_ROOT").map_err(|_| {
+        runtime_problem(RuntimeError::InvalidPath(
+            "XIHE_WORKSPACE_HOST_ROOT is not configured".to_string(),
+        ))
+    })?;
+    let status = app
+        .imports
+        .start(ws_id, PathBuf::from(host_root), request)
+        .await
+        .map_err(|detail| runtime_problem(RuntimeError::InvalidPath(detail)))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        AxumJson(serde_json::to_value(status).unwrap_or_default()),
+    ))
+}
+
+async fn workspace_import_status_handler(
+    Path((_ws_id, import_id)): Path<(String, String)>,
+    State(app): State<Arc<AppState>>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    let status = app.imports.get(&import_id).await.ok_or_else(|| {
+        runtime_problem(RuntimeError::InvalidPath("import not found".to_string()))
+    })?;
+    Ok(AxumJson(serde_json::to_value(status).unwrap_or_default()))
+}
+
+async fn workspace_import_cancel_handler(
+    Path((_ws_id, import_id)): Path<(String, String)>,
+    State(app): State<Arc<AppState>>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    let status = app.imports.cancel(&import_id).await.ok_or_else(|| {
+        runtime_problem(RuntimeError::InvalidPath("import not found".to_string()))
+    })?;
+    Ok(AxumJson(serde_json::to_value(status).unwrap_or_default()))
+}
+
 /// PLAN-0344 T1.2：CP 续看/对账用的内部 job 读路径（不经 MCP 工具面，
 /// 避免向 Agent 暴露字节游标协议）。
 #[derive(Debug, Deserialize)]
@@ -2279,6 +2328,18 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
             post(workspace_materialize_handler),
         )
         .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/imports",
+            post(workspace_import_start_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/imports/{import_id}",
+            get(workspace_import_status_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/imports/{import_id}/cancel",
+            post(workspace_import_cancel_handler),
+        )
+        .route(
             "/internal/v1/runtime/workspaces/delete",
             post(delete_workspace_handler),
         )
@@ -2503,6 +2564,7 @@ async fn run() -> anyhow::Result<()> {
                 .with_nested_repo_policy(runtime_checkpoint_nested_repo_policy()),
         ),
         ready: readiness.clone(),
+        imports: Arc::new(ImportManager::new()),
     });
     // `readiness` and `workspace_ensurer` are consumed by `app_state`; clone first
     // so the background loops can observe them without taking references into
@@ -3294,6 +3356,7 @@ mod remote_handler_tests {
             // tests never touch the host root.
             checkpoints: Arc::new(CheckpointService::new(std::env::temp_dir())),
             ready: Arc::new(AtomicBool::new(true)),
+            imports: Arc::new(ImportManager::new()),
         })
     }
 
