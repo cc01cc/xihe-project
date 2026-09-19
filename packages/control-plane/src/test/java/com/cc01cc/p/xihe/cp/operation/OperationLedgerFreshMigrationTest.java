@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.operation;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -46,7 +47,11 @@ class OperationLedgerFreshMigrationTest {
     }
 
     private static int scalarInt(String sql) throws SQLException {
-        try (Statement statement = connection.createStatement();
+        return scalarInt(connection, sql);
+    }
+
+    private static int scalarInt(Connection c, String sql) throws SQLException {
+        try (Statement statement = c.createStatement();
              ResultSet rs = statement.executeQuery(sql)) {
             rs.next();
             return rs.getInt(1);
@@ -54,7 +59,11 @@ class OperationLedgerFreshMigrationTest {
     }
 
     private static String scalarString(String sql) throws SQLException {
-        try (Statement statement = connection.createStatement();
+        return scalarString(connection, sql);
+    }
+
+    private static String scalarString(Connection c, String sql) throws SQLException {
+        try (Statement statement = c.createStatement();
              ResultSet rs = statement.executeQuery(sql)) {
             rs.next();
             return rs.getString(1);
@@ -62,7 +71,11 @@ class OperationLedgerFreshMigrationTest {
     }
 
     private static void executeUpdate(String sql) throws SQLException {
-        try (Statement statement = connection.createStatement()) {
+        executeUpdate(connection, sql);
+    }
+
+    private static void executeUpdate(Connection c, String sql) throws SQLException {
+        try (Statement statement = c.createStatement()) {
             statement.executeUpdate(sql);
         }
     }
@@ -623,5 +636,111 @@ class OperationLedgerFreshMigrationTest {
         insertOperation(UUID.randomUUID(), userId, sessionId, "idem-key-2");
         insertOperation(UUID.randomUUID(), null, null, null);
         insertOperation(UUID.randomUUID(), null, null, null);
+    }
+
+    @Test
+    void v34OperationExtensionTargetsCascade() throws SQLException {
+        // PLAN-0367 DDL-13: both extension target FKs switch SET NULL -> CASCADE
+        // on the fresh chain; the at-least-one-target CHECK stays.
+        for (String fk : new String[]{"fk_operation_extensions_item", "fk_operation_extensions_attempt"}) {
+            assertEquals("c", scalarString(
+                    "SELECT confdeltype FROM pg_constraint WHERE conname = '" + fk + "'"),
+                    "FK must be ON DELETE CASCADE after V34: " + fk);
+        }
+        assertNotNull(scalarString(
+                "SELECT conname FROM pg_constraint WHERE conname = 'ck_operation_extensions_target'"),
+                "ck_operation_extensions_target must survive V34");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '34' AND success = true"),
+                "V34 must be recorded as applied");
+    }
+
+    @Test
+    void v34ItemDeletionCascadesExtensions() throws SQLException {
+        // PLAN-0367 DDL-13: deleting a ledger item no longer trips the CHECK —
+        // item- and attempt-anchored extensions are removed with their target.
+        UUID userId = UUID.randomUUID();
+        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                + "'::uuid, 'cp-" + userId + "@test.local', 'hash')");
+        UUID operationId = UUID.randomUUID();
+        insertOperation(operationId, userId, null, null);
+
+        UUID itemId = insertItem(operationId, 1);
+        insertExtension(itemId, null, "llm_usage", 1);
+        executeUpdate("DELETE FROM operation_items WHERE id = '" + itemId + "'::uuid");
+        assertEquals(0, scalarInt("SELECT count(*) FROM operation_extensions WHERE item_id = '"
+                + itemId + "'::uuid"));
+
+        UUID secondItemId = insertItem(operationId, 2);
+        UUID attemptId = insertAttempt(secondItemId, "agent_tool", 0);
+        insertExtension(null, attemptId, "mcp_call", 1);
+        executeUpdate("DELETE FROM operation_items WHERE id = '" + secondItemId + "'::uuid");
+        assertEquals(0, scalarInt("SELECT count(*) FROM operation_attempts WHERE id = '"
+                + attemptId + "'::uuid"));
+        assertEquals(0, scalarInt("SELECT count(*) FROM operation_extensions WHERE attempt_id = '"
+                + attemptId + "'::uuid"));
+    }
+
+    @Test
+    void v34UpgradeFromV33PreservesExtensionRowsAndSwitchesCascade() throws SQLException {
+        // PLAN-0367 V4: apply V33 first (pre-V34 state), seed an extension row,
+        // then migrate to head: the row must survive and the delete rule switches.
+        String upgradeDb = "xihe_cp_upgrade_v34";
+        String adminUrl = postgres.getJdbcUrl();
+        try (Connection admin = DriverManager.getConnection(
+                adminUrl, postgres.getUsername(), postgres.getPassword());
+             Statement statement = admin.createStatement()) {
+            statement.executeUpdate("DROP DATABASE IF EXISTS " + upgradeDb);
+            statement.executeUpdate("CREATE DATABASE " + upgradeDb);
+        }
+        String upgradeUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + upgradeDb);
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("33"))
+                .load()
+                .migrate();
+
+        UUID userId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                    + "'::uuid, 'upgrade-" + userId + "@test.local', 'hash')");
+            executeUpdate(c, "INSERT INTO ledger_operations (id, user_id, kind, source, actor_type, status) "
+                    + "VALUES ('" + operationId + "'::uuid, '" + userId
+                    + "'::uuid, 'system', 'system', 'system', 'accepted')");
+            executeUpdate(c, "INSERT INTO operation_items (id, operation_id, sequence, kind, source, status) "
+                    + "VALUES ('" + itemId + "'::uuid, '" + operationId
+                    + "'::uuid, 1, 'llm_usage', 'agent', 'completed')");
+            executeUpdate(c, "INSERT INTO operation_extensions (id, item_id, extension_kind, schema_version, payload) "
+                    + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + itemId
+                    + "'::uuid, 'llm_usage', 1, '{\"totalTokens\": 10}'::jsonb)");
+            assertEquals("n", scalarString(c,
+                    "SELECT confdeltype FROM pg_constraint WHERE conname = 'fk_operation_extensions_item'"),
+                    "V33 state must still declare ON DELETE SET NULL");
+        }
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                    + "WHERE version = '34' AND success = true"), "V34 must be applied on upgrade");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM operation_extensions WHERE item_id = '"
+                    + itemId + "'::uuid"), "existing extension rows must survive the upgrade");
+            assertEquals("c", scalarString(c,
+                    "SELECT confdeltype FROM pg_constraint WHERE conname = 'fk_operation_extensions_item'"),
+                    "delete rule must be CASCADE after the upgrade");
+            executeUpdate(c, "DELETE FROM operation_items WHERE id = '" + itemId + "'::uuid");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM operation_extensions WHERE item_id = '"
+                    + itemId + "'::uuid"), "post-upgrade item delete must cascade the extension");
+        }
     }
 }

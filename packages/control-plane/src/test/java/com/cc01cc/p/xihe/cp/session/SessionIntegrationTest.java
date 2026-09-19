@@ -7,15 +7,23 @@ import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
+import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
+import com.cc01cc.p.xihe.cp.entity.OperationExtension;
+import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository;
+import com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository;
+import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -73,6 +81,18 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatRunRepository chatRunRepository;
+
+    @Autowired
+    private LedgerOperationRepository ledgerOperationRepository;
+
+    @Autowired
+    private OperationItemRepository operationItemRepository;
+
+    @Autowired
+    private OperationAttemptRepository operationAttemptRepository;
+
+    @Autowired
+    private OperationExtensionRepository operationExtensionRepository;
 
     private String authToken;
     private String userId;
@@ -158,6 +178,68 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
         assertFalse(sessionRepository.findById(UUID.fromString(sessionId)).isPresent());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
+    }
+
+    /**
+     * PLAN-0367 V5 (DDL-13): the session hard delete must succeed and remove the
+     * whole ledger chain when extension rows are present (before V34 the
+     * SET NULL rewrite violated ck_operation_extensions_target and rolled back
+     * the transaction).
+     */
+    @Test
+    void deleteSession_withOperationExtensions_cascadesLedgerChain() {
+        Session session = sessionService.create(userId, workspaceId, "Delete With Extensions", null, null);
+        String sessionId = session.getId().toString();
+
+        LedgerOperation operation = new LedgerOperation();
+        operation.setId(UUID.randomUUID());
+        operation.setSessionId(sessionId);
+        operation.setWorkspaceId(workspaceId);
+        operation.setUserId(userId);
+        operation.setKind("chat");
+        operation.setSource("ui");
+        operation.setActorType("user");
+        operation.setStatus("completed");
+        ledgerOperationRepository.save(operation);
+
+        OperationItem item = new OperationItem();
+        item.setId(UUID.randomUUID());
+        item.setOperationId(operation.getId().toString());
+        item.setSequence(1);
+        item.setKind("llm_usage");
+        item.setSource("agent");
+        item.setStatus("completed");
+        operationItemRepository.save(item);
+
+        OperationAttempt attempt = new OperationAttempt();
+        attempt.setId(UUID.randomUUID());
+        attempt.setItemId(item.getId().toString());
+        attempt.setStage("agent_tool");
+        attempt.setRetryNo(0);
+        attempt.setModule("agent");
+        attempt.setStatus("succeeded");
+        attempt.setStartedAt(java.time.Instant.now());
+        operationAttemptRepository.save(attempt);
+
+        OperationExtension itemExtension = new OperationExtension(
+                item.getId().toString(), null, "llm_usage", 1, "{\"totalTokens\": 10}");
+        itemExtension.setId(UUID.randomUUID());
+        operationExtensionRepository.save(itemExtension);
+        OperationExtension attemptExtension = new OperationExtension(
+                null, attempt.getId().toString(), "mcp_call", 1, "{\"toolName\": \"read_file\"}");
+        attemptExtension.setId(UUID.randomUUID());
+        operationExtensionRepository.save(attemptExtension);
+
+        sessionService.delete(sessionId, userId, workspaceId);
+
+        assertFalse(sessionRepository.findById(UUID.fromString(sessionId)).isPresent());
+        assertFalse(ledgerOperationRepository.findById(operation.getId()).isPresent());
+        assertTrue(operationItemRepository.findByOperationIdOrderBySequenceAsc(
+                operation.getId().toString()).isEmpty());
+        assertTrue(operationAttemptRepository.findByItemIdOrderByStartedAtAsc(
+                item.getId().toString()).isEmpty());
+        assertTrue(operationExtensionRepository.findByItemId(item.getId().toString()).isEmpty());
+        assertTrue(operationExtensionRepository.findByAttemptId(attempt.getId().toString()).isEmpty());
     }
 
     @Test
