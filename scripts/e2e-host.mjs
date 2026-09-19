@@ -525,11 +525,15 @@ async function runPlaywright() {
   // PLAN-0369: the Agent binds one MCP workspace per process. Specs that move
   // between workspaces restart the Agent through `ensureAgentWorkspaceBinding`
   // and need the exact provider/credential env the Agent was launched with.
-  // The real-provider lane deliberately keeps its key out of the Playwright
-  // process, so it receives a disabled sentinel instead (restart is skipped
-  // with a warning; single-spec real runs keep the pre-0369 behavior).
+  // PLAN-0372 (BL-28): the real-provider lane restarts through the same contract
+  // so a full real run can rebind across spec-local workspaces. The key value is
+  // the same one the runner already passes down the process tree (env
+  // inheritance); it stays in memory only and is never logged.
   const agentRestartEnv = realXiaomiKey
-    ? { disabled: 'real-provider' }
+    ? {
+        XIHE_LLM_PROVIDER: 'xiaomi',
+        XIHE_XIAOMI_API_KEY: realXiaomiKey,
+      }
     : {
         XIHE_LLM_PROVIDER: llmMode === 'mock' ? 'mock' : 'openai',
         ...(llmMode === 'missing' || llmMode === 'mock'

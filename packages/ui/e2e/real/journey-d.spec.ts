@@ -103,6 +103,10 @@ test.describe('@host Journey D — context pipeline', () => {
 
   test('D1-real: multi-turn memory with the real model (smoke)', async ({ page }) => {
     test.skip(!process.env.XIHE_E2E_REAL_XIAOMI_KEY, 'requires a real provider key (XIHE_E2E_REAL_XIAOMI_KEY)')
+    // PLAN-0372 (BL-28): the real lane restarts the Agent through the same
+    // contract as mock now — rebind its single MCP workspace to this spec's
+    // registered workspace before the first workspace chat.
+    await ensureAgentWorkspaceBinding(sharedWs)
     const authToken = sharedAuth
     const wsId = sharedWs
     mkdirSync(EVIDENCE_DIR, { recursive: true })
