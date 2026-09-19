@@ -86,6 +86,35 @@ test.describe('Workspace file operations (PLAN-262 M3)', () => {
     await expect(page.getByText('Makefile')).toBeVisible()
   })
 
+  test('delete confirmation keeps the destructive action visible and clickable', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        'xihe-mock-filetree',
+        JSON.stringify([{ name: 'notes.md', path: 'notes.md', type: 'file', size: 12 }]),
+      )
+    })
+    await page.goto('/workspace/workspace-1')
+    const fileEntry = page.getByRole('button', { name: 'notes.md', exact: true })
+    await expect(fileEntry).toBeVisible({ timeout: 15000 })
+    await fileEntry.click({ button: 'right' })
+    const deleteItem = page.getByRole('menuitem', { name: /^Delete…$|^Delete$|^删除…$|^删除$/ }).first()
+    await expect(deleteItem).toBeVisible()
+    await deleteItem.click()
+    const dialog = page.locator('[data-testid="modal-backdrop"]').first()
+    await expect(dialog).toBeVisible()
+    const destructive = dialog.locator('button').filter({ hasText: /delete|删除|confirm|确认/i }).first()
+    await expect(destructive).toBeVisible()
+    await expect(destructive).toHaveCSS('pointer-events', 'auto')
+  })
+
+  test('empty file tree renders an explicit empty state', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('xihe-mock-filetree', JSON.stringify([]))
+    })
+    await page.goto('/workspace/workspace-1')
+    await expect(page.getByText(/暂无|empty|no files/i).first()).toBeVisible({ timeout: 15000 })
+  })
+
   test('environment page shows five-state pill, storage access and refresh', async ({ page }) => {
     await page.goto('/workspace/workspace-1/environment')
     await expect(page.getByTestId('workspace-environment-heading')).toBeVisible()
