@@ -30,6 +30,18 @@ updated: 2026-09-06
 - **lease 为进程内存**：Runtime 重启后 lease 全清，依赖 Docker `rebuild` 接管（无跨进程双主防护，单 Runtime v1 场景可接受）。
 - **REST read/list/stat 已走容器 exec**：无 Docker 或容器未启动时这些端点 fail-closed 503（与变更类一致）；binary write 仍 host 直写（JSON 帧 UTF-8 限制，债）。
 
+## PLAN-0354 LLM 摘要 — 适用前提、租约与回退排障（2026-09-19）
+
+- **BYOK 前提**：LLM 摘要仅在会话绑定 provider connection（`sessions.provider_connection_id`）且 canonical pair（provider+model）完整、provider ≠ `mock` 时发起；env-only / 无连接用户恒走规则式（`fallbackReason=no_credential`），属设计内回退而非故障，压缩与 run 均不受影响（I1）。
+- **租约 2 分钟 TTL**：摘要跳使用 `ProviderCredentialLeaseService.issue(..., 2min)` 新重载（既有调用方保持 5 分钟默认），窗口覆盖 `summaryTimeoutMs` 上限 60s；兑换仍走既有 `/internal/v1/provider-leases/redeem` 通道，租约行以 `sessionId` 落审计、不新增 purpose 列，租约 token/apiKey 不入日志。
+- **回退原因对照（排障）**：
+  - `no_credential`：会话未绑定 provider connection（BYOK 前提）→ 在会话中重选连接。
+  - `lease_failed`：connection revision 过期 / 连接不可用 → 重选连接后重试。
+  - `timeout`：模型响应超过 `summaryTimeoutMs` → 调大该键（≤ 60000）。
+  - `agent_error`：Agent 非 2xx / 连接失败 / 响应不可解析（CP 不区分细分码）。
+  - `invalid_output`：摘要为空 / 超 100000 chars / 无 `^[` 分节行；`shrink_failed`：产出未通过缩减校验，实际应用截断摘要（LLM usage 成本仍计）。
+- **验证边界**：无 BYOK 凭据的环境（host E2E）只覆盖回退路径；LLM 成功路径由 WireMock 集成测试与 Agent 单测覆盖（`evidence/observability.md` 与 spec §10 断言清单）。
+
 ## PLAN-0342 诊断回灌 — 已知限制（2026-09-17）
 
 - **历史消息不持久化 toolCalls**：刷新后工具卡不显示，诊断仅本 run 可见（`message.toolCalls` 只在 run 内写入）。

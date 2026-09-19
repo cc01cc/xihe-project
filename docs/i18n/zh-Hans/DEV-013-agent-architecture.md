@@ -165,6 +165,14 @@ CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` �
 4. **UI 呈现**：`ToolCallCard.vue` 有诊断时整卡自动展开，展示前 3 条 +「另有 N 条」；原文回退默认折叠；`useSSE` 兼容 `tool`/`toolCallId` 键名并写入本 run 内 `message.toolCalls`（历史消息不持久化 toolCalls）。
 5. **边界**：只解析命令结果（其他工具内容不改写）；不解析 LLM 层失败；诊断不单独落盘（仅随事件 payload / SSE 透传）；跨 session 诊断账本（L1）后置。
 
+### 3.6 LLM 摘要端点与 `llm/summarize.py`（PLAN-0354）
+
+- **端点**：`POST /internal/v1/agent/summarize`（service Bearer；调用方仅 CP `LlmSummaryProvider`）。CP 在压缩时签发 2 分钟短租约并在请求中携带，Agent 经既有 CP `/internal/v1/provider-leases/redeem` 兑换后单次调用 provider（不新增凭据通道）。
+- **请求契约（camelCase）**：`sessionId` / `runId` / `provider` / `model` / `credentialLease` / `providerConnectionId` / `connectionRevision` / `text` / `priorSummary`。`credentialLease` 与 `text` 必填 fail-closed（缺 → 400 `INVALID_REQUEST`）；租约兑换失败 → 503 `PROVIDER_CONNECTION_UNAVAILABLE`；provider 调用异常 → 502 + `_classify_llm_exception` 细分码（如 `LLM_PROVIDER_UNREACHABLE`、`LLM_NOT_CONFIGURED`）。错误体为 problem+json（`code`/`detail`/`retryable`/`requestId`，回写 `X-Request-Id`）。
+- **组装（`llm/summarize.py`）**：`SUMMARIZE_SECTIONS` 固定六节 `[Goal]/[Work State]/[Next Move]/[Files&Artifacts]/[Errors]/[Recent]`；系统提示为固定常量，明确禁止输出 `[Constraints]`（SC/审批原文永不进 LLM，I3）；输入 = `priorSummary`（CP 已剥 `[Constraints]`）+ `text`（CP 已按单条上限 4000 chars 与 `pruneWindowChars` 预算截断）；`LLMConfig` 的 provider/model/apiKey/apiBase 来自兑换 grant，timeout/maxTokens/temperature 取进程 effective `llm-provider`，`max_tokens = min(config.maxTokens, 2048)`。
+- **usage 三档**：`usage_metadata` 命中 → `source=real`；未命中 → 本地 `TokenCounter` 估算 → `estimated`；两者皆无 → `fallback` + 计数 0；`main.py` 追加 `model=provider/model`（CP pricing 查表键）。
+- **边界**：端点不写事件、不碰 SC/审批、无持久化；请求/响应日志不含摘要正文与凭据。
+
 ## 4. 崩溃恢复
 
 Agent 启动恢复流程：
@@ -212,6 +220,7 @@ if recover_ids:
 - `packages/agent/src/xihe_agent/agent_runner/langgraph_runner.py`
 - `packages/agent/src/xihe_agent/context/`
 - `packages/agent/src/xihe_agent/adapters/`
+- `packages/agent/src/xihe_agent/llm/summarize.py`
 - `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/context/`
 
 ## 7. 相关 PLAN
@@ -220,6 +229,7 @@ if recover_ids:
 - PLAN-0341 上下文管道与 prune（overflow/prune/SUM/熔断）— 本节 §3.1b
 - PLAN-0342 诊断回灌与工具卡片呈现（L0/L2 + 四通道）— 本节 §3.5
 - PLAN-0343 用量与成本契约（usage 事件注入 `model`=`provider/model`；CP 终态一次映射 cost，unmapped→`cost=null`+log warn；schemaVersion 仍 1）— 本节 §3 事件表 `llm.usage`
+- PLAN-0354 摘要提供方 seam 与 LLM 回退（Agent 摘要端点与 `llm/summarize.py`）— 本节 §3.6；CP 侧见 DEV-014 §10
 - PLAN-294 上下文事件流与自动压缩门
 
 - `PLAN-033-XH-agent-module-decoupling.md`
