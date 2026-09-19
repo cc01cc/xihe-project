@@ -49,6 +49,15 @@ public class WorkspaceImportController {
         return ResponseEntity.ok(view(service.get(importId, requireUserId())));
     }
 
+    @GetMapping("/workspaces/import-sources")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> listSources(@RequestParam String path) {
+        return service.listSourceDirectory(path)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                        .body(Map.of("code", "RUNTIME_SOURCE_UNAVAILABLE")));
+    }
+
     @PostMapping("/workspace-imports/{importId}/cancel")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     public ResponseEntity<?> cancel(@PathVariable String importId) {

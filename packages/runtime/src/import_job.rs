@@ -33,6 +33,45 @@ pub struct ImportStatus {
     pub error_detail: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceDirectoryEntry {
+    pub name: String,
+    pub kind: String,
+    pub readable: bool,
+    pub size: u64,
+}
+
+pub fn list_source_directory(path: &str) -> Result<Vec<SourceDirectoryEntry>, String> {
+    let directory =
+        fs::canonicalize(path).map_err(|error| format!("source path is not readable: {error}"))?;
+    if !directory.is_dir() {
+        return Err("source path is not a directory".to_string());
+    }
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| format!("source directory cannot be listed: {error}"))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let metadata = entry.metadata().map_err(|error| error.to_string())?;
+        let file_type = if metadata.is_dir() {
+            "directory"
+        } else if metadata.is_file() {
+            "file"
+        } else {
+            "other"
+        };
+        entries.push(SourceDirectoryEntry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            kind: file_type.to_string(),
+            readable: metadata.permissions().readonly() || fs::File::open(entry.path()).is_ok(),
+            size: metadata.len(),
+        });
+    }
+    entries.sort_by(|left, right| left.kind.cmp(&right.kind).then(left.name.cmp(&right.name)));
+    Ok(entries)
+}
+
 #[derive(Clone)]
 pub struct ImportManager {
     jobs: Arc<Mutex<HashMap<String, Arc<Job>>>>,
@@ -230,5 +269,22 @@ mod tests {
         assert!(target_root.join("ws-1/src/main.ts").exists());
         assert!(!target_root.join("ws-1/node_modules/ignored.js").exists());
         assert_eq!(status.files_copied, 1);
+    }
+
+    #[test]
+    fn lists_source_directory_entries_without_following_workspace_semantics() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("dir")).unwrap();
+        fs::write(root.path().join("file.txt"), "text").unwrap();
+        let entries = list_source_directory(root.path().to_str().unwrap()).unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["dir", "file.txt"]
+        );
+        assert_eq!(entries[0].kind, "directory");
+        assert_eq!(entries[1].kind, "file");
     }
 }

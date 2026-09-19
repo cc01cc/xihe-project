@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
-import { Code, FileDiff, FolderTree, PanelLeft, RefreshCw, Settings2, Upload } from '@lucide/vue'
+import { Code, FileDiff, FolderOpen, FolderTree, PanelLeft, RefreshCw, Settings2, Upload } from '@lucide/vue'
 
 const props = defineProps<{
   workspaceId: string
@@ -16,6 +16,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   upload: []
+  importSource: []
   settings: []
   files: []
   toggleTree: []
@@ -174,6 +175,14 @@ function switchSession(id: string) {
         @click="emit('settings')"
       >
         <Settings2 class="size-3.5" />
+      </button>
+      <button
+        data-testid="workspace-toolbar-import-source"
+        class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
+        title="Import workspace directory"
+        @click="emit('importSource')"
+      >
+        <FolderOpen class="size-3.5" />
       </button>
       <button
         class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"

@@ -20,6 +20,7 @@ import MobileChangesSheet from './MobileChangesSheet.vue'
 import FileTreePanel from './FileTreePanel.vue'
 import FileEditor from './FileEditor.vue'
 import FileImportDialog from './FileImportDialog.vue'
+import WorkspaceSourceImportDialog from './WorkspaceSourceImportDialog.vue'
 import WorkspaceChangesPanel from './WorkspaceChangesPanel.vue'
 import ChatPanel from '../chat/ChatPanel.vue'
 
@@ -55,6 +56,7 @@ const routeWorkspaceId = computed(() => (route.params.workspaceId as string | un
 
 const showCreateDialog = ref(false)
 const showSettingsDialog = ref(false)
+const showSourceImportDialog = ref(false)
 const showMobileFiles = ref(false)
 const showMobileChanges = ref(false)
 
@@ -246,6 +248,7 @@ watch(routeWorkspaceId, () => {
         :code-open="!isMobileViewport && auxPanel === 'code'"
         :changes-open="isMobileViewport ? showMobileChanges : auxPanel === 'changes'"
         @upload="handleUpload"
+        @import-source="showSourceImportDialog = true"
         @settings="showSettingsDialog = true"
         @files="showMobileFiles = true"
         @toggle-tree="toggleTree"
@@ -337,6 +340,12 @@ watch(routeWorkspaceId, () => {
     </div>
 
     <FileImportDialog v-if="ws.showImportDialog" />
+    <WorkspaceSourceImportDialog
+      :open="showSourceImportDialog"
+      :workspace-id="workspaceId"
+      @close="showSourceImportDialog = false"
+      @completed="showSourceImportDialog = false; void ws.refreshTree()"
+    />
 
     <WorkspaceSettingsDialog
       :open="showSettingsDialog"

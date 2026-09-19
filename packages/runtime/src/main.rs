@@ -31,7 +31,7 @@ use tracing_subscriber::prelude::*;
 
 mod import_job;
 mod ws_file_handler;
-use crate::import_job::{ImportManager, ImportRequest};
+use crate::import_job::{ImportManager, ImportRequest, list_source_directory};
 use tokio::sync::Mutex;
 use xihe_runtime::backend::{DockerBackend, SandboxBackend, SandboxHandle};
 use xihe_runtime::checkpoint::NestedRepoPolicy;
@@ -1550,6 +1550,23 @@ async fn workspace_import_start_handler(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+struct SourceDirectoryRequest {
+    path: String,
+}
+
+async fn source_directory_handler(
+    State(_app): State<Arc<AppState>>,
+    AxumJson(request): AxumJson<SourceDirectoryRequest>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    let entries = list_source_directory(&request.path)
+        .map_err(|detail| runtime_problem(RuntimeError::InvalidPath(detail)))?;
+    Ok(AxumJson(serde_json::json!({
+        "path": request.path,
+        "entries": entries,
+    })))
+}
+
 async fn workspace_import_status_handler(
     Path((_ws_id, import_id)): Path<(String, String)>,
     State(app): State<Arc<AppState>>,
@@ -2330,6 +2347,10 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/imports",
             post(workspace_import_start_handler),
+        )
+        .route(
+            "/internal/v1/runtime/source-directory",
+            post(source_directory_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/imports/{import_id}",

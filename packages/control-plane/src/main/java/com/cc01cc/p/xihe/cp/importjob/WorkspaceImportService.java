@@ -11,6 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class WorkspaceImportService {
@@ -75,6 +77,14 @@ public class WorkspaceImportService {
     public List<WorkspaceImport> list(String workspaceId, String ownerId) {
         workspaceService.requireAccessibleWorkspace(workspaceId, ownerId);
         return repository.findByWorkspaceIdOrderByCreatedAtDesc(UUID.fromString(workspaceId));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Map<String, Object>> listSourceDirectory(String path) {
+        if (path == null || path.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "IMPORT_SOURCE_REQUIRED", "path is required");
+        }
+        return runtimeClient.listSourceDirectory(path);
     }
 
     private OptionalExisting findExisting(String ownerId, String idempotencyKey) {

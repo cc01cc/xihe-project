@@ -68,6 +68,10 @@ public class RuntimeWorkspaceImportClient {
         return post("/internal/v1/runtime/workspaces/" + workspaceId + "/imports/" + importId + "/cancel", Map.of());
     }
 
+    public Optional<Map<String, Object>> listSourceDirectory(String path) {
+        return post("/internal/v1/runtime/source-directory", Map.of("path", path));
+    }
+
     private Optional<Map<String, Object>> post(String path, Map<String, Object> body) {
         try {
             return Optional.ofNullable(restTemplate.exchange(

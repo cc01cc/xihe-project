@@ -1456,6 +1456,29 @@ export const api = {
             }),
         );
     },
+    async listImportSources(path: string): Promise<{
+        path: string;
+        entries: Array<{ name: string; kind: string; readable: boolean; size: number }>;
+    }> {
+        return request(`/workspaces/import-sources?path=${encodeURIComponent(path)}`);
+    },
+    async startWorkspaceImport(workspaceId: string, input: {
+        sourcePath: string;
+        excludeRules?: string[];
+        idempotencyKey: string;
+    }): Promise<Record<string, unknown>> {
+        return request(`/workspaces/${encodeURIComponent(workspaceId)}/imports`, {
+            method: 'POST',
+            headers: workspaceHeaders(workspaceId),
+            body: JSON.stringify(input),
+        });
+    },
+    async getWorkspaceImport(importId: string): Promise<Record<string, unknown>> {
+        return request(`/workspace-imports/${encodeURIComponent(importId)}`);
+    },
+    async cancelWorkspaceImport(importId: string): Promise<Record<string, unknown>> {
+        return request(`/workspace-imports/${encodeURIComponent(importId)}/cancel`, { method: 'POST' });
+    },
     async createWorkspace(input: {
         name?: string;
         description?: string | null;
