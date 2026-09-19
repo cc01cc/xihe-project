@@ -43,8 +43,7 @@ pub struct SourceDirectoryEntry {
 }
 
 pub fn list_source_directory(path: &str) -> Result<Vec<SourceDirectoryEntry>, String> {
-    let directory =
-        fs::canonicalize(path).map_err(|error| format!("source path is not readable: {error}"))?;
+    let directory = canonical_source(path)?;
     if !directory.is_dir() {
         return Err("source path is not a directory".to_string());
     }
@@ -95,8 +94,7 @@ impl ImportManager {
         host_root: PathBuf,
         request: ImportRequest,
     ) -> Result<ImportStatus, String> {
-        let source = fs::canonicalize(&request.source_path)
-            .map_err(|error| format!("source path is not readable: {error}"))?;
+        let source = canonical_source(&request.source_path)?;
         if !source.is_dir() {
             return Err("source path is not a directory".to_string());
         }
@@ -188,6 +186,10 @@ fn copy_tree(
         let metadata = entry
             .metadata()
             .map_err(|error| ("IMPORT_SCAN_FAILED".to_string(), error.to_string()))?;
+        if metadata.is_file() {
+            let mut status = job.status.blocking_lock();
+            status.files_scanned += 1;
+        }
         if ignored {
             let mut status = job.status.blocking_lock();
             status.files_skipped += u64::from(metadata.is_file());
@@ -215,12 +217,23 @@ fn copy_tree(
         fs::copy(entry.path(), &destination)
             .map_err(|error| ("IMPORT_COPY_FAILED".to_string(), error.to_string()))?;
         let mut status = job.status.blocking_lock();
-        status.files_scanned += 1;
         status.files_copied += 1;
         status.bytes_copied += metadata.len();
         status.current_path = Some(relative_text);
     }
     Ok(())
+}
+
+fn canonical_source(path: &str) -> Result<PathBuf, String> {
+    if path.contains('\0') || path.starts_with(r"\\.\") || path.starts_with("//./") {
+        return Err("source path uses an unsupported device namespace".to_string());
+    }
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("source path is not readable: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err("source path must not be a symlink or reparse link".to_string());
+    }
+    fs::canonicalize(path).map_err(|error| format!("source path is not readable: {error}"))
 }
 
 #[cfg(test)]
