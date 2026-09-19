@@ -291,6 +291,48 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
+    void workspaceImportCanBeQueuedWithoutSession() {
+        String email = "workspace-import-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(
+                url("/api/v1/auth/register"),
+                java.util.Map.of("email", email, "password", TestDataFactory.PASSWORD, "name", "Workspace Import"),
+                java.util.Map.class);
+        assertEquals(201, registration.getStatusCode().value());
+        String workspaceId = (String) registration.getBody().get("workspaceId");
+        String token = (String) registration.getBody().get("accessToken");
+
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        org.springframework.http.ResponseEntity<java.util.Map> accepted = restTemplate.postForEntity(
+                url("/api/v1/workspaces/" + workspaceId + "/imports"),
+                new org.springframework.http.HttpEntity<>(java.util.Map.of(
+                        "sourcePath", "H:\\zeogit\\one",
+                        "excludeRules", java.util.List.of("node_modules", "target"),
+                        "idempotencyKey", "import-test-1"), headers),
+                java.util.Map.class);
+
+        assertEquals(202, accepted.getStatusCode().value());
+        assertEquals("queued", accepted.getBody().get("status"));
+        String importId = (String) accepted.getBody().get("importId");
+
+        org.springframework.http.ResponseEntity<java.util.Map> status = restTemplate.exchange(
+                url("/api/v1/workspace-imports/" + importId),
+                org.springframework.http.HttpMethod.GET,
+                new org.springframework.http.HttpEntity<>(headers),
+                java.util.Map.class);
+        assertEquals(200, status.getStatusCode().value());
+        assertEquals(importId, status.getBody().get("importId"));
+
+        org.springframework.http.ResponseEntity<java.util.Map> cancelled = restTemplate.postForEntity(
+                url("/api/v1/workspace-imports/" + importId + "/cancel"),
+                new org.springframework.http.HttpEntity<>(java.util.Map.of(), headers),
+                java.util.Map.class);
+        assertEquals(200, cancelled.getStatusCode().value());
+        assertEquals("cancelled", cancelled.getBody().get("status"));
+    }
+
+    @Test
     void environmentUsesPerWorkspaceStatusInsteadOfGlobalHeartbeat() {
         String email = "env-status-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(
