@@ -235,6 +235,8 @@ const approvalStates = [
     "dispatch_unknown",
 ] as const;
 
+const approvalRequestOrigins = ["cp_gate", "agent_relay"] as const;
+
 function hasField(record: JsonRecord, key: string): boolean {
     return Object.prototype.hasOwnProperty.call(record, key);
 }
@@ -271,6 +273,15 @@ export function normalizeApprovalRequest(
         if (hasField(record, key) && record[key] !== null && typeof record[key] !== "string")
             return null;
     }
+    // PLAN-0371: origin is display-only provenance. Unknown values are dropped instead of
+    // rejecting the whole request; an explicit null (pre-V25 legacy row) is preserved so the
+    // UI can stay quiet without inventing an origin.
+    const origin =
+        record.origin === null
+            ? null
+            : isEnumValue(record.origin, approvalRequestOrigins)
+              ? record.origin
+              : undefined;
     if (
         record.modeAtGrant !== undefined &&
         record.modeAtGrant !== null &&
@@ -294,6 +305,7 @@ export function normalizeApprovalRequest(
         expiresAt: typeof record.expiresAt === "string" ? record.expiresAt : undefined,
         ...(typeof record.replayed === "boolean" ? { replayed: record.replayed } : {}),
         ...(state !== undefined ? { state } : {}),
+        ...(origin !== undefined ? { origin } : {}),
         ...(record.modeAtGrant !== undefined
             ? { modeAtGrant: record.modeAtGrant as ApprovalPolicyMode }
             : {}),

@@ -493,6 +493,22 @@ describe('api.getChatRunStatus approval recovery', () => {
     expect(normalized?.policy).toMatchObject({ modeAtGrant: null })
     expect(normalized?.policy).not.toHaveProperty('details')
   })
+
+  it('passes through the durable origin and never invents one', () => {
+    const relayed = normalizeApprovalRequest({ requestId: APPROVAL_ID, sessionId: SESSION_ID, origin: 'agent_relay' })
+    expect(relayed?.origin).toBe('agent_relay')
+
+    const legacy = normalizeApprovalRequest({ requestId: APPROVAL_ID, sessionId: SESSION_ID, origin: null })
+    expect(legacy?.origin).toBeNull()
+
+    const missing = normalizeApprovalRequest({ requestId: APPROVAL_ID, sessionId: SESSION_ID })
+    expect(missing).not.toHaveProperty('origin')
+
+    // Unknown values are dropped without rejecting the whole request (display-only field).
+    const unknown = normalizeApprovalRequest({ requestId: APPROVAL_ID, sessionId: SESSION_ID, origin: 'future-origin' })
+    expect(unknown?.requestId).toBe(APPROVAL_ID)
+    expect(unknown).not.toHaveProperty('origin')
+  })
 })
 
 describe('api.getHealth', () => {

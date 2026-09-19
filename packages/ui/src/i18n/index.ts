@@ -152,6 +152,8 @@ const messages = {
             approvalEvidenceModeAtGrant: "决定时模式",
             approvalEvidenceUnavailable:
                 "策略依据暂不可用。没有收到服务端策略证据，不能推断默认值。",
+            approvalOriginCpGate: "策略门禁",
+            approvalOriginAgentRelay: "模型请求",
             approvalNoMatchedRule: "未命中具体规则",
             approvalLayerBuiltin: "内置层",
             approvalLayerInstance: "实例层",
@@ -788,6 +790,8 @@ const messages = {
             approvalEvidenceModeAtGrant: "Mode at decision",
             approvalEvidenceUnavailable:
                 "Policy evidence is unavailable. No server-side evidence was received, so no default can be inferred.",
+            approvalOriginCpGate: "Policy gate",
+            approvalOriginAgentRelay: "Model request",
             approvalNoMatchedRule: "No specific rule matched",
             approvalLayerBuiltin: "Built-in layer",
             approvalLayerInstance: "Instance layer",

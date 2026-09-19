@@ -153,6 +153,11 @@ async function pushApproval(page: import('@playwright/test').Page, payload: Reco
   }, payload)
 }
 
+function viewportTag(page: import('@playwright/test').Page): string {
+  const size = page.viewportSize()
+  return size ? `${size.width}x${size.height}` : 'default'
+}
+
 test.describe('Chat approval flow', () => {
   test.beforeEach(async ({ page }) => {
     await setupMockAuth(page)
@@ -207,6 +212,38 @@ test.describe('Chat approval flow', () => {
     await expect(dialog.locator('[data-testid="approval-allow-session"]')).toHaveCount(0)
     await expect(dialog.locator('[data-testid="approval-save-rule"]')).toHaveCount(0)
     await expect(dialog.locator('[data-testid="approval-tier-gate-reason"]')).toContainText('工具形态依据不可用')
+  })
+
+  test('shows the durable origin badge for model-initiated approvals', async ({ page }) => {
+    await openApprovalChat(page)
+    await pushApproval(page, { ...approvalEvent(REQUEST_ID), origin: 'agent_relay' })
+
+    const dialog = page.locator('[data-testid="modal-content"]')
+    await expect(dialog).toBeVisible({ timeout: 5000 })
+    await expect(dialog.locator('[data-testid="approval-origin"]')).toHaveText('模型请求')
+    await page.screenshot({ path: `test-results/plan0371-approval-origin-agent-relay-${viewportTag(page)}.png` })
+    await expect(page).toHaveScreenshot(`approval-origin-agent-relay-${viewportTag(page)}.png`)
+  })
+
+  test('labels gate-created approvals with the policy-gate origin', async ({ page }) => {
+    await openApprovalChat(page)
+    await pushApproval(page, { ...approvalEvent(REQUEST_ID), origin: 'cp_gate' })
+
+    const dialog = page.locator('[data-testid="modal-content"]')
+    await expect(dialog).toBeVisible({ timeout: 5000 })
+    await expect(dialog.locator('[data-testid="approval-origin"]')).toHaveText('策略门禁')
+    await page.screenshot({ path: `test-results/plan0371-approval-origin-cp-gate-${viewportTag(page)}.png` })
+    await expect(page).toHaveScreenshot(`approval-origin-cp-gate-${viewportTag(page)}.png`)
+  })
+
+  test('legacy approvals without origin render no origin badge', async ({ page }) => {
+    await openApprovalChat(page)
+    await pushApproval(page, { ...approvalEvent(REQUEST_ID), origin: null })
+
+    const dialog = page.locator('[data-testid="modal-content"]')
+    await expect(dialog).toBeVisible({ timeout: 5000 })
+    await expect(dialog.locator('[data-testid="approval-origin"]')).toHaveCount(0)
+    await page.screenshot({ path: `test-results/plan0371-approval-origin-legacy-${viewportTag(page)}.png` })
   })
 
   test('renders dispatch_unknown recovery as an explicit retry without auto-deciding', async ({ page }) => {

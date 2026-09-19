@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import BaseModal from '../shared/BaseModal.vue'
 import { ApiError, api } from '../../composables/api'
 import { logger } from '../../lib/logger'
-import type { ApprovalDecisionEnvelope, ApprovalPolicyMode, ApprovalPolicyShape, ApprovalPolicySourceLayer, ApprovalRequest } from '../../types'
+import type { ApprovalDecisionEnvelope, ApprovalPolicyMode, ApprovalPolicyShape, ApprovalPolicySourceLayer, ApprovalRequest, ApprovalRequestOrigin } from '../../types'
 import { Bot, LoaderCircle, ShieldCheck } from '@lucide/vue'
 
 const props = withDefaults(defineProps<{
@@ -69,6 +69,19 @@ const modeLabels: Record<Exclude<ApprovalPolicyMode, null>, string> = {
   manual: 'chat.approvalModeManual',
   auto: 'chat.approvalModeAuto',
 }
+
+const originLabels: Record<ApprovalRequestOrigin, string> = {
+  cp_gate: 'chat.approvalOriginCpGate',
+  agent_relay: 'chat.approvalOriginAgentRelay',
+}
+
+/** Durable provenance badge (PLAN-0371); unknown/missing/null values render nothing. */
+const originLabel = computed(() => {
+  const origin = props.approval?.origin
+  if (!origin) return ''
+  const labelKey = (originLabels as Record<string, string | undefined>)[origin]
+  return labelKey ? t(labelKey) : ''
+})
 
 const shapeLabels: Record<ApprovalPolicyShape, string> = {
   structured: 'chat.approvalShapeStructured',
@@ -391,9 +404,14 @@ onBeforeUnmount(() => {
         </p>
 
         <section class="mb-4 space-y-3" :aria-labelledby="`approval-tool-${approval.requestId}`">
-          <div class="flex items-center gap-2 text-sm">
+          <div class="flex flex-wrap items-center gap-2 text-sm">
             <Bot class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span :id="`approval-tool-${approval.requestId}`" data-testid="approval-tool" class="font-medium">{{ approval.tool }}</span>
+            <span
+              v-if="originLabel"
+              data-testid="approval-origin"
+              class="inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
+            >{{ originLabel }}</span>
           </div>
           <div>
             <p class="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ t('chat.approvalAction') }}</p>

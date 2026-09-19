@@ -118,6 +118,9 @@ export type ApprovalRequestState =
     | "expired"
     | "dispatch_unknown";
 
+/** Durable creation provenance (PLAN-0371 / V25); null for rows predating V25. */
+export type ApprovalRequestOrigin = "cp_gate" | "agent_relay";
+
 export interface ApprovalRequest {
     requestId: string;
     operationId?: string;
@@ -131,6 +134,7 @@ export interface ApprovalRequest {
     expiresAt?: string;
     replayed?: boolean;
     state?: ApprovalRequestState;
+    origin?: ApprovalRequestOrigin | null;
     modeAtGrant?: ApprovalPolicyMode;
     policy?: ApprovalPolicy;
 }

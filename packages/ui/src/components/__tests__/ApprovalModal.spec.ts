@@ -41,6 +41,8 @@ const i18n = createI18n({
         approvalEvidenceMode: 'Mode',
         approvalEvidenceModeAtGrant: 'Mode at decision',
         approvalEvidenceUnavailable: 'Policy evidence unavailable',
+        approvalOriginCpGate: 'Policy gate',
+        approvalOriginAgentRelay: 'Model request',
         approvalNoMatchedRule: 'No specific rule matched',
         approvalLayerBuiltin: 'Built-in layer',
         approvalLayerInstance: 'Instance layer',
@@ -193,6 +195,23 @@ describe('ApprovalModal', () => {
 
     expect(wrapper.find('[data-testid="approval-evidence-unavailable"]').text()).toContain('unavailable')
     expect(wrapper.find('[data-testid="approval-evidence"]').exists()).toBe(false)
+  })
+
+  it('renders the durable origin badge for relayed model requests', () => {
+    const wrapper = mountModal({ approval: { ...baseApproval, origin: 'agent_relay' }, show: true })
+
+    expect(wrapper.find('[data-testid="approval-origin"]').text()).toBe('Model request')
+  })
+
+  it('renders the policy-gate badge and stays quiet for legacy rows', () => {
+    const gated = mountModal({ approval: { ...baseApproval, origin: 'cp_gate' }, show: true })
+    expect(gated.find('[data-testid="approval-origin"]').text()).toBe('Policy gate')
+
+    const legacy = mountModal({ approval: { ...baseApproval, origin: null }, show: true })
+    expect(legacy.find('[data-testid="approval-origin"]').exists()).toBe(false)
+
+    const missing = mountModal({ approval: baseApproval, show: true })
+    expect(missing.find('[data-testid="approval-origin"]').exists()).toBe(false)
   })
 
   it('marks dispatch_unknown recovery as retryable without submitting on mount', () => {

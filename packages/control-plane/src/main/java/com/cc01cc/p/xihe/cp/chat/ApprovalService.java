@@ -902,6 +902,10 @@ public class ApprovalService {
         payload.put("argumentsHash", approval.getArgumentsHash());
         payload.put("expiresAt", approval.getExpiresAt());
         payload.put("state", approval.getState());
+        // PLAN-0371 (APV-4): expose the durable creation provenance to the read side.
+        // `cp_gate` = CP policy gate, `agent_relay` = model-initiated request_approval;
+        // legacy rows predating V25 keep null and the UI must stay quiet.
+        payload.put("origin", approval.getOrigin());
         payload.put("replayed", replayed);
         policySummary.readStored(approval.getPolicySummary()).ifPresent(policy -> {
             if (approval.getModeAtGrant() != null && !approval.getModeAtGrant().isBlank()) {

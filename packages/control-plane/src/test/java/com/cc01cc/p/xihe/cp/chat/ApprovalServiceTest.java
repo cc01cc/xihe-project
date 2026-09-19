@@ -187,6 +187,28 @@ class ApprovalServiceTest {
     }
 
     @Test
+    void livePayloadCarriesDurableOriginForBothCreationPaths() {
+        ChatApproval relayed = pending(Instant.now().plusSeconds(60));
+        relayed.setOrigin(ChatApproval.ORIGIN_AGENT_RELAY);
+        ChatApproval gated = pending(Instant.now().plusSeconds(60));
+        gated.setOrigin(ChatApproval.ORIGIN_CP_GATE);
+
+        // PLAN-0371 (APV-4): the durable provenance must reach the live/replay envelope.
+        assertEquals(ChatApproval.ORIGIN_AGENT_RELAY, service.livePayload(relayed).get("origin"));
+        assertEquals(ChatApproval.ORIGIN_CP_GATE, service.livePayload(gated).get("origin"));
+    }
+
+    @Test
+    void livePayloadKeepsNullOriginForLegacyRows() {
+        ChatApproval legacy = pending(Instant.now().plusSeconds(60));
+
+        Map<String, Object> payload = service.livePayload(legacy);
+
+        assertTrue(payload.containsKey("origin"));
+        assertNull(payload.get("origin"));
+    }
+
+    @Test
     void recordPendingRejectsMismatchedRunIdentity() {
         ChatRun run = runningRun();
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(run));
