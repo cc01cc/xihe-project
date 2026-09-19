@@ -1,13 +1,13 @@
 <mxfile host="65bd71144e">
     <diagram id="xihe-arch-page-1" name="Architecture">
-        <mxGraphModel dx="1647" dy="907" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0" adaptiveColors="auto">
+        <mxGraphModel dx="2074" dy="1139" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0" adaptiveColors="auto">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
                 <mxCell id="title" value="xihe Agent system architecture" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#161616;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
                     <mxGeometry x="100" y="80" width="420" height="30" as="geometry"/>
                 </mxCell>
-                <mxCell id="subtitle" value="Hub-Module layout with restrained hierarchy and bidirectional control-plane flows" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#6f6f6f;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                <mxCell id="subtitle" value="Hub-Module layout with restrained hierarchy and bidirectional control-plane flows" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#6f6f6f;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
                     <mxGeometry x="100" y="110" width="460" height="22" as="geometry"/>
                 </mxCell>
                 <mxCell id="ui" value="&lt;b&gt;UI - HUMAN&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;Vue / TypeScript / multi-client surface&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#8d8d8d;strokeWidth=2;fontColor=#161616;fontSize=20;arcSize=10;align=center;verticalAlign=middle;spacingTop=2;" parent="1" vertex="1">
@@ -22,14 +22,14 @@
                 <mxCell id="runtime" value="&lt;b&gt;RUNTIME&lt;/b&gt;&lt;br/&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;Rust sandbox / filesystem / shell / process&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4f4f4;strokeColor=#8d8d8d;strokeWidth=2;fontColor=#161616;fontSize=20;arcSize=10;align=center;verticalAlign=middle;spacingTop=2;" parent="1" vertex="1">
                     <mxGeometry x="90" y="710" width="900" height="110" as="geometry"/>
                 </mxCell>
-                <mxCell id="edge-ui-cp" value="WebSocket / user interaction" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0f62fe;strokeWidth=2;startArrow=block;startFill=1;endArrow=block;endFill=1;fontSize=11;fontColor=#0043ce;labelBackgroundColor=#f8f9fb;" edge="1" parent="1" source="ui" target="cp">
+                <mxCell id="edge-ui-cp" value="WebSocket / user interaction" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0f62fe;strokeWidth=2;startArrow=block;startFill=1;endArrow=block;endFill=1;fontSize=11;fontColor=#0043ce;labelBackgroundColor=#f8f9fb;" parent="1" source="ui" target="cp" edge="1">
                     <mxGeometry relative="1" as="geometry">
                         <Array as="points">
                             <mxPoint x="310" y="300"/>
                         </Array>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="edge-cp-runtime" value="tool calls / execution results" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0f62fe;strokeWidth=2;startArrow=block;startFill=1;endArrow=block;endFill=1;fontSize=11;fontColor=#0043ce;labelBackgroundColor=#f8f9fb;" edge="1" parent="1" source="cp" target="runtime">
+                <mxCell id="edge-cp-runtime" value="tool calls / execution results" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0f62fe;strokeWidth=2;startArrow=block;startFill=1;endArrow=block;endFill=1;fontSize=11;fontColor=#0043ce;labelBackgroundColor=#f8f9fb;" parent="1" source="cp" target="runtime" edge="1">
                     <mxGeometry x="0.0698" y="20" relative="1" as="geometry">
                         <Array as="points">
                             <mxPoint x="300" y="620"/>
@@ -37,41 +37,56 @@
                         <mxPoint as="offset"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="footnote" value="Agent does not touch filesystem or shell directly; Runtime stays the execution boundary." style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontSize=11;fontColor=#6f6f6f;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                <mxCell id="footnote" value="Agent does not touch filesystem or shell directly; Runtime stays the execution boundary." style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontSize=11;fontColor=#6f6f6f;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
                     <mxGeometry x="335" y="790" width="470" height="20" as="geometry"/>
                 </mxCell>
-                <mxCell id="4" value="" style="shape=flexArrow;endArrow=classic;startArrow=classic;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="cp" target="agent">
+                <mxCell id="4" value="" style="shape=flexArrow;endArrow=classic;startArrow=classic;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="cp" target="agent" edge="1">
                     <mxGeometry width="100" height="100" relative="1" as="geometry">
                         <mxPoint x="780" y="490" as="sourcePoint"/>
                         <mxPoint x="880" y="390" as="targetPoint"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="5" value="WEB" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="5" value="WEB" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="130" y="170" width="60" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="8" value="MOBILE" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="8" value="MOBILE" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="280" y="170" width="60" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="9" value="TUI" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="9" value="TUI" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="200" y="170" width="60" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="10" value="AGENT1" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="10" value="AGENT1" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="669" y="304" width="60" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="11" value="AGENT2" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="11" value="AGENT2" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="759" y="304" width="60" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="12" value="..." style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="12" value="..." style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="849" y="304" width="60" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="13" value="..." style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="13" value="..." style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="350" y="170" width="60" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="14" value="WORKSPACE 1" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="14" value="WORKSPACE 1" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="110" y="730" width="110" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="15" value="WORKSPACE 2" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="15" value="WORKSPACE 2" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="240" y="730" width="110" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="16" value="&lt;b&gt;CONTROL PLANE&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#8d8d8d;strokeWidth=2;fontColor=#161616;fontSize=20;arcSize=10;align=center;verticalAlign=top;spacingTop=2;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="1400" width="940" height="230" as="geometry"/>
+                </mxCell>
+                <mxCell id="17" value="&lt;b&gt;UI&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#8d8d8d;strokeWidth=2;fontColor=#161616;fontSize=20;arcSize=10;align=center;verticalAlign=middle;spacingTop=2;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="1160" width="460" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="18" value="&lt;b&gt;AGENT&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#8d8d8d;strokeWidth=2;fontColor=#161616;fontSize=20;arcSize=10;align=center;verticalAlign=middle;spacingTop=2;" vertex="1" parent="1">
+                    <mxGeometry x="560" y="1160" width="470" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="19" value="&lt;b&gt;RUNTIME&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#8d8d8d;strokeWidth=2;fontColor=#161616;fontSize=20;arcSize=10;align=center;verticalAlign=middle;spacingTop=2;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="1681" width="940" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="21" value="&lt;b&gt;DATABASE&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#8d8d8d;strokeWidth=2;fontColor=#161616;fontSize=20;arcSize=10;align=center;verticalAlign=middle;spacingTop=2;" vertex="1" parent="1">
+                    <mxGeometry x="255" y="1500" width="570" height="100" as="geometry"/>
                 </mxCell>
             </root>
         </mxGraphModel>
