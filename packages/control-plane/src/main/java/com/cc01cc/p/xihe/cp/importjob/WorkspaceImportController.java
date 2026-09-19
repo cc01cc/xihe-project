@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.importjob;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceImport;
 import org.springframework.http.HttpStatus;
@@ -14,9 +15,11 @@ import java.util.Map;
 @RequestMapping("/api/v1")
 public class WorkspaceImportController {
     private final WorkspaceImportService service;
+    private final ObjectMapper objectMapper;
 
-    public WorkspaceImportController(WorkspaceImportService service) {
+    public WorkspaceImportController(WorkspaceImportService service, ObjectMapper objectMapper) {
         this.service = service;
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/workspaces/{workspaceId}/imports")
@@ -26,9 +29,18 @@ public class WorkspaceImportController {
                 workspaceId,
                 requireUserId(),
                 (String) body.get("sourcePath"),
-                body.getOrDefault("excludeRules", List.of()).toString(),
+                excludeRules(body.get("excludeRules")),
                 (String) body.get("idempotencyKey"));
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(view(record));
+    }
+
+    private String excludeRules(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value == null ? List.of() : value);
+        } catch (Exception error) {
+            throw new com.cc01cc.p.xihe.cp.config.CpApiException(
+                    HttpStatus.BAD_REQUEST, "IMPORT_EXCLUDE_RULES_INVALID", "excludeRules must be JSON-compatible");
+        }
     }
 
     @GetMapping("/workspace-imports/{importId}")

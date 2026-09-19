@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.runtime;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceImport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,14 +22,17 @@ public class RuntimeWorkspaceImportClient {
     private static final Logger logger = LoggerFactory.getLogger(RuntimeWorkspaceImportClient.class);
 
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
     private final String runtimeUrl;
     private final String serviceToken;
 
     public RuntimeWorkspaceImportClient(
             RestTemplate restTemplate,
+            ObjectMapper objectMapper,
             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
             @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
         this.restTemplate = restTemplate;
+        this.objectMapper = objectMapper;
         this.runtimeUrl = runtimeUrl;
         this.serviceToken = serviceToken;
     }
@@ -35,7 +40,13 @@ public class RuntimeWorkspaceImportClient {
     public Optional<Map<String, Object>> start(WorkspaceImport record) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sourcePath", record.getSourcePath());
-        body.put("excludeRules", record.getExcludeRules());
+        try {
+            body.put("excludeRules", objectMapper.readValue(
+                    record.getExcludeRules(), new TypeReference<java.util.List<String>>() { }));
+        } catch (Exception error) {
+            logger.warn("Invalid import exclude rules importId={} reason={}", record.getId(), error.getMessage());
+            body.put("excludeRules", java.util.List.of());
+        }
         return post("/internal/v1/runtime/workspaces/" + record.getWorkspaceId() + "/imports", body);
     }
 
