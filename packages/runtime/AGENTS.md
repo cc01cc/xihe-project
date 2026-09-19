@@ -65,6 +65,7 @@ src/
 - 启动时只完成 Runtime 自身 liveness/readiness；通过 Bearer 按 `workspaceId` 定向获取 `WorkspaceExecutionSpec`，首次文件/命令/MCP 操作时再 materialize Workspace Sandbox。
 - Sandbox Container 创建、重建和删除只处理临时执行实体，必须保留 WorkspaceStorage 文件。
 - Strict Sandbox 使用 `network_mode=none`；所有 Workspace 操作与 stdio MCP 会话都经 per-request exec / exec attach，不发布任何端口（PLAN-0347 后 39001/39000 全部退役）。
+- 沙盒容器资源默认 512MB / 2 CPU / 100 pids；经 `XIHE_SANDBOX_MEMORY_MB` / `XIHE_SANDBOX_CPUS` / `XIHE_SANDBOX_PIDS_LIMIT` 覆盖（env 部署权威，非法/越界值按字段回退默认并告警，创建容器时记录生效值）。
 - Handler 级 Fake 门：`main.rs` 内 `#[cfg(test)]` 模块直调 handler，stub CP（execution-spec）+ stub Fake MCP（127.0.0.1 随机端口，需 `XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL=true`），断言结果 + 注册表无容器 + `list_workspaces()` 为空；无 Docker 下最强的完成证据（见 `remote_handler_tests`）。
 
 ## Permissions

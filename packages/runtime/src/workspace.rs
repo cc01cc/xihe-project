@@ -20,6 +20,95 @@ pub(crate) fn container_name(ws_id: &str) -> String {
     format!("xihe-workspace-ws_{ws_id}")
 }
 
+/// Sandbox container resource defaults (legacy profile; env-overridable).
+pub const DEFAULT_SANDBOX_MEMORY_MB: u64 = 512;
+pub const DEFAULT_SANDBOX_CPUS: u64 = 2;
+pub const DEFAULT_SANDBOX_PIDS_LIMIT: u64 = 100;
+
+/// Sanity bounds for env overrides: reject implausible values instead of
+/// handing them to Docker (1 TiB / 256 CPUs / 1M pids).
+const MAX_SANDBOX_MEMORY_MB: u64 = 1024 * 1024;
+const MAX_SANDBOX_CPUS: u64 = 256;
+const MAX_SANDBOX_PIDS_LIMIT: u64 = 1_000_000;
+
+/// Sandbox container resource limits.
+///
+/// Deployment authority is the environment (`XIHE_SANDBOX_MEMORY_MB`,
+/// `XIHE_SANDBOX_CPUS`, `XIHE_SANDBOX_PIDS_LIMIT`), resolved when a sandbox
+/// container is created. Malformed or out-of-range values fall back to the
+/// default for that field and log a warning; the effective values are logged
+/// on every container create.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SandboxResourceLimits {
+    pub memory_bytes: i64,
+    pub memory_swap_bytes: i64,
+    pub nano_cpus: i64,
+    pub pids_limit: i64,
+}
+
+impl Default for SandboxResourceLimits {
+    fn default() -> Self {
+        let memory_bytes = (DEFAULT_SANDBOX_MEMORY_MB * 1024 * 1024) as i64;
+        Self {
+            memory_bytes,
+            // Keep swap == memory: no extra swap beyond the memory limit.
+            memory_swap_bytes: memory_bytes,
+            nano_cpus: (DEFAULT_SANDBOX_CPUS * 1_000_000_000) as i64,
+            pids_limit: DEFAULT_SANDBOX_PIDS_LIMIT as i64,
+        }
+    }
+}
+
+impl SandboxResourceLimits {
+    /// Resolve limits from the process environment.
+    pub fn from_env() -> Self {
+        Self::from_lookup(|key| std::env::var(key).ok())
+    }
+
+    fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Self {
+        let mut limits = Self::default();
+
+        if let Some(raw) = lookup("XIHE_SANDBOX_MEMORY_MB") {
+            match parse_sandbox_env_u64(&raw, 1, MAX_SANDBOX_MEMORY_MB) {
+                Some(mb) => {
+                    limits.memory_bytes = (mb * 1024 * 1024) as i64;
+                    limits.memory_swap_bytes = limits.memory_bytes;
+                }
+                None => warn!(
+                    "invalid XIHE_SANDBOX_MEMORY_MB={raw:?}; using default {} MB",
+                    DEFAULT_SANDBOX_MEMORY_MB
+                ),
+            }
+        }
+        if let Some(raw) = lookup("XIHE_SANDBOX_CPUS") {
+            match parse_sandbox_env_u64(&raw, 1, MAX_SANDBOX_CPUS) {
+                Some(cpus) => limits.nano_cpus = (cpus * 1_000_000_000) as i64,
+                None => warn!(
+                    "invalid XIHE_SANDBOX_CPUS={raw:?}; using default {}",
+                    DEFAULT_SANDBOX_CPUS
+                ),
+            }
+        }
+        if let Some(raw) = lookup("XIHE_SANDBOX_PIDS_LIMIT") {
+            match parse_sandbox_env_u64(&raw, 1, MAX_SANDBOX_PIDS_LIMIT) {
+                Some(pids) => limits.pids_limit = pids as i64,
+                None => warn!(
+                    "invalid XIHE_SANDBOX_PIDS_LIMIT={raw:?}; using default {}",
+                    DEFAULT_SANDBOX_PIDS_LIMIT
+                ),
+            }
+        }
+        limits
+    }
+}
+
+fn parse_sandbox_env_u64(raw: &str, min: u64, max: u64) -> Option<u64> {
+    raw.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|value| (min..=max).contains(value))
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceState {
     pub ws_id: String,
@@ -113,11 +202,23 @@ impl WorkspaceManager {
             .ok()
             .map(|run_id| HashMap::from([(String::from("xihe.e2e.run-id"), run_id)]));
 
+        // Sandbox resource limits are deployment-authority env knobs
+        // (XIHE_SANDBOX_MEMORY_MB / XIHE_SANDBOX_CPUS / XIHE_SANDBOX_PIDS_LIMIT);
+        // defaults preserve the legacy 512 MB / 2 CPU / 100 pids profile.
+        let limits = SandboxResourceLimits::from_env();
+        info!(
+            "sandbox resource limits: ws_id={} memory={}MB cpus={} pids={}",
+            ws_id,
+            limits.memory_bytes / (1024 * 1024),
+            limits.nano_cpus / 1_000_000_000,
+            limits.pids_limit
+        );
+
         let host_config = HostConfig {
-            memory: Some(512 * 1024 * 1024),
-            memory_swap: Some(512 * 1024 * 1024),
-            nano_cpus: Some(2_000_000_000),
-            pids_limit: Some(100),
+            memory: Some(limits.memory_bytes),
+            memory_swap: Some(limits.memory_swap_bytes),
+            nano_cpus: Some(limits.nano_cpus),
+            pids_limit: Some(limits.pids_limit),
             cap_drop: Some(vec!["ALL".to_string()]),
             security_opt: Some(vec!["no-new-privileges:true".to_string()]),
             binds: Some(vec![format!("{}:/workspace:rw", workspace_path)]),
@@ -654,5 +755,64 @@ impl WorkspaceManager {
                 container_name, error
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod sandbox_resource_limits_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn lookup<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+        move |key: &str| map.get(key).cloned()
+    }
+
+    #[test]
+    fn defaults_preserve_legacy_profile() {
+        let limits = SandboxResourceLimits::default();
+        assert_eq!(limits.memory_bytes, 512 * 1024 * 1024);
+        assert_eq!(limits.memory_swap_bytes, 512 * 1024 * 1024);
+        assert_eq!(limits.nano_cpus, 2_000_000_000);
+        assert_eq!(limits.pids_limit, 100);
+
+        let resolved = SandboxResourceLimits::from_lookup(|_| None);
+        assert_eq!(resolved, limits);
+    }
+
+    #[test]
+    fn env_overrides_each_field_and_keeps_swap_equal_to_memory() {
+        let limits = SandboxResourceLimits::from_lookup(lookup(&[
+            ("XIHE_SANDBOX_MEMORY_MB", "2048"),
+            ("XIHE_SANDBOX_CPUS", "6"),
+            ("XIHE_SANDBOX_PIDS_LIMIT", "512"),
+        ]));
+        assert_eq!(limits.memory_bytes, 2048 * 1024 * 1024);
+        assert_eq!(limits.memory_swap_bytes, 2048 * 1024 * 1024);
+        assert_eq!(limits.nano_cpus, 6_000_000_000);
+        assert_eq!(limits.pids_limit, 512);
+    }
+
+    #[test]
+    fn malformed_or_out_of_range_values_fall_back_per_field() {
+        let defaults = SandboxResourceLimits::default();
+
+        let zero_and_garbage = SandboxResourceLimits::from_lookup(lookup(&[
+            ("XIHE_SANDBOX_MEMORY_MB", "0"),
+            ("XIHE_SANDBOX_CPUS", "not-a-number"),
+            ("XIHE_SANDBOX_PIDS_LIMIT", "99999999999"),
+        ]));
+        assert_eq!(zero_and_garbage, defaults);
+
+        let negative_cpus =
+            SandboxResourceLimits::from_lookup(lookup(&[("XIHE_SANDBOX_CPUS", "-4")]));
+        assert_eq!(negative_cpus, defaults);
+
+        let oversized_memory =
+            SandboxResourceLimits::from_lookup(lookup(&[("XIHE_SANDBOX_MEMORY_MB", "2097152")]));
+        assert_eq!(oversized_memory, defaults);
     }
 }

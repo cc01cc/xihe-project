@@ -91,6 +91,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 | `XIHE_CP_JWT_SECRET` | JWT 签名密钥（仅 CP 自身初始化） |
 | `XIHE_WORKSPACE_HOST_ROOT` | host workspace 根（默认 `A03-xihe/.xihe-workspaces`；由 mise/scripts 注入，非 `.env` 模板项） |
 | `XIHE_WORKSPACE_MATERIALIZE_TIMEOUT_SECS` | Runtime 物化总时限（秒；默认 600，自取得 per-workspace 锁后计时、排队不计入；超时置 `failed` 并署名，PLAN-0323 M-1） |
+| `XIHE_SANDBOX_MEMORY_MB` / `XIHE_SANDBOX_CPUS` / `XIHE_SANDBOX_PIDS_LIMIT` | 沙盒容器资源（默认 512MB / 2 CPU / 100 pids；env 部署权威，非法或越界值按字段回退默认并告警，创建容器时记录生效值） |
 | `XIHE_LOAD_DOTENV` | `0`：各模块不从 `.env` 读取应用层配置 |
 | `XIHE_LOG_LEVEL` / `XIHE_LOG_LEVEL_<MODULE>` | 日志启动引导等级（运行期权威为 DB `logging` 域，详见 DEV-004） |
 

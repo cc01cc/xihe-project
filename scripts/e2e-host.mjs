@@ -49,6 +49,15 @@ const skipRuntime = process.argv.includes('--skip-runtime')
 // committed. When set, the Fake LLM fixture is skipped and llmMode is used
 // only for spec selection.
 const realXiaomiKey = process.env.XIHE_E2E_REAL_XIAOMI_KEY ?? ''
+// PLAN-0372 (BL-28) decisions #A/#B: the real lane has two isolated route
+// fixtures. `native` (default) keeps the historical native Xiaomi slug — tool
+// calls are rejected by design, which boundary case A asserts explicitly;
+// `openai-compat` points the OpenAI-compatible route at the same MiMo
+// endpoint/key, where tools work and case B runs a real tool round-trip. The
+// mode is per-invocation; only the two real-lane cases read it and no other
+// spec is affected.
+const realRoute = process.env.XIHE_E2E_REAL_ROUTE ?? 'native'
+const realOpenAiBase = process.env.XIHE_E2E_REAL_OPENAI_BASE ?? 'https://api.xiaomimimo.com/v1'
 const fakeMcpAccessToken = randomPassword(24)
 const e2eAdminPassword = randomPassword(24)
 
@@ -420,25 +429,34 @@ async function configureFakeLlm() {
   if (!login.ok) throw new Error(`fake LLM admin login failed: HTTP ${login.status}`)
   const loginBody = await login.json()
   if (realXiaomiKey) {
+    // PLAN-0372 decision #A: the default native route (tools rejected by
+    // design). PLAN-0372 decision #B: `openai-compat` reuses the same MiMo
+    // endpoint/key through the OpenAI-compatible provider (tools work).
+    const llmProvider = realRoute === 'openai-compat'
+      ? {
+          defaultProvider: 'openai',
+          openaiModel: 'mimo-v2.5',
+          openaiApiBase: realOpenAiBase,
+          defaultModel: 'mimo-v2.5',
+        }
+      : {
+          defaultProvider: 'xiaomi',
+          xiaomiModel: 'mimo-v2.5',
+          defaultModel: 'mimo-v2.5',
+        }
     const imported = await fetch(`${cpBaseUrl}/api/v1/config/import`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${loginBody.accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        'llm-provider': {
-          defaultProvider: 'xiaomi',
-          xiaomiModel: 'mimo-v2.5',
-          defaultModel: 'mimo-v2.5',
-        },
-      }),
+      body: JSON.stringify({ 'llm-provider': llmProvider }),
     })
     if (!imported.ok) {
       const problem = await imported.text()
       throw new Error(`real provider config import failed: HTTP ${imported.status} ${problem.slice(0, 500)}`)
     }
-    console.log('[e2e-host] real Xiaomi configuration imported (key stays in the Agent env only)')
+    console.log(`[e2e-host] real provider configuration imported route=${realRoute} (key stays in the Agent env only)`)
     return
   }
   const fakeBase = `http://127.0.0.1:${fakeLlmPort}`
@@ -525,15 +543,22 @@ async function runPlaywright() {
   // PLAN-0369: the Agent binds one MCP workspace per process. Specs that move
   // between workspaces restart the Agent through `ensureAgentWorkspaceBinding`
   // and need the exact provider/credential env the Agent was launched with.
-  // PLAN-0372 (BL-28): the real-provider lane restarts through the same contract
-  // so a full real run can rebind across spec-local workspaces. The key value is
-  // the same one the runner already passes down the process tree (env
+  // PLAN-0372 (BL-28) decisions #A/#B: the real-provider lane restarts through
+  // the same contract so a full real run can rebind across spec-local
+  // workspaces; the contract follows the selected real route fixture (`native`
+  // -> XIHE_XIAOMI_API_KEY, `openai-compat` -> XIHE_OPENAI_API_KEY). The key
+  // value is the same one the runner already passes down the process tree (env
   // inheritance); it stays in memory only and is never logged.
   const agentRestartEnv = realXiaomiKey
-    ? {
-        XIHE_LLM_PROVIDER: 'xiaomi',
-        XIHE_XIAOMI_API_KEY: realXiaomiKey,
-      }
+    ? realRoute === 'openai-compat'
+      ? {
+          XIHE_LLM_PROVIDER: 'openai',
+          XIHE_OPENAI_API_KEY: realXiaomiKey,
+        }
+      : {
+          XIHE_LLM_PROVIDER: 'xiaomi',
+          XIHE_XIAOMI_API_KEY: realXiaomiKey,
+        }
     : {
         XIHE_LLM_PROVIDER: llmMode === 'mock' ? 'mock' : 'openai',
         ...(llmMode === 'missing' || llmMode === 'mock'
@@ -571,6 +596,9 @@ async function runPlaywright() {
       XIHE_E2E_LLM_MODE: llmMode,
       XIHE_E2E_ADMIN_PASSWORD: e2eAdminPassword,
       XIHE_E2E_AGENT_RESTART_ENV: JSON.stringify(agentRestartEnv),
+      // PLAN-0372 decisions #A/#B: the real-lane cases read the selected route
+      // fixture (no secrets; mock lane ignores it).
+      XIHE_E2E_REAL_ROUTE: realRoute,
       XIHE_E2E_HEADED: process.env.XIHE_E2E_HEADED ?? '0',
       XIHE_E2E_BROWSER_CHANNEL: process.env.XIHE_E2E_BROWSER_CHANNEL ?? 'chrome-beta',
     },
@@ -912,11 +940,19 @@ async function main() {
           extraEnv: {
             XIHE_AGENT_PORT: agentPort,
             XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
-            XIHE_LLM_PROVIDER: realXiaomiKey ? 'xiaomi' : llmMode === 'mock' ? 'mock' : 'openai',
+            XIHE_LLM_PROVIDER: realXiaomiKey
+              ? realRoute === 'openai-compat'
+                ? 'openai'
+                : 'xiaomi'
+              : llmMode === 'mock'
+                ? 'mock'
+                : 'openai',
             // PLAN-0307 decision #21/#37 (BYOK): fake/real credentials travel
             // through the Agent env fallback, never through config layers.
             ...(realXiaomiKey
-              ? { XIHE_XIAOMI_API_KEY: realXiaomiKey }
+              ? realRoute === 'openai-compat'
+                ? { XIHE_OPENAI_API_KEY: realXiaomiKey }
+                : { XIHE_XIAOMI_API_KEY: realXiaomiKey }
               : llmMode === 'missing' || llmMode === 'mock'
                 ? {}
                 : {
