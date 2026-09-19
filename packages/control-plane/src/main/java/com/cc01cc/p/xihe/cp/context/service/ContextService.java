@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.context.service;
 
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
+import com.cc01cc.p.xihe.cp.context.summary.ConstraintExtractor;
 import com.cc01cc.p.xihe.cp.context.summary.SummaryProvider;
 import com.cc01cc.p.xihe.cp.context.summary.SummarySections;
 import com.cc01cc.p.xihe.cp.usage.UsageCostMapper;
@@ -29,19 +30,22 @@ public class ContextService {
     private final com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager;
     private final SummaryProvider summaryProvider;
     private final UsageCostMapper usageCostMapper;
+    private final ConstraintExtractor constraintExtractor;
 
     public ContextService(EventStoreService eventStoreService,
                           ContextProjectionService projectionService,
                           ObjectMapper objectMapper,
                           com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager,
                           SummaryProvider summaryProvider,
-                          UsageCostMapper usageCostMapper) {
+                          UsageCostMapper usageCostMapper,
+                          ConstraintExtractor constraintExtractor) {
         this.eventStoreService = eventStoreService;
         this.objectMapper = objectMapper;
         this.projectionService = projectionService;
         this.sseManager = sseManager;
         this.summaryProvider = summaryProvider;
         this.usageCostMapper = usageCostMapper;
+        this.constraintExtractor = constraintExtractor;
     }
 
     @Transactional
@@ -166,7 +170,7 @@ public class ContextService {
                     sessionId, effectiveTrigger, summary.length(),
                     previousSummary == null ? 0 : previousSummary.length());
             recordIneffectiveCompaction(sessionId, workspaceId, userId);
-            summary = buildTruncationOnlySummary(context);
+            summary = buildTruncationOnlySummary(sessionId, context, previousSummary);
             provider = "rule";
             model = "";
             fallbackReason = "shrink_failed";
@@ -271,11 +275,20 @@ public class ContextService {
         return summary.length() < sourceChars || summary.length() <= previousSummary.length();
     }
 
-    /** Degradation path when shrink validation fails: keep-recent only. */
-    private String buildTruncationOnlySummary(ObjectNode context) {
+    /** Degradation path when shrink validation fails: keep-recent plus constraints. */
+    private String buildTruncationOnlySummary(String sessionId, ObjectNode context, String previousSummary) {
         ArrayNode messages = (ArrayNode) context.get("messages");
         StringBuilder sb = new StringBuilder();
         sb.append(SummarySections.GOAL).append(" (compacted by truncation)\n");
+        // PLAN-0367 decision #1 (F1): [Constraints] must survive the truncation
+        // degradation (0354 I3) — same code extractor as both providers, with
+        // prior constraints carried forward.
+        Map<String, String> prior = SummarySections.parse(previousSummary);
+        String constraints = constraintExtractor.renderSection(
+                sessionId, messages, prior.get(SummarySections.CONSTRAINTS));
+        if (constraints != null) {
+            sb.append(constraints).append('\n');
+        }
         sb.append(SummarySections.RECENT).append(' ');
         if (messages != null) {
             int size = messages.size();

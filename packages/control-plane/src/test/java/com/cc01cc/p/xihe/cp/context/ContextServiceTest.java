@@ -304,6 +304,54 @@ class ContextServiceTest extends AbstractH2Test {
     }
 
     @org.junit.jupiter.api.Test
+    void shrinkFailed_truncationKeepsConstraints() {
+        // PLAN-0367 F1 (0354 I3): when shrink validation fails, the truncation
+        // degradation must still carry [Constraints]. The constraint message is
+        // outside the keep-recent tail after the first compaction, so the phrase
+        // can only survive through prior carry-forward.
+        String sessionId = "aaaaaab1-0000-0000-0000-000000000000";
+        String constraint = "Do not touch the production config, ask first";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", constraint)));
+        for (int i = 0; i < 14; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "s" + i)));
+        }
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+
+        // Short non-recent messages + a long keep-recent tail: the next rule
+        // summary (prior carry + keep-recent tail) cannot shrink below the
+        // reclaimed source, so the shrink validation must fail.
+        for (int i = 0; i < 5; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "n" + i)));
+        }
+        for (int i = 0; i < 10; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                    "message", Map.of("role", "human", "content", "L".repeat(4000))));
+        }
+        contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+
+        var applied = contextService.readEvents(sessionId, 0L).stream()
+                .filter(e -> "compaction.applied".equals(e.getEventType()))
+                .reduce((a, b) -> b).orElseThrow();
+        com.fasterxml.jackson.databind.JsonNode payload;
+        try {
+            payload = new com.fasterxml.jackson.databind.ObjectMapper().readTree(applied.getPayload());
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        assertThat(payload.path("fallbackReason").asText()).isEqualTo("shrink_failed");
+        String summary = payload.path("summary").asText();
+        assertThat(summary).contains("[Constraints]");
+        assertThat(summary).contains("Do not touch the production config");
+    }
+
+    @org.junit.jupiter.api.Test
     void constraints_extractedVerbatimFromUserMessagesAndApprovals() {
         // PLAN-0341 T1.5 (I6): explicit user constraints + decided approvals
         // land in [Constraints] verbatim; hardcoded [Decisions] is gone.
