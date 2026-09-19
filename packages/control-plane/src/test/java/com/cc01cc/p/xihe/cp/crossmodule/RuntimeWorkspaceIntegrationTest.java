@@ -292,6 +292,16 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void workspaceImportCanBeQueuedWithoutSession() {
+        wireMock.resetAll();
+        wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/imports"))
+                .willReturn(aResponse().withStatus(202).withHeader("Content-Type", "application/json")
+                        .withBody("{\"status\":\"running\",\"importId\":\"runtime-import\"}")));
+        wireMock.stubFor(get(urlPathMatching("/internal/v1/runtime/workspaces/.*/imports/.*"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"status\":\"running\",\"filesCopied\":1}")));
+        wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/imports/.*/cancel"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"status\":\"cancelled\"}")));
         String email = "workspace-import-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
         org.springframework.http.ResponseEntity<java.util.Map> registration = restTemplate.postForEntity(
                 url("/api/v1/auth/register"),
@@ -313,7 +323,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                 java.util.Map.class);
 
         assertEquals(202, accepted.getStatusCode().value());
-        assertEquals("queued", accepted.getBody().get("status"));
+        assertEquals("running", accepted.getBody().get("status"));
         String importId = (String) accepted.getBody().get("importId");
 
         org.springframework.http.ResponseEntity<java.util.Map> status = restTemplate.exchange(
