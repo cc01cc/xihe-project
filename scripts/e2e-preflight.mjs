@@ -7,12 +7,21 @@
 // whether something needs handling.
 //
 // Usage:
-//   node scripts/e2e-preflight.mjs [--ports=27000-28020[,A-B...]] [--logs=8] [--strict]
+//   node scripts/e2e-preflight.mjs [--ports=27000-28020[,A-B...]] [--logs=8] [--strict] [--ignore-build] [--self-pid=N]
 //
-//   --ports=A-B   replace the default e2e port block (repeat/comma-separate to
-//                 add more ranges). The five xihe dev ports are always checked.
-//   --logs=N      how many recent .local/dev entries to print (default 8).
-//   --strict      also fail (exit 1) on warnings, not only on blocking findings.
+//   --ports=A-B    replace the default e2e port block (repeat/comma-separate to
+//                  add more ranges). The five xihe dev ports are always checked.
+//   --logs=N       how many recent .local/dev entries to print (default 8).
+//   --strict       also fail (exit 1) on warnings, not only on blocking findings.
+//   --ignore-build skip section 3 (artifact freshness); used by the runner when
+//                  the CP jar will not be booted at all (--jar-mode=run).
+//   --self-pid=N[,M]  the caller's own runner pid(s); a newest-log pid file
+//                  matching one of them is the caller's own run (or the
+//                  persistent stack it reuses), not a concurrent one.
+//   --allow-ports=A,B  listeners on these ports are the caller's own persistent
+//                  stack (reuse runs), not a leaked run.
+//   --own-run-id=ID    e2e-labelled sandboxes for this run id belong to the
+//                  caller's own persistent stack (reuse runs), not residue.
 //
 // Exit codes: 0 = no blocking finding; 1 = needs handling; 2 = usage error.
 //
@@ -42,6 +51,9 @@ const E2E_BASE_MIN = 27000
 const E2E_BASE_COUNT = 1500
 const E2E_MAX_OFFSET = 12
 const E2E_DEFAULT_RANGE = [E2E_BASE_MIN, E2E_BASE_MIN + E2E_BASE_COUNT - 1 + E2E_MAX_OFFSET]
+// HTTP.sys AURASDK reservation; the runner shifts its block around it, so a
+// listener there is never an e2e conflict (see e2e-host.mjs portBase).
+const OS_EXCLUDED_PORTS = new Set([27339])
 const devPorts = [
   { port: 12630, name: 'ui', blocking: false },
   { port: 12631, name: 'cp', blocking: false },
@@ -54,12 +66,33 @@ let e2eRanges = null
 let portsCustomized = false
 let logCount = 8
 let strict = false
+let ignoreBuild = false
+const selfPids = new Set()
+let ownRunId = ''
+const allowedPorts = new Set()
 for (const arg of process.argv.slice(2)) {
   if (arg === '--help' || arg === '-h') {
-    console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 27).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'))
+    console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 34).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'))
     process.exit(0)
   } else if (arg === '--strict') {
     strict = true
+  } else if (arg === '--ignore-build') {
+    ignoreBuild = true
+  } else if (arg.startsWith('--self-pid=')) {
+    for (const part of arg.slice('--self-pid='.length).split(',')) {
+      const pid = Number(part.trim())
+      if (!Number.isInteger(pid) || pid <= 0) usage(`invalid --self-pid entry: ${part}`)
+      selfPids.add(pid)
+    }
+  } else if (arg.startsWith('--allow-ports=')) {
+    for (const part of arg.slice('--allow-ports='.length).split(',')) {
+      const port = Number(part.trim())
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) usage(`invalid --allow-ports entry: ${part}`)
+      allowedPorts.add(port)
+    }
+  } else if (arg.startsWith('--own-run-id=')) {
+    ownRunId = arg.slice('--own-run-id='.length).trim()
+    if (!ownRunId) usage(`invalid --own-run-id: ${arg}`)
   } else if (arg.startsWith('--logs=')) {
     logCount = Number(arg.slice('--logs='.length))
     if (!Number.isInteger(logCount) || logCount < 1 || logCount > 50) usage(`invalid --logs: ${arg}`)
@@ -80,7 +113,7 @@ if (!e2eRanges) e2eRanges = [E2E_DEFAULT_RANGE]
 
 function usage(message) {
   console.error(`e2e-preflight: ${message}`)
-  console.error('usage: node scripts/e2e-preflight.mjs [--ports=A-B[,A-B]] [--logs=N] [--strict]')
+  console.error('usage: node scripts/e2e-preflight.mjs [--ports=A-B[,A-B]] [--logs=N] [--strict] [--ignore-build] [--self-pid=N]')
   process.exit(2)
 }
 
@@ -168,21 +201,34 @@ if (!dockerVersion.ok) {
   const networks = runCapture(dockerCmd, ['network', 'ls', '--format', '{{.Name}}'])
   const residueContainers = []
   const e2eSandboxes = []
+  const ownSandboxes = []
+  const ownComposeContainers = []
   const devSandboxes = []
+  // The runner's compose project is `xihe-e2e-host-<runId without punctuation>`;
+  // reuse runs own those containers/volumes/networks (teardown removes them).
+  const ownComposePrefix = ownRunId ? `xihe-e2e-host-${ownRunId.replace(/[^a-z0-9]/gi, '').toLowerCase()}` : ''
   if (ps.ok) {
     for (const line of ps.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
       const [name, status = '', labels = ''] = line.split('\t')
-      if (name.startsWith('xihe-e2e-')) residueContainers.push({ name, status })
-      else if (name.startsWith('xihe-workspace-')) {
-        if (labels.includes('xihe.e2e.run-id=')) e2eSandboxes.push({ name, status })
+      if (name.startsWith('xihe-e2e-')) {
+        if (ownComposePrefix && name.toLowerCase().startsWith(ownComposePrefix)) ownComposeContainers.push({ name, status })
+        else residueContainers.push({ name, status })
+      } else if (name.startsWith('xihe-workspace-')) {
+        const label = /xihe\.e2e\.run-id=([^,\s]+)/.exec(labels)
+        if (label && ownRunId && label[1] === ownRunId) ownSandboxes.push({ name, status })
+        else if (labels.includes('xihe.e2e.run-id=')) e2eSandboxes.push({ name, status })
         else devSandboxes.push({ name, status })
       }
     }
   } else {
     add('FAIL', 'docker', 'cannot list containers (`docker ps -a` failed)', ps.stderr.trim().split('\n')[0])
   }
-  const residueVolumes = volumes.ok ? volumes.stdout.split('\n').map((l) => l.trim()).filter((n) => n.startsWith('xihe-e2e-')) : []
-  const residueNetworks = networks.ok ? networks.stdout.split('\n').map((l) => l.trim()).filter((n) => n.startsWith('xihe-e2e-')) : []
+  const allE2eVolumes = volumes.ok ? volumes.stdout.split('\n').map((l) => l.trim()).filter((n) => n.startsWith('xihe-e2e-')) : []
+  const allE2eNetworks = networks.ok ? networks.stdout.split('\n').map((l) => l.trim()).filter((n) => n.startsWith('xihe-e2e-')) : []
+  const ownComposeVolumes = ownComposePrefix ? allE2eVolumes.filter((n) => n.toLowerCase().startsWith(ownComposePrefix)) : []
+  const ownComposeNetworks = ownComposePrefix ? allE2eNetworks.filter((n) => n.toLowerCase().startsWith(ownComposePrefix)) : []
+  const residueVolumes = allE2eVolumes.filter((n) => !ownComposeVolumes.includes(n))
+  const residueNetworks = allE2eNetworks.filter((n) => !ownComposeNetworks.includes(n))
   if (residueContainers.length > 0) {
     add('FAIL', 'docker', `${residueContainers.length} residual xihe-e2e-* container(s)`, 'interrupted run; tear down before starting a new one (or reuse via XIHE_E2E_EXTERNAL_SERVER=1)')
     for (const item of residueContainers) console.log(`  FAIL  container ${item.name} (${item.status})`)
@@ -201,6 +247,14 @@ if (!dockerVersion.ok) {
   }
   if (residueContainers.length === 0 && e2eSandboxes.length === 0 && residueVolumes.length === 0 && residueNetworks.length === 0) {
     console.log('  OK    no residual xihe-e2e-* containers/volumes/networks, no e2e-labelled sandboxes')
+  }
+  for (const item of ownComposeContainers) {
+    console.log(`  INFO  container ${item.name} (${item.status}) — this caller's own persistent stack; removed by --teardown`)
+  }
+  if (ownComposeVolumes.length > 0) console.log(`  INFO  volume ${ownComposeVolumes.join(', ')} — this caller's own persistent stack`)
+  if (ownComposeNetworks.length > 0) console.log(`  INFO  network ${ownComposeNetworks.join(', ')} — this caller's own persistent stack`)
+  for (const item of ownSandboxes) {
+    console.log(`  INFO  sandbox ${item.name} (${item.status}) — this caller's own stack run (${ownRunId}); removed by --teardown`)
   }
   for (const item of devSandboxes) {
     console.log(`  INFO  dev sandbox ${item.name} (${item.status}) — not e2e-carried; do not remove blindly`)
@@ -222,8 +276,12 @@ if (listenFindings === null) {
     const dev = devPorts.find((p) => p.port === item.port)
     const detail = `port ${item.port} (${item.address || '?'}) held by pid ${item.pid} ${item.process || ''}`.trim()
     if (inE2eBlock) {
-      add('FAIL', 'ports', detail, 'e2e block must be free: a live run may own it, or a service leaked; do not start a second run')
-      console.log(`  FAIL  ${detail} — inside the e2e block`)
+      if (allowedPorts.has(item.port)) {
+        console.log(`  INFO  ${detail} — this caller's own stack (--allow-ports); not a leaked run`)
+      } else {
+        add('FAIL', 'ports', detail, 'e2e block must be free: a live run may own it, or a service leaked; do not start a second run')
+        console.log(`  FAIL  ${detail} — inside the e2e block`)
+      }
     } else if (dev?.blocking) {
       add('FAIL', 'ports', `${detail} — dev runtime blocks cargo-run (binary lock, os error 5)`, 'stop the dev runtime first: mise run dev:host:stop')
       console.log(`  FAIL  ${detail} — dev runtime binary lock`)
@@ -236,6 +294,9 @@ console.log('')
 
 // ------------------------------------------------------------- 3. artifacts
 console.log('[3/4] build artifacts (source mtime vs artifact mtime)')
+if (ignoreBuild) {
+  console.log('  INFO  artifact freshness checks skipped (--ignore-build)')
+} else {
 const cpDir = join(projectDir, 'packages', 'control-plane')
 const cpTarget = join(cpDir, 'target')
 let cpJar = null
@@ -304,6 +365,7 @@ if (lockHits.length > 0) {
   }
   console.log(`  INFO  lock files present (${lockHits.length}): ${lockHits.map((h) => `${h.path.split(/[\\/]/).pop()}(${fmtAge(now - h.mtimeMs)})`).join(', ')} — cargo keeps these files; only recent mtime means an active build`)
 }
+}
 console.log('')
 
 // --------------------------------------------------------------- 4. digest
@@ -326,7 +388,9 @@ if (!existsSync(devDir)) {
     if (existsSync(pidFile)) {
       const rawPid = Number(readFileSync(pidFile, 'utf8').trim())
       const alive = pidAlive(rawPid)
-      if (alive) {
+      if (alive && selfPids.has(rawPid)) {
+        console.log(`  INFO  newest log ${newestLog.name} is this caller's own run (pid ${rawPid}); not a concurrent run`)
+      } else if (alive) {
         add('FAIL', 'runs', `newest host-e2e log ${newestLog.name} has a live runner pid ${rawPid} (${fmtAge(now - newestLog.mtimeMs)} since last log write)`, 'another host E2E run appears active — do not start a second one; wait for teardown or check the log')
         console.log(`  FAIL  newest log ${newestLog.name} looks ACTIVE (pid ${rawPid} alive, last write ${fmtAge(now - newestLog.mtimeMs)} ago)`)
       } else {
@@ -379,7 +443,10 @@ function queryListeners(ranges, dev) {
   for (const [a, b] of ranges) for (let p = a; p <= b; p += 1) wanted.add(p)
   for (const entry of dev) wanted.add(entry.port)
   if (isWindows) {
-    const rangeLiteral = ranges.map(([a, b]) => `@(${a},${b})`).join(', ')
+    // Leading commas keep each range a nested array: @(,@(a,b)) is a one-element
+    // array holding @(a,b), whereas @(@(a,b)) flattens to a two-int array and
+    // makes `$_[0]`/`$_[1]` null (silently reporting zero listeners).
+    const rangeLiteral = ranges.map(([a, b]) => `,@(${a},${b})`).join('')
     const script = [
       `$ranges = @(${rangeLiteral})`,
       '$hits = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {',
@@ -398,12 +465,14 @@ function queryListeners(ranges, dev) {
     try {
       const parsed = JSON.parse(trimmed)
       const list = Array.isArray(parsed) ? parsed : [parsed]
-      return list.filter((item) => wanted.has(Number(item.port))).map((item) => ({
-        port: Number(item.port),
-        address: item.address,
-        pid: item.pid,
-        process: item.process,
-      }))
+      return list
+        .filter((item) => item && wanted.has(Number(item.port)) && !OS_EXCLUDED_PORTS.has(Number(item.port)))
+        .map((item) => ({
+          port: Number(item.port),
+          address: item.address,
+          pid: item.pid,
+          process: item.process,
+        }))
     } catch {
       return null
     }
@@ -417,7 +486,7 @@ function queryListeners(ranges, dev) {
       : /LISTEN\s+\d+\s+\d+\s+\S*?:(\d+)\s+.*?(?:pid=(\d+))?/.exec(line)
     if (!match) continue
     const port = Number(match[1])
-    if (wanted.has(port)) hits.push({ port, address: '', pid: match[2] ?? '?', process: '' })
+    if (wanted.has(port) && !OS_EXCLUDED_PORTS.has(port)) hits.push({ port, address: '', pid: match[2] ?? '?', process: '' })
   }
   return hits
 }

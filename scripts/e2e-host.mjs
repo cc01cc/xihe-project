@@ -1,8 +1,8 @@
-import { join, dirname } from 'node:path'
+import { join, dirname, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { stat as stat2, readdir, writeFile, readFile } from 'node:fs/promises'
+import { randomBytes, createHash } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { stat as stat2, readdir, writeFile, readFile, mkdir } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer } from 'node:net'
 
@@ -21,11 +21,90 @@ const isTeardown = process.argv.includes('--teardown')
 const stateFile = join(projectDir, '.tmp', 'e2e-host', 'persistent-stack.json')
 const externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === '1'
 
+// PLAN-0375 (BL-40) runner flags. Everything the runner consumes itself must be
+// kept out of the Playwright passthrough (see runPlaywright), otherwise the
+// test CLI would reject the unknown option.
+const showHelp = process.argv.includes('--help') || process.argv.includes('-h')
+const listBatches = process.argv.includes('--list-batches')
+const skipPreflight = process.argv.includes('--skip-preflight')
+const validateAtEnd = process.argv.includes('--validate-at-end')
+const jarModeArg = process.argv.find((arg) => arg.startsWith('--jar-mode='))
+const jarMode = jarModeArg?.slice('--jar-mode='.length) ?? 'auto'
+const batchArg = process.argv.find((arg) => arg.startsWith('--batch='))
+const batchName = batchArg?.slice('--batch='.length) ?? ''
+const reportNameArg = process.argv.find((arg) => arg.startsWith('--report-name='))
+const reportName = reportNameArg?.slice('--report-name='.length) ?? ''
+if (!['auto', 'use', 'rebuild', 'run'].includes(jarMode)) {
+  console.error(`[e2e-host] invalid --jar-mode=${jarMode}; expected auto | use | rebuild | run`)
+  process.exit(2)
+}
+const e2eBatchesFile = join(projectDir, 'scripts', 'e2e-batches.jsonc')
+
+// PLAN-0375 (R4): batch manifest. A batch pins one llm-mode and a spec list, so
+// `--batch=<name>` replaces hand-listing specs for a lane/mode combination.
+function stripJsonComments(text) {
+  let out = ''
+  let inString = false
+  let inLineComment = false
+  let inBlockComment = false
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    const next = text[i + 1]
+    if (inLineComment) {
+      if (ch === '\n') { inLineComment = false; out += ch }
+      continue
+    }
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') { inBlockComment = false; i += 1 }
+      continue
+    }
+    if (inString) {
+      out += ch
+      if (ch === '\\') { out += next ?? ''; i += 1 } else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; out += ch; continue }
+    if (ch === '/' && next === '/') { inLineComment = true; i += 1; continue }
+    if (ch === '/' && next === '*') { inBlockComment = true; i += 1; continue }
+    out += ch
+  }
+  return out
+}
+function loadE2eBatches() {
+  if (!existsSync(e2eBatchesFile)) throw new Error(`batch manifest not found: ${e2eBatchesFile}`)
+  const parsed = JSON.parse(stripJsonComments(readFileSync(e2eBatchesFile, 'utf8')))
+  if (!parsed || typeof parsed.batches !== 'object' || parsed.batches === null) {
+    throw new Error(`batch manifest has no "batches" object: ${e2eBatchesFile}`)
+  }
+  return parsed.batches
+}
+let batch = null
+if (batchName) {
+  let batches
+  try {
+    batches = loadE2eBatches()
+  } catch (error) {
+    console.error(`[e2e-host] ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(2)
+  }
+  batch = batches[batchName]
+  if (!batch) {
+    console.error(`[e2e-host] unknown --batch=${batchName}; available: ${Object.keys(batches).join(', ')}`)
+    process.exit(2)
+  }
+  if (!Array.isArray(batch.specs) || batch.specs.length === 0) {
+    console.error(`[e2e-host] batch ${batchName} has no specs`)
+    process.exit(2)
+  }
+}
+
 const workerCount = process.env.XIHE_E2E_WORKERS ?? '1'
 const readinessTimeoutMs = Number(process.env.XIHE_E2E_READY_TIMEOUT_MS ?? '180000')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const uvCommand = process.platform === 'win32' ? 'uv.exe' : 'uv'
 const nodeCommand = process.execPath
+const mvnCommand = process.platform === 'win32' ? 'mvn.cmd' : 'mvn'
+const miseCommand = process.platform === 'win32' ? 'mise.exe' : 'mise'
 
 const portBaseRaw = 27000 + (Math.abs(hashString(e2eRunId)) % 1500)
 // 27339 is excluded at OS level (HTTP.sys AURASDK reservation, see
@@ -41,7 +120,8 @@ let fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT ?? String(portBase + 10)
 let fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portBase + 11)
 let fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT ?? String(portBase + 12)
 const llmModeArg = process.argv.find((arg) => arg.startsWith('--llm-mode='))
-const llmMode = process.env.XIHE_E2E_LLM_MODE ?? llmModeArg?.slice('--llm-mode='.length) ?? 'mock'
+const llmMode = process.env.XIHE_E2E_LLM_MODE ?? llmModeArg?.slice('--llm-mode='.length) ?? batch?.llmMode ?? 'mock'
+const batchSpecs = batch?.specs ?? []
 const skipRuntime = process.argv.includes('--skip-runtime')
 // Supplementary real-provider sampling (PLAN-247, requires explicit user
 // approval per run). The key travels only via this env var into the CP Admin
@@ -117,6 +197,207 @@ function hashString(input) {
     h = (h * 31 + input.charCodeAt(i)) | 0
   }
   return h
+}
+
+function fmtAge(ms) {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.round(s / 60)
+  if (m < 120) return `${m}m`
+  const h = Math.round(m / 60)
+  if (h < 48) return `${h}h`
+  return `${Math.round(h / 24)}d`
+}
+
+// PLAN-0375 (R2): same source-vs-artifact comparison as e2e-preflight.mjs, but
+// in the runner so it can *repair* the one condition it owns (a stale CP jar)
+// before the read-only preflight would otherwise block on it.
+function newestMtimeSync(root, skipDirs = ['node_modules', 'target', '.git']) {
+  let newest = { path: root, mtimeMs: 0 }
+  const stack = [root]
+  while (stack.length > 0) {
+    const dir = stack.pop()
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (!skipDirs.includes(entry.name)) stack.push(full)
+      } else if (entry.isFile()) {
+        try {
+          const stat = statSync(full)
+          if (stat.mtimeMs > newest.mtimeMs) newest = { path: full, mtimeMs: stat.mtimeMs }
+        } catch {
+          // unreadable entry: freshness stays conservative
+        }
+      }
+    }
+  }
+  return newest
+}
+
+function resolveCpJarState() {
+  const cpDir = join(projectDir, 'packages', 'control-plane')
+  const targetDir = join(cpDir, 'target')
+  let jar = null
+  if (existsSync(targetDir)) {
+    for (const name of readdirSync(targetDir)) {
+      if (!/^control-plane-.*\.jar$/.test(name)) continue
+      const path = join(targetDir, name)
+      const stat = statSync(path)
+      if (!jar || stat.mtimeMs > jar.mtimeMs) jar = { path, name, mtimeMs: stat.mtimeMs }
+    }
+  }
+  let newestSource = newestMtimeSync(join(cpDir, 'src', 'main'))
+  const pomPath = join(cpDir, 'pom.xml')
+  if (existsSync(pomPath)) {
+    const pomStat = statSync(pomPath)
+    if (pomStat.mtimeMs > newestSource.mtimeMs) newestSource = { path: pomPath, mtimeMs: pomStat.mtimeMs }
+  }
+  return { cpDir, jar, newestSource }
+}
+
+// R2 decision table (--jar-mode): auto = fresh jar or rebuild-then-use, falling
+// back to `mvn spring-boot:run` when the rebuild cannot produce a fresh jar;
+// use = always boot the existing jar; rebuild = always rebuild first; run =
+// never boot a jar. A stale jar must never be used silently.
+async function resolveCpBootPlan() {
+  if (jarMode === 'run') return { mode: 'run', jar: null, reason: '--jar-mode=run' }
+  const state = resolveCpJarState()
+  if (!state.jar) return { mode: 'run', jar: null, reason: 'no CP jar in target/ (mvn spring-boot:run)' }
+  const stale = state.newestSource.mtimeMs > state.jar.mtimeMs
+  if (jarMode === 'use') {
+    if (stale) console.warn(`[e2e-host] CP jar ${state.jar.name} is STALE but --jar-mode=use; booting it as-is`)
+    return { mode: 'jar', jar: state.jar, reason: stale ? 'stale, forced by --jar-mode=use' : 'fresh (forced use)' }
+  }
+  if (jarMode === 'rebuild' || stale) {
+    if (stale) {
+      console.log(`[e2e-host] CP jar ${state.jar.name} is stale vs ${state.newestSource.path} by ${fmtAge(state.newestSource.mtimeMs - state.jar.mtimeMs)}; rebuilding (mvn -q -DskipTests package)`)
+    } else {
+      console.log(`[e2e-host] --jar-mode=rebuild: rebuilding CP jar (mvn -q -DskipTests package)`)
+    }
+    const rebuild = await run(mvnCommand, ['-q', '-DskipTests', 'package'], { cwd: state.cpDir, stdio: 'inherit' })
+    if (rebuild.code !== 0) {
+      console.warn(`[e2e-host] CP jar rebuild failed (exit=${rebuild.code}); falling back to mvn spring-boot:run`)
+      return { mode: 'run', jar: null, reason: 'rebuild failed' }
+    }
+    const after = resolveCpJarState()
+    if (!after.jar || after.newestSource.mtimeMs > after.jar.mtimeMs) {
+      console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
+      return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
+    }
+    console.log(`[e2e-host] CP jar rebuilt: ${after.jar.name} (${fmtAge(Date.now() - after.jar.mtimeMs)} old)`)
+    return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }
+  }
+  return { mode: 'jar', jar: state.jar, reason: `fresh (${fmtAge(Date.now() - state.jar.mtimeMs)} old)` }
+}
+
+function printRunnerHelp() {
+  console.log(`XH host E2E runner (PLAN-0375)
+
+usage: node scripts/e2e-host.mjs [runner flags] [playwright args...]
+
+runner flags:
+  --llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / history-marker / job / job-cancel / exec_command / overflow / success)
+  --batch=<name>        expand a batch from scripts/e2e-batches.jsonc; the batch llm-mode applies unless --llm-mode is explicit
+  --list-batches        list batch names, modes and spec counts, then exit
+  --report-name=<file>  write the Playwright JSON report to .local/dev/<file> (adds the list,json reporter unless one is given)
+  --jar-mode=<mode>     CP boot artifact policy: auto (default) | use | rebuild | run
+  --skip-preflight      skip the read-only preflight (not recommended)
+  --validate-at-end     run "mise run validate" once after the specs (batch closure; default off)
+  --skip-runtime        boot without the Runtime service (chat-only paths)
+  --persistent          boot the isolated stack, record it and exit (see reuse)
+  --teardown            stop the persistent stack recorded by --persistent, then exit
+  --keep                keep isolated resources for debugging
+  --help, -h            this text
+
+stack reuse (iteration; boot once, run many):
+  1) node scripts/e2e-host.mjs --persistent --llm-mode=mock
+  2) XIHE_E2E_EXTERNAL_SERVER=1 node scripts/e2e-host.mjs --llm-mode=<mode> [--batch=<name>] [specs...]
+  3) node scripts/e2e-host.mjs --teardown
+
+playwright args (spec files, --grep, --retries, --reporter, ...) pass through.`)
+}
+
+function printBatchList() {
+  let batches
+  try {
+    batches = loadE2eBatches()
+  } catch (error) {
+    console.error(`[e2e-host] ${error instanceof Error ? error.message : String(error)}`)
+    process.exitCode = 2
+    return
+  }
+  console.log(`XH host E2E batches (${e2eBatchesFile}):`)
+  for (const [name, entry] of Object.entries(batches)) {
+    const mode = entry.llmMode ?? '(runner default)'
+    const specs = Array.isArray(entry.specs) ? entry.specs : []
+    console.log(`  ${name.padEnd(16)} mode=${mode.padEnd(14)} specs=${specs.length}${entry.description ? `  ${entry.description}` : ''}`)
+  }
+}
+
+// PLAN-0375 (R3): per-run artifact fingerprints. The run root is recycled on a
+// successful teardown, so the fingerprints are also printed to the log (which
+// lives in .local/dev) and to <runRoot>/logs/artifacts.json for evidence.
+async function fingerprintArtifact(name, path, used) {
+  const stat = await stat2(path)
+  const buffer = await readFile(path)
+  return {
+    name,
+    used,
+    path: path.replaceAll('\\', '/').replace(`${projectDir.replaceAll('\\', '/')}/`, ''),
+    sizeBytes: stat.size,
+    mtime: new Date(stat.mtimeMs).toISOString(),
+    sha256: createHash('sha256').update(buffer).digest('hex'),
+  }
+}
+
+async function writeArtifactsManifest(cpBootPlan) {
+  if (externalServer && !existsSync(stateFile)) {
+    console.log('[e2e-host] artifact fingerprints skipped (external server without a persistent state file)')
+    return
+  }
+  const artifacts = []
+  if (cpBootPlan?.mode === 'jar' && cpBootPlan.jar && existsSync(cpBootPlan.jar.path)) {
+    artifacts.push(await fingerprintArtifact('control-plane-jar', cpBootPlan.jar.path, true))
+  }
+  const runtimeBinary = join(projectDir, 'packages', 'runtime', 'target', 'debug', process.platform === 'win32' ? 'xihe-runtime.exe' : 'xihe-runtime')
+  if (existsSync(runtimeBinary)) {
+    artifacts.push(await fingerprintArtifact('runtime-debug-binary', runtimeBinary, !skipRuntime))
+  }
+  let gitHead = ''
+  try {
+    const head = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: projectDir })
+    if (head.code === 0) gitHead = head.stdout.trim()
+  } catch {
+    // not a git checkout: the field stays empty
+  }
+  const manifest = {
+    runId: runIdForTests,
+    generatedAt: new Date().toISOString(),
+    llmMode,
+    realRoute,
+    jarMode,
+    cpBoot: cpBootPlan ? { mode: cpBootPlan.mode, reason: cpBootPlan.reason } : { mode: 'external-server', reason: 'stack reuse' },
+    gitHead,
+    artifacts,
+  }
+  const logsDir = join(hostRootParent, runIdForTests, 'logs')
+  try {
+    await mkdir(logsDir, { recursive: true })
+    const manifestPath = join(logsDir, 'artifacts.json')
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+    console.log(`[e2e-host] artifact fingerprints → ${manifestPath}`)
+  } catch (error) {
+    console.warn(`[e2e-host] artifact manifest write failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  for (const artifact of artifacts) {
+    console.log(`[e2e-host] artifact ${artifact.name}: sha256=${artifact.sha256.slice(0, 12)}… size=${artifact.sizeBytes} mtime=${artifact.mtime} used=${artifact.used}`)
+  }
 }
 
 function randomPassword(length) {
@@ -497,9 +778,9 @@ async function configureFakeLlm() {
   console.log(`[e2e-host] fake LLM configuration imported mode=${llmMode}`)
 }
 
-async function removeRunSandboxContainers() {
+async function removeRunSandboxContainers(runId = e2eRunId) {
   const listed = await runCapture(dockerCommand, [
-    'ps', '-aq', '--filter', `label=xihe.e2e.run-id=${e2eRunId}`,
+    'ps', '-aq', '--filter', `label=xihe.e2e.run-id=${runId}`,
   ])
   if (listed.code !== 0) {
     throw new Error(`list e2e Sandbox containers failed: ${listed.stderr.trim()}`)
@@ -538,8 +819,22 @@ async function recycleHostRoot() {
 }
 
 async function runPlaywright() {
-  const testArgs = process.argv.slice(2).filter((arg) => !['--keep', '--skip-runtime'].includes(arg) && !arg.startsWith('--llm-mode='))
-  const playwrightTestArgs = testArgs.length > 0 ? testArgs : ['e2e/real']
+  // PLAN-0375: runner-owned flags must never reach the Playwright CLI.
+  const runnerOnlyArgs = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight', '--validate-at-end', '--list-batches', '--help', '-h'])
+  const runnerOnlyPrefixes = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=']
+  const testArgs = process.argv.slice(2).filter(
+    (arg) => !runnerOnlyArgs.has(arg) && !runnerOnlyPrefixes.some((prefix) => arg.startsWith(prefix)),
+  )
+  let playwrightTestArgs = [...batchSpecs, ...testArgs]
+  if (playwrightTestArgs.length === 0) playwrightTestArgs = ['e2e/real']
+  // PLAN-0375 (R7): --report-name pins the JSON report under .local/dev
+  // without depending on a hand-exported PLAYWRIGHT_JSON_OUTPUT_NAME.
+  const reportPath = reportName
+    ? (isAbsolute(reportName) ? reportName : join(projectDir, '.local', 'dev', reportName))
+    : ''
+  const hasReporter = playwrightTestArgs.some((arg) => arg === '--reporter' || arg.startsWith('--reporter='))
+  if (reportPath && !hasReporter) playwrightTestArgs = ['--reporter=list,json', ...playwrightTestArgs]
+  if (reportPath) console.log(`[e2e-host] JSON report → ${reportPath}`)
   // PLAN-0369: the Agent binds one MCP workspace per process. Specs that move
   // between workspaces restart the Agent through `ensureAgentWorkspaceBinding`
   // and need the exact provider/credential env the Agent was launched with.
@@ -601,6 +896,7 @@ async function runPlaywright() {
       XIHE_E2E_REAL_ROUTE: realRoute,
       XIHE_E2E_HEADED: process.env.XIHE_E2E_HEADED ?? '0',
       XIHE_E2E_BROWSER_CHANNEL: process.env.XIHE_E2E_BROWSER_CHANNEL ?? 'chrome-beta',
+      ...(reportPath ? { PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath } : {}),
     },
   })
 }
@@ -779,6 +1075,15 @@ async function teardownPersistent() {
   const state = JSON.parse(await readFile(stateFile, 'utf8'))
   console.log(`[e2e-host] tearing down persistent stack ${state.runId}`)
   await stopPersistentProcesses(state)
+  // PLAN-0375 (R5): reuse rounds skip per-run container cleanup, so the stack's
+  // Sandbox containers are reclaimed here by the stack run id (otherwise the
+  // next window's preflight reports them as residue).
+  try {
+    const removed = await removeRunSandboxContainers(state.runId)
+    console.log(`[e2e-host] removed ${removed} Sandbox containers for persistent stack ${state.runId}`)
+  } catch (error) {
+    console.warn(`[e2e-host] persistent Sandbox cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
   if (process.platform === 'win32') {
     const probe = await run('docker', ['compose', 'version'], { stdio: ['ignore', 'pipe', 'ignore'] })
     const usePlugin = probe.code === 0
@@ -808,10 +1113,52 @@ async function stopPersistentProcesses(state) {
   }
 }
 
+// PLAN-0375 (R1): read-only preflight gate. Returns false when the run must
+// not start. `allowPorts`/`ownRunId` mark the caller's own persistent stack in
+// reuse mode; `--self-pid` marks this process's own detached log/pid record.
+async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids = [] } = {}) {
+  if (skipPreflight) {
+    console.log('[e2e-host] --skip-preflight set; skipping the read-only preflight')
+    return true
+  }
+  console.log('[e2e-host] preflight (read-only): node scripts/e2e-preflight.mjs')
+  const selfPids = [process.pid, ...extraSelfPids.filter((pid) => Number.isInteger(pid) && pid > 0)]
+  const preflightArgs = [join(projectDir, 'scripts', 'e2e-preflight.mjs'), `--self-pid=${selfPids.join(',')}`]
+  if (jarMode === 'run') preflightArgs.push('--ignore-build')
+  if (allowPorts.length > 0) preflightArgs.push(`--allow-ports=${allowPorts.join(',')}`)
+  if (ownRunId) preflightArgs.push(`--own-run-id=${ownRunId}`)
+  const preflight = await runCapture(nodeCommand, preflightArgs)
+  if (preflight.stdout) process.stdout.write(preflight.stdout)
+  if (preflight.stderr) process.stderr.write(preflight.stderr)
+  if (preflight.code !== 0) {
+    console.error('[e2e-host] preflight reported blocking findings; not starting a run.')
+    console.error('[e2e-host] handle the findings above (teardown residue / ports / active run), then retry.')
+    console.error('[e2e-host] --skip-preflight bypasses this gate (use only when you know the finding is not yours).')
+    return false
+  }
+  return true
+}
+
 async function main() {
+  if (showHelp) {
+    printRunnerHelp()
+    return
+  }
+  if (listBatches) {
+    printBatchList()
+    return
+  }
   if (isTeardown) {
     await teardownPersistent()
     return
+  }
+  // PLAN-0375 (R2): repair the artifact condition the runner owns *before* the
+  // read-only preflight runs — preflight fails on a stale CP jar, so a
+  // preflight-first order would make the rebuild unreachable.
+  let cpBootPlan = null
+  if (!externalServer) {
+    cpBootPlan = await resolveCpBootPlan()
+    console.log(`[e2e-host] CP boot: ${cpBootPlan.mode === 'jar' ? `java -jar ${cpBootPlan.jar.name}` : 'mvn spring-boot:run'} (${cpBootPlan.reason})`)
   }
   console.log(`[e2e-host] runId=${e2eRunId} ports ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort} pg=${pgPort}`)
   console.log(`[e2e-host] isolated pg project=${pgProjectName} db=${pgDatabase} hostRoot=${hostRoot}`)
@@ -821,8 +1168,12 @@ async function main() {
 
   // Reuse mode: a persistent stack is already up — point this run's ports at
   // it and skip every boot phase.
+  let reuseOwnPorts = []
+  let reuseOwnRunId = ''
+  let reuseRunnerPid = 0
   if (externalServer && existsSync(stateFile)) {
     const state = JSON.parse(await readFile(stateFile, 'utf8'))
+    reuseRunnerPid = Number(state.runnerPid) || 0
     uiPort = state.ports.ui; cpPort = state.ports.cp; agentPort = state.ports.agent
     runtimePort = state.ports.runtime; pgPort = state.ports.pg
     // PLAN-0365 (root cause A): restore fixture ports the same way — without
@@ -832,12 +1183,22 @@ async function main() {
     if (state.ports.fakeMcp) fakeMcpPort = state.ports.fakeMcp
     if (state.ports.fakeLlm) fakeLlmPort = state.ports.fakeLlm
     runIdForTests = state.runId
+    reuseOwnPorts = [uiPort, cpPort, agentPort, runtimePort, pgPort, fakeOAuthPort, fakeMcpPort, fakeLlmPort]
+    reuseOwnRunId = state.runId
     console.log(`[e2e-host] persistent stack ${state.runId}: ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort}`)
     // 关键：本进程新生成的 e2eRunId 与栈不同，传给 Playwright 的必须是栈 runId
     // （隔离库名与 host root 都由它派生）。两者都打印，避免操作者误判。
     console.log(`[e2e-host] reuse: 传给 Playwright 的 XIHE_E2E_RUN_ID=${runIdForTests}（本次进程 runId=${e2eRunId} 仅用于日志）`)
   } else if (externalServer) {
     console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')
+  }
+
+  // PLAN-0375 (R1): open the window with the read-only preflight. It runs after
+  // the reuse restore so the caller's own persistent stack (ports + sandbox
+  // labels) is recognised instead of being reported as leaked residue.
+  if (!(await runPreflightGate({ allowPorts: reuseOwnPorts, ownRunId: reuseOwnRunId, extraSelfPids: [reuseRunnerPid] }))) {
+    process.exitCode = 1
+    return
   }
 
   if (externalServer) {
@@ -872,9 +1233,10 @@ async function main() {
        XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
        XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword,
      }
-    const cpJar = join(projectDir, 'packages', 'control-plane', 'target', 'control-plane-0.1.0.jar')
-    const useCpJar = existsSync(cpJar)
-    if (useCpJar) console.log('[e2e-host] CP boot via pre-built fat jar (java -jar); mvn package to refresh it')
+    const useCpJar = cpBootPlan?.mode === 'jar'
+    const cpJar = useCpJar ? cpBootPlan.jar.path : null
+    if (useCpJar) console.log(`[e2e-host] CP boot via fat jar ${cpBootPlan.jar.name} (${cpBootPlan.reason})`)
+    else console.log(`[e2e-host] CP boot via mvn spring-boot:run (${cpBootPlan?.reason ?? 'external decision'})`)
 
     const bootTasks = [
       // PostgreSQL first (CP datasource needs it), but everything else in
@@ -1005,6 +1367,10 @@ async function main() {
     for (const entry of dockerProcesses) pids[entry.name] = entry.child.pid ?? null
     await writeFile(stateFile, JSON.stringify({
       runId: e2eRunId,
+      // PLAN-0375 (R5): the stack supervisor's pid; reuse runs hand it to the
+      // preflight so the stack's continuously-written log is not mistaken for
+      // a concurrent run (see runPreflightGate).
+      runnerPid: process.pid,
       // PLAN-0365 (root cause A): fixture ports must round-trip too — external
       // spec runs inject them into Playwright, and a stale random port yields
       // ERR_CONNECTION_REFUSED in the OAuth/MCP fixture flows.
@@ -1021,6 +1387,7 @@ async function main() {
     process.exitCode = 0
     return
   }
+  await writeArtifactsManifest(cpBootPlan)
   result = await runPlaywright()
   const teardown = await cleanup()
   if (!teardown.ok) {
@@ -1030,6 +1397,19 @@ async function main() {
     }
     process.exitCode = 2
     return
+  }
+  // PLAN-0375 (R6): validate is a batch-closure action, not an iteration one.
+  // It runs after teardown: with the isolated Runtime still up, `cargo build`
+  // would hit the Windows binary lock (os error 5).
+  if (validateAtEnd) {
+    console.log('[e2e-host] --validate-at-end: running "mise run validate" once (batch closure)')
+    const validateResult = await run(miseCommand, ['run', 'validate'], { stdio: 'inherit' })
+    if (validateResult.code !== 0) {
+      console.error(`[e2e-host] validate failed with exit=${validateResult.code}`)
+      if (result.code === 0) result = { code: validateResult.code }
+    } else {
+      console.log('[e2e-host] validate passed')
+    }
   }
   process.exitCode = result.code
   // ③2 (PLAN-294 review): Host E2E requires the dev runtime stopped (binary

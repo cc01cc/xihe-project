@@ -1,0 +1,80 @@
+{
+  // XH host E2E batch manifest (PLAN-0375 R4, BL-40).
+  //
+  // One batch = one isolated run with a single llm-mode. `--batch=<name>` on
+  // scripts/e2e-host.mjs expands `specs`; the batch `llmMode` applies unless
+  // --llm-mode= (or XIHE_E2E_LLM_MODE) is given explicitly. Spec mode gates
+  // live in the specs themselves: a run executes the cases whose gate matches
+  // the selected mode and skips the rest (that is expected, not a failure).
+  //
+  // Spec paths are relative to packages/ui (Playwright cwd).
+  "batches": {
+    "smoke": {
+      "description": "stack smoke first: UI health + chat availability",
+      "llmMode": "mock",
+      "specs": ["e2e/real/ui-health.spec.ts", "e2e/real/chat-availability.spec.ts"]
+    },
+    "mock-full": {
+      "description": "host lane full suite in mock mode (0368/0369 baseline 41P/0F/30S)",
+      "llmMode": "mock",
+      "specs": ["e2e/real"]
+    },
+    "real-full": {
+      "description": "host lane full suite on the real provider (key-gated; 0372 baseline 42P/0F/31S)",
+      "llmMode": "real",
+      "specs": ["e2e/real"]
+    },
+    "write-file": {
+      "description": "deterministic write_file tool-call gate (journey-a/c, checkpoints, approval reuse, usage)",
+      "llmMode": "write_file",
+      "specs": [
+        "e2e/real/journey-a.spec.ts",
+        "e2e/real/journey-c.spec.ts",
+        "e2e/real/checkpoint-slices.spec.ts",
+        "e2e/real/checkpoint-rollback.spec.ts",
+        "e2e/real/approval-reuse.spec.ts",
+        "e2e/real/usage-line.spec.ts"
+      ]
+    },
+    "approval": {
+      "description": "approval pass/reject/persist chain",
+      "llmMode": "approval",
+      "specs": ["e2e/real/approval.spec.ts"]
+    },
+    "history-marker": {
+      "description": "fake LLM history markers (journey-d D1/D2, circuit breaker)",
+      "llmMode": "history-marker",
+      "specs": ["e2e/real/journey-d.spec.ts", "e2e/real/journey-d-circuit.spec.ts"]
+    },
+    "job": {
+      "description": "durable job archive and resume",
+      "llmMode": "job",
+      "specs": ["e2e/real/job-resume.spec.ts"]
+    },
+    "job-cancel": {
+      "description": "single job cancel four-phase termination",
+      "llmMode": "job-cancel",
+      "specs": ["e2e/real/plan0366-mcp-status-job-cancel.spec.ts"]
+    },
+    "exec-command": {
+      "description": "diagnostics injection/rendering via exec_command",
+      "llmMode": "exec_command",
+      "specs": ["e2e/real/diagnostics.spec.ts"]
+    },
+    "overflow": {
+      "description": "context overflow -> compact -> retry",
+      "llmMode": "overflow",
+      "specs": ["e2e/real/journey-d-overflow.spec.ts"]
+    },
+    "success": {
+      "description": "user-layer config override applies to the next run",
+      "llmMode": "success",
+      "specs": ["e2e/real/config-run-effective.spec.ts"]
+    },
+    "evidence": {
+      "description": "visual/manual evidence artifacts — run last, not a regular gate",
+      "llmMode": "mock",
+      "specs": ["e2e/real/screenshots.spec.ts", "e2e/real/settings-visual.spec.ts"]
+    }
+  }
+}
