@@ -22,6 +22,16 @@ Agent 模块负责 LLM 编排、工具调用与上下文管理。为降低对 La
 2. **可替换的工具实现** — 通过 `BaseAgentTool` 接口隔离 `BaseTool`。
 3. **可观测、可恢复的对话状态** — 通过 CP Event Store 持久化事件，CP Projection Service 生成快照。
 
+### SPEC 指针
+
+Agent 执行、role/scope 绑定传播和 Context/Tool 消费边界见根级 proposed SPEC：
+
+- [`spec/agent/execution.md`](../../../spec/agent/execution.md)
+- [`spec/agent/role-scope-binding.md`](../../../spec/agent/role-scope-binding.md)
+- [`spec/agent/context-tool.md`](../../../spec/agent/context-tool.md)
+
+上述 SPEC 是目标态边界，不代表独立 Agent principal/schema 或 PLAN-0381/0382 未冻结字段已经实现。
+
 ## 2. 接口层
 
 接口定义集中在 `packages/agent/src/xihe_agent/interfaces/`，该目录下**不直接 import `langchain*`**。

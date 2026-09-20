@@ -20,6 +20,8 @@ Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、
 - `runtime/`、`agent/`、`config/`：Runtime/Agent 客户端及配置/认证边界。
 - `service/`、`entity/`、`repository/`：应用服务、持久化模型与仓储。
 
+Session、ChatRun/Operation 生命周期的项目级 proposed SPEC 见 `../../spec/session/`；本文件和 DEV-014/OpenAPI/代码仍是当前实现事实源。
+
 测试位于 `src/test/java/`，按同名领域包组织；跨模块测试在 `crossmodule/`。
 
 ## 命令

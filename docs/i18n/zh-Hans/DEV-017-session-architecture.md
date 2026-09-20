@@ -15,6 +15,16 @@ updated: 2026-09-19
 >
 > Chat 与 Workspace 可以在同一工作界面协作，但领域依赖方向是 Workspace 独立存在、Session 可选绑定 Workspace。与 DEV-010 以"Session 领域 vs UI 实现"分界：状态归属、同步机制、嵌入约定归本文；路由表、组件树、传输层实现归 DEV-010。
 
+### SPEC 指针
+
+Session、ChatRun/Operation 和 Runtime MCP session 的目标态生命周期边界见根级 proposed SPEC：
+
+- [`spec/session/chat-session.md`](../../../spec/session/chat-session.md)
+- [`spec/session/chat-run-operation.md`](../../../spec/session/chat-run-operation.md)
+- [`spec/session/mcp-session.md`](../../../spec/session/mcp-session.md)
+
+这些文档不把三类生命周期合并，也不改变本 DEV 文档和 CP/Runtime 代码的当前事实源。
+
 ## 1. Session 领域模型
 
 Session 是用户一次连贯工作上下文，独立于视图：

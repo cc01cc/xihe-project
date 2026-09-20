@@ -48,6 +48,8 @@ src/
 └── error.rs           # 错误处理
 ```
 
+Runtime MCP session 的项目级 proposed 生命周期边界见 `../../spec/session/mcp-session.md`；具体字段、状态和 transport 事实仍以本包代码与 DEV-015/016 为准。
+
 ## Key Conventions
 
 - `snake_case` 命名（Rust 标准）

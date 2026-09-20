@@ -91,6 +91,15 @@ PLAN-0386 已建立 Security proposed 草案；当前 User/JWT/USER-ADMIN 实现
 - [审批契约](security/approval.md)
 - [安全审计](security/audit.md)
 
+PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑定传播、Context 消费和生命周期边界，不替代 Security、OpenAPI、Flyway 或 PLAN-0381/0382 未冻结字段：
+
+- [Agent 执行模型](agent/execution.md)
+- [Agent role/scope 绑定与传播](agent/role-scope-binding.md)
+- [Agent Context 与 Tool 边界](agent/context-tool.md)
+- [Chat Session 生命周期](session/chat-session.md)
+- [ChatRun 与 Operation 生命周期](session/chat-run-operation.md)
+- [Runtime MCP Session 生命周期](session/mcp-session.md)
+
 ## 5. Spec Impact 与写回
 
 每个 XH PLAN 必须声明 Spec Impact：

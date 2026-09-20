@@ -74,6 +74,7 @@ src/xihe_agent/
 - `interfaces/` 目录下禁止直接 import `langchain*`；LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph
 - Context 通过 `ContextProvider.load()` 获取 CP 投影后的 `AgentContext` 快照；事件持久化由 `EventStore` 写入 CP
+- Agent 执行、role/scope 绑定传播和 Context/Tool 边界的项目级 proposed SPEC 见 `../../spec/agent/`；通用授权正文仍归 `../../spec/security/`
 - **诊断回灌（PLAN-0342）**：失败命令结果经 `context/diagnostics.py` 提取 L0 诊断（`path:line[:col]: message`；未命中保留原文 L2）+ 会话级去重账本/预算；结构化 bundle 经 `ToolMessage.artifact` 通道（`response_format="content_and_artifact"`，不进模型 wire），模型可见 `<diagnostics>` 文本块位于不可信信封内，durable `tool.result` payload 与 SSE `tool_result.data.diagnostics` 仅触发时携带
 - **Chat 流式（PLAN-230）**：`XiheLiteLLM` 以 `streaming=True` 实现 `BaseChatModel._astream()`，使 `astream_events` 产生真实 `on_chat_model_stream`；`LangGraphEventAdapter` 按 `run_id` 记录 `streamed` 状态，`on_chat_model_end` 仅在无 stream 时 fallback 单 `token`，避免重复；`main.py` 设置 `litellm.suppress_debug_info=True` 并经 `log_redact` 掩码 `Authorization:`，日志仅 `tokenChars`/`tokenCount` 不记内容。**出站 reasoning 剥离（PLAN-0371）**：`_create_message_dicts` 收口按 route 判定——仅 Anthropic/`claude-*` 保留 `additional_kwargs["reasoning_content"]` 回放（thinking+tool 同链契约），其余线路剥离（该键为唯一回放通道）
 - **Post-gate approval**：CP 闸门以 JSON-RPC `-32003` 返回，`error.data` 携带 `code=APPROVAL_REQUIRED`、`approvalRequestId`、`tool`、`expiresAt` 与 `retryHeader`。Agent 注册 waiter 等待同一 request id，批准后仅重试一次，并以 `X-Xihe-Approval-Request-Id` 头携带 grant；第二次 gate/403、过期、错配或传输失败均 fail-closed。复用 grant 必须绑定同一工具及 canonical arguments SHA-256，不得以截断 preview 匹配。
