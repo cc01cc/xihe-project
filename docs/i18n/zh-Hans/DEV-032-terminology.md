@@ -48,6 +48,8 @@ updated: 2026-09-17
 
 XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账户与角色权限），与开发者**协作**，**不绑定某个 user**。**协作 ≠ 委托**——「Agent 代表某 user 执行」不是目标模型；若确需受托，另立显式 *delegation* 概念。
 
+该段描述的是目标模型。当前 user-only schema 与独立 Agent principal 仍存在实现差距，认证、principal、授权、能力策略、审批和审计的统一契约见根级 `spec/security/`（PLAN-0386，当前为 proposed）。
+
 | 术语 | 正名 | 取值 / 说明 | 禁止写法 |
 |---|---|---|---|
 | 主体 | **principal** | `human`（开发者/用户）、`agent`（独立账户与角色）、`service`（CP/Agent/Runtime 内部管道，非协作者）；`system` = 平台自身触发，非可登录主体 | 把 Agent 说成「代表 user 的 actor」；用 `user` 泛指 principal |

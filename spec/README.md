@@ -82,6 +82,15 @@ PLAN-0385 已建立第一批架构/通信/事件/账本草案。它们仍为 `pr
 - [MCP 通信边界](protocol/mcp.md)
 - [Operation Ledger](data/operation-ledger.md)
 
+PLAN-0386 已建立 Security proposed 草案；当前 User/JWT/USER-ADMIN 实现与 DEV-032 的 independent Agent principal 目标仍存在 gap，未标记 active：
+
+- [身份认证](security/authentication.md)
+- [Principal、Workspace Scope 与资源归属](security/principal-workspace-scope.md)
+- [授权模型](security/authorization.md)
+- [执行能力边界](security/capability-boundary.md)
+- [审批契约](security/approval.md)
+- [安全审计](security/audit.md)
+
 ## 5. Spec Impact 与写回
 
 每个 XH PLAN 必须声明 Spec Impact：

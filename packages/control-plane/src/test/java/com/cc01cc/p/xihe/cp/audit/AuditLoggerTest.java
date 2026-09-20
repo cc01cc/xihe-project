@@ -44,4 +44,23 @@ class AuditLoggerTest {
         assertEquals("action", record.action());
         assertEquals("detail", record.detail());
     }
+
+    @Test
+    void record_redactsCredentialsAndRawArgumentsBeforeStorage() {
+        logger.record("s1", "mcp", "request",
+            "Authorization: Bearer bearer-secret Cookie=session-secret apiKey=api-secret "
+                + "arguments={\"password\":\"raw-secret\"}");
+
+        String detail = logger.getRecentRecords().get("s1:mcp:request").detail();
+        assertFalse(detail.contains("bearer-secret"));
+        assertFalse(detail.contains("session-secret"));
+        assertFalse(detail.contains("api-secret"));
+        assertFalse(detail.contains("raw-secret"));
+        assertTrue(detail.contains("***redacted***"));
+    }
+
+    @Test
+    void sanitize_preservesNonSensitiveAuditContext() {
+        assertEquals("policy=allow reason=classified", AuditLogger.sanitize("policy=allow reason=classified"));
+    }
 }
