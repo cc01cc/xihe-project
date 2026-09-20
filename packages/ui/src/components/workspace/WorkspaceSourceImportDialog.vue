@@ -10,6 +10,7 @@ const entries = ref<Array<{ name: string; kind: string; readable: boolean; size:
 const error = ref<string | null>(null)
 const loading = ref(false)
 const importing = ref(false)
+const excludeRules = ref('node_modules\ntarget\n.venv\n.tmp')
 const importId = ref<string | null>(null)
 const status = ref<string | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | undefined
@@ -41,6 +42,7 @@ async function startImport() {
   try {
     const result = await api.startWorkspaceImport(props.workspaceId, {
       sourcePath: path.value,
+      excludeRules: excludeRules.value.split(/\r?\n/).map((rule) => rule.trim()).filter(Boolean),
       idempotencyKey: crypto.randomUUID(),
     })
     importId.value = String(result.importId)
@@ -98,6 +100,10 @@ onBeforeUnmount(() => {
         </button>
         <p v-if="entries.length === 0" class="p-3 text-muted-foreground">请输入并读取目录</p>
       </div>
+      <label class="mt-3 block text-xs text-muted-foreground">
+        排除目录（每行一条）
+        <textarea v-model="excludeRules" class="mt-1 min-h-20 w-full rounded border bg-background p-2 text-sm" :disabled="importing" />
+      </label>
       <div class="mt-4 flex items-center justify-between">
         <span v-if="status" class="text-xs text-muted-foreground">状态：{{ status }}</span>
         <span v-else />

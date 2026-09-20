@@ -49,7 +49,10 @@ public class WorkspaceImportService {
                     record.markRunning();
                     repository.save(record);
                 },
-                () -> repository.save(record));
+                () -> {
+                    record.markRuntimeFailure("RUNTIME_UNAVAILABLE", "Runtime import worker is unavailable");
+                    repository.save(record);
+                });
         return record;
     }
 
@@ -59,7 +62,9 @@ public class WorkspaceImportService {
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "IMPORT_NOT_FOUND", "Import not found"));
         if ("queued".equals(record.getStatus()) || "running".equals(record.getStatus())) {
             runtimeClient.status(record.getWorkspaceId().toString(), importId)
-                    .ifPresent(runtime -> { record.applyRuntimeStatus(runtime); repository.save(record); });
+                    .ifPresentOrElse(
+                            runtime -> { record.applyRuntimeStatus(runtime); repository.save(record); },
+                            () -> { record.markRuntimeFailure("RUNTIME_UNAVAILABLE", "Runtime import status is unavailable"); repository.save(record); });
         }
         return record;
     }
