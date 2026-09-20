@@ -10,7 +10,7 @@ created: 2026-09-15
 
 # DEV-031: 沙盒后端契约
 
-> 面向 Runtime 开发者与换后端评估者：定义 `SandboxBackend` 的必备接口（动词 + 能力查询）、能力声明与跨后端语义约束（§1–5）、长驻 stdio MCP 的三档映射（§6），以及 Docker 后端的现状对照（§7）。设计原则见 `sandbox-backend-abstraction` skill；泄漏审计记录见 PLAN-0329。
+> 面向 Runtime 开发者与换后端评估者：定义 `SandboxBackend` 的必备接口（动词 + 能力查询）、能力声明与跨后端语义约束（§1–5）、长驻 stdio MCP 的三档映射（§6），以及 Docker 后端的现状对照（§7）。能力快照还必须区分稳定 backend identity、成熟度、Runtime/执行平台和 provider 版本。设计原则见 `sandbox-backend-abstraction` skill；泄漏审计记录见 PLAN-0329。
 
 ## 1. 定位与边界
 
@@ -18,7 +18,7 @@ created: 2026-09-15
 - 现状边界：`execute` 接缝（seam：可以替换实现而不改动调用方的接口边界）已收敛在 `WorkspaceExecutionRouter`（per-request exec，即「每次操作单独执行」）；`ensure/destroy` 接缝当前位于 `WorkspaceManager`/`WorkspaceRegistry` 双路径，收敛由工作区生命周期专项承接——**本契约描述目标态**。
 - 六条不变式（invariant，指任何后端实现都必须始终满足的约束）：
   1. 必备接口在所有后端都有非空实现；
-  2. 缺能力时显式返回 `UNSUPPORTED`（不支持），不做静默降级（详见 §3）；
+  2. 缺能力时显式返回 `UNSUPPORTED`（不支持），不做静默降级（详见 §3）；用户显式选择的不受限宿主执行是独立模式，不是 fallback；
   3. 接缝上不出现 Docker 概念；
   4. 能力声明必须同时包含「声明支持」与「实测结果」，两者不一致时按拒绝处理（详见 §3）；
   5. 连接可断开，客户端必须能重连（详见 §5）；
@@ -40,6 +40,27 @@ created: 2026-09-15
 ```
 capabilities() -> { <capability>: { declared, probed, reason } }
 ```
+
+能力快照的身份部分至少包含：
+
+```json
+{
+  "contractVersion": "v1",
+  "backendKind": "windows-mxc",
+  "backendRevision": "git:<revision-or-package-version>",
+  "maturity": "experimental",
+  "profile": "strict",
+  "platform": {
+    "runtimeOs": "windows",
+    "runtimeArch": "x86_64",
+    "executionOs": "windows",
+    "executionArch": "x86_64"
+  },
+  "engineVersion": "<provider-version>"
+}
+```
+
+`backendKind` 是稳定身份，不写 `beta`/`preview`；`maturity` 表示成熟度；`backendRevision` 是 XH adapter 构建版本；`engineVersion` 是 MXC/Docker 等 provider 版本。`runtimeOs` 是 Runtime 所在系统，`executionOs` 是命令实际运行系统。Windows Docker Linux 容器与 Linux Docker 都是 `backendKind: "docker"`，只通过平台字段区分。
 
 - `declared`（声明支持）、`probed`（启动或调用前的实测结果）与 `reason`（不支持或降级的原因）三者齐备；`declared` 与 `probed` **不一致即 fail-closed**。
 - 探测失败或未实现 → 显式降级或拒绝；禁止静默降级（实证：Claude 默认 fail-open，即失败时放行而不拦截；Landlock `BestEffort` 静默过滤；Codex Windows 未启用沙盒时 `workspace-write` 静默降级 read-only）。
@@ -64,7 +85,7 @@ capabilities() -> { <capability>: { declared, probed, reason } }
 
 > 本节列出从 Docker 换到其他后端（microVM / 远程执行）时上层必须知道的五条语义约束；术语在首次出现处解释。
 
-1. **工作区数据与执行实体分离**：工作区数据（代码、文件）存放在工作区存储（`hostRoot/<workspaceId>`）；沙盒只是可替换的执行实体。容器被删除或重建不影响工作区数据——`destroy` 只销毁执行实体，不得删除工作区目录。
+1. **工作区数据与执行实体分离**：工作区数据（代码、文件）存放在 WorkspaceStorage 根目录（XH 管理目录或用户明确挂接且校验通过的 `host_directory`）；沙盒只是可替换的执行实体。容器、MXC 或宿主执行实体被删除或重建不影响工作区数据——`destroy` 只销毁执行实体，不得删除工作区目录。
 2. **连接会失效，必须支持重连**：快照、暂停恢复、实体重建都会使既有连接失效，且由后端机制决定，不是故障：E2B 快照会中断所有 WebSocket/PTY/命令流；Firecracker 恢复快照后重置 vsock（虚拟 socket）；gVisor 恢复后对端收到 `ECONNRESET`（连接被重置的错误码）。因此长连接（MCP 通道、事件流）必须实现断线重连与会话恢复；`session` 能力把 `reconnect` 作为定义的一部分，不假设连接持久。
 3. **快照按维度声明**：快照（snapshot）必须说明恢复范围，不能假设为全量：
    - fs 快照（文件系统）：文件保留、进程丢失（相当于重启）；
@@ -79,8 +100,8 @@ capabilities() -> { <capability>: { declared, probed, reason } }
 5. **工作区文件接入方式**：文件如何进入沙盒由后端决定；契约只承诺「沙盒内可见工作区数据，且数据不因沙盒生命周期而丢失」，三种形态的语义需按声明预期：
    - 挂载（mount，如 bind mount、virtiofs）：宿主与沙盒共享同一份文件，修改立即可见（XH 现状）；
    - 同步（sync）：向沙盒推送副本并把改动同步回工作区存储，存在延迟与冲突处理问题；
-   - 复制（copy）：进出各一次，最简单、最慢。
-   沙盒内文件与工作区存储不一致时，一律以工作区存储为准。
+    - 复制（copy）：进出各一次，最简单、最慢。
+沙盒内文件与工作区存储不一致时，一律以工作区存储为准。`windows-host/unrestricted` 是显式宿主执行模式，不得伪装成受限 sandbox；它仍使用同一 WorkspaceStorage 根目录，但不提供 workspace 外写范围保护。
 
 ## 6. 长驻 stdio MCP 三档映射
 
@@ -104,6 +125,8 @@ capabilities() -> { <capability>: { declared, probed, reason } }
 | `endpoint(port)` | 39001 发布 + 宿主随机端口 | 「vestigial（残留、已无消费者）」 |
 | `network(policy)` | `network_mode` none/bridge + 代理 env | 接缝下实现 |
 | 快照/回滚 | 不在沙盒层（属工作区文件变更层，归 PLAN-0328 范围） | 与执行实体解耦 |
+
+当前 backend 方向：`windows-mxc` 由 PLAN-0379 承接，成熟度通过 `maturity: "experimental"` 报告；`windows-host/unrestricted` 是用户显式选择的宿主执行兜底，不宣称 workspace 外写保护；`docker` 保持稳定 backend identity，但 Docker 卷/guard 线由 PLAN-0377/0380 后置。三者共用 `contractVersion: "v1"`，消费方按 capability/platform 分支，不按 backend 名称拼接传输细节。
 
 ## 8. 变更规则
 

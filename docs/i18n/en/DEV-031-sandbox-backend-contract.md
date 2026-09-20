@@ -10,7 +10,7 @@ created: 2026-09-15
 
 # DEV-031: Sandbox Backend Contract
 
-> For Runtime developers and backend-swap evaluations: the `SandboxBackend` required interface (verbs plus the capability query), capability declaration, and cross-backend semantic constraints (§1–5); the three-tier mapping for long-running stdio MCP (§6); and the Docker backend status map (§7). Design principles live in the `sandbox-backend-abstraction` skill; the leak audit record is in PLAN-0329.
+> For Runtime developers and backend-swap evaluations: the `SandboxBackend` required interface (verbs plus the capability query), capability declaration, and cross-backend semantic constraints (§1–5); the three-tier mapping for long-running stdio MCP (§6); and the Docker backend status map (§7). Capability snapshots also distinguish stable backend identity, maturity, Runtime/execution platforms, and provider version. Design principles live in the `sandbox-backend-abstraction` skill; the leak audit record is in PLAN-0329.
 
 ## 1. Scope and Boundaries
 
@@ -18,7 +18,7 @@ created: 2026-09-15
 - Current seam (the interface boundary between upper-layer calls and backend implementations): `execute` is converged in `WorkspaceExecutionRouter` (per-request exec); `ensure/destroy` still live in the `WorkspaceManager`/`WorkspaceRegistry` dual path, to be converged by the workspace lifecycle initiative — this contract describes the **target state**.
 - Six invariants (constraints that every backend implementation must always satisfy):
   1. Every required interface has a non-empty implementation on all backends;
-  2. A missing capability returns an explicit `UNSUPPORTED` (not supported) result and never silently degrades (see §3);
+  2. A missing capability returns an explicit `UNSUPPORTED` (not supported) result and never silently degrades (see §3); explicit unrestricted host execution is a separate user-selected mode, not a fallback;
   3. No Docker concepts above the seam;
   4. A capability declaration must include both the declared support and the measured result; if the two disagree, refuse rather than allow (see §3);
   5. Connections may drop and clients must be able to reconnect (see §5);
@@ -40,6 +40,27 @@ Rule: if an interface can only raise "unsupported" on some backend, it cannot be
 ```
 capabilities() -> { <capability>: { declared, probed, reason } }
 ```
+
+The identity portion of a capability snapshot includes at least:
+
+```json
+{
+  "contractVersion": "v1",
+  "backendKind": "windows-mxc",
+  "backendRevision": "git:<revision-or-package-version>",
+  "maturity": "experimental",
+  "profile": "strict",
+  "platform": {
+    "runtimeOs": "windows",
+    "runtimeArch": "x86_64",
+    "executionOs": "windows",
+    "executionArch": "x86_64"
+  },
+  "engineVersion": "<provider-version>"
+}
+```
+
+`backendKind` is stable and must not contain `beta` or `preview`; `maturity` describes product maturity; `backendRevision` identifies the XH adapter build; and `engineVersion` identifies the MXC/Docker provider version. `runtimeOs` is where Runtime runs, while `executionOs` is where the command actually runs. Windows Docker Linux containers and Linux Docker both use `backendKind: "docker"`; the platform fields distinguish the topology.
 
 - All three of `declared` (declared support), `probed` (measured at startup or before call) and `reason` (why unsupported or degraded) are required; a mismatch between `declared` and `probed` is **fail-closed**.
 - Probe failure or unimplemented capability → explicit degradation or refusal; silent degradation is forbidden (evidence: Claude defaults to fail-open, i.e. allowing instead of blocking on failure; Landlock `BestEffort` silently filters; Codex on Windows silently downgrades `workspace-write` to read-only when its sandbox is disabled).
@@ -64,7 +85,7 @@ capabilities() -> { <capability>: { declared, probed, reason } }
 
 > Five constraints the upper layers must know when replacing Docker with another backend (microVM / remote execution). Terms are explained at first occurrence.
 
-1. **Separate workspace data from the execution entity**: workspace data (code and files) lives in workspace storage (`hostRoot/<workspaceId>`); the sandbox is a replaceable execution entity. Deleting or rebuilding a container does not affect workspace data — `destroy` only removes the execution entity and never the workspace directory.
+1. **Separate workspace data from the execution entity**: workspace data (code and files) lives in a WorkspaceStorage root (an XH-managed directory or an explicitly selected and validated `host_directory`); the sandbox is a replaceable execution entity. Deleting or rebuilding a container, MXC instance, or host execution entity does not affect workspace data — `destroy` only removes the execution entity and never the workspace directory.
 2. **Connections will drop; reconnection is required**: snapshot, pause/resume, and rebuild invalidate existing connections by backend design, not as failures: E2B interrupts all WebSocket/PTY/command streams on snapshot; Firecracker resets vsock (a virtual socket) on restore; gVisor peers receive `ECONNRESET` (the connection-reset error code) after restore. Long-lived channels (MCP bridges, event streams) must therefore reconnect and resume sessions; `session` treats `reconnect` as part of its definition and assumes no persistent connection.
 3. **Snapshots are declared by dimension**: a snapshot must state its restore scope; never assume it is a full capture:
    - fs snapshot (filesystem): files remain, processes are lost (equivalent to a reboot);
@@ -79,8 +100,8 @@ capabilities() -> { <capability>: { declared, probed, reason } }
 5. **Workspace file access mode**: how files enter the sandbox is backend-defined; the contract only promises that workspace data is visible inside the sandbox and is not lost with the sandbox lifecycle. The three modes have distinct semantics:
    - mount (e.g., bind mount, virtiofs): host and sandbox share the same files, changes visible immediately (XH today);
    - sync: a copy is pushed in and synced back to workspace storage, with delay and conflict handling;
-   - copy: one transfer in and out; simplest, slowest.
-   When the sandbox files and workspace storage diverge, workspace storage wins.
+    - copy: one transfer in and out; simplest, slowest.
+When the sandbox files and workspace storage diverge, workspace storage wins. `windows-host/unrestricted` is an explicit host execution mode, not a constrained sandbox; it uses the same WorkspaceStorage root but does not provide workspace-outside write protection.
 
 ## 6. Long-Running stdio MCP: Three Tiers
 
@@ -104,6 +125,8 @@ Status: the current MCP bridge depends on an in-sandbox HTTP service plus a publ
 | `endpoint(port)` | 39001 publish + random host port | "Vestigial" (left over with no consumers) |
 | `network(policy)` | `network_mode` none/bridge + proxy env | Below-seam implementation |
 | Snapshot/rollback | Not in the sandbox layer (belongs to the workspace file-change layer, owned by PLAN-0328) | Kept separate from the execution entity |
+
+Current backend direction: PLAN-0379 owns `windows-mxc`, reported with `maturity: "experimental"`; `windows-host/unrestricted` is an explicitly user-selected host-execution fallback and does not claim workspace-outside write protection; `docker` remains the stable backend identity, while the Docker volume/guard line is deferred by PLAN-0377/0380. All three share `contractVersion: "v1"`; consumers branch on capabilities and platform, not on backend-specific transport names.
 
 ## 8. Change Rules
 
