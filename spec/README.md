@@ -72,6 +72,16 @@ Agent 处理 XH 任务时：
 
 `AGENTS.md` 负责 Agent 的工作规则；本目录负责 XH 的领域契约。HTTP route/schema 以 OpenAPI 和 route inventory 为准，事件 wire schema 以对应事件 schema 为准。
 
+## 4.1 当前领域草案
+
+PLAN-0385 已建立第一批架构/通信/事件/账本草案。它们仍为 `proposed`，必须完成真实消费者、schema、错误/重试、幂等和 evidence 验证后才可转为 `active`：
+
+- [模块边界](architecture/module-boundaries.md)
+- [模块通信](architecture/communication.md)
+- [事件流](protocol/event-stream.md)
+- [MCP 通信边界](protocol/mcp.md)
+- [Operation Ledger](data/operation-ledger.md)
+
 ## 5. Spec Impact 与写回
 
 每个 XH PLAN 必须声明 Spec Impact：

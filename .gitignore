@@ -69,6 +69,10 @@ packages/control-plane/data/
 # Dev/test data (PDFs, images, etc.)
 data/
 
+# Project SPEC data contracts are Markdown, not runtime data
+!spec/data/
+!spec/data/*.md
+
 # Runtime device state (generated, not committed)
 .xihe-state/
 

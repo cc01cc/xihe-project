@@ -12,6 +12,8 @@ updated: 2026-09-18
 
 # DEV-016: MCP 三层路由架构
 
+> 本文保留 MCP 实现说明；CP/Runtime/Agent 的冻结通信边界见根级 `spec/protocol/mcp.md`，wire 字段以 OpenAPI/inventory 和 MCP 实现为准。
+
 ## 1. 概述
 
 MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整路径经过路由：

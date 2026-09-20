@@ -13,7 +13,7 @@ status: active
 
 > 面向新人阅读：5 分钟建立全系统心智模型（四模块分工 + 两流 + 协议总表）。模块细节见 DEV-010/013/014/015/016/017。
 >
-> xihe 是一个通用 Agent 运行时平台，提供多 Agent 编排、工具调用、沙盒执行、权限控制等能力。四模块 Hub-Module 架构：各模块独立演进、独立部署、独立技术栈。模块专篇：UI 见 DEV-010、Agent 见 DEV-013、CP 见 DEV-014、Runtime 见 DEV-015、MCP 见 DEV-016、Session 见 DEV-017；本文只保留总览与跨模块契约。
+> xihe 是一个通用 Agent 运行时平台，提供多 Agent 编排、工具调用、沙盒执行、权限控制等能力。四模块 Hub-Module 架构：各模块独立演进、独立部署、独立技术栈。模块专篇：UI 见 DEV-010、Agent 见 DEV-013、CP 见 DEV-014、Runtime 见 DEV-015、MCP 见 DEV-016、Session 见 DEV-017；本文保留总览与实现导航，冻结的跨模块契约见根级 `spec/architecture/` 与 `spec/protocol/`。
 
 ## 1. 四模块详解
 
