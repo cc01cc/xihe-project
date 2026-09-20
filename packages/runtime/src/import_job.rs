@@ -281,7 +281,11 @@ mod tests {
         fs::create_dir_all(source.join(".git")).unwrap();
         fs::write(source.join("src/main.ts"), "export const value = 1;\n").unwrap();
         fs::write(source.join("node_modules/ignored.js"), "ignored\n").unwrap();
-        fs::write(source.join(".git/config"), "[core]\n\trepositoryformatversion = 0\n").unwrap();
+        fs::write(
+            source.join(".git/config"),
+            "[core]\n\trepositoryformatversion = 0\n",
+        )
+        .unwrap();
 
         let manager = ImportManager::new();
         let started = manager
