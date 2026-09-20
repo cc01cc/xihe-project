@@ -278,8 +278,10 @@ mod tests {
         let target_root = root.path().join("target-root");
         fs::create_dir_all(source.join("src")).unwrap();
         fs::create_dir_all(source.join("node_modules")).unwrap();
+        fs::create_dir_all(source.join(".git")).unwrap();
         fs::write(source.join("src/main.ts"), "export const value = 1;\n").unwrap();
         fs::write(source.join("node_modules/ignored.js"), "ignored\n").unwrap();
+        fs::write(source.join(".git/config"), "[core]\n\trepositoryformatversion = 0\n").unwrap();
 
         let manager = ImportManager::new();
         let started = manager
@@ -310,6 +312,7 @@ mod tests {
 
         assert_eq!(status.status, "completed");
         assert!(target_root.join("ws-1/src/main.ts").exists());
+        assert!(target_root.join("ws-1/.git/config").exists());
         assert!(!target_root.join("ws-1/node_modules/ignored.js").exists());
         assert_eq!(status.files_copied, 1);
     }
