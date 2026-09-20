@@ -16,6 +16,8 @@ All public documentation is centralized under `docs/i18n/{lang}/`.
 | -------- | -------------------------------- | -------------- |
 | `docs/i18n/{lang}/*.md` | DEV-NNN, USER-NNN (root docs) | zh-Hans / en |
 
+The project-root `spec/` directory contains Agent/GitHub-only XH contracts. It is not part of the public documentation site and does not use this frontmatter or sidebar scheme. Its canonical entry is `spec/README.md` and its writing guide is `spec/writing-guide.md`; this DEV document and INDEX.md only provide navigation.
+
 **Non-public directories** (not subject to frontmatter standardization):
 
 | Directory | Reason |
@@ -24,6 +26,7 @@ All public documentation is centralized under `docs/i18n/{lang}/`.
 | `SPRINTS/` | Sprint documents |
 | `.github/`, `.kilo/` | Agent configuration |
 | `AGENTS.md` | AI Agent guidance |
+| `spec/` | Agent/GitHub-only project SPEC; excluded from the documentation site |
 | `CHANGELOG.md` | Changelog with its own format |
 | `.changeset/` | Changeset files |
 

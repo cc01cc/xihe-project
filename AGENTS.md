@@ -138,6 +138,15 @@ packages/
 - **Runtime / Sandbox 边界**：控制面（CP：workspace 元数据/授权/健康/降级）与执行面（Runtime：文件/命令/容器/进程/stdio MCP 会话）分离，进程保活由外部 orchestrator（Docker/mise watcher）负责。`/health` 仅进程存活、`/ready` 不等待全部 Sandbox 物化，Workspace 按 `workspaceId` 懒加载。单 Runtime/单设备 v1 不以 registration/heartbeat/generation/warm pool/microVM/多设备接管为前置条件。未知 workspace、后端不可用、执行超时必须显式失败，禁止默认目录或静默降级掩盖状态丢失。远程 MCP 仅经 CP logical endpoint，禁止跨 workspace 复用已发现工具。CP→Runtime 调用恒有界（connect 2s / read 10s，超时走既有显式降级）；MXC/Docker 失败不得自动裸执行，`windows-host/unrestricted` 只能由用户显式选择。工作区删除以 DB 逻辑删除为权威，Runtime 执行实体清理在事务提交后 best-effort（失败记 `RUNTIME_CLEANUP_FAILED`，孤儿实体由启动期清理兜底）。**执行后端须可替换**：执行层抽象建在能力（execute/session/fs/lifecycle）而非 Docker 传输，禁止把 `docker exec`/容器 IP/端口发布/`network_mode`/容器内 pid 文件/沙盒内 HTTP 服务泄漏到执行层之上（设计原则见 `sandbox-backend-abstraction` skill；**契约与能力声明见 DEV-031**，泄漏审计记录见 PLAN-0329）。**PLAN-0347 已落地首版接缝**：`backend.rs` 的 `SandboxBackend`（当前 Docker 实现，后续由 PLAN-0379 扩展 Windows MXC/宿主执行；能力声明 + fail-closed）与生命周期唯一写入口；stdio MCP 会话见 `mcp_session.rs`（会话按 `(workspace, serverId)` 共享，执行层之上零 Docker 概念）。
 - **生命周期（PLAN-0345 已落地）**：六态权威状态机（`creating/ready/paused/stopped/failed/destroying`）经 `runtime/src/lifecycle.rs` `Lifecycle` 单一写路径；Registry 为可重建缓存；paused→unpause 激活（禁 force recreate）；destroying 窗口迟到 materialize → 409 `WORKSPACE_DESTROYING`（CP 透传）。新增生命周期代码必须走 `Lifecycle`，禁止直接写 `WorkspaceRegistry` 状态。隔离引擎升级仍属后续。详见 DEV-015。
 
+## SPEC Contract Layer
+
+- 根级 `spec/README.md` 是 XH 项目级 SPEC 入口；任务涉及架构、UI 交互、Agent、Session、认证/授权、Workspace、配置、协议或数据边界时，先读取入口，再按任务加载相关规范。
+- `AGENTS.md` 负责 Agent 的工作规则；根级 SPEC 负责 XH 领域契约。`active` 表示已接受的目标契约，不等于实现已经完整；入口同时记录实现状态、owner、消费者和承接 PLAN。`proposed` 不得被当作当前运行事实。
+- Security 拥有 authentication、principal、role/scope 和 authorization 的 canonical 正文；Agent 文档只描述 Agent-specific binding、传播和消费。能力策略、审批和审计分别建模。
+- 一个根级 SPEC 文件同一时间只能由一个 active PLAN 承接；其他 PLAN 只能在自己的 `spec/` 中提出草案。Agent 可以提出写回建议，但不得自动改写 active SPEC。
+- 每个 XH PLAN 必须声明 Spec Impact：`none`、`read`、`create`、`update` 或 `supersede`，并在同一变更波次同步根级 SPEC、DEV 摘要、OpenAPI/事件 schema 和测试。XH 试点规则暂不改变 workspace 全局 PLAN 模板。
+- 根级 SPEC v1 仅作为 Agent/GitHub-only 契约入口，不纳入文档站 frontmatter 或渲染；DEV-030 和文档索引只提供导航。具体写作规则见 `spec/writing-guide.md`。
+
 ## Code Style
 
 - **Naming**: `camelCase` (TS/JS/Java), `snake_case` (Python/Rust)
@@ -260,6 +269,8 @@ Route/SSE/Flyway/tool-surface changes must update the OpenAPI contract or route/
 
 - [ ] 更新 `packages/agent/AGENTS.md` 的项目结构、接口约定与目录说明。
 - [ ] 更新 `A03-xihe/AGENTS.md` 的 Architecture 关键设计小节。
+- [ ] 若 PLAN 影响 XH 领域契约，声明 Spec Impact，并同步根级 `spec/README.md`/相关 SPEC 或记录子 PLAN 承接关系。
+- [ ] 根级 SPEC 变更确认唯一 active 承接 PLAN、契约/实现状态、owner、消费者、来源和验证映射；Agent/GitHub-only 规则不引入文档站 frontmatter。
 - [ ] 新增或更新 `docs/i18n/zh-Hans/DEV-013-agent-architecture.md` 等设计文档（编号见 DEV-030 分块规则）。
 - [ ] 若系统架构有变，同步更新 `docs/i18n/zh-Hans/DEV-001-system-architecture.md`。
 - [ ] 同步更新 `plans/PLAN-XXX.md` 的 frontmatter、§7 完成状态、§8 收尾总结与决策日志。

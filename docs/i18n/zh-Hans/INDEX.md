@@ -45,6 +45,11 @@ sidebar_order: 0
 - [DEV-031: 沙盒后端契约](DEV-031-sandbox-backend-contract.md)
 - [DEV-032: 术语规范（一词多义与多词一义）](DEV-032-terminology.md)
 
+## 项目级 SPEC（Agent/GitHub-only）
+
+- `spec/README.md`：XH 项目级契约入口（仓库根目录，不进入文档站）
+- `spec/writing-guide.md`：中文 SPEC 写作、profile、Mermaid/ASCII 和验证规则
+
 ## PLAN-0328 / 合同入口
 
 - [API OpenAPI](../../api/openapi.yaml) 与 [API inventory](../../api/inventory.md) 是当前公共/内部路由和 JSON 字段的 canonical contract。

@@ -27,4 +27,9 @@ General-purpose Agent tool platform.
 - [RFC-001: Session Domain Model](RFC-001-session-domain-model.md)
 - [ADR-001: Session Store Boundary](ADR-001-session-store-boundary.md)
 
+## Project SPEC (Agent/GitHub-only)
+
+- `spec/README.md`: XH project contract entry at repository root; excluded from the documentation site
+- `spec/writing-guide.md`: Chinese-first SPEC writing, profiles, Mermaid/ASCII, and verification rules
+
 (WIP - more English translations coming soon)

@@ -16,6 +16,8 @@ sidebar_group: "开发指南"
 | ---- | -------------------------------- | -------------- |
 | `docs/i18n/{lang}/*.md` | DEV-NNN, USER-NNN（根文档） | zh-Hans / en |
 
+项目根 `spec/` 是 Agent/GitHub-only 的 XH 项目级契约目录，不属于公开文档站，不使用本文 frontmatter 或 sidebar 规则。其唯一入口是 `spec/README.md`，写作规则是 `spec/writing-guide.md`；本 DEV 文档和 INDEX.md 只提供导航。
+
 **非公开目录**（不纳入 frontmatter 标准化）：
 
 | 目录 | 原因 |
@@ -24,6 +26,7 @@ sidebar_group: "开发指南"
 | `SPRINTS/` | Sprint 文档 |
 | `.github/`、`.kilo/` | Agent 配置 |
 | `AGENTS.md` | AI Agent 指引 |
+| `spec/` | Agent/GitHub-only 项目级 SPEC，不进入文档站 |
 | `CHANGELOG.md` | 变更日志，有自身格式 |
 | `.changeset/` | Changeset 文件 |
 

@@ -125,6 +125,7 @@ Open http://localhost:12630 in your browser.
 | [docs/i18n/en/](docs/i18n/en/) | Developers (English) | Architecture, logging, test strategy, ADR/RFC |
 | [docs/i18n/zh-Hans/USER-001-user-guide.md](docs/i18n/zh-Hans/USER-001-user-guide.md) | End users | User guide |
 | [AGENTS.md](AGENTS.md) | Agents / contributors | Project conventions, commands, ports, known issues |
+| [spec/README.md](spec/README.md) | Agents / contributors | Project-level contracts; Agent/GitHub-only, not rendered by the documentation site |
 | [CHANGELOG.md](CHANGELOG.md) | All | Release notes |
 
 > Doc numbering differs between `zh-Hans/` and `en/` (each side has its own INDEX); navigate per-side.
