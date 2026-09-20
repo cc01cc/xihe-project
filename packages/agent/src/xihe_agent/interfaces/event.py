@@ -16,6 +16,8 @@ EventType = Literal[
     "tool.called",
     "tool.result",
     "context.source_changed",
+    "context.prune",
+    "context.env_updated",
     "epoch.started",
     "epoch.replaced",
     "runtime.state_cleared",
