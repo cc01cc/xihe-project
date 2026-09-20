@@ -1559,10 +1559,14 @@ async fn source_directory_handler(
     State(_app): State<Arc<AppState>>,
     AxumJson(request): AxumJson<SourceDirectoryRequest>,
 ) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
-    let entries = list_source_directory(&request.path)
+    let requested_path = request.path;
+    let path_for_listing = requested_path.clone();
+    let entries = tokio::task::spawn_blocking(move || list_source_directory(&path_for_listing))
+        .await
+        .map_err(|error| runtime_problem(RuntimeError::InvalidPath(error.to_string())))?
         .map_err(|detail| runtime_problem(RuntimeError::InvalidPath(detail)))?;
     Ok(AxumJson(serde_json::json!({
-        "path": request.path,
+        "path": requested_path,
         "entries": entries,
     })))
 }

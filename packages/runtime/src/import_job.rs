@@ -12,6 +12,8 @@ use walkdir::WalkDir;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportRequest {
+    #[serde(default)]
+    pub import_id: Option<String>,
     pub source_path: String,
     #[serde(default)]
     pub exclude_rules: Vec<String>,
@@ -100,9 +102,25 @@ impl ImportManager {
         }
         let target = host_root.join(&workspace_id);
         if target.exists() {
-            return Err("target workspace directory already exists".to_string());
+            let entries = fs::read_dir(&target).map_err(|error| {
+                format!("target workspace directory cannot be inspected: {error}")
+            })?;
+            let mut unexpected = Vec::new();
+            for entry in entries {
+                let entry = entry.map_err(|error| error.to_string())?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !is_runtime_managed_entry(&name) {
+                    unexpected.push(name);
+                }
+            }
+            if !unexpected.is_empty() {
+                return Err("target workspace directory is not empty".to_string());
+            }
         }
-        let import_id = Uuid::new_v4().to_string();
+        let import_id = request
+            .import_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let job = Arc::new(Job {
             status: Mutex::new(ImportStatus {
                 import_id: import_id.clone(),
@@ -236,6 +254,17 @@ fn canonical_source(path: &str) -> Result<PathBuf, String> {
     fs::canonicalize(path).map_err(|error| format!("source path is not readable: {error}"))
 }
 
+fn is_runtime_managed_entry(name: &str) -> bool {
+    matches!(
+        name,
+        ".xihe-sentinel"
+            | ".xihe-container-runtime.log"
+            | ".xihe-container-runtime.pid"
+            | "logs"
+            | "AGENTS.md"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +287,7 @@ mod tests {
                 "ws-1".to_string(),
                 target_root.clone(),
                 ImportRequest {
+                    import_id: None,
                     source_path: source.to_string_lossy().to_string(),
                     exclude_rules: vec!["node_modules".to_string()],
                 },

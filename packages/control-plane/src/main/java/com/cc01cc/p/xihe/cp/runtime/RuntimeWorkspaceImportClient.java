@@ -39,6 +39,7 @@ public class RuntimeWorkspaceImportClient {
 
     public Optional<Map<String, Object>> start(WorkspaceImport record) {
         Map<String, Object> body = new LinkedHashMap<>();
+        body.put("importId", record.getId().toString());
         body.put("sourcePath", record.getSourcePath());
         try {
             body.put("excludeRules", objectMapper.readValue(
