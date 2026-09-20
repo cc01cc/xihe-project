@@ -330,4 +330,42 @@ mod tests {
         assert_eq!(entries[0].kind, "directory");
         assert_eq!(entries[1].kind, "file");
     }
+
+    #[tokio::test]
+    async fn cancelled_import_removes_partial_target() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("source");
+        let target_root = root.path().join("target-root");
+        fs::create_dir_all(&source).unwrap();
+        for index in 0..1000 {
+            fs::write(source.join(format!("file-{index}.txt")), "data").unwrap();
+        }
+        let manager = ImportManager::new();
+        let started = manager
+            .start(
+                "ws-cancel".to_string(),
+                target_root.clone(),
+                ImportRequest {
+                    import_id: None,
+                    source_path: source.to_string_lossy().to_string(),
+                    exclude_rules: Vec::new(),
+                },
+            )
+            .await
+            .unwrap();
+        manager.cancel(&started.import_id).await.unwrap();
+        let status = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let current = manager.get(&started.import_id).await.unwrap();
+                if current.status != "running" {
+                    break current;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(status.status, "cancelled");
+        assert!(!target_root.join("ws-cancel").exists());
+    }
 }
