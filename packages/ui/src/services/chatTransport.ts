@@ -26,6 +26,7 @@ class ChatTransportImpl {
   private states = new Map<string, ChatTransportState>()
   private connectionPromises = new Map<string, Promise<void>>()
   private connectionOptions = new Map<string, ChatTransportOptions>()
+  private lastEventIds = new Map<string, string>()
   private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private intentionalStops = new Set<string>()
   private generations = new Map<string, number>()
@@ -69,6 +70,7 @@ class ChatTransportImpl {
     this.intentionalStops.add(sessionId)
     this.clearReconnectTimer(sessionId)
     this.connectionOptions.delete(sessionId)
+    this.lastEventIds.delete(sessionId)
     const controller = this.controllers.get(sessionId)
     if (controller) {
       controller.abort()
@@ -113,6 +115,9 @@ class ChatTransportImpl {
         headers: {
           Accept: 'text/event-stream',
           ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(this.lastEventIds.has(sessionId)
+            ? { 'Last-Event-ID': this.lastEventIds.get(sessionId)! }
+            : {}),
           ...apiAuthHeaders(options.headers, Boolean(body)),
         },
         body,
@@ -154,6 +159,7 @@ class ChatTransportImpl {
             event: msg.event,
             dataLength: msg.data.length,
           })
+          if (msg.id) this.lastEventIds.set(sessionId, msg.id)
           void options.onmessage?.(msg)
         },
         onerror: (error) => {

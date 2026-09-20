@@ -275,3 +275,66 @@ describe('workspace store openFile preview routing (PLAN-292 T6)', () => {
     expect(store.openFiles.get('docs/note.md')?.content).toBe('hello')
   })
 })
+
+describe('workspace store external Workspace events (PLAN-0350)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('reloads an opened unmodified file after a file_changed event', async () => {
+    const store = useWorkspaceStore()
+    const { readFilePreview } = await import('../../composables/fileService')
+    store.openFiles.set('src/a.ts', {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      content: 'old',
+      originalContent: 'old',
+      language: 'typescript',
+      modified: false,
+      loading: false,
+    })
+    store.activeFilePath = 'src/a.ts'
+    vi.mocked(readFilePreview).mockResolvedValue({ content: 'new', truncated: false })
+    mockedApi.listDirectory.mockResolvedValue({ entries: [] })
+
+    await store.applyWorkspaceEvent({
+      workspaceId: 'ws-test',
+      sequence: 1,
+      kind: 'file_changed',
+      path: 'src/a.ts',
+      changeType: 'modified',
+      source: 'runtime',
+    })
+
+    expect(store.openFiles.get('src/a.ts')?.content).toBe('new')
+    expect(store.openFiles.get('src/a.ts')?.externalChange).toBeUndefined()
+  })
+
+  it('marks a locally modified file without overwriting its content', async () => {
+    const store = useWorkspaceStore()
+    store.openFiles.set('src/a.ts', {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      content: 'local',
+      originalContent: 'old',
+      language: 'typescript',
+      modified: true,
+      loading: false,
+    })
+    await store.applyWorkspaceEvent({
+      workspaceId: 'ws-test',
+      sequence: 3,
+      kind: 'file_changed',
+      path: 'src/a.ts',
+      changeType: 'modified',
+      source: 'runtime',
+    })
+
+    expect(store.openFiles.get('src/a.ts')?.content).toBe('local')
+    expect(store.openFiles.get('src/a.ts')?.externalChange).toEqual({
+      sequence: 3,
+      changeType: 'modified',
+    })
+  })
+})

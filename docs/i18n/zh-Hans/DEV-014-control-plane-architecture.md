@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 14
 status: active
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-20
 ---
 
 # DEV-014: CP 架构
@@ -20,16 +20,17 @@ flowchart LR
     CP -->|"POST /internal/v1/agent/chat"| AG["Agent"]
     AG -.->|"SSE 回流"| CP
     CP -.->|"GET /api/v1/events SSE"| UI
+    CP -.->|"GET /api/v1/workspaces/{id}/events SSE"| UI
     AG2["Agent MCP"] -->|"POST /api/v1/mcp"| CP
     CP -->|"/mcp · /stdio"| RT["Runtime"]
-    RT -.->|"notification"| CP
+    RT -.->|"POST /internal/v1/runtime/workspaces/{id}/events"| CP
 ```
 
 ## 1. 三通道
 
 - **聊天通道**：`POST /api/v1/chat`（`202` + `runId`，指令发送）+ `GET /api/v1/events?sessionId=`（会话级持久 SSE，流接收）。CP 中转 UI↔Agent，流式分发到 UI。**注意**：CP 只转运聊天流量（租约/透传/审计），不组装 LLM 请求、不代理模型调用——模型调用由 Agent 直调 provider（见 DEV-013 §2.3）。
 - **MCP 反向代理通道**（`POST /api/v1/mcp`，另有同前缀 GET/DELETE）：JSON-RPC 解析 → 工具名提取 → 权限检查 → 请求改写 → 三层路由转发（详见 DEV-016）。CP 为纯 HTTP 反代，不依赖 MCP SDK。
-- **状态分发通道**：Runtime MCP notification → CP 分发到 UI（SSE）与 Agent（透传）。
+- **状态分发通道**：Runtime/Workspace storage watcher → CP Workspace event ingress → UI Workspace SSE；ChatRun 仍独立使用 Session SSE，不把无 Session 文件事件塞入 Chat。
 
 ## 2. 会话级持久 SSE（PLAN-230）
 
@@ -38,6 +39,13 @@ flowchart LR
 - `done` 仅结束当前 `runId`，不关闭会话 SSE；`heartbeat` 15s 保活不进业务气泡。
 - `requestId`/`runId` 由 `RequestIdFilter` 生成，经 `X-Request-Id`/`X-Chat-Run-Id` 显式透传至异步 `execAsync` 与 Agent（禁跨线程 MDC 继承）；`RequestIdFilter` 同时写 MDC `requestId` 并回写响应头。
 - CP→Agent 聊天：`POST /internal/v1/agent/chat`（`stream:true`，SSE 回流）。
+
+## 2.1 Workspace 级事件 SSE（PLAN-0350 首批）
+
+- `GET /api/v1/workspaces/{workspaceId}/events` 按 `TenantContext` + Workspace membership 鉴权，不要求 Session 存在；订阅数按 Workspace 有界。
+- Runtime 通过 `POST /internal/v1/runtime/workspaces/{workspaceId}/events` 上报归一化的相对路径/变更提示，CP 分配 Workspace-local `sequence` 并直接 fan-out。
+- v1 不持久化 replay log；`Last-Event-ID` 发生 gap 时发送 `snapshot_required`，UI 通过既有 Workspace HTTP/MCP API 重建文件树和打开文件状态。
+- 事件只携带摘要，不携带文件正文、完整目录树或宿主绝对路径；Workspace 删除提交后 CP 关闭相关订阅。
 
 ## 3. MCP 反代与工具命名空间
 

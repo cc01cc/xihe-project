@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 15
 status: active
 created: 2026-09-03
-updated: 2026-09-17
+updated: 2026-09-20
 ---
 
 # DEV-015: Runtime 架构
@@ -66,6 +66,13 @@ sequenceDiagram
 - WorkspaceStorage（host 持久化）与 Sandbox（容器执行面）分离；unknown workspace fail-closed；Docker 不可用与执行超时显式失败。
 - MCP 2026-07-28 无会话协议（SEP-2567）：Runtime 侧全程 stateless；CP 转发 `tools/list`/`tools/call` 必须带 `Mcp-Method` + `Mcp-Name` 头。
 - 生命周期（PLAN-0345）：六态权威状态机（`creating/ready/paused/stopped/failed/destroying`）经 `lifecycle.rs` `Lifecycle` 单一写路径（lease 绑 in-flight 操作，无心跳/无持久化）；Registry=可重建缓存（`rebuild` 从 Docker 推导）。paused 走 unpause 激活（禁 force recreate，失败 fail-closed）；destroying 窗口内迟到 materialize → 409 `WORKSPACE_DESTROYING`（CP 原样透传，不 collapse 502）；destroy 完成即注销（无常驻 `destroyed` 态）。idle reaper 三档（15m pause / 2h stop / 24h 注销，原 7d `Released` 档删除）。REST read/list/stat 收口 executor router（binary write 仍 host 例外=债）。warm pool/microVM/多设备接管仍属后续。
+
+### 4.1 Workspace 文件事件（PLAN-0350）
+
+- Workspace 首次 materialize 后，Runtime 以已校验的绝对 WorkspaceStorage 根挂载一个递归 `notify` watcher；空路径、相对路径、canonicalize 失败或非目录一律拒绝观察。
+- watcher 输入与 CP 上报队列均有界且非阻塞；溢出只发送 `snapshot_required`，不把宿主路径放入事件，也不保证 exactly-once。
+- Runtime 只上报 Workspace-relative POSIX path、`created/modified/deleted` 变更提示到 CP `/internal/v1/runtime/workspaces/{workspaceId}/events`；sequence 由 CP 分配，文件正文与目录树不进入事件流。
+- 显式删除和 idle eviction 会停止 watcher；CP SSE 订阅关闭由 Workspace 删除提交后的事件生命周期清理完成。
 
 ## 5. 执行终止语义（PLAN-0317）
 

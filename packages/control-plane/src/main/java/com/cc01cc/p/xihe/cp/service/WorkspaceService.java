@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -56,6 +57,7 @@ public class WorkspaceService {
     private final String serviceToken;
     private final JobStateService jobStateService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final WorkspaceEventManager workspaceEventManager;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceUserRepository workspaceUserRepository,
@@ -65,7 +67,8 @@ public class WorkspaceService {
                             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
                             @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken,
                             JobStateService jobStateService,
-                            com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                            com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                            WorkspaceEventManager workspaceEventManager) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.userRepository = userRepository;
@@ -75,6 +78,7 @@ public class WorkspaceService {
         this.serviceToken = serviceToken;
         this.jobStateService = jobStateService;
         this.objectMapper = objectMapper;
+        this.workspaceEventManager = workspaceEventManager;
     }
 
     /**
@@ -224,11 +228,19 @@ public class WorkspaceService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    cleanup.run();
+                    try {
+                        cleanup.run();
+                    } finally {
+                        workspaceEventManager.completeWorkspace(workspaceId, "workspace_deleted");
+                    }
                 }
             });
         } else {
-            cleanup.run();
+            try {
+                cleanup.run();
+            } finally {
+                workspaceEventManager.completeWorkspace(workspaceId, "workspace_deleted");
+            }
         }
 
         logger.info("Workspace logically deleted: id={} name={}", workspaceId, workspace.getName());

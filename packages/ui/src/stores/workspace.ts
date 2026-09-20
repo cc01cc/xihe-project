@@ -6,7 +6,7 @@ import { api, apiPost, ApiError } from '../composables/api'
 import { readFilePreview } from '../composables/fileService'
 import { humanizeErrorCode } from '../lib/errorMessages'
 import { logger } from '../lib/logger'
-import type { FileNode, OpenFile, UploadItem } from '../types'
+import type { FileNode, OpenFile, UploadItem, WorkspaceEvent } from '../types'
 
 function detectLanguage(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() || ''
@@ -288,10 +288,52 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         ...file,
         originalContent: file.content,
         modified: false,
+        externalChange: undefined,
       })
     } catch (e) {
       treeError.value = humanizeFileError(e, `保存 ${path} 失败`)
     }
+  }
+
+  async function reloadOpenFile(path: string) {
+    if (!openFiles.value.has(path)) return
+    const previousActivePath = activeFilePath.value
+    closeFile(path)
+    await openFile(path)
+    if (previousActivePath && previousActivePath !== path && openFiles.value.has(previousActivePath)) {
+      activeFilePath.value = previousActivePath
+    }
+  }
+
+  async function reloadUnmodifiedOpenFiles() {
+    for (const [path, file] of Array.from(openFiles.value.entries())) {
+      if (!file.modified) await reloadOpenFile(path)
+    }
+  }
+
+  /** Apply a Workspace SSE hint without treating the event stream as file data. */
+  async function applyWorkspaceEvent(event: WorkspaceEvent) {
+    if (event.kind === 'snapshot_required') {
+      await refreshAfterMutation()
+      await reloadUnmodifiedOpenFiles()
+      return
+    }
+    if (event.kind !== 'file_changed' || !event.path) return
+
+    const file = openFiles.value.get(event.path)
+    if (file?.modified) {
+      openFiles.value.set(event.path, {
+        ...file,
+        externalChange: {
+          sequence: event.sequence,
+          changeType: event.changeType ?? 'modified',
+        },
+      })
+    } else if (file) {
+      await reloadOpenFile(event.path)
+    }
+    const slash = event.path.lastIndexOf('/')
+    await refreshAfterMutation(slash >= 0 ? event.path.substring(0, slash) : '')
   }
 
   async function deleteNode(path: string): Promise<boolean> {
@@ -556,6 +598,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     showImportDialog, uploadQueue,
     loadTree, refreshTree, toggleExpand, highlightFile,
     openFile, closeFile, updateFileContent, saveFile,
+    reloadOpenFile, applyWorkspaceEvent,
     deleteNode, createFile, renameNode, moveNode, duplicateNode, createDirectory,
     refreshAfterMutation,
     splitPdf, loadFullContent,

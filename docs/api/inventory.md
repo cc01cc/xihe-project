@@ -42,6 +42,7 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `DELETE /api/v1/policy/rules/{id}?layer=` | unchanged under `/api/v1/policy/rules/{id}` | user/admin Bearer + instance ADMIN or workspace OWNER/ADMIN guard | UI permission-rules page — deletes one rule scoped by layer; cross-layer/owner deletion is 404 without leaking existence |
 | CP | `GET /api/v1/policy/rules/conflicts?layer=instance\|user\|workspace` | unchanged under `/api/v1/policy/rules/conflicts` | user/admin Bearer + instance layer ADMIN / workspace scope | UI permission-rules page — subset of rules carrying a static `conflict` note; detection is server-side only |
 | CP | `GET /api/v1/events?sessionId=` | `GET /api/v1/events?sessionId=` — **session-scoped persistent SSE** | user Bearer + current workspace | UI — one active emitter per `sessionId`; `done` ends run, not SSE; `heartbeat` (15s) is transport-only, never enters `MessagePart` |
+| CP | Workspace event stream | `GET /api/v1/workspaces/{workspaceId}/events` — **Workspace-scoped SSE** | user Bearer + Workspace membership | UI — works without Session; compact `file_changed`/refresh hints, Workspace-local sequence, reconnect/gap uses existing HTTP/MCP refresh, no replay log |
 | CP | `/api/v1/status`, `/api/v1/health`, `/api/v1/logs`, `/api/v1/telemetry/*` | unchanged `/api/v1/...` | public/user Bearer | UI/telemetry |
 | CP | `/api/v1/sessions/{sessionId}/messages[/{messageId}]` | unchanged `/api/v1/...` | user Bearer | UI |
 | CP | `GET /api/v1/operations` | unchanged (paginated, redacted user projection) | user Bearer | UI audit view (PLAN-281) |
@@ -57,6 +58,7 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `/internal/v1/context/**` | `/internal/v1/context/**` | service Bearer | Agent context client（events/snapshot/refresh-sources/compact/fork） |
 | CP | `/context/{sessionId}/sources` | `GET /api/v1/context/{sessionId}/sources` | user Bearer | UI `ContextSourcesU1` U1 元信息（无正文，PLAN-0340） |
 | Runtime | `/workspace/**` | `/internal/v1/runtime/workspaces/**` | service Bearer | CP, UI through CP |
+| Runtime | Workspace filesystem event ingress | `POST /internal/v1/runtime/workspaces/{workspaceId}/events` | service Bearer | Runtime notify watcher → CP Workspace SSE fan-out; path is Workspace-relative and never host-absolute |
 | Runtime | git porcelain status | `/internal/v1/runtime/workspaces/{workspaceId}/git-status` | service Bearer | CP dual-diff 待提交侧 |
 | Runtime | git branch+HEAD 事实 | `/internal/v1/runtime/workspaces/{workspaceId}/git-facts` | service Bearer | CP L1b env（PLAN-0340，仅 branch/HEAD，无 dirty） |
 | Runtime | targeted execution spec lookup | `/internal/v1/runtime/workspaces/{workspaceId}/execution-spec` | service Bearer | Runtime lazy materialization |

@@ -73,6 +73,13 @@ flowchart LR
 - **SSEStream**：带 hint（`reasoning`/`text`）的 token 走 `chatStore.appendToParts` 追加；无 hint 时经 `useStreamParser.handleToken` 再 `replaceStreamingParts` 整量替换；`done` 仅结束 run；`heartbeat` 15s 不进业务气泡。
 - **useStreamParser**（`composables/`）：token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`）；`Message.parts` 替代旧 `marked`；代码渲染经 `MarkstreamCodeBlockAdapter` + `parts/TextPart`。
 
+### 4.1 Workspace 级事件 SSE（PLAN-0350）
+
+- `useWorkspaceSSE` 按 `workspaceId` 建立独立订阅，Workspace 无 Session 时同样启用；连接 key 使用 `workspace:<id>`，不与 Chat SSE 共用 Session 语义。
+- `WorkspaceEvent` 只携带相对路径、变更类型、来源和 Workspace-local `sequence`；`Last-Event-ID` 由 `chatTransport` 保存并在重连时发送。
+- `file_changed` 触发 Workspace store 刷新；未修改的打开文件重读，本地有未保存修改时只显示冲突提示；`snapshot_required` 触发既有 HTTP/MCP 文件树补偿。
+- 文件内容、目录树和大数据不进入 SSE；完整契约以 `docs/api/inventory.md`、`plans/PLAN-0350-XH-channel-heartbeat/spec/` 为准。
+
 ## 5. 附件 UI 流 / i18n / 主题
 
 - **附件**：`services/attachmentService.ts`（函数模块）批量上传 `POST /api/v1/sessions/{sessionId}/attachments` + 前端白名单/大小校验；上传入口在 `InputArea`（`ChatPanel.handleSend` 只负责发消息 + 透传 fileIds）；`InputArea` 有文本则合并发送、无文本则纯附件消息；`MessageItem` 用 `/api/v1/files/{fileId}` 渲染；workspace 文件经 `POST /api/v1/files/upload` 可写（附件只读约定见 DEV-017）。

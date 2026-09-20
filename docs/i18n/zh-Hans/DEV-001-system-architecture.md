@@ -183,7 +183,7 @@ sequenceDiagram
   CP->>UI: REST 响应
 ```
 
-状态流：Runtime 文件事件 → MCP notification → CP → UI（`GET /api/v1/events?sessionId=`）/ Agent（透传）；Agent 会话切换/模型变更 → HTTP POST → CP → UI SSE。
+状态流：Runtime/Workspace storage watcher → CP `POST /internal/v1/runtime/workspaces/{workspaceId}/events` → UI Workspace SSE（`GET /api/v1/workspaces/{workspaceId}/events`）；ChatRun 仍独立走 Session SSE（`GET /api/v1/events?sessionId=`）。文件正文与目录树继续走 HTTP/MCP，不进入事件流。
 
 ## 3. 架构优势
 

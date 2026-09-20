@@ -514,6 +514,45 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/events:
+    get:
+      operationId: workspaceEvents
+      summary: Subscribe to workspace-scoped file and lifecycle SSE
+      description: |
+        Workspace-scoped Server-Sent Events for users who can access the Workspace,
+        including Workspaces without a Session. The stream carries compact `file_changed` hints;
+        file contents and directory listings are always re-read through the existing Workspace HTTP/MCP APIs.
+        Each event has a Workspace-local sequence. v1 keeps no replay log: a gap or reconnect may require
+        an HTTP/MCP refresh. Heartbeats are transport-only and do not represent file changes.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: workspaceId
+          required: true
+          schema: { type: string }
+        - in: header
+          name: Last-Event-ID
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Last received Workspace-local event sequence.
+      responses:
+        '200':
+          description: 'SSE stream — compact Workspace event hints'
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                id: 12
+                event: file_changed
+                data: {"workspaceId":"ws-123","sequence":12,"kind":"file_changed","path":"src/app.ts","changeType":"modified","source":"runtime"}
+
+                event: heartbeat
+                data: {"workspaceId":"ws-123","sequence":12,"type":"heartbeat"}
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
   /api/v1/models:
     get:
       operationId: listModels
@@ -921,6 +960,22 @@ paths:
     post: { operationId: registerRuntimeWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Registered } } }
   /internal/v1/runtime/workspaces/{workspaceId}/execution-spec:
     get: { operationId: getWorkspaceExecutionSpec, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Targeted workspace execution specification, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceExecutionSpec' } } } }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/events:
+    post:
+      operationId: publishRuntimeWorkspaceEvent
+      description: Runtime publishes a validated relative-path Workspace event hint to the CP fan-out.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishWorkspaceEventRequest' }
+      responses:
+        '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEventAccepted' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /internal/v1/runtime/workspaces/{workspaceId}/status:
     get: { operationId: getRuntimeWorkspaceStatus, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Runtime workspace materialization status }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/runtime/workspaces/{workspaceId}/materialize:
@@ -1723,6 +1778,8 @@ components:
     RagIngestResponse: { type: object, required: [status, chunks, docIds], properties: { status: { type: string }, chunks: { type: integer }, docIds: { type: array, items: { type: string } } } }
     RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
     WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string } } }
+    PublishWorkspaceEventRequest: { type: object, required: [kind, source], properties: { kind: { type: string, enum: [file_changed, snapshot_required] }, path: { type: string, description: Workspace-relative POSIX path }, changeType: { type: string, enum: [created, modified, deleted] }, source: { type: string, enum: [runtime] } } }
+    WorkspaceEventAccepted: { type: object, required: [accepted, workspaceId, sequence], properties: { accepted: { type: boolean }, workspaceId: { type: string }, sequence: { type: integer, format: int64 } } }
     RuntimeHeartbeatRequest: { type: object, required: [deviceId, status], properties: { deviceId: { type: string }, status: { type: string, enum: [ready, blocked] } } }
     ProblemDetails:
       type: object

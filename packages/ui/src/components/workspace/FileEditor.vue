@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { FileText } from '@lucide/vue'
 import { useWorkspaceStore } from '../../stores/workspace'
 import type { OpenFile } from '../../types'
@@ -12,6 +13,7 @@ import DiffViewer from './DiffViewer.vue'
 import UnknownFileNotice from './UnknownFileNotice.vue'
 
 const ws = useWorkspaceStore()
+const { t } = useI18n()
 const diffMode = ref(false)
 
 const activeFile = computed<OpenFile | null>(() => ws.activeFile)
@@ -73,6 +75,21 @@ function handleLoadFullContent() {
       @select="ws.openFile($event)"
       @close="ws.closeFile($event)"
     />
+
+    <div
+      v-if="activeFile?.externalChange"
+      data-testid="workspace-file-external-change"
+      class="flex shrink-0 items-center justify-between gap-3 border-b border-amber-500/40 bg-amber-50 px-3 py-1.5 text-xs text-amber-900"
+    >
+      <span>{{ t('workspace.externalChange') }}</span>
+      <button
+        type="button"
+        class="rounded border border-amber-700/40 px-2 py-0.5 hover:bg-amber-100"
+        @click="ws.reloadOpenFile(activeFile.path)"
+      >
+        {{ t('workspace.reloadExternalChange') }}
+      </button>
+    </div>
 
     <div v-if="!activeFile" class="flex-1 flex items-center justify-center">
       <div class="text-center">

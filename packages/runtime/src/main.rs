@@ -30,9 +30,11 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 mod import_job;
+mod workspace_events;
 mod ws_file_handler;
 use crate::import_job::{ImportManager, ImportRequest, list_source_directory};
 use tokio::sync::Mutex;
+use workspace_events::WorkspaceEventWatchers;
 use xihe_runtime::backend::{DockerBackend, SandboxBackend, SandboxHandle};
 use xihe_runtime::checkpoint::NestedRepoPolicy;
 use xihe_runtime::checkpoint_api::{
@@ -86,6 +88,7 @@ pub struct AppState {
     /// Readiness describes the Runtime process, not any particular Workspace.
     pub ready: Arc<AtomicBool>,
     pub imports: Arc<ImportManager>,
+    pub(crate) workspace_event_watchers: WorkspaceEventWatchers,
 }
 
 impl AppState {
@@ -93,9 +96,22 @@ impl AppState {
         &self,
         workspace_id: &str,
     ) -> xihe_runtime::error::Result<xihe_runtime::gateway::XiheRuntimeInstance> {
-        self.workspace_ensurer
+        let instance = self
+            .workspace_ensurer
             .ensure_workspace_materialized(workspace_id)
+            .await?;
+        if let Err(error) = self
+            .workspace_event_watchers
+            .ensure(workspace_id, &instance.workspace_path)
             .await
+        {
+            tracing::warn!(
+                "workspace filesystem watcher unavailable workspaceId={} error={}",
+                workspace_id,
+                error
+            );
+        }
+        Ok(instance)
     }
 
     /// PLAN-242 M2: identity-only check for remote MCP calls (no container).
@@ -1901,6 +1917,7 @@ async fn delete_workspace_handler(
             .map_err(runtime_problem)?;
         return Err(runtime_problem(error));
     }
+    app.workspace_event_watchers.stop(ws_id).await;
     // F2: no resident `destroyed` state — unregister + released marker.
     app.lifecycle.complete_destroy(ws_id).await;
     tracing::info!(
@@ -2590,6 +2607,7 @@ async fn run() -> anyhow::Result<()> {
         ),
         ready: readiness.clone(),
         imports: Arc::new(ImportManager::new()),
+        workspace_event_watchers: WorkspaceEventWatchers::default(),
     });
     // `readiness` and `workspace_ensurer` are consumed by `app_state`; clone first
     // so the background loops can observe them without taking references into
@@ -2628,6 +2646,7 @@ async fn run() -> anyhow::Result<()> {
     let reaper_sessions = mcp_sessions.clone();
     let reaper_manager = manager.clone();
     let reaper_router = router.clone();
+    let reaper_workspace_event_watchers = app_state.workspace_event_watchers.clone();
     let reaper_cp_url =
         std::env::var("XIHE_CP_URL").unwrap_or_else(|_| "http://127.0.0.1:12631".to_string());
     let reaper_api_token =
@@ -2641,6 +2660,7 @@ async fn run() -> anyhow::Result<()> {
                 sessions: reaper_sessions,
                 manager: reaper_manager,
                 router: reaper_router,
+                workspace_event_watchers: reaper_workspace_event_watchers,
                 cp_url: reaper_cp_url,
                 api_token: reaper_api_token,
             },
@@ -2685,6 +2705,7 @@ async fn run() -> anyhow::Result<()> {
     let _ = reaper_ready_marker;
 
     let service_ensurer = workspace_ensurer;
+    let service_workspace_event_watchers = app_state.workspace_event_watchers.clone();
     let service = StreamableHttpService::new(
         move || {
             let ws_id = CURRENT_WS_ID
@@ -2695,8 +2716,22 @@ async fn run() -> anyhow::Result<()> {
             // block_in_place: rmcp invokes this closure from async worker threads;
             // a bare block_on panics with "Cannot start a runtime from within a runtime".
             let materialized = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(service_ensurer.ensure_workspace_materialized(&ws_id))
+                tokio::runtime::Handle::current().block_on(async {
+                    let instance = service_ensurer
+                        .ensure_workspace_materialized(&ws_id)
+                        .await?;
+                    if let Err(error) = service_workspace_event_watchers
+                        .ensure(&ws_id, &instance.workspace_path)
+                        .await
+                    {
+                        tracing::warn!(
+                            "workspace filesystem watcher unavailable workspaceId={} error={}",
+                            ws_id,
+                            error
+                        );
+                    }
+                    Ok::<_, xihe_runtime::error::RuntimeError>(instance)
+                })
             });
             let instance = match materialized {
                 Ok(instance) => instance,
@@ -2927,6 +2962,7 @@ struct ReaperContext {
     sessions: Arc<McpSessionManager>,
     manager: Arc<Mutex<WorkspaceManager>>,
     router: Arc<WorkspaceExecutionRouter>,
+    workspace_event_watchers: WorkspaceEventWatchers,
     cp_url: String,
     api_token: String,
 }
@@ -2938,6 +2974,7 @@ async fn idle_reaper_loop(ctx: ReaperContext, ct: tokio_util::sync::Cancellation
         sessions,
         manager,
         router,
+        workspace_event_watchers,
         cp_url,
         api_token,
     } = ctx;
@@ -3007,6 +3044,7 @@ async fn idle_reaper_loop(ctx: ReaperContext, ct: tokio_util::sync::Cancellation
                             let mut mgr = manager.lock().await;
                             match mgr.delete_workspace(ws_id).await {
                                 Ok(_) => {
+                                    workspace_event_watchers.stop(ws_id).await;
                                     lifecycle.evict(ws_id).await;
                                     sessions.cleanup_workspace(ws_id).await;
                                     tracing::info!(
@@ -3382,6 +3420,7 @@ mod remote_handler_tests {
             checkpoints: Arc::new(CheckpointService::new(std::env::temp_dir())),
             ready: Arc::new(AtomicBool::new(true)),
             imports: Arc::new(ImportManager::new()),
+            workspace_event_watchers: WorkspaceEventWatchers::default(),
         })
     }
 

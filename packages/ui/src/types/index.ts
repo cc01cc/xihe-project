@@ -673,6 +673,24 @@ export interface FileNode {
     children?: FileNode[];
 }
 
+export type WorkspaceEventKind =
+    | "workspace_status"
+    | "file_changed"
+    | "snapshot_required"
+    | "workspace_event_error"
+    | "heartbeat";
+
+export interface WorkspaceEvent {
+    workspaceId: string;
+    sequence: number;
+    kind: WorkspaceEventKind;
+    path?: string;
+    changeType?: string;
+    source: string;
+    snapshotVersion?: string;
+    status?: string;
+}
+
 export interface OpenFile {
     path: string;
     name: string;
@@ -684,6 +702,10 @@ export interface OpenFile {
     truncated?: boolean;
     chunks?: string[];
     chunkIndex?: number;
+    externalChange?: {
+        sequence: number;
+        changeType: string;
+    };
 }
 
 export interface UploadItem {

@@ -4,12 +4,101 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::time::Duration;
+use tracing::warn;
 
 use crate::{AppState, DeleteFileRequest, GetFileInfoRequest, ListDirectoryRequest, MkdirRequest};
 use xihe_runtime::{error::RuntimeError, fs};
+
+static EVENT_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'?')
+    .add(b'\\');
+
+/// Best-effort Runtime -> CP notification. File operations stay successful
+/// when the event surface is unavailable; UI will recover through snapshot
+/// refresh after reconnect or a sequence gap.
+pub(crate) async fn report_workspace_event(workspace_id: &str, path: &str, change_type: &str) {
+    let normalized_path = path.replace('\\', "/");
+    if normalized_path.starts_with('/')
+        || normalized_path.contains(':')
+        || normalized_path.split('/').any(|part| part == "..")
+    {
+        warn!(
+            "workspace event skipped due to invalid relative path workspaceId={} errorCode=INVALID_WORKSPACE_PATH",
+            workspace_id
+        );
+        return;
+    }
+    post_workspace_event(
+        workspace_id,
+        serde_json::json!({
+            "kind": "file_changed",
+            "path": normalized_path,
+            "changeType": change_type,
+            "source": "runtime",
+        }),
+    )
+    .await;
+}
+
+pub(crate) async fn report_workspace_snapshot_required(workspace_id: &str) {
+    post_workspace_event(
+        workspace_id,
+        serde_json::json!({
+            "kind": "snapshot_required",
+            "source": "runtime",
+            "snapshotVersion": "overflow",
+        }),
+    )
+    .await;
+}
+
+async fn post_workspace_event(workspace_id: &str, payload: serde_json::Value) {
+    let cp_url = std::env::var("XIHE_CP_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:12631".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let token =
+        std::env::var("XIHE_CP_API_TOKEN").unwrap_or_else(|_| "dev-token-not-secure".to_string());
+    let client = EVENT_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("workspace event client should build")
+    });
+    let result = client
+        .post(format!(
+            "{cp_url}/internal/v1/runtime/workspaces/{}/events",
+            utf8_percent_encode(workspace_id, PATH_SEGMENT_ENCODE_SET)
+        ))
+        .bearer_auth(token)
+        .json(&payload)
+        .send()
+        .await;
+    match result {
+        Ok(response) if response.status().is_success() => {}
+        Ok(response) => warn!(
+            "workspace event publish rejected workspaceId={} status={}",
+            workspace_id,
+            response.status()
+        ),
+        Err(error) => warn!(
+            "workspace event publish failed workspaceId={} reason={}",
+            workspace_id, error
+        ),
+    }
+}
 
 /// PLAN-274 Decision 11: per-workspace fail-closed gate. Mutations must not
 /// proceed when the Registry/Manager cross-map diverges for this workspace.
@@ -354,6 +443,7 @@ mod tests {
                 dir.path(),
             )),
             imports: Arc::new(crate::import_job::ImportManager::new()),
+            workspace_event_watchers: crate::workspace_events::WorkspaceEventWatchers::default(),
         });
         (app, ws_id, dir, TestCp { task })
     }

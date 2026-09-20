@@ -7,6 +7,7 @@ import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
 import { useChatStore } from '../../stores/chat'
 import { ApiError } from '../../composables/api'
+import { useWorkspaceSSE } from '../../composables/useWorkspaceSSE'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import { FolderTree, X } from '@lucide/vue'
@@ -105,6 +106,10 @@ const sessionId = computed(() => {
 })
 
 const workspaceId = computed(() => routeWorkspaceId.value || auth.currentWorkspaceId || '')
+
+const workspaceEvents = useWorkspaceSSE(workspaceId, {
+  onEvent: (event) => ws.applyWorkspaceEvent(event),
+})
 
 async function selectSessionForWorkspace() {
   if (!workspaceId.value) return null
@@ -269,6 +274,13 @@ watch(routeWorkspaceId, () => {
           >
             <span class="font-medium text-foreground/80">{{ auth.workspace?.name ?? t('workspace.chatHeader') }}</span>
             <span class="text-muted-foreground/60">{{ t('workspace.chatHeader') }}</span>
+            <span
+              data-testid="workspace-event-status"
+              class="text-[10px]"
+              :class="workspaceEvents.isConnected.value ? 'text-emerald-600' : 'text-muted-foreground/60'"
+            >
+              {{ workspaceEvents.isConnected.value ? t('workspace.eventsConnected') : t('workspace.eventsReconnecting') }}
+            </span>
             <!-- PLAN-0343: run-terminal usage line (tokens · cost/unmapped · source badge) -->
             <div
               v-if="lastUsage && usageInput !== undefined"

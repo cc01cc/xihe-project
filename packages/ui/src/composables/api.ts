@@ -38,6 +38,7 @@ import type {
     WorkspaceCheckpointRevertCounts,
     WorkspaceCheckpointRevertState,
     WorkspaceCheckpointRevertView,
+    WorkspaceEvent,
 } from "../types";
 
 const API_BASE = "/api/v1";
@@ -844,6 +845,54 @@ function normalizeWorkspaceResponse(value: unknown): ApiWorkspace {
     const workspace = normalizeWorkspace(root?.workspace) ?? normalizeWorkspace(root);
     if (!workspace) throw new Error("Invalid workspace response: missing id or name");
     return workspace;
+}
+
+const workspaceEventKinds = [
+    "workspace_status",
+    "file_changed",
+    "snapshot_required",
+    "workspace_event_error",
+    "heartbeat",
+] as const;
+
+/** Normalize the Workspace SSE envelope without accepting host paths or stale foreign IDs. */
+export function normalizeWorkspaceEvent(
+    value: unknown,
+    fallbackWorkspaceId: string,
+    fallbackKind?: string,
+): WorkspaceEvent | null {
+    const record = asRecord(value);
+    if (!record || typeof record.workspaceId !== "string" || record.workspaceId !== fallbackWorkspaceId) {
+        return null;
+    }
+    const kind = typeof record.kind === "string" ? record.kind : fallbackKind;
+    if (!kind || !workspaceEventKinds.includes(kind as (typeof workspaceEventKinds)[number])) {
+        return null;
+    }
+    const sequence = asNonNegativeInteger(record.sequence);
+    const source = typeof record.source === "string"
+        ? record.source
+        : kind === "heartbeat"
+            ? "control-plane"
+            : "";
+    if (sequence === null || source.length === 0) return null;
+    const path = typeof record.path === "string" ? record.path : undefined;
+    if (
+        path !== undefined &&
+        (path.length === 0 || path.startsWith("/") || path.includes("\\") || path.includes(":") || path.split("/").includes(".."))
+    ) {
+        return null;
+    }
+    return {
+        workspaceId: fallbackWorkspaceId,
+        sequence,
+        kind: kind as WorkspaceEvent["kind"],
+        path,
+        changeType: typeof record.changeType === "string" ? record.changeType : undefined,
+        source,
+        snapshotVersion: typeof record.snapshotVersion === "string" ? record.snapshotVersion : undefined,
+        status: typeof record.status === "string" ? record.status : undefined,
+    };
 }
 
 function endpoint(path: string): string {
