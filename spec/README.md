@@ -49,16 +49,16 @@ spec/
 
 | 领域 | 契约状态 | 实现状态 | Canonical owner | 承接关系 |
 |---|---|---|---|---|
-| architecture / communication | proposed | partial | 跨边界 owner | 待领域 PLAN |
-| ui interaction | proposed | partial | UI + 跨边界 owner | feature PLAN 与领域 PLAN 分开 |
-| agent execution / Context | proposed | partial | Agent owner | Context PLAN 仍为局部规范 |
-| session boundaries | proposed | partial | CP/Session owner | Chat Session、ChatRun/Operation、MCP session 分开 |
-| authentication / authorization | proposed | partial | Security owner | principal/role/scope 归 Security |
-| agent role/scope binding | proposed | partial | Agent owner | 只写绑定、传播和消费，不复制授权模型 |
-| capability / approval / audit | proposed | partial | Runtime/Security/CP owners | 能力策略、审批、审计分别建模 |
-| workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | 由领域 PLAN 冻结后晋升 |
-| configuration / env | proposed | implemented | CP ConfigService owner | 以现行配置模型整合历史来源 |
-| protocol / data | proposed | partial | 对应协议和 durable-record owners | OpenAPI/inventory/schema 保持各自事实源 |
+| architecture / communication | proposed | partial | 跨边界 owner | PLAN-0385 |
+| ui interaction | proposed | partial | UI + 跨边界 owner | PLAN-0388；PLAN-0384 仅负责 feature flow |
+| agent execution / Context | proposed | partial | Agent owner | PLAN-0387；0381/0382 仍为局部规范 |
+| session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开 |
+| authentication / authorization | proposed | partial | Security owner | PLAN-0386；principal/role/scope 归 Security |
+| agent role/scope binding | proposed | partial | Agent owner | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
+| capability / approval / audit | proposed | partial | Runtime/Security/CP owners | PLAN-0386/0389；能力策略、审批、审计分别建模 |
+| workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | PLAN-0389 |
+| configuration / env | proposed | implemented | CP ConfigService owner | PLAN-0389；以现行配置模型整合历史来源 |
+| protocol / data | proposed | partial | 对应协议和 durable-record owners | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
 
 ## 4. Agent 读取规则
 
