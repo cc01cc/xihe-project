@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { generateE2EPassword } from './helpers/password'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
@@ -28,8 +29,22 @@ test.describe('@host Workspace import', () => {
     wsId = auth.workspaceId
   })
 
-  test.afterAll(() => {
+  test.afterAll(async ({ request }) => {
     if (sourceDir) fs.rmSync(sourceDir, { recursive: true, force: true })
+    if (wsId && authToken) {
+      await request.delete(`${CP_URL}/api/v1/workspaces/${wsId}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      }).catch(() => undefined)
+    }
+    const hostRoot = process.env.XIHE_WORKSPACE_HOST_ROOT
+      ? path.resolve(process.env.XIHE_WORKSPACE_HOST_ROOT)
+      : path.resolve('..', '..', '.xihe-workspaces')
+    const target = path.join(hostRoot, wsId)
+    if (wsId && fs.existsSync(target)) {
+      execFileSync('pwsh', ['-NoProfile', '-Command',
+        `[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('${target.replace(/'/g, "''")}', 'OnlyErrorDialogs', 'SendToRecycleBin')`],
+        { stdio: 'ignore' })
+    }
   })
 
   test.beforeEach(async ({ page }) => {
