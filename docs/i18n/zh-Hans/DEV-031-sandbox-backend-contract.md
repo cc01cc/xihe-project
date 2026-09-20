@@ -20,7 +20,7 @@ created: 2026-09-15
   1. 必备接口在所有后端都有非空实现；
   2. 缺能力时显式返回 `UNSUPPORTED`（不支持），不做静默降级（详见 §3）；用户显式选择的不受限宿主执行是独立模式，不是 fallback；
   3. 接缝上不出现 Docker 概念；
-  4. 能力声明必须同时包含「声明支持」与「实测结果」，两者不一致时按拒绝处理（详见 §3）；
+  4. 公共能力结果必须给出最终 `available/reason`；backend 内部可以保留声明/实测分层，但不得形成第二个对外状态源（详见 §3）；`profile` 是 backend-scoped，Docker profile 不自动适用于 Windows backend；
   5. 连接可断开，客户端必须能重连（详见 §5）；
   6. 销毁执行实体不得删除工作区数据（详见 §5）。
 
@@ -38,7 +38,7 @@ created: 2026-09-15
 ## 3. 能力声明与 `UNSUPPORTED`
 
 ```
-capabilities() -> { <capability>: { declared, probed, reason } }
+capabilities() -> { available, reason, diagnostics? }
 ```
 
 能力快照的身份部分至少包含：
@@ -60,9 +60,11 @@ capabilities() -> { <capability>: { declared, probed, reason } }
 }
 ```
 
-`backendKind` 是稳定身份，不写 `beta`/`preview`；`maturity` 表示成熟度；`backendRevision` 是 XH adapter 构建版本；`engineVersion` 是 MXC/Docker 等 provider 版本。`runtimeOs` 是 Runtime 所在系统，`executionOs` 是命令实际运行系统。Windows Docker Linux 容器与 Linux Docker 都是 `backendKind: "docker"`，只通过平台字段区分。
+`backendKind` 是稳定身份，不写 `beta`/`preview`；`maturity` 表示成熟度。`backendRevision`、platform 和 `engineVersion` 只作为可选 diagnostics，不参与 v1 公共可用性判断。Windows Docker Linux 容器与 Linux Docker 都是 `backendKind: "docker"`，未来需要时再通过 diagnostics 区分拓扑。
 
-- `declared`（声明支持）、`probed`（启动或调用前的实测结果）与 `reason`（不支持或降级的原因）三者齐备；`declared` 与 `probed` **不一致即 fail-closed**。
+`profile` 只在 backend 需要时存在：Docker 使用 `strict/coding/isolated`；Windows MXC/宿主首版使用 Workspace `executionMode`，不要求 image/profile。公共 UI/CP 不把 `profile` 当成跨 backend 的安全语义。
+
+- Runtime 内部可以记录 `declared`（声明支持）和 `probed`（启动或调用前的实测结果），但公共调用方只读取最终 `available`（当前是否可用）与 `reason`（不可用/降级原因）。
 - 探测失败或未实现 → 显式降级或拒绝；禁止静默降级（实证：Claude 默认 fail-open，即失败时放行而不拦截；Landlock `BestEffort` 静默过滤；Codex Windows 未启用沙盒时 `workspace-write` 静默降级 read-only）。
 - 调用未声明能力 → 返回 `UNSUPPORTED` 并附 `reason`；调用方**按能力分支，不按后端名分支**。
 
@@ -126,7 +128,7 @@ capabilities() -> { <capability>: { declared, probed, reason } }
 | `network(policy)` | `network_mode` none/bridge + 代理 env | 接缝下实现 |
 | 快照/回滚 | 不在沙盒层（属工作区文件变更层，归 PLAN-0328 范围） | 与执行实体解耦 |
 
-当前 backend 方向：`windows-mxc` 由 PLAN-0379 承接，成熟度通过 `maturity: "experimental"` 报告；`windows-host/unrestricted` 是用户显式选择的宿主执行兜底，不宣称 workspace 外写保护；`docker` 保持稳定 backend identity，但 Docker 卷/guard 线由 PLAN-0377/0380 后置。三者共用 `contractVersion: "v1"`，消费方按 capability/platform 分支，不按 backend 名称拼接传输细节。
+当前 backend 方向：`windows-mxc` 由 PLAN-0379 承接，成熟度通过 `maturity: "experimental"` 报告；`windows-host/unrestricted` 是用户显式选择的宿主执行兜底，不宣称 workspace 外写保护；`docker` 保持稳定 backend identity，但 Docker 卷/guard 线由 PLAN-0377/0380 后置。三者共用 `contractVersion: "v1"`，消费方按 `available/reason` 和 executionMode 分支，platform/provider version 只作 diagnostics，不按 backend 名称拼接传输细节。
 
 ## 8. 变更规则
 

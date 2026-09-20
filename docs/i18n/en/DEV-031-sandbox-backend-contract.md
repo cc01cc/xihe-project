@@ -20,7 +20,7 @@ created: 2026-09-15
   1. Every required interface has a non-empty implementation on all backends;
   2. A missing capability returns an explicit `UNSUPPORTED` (not supported) result and never silently degrades (see §3); explicit unrestricted host execution is a separate user-selected mode, not a fallback;
   3. No Docker concepts above the seam;
-  4. A capability declaration must include both the declared support and the measured result; if the two disagree, refuse rather than allow (see §3);
+  4. The public capability result must provide final `available/reason`; a backend may keep declared/measured layers internally, but they must not become a second public state source (see §3); `profile` is backend-scoped and Docker profiles do not automatically apply to Windows backends;
   5. Connections may drop and clients must be able to reconnect (see §5);
   6. Destroying the execution entity must not delete workspace data (see §5).
 
@@ -38,7 +38,7 @@ Rule: if an interface can only raise "unsupported" on some backend, it cannot be
 ## 3. Capability Declaration and `UNSUPPORTED`
 
 ```
-capabilities() -> { <capability>: { declared, probed, reason } }
+capabilities() -> { available, reason, diagnostics? }
 ```
 
 The identity portion of a capability snapshot includes at least:
@@ -60,9 +60,11 @@ The identity portion of a capability snapshot includes at least:
 }
 ```
 
-`backendKind` is stable and must not contain `beta` or `preview`; `maturity` describes product maturity; `backendRevision` identifies the XH adapter build; and `engineVersion` identifies the MXC/Docker provider version. `runtimeOs` is where Runtime runs, while `executionOs` is where the command actually runs. Windows Docker Linux containers and Linux Docker both use `backendKind: "docker"`; the platform fields distinguish the topology.
+`backendKind` is stable and must not contain `beta` or `preview`; `maturity` describes product maturity. `backendRevision`, platform, and `engineVersion` are optional diagnostics and do not participate in the v1 public availability result. Windows Docker Linux containers and Linux Docker both use `backendKind: "docker"`; diagnostics can distinguish the topology when needed.
 
-- All three of `declared` (declared support), `probed` (measured at startup or before call) and `reason` (why unsupported or degraded) are required; a mismatch between `declared` and `probed` is **fail-closed**.
+`profile` exists only where a backend needs it: Docker uses `strict/coding/isolated`; Windows MXC/host execution uses the Workspace `executionMode` in v1 and does not require an image/profile. Public UI/CP must not treat `profile` as cross-backend security semantics.
+
+- Runtime may track `declared` support and `probed` results internally, but public consumers read only final `available` and `reason`.
 - Probe failure or unimplemented capability → explicit degradation or refusal; silent degradation is forbidden (evidence: Claude defaults to fail-open, i.e. allowing instead of blocking on failure; Landlock `BestEffort` silently filters; Codex on Windows silently downgrades `workspace-write` to read-only when its sandbox is disabled).
 - Calling an undeclared capability → returns `UNSUPPORTED` with `reason`; callers branch **on capabilities, not backend names**.
 
@@ -126,7 +128,7 @@ Status: the current MCP bridge depends on an in-sandbox HTTP service plus a publ
 | `network(policy)` | `network_mode` none/bridge + proxy env | Below-seam implementation |
 | Snapshot/rollback | Not in the sandbox layer (belongs to the workspace file-change layer, owned by PLAN-0328) | Kept separate from the execution entity |
 
-Current backend direction: PLAN-0379 owns `windows-mxc`, reported with `maturity: "experimental"`; `windows-host/unrestricted` is an explicitly user-selected host-execution fallback and does not claim workspace-outside write protection; `docker` remains the stable backend identity, while the Docker volume/guard line is deferred by PLAN-0377/0380. All three share `contractVersion: "v1"`; consumers branch on capabilities and platform, not on backend-specific transport names.
+Current backend direction: PLAN-0379 owns `windows-mxc`, reported with `maturity: "experimental"`; `windows-host/unrestricted` is an explicitly user-selected host-execution fallback and does not claim workspace-outside write protection; `docker` remains the stable backend identity, while the Docker volume/guard line is deferred by PLAN-0377/0380. All three share `contractVersion: "v1"`; consumers branch on `available/reason` and execution mode, while platform/provider versions remain diagnostics, not on backend-specific transport names.
 
 ## 8. Change Rules
 
