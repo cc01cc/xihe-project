@@ -426,6 +426,7 @@ impl WorkspaceExecutionRouter {
             let execution_mode = instance.execution_mode.clone();
             return self
                 .execute_direct_attach_operation(
+                    workspace_id,
                     &instance.workspace_path,
                     &execution_mode,
                     operation,
@@ -439,6 +440,7 @@ impl WorkspaceExecutionRouter {
 
     async fn execute_direct_attach_operation(
         &self,
+        workspace_id: &str,
         workspace_path: &str,
         execution_mode: &str,
         operation: &str,
@@ -590,6 +592,13 @@ impl WorkspaceExecutionRouter {
                     .map(str::to_string)
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 let job_id = format!("oneshot-{workspace_path}-{item_id}");
+                // PLAN-0397：直连命令登记进 in-flight 注册表，取消请求经 token 命中。
+                let registration = self.in_flight.register(workspace_id, &item_id);
+                let _in_flight_guard = InFlightGuard {
+                    registry: self.in_flight.clone(),
+                    item_id: item_id.clone(),
+                };
+                let cancel_token = registration.token.clone();
                 let shell = payload
                     .get("shell")
                     .and_then(Value::as_bool)
@@ -633,6 +642,22 @@ impl WorkspaceExecutionRouter {
                         .map_err(job_engine_error)?;
                     if snapshot.status.is_terminal() {
                         break snapshot;
+                    }
+                    if cancel_token.is_cancelled() {
+                        let cancel = self.job_engine.cancel(&job_id);
+                        let confirmed = matches!(
+                            cancel,
+                            Ok(ref result)
+                                if result.outcome
+                                    == crate::job_engine::CancelOutcome::Cancelled
+                        );
+                        if let Err(error) = self.job_engine.cleanup(&job_id) {
+                            tracing::warn!(job_id = %job_id, error = %error, "PLAN-0397: cancelled one-shot cleanup failed");
+                        }
+                        return Err(RuntimeError::Cancelled {
+                            detail: format!("one-shot job {job_id} cancelled by request"),
+                            confirmed,
+                        });
                     }
                     if std::time::Instant::now() >= deadline {
                         let _ = self.job_engine.cancel(&job_id);
