@@ -88,6 +88,16 @@ html2md = "0.2.15"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
+# === NEW: Windows Process Job engine (PLAN-0393) ===
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [dependencies.tower]
 version = "0.5"
 features = ["util"]

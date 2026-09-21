@@ -16,6 +16,7 @@ pub mod gateway;
 pub mod heartbeat;
 pub mod hydrate;
 pub mod inventory;
+pub mod job_engine;
 pub mod lifecycle;
 pub mod log_redact;
 pub mod mcp_session;
