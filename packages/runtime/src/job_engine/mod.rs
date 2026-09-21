@@ -1444,6 +1444,51 @@ mod tests {
         }
 
         #[test]
+        fn cwd_through_a_directory_link_escape_fails_closed() {
+            // A junction/symlink inside the workspace must not let a job run
+            // outside the grants: the engine canonicalizes before comparing.
+            let root = temp_root("link-escape");
+            let outside = temp_root("link-outside");
+            let link = root.join("escape");
+            let linked = {
+                #[cfg(windows)]
+                {
+                    let status = std::process::Command::new("cmd")
+                        .args([
+                            "/C",
+                            "mklink",
+                            "/J",
+                            &link.to_string_lossy(),
+                            &outside.to_string_lossy(),
+                        ])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status();
+                    status.map(|value| value.success()).unwrap_or(false)
+                }
+                #[cfg(not(windows))]
+                {
+                    std::os::unix::fs::symlink(&outside, &link).is_ok()
+                }
+            };
+            assert!(linked, "could not create the escape link");
+            let engine = JobEngine::new("boot-test", temp_root("link-escape-jobs"));
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let mut plan = plan_for(&["/C", "exit 0"], 0);
+            plan.cwd = Some(link.clone());
+            plan.grants = FilesystemPolicy {
+                read_only_roots: Vec::new(),
+                read_write_roots: vec![root.clone()],
+            };
+            match engine.start(&job_id, plan) {
+                Err(JobEngineError::InvalidPath(_)) => {}
+                other => panic!("expected fail-closed for a linked cwd, got {other:?}"),
+            }
+            assert_eq!(engine.active_count(), 0);
+            let _ = fs::remove_dir(&link);
+        }
+
+        #[test]
         fn cwd_outside_grants_fails_closed() {
             let engine = JobEngine::new("boot-test", temp_root("grant"));
             let job_id = uuid::Uuid::new_v4().to_string();

@@ -6202,6 +6202,62 @@ mod job_engine_route_tests {
     }
 
     #[tokio::test]
+    async fn host_job_honors_env_and_readonly_cwd() {
+        // 边界矩阵：env 生效；cwd 落在只读 grant 内也允许（Host 无写保护，
+        // grants 只是引擎的 cwd 规则——见 PLAN-0395 spec §3）。
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = direct_attach_app_with_mode("windows-host").await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("XIHE_IT_MARKER".to_string(), "boundary-42".to_string());
+        let (status, _) = workspace_job_start_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(JobStartRequest {
+                operation_item_id: job_id.clone(),
+                command: "node".to_string(),
+                args: vec![
+                    "-e".to_string(),
+                    "process.stdout.write(process.env.XIHE_IT_MARKER || 'missing')".to_string(),
+                ],
+                timeout_secs: 30,
+                cwd: Some(dir.path().to_string_lossy().into_owned()),
+                env: Some(env),
+            }),
+        )
+        .await
+        .expect("start");
+        assert_eq!(status, StatusCode::ACCEPTED);
+        await_terminal(&app, &ws_id, &job_id).await;
+        let response = workspace_job_output_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(super::JobOutputRequest {
+                job_id: job_id.clone(),
+                stream: Some("stdout".to_string()),
+                offset: Some(0),
+                limit: None,
+            }),
+        )
+        .await
+        .expect("output");
+        let body = body_json(response.into_response()).await;
+        assert!(
+            body["data"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("boundary-42"),
+            "env must reach the job: {body}"
+        );
+        app.job_engine.cleanup(&job_id).expect("cleanup");
+        drop(dir);
+    }
+
+    #[tokio::test]
     async fn conf_no_transport_detail_leak() {
         let DirectAttachApp {
             app,

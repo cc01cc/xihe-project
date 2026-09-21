@@ -233,6 +233,77 @@ fn mxc_job_is_owned_and_killed() {
     engine.cleanup(&job_id).expect("cleanup");
 }
 
+#[test]
+fn mxc_readonly_grant_denies_writes() {
+    if std::env::var("XIHE_JOB_MXC").ok().as_deref() != Some("1") {
+        eprintln!("SKIP: set XIHE_JOB_MXC=1 (and have wxc-exec.exe) to run the MXC path");
+        return;
+    }
+    let mxc = std::env::var("XIHE_MXC_EXEC")
+        .expect("set XIHE_MXC_EXEC to the wxc-exec.exe path together with XIHE_JOB_MXC=1");
+    let node = String::from_utf8_lossy(
+        &Command::new("where")
+            .arg("node")
+            .output()
+            .expect("where node")
+            .stdout,
+    )
+    .lines()
+    .next()
+    .unwrap_or_default()
+    .trim()
+    .to_string();
+    assert!(!node.is_empty(), "node.exe not found on PATH");
+    let node_dir = PathBuf::from(&node)
+        .parent()
+        .expect("node dir")
+        .to_path_buf();
+
+    let root = temp_root("mxc-readonly");
+    let policy_path = root.join("policy.json");
+    let marker = node_dir.join("xihe-mxc-readonly-probe.txt");
+    let _ = fs::remove_file(&marker);
+    let script = format!(
+        "const fs=require('fs');try{{fs.writeFileSync(String.raw`{}`,'1');process.exit(0)}}catch(e){{process.exit(7)}}",
+        marker.display()
+    );
+    let policy = serde_json::json!({
+        "version": "0.8.0-alpha",
+        "containment": "processcontainer",
+        "process": {
+            "commandLine": format!("\"{node}\" -e \"{}\"", script.replace('"', "\\\"")),
+            "cwd": root.to_string_lossy(),
+            "timeout": 30000
+        },
+        "filesystem": {
+            "readonlyPaths": [node_dir.to_string_lossy()],
+            "readwritePaths": [root.to_string_lossy()]
+        },
+        "fallback": { "allowDaclMutation": true },
+        "network": { "egress": { "default": "allow" }, "ingress": { "default": "allow", "hostLoopback": "allow" } },
+        "processContainer": { "capabilities": ["internetClient", "privateNetworkClientServer"] },
+        "ui": { "disable": false }
+    });
+    fs::write(&policy_path, serde_json::to_vec_pretty(&policy).unwrap()).expect("policy");
+
+    let engine = JobEngine::new("boot-it", root.clone());
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let policy_arg = policy_path.to_string_lossy().to_string();
+    let mut plan = host_plan(&root, &mxc, &[policy_arg.as_str()], 0);
+    plan.backend_kind = "windows-mxc".to_string();
+    plan.grants.read_only_roots.push(node_dir.clone());
+    engine.start(&job_id, plan).expect("start mxc job");
+    let snapshot = wait_terminal(&engine, &job_id);
+    let wrote = marker.exists();
+    let _ = fs::remove_file(&marker);
+    assert!(
+        !wrote,
+        "a read-only grant must not be writable inside the sandbox (exit={:?})",
+        snapshot.exit_code
+    );
+    engine.cleanup(&job_id).expect("cleanup");
+}
+
 /// Crash-path helper: creates a job, records its PIDs, then exits without any
 /// cleanup so only the OS handle closure (kill-on-close) can reap the tree.
 #[test]
