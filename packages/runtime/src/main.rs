@@ -2004,6 +2004,7 @@ async fn workspace_job_start_handler(
     if let Some(context) = direct_attach_job_context(&app, &ws_id).await? {
         return start_direct_attach_job(
             &app,
+            &ws_id,
             &context.mode,
             &context.workspace_path,
             &operation_item_id,
@@ -2049,6 +2050,7 @@ async fn workspace_job_start_handler(
 #[allow(clippy::too_many_arguments)]
 async fn start_direct_attach_job(
     app: &Arc<AppState>,
+    ws_id: &str,
     mode: &str,
     workspace_path: &str,
     operation_item_id: &str,
@@ -2089,7 +2091,10 @@ async fn start_direct_attach_job(
             &app.job_engine.output_dir(operation_item_id),
         )
         .map_err(job_engine_problem)?;
-        return match app.job_engine.start(operation_item_id, plan) {
+        return match app
+            .job_engine
+            .start_in_workspace(Some(ws_id), operation_item_id, plan)
+        {
             Ok(_handle) => Ok((
                 StatusCode::ACCEPTED,
                 AxumJson(serde_json::json!({
@@ -2122,7 +2127,10 @@ async fn start_direct_attach_job(
         backend_kind = plan.backend_kind,
         "PLAN-0395: starting an unrestricted host job (no filesystem isolation)"
     );
-    match app.job_engine.start(operation_item_id, plan) {
+    match app
+        .job_engine
+        .start_in_workspace(Some(ws_id), operation_item_id, plan)
+    {
         Ok(_handle) => Ok((
             StatusCode::ACCEPTED,
             AxumJson(serde_json::json!({

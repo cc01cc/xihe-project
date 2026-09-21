@@ -153,6 +153,20 @@ impl InFlightExecutions {
         }
     }
 
+    /// PLAN-0379 T3.5：模式切换时取消该 Workspace 仍在飞的全部一次性执行。
+    /// 返回实际取消的条目数；幂等（重复调用返回 0）。
+    pub fn cancel_workspace(&self, workspace_id: &str) -> usize {
+        let map = self.inner.lock().expect("in-flight registry poisoned");
+        let mut cancelled = 0;
+        for entry in map.values() {
+            if entry.workspace_id == workspace_id && !entry.token.is_cancelled() {
+                entry.token.cancel();
+                cancelled += 1;
+            }
+        }
+        cancelled
+    }
+
     pub fn len(&self) -> usize {
         self.inner
             .lock()
@@ -335,6 +349,9 @@ pub struct WorkspaceExecutionRouter {
     docker: Docker,
     /// PLAN-0397：非 Docker 一次性命令走进程 Job 引擎（同一归属/终止实现）。
     job_engine: Arc<crate::job_engine::JobEngine>,
+    /// PLAN-0379 T3.5：每个 Workspace 上次物化的执行模式；模式变化即
+    /// 终止旧模式遗留的执行（Job 与一次性执行）。
+    mode_by_workspace: Arc<StdMutex<HashMap<String, String>>>,
 }
 
 impl std::fmt::Debug for WorkspaceExecutionRouter {
@@ -359,6 +376,7 @@ impl WorkspaceExecutionRouter {
             in_flight: Arc::new(InFlightExecutions::new()),
             docker,
             job_engine,
+            mode_by_workspace: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -405,6 +423,27 @@ impl WorkspaceExecutionRouter {
                     );
                 }
             }
+        }
+        // PLAN-0379 T3.5：CP 切换执行模式会推进 generation，本次物化因此拿到
+        // 新模式；旧模式遗留的 Job 与一次性执行必须在这里终止，避免旧句柄、
+        // 旧进程跨越模式存活（CP 侧另有 WORKSPACE_BUSY 兜底 durable job）。
+        let current_mode = instance.execution_mode.clone();
+        let previous_mode = self
+            .mode_by_workspace
+            .lock()
+            .expect("mode map poisoned")
+            .insert(workspace_id.to_string(), current_mode.clone());
+        if let Some(previous_mode) = previous_mode.filter(|mode| mode != &current_mode) {
+            let jobs = self.job_engine.terminate_workspace(workspace_id);
+            let inflight = self.in_flight.cancel_workspace(workspace_id);
+            tracing::info!(
+                workspace_id,
+                previous_mode,
+                current_mode,
+                jobs,
+                inflight,
+                "execution mode switch terminated previous executions"
+            );
         }
         Ok(instance)
     }
@@ -631,7 +670,7 @@ impl WorkspaceExecutionRouter {
                 };
                 let plan = crate::job_engine::LaunchPlan { shell, ..plan };
                 self.job_engine
-                    .start(&job_id, plan)
+                    .start_in_workspace(Some(workspace_id), &job_id, plan)
                     .map_err(job_engine_error)?;
                 let deadline = std::time::Instant::now()
                     + Duration::from_millis(timeout_ms.saturating_add(5_000));
@@ -1396,6 +1435,27 @@ mod in_flight_tests {
             "another workspace must not be able to cancel this execution"
         );
         assert!(!registration.token.is_cancelled());
+    }
+
+    /// PLAN-0379 T3.5：模式切换按 Workspace 取消全部在飞执行；其它
+    /// Workspace 不受影响，重复调用幂等。
+    #[test]
+    fn cancel_workspace_cancels_only_its_own_executions() {
+        let registry = InFlightExecutions::new();
+        let alpha = registry.register("ws-alpha", "item-a");
+        let beta = registry.register("ws-alpha", "item-b");
+        let untouched = registry.register("ws-other", "item-c");
+
+        assert_eq!(registry.cancel_workspace("ws-alpha"), 2);
+        assert!(alpha.token.is_cancelled());
+        assert!(beta.token.is_cancelled());
+        assert!(!untouched.token.is_cancelled());
+        assert_eq!(
+            registry.cancel_workspace("ws-alpha"),
+            0,
+            "repeated switch requests must be idempotent"
+        );
+        assert_eq!(registry.count_for_workspace("ws-other"), 1);
     }
 
     /// PLAN-0317 T2.1：同一 key 重复注册只保留最新执行，旧执行被取消。

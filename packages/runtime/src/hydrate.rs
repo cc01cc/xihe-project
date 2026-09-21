@@ -497,6 +497,9 @@ impl WorkspaceEnsurer {
             && instance.profile == profile
             && instance.workspace_path == workspace_path_string
             && instance.state == InstanceState::Active
+            // PLAN-0379 T3.5: CP bumps generation on a mode switch, so this is
+            // defense-in-depth — a stale mode must never satisfy a cache hit.
+            && instance.execution_mode == spec.execution_mode
         {
             self.registry.update_last_active(workspace_id).await;
             if let Err(error) = self

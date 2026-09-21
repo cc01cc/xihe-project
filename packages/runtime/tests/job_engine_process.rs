@@ -471,3 +471,92 @@ fn runtime_crash_leaves_no_residue() {
         }
     }
 }
+
+/// PLAN-0379 T3.5: a mode switch terminates every execution the previous mode
+/// left behind, while jobs of other Workspaces keep running.
+#[test]
+fn mode_switch_terminates_previous_workspace_executions() {
+    let root = temp_root("mode-switch");
+    let engine = JobEngine::new("boot-switch", root.clone());
+    let alpha_job = uuid::Uuid::new_v4().to_string();
+    let beta_job = uuid::Uuid::new_v4().to_string();
+    let long = ["/C", "ping -n 60 127.0.0.1 > nul"];
+
+    engine
+        .start_in_workspace(
+            Some("ws-alpha"),
+            &alpha_job,
+            host_plan(&root, "cmd", &long, 0),
+        )
+        .expect("alpha start");
+    engine
+        .start_in_workspace(
+            Some("ws-alpha"),
+            &beta_job,
+            host_plan(&root, "cmd", &long, 0),
+        )
+        .expect("beta start");
+    let alpha_pids = loop {
+        let pids = engine.job_pids(&alpha_job).expect("alpha pids");
+        if !pids.is_empty() {
+            break pids;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    let beta_pids = loop {
+        let pids = engine.job_pids(&beta_job).expect("beta pids");
+        if !pids.is_empty() {
+            break pids;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+
+    let addressed = engine.terminate_workspace("ws-alpha");
+    assert_eq!(addressed, 2, "both alpha jobs must be addressed");
+    for pid in alpha_pids.iter().chain(beta_pids.iter()) {
+        let started = Instant::now();
+        loop {
+            if pid_gone(*pid) {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(15),
+                "pid {pid} survived the mode-switch termination"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    assert!(
+        engine.handle(&alpha_job).is_err(),
+        "alpha handle outlived the mode switch"
+    );
+    assert!(
+        engine.handle(&beta_job).is_err(),
+        "beta handle outlived the mode switch"
+    );
+
+    let other_job = uuid::Uuid::new_v4().to_string();
+    engine
+        .start_in_workspace(
+            Some("ws-gamma"),
+            &other_job,
+            host_plan(&root, "cmd", &long, 0),
+        )
+        .expect("gamma start");
+    assert_eq!(
+        engine.terminate_workspace("ws-alpha"),
+        0,
+        "alpha has no jobs after its switch"
+    );
+    assert!(
+        engine.handle(&other_job).is_ok(),
+        "another workspace job must keep its handle"
+    );
+    assert_eq!(engine.active_count(), 1);
+    let other_pids = engine.job_pids(&other_job).expect("gamma pids");
+    assert!(engine.cancel(&other_job).expect("gamma cancel").changed);
+    for pid in other_pids {
+        assert!(pid_gone(pid), "pid {pid} survived the explicit cancel");
+    }
+    engine.cleanup(&other_job).expect("gamma cleanup");
+}

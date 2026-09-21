@@ -306,6 +306,9 @@ struct OutputCounters {
 
 struct JobEntry {
     job_id: String,
+    /// PLAN-0379 T3.5: owning workspace, recorded at start so a mode switch can
+    /// terminate every execution that was started under the previous mode.
+    workspace_id: Option<String>,
     handle: JobHandle,
     job_object: Arc<sys::JobObject>,
     child: Mutex<Option<Child>>,
@@ -392,22 +395,58 @@ impl JobEngine {
     /// Starts a job. Re-starts with the same `job_id` are idempotent and return
     /// the existing handle (decision #20).
     pub fn start(&self, job_id: &str, plan: LaunchPlan) -> Result<JobHandle, JobEngineError> {
+        self.start_in_workspace(None, job_id, plan)
+    }
+
+    /// PLAN-0379 T3.5: like [`Self::start`], but records the owning workspace so
+    /// [`Self::terminate_workspace`] can end everything a previous execution
+    /// mode left behind.
+    pub fn start_in_workspace(
+        &self,
+        workspace_id: Option<&str>,
+        job_id: &str,
+        plan: LaunchPlan,
+    ) -> Result<JobHandle, JobEngineError> {
         if let Some(existing) = self.get_entry(job_id) {
             return Ok(existing.handle.clone());
         }
 
         #[cfg(windows)]
         {
-            self.start_windows(job_id, plan)
+            self.start_windows(workspace_id, job_id, plan)
         }
 
         #[cfg(not(windows))]
         {
-            let _ = (job_id, plan);
+            let _ = (workspace_id, job_id, plan);
             Err(JobEngineError::Unsupported(
                 "windows process job engine requires windows".to_string(),
             ))
         }
+    }
+
+    /// PLAN-0379 T3.5: cancel and clean every job started by one workspace.
+    /// Terminal jobs are cleaned too, so their handles and output do not outlive
+    /// the execution mode they were started under. Returns the number of jobs
+    /// addressed.
+    pub fn terminate_workspace(&self, workspace_id: &str) -> usize {
+        let job_ids: Vec<String> = self
+            .jobs
+            .lock()
+            .expect("job table poisoned")
+            .iter()
+            .filter(|(_, entry)| entry.workspace_id.as_deref() == Some(workspace_id))
+            .map(|(job_id, _)| job_id.clone())
+            .collect();
+        for job_id in &job_ids {
+            if let Err(error) = self.cancel(job_id) {
+                tracing::warn!(job_id, code = error.code(), "mode-switch cancel failed");
+            }
+            if let Err(error) = self.cleanup(job_id) {
+                tracing::warn!(job_id, code = error.code(), "mode-switch cleanup failed");
+            }
+        }
+        job_ids.len()
     }
 
     /// Output directory that this job id maps to. Adapters write backend
@@ -634,7 +673,12 @@ impl JobEngine {
     }
 
     #[cfg(windows)]
-    fn start_windows(&self, job_id: &str, plan: LaunchPlan) -> Result<JobHandle, JobEngineError> {
+    fn start_windows(
+        &self,
+        workspace_id: Option<&str>,
+        job_id: &str,
+        plan: LaunchPlan,
+    ) -> Result<JobHandle, JobEngineError> {
         use std::os::windows::io::AsRawHandle;
 
         let cwd = validate_cwd(&plan)?;
@@ -688,6 +732,7 @@ impl JobEngine {
 
         let entry = Arc::new(JobEntry {
             job_id: job_id.to_string(),
+            workspace_id: workspace_id.map(|value| value.to_string()),
             handle: JobHandle {
                 opaque_handle_id: uuid::Uuid::new_v4().to_string(),
                 backend_kind: plan.backend_kind.clone(),

@@ -47,6 +47,9 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
     @AfterEach
     void cleanup() {
+        // Absolute request counts are asserted with wireMock.verify below, so
+        // the request journal must stay scoped to one test.
+        wireMock.resetRequests();
         if (createdWorkspace != null) {
             workspaceUserRepository.deleteAll(
                     workspaceUserRepository.findByIdWorkspaceId(createdWorkspace.getId()));
@@ -112,6 +115,35 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("windows-mxc", switched.getExecutionMode());
         wireMock.verify(3, postRequestedFor(
                 urlEqualTo("/internal/v1/runtime/capabilities/direct-attach/probe")));
+    }
+
+    /**
+     * PLAN-0379 T3.7：创建前 probe 失败必须不落 Workspace（fail-closed 503，
+     * 且不写库）——创建后的启动失败才保留 Workspace 并投影 blocked。
+     */
+    @Test
+    void directAttachCreationFailsClosedWhenProbeReportsUnavailable() {
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/capabilities/direct-attach/probe"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"contractVersion\":\"v1\",\"backendKind\":\"windows-mxc\","
+                                + "\"backendRevision\":\"builtin\",\"maturity\":\"experimental\","
+                                + "\"executionMode\":\"windows-mxc\",\"available\":false,"
+                                + "\"reason\":\"MXC is not installed\"}")));
+
+        String ownerId = UUID.randomUUID().toString();
+        com.cc01cc.p.xihe.cp.config.CpApiException error = assertThrows(
+                com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> workspaceService.createWorkspace(
+                        "probe-unavailable", null, ownerId, null, null,
+                        "direct_attach", tempWorkspace.toString(), "windows-mxc",
+                        "probe-unavailable-" + UUID.randomUUID()));
+        assertEquals("DIRECT_ATTACH_UNAVAILABLE", error.getCode());
+        assertTrue(
+                workspaceRepository.findAll().stream()
+                        .noneMatch(workspace -> ownerId.equals(workspace.getOwnerId())),
+                "a failed probe must not persist a Workspace");
     }
 
     @Test

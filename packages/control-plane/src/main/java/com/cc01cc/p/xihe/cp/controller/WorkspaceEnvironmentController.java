@@ -215,11 +215,20 @@ public class WorkspaceEnvironmentController {
         } catch (Exception e) {
             logger.warn("Workspace Runtime status unavailable workspaceId={}: {}",
                     workspaceId, e.getMessage());
-            return Map.of("status", "blocked", "lastError", "Runtime status unavailable");
+            return runtimeStatusUnavailableView();
         }
     }
 
-    private String mapRuntimeState(Object rawState) {
+    /**
+     * PLAN-0379 T3.7: the projection a Workspace keeps when the Runtime cannot
+     * report status — the Workspace row is never deleted by a Runtime failure,
+     * so the view stays readable and explicitly says why.
+     */
+    static Map<String, Object> runtimeStatusUnavailableView() {
+        return Map.of("status", "blocked", "lastError", "Runtime status unavailable");
+    }
+
+    static String mapRuntimeState(Object rawState) {
         String state = rawState == null ? "" : rawState.toString().toLowerCase();
         // PLAN-0345 (decision #17/F4): 6-state mapping. `creating/paused/
         // stopped/destroying` must surface as themselves — never fall into

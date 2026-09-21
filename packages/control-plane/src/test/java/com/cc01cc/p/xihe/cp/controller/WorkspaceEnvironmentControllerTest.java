@@ -105,4 +105,19 @@ class WorkspaceEnvironmentControllerTest {
         assertEquals(false, view.get("available"));
         assertEquals("DIRECTORY_NOT_FOUND", view.get("unavailableReason"));
     }
+
+    /**
+     * PLAN-0379 T3.7：创建后 Runtime 启动/状态失败时，Workspace 保留并投影为
+     * blocked（不删除 Workspace，也不伪装 ready）。
+     */
+    @Test
+    void runtimeFailureProjectsAsBlockedAndKeepsTheWorkspaceView() {
+        Map<String, Object> unavailable = WorkspaceEnvironmentController.runtimeStatusUnavailableView();
+        assertEquals("blocked", unavailable.get("status"));
+        assertEquals("Runtime status unavailable", unavailable.get("lastError"));
+
+        assertEquals("blocked", WorkspaceEnvironmentController.mapRuntimeState("failed"));
+        assertEquals("materializing", WorkspaceEnvironmentController.mapRuntimeState("creating"));
+        assertEquals("ready", WorkspaceEnvironmentController.mapRuntimeState("ready"));
+    }
 }
