@@ -430,6 +430,10 @@ mod tests {
             workspace_ensurer.clone(),
             manager.clone(),
             registry.clone(),
+            Arc::new(xihe_runtime::job_engine::JobEngine::new(
+                "test-boot",
+                dir.path().join("router-job-output"),
+            )),
         ));
         let lifecycle = Arc::new(xihe_runtime::lifecycle::Lifecycle::new(
             registry.clone(),

@@ -3018,6 +3018,10 @@ async fn run() -> anyhow::Result<()> {
         workspace_ensurer.clone(),
         manager.clone(),
         registry.clone(),
+        Arc::new(xihe_runtime::job_engine::JobEngine::new(
+            "test-boot",
+            std::env::temp_dir().join("xihe-runtime-router-job-output"),
+        )),
     ));
     // PLAN-0347 T1.3: stdio MCP sessions (exec attach directly into the
     // workspace container; no in-container HTTP bridge).
@@ -3915,6 +3919,10 @@ mod remote_handler_tests {
             ensurer.clone(),
             manager.clone(),
             registry.clone(),
+            Arc::new(xihe_runtime::job_engine::JobEngine::new(
+                "test-boot",
+                std::env::temp_dir().join("xihe-runtime-router-job-output"),
+            )),
         ));
         Arc::new(AppState {
             registry: registry.clone(),
@@ -5436,6 +5444,10 @@ mod job_engine_route_tests {
             ensurer.clone(),
             manager.clone(),
             registry.clone(),
+            Arc::new(xihe_runtime::job_engine::JobEngine::new(
+                "test-boot",
+                std::env::temp_dir().join("xihe-runtime-router-job-output"),
+            )),
         ));
         let app = Arc::new(AppState {
             registry: registry.clone(),
@@ -6201,6 +6213,66 @@ mod job_engine_route_tests {
         drop(dir);
     }
 
+    #[tokio::test]
+    async fn oneshot_command_runs_through_the_engine_with_the_same_contract() {
+        // PLAN-0397 V1/V2/V5/V8：直连 execute_command 走引擎，返回契约与旧实现逐字一致。
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = direct_attach_app_with_mode("windows-host").await;
+        let result = app
+            .router
+            .execute_command(
+                &ws_id,
+                "cmd",
+                vec!["/C".to_string(), "echo oneshot-engine & exit 3".to_string()],
+                Some(30),
+                None,
+            )
+            .await;
+        let value = result.expect("one-shot command");
+        assert_eq!(value["exit_code"], 3, "{value}");
+        assert_eq!(value["success"], false);
+        assert!(
+            value["stdout"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("oneshot-engine"),
+            "{value}"
+        );
+        assert_eq!(value["stdout_truncated"], false);
+        assert_eq!(value["stderr_truncated"], false);
+        // 跑完即回收：不留下任何 job 目录，也不残留活跃句柄。
+        assert_eq!(app.job_engine.active_count(), 0);
+        let out = app.job_engine.output_root();
+        let leftovers = std::fs::read_dir(out)
+            .map(|entries| entries.flatten().count())
+            .unwrap_or(0);
+        assert_eq!(leftovers, 0, "one-shot jobs must be reclaimed immediately");
+
+        // PLAN-0397 V3：超时由引擎终止并映射回既有错误面。
+        let timeout = app
+            .router
+            .execute_command(
+                &ws_id,
+                "cmd",
+                vec!["/C".to_string(), "ping -n 30 127.0.0.1 > nul".to_string()],
+                Some(1),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(
+                timeout,
+                Err(xihe_runtime::error::RuntimeError::ProcessTimeout { .. })
+            ),
+            "expected ProcessTimeout, got {timeout:?}"
+        );
+        assert_eq!(app.job_engine.active_count(), 0);
+        drop(dir);
+    }
     #[tokio::test]
     async fn host_job_honors_env_and_readonly_cwd() {
         // 边界矩阵：env 生效；cwd 落在只读 grant 内也允许（Host 无写保护，

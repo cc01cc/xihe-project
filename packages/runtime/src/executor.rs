@@ -19,7 +19,6 @@ use crate::error::{Result, RuntimeError};
 use crate::fs;
 use crate::gateway::WorkspaceRegistry;
 use crate::hydrate::WorkspaceEnsurer;
-use crate::process_guard::{self, FilesystemPolicy, ProcessRequest};
 use crate::workspace::WorkspaceManager;
 
 /// How a registered execution ended (PLAN-0317 T2.3): a cancel request uses the
@@ -262,6 +261,24 @@ struct InFlightGuard {
     item_id: String,
 }
 
+/// PLAN-0397：引擎错误 → RuntimeError（保持既有对外错误面）。
+fn job_engine_error(error: crate::job_engine::JobEngineError) -> RuntimeError {
+    match error.code() {
+        "PROCESS_BACKEND_LAUNCH_PENDING" => RuntimeError::Unsupported {
+            capability: "process-backend".to_string(),
+            reason: error.reason(),
+        },
+        "JOB_NOT_FOUND" => RuntimeError::Unsupported {
+            capability: "job-handle".to_string(),
+            reason: error.reason(),
+        },
+        _ => RuntimeError::Unsupported {
+            capability: "process-execution".to_string(),
+            reason: format!("{}: {}", error.code(), error.reason()),
+        },
+    }
+}
+
 /// Per-execution handles kept by the running call (PLAN-0317 T2.1/T2.3).
 struct InFlightState {
     item_id: String,
@@ -316,6 +333,8 @@ pub struct WorkspaceExecutionRouter {
     registry: Arc<WorkspaceRegistry>,
     in_flight: Arc<InFlightExecutions>,
     docker: Docker,
+    /// PLAN-0397：非 Docker 一次性命令走进程 Job 引擎（同一归属/终止实现）。
+    job_engine: Arc<crate::job_engine::JobEngine>,
 }
 
 impl std::fmt::Debug for WorkspaceExecutionRouter {
@@ -329,6 +348,7 @@ impl WorkspaceExecutionRouter {
         ensurer: Arc<WorkspaceEnsurer>,
         manager: Arc<Mutex<WorkspaceManager>>,
         registry: Arc<WorkspaceRegistry>,
+        job_engine: Arc<crate::job_engine::JobEngine>,
     ) -> Self {
         let docker = Docker::connect_with_local_defaults()
             .unwrap_or_else(|e| panic!("failed to connect Docker for executor router: {e}"));
@@ -338,6 +358,7 @@ impl WorkspaceExecutionRouter {
             registry,
             in_flight: Arc::new(InFlightExecutions::new()),
             docker,
+            job_engine,
         }
     }
 
@@ -559,35 +580,104 @@ impl WorkspaceExecutionRouter {
                         .or_else(|| payload.get("truncate_limit"))
                         .and_then(Value::as_u64),
                 );
-                let result = process_guard::execute(ProcessRequest {
-                    contract_version: process_guard::CONTRACT_VERSION.to_string(),
-                    backend_kind: None,
-                    backend_revision: None,
-                    execution_mode: execution_mode.to_string(),
-                    program: command.to_string(),
-                    args,
-                    cwd,
-                    env,
-                    filesystem: FilesystemPolicy {
-                        read_only_roots: Vec::new(),
-                        read_write_roots: vec![std::path::PathBuf::from(workspace_path)],
-                    },
-                    timeout_ms,
-                    shell: payload
-                        .get("shell")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    output_limit_bytes: output_limit,
-                })
-                .await?;
-                Ok(serde_json::json!({
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "exit_code": result.exit_code.unwrap_or(-1),
-                    "success": result.exit_code == Some(0),
-                    "stdout_truncated": result.stdout_truncated,
-                    "stderr_truncated": result.stderr_truncated,
-                }))
+                // PLAN-0397：一次性命令也进 Job Object（与 Job 同一归属/终止实现）。
+                // 返回契约与改造前逐字一致（spec/oneshot-job-contract.md §1）。
+                let item_id = payload
+                    .get("operationItemId")
+                    .or_else(|| payload.get("toolCallId"))
+                    .or_else(|| payload.get("requestId"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let job_id = format!("oneshot-{workspace_path}-{item_id}");
+                let shell = payload
+                    .get("shell")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let plan = if execution_mode == "windows-mxc" {
+                    crate::job_mxc_adapter::build_mxc_job(
+                        crate::job_mxc_adapter::MxcJobRequest {
+                            workspace_path: workspace_path.to_string(),
+                            command: command.to_string(),
+                            args,
+                            cwd: cwd.map(|path| path.to_string_lossy().into_owned()),
+                            env,
+                            timeout_secs: timeout_ms.div_ceil(1_000),
+                        },
+                        &self.job_engine.output_dir(&job_id),
+                    )
+                    .map_err(job_engine_error)?
+                } else {
+                    crate::job_host_adapter::build_host_job(
+                        crate::job_host_adapter::HostJobRequest {
+                            workspace_path: workspace_path.to_string(),
+                            command: command.to_string(),
+                            args,
+                            cwd: cwd.map(|path| path.to_string_lossy().into_owned()),
+                            env,
+                            timeout_secs: timeout_ms.div_ceil(1_000),
+                        },
+                    )
+                    .map_err(job_engine_error)?
+                };
+                let plan = crate::job_engine::LaunchPlan { shell, ..plan };
+                self.job_engine
+                    .start(&job_id, plan)
+                    .map_err(job_engine_error)?;
+                let deadline = std::time::Instant::now()
+                    + Duration::from_millis(timeout_ms.saturating_add(5_000));
+                let snapshot = loop {
+                    let snapshot = self
+                        .job_engine
+                        .snapshot(&job_id)
+                        .map_err(job_engine_error)?;
+                    if snapshot.status.is_terminal() {
+                        break snapshot;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        let _ = self.job_engine.cancel(&job_id);
+                        let _ = self.job_engine.cleanup(&job_id);
+                        return Err(RuntimeError::ProcessTimeout {
+                            detail: format!(
+                                "one-shot job did not reach a terminal state within {timeout_ms}ms"
+                            ),
+                        });
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                };
+                let read = |stream: &str| -> (String, bool) {
+                    match self.job_engine.read_output(
+                        &job_id,
+                        stream,
+                        Some(0),
+                        output_limit.map(|value| value as usize),
+                    ) {
+                        Ok(chunk) => (chunk.data, chunk.truncated),
+                        Err(_) => (String::new(), false),
+                    }
+                };
+                let (stdout, stdout_truncated) = read("stdout");
+                let (stderr, stderr_truncated) = read("stderr");
+                if let Err(error) = self.job_engine.cleanup(&job_id) {
+                    tracing::warn!(job_id = %job_id, error = %error, "PLAN-0397: one-shot job cleanup failed");
+                }
+                match snapshot.status {
+                    crate::job_engine::JobStatus::TimedOut => Err(RuntimeError::ProcessTimeout {
+                        detail: format!("process exceeded {timeout_ms}ms"),
+                    }),
+                    crate::job_engine::JobStatus::Cancelled => Err(RuntimeError::Cancelled {
+                        detail: format!("one-shot job {job_id} was cancelled"),
+                        confirmed: true,
+                    }),
+                    _ => Ok(serde_json::json!({
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "exit_code": snapshot.exit_code.unwrap_or(-1),
+                        "success": snapshot.exit_code == Some(0),
+                        "stdout_truncated": stdout_truncated,
+                        "stderr_truncated": stderr_truncated,
+                    })),
+                }
             }
             "write_file" => Ok(serde_json::json!({
                 "message": fs::write_file(
