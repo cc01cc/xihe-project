@@ -304,6 +304,107 @@ fn mxc_readonly_grant_denies_writes() {
     engine.cleanup(&job_id).expect("cleanup");
 }
 
+#[test]
+fn mxc_readwrite_grant_allows_writes_inside_the_workspace() {
+    if std::env::var("XIHE_JOB_MXC").ok().as_deref() != Some("1") {
+        eprintln!("SKIP: set XIHE_JOB_MXC=1 (and have wxc-exec.exe) to run the MXC path");
+        return;
+    }
+    let mxc = std::env::var("XIHE_MXC_EXEC")
+        .expect("set XIHE_MXC_EXEC to the wxc-exec.exe path together with XIHE_JOB_MXC=1");
+    let node = String::from_utf8_lossy(
+        &Command::new("where")
+            .arg("node")
+            .output()
+            .expect("where node")
+            .stdout,
+    )
+    .lines()
+    .next()
+    .unwrap_or_default()
+    .trim()
+    .to_string();
+    assert!(!node.is_empty(), "node.exe not found on PATH");
+    let node_dir = PathBuf::from(&node)
+        .parent()
+        .expect("node dir")
+        .to_path_buf();
+
+    let root = temp_root("mxc-readwrite");
+    let policy_path = root.join("policy.json");
+    let marker = root.join("written-inside.txt");
+    let script = format!(
+        "require('fs').writeFileSync(String.raw`{}`,'ok')",
+        marker.display()
+    );
+    let policy = serde_json::json!({
+        "version": "0.8.0-alpha",
+        "containment": "processcontainer",
+        "process": {
+            "commandLine": format!("\"{node}\" -e \"{}\"", script.replace('"', "\\\"")),
+            "cwd": root.to_string_lossy(),
+            "timeout": 30000
+        },
+        "filesystem": {
+            "readonlyPaths": [node_dir.to_string_lossy()],
+            "readwritePaths": [root.to_string_lossy()]
+        },
+        "fallback": { "allowDaclMutation": true },
+        "network": { "egress": { "default": "allow" }, "ingress": { "default": "allow", "hostLoopback": "allow" } },
+        "processContainer": { "capabilities": ["internetClient", "privateNetworkClientServer"] },
+        "ui": { "disable": false }
+    });
+    fs::write(&policy_path, serde_json::to_vec_pretty(&policy).unwrap()).expect("policy");
+
+    let engine = JobEngine::new("boot-it", root.clone());
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let policy_arg = policy_path.to_string_lossy().to_string();
+
+    let mut plan = host_plan(&root, &mxc, &[policy_arg.as_str()], 0);
+    plan.backend_kind = "windows-mxc".to_string();
+    plan.grants.read_only_roots.push(node_dir.clone());
+    engine.start(&job_id, plan).expect("start mxc job");
+    let snapshot = wait_terminal(&engine, &job_id);
+    assert_eq!(
+        snapshot.status,
+        JobStatus::Succeeded,
+        "writing inside readwritePaths must succeed: {snapshot:?}"
+    );
+    assert!(
+        marker.exists(),
+        "the sandboxed write must land in the workspace"
+    );
+    engine.cleanup(&job_id).expect("cleanup");
+}
+
+/// Engine restart: handles are not persisted, so a restarted Runtime cannot see
+/// the previous process's jobs (CP marks them interrupted by bootId change).
+#[test]
+fn restarted_engine_cannot_see_previous_handles() {
+    let root = temp_root("restart");
+    let first = JobEngine::new("boot-one", root.clone());
+    let job_id = uuid::Uuid::new_v4().to_string();
+    first
+        .start(
+            &job_id,
+            host_plan(&root, "cmd", &["/C", "ping -n 60 127.0.0.1 > nul"], 0),
+        )
+        .expect("start");
+    assert!(!first.job_pids(&job_id).expect("pids").is_empty());
+    drop(first); // Runtime shutdown terminates and closes the handles
+
+    let second = JobEngine::new("boot-two", root.clone());
+    assert!(matches!(
+        second.snapshot(&job_id),
+        Err(xihe_runtime::job_engine::JobEngineError::NotFound)
+    ));
+    assert!(matches!(
+        second.cancel(&job_id),
+        Err(xihe_runtime::job_engine::JobEngineError::NotFound)
+    ));
+    assert_eq!(second.active_count(), 0);
+}
+
 /// Crash-path helper: creates a job, records its PIDs, then exits without any
 /// cleanup so only the OS handle closure (kill-on-close) can reap the tree.
 #[test]
