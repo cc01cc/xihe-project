@@ -453,6 +453,10 @@ mod tests {
                 router.clone(),
             )),
             lifecycle,
+            job_engine: Arc::new(xihe_runtime::job_engine::JobEngine::new(
+                "test-boot",
+                dir.path().join("job-output"),
+            )),
             checkpoints: Arc::new(xihe_runtime::checkpoint_api::CheckpointService::new(
                 dir.path(),
             )),

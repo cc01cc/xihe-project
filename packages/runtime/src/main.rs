@@ -53,6 +53,7 @@ use xihe_runtime::fs::{EditFileResult, FileInfo, ReadFileRangeResult};
 use xihe_runtime::gateway::{InstanceState, WorkspaceRegistry};
 use xihe_runtime::heartbeat;
 use xihe_runtime::hydrate::WorkspaceEnsurer;
+use xihe_runtime::job_engine::{CancelOutcome, JobEngineError, JobSnapshot, JobStatus};
 use xihe_runtime::lifecycle::LifecycleState;
 use xihe_runtime::mcp_session::{self, McpSessionManager, StdioServerSpec};
 use xihe_runtime::process_guard::{self, DirectAttachProbeRequest};
@@ -78,6 +79,9 @@ pub struct AppState {
     /// (unlike the persisted `device_id`). Exposed on the probes so CP can tell
     /// a restarted Runtime from a long-lived one.
     pub boot_id: String,
+    /// PLAN-0393: Windows process job engine (Job Object ownership, bounded
+    /// output, timeout/cancel/cleanup) for non-Docker execution modes.
+    pub job_engine: Arc<xihe_runtime::job_engine::JobEngine>,
     pub workspace_ensurer: Arc<WorkspaceEnsurer>,
     pub router: Arc<WorkspaceExecutionRouter>,
     /// PLAN-0347 T1.3: stdio MCP sessions (`exec attach`), replacing the
@@ -1690,6 +1694,19 @@ async fn workspace_job_status_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<JobStatusRequest>,
 ) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    match direct_attach_job_context(&app, &ws_id).await {
+        Ok(Some(_context)) => {
+            return match app.job_engine.snapshot(&req.job_id) {
+                Ok(snapshot) => Ok(AxumJson(job_snapshot_projection(&req.job_id, &snapshot))),
+                Err(error) if job_engine_not_found(&error) => {
+                    Err(job_not_found_problem(&ws_id, &req.job_id))
+                }
+                Err(error) => Err(job_engine_problem(error)),
+            };
+        }
+        Ok(None) => {}
+        Err(problem) => return Err(problem),
+    }
     match app.router.get_background_process(&ws_id, &req.job_id).await {
         Ok(value) => Ok(AxumJson(value)),
         Err(error) if is_job_not_found(&error) => Err(job_not_found_problem(&ws_id, &req.job_id)),
@@ -1705,6 +1722,28 @@ async fn workspace_job_output_handler(
     let stream = req.stream.as_deref().unwrap_or("stdout");
     let offset = req.offset.map(|value| value as usize);
     let limit = req.limit.map(|value| value as usize);
+    match direct_attach_job_context(&app, &ws_id).await {
+        Ok(Some(_context)) => {
+            return match app
+                .job_engine
+                .read_output(&req.job_id, stream, offset, limit)
+            {
+                Ok(chunk) => Ok(AxumJson(job_output_projection(&chunk))),
+                Err(JobEngineError::NotFound) => Err(job_not_found_problem(&ws_id, &req.job_id)),
+                // Reclaimed output is not an error for CP: `available=false`
+                // (CP folds it into JOB_OUTPUT_EXPIRED/LOST).
+                Err(JobEngineError::OutputMissing(reason)) => Ok(AxumJson(serde_json::json!({
+                    "jobId": req.job_id,
+                    "stream": stream,
+                    "available": false,
+                    "reason": reason,
+                }))),
+                Err(error) => Err(job_engine_problem(error)),
+            };
+        }
+        Ok(None) => {}
+        Err(problem) => return Err(problem),
+    }
     match app
         .router
         .read_job_output(&ws_id, &req.job_id, stream, offset, limit)
@@ -1723,6 +1762,27 @@ async fn workspace_job_cancel_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<JobStatusRequest>,
 ) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    match direct_attach_job_context(&app, &ws_id).await {
+        Ok(Some(_context)) => {
+            return match app.job_engine.cancel(&req.job_id) {
+                Ok(result) => Ok(AxumJson(serde_json::json!({
+                    "jobId": req.job_id,
+                    // Wire fold kept for CP (`cancelled`/`failed` only); the
+                    // 0390 outcome travels additively.
+                    "status": match result.outcome {
+                        CancelOutcome::Cancelled => "cancelled",
+                        _ => "failed",
+                    },
+                    "outcome": result.outcome,
+                    "changed": result.changed,
+                }))),
+                Err(JobEngineError::NotFound) => Err(job_not_found_problem(&ws_id, &req.job_id)),
+                Err(error) => Err(job_engine_problem(error)),
+            };
+        }
+        Ok(None) => {}
+        Err(problem) => return Err(problem),
+    }
     match app
         .router
         .cancel_background_process(&ws_id, &req.job_id)
@@ -1732,6 +1792,152 @@ async fn workspace_job_cancel_handler(
         Err(error) if is_job_not_found(&error) => Err(job_not_found_problem(&ws_id, &req.job_id)),
         Err(error) => Err(runtime_problem(error)),
     }
+}
+
+/// PLAN-0393: `.../jobs/cleanup` — reclaims one engine job (terminate when
+/// needed, remove output, report `processes`); PLAN-0390 `CleanupResult` shape.
+async fn workspace_job_cleanup_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(req): AxumJson<JobStatusRequest>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    direct_attach_job_context(&app, &ws_id).await?;
+    match app.job_engine.cleanup(&req.job_id) {
+        Ok(result) => Ok(AxumJson(serde_json::json!({
+            "jobId": req.job_id,
+            "outcome": result.outcome,
+            "reason": result.reason,
+            "processes": result.processes,
+        }))),
+        Err(JobEngineError::NotFound) => Err(job_not_found_problem(&ws_id, &req.job_id)),
+        Err(error) => Err(job_engine_problem(error)),
+    }
+}
+
+/// PLAN-0393 decision #15/#16: engine capabilities in the 0390
+/// `BackendCapability` shape, keeping the probe's legacy `reason` key.
+async fn workspace_job_capabilities_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
+    let instance = app
+        .ensure_workspace(&ws_id)
+        .await
+        .map_err(runtime_problem)?;
+    if instance.execution_mode == "docker" {
+        return Err(job_backend_launch_pending_problem(
+            "container jobs are served by the Docker backend (PLAN-0392)",
+        ));
+    }
+    let probe = process_guard::probe_direct_attach(process_guard::DirectAttachProbeRequest {
+        storage_mode: "direct_attach".to_string(),
+        host_path: instance.workspace_path.clone(),
+        execution_mode: instance.execution_mode.clone(),
+    })
+    .await
+    .map_err(runtime_problem)?;
+    Ok(AxumJson(serde_json::json!({
+        "backendKind": probe.backend_kind,
+        "backendRevision": probe.backend_revision,
+        "maturity": probe.maturity,
+        "executionMode": probe.execution_mode,
+        "canStart": true,
+        "canCancel": true,
+        "canStreamOutput": true,
+        "canIsolateFilesystem": instance.execution_mode == "windows-mxc",
+        "available": probe.available,
+        "unavailableReason": probe.reason,
+        "reason": probe.reason,
+    })))
+}
+
+/// Resolved context for a non-Docker workspace's job routes: the execution
+/// mode and the materialized workspace path must come from the same locked
+/// materialization (a concurrent mode switch must not route a stale path).
+struct DirectAttachJobContext {
+    mode: String,
+    workspace_path: String,
+}
+
+/// Resolves the workspace job context; `Ok(None)` means the Docker path.
+/// Materialization errors are preserved so callers fail closed.
+async fn direct_attach_job_context(
+    app: &Arc<AppState>,
+    ws_id: &str,
+) -> Result<Option<DirectAttachJobContext>, (StatusCode, AxumJson<serde_json::Value>)> {
+    let instance = app.ensure_workspace(ws_id).await.map_err(runtime_problem)?;
+    if instance.execution_mode == "docker" {
+        Ok(None)
+    } else {
+        Ok(Some(DirectAttachJobContext {
+            mode: instance.execution_mode,
+            workspace_path: instance.workspace_path,
+        }))
+    }
+}
+
+fn job_engine_not_found(error: &JobEngineError) -> bool {
+    matches!(error, JobEngineError::NotFound)
+}
+
+/// `timed_out` is the engine/0390 word; the wire keeps `timeout` for CP.
+fn job_wire_status(status: JobStatus) -> &'static str {
+    match status {
+        JobStatus::TimedOut => "timeout",
+        other => other.as_str(),
+    }
+}
+
+/// PLAN-0390/0393 §路由投影表: keep the keys CP already reads (`jobId`,
+/// `status`, `exitCode`, `createdAt`) and add the 0390 keys additively.
+/// Transport details (pid, policy path, tier) are never projected.
+fn job_snapshot_projection(job_id: &str, snapshot: &JobSnapshot) -> serde_json::Value {
+    serde_json::json!({
+        "jobId": job_id,
+        "status": job_wire_status(snapshot.status),
+        "exitCode": snapshot.exit_code,
+        "createdAt": snapshot.started_at,
+        "startedAt": snapshot.started_at,
+        "finishedAt": snapshot.finished_at,
+        "stdoutBytes": snapshot.stdout_bytes,
+        "stderrBytes": snapshot.stderr_bytes,
+        "truncated": snapshot.truncated,
+        "cleanupStatus": snapshot.cleanup_status,
+    })
+}
+
+fn job_output_projection(chunk: &xihe_runtime::job_engine::OutputChunk) -> serde_json::Value {
+    serde_json::json!({
+        "available": true,
+        "stream": chunk.stream,
+        "offset": chunk.offset,
+        "nextOffset": chunk.next_offset,
+        "sizeBytes": chunk.size_bytes,
+        "truncated": chunk.truncated,
+        "data": chunk.data,
+    })
+}
+
+fn job_engine_problem(error: JobEngineError) -> (StatusCode, AxumJson<serde_json::Value>) {
+    let status = match error {
+        JobEngineError::LaunchPending(_) => StatusCode::NOT_IMPLEMENTED,
+        JobEngineError::NotFound => StatusCode::NOT_FOUND,
+        JobEngineError::Unavailable(_)
+        | JobEngineError::InvalidPath(_)
+        | JobEngineError::OutputMissing(_)
+        | JobEngineError::Unsupported(_) => StatusCode::BAD_GATEWAY,
+    };
+    (
+        status,
+        AxumJson(serde_json::json!({
+            "type": "https://xihe.dev/problems/job-engine",
+            "title": status.canonical_reason().unwrap_or("Job Engine Error"),
+            "status": status.as_u16(),
+            "code": error.code(),
+            "detail": error.reason(),
+            "requestId": uuid::Uuid::new_v4().to_string(),
+        })),
+    )
 }
 
 /// 取消结果折叠：容器侧返回 `{"status":"cancelled"|"failed"}`；
@@ -1794,11 +2000,25 @@ async fn workspace_job_start_handler(
         command,
         args,
         timeout_secs,
-        // Backend adapters (PLAN-0392+) will consume these; the current Docker
-        // `start_background_process` signature carries neither.
-        cwd: _,
-        env: _,
+        cwd,
+        env,
     } = req;
+    // PLAN-0393 T1.8: non-Docker workspaces start through the process job
+    // engine; Docker keeps the container launcher.
+    if let Some(context) = direct_attach_job_context(&app, &ws_id).await? {
+        return start_direct_attach_job(
+            &app,
+            &context.mode,
+            &context.workspace_path,
+            &operation_item_id,
+            &command,
+            args,
+            cwd,
+            env,
+            timeout_secs,
+        )
+        .await;
+    }
     // `timeout_secs == 0` stays `Some(0)` so the container treats it as
     // unlimited (matching the MCP tool contract).
     match app
@@ -1824,6 +2044,58 @@ async fn workspace_job_start_handler(
             Err(job_backend_launch_pending_problem(&reason))
         }
         Err(error) => Err(runtime_problem(error)),
+    }
+}
+
+/// PLAN-0393 T1.8: start a job on a non-Docker workspace through the process
+/// job engine. `windows-mxc` stays fail-closed until PLAN-0394 assembles the
+/// MXC policy artifact; it never downgrades to bare host execution.
+#[allow(clippy::too_many_arguments)]
+async fn start_direct_attach_job(
+    app: &Arc<AppState>,
+    mode: &str,
+    workspace_path: &str,
+    operation_item_id: &str,
+    command: &str,
+    args: Vec<String>,
+    cwd: Option<String>,
+    env: Option<std::collections::BTreeMap<String, String>>,
+    timeout_secs: u64,
+) -> Result<(StatusCode, AxumJson<serde_json::Value>), (StatusCode, AxumJson<serde_json::Value>)> {
+    if mode == "windows-mxc" {
+        return Err(job_backend_launch_pending_problem(
+            "MXC job policy assembly is delivered by PLAN-0394",
+        ));
+    }
+    let plan = xihe_runtime::job_engine::LaunchPlan {
+        backend_kind: mode.to_string(),
+        backend_revision: "builtin".to_string(),
+        program: command.to_string(),
+        args,
+        cwd: cwd
+            .filter(|value| !value.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| Some(std::path::PathBuf::from(workspace_path))),
+        env: env.unwrap_or_default(),
+        timeout_ms: timeout_secs.saturating_mul(1_000),
+        shell: false,
+        grants: process_guard::FilesystemPolicy {
+            read_only_roots: Vec::new(),
+            read_write_roots: vec![std::path::PathBuf::from(workspace_path)],
+        },
+        policy_artifact: None,
+    };
+    match app.job_engine.start(operation_item_id, plan) {
+        Ok(_handle) => Ok((
+            StatusCode::ACCEPTED,
+            AxumJson(serde_json::json!({
+                "jobId": operation_item_id,
+                "status": "running",
+                "operationItemId": operation_item_id,
+                "bootId": app.boot_id,
+            })),
+        )),
+        Err(error) => Err(job_engine_problem(error)),
     }
 }
 
@@ -2598,6 +2870,14 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
             post(workspace_job_cancel_handler),
         )
         .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/jobs/cleanup",
+            post(workspace_job_cleanup_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/jobs/capabilities",
+            post(workspace_job_capabilities_handler),
+        )
+        .route(
             "/internal/v1/runtime/workspaces/{ws_id}/jobs/start",
             post(workspace_job_start_handler),
         )
@@ -2740,13 +3020,29 @@ async fn run() -> anyhow::Result<()> {
     }
 
     let readiness = Arc::new(AtomicBool::new(true));
+    // PLAN-0393: job output lives under the Runtime state dir; a previous
+    // process's directories are unreachable (handles are not persisted), so
+    // they are reaped on startup.
+    let job_boot_id = uuid::Uuid::new_v4().to_string();
+    let job_engine = Arc::new(xihe_runtime::job_engine::JobEngine::new(
+        job_boot_id.clone(),
+        device::resolve_state_dir().join("job-output"),
+    ));
+    let orphan_job_dirs = job_engine.reap_orphan_output_dirs();
+    if orphan_job_dirs > 0 {
+        tracing::info!(
+            dirs = orphan_job_dirs,
+            "PLAN-0393: reclaimed orphan job output directories"
+        );
+    }
     let app_state = Arc::new(AppState {
         registry: registry.clone(),
         manager: manager.clone(),
         device_id: device_id.clone(),
-        boot_id: uuid::Uuid::new_v4().to_string(),
+        boot_id: job_boot_id,
         workspace_ensurer: workspace_ensurer.clone(),
         router: router.clone(),
+        job_engine: job_engine.clone(),
         mcp_sessions: mcp_sessions.clone(),
         sandbox_backend: sandbox_backend.clone(),
         lifecycle: lifecycle.clone(),
@@ -2809,6 +3105,7 @@ async fn run() -> anyhow::Result<()> {
                 sessions: reaper_sessions,
                 manager: reaper_manager,
                 router: reaper_router,
+                job_engine: job_engine.clone(),
                 workspace_event_watchers: reaper_workspace_event_watchers,
                 cp_url: reaper_cp_url,
                 api_token: reaper_api_token,
@@ -3111,6 +3408,7 @@ struct ReaperContext {
     sessions: Arc<McpSessionManager>,
     manager: Arc<Mutex<WorkspaceManager>>,
     router: Arc<WorkspaceExecutionRouter>,
+    job_engine: Arc<xihe_runtime::job_engine::JobEngine>,
     workspace_event_watchers: WorkspaceEventWatchers,
     cp_url: String,
     api_token: String,
@@ -3123,6 +3421,7 @@ async fn idle_reaper_loop(ctx: ReaperContext, ct: tokio_util::sync::Cancellation
         sessions,
         manager,
         router,
+        job_engine,
         workspace_event_watchers,
         cp_url,
         api_token,
@@ -3305,8 +3604,21 @@ async fn idle_reaper_loop(ctx: ReaperContext, ct: tokio_util::sync::Cancellation
                 // maintenance pass cannot start or keep alive an idle
                 // workspace.
                 if should_cleanup_jobs(ticks) {
+                    // PLAN-0393: engine jobs live outside containers; their
+                    // output TTL is reclaimed independently of Docker.
+                    let reclaimed = job_engine.reap_expired();
+                    if reclaimed > 0 {
+                        tracing::info!(
+                            reclaimed,
+                            "PLAN-0393: reclaimed expired process job outputs"
+                        );
+                    }
                     for instance in &instances {
                         if instance.state != InstanceState::Active {
+                            continue;
+                        }
+                        if instance.execution_mode != "docker" {
+                            // Engine jobs are covered by `reap_expired` above.
                             continue;
                         }
                         match router.cleanup_jobs(&instance.ws_id).await {
@@ -3574,6 +3886,10 @@ mod remote_handler_tests {
             boot_id: uuid::Uuid::new_v4().to_string(),
             workspace_ensurer: ensurer.clone(),
             router: router.clone(),
+            job_engine: Arc::new(xihe_runtime::job_engine::JobEngine::new(
+                "test-boot",
+                std::env::temp_dir().join("xihe-runtime-test-job-output"),
+            )),
             mcp_sessions: Arc::new(
                 McpSessionManager::new().expect("mcp session manager (docker) for tests"),
             ),
@@ -4998,5 +5314,340 @@ mod tool_router_regression_tests {
         let explicit =
             resolve_runtime_log_filter_with(Some("xihe_runtime=debug,timeout=warn"), None, None);
         assert_eq!(explicit.to_string().matches("timeout=").count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod job_engine_route_tests {
+    use super::{
+        AppState, JobStartRequest, JobStatusRequest, job_engine_problem, job_output_projection,
+        job_snapshot_projection, workspace_job_cancel_handler, workspace_job_capabilities_handler,
+        workspace_job_cleanup_handler, workspace_job_output_handler, workspace_job_start_handler,
+        workspace_job_status_handler,
+    };
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::Mutex;
+    use xihe_runtime::gateway::WorkspaceRegistry;
+    use xihe_runtime::hydrate::{ExecutionSpecClient, WorkspaceEnsurer};
+    use xihe_runtime::job_engine::{JobEngine, JobStatus};
+    use xihe_runtime::lifecycle::Lifecycle;
+    use xihe_runtime::workspace::WorkspaceManager;
+
+    struct DirectAttachApp {
+        app: Arc<AppState>,
+        ws_id: String,
+        dir: tempfile::TempDir,
+        _server: tokio::task::JoinHandle<()>,
+    }
+
+    /// Boots a direct-attach workspace (`windows-host`) against an in-test CP
+    /// stub, so job routes run through the engine (no Docker).
+    async fn direct_attach_app() -> DirectAttachApp {
+        let dir = tempfile::tempdir().expect("workspace dir");
+        let ws_id = uuid::Uuid::new_v4().to_string();
+        let host_path = dir.path().to_string_lossy().to_string();
+        let hash = "b".repeat(64);
+        let route_path = format!("/internal/v1/runtime/workspaces/{ws_id}/execution-spec");
+        let spec_body = serde_json::json!({
+            "workspaceId": ws_id,
+            "generation": 1,
+            "sandboxSpecHash": hash,
+            "sandboxSpec": {"profile": "coding"},
+            "storageBackend": "host_directory",
+            "storageRef": ws_id,
+            "storageMode": "direct_attach",
+            "hostPath": host_path,
+            "executionMode": "windows-host",
+        });
+        let route_body = spec_body.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stub CP");
+        let address = listener.local_addr().expect("stub CP address");
+        let server = tokio::spawn(async move {
+            let router = axum::Router::new().route(
+                &route_path,
+                axum::routing::get(move || {
+                    let body = route_body.clone();
+                    async move { axum::Json(body) }
+                }),
+            );
+            let _ = axum::serve(listener, router).await;
+        });
+
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+        let lifecycle = Arc::new(Lifecycle::new(
+            registry.clone(),
+            Arc::new(xihe_runtime::lifecycle::ExecutionLease::new()),
+        ));
+        let ensurer = Arc::new(WorkspaceEnsurer::new(
+            lifecycle.clone(),
+            manager.clone(),
+            ExecutionSpecClient::new(&format!("http://{address}"), "test-token"),
+            Some(dir.path().to_path_buf()),
+        ));
+        let router = Arc::new(xihe_runtime::executor::WorkspaceExecutionRouter::new(
+            ensurer.clone(),
+            manager.clone(),
+            registry.clone(),
+        ));
+        let app = Arc::new(AppState {
+            registry: registry.clone(),
+            manager: manager.clone(),
+            device_id: "test-device".to_string(),
+            boot_id: "test-boot".to_string(),
+            workspace_ensurer: ensurer.clone(),
+            router: router.clone(),
+            job_engine: Arc::new(JobEngine::new("test-boot", dir.path().join("job-output"))),
+            mcp_sessions: Arc::new(
+                xihe_runtime::mcp_session::McpSessionManager::new()
+                    .expect("session manager for tests"),
+            ),
+            sandbox_backend: Arc::new(xihe_runtime::backend::DockerBackend::new(
+                ensurer.clone(),
+                manager.clone(),
+                router.clone(),
+            )),
+            lifecycle,
+            checkpoints: Arc::new(xihe_runtime::checkpoint_api::CheckpointService::new(
+                dir.path(),
+            )),
+            ready: Arc::new(AtomicBool::new(true)),
+            imports: Arc::new(crate::import_job::ImportManager::new()),
+            workspace_event_watchers: crate::workspace_events::WorkspaceEventWatchers::default(),
+        });
+        DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server: server,
+        }
+    }
+
+    async fn body_json(response: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        serde_json::from_slice(&bytes).expect("json body")
+    }
+
+    #[test]
+    fn snapshot_projection_keeps_cp_keys_and_hides_transport_details() {
+        let snapshot = xihe_runtime::job_engine::JobSnapshot {
+            status: JobStatus::TimedOut,
+            exit_code: Some(1),
+            started_at: Some("2026-09-21T10:00:00.000Z".to_string()),
+            finished_at: Some("2026-09-21T10:01:00.000Z".to_string()),
+            stdout_bytes: 12,
+            stderr_bytes: 3,
+            truncated: true,
+            cleanup_status: "not_started".to_string(),
+        };
+        let projected = job_snapshot_projection("job-1", &snapshot);
+        assert_eq!(projected["jobId"], "job-1");
+        assert_eq!(projected["status"], "timeout", "timed_out folds to timeout");
+        assert_eq!(projected["exitCode"], 1);
+        assert_eq!(projected["createdAt"], projected["startedAt"]);
+        assert_eq!(projected["truncated"], true);
+        assert_eq!(projected["cleanupStatus"], "not_started");
+        for forbidden in [
+            "pid",
+            "wrapperPid",
+            "policyPath",
+            "mxcTier",
+            "policyArtifact",
+        ] {
+            assert!(
+                projected.get(forbidden).is_none(),
+                "projection leaked {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn output_and_problem_projection_shapes() {
+        let chunk = xihe_runtime::job_engine::OutputChunk {
+            stream: "stdout".to_string(),
+            offset: 0,
+            next_offset: 4,
+            size_bytes: 4,
+            truncated: false,
+            data: "data".to_string(),
+        };
+        let projected = job_output_projection(&chunk);
+        assert_eq!(projected["available"], true);
+        assert_eq!(projected["nextOffset"], 4);
+        assert_eq!(projected["data"], "data");
+
+        let (status, _) = job_engine_problem(xihe_runtime::job_engine::JobEngineError::NotFound);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = job_engine_problem(
+            xihe_runtime::job_engine::JobEngineError::InvalidPath("outside grants".to_string()),
+        );
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn direct_attach_job_routes_use_the_engine_end_to_end() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = direct_attach_app().await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+
+        let started = workspace_job_start_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(JobStartRequest {
+                operation_item_id: job_id.clone(),
+                command: "cmd".to_string(),
+                args: vec!["/C".to_string(), "echo engine-route & exit 0".to_string()],
+                timeout_secs: 30,
+                cwd: None,
+                env: None,
+            }),
+        )
+        .await
+        .expect("start job");
+        assert_eq!(started.0, StatusCode::ACCEPTED);
+        let start_body = body_json(started.1.into_response()).await;
+        assert_eq!(start_body["jobId"], job_id);
+        assert_eq!(start_body["bootId"], "test-boot");
+
+        // Idempotent re-start must not spawn a second process.
+        let again = workspace_job_start_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(JobStartRequest {
+                operation_item_id: job_id.clone(),
+                command: "cmd".to_string(),
+                args: vec!["/C".to_string(), "exit 0".to_string()],
+                timeout_secs: 30,
+                cwd: None,
+                env: None,
+            }),
+        )
+        .await
+        .expect("re-start job");
+        assert_eq!(again.0, StatusCode::ACCEPTED);
+
+        // Poll status until terminal; the wire status must be a CP-recognised
+        // literal (succeeded/cancelled/timeout/orphaned).
+        let mut status = String::new();
+        for _ in 0..200 {
+            let response = workspace_job_status_handler(
+                Path(ws_id.clone()),
+                State(app.clone()),
+                axum::Json(JobStatusRequest {
+                    job_id: job_id.clone(),
+                }),
+            )
+            .await
+            .expect("status");
+            let body = body_json(response.into_response()).await;
+            status = body["status"].as_str().unwrap_or_default().to_string();
+            if matches!(
+                status.as_str(),
+                "succeeded" | "failed" | "cancelled" | "timeout"
+            ) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert_eq!(status, "succeeded");
+
+        let output = workspace_job_output_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(super::JobOutputRequest {
+                job_id: job_id.clone(),
+                stream: Some("stdout".to_string()),
+                offset: Some(0),
+                limit: None,
+            }),
+        )
+        .await
+        .expect("output");
+        let output_body = body_json(output.into_response()).await;
+        assert_eq!(output_body["available"], true);
+        assert!(
+            output_body["data"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("engine-route"),
+            "captured stdout: {output_body}"
+        );
+
+        let cancelled = workspace_job_cancel_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(JobStatusRequest {
+                job_id: job_id.clone(),
+            }),
+        )
+        .await
+        .expect("cancel");
+        let cancel_body = body_json(cancelled.into_response()).await;
+        assert_eq!(cancel_body["outcome"], "already_terminal");
+        assert_eq!(cancel_body["changed"], false);
+
+        let cleanup = workspace_job_cleanup_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(JobStatusRequest {
+                job_id: job_id.clone(),
+            }),
+        )
+        .await
+        .expect("cleanup");
+        let cleanup_body = body_json(cleanup.into_response()).await;
+        assert_eq!(cleanup_body["outcome"], "completed");
+        assert!(
+            !app.job_engine
+                .output_root()
+                .join(job_id.replace(['/', '\\', ':'], "_"))
+                .exists()
+        );
+
+        let missing = workspace_job_status_handler(
+            Path(ws_id),
+            State(app),
+            axum::Json(JobStatusRequest {
+                job_id: "missing".to_string(),
+            }),
+        )
+        .await
+        .expect_err("missing job must 404");
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn job_capabilities_route_reports_engine_capability() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = direct_attach_app().await;
+        let response = workspace_job_capabilities_handler(Path(ws_id), State(app))
+            .await
+            .expect("capabilities");
+        let body = body_json(response.into_response()).await;
+        assert_eq!(body["backendKind"], "windows-host");
+        assert_eq!(body["canCancel"], true);
+        assert_eq!(body["canStreamOutput"], true);
+        assert_eq!(body["canIsolateFilesystem"], false);
+        assert!(body["available"].is_boolean());
+        assert!(body.get("unavailableReason").is_some());
+        assert!(body.get("reason").is_some(), "legacy probe key kept");
+        drop(dir);
     }
 }

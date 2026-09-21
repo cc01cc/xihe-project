@@ -120,6 +120,10 @@ pub struct ProcessRequest {
     pub timeout_ms: u64,
     #[serde(default)]
     pub shell: bool,
+    /// Authorized stdout/stderr cap per stream; `None` uses
+    /// [`DEFAULT_OUTPUT_CAP_BYTES`]. Output is always bounded.
+    #[serde(default)]
+    pub output_limit_bytes: Option<u64>,
 }
 
 fn default_contract_version() -> String {
@@ -137,7 +141,17 @@ pub struct ProcessResult {
     pub timed_out: bool,
     pub stdout: String,
     pub stderr: String,
+    /// The stream hit the capture cap and was truncated (large-output boundary).
+    #[serde(default)]
+    pub stdout_truncated: bool,
+    #[serde(default)]
+    pub stderr_truncated: bool,
 }
+
+/// Default per-stream capture cap for one-shot execution when the caller has no
+/// authorized output limit (aligned with the container path's 4096-line default
+/// order of magnitude).
+pub const DEFAULT_OUTPUT_CAP_BYTES: u64 = 262_144;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -335,24 +349,33 @@ async fn execute_host(request: ProcessRequest) -> Result<ProcessResult> {
             .envs(&request.env)
             .kill_on_drop(true);
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let child = command.spawn().map_err(RuntimeError::Io)?;
+        let mut child = command.spawn().map_err(RuntimeError::Io)?;
         let pid = child.id();
-        let output = tokio::select! {
-            result = child.wait_with_output() => result.map_err(RuntimeError::Io)?,
-            _ = tokio::time::sleep(Duration::from_millis(request.timeout_ms)) => {
-                if let Some(pid) = pid {
+        let captured = match capture_capped(
+            &mut child,
+            request.timeout_ms,
+            request.output_limit_bytes,
+            "process",
+        )
+        .await
+        {
+            Ok(captured) => captured,
+            Err(error) => {
+                if let Some(pid) = pid
+                    && matches!(error, RuntimeError::ProcessTimeout { .. })
+                {
                     terminate_process_tree(pid).await?;
                 }
-                return Err(RuntimeError::ProcessTimeout {
-                    detail: format!("process exceeded {}ms", request.timeout_ms),
-                });
+                return Err(error);
             }
         };
         Ok(ProcessResult {
-            exit_code: output.status.code(),
+            exit_code: captured.exit_code,
             timed_out: false,
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            stdout: captured.stdout,
+            stderr: captured.stderr,
+            stdout_truncated: captured.stdout_truncated,
+            stderr_truncated: captured.stderr_truncated,
         })
     }
 }
@@ -409,7 +432,7 @@ async fn execute_mxc(request: ProcessRequest) -> Result<ProcessResult> {
         let config_bytes = serde_json::to_vec(&config)
             .map_err(|error| RuntimeError::Command(format!("serialize MXC policy: {error}")))?;
         tokio::fs::write(&config_path, config_bytes).await?;
-        let child = tokio::process::Command::new(&executable)
+        let mut child = tokio::process::Command::new(&executable)
             .arg(&config_path)
             .kill_on_drop(true)
             .stdout(Stdio::piped())
@@ -417,26 +440,121 @@ async fn execute_mxc(request: ProcessRequest) -> Result<ProcessResult> {
             .spawn()
             .map_err(RuntimeError::Io)?;
         let pid = child.id();
-        let output = tokio::select! {
-            result = child.wait_with_output() => result.map_err(RuntimeError::Io)?,
-            _ = tokio::time::sleep(Duration::from_millis(request.timeout_ms)) => {
-                if let Some(pid) = pid {
+        let captured = match capture_capped(
+            &mut child,
+            request.timeout_ms,
+            request.output_limit_bytes,
+            "MXC process",
+        )
+        .await
+        {
+            Ok(captured) => captured,
+            Err(error) => {
+                if let Some(pid) = pid
+                    && matches!(error, RuntimeError::ProcessTimeout { .. })
+                {
                     terminate_process_tree(pid).await?;
                 }
                 let _ = tokio::fs::remove_file(&config_path).await;
-                return Err(RuntimeError::ProcessTimeout {
-                    detail: format!("MXC process exceeded {}ms", request.timeout_ms),
-                });
+                return Err(error);
             }
         };
         let _ = tokio::fs::remove_file(&config_path).await;
         Ok(ProcessResult {
-            exit_code: output.status.code(),
+            exit_code: captured.exit_code,
             timed_out: false,
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            stdout: captured.stdout,
+            stderr: captured.stderr,
+            stdout_truncated: captured.stdout_truncated,
+            stderr_truncated: captured.stderr_truncated,
         })
     }
+}
+
+struct CappedCapture {
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+}
+
+/// Waits for the child with a deadline while capturing both streams under a
+/// per-stream cap; the remainder is drained (never buffered) and flagged.
+async fn capture_capped(
+    child: &mut tokio::process::Child,
+    timeout_ms: u64,
+    output_limit_bytes: Option<u64>,
+    label: &str,
+) -> Result<CappedCapture> {
+    let cap = output_limit_bytes
+        .unwrap_or(DEFAULT_OUTPUT_CAP_BYTES)
+        .max(1024) as usize;
+    let stdout_task = child
+        .stdout
+        .take()
+        .map(|stream| tokio::spawn(read_capped(stream, cap)));
+    let stderr_task = child
+        .stderr
+        .take()
+        .map(|stream| tokio::spawn(read_capped(stream, cap)));
+    let status = tokio::select! {
+        result = child.wait() => result.map_err(RuntimeError::Io)?,
+        _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => {
+            return Err(RuntimeError::ProcessTimeout {
+                detail: format!("{label} exceeded {timeout_ms}ms"),
+            });
+        }
+    };
+    let (stdout, stdout_truncated) = match stdout_task {
+        Some(task) => task.await.unwrap_or_default(),
+        None => (Vec::new(), false),
+    };
+    let (stderr, stderr_truncated) = match stderr_task {
+        Some(task) => task.await.unwrap_or_default(),
+        None => (Vec::new(), false),
+    };
+    Ok(CappedCapture {
+        exit_code: status.code(),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        stdout_truncated,
+        stderr_truncated,
+    })
+}
+
+/// Reads up to `cap` bytes, then keeps draining so the child never blocks.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    cap: usize,
+) -> (Vec<u8>, bool) {
+    use tokio::io::AsyncReadExt;
+
+    let mut collected: Vec<u8> = Vec::with_capacity(cap.min(16 * 1024));
+    let mut buffer = [0u8; 16 * 1024];
+    let mut truncated = false;
+    loop {
+        match reader.read(&mut buffer).await {
+            Ok(0) => break,
+            Ok(read) => {
+                let remaining = cap.saturating_sub(collected.len());
+                if remaining == 0 {
+                    truncated = true;
+                    continue;
+                }
+                let take = read.min(remaining);
+                collected.extend_from_slice(&buffer[..take]);
+                if take < read || collected.len() >= cap {
+                    truncated = true;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "PLAN-0379: capped capture read failed");
+                break;
+            }
+        }
+    }
+    (collected, truncated)
 }
 
 #[cfg(windows)]
@@ -644,6 +762,7 @@ mod tests {
             filesystem: super::FilesystemPolicy::default(),
             timeout_ms: 5_000,
             shell: false,
+            output_limit_bytes: None,
         })
         .await
         .expect("host execution");
@@ -667,6 +786,7 @@ mod tests {
             filesystem: super::FilesystemPolicy::default(),
             timeout_ms: 100,
             shell: false,
+            output_limit_bytes: None,
         })
         .await
         .expect_err("long-running host process must time out");
@@ -695,6 +815,7 @@ mod tests {
             },
             timeout_ms: 10_000,
             shell: false,
+            output_limit_bytes: None,
         })
         .await
         .expect("MXC execution");
@@ -732,6 +853,7 @@ mod tests {
             },
             timeout_ms: 10_000,
             shell: false,
+            output_limit_bytes: None,
         })
         .await
         .expect("MXC cwd/env execution");
@@ -765,6 +887,7 @@ mod tests {
             },
             timeout_ms: 100,
             shell: false,
+            output_limit_bytes: None,
         })
         .await
         .expect_err("long-running MXC process must time out");
@@ -791,11 +914,44 @@ mod tests {
             },
             timeout_ms: 10_000,
             shell: false,
+            output_limit_bytes: None,
         })
         .await
         .expect_err("MXC must reject cwd outside grants");
         assert!(
             matches!(result, super::RuntimeError::Unsupported { reason, .. } if reason == "CWD_OUTSIDE_GRANT")
         );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn host_execution_caps_output_and_flags_truncation() {
+        let directory = tempfile::tempdir().expect("temporary workspace directory");
+        let result = super::execute(super::ProcessRequest {
+            contract_version: CONTRACT_VERSION.to_string(),
+            backend_kind: Some("windows-host".to_string()),
+            backend_revision: Some("builtin".to_string()),
+            execution_mode: "windows-host".to_string(),
+            program: "cmd.exe".to_string(),
+            args: vec![
+                "/C".to_string(),
+                "for /L %i in (1,1,2000) do @echo 0123456789012345678901234567890123456789"
+                    .to_string(),
+            ],
+            cwd: Some(directory.path().to_path_buf()),
+            env: BTreeMap::new(),
+            filesystem: super::FilesystemPolicy {
+                read_only_roots: Vec::new(),
+                read_write_roots: vec![directory.path().to_path_buf()],
+            },
+            timeout_ms: 30_000,
+            shell: false,
+            output_limit_bytes: Some(4096),
+        })
+        .await
+        .expect("host execution");
+        assert!(result.stdout_truncated, "80 KB of output must be capped");
+        assert!(result.stdout.len() <= 4096);
+        assert!(!result.stderr_truncated);
     }
 }

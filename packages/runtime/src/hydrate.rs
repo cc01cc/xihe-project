@@ -378,16 +378,6 @@ impl WorkspaceEnsurer {
             .map(|_| ())
     }
 
-    /// Return the validated execution mode for the targeted Workspace. The
-    /// execution router uses this to avoid sending a direct-attach operation
-    /// to the Docker-only path.
-    pub async fn execution_mode(&self, workspace_id: &str) -> Result<String> {
-        self.client
-            .fetch_for_workspace(workspace_id)
-            .await
-            .map(|spec| spec.execution_mode)
-    }
-
     pub async fn ensure_workspace_materialized(
         &self,
         workspace_id: &str,

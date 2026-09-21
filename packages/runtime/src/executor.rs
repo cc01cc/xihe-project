@@ -399,8 +399,10 @@ impl WorkspaceExecutionRouter {
         payload: Value,
     ) -> Result<Value> {
         let instance = self.ensure(workspace_id).await?;
-        let execution_mode = self.ensurer.execution_mode(workspace_id).await?;
-        if execution_mode != "docker" {
+        // The mode travels with the materialized instance: re-fetching the spec
+        // here would let a concurrent mode switch route a stale instance.
+        if instance.execution_mode != "docker" {
+            let execution_mode = instance.execution_mode.clone();
             return self
                 .execute_direct_attach_operation(
                     &instance.workspace_path,
@@ -550,6 +552,13 @@ impl WorkspaceExecutionRouter {
                             .collect::<std::collections::BTreeMap<_, _>>()
                     })
                     .unwrap_or_default();
+                let output_limit = crate::tool_timeout::output_limit_guard(
+                    crate::tool_timeout::current_output_limit(),
+                    payload
+                        .get("truncateLimit")
+                        .or_else(|| payload.get("truncate_limit"))
+                        .and_then(Value::as_u64),
+                );
                 let result = process_guard::execute(ProcessRequest {
                     contract_version: process_guard::CONTRACT_VERSION.to_string(),
                     backend_kind: None,
@@ -568,6 +577,7 @@ impl WorkspaceExecutionRouter {
                         .get("shell")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
+                    output_limit_bytes: output_limit,
                 })
                 .await?;
                 Ok(serde_json::json!({
@@ -575,6 +585,8 @@ impl WorkspaceExecutionRouter {
                     "stderr": result.stderr,
                     "exit_code": result.exit_code.unwrap_or(-1),
                     "success": result.exit_code == Some(0),
+                    "stdout_truncated": result.stdout_truncated,
+                    "stderr_truncated": result.stderr_truncated,
                 }))
             }
             "write_file" => Ok(serde_json::json!({
