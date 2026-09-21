@@ -142,6 +142,8 @@ Sandbox 容器隔离基线（Docker backend 当前事实）：workspace 目录 b
 - `windows-host/unrestricted` **MUST** 由用户显式选择，**MUST NOT** 由 Docker/MXC 失败自动触发；且必须有权限、确认、审计、超时与取消。
 - `windows-mxc` **MUST** 对 policy 与 UI 消费者可见 experimental 状态；能力缺失显式 `UNSUPPORTED` 并给出 reason。
 - 缺能力、探测失败、未知 Workspace **MUST** fail-closed；禁止静默 fallback 到其他 backend 或只读降级。
+- Windows 进程收容机制与进程树不变式（Job Object 回收归引擎、无 PID namespace、超时/取消/父退出清空整树）见 `spec/workspace/sandbox-backend.md`「Windows 进程收容与进程树语义」；Job 生命周期与恢复语义见 `spec/workspace/execution-job.md`。
+- 执行模式切换（MXC ↔ 宿主）复用既有 Workspace generation/operation identity；切换时旧模式的 Job 与在飞一次性执行由 Runtime 引擎终止，CP 侧另有 `WORKSPACE_BUSY` 门禁（PLAN-0379 T3.5）。
 
 ## 7. 当前实现差距
 
