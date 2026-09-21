@@ -13,6 +13,16 @@ updated: 2026-09-03
 
 > Vue 3 + Pinia + vue-router + Vite + Tailwind CSS 4 + reka-ui。UI 只与 CP 对话（`fetch POST` + 持久 SSE），不直接调用 Agent 或 Runtime。与 DEV-017 以"UI 实现 vs Session 领域"分界：路由/视图/组件/传输层归本文，store 职责边界与跨视图同步归 DEV-017。
 
+### SPEC 指针
+
+跨页面交互状态、设计系统和无障碍契约见根级 proposed SPEC：
+
+- [`spec/ui/interaction-model.md`](../../../spec/ui/interaction-model.md)
+- [`spec/ui/design-system.md`](../../../spec/ui/design-system.md)
+- [`spec/ui/accessibility.md`](../../../spec/ui/accessibility.md)
+
+这些 SPEC 不复制 OpenAPI/SSE schema，也不替代 feature PLAN 的具体页面流程。
+
 ## 1. 路由与布局
 
 `packages/ui/src/router/index.ts`：
