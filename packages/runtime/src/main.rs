@@ -5779,4 +5779,474 @@ mod job_engine_route_tests {
         assert!(body.get("reason").is_some(), "legacy probe key kept");
         drop(dir);
     }
+
+    // ---- PLAN-0390 fixture 一致性（PLAN-0393/0394/0395 M2） ----
+
+    /// Fixture 驱动的 10 条一致性用例；`XIHE_JOB_CONFORMANCE_BACKEND`
+    /// （缺省 `windows-host`）选择适配器。fixture 路径可用
+    /// `XIHE_JOB_CONFORMANCE_FIXTURE` 覆盖，否则按仓库相对位置解析。
+    fn conformance_fixture() -> serde_json::Value {
+        let path = std::env::var("XIHE_JOB_CONFORMANCE_FIXTURE").unwrap_or_else(|_| {
+            format!(
+                "{}/../../../plans/PLAN-0390-XH-execution-job-backends/fixture/job-handle-conformance.json",
+                env!("CARGO_MANIFEST_DIR")
+            )
+        });
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("cannot read conformance fixture {path}: {error}"));
+        serde_json::from_slice(&bytes).expect("fixture json")
+    }
+
+    fn conformance_backend() -> String {
+        std::env::var("XIHE_JOB_CONFORMANCE_BACKEND").unwrap_or_else(|_| "windows-host".to_string())
+    }
+
+    async fn conformance_app() -> DirectAttachApp {
+        direct_attach_app_with_mode(&conformance_backend()).await
+    }
+
+    async fn start_job(
+        app: &Arc<AppState>,
+        ws_id: &str,
+        job_id: &str,
+        args: Vec<String>,
+        timeout_secs: u64,
+    ) -> Result<(StatusCode, serde_json::Value), (StatusCode, serde_json::Value)> {
+        start_job_program(app, ws_id, job_id, "cmd", args, timeout_secs).await
+    }
+
+    async fn start_job_program(
+        app: &Arc<AppState>,
+        ws_id: &str,
+        job_id: &str,
+        program: &str,
+        args: Vec<String>,
+        timeout_secs: u64,
+    ) -> Result<(StatusCode, serde_json::Value), (StatusCode, serde_json::Value)> {
+        match workspace_job_start_handler(
+            Path(ws_id.to_string()),
+            State(app.clone()),
+            axum::Json(JobStartRequest {
+                operation_item_id: job_id.to_string(),
+                command: program.to_string(),
+                args,
+                timeout_secs,
+                cwd: None,
+                env: None,
+            }),
+        )
+        .await
+        {
+            Ok((status, body)) => Ok((status, body_json(body.into_response()).await)),
+            Err(problem) => Err((problem.0, problem.1.0)),
+        }
+    }
+
+    async fn await_terminal(app: &Arc<AppState>, ws_id: &str, job_id: &str) -> serde_json::Value {
+        for _ in 0..400 {
+            let response = workspace_job_status_handler(
+                Path(ws_id.to_string()),
+                State(app.clone()),
+                axum::Json(JobStatusRequest {
+                    job_id: job_id.to_string(),
+                }),
+            )
+            .await
+            .expect("status");
+            let body = body_json(response.into_response()).await;
+            if matches!(
+                body["status"].as_str().unwrap_or_default(),
+                "succeeded" | "failed" | "cancelled" | "timeout"
+            ) {
+                return body;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("job {job_id} never reached a terminal state");
+    }
+
+    #[tokio::test]
+    async fn conf_start_success() {
+        let fixture = conformance_fixture();
+        assert_eq!(fixture["contract"], "job-handle-v1");
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = conformance_app().await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        let (status, body) = start_job(
+            &app,
+            &ws_id,
+            &job_id,
+            vec!["/C".to_string(), "ping -n 5 127.0.0.1 > nul".to_string()],
+            30,
+        )
+        .await
+        .expect("start");
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["jobId"], job_id);
+        assert!(!body["bootId"].as_str().unwrap_or_default().is_empty());
+        let snapshot = app.job_engine.snapshot(&job_id).expect("snapshot");
+        assert_eq!(snapshot.status.as_str(), "running");
+        assert!(
+            !app.job_engine
+                .handle(&job_id)
+                .expect("handle")
+                .opaque_handle_id
+                .is_empty()
+        );
+        app.job_engine.cancel(&job_id).expect("cancel");
+        app.job_engine.cleanup(&job_id).expect("cleanup");
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_start_unsupported_backend() {
+        // 契约：后备不可用/进程创建失败时不产生任何进程。
+        // 路由级 501 分支由 `mxc_job_route_is_probe_gated` 覆盖（无 MXC 环境）。
+        let DirectAttachApp {
+            app,
+            ws_id: _ws_id,
+            dir,
+            _server,
+        } = direct_attach_app_with_mode("windows-mxc").await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        let plan = xihe_runtime::job_engine::LaunchPlan {
+            backend_kind: "windows-mxc".to_string(),
+            program: "definitely-not-a-real-program-xyz.exe".to_string(),
+            grants: xihe_runtime::process_guard::FilesystemPolicy {
+                read_only_roots: Vec::new(),
+                read_write_roots: vec![dir.path().to_path_buf()],
+            },
+            ..Default::default()
+        };
+        let error = app.job_engine.start(&job_id, plan).expect_err("must fail");
+        assert_eq!(error.code(), "RUNTIME_UNAVAILABLE");
+        assert_eq!(app.job_engine.active_count(), 0);
+        assert!(!app.job_engine.output_dir(&job_id).exists());
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_output_cursor_monotonic() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = conformance_app().await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        start_job(
+            &app,
+            &ws_id,
+            &job_id,
+            vec!["/C".to_string(), "echo conformance-output".to_string()],
+            30,
+        )
+        .await
+        .expect("start");
+        await_terminal(&app, &ws_id, &job_id).await;
+        let response = workspace_job_output_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(super::JobOutputRequest {
+                job_id: job_id.clone(),
+                stream: Some("stdout".to_string()),
+                offset: Some(0),
+                limit: Some(65_536),
+            }),
+        )
+        .await
+        .expect("output");
+        let body = body_json(response.into_response()).await;
+        let offset = body["offset"].as_u64().expect("offset");
+        let next = body["nextOffset"].as_u64().expect("nextOffset");
+        let size = body["sizeBytes"].as_u64().expect("sizeBytes");
+        assert!(next >= offset, "cursor must be monotonic: {body}");
+        assert!(
+            size <= next - offset,
+            "sizeBytes must not exceed the read window"
+        );
+        app.job_engine.cleanup(&job_id).expect("cleanup");
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_output_truncated_boundary() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = conformance_app().await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        start_job_program(
+            &app,
+            &ws_id,
+            &job_id,
+            "node",
+            vec![
+                "-e".to_string(),
+                "process.stdout.write(String.fromCharCode(97).repeat(2097152))".to_string(),
+            ],
+            60,
+        )
+        .await
+        .expect("start");
+        let snapshot = await_terminal(&app, &ws_id, &job_id).await;
+        let response = workspace_job_output_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(super::JobOutputRequest {
+                job_id: job_id.clone(),
+                stream: Some("stdout".to_string()),
+                offset: Some(0),
+                limit: Some(1_048_576),
+            }),
+        )
+        .await
+        .expect("output");
+        let body = body_json(response.into_response()).await;
+        assert_eq!(
+            body["truncated"], true,
+            "2 MiB producer must be truncated: snapshot={snapshot} chunk={body}"
+        );
+        let offset = body["offset"].as_u64().expect("offset");
+        let next = body["nextOffset"].as_u64().expect("nextOffset");
+        assert_eq!(next - offset, 1_048_576);
+        app.job_engine.cleanup(&job_id).expect("cleanup");
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_cancel_terminal_idempotent() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = conformance_app().await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        start_job(
+            &app,
+            &ws_id,
+            &job_id,
+            vec!["/C".to_string(), "exit 0".to_string()],
+            30,
+        )
+        .await
+        .expect("start");
+        await_terminal(&app, &ws_id, &job_id).await;
+        let response = workspace_job_cancel_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(JobStatusRequest {
+                job_id: job_id.clone(),
+            }),
+        )
+        .await
+        .expect("cancel");
+        let body = body_json(response.into_response()).await;
+        assert_eq!(body["outcome"], "already_terminal");
+        assert_eq!(body["changed"], false);
+        app.job_engine.cleanup(&job_id).expect("cleanup");
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_cancel_missing_handle() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = conformance_app().await;
+        let problem = workspace_job_cancel_handler(
+            Path(ws_id),
+            State(app),
+            axum::Json(JobStatusRequest {
+                job_id: "missing".to_string(),
+            }),
+        )
+        .await
+        .expect_err("missing handle must 404");
+        assert_eq!(problem.0, StatusCode::NOT_FOUND);
+        assert_eq!(problem.1.0["code"], "JOB_NOT_FOUND");
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_cancel_process_tree_unconfirmed_contract() {
+        // fixture 要求「树未确认 → unconfirmed」。构造真实残留会让 Job Object
+        // 语义失效，故此处断言分类契约，真实场景见 0393 manual-verification §6。
+        let fixture = conformance_fixture();
+        let case = fixture["cases"]
+            .as_array()
+            .expect("cases")
+            .iter()
+            .find(|case| case["id"] == "cancel-process-tree-unconfirmed")
+            .expect("case");
+        assert_eq!(case["expect"]["cancel.outcome"], "unconfirmed");
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = conformance_app().await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        start_job(
+            &app,
+            &ws_id,
+            &job_id,
+            vec!["/C".to_string(), "ping -n 30 127.0.0.1 > nul".to_string()],
+            60,
+        )
+        .await
+        .expect("start");
+        let cancel = app.job_engine.cancel(&job_id).expect("cancel");
+        assert_eq!(
+            cancel.outcome,
+            xihe_runtime::job_engine::CancelOutcome::Cancelled,
+            "the real tree is confirmable, so cancel reports cancelled"
+        );
+        app.job_engine.cleanup(&job_id).expect("cleanup");
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_cleanup_explicit_result() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = conformance_app().await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        start_job(
+            &app,
+            &ws_id,
+            &job_id,
+            vec!["/C".to_string(), "exit 0".to_string()],
+            30,
+        )
+        .await
+        .expect("start");
+        await_terminal(&app, &ws_id, &job_id).await;
+        let response = workspace_job_cleanup_handler(
+            Path(ws_id),
+            State(app),
+            axum::Json(JobStatusRequest {
+                job_id: job_id.clone(),
+            }),
+        )
+        .await
+        .expect("cleanup");
+        let body = body_json(response.into_response()).await;
+        assert!(
+            matches!(body["outcome"].as_str(), Some("completed") | Some("failed")),
+            "explicit outcome required: {body}"
+        );
+        assert!(body["processes"].as_u64().is_some());
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_capability_unavailable_has_reason() {
+        // 不可用能力必须带原因（adapter 层构造，确定性）。
+        let probe = xihe_runtime::process_guard::BackendCapabilitySnapshot::unavailable(
+            "windows-mxc",
+            "builtin",
+            "experimental",
+            "windows-mxc",
+            "MXC_EXECUTABLE_MISSING",
+            None,
+        );
+        let capability = xihe_runtime::job_mxc_adapter::mxc_capability(&probe);
+        assert_eq!(capability["available"], false);
+        assert_eq!(capability["unavailableReason"], "MXC_EXECUTABLE_MISSING");
+        // fixture 的 error.code 是引擎侧投影；HTTP 面沿用既有的 JOB_* 码。
+        assert_eq!(
+            xihe_runtime::job_engine::JobEngineError::LaunchPending("probe failed".to_string())
+                .code(),
+            "PROCESS_BACKEND_LAUNCH_PENDING"
+        );
+
+        // 与真实分支对照：环境未配置 MXC 时路由返回 501 且带 reason。
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = direct_attach_app_with_mode("windows-mxc").await;
+        let mxc = std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_default();
+        let mxc_available = !mxc.is_empty() && std::path::Path::new(&mxc).exists();
+        if !mxc_available {
+            let problem = start_job(
+                &app,
+                &ws_id,
+                &uuid::Uuid::new_v4().to_string(),
+                vec!["/C".to_string(), "exit 0".to_string()],
+                30,
+            )
+            .await
+            .expect_err("must fail closed without MXC");
+            assert_eq!(problem.1["code"], "JOB_BACKEND_LAUNCH_PENDING");
+            assert!(
+                !problem.1["detail"].as_str().unwrap_or_default().is_empty(),
+                "fail-closed must explain why: {problem:?}"
+            );
+        }
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn conf_no_transport_detail_leak() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = conformance_app().await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        start_job(
+            &app,
+            &ws_id,
+            &job_id,
+            vec!["/C".to_string(), "ping -n 5 127.0.0.1 > nul".to_string()],
+            30,
+        )
+        .await
+        .expect("start");
+        let response = workspace_job_status_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(JobStatusRequest {
+                job_id: job_id.clone(),
+            }),
+        )
+        .await
+        .expect("status");
+        let body = body_json(response.into_response()).await;
+        let object = body.as_object().expect("object");
+        for forbidden in [
+            "containerPath",
+            "containerIp",
+            "networkMode",
+            "sandboxUrl",
+            "policyPath",
+            "wrapperPid",
+            "containerId",
+            "pid",
+        ] {
+            assert!(
+                !object.contains_key(forbidden),
+                "status leaked {forbidden}: {body}"
+            );
+        }
+        app.job_engine.cancel(&job_id).expect("cancel");
+        app.job_engine.cleanup(&job_id).expect("cleanup");
+        drop(dir);
+    }
 }
