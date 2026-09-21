@@ -51,6 +51,11 @@
       "llmMode": "job",
       "specs": ["e2e/real/job-resume.spec.ts"]
     },
+    "job-workspace-start": {
+      "description": "PLAN-0390 workspace job start: idempotency, real docker job, cursor, cancel, LOST",
+      "llmMode": "mock",
+      "specs": ["e2e/real/plan0390-workspace-job-start.spec.ts"]
+    },
     "job-cancel": {
       "description": "single job cancel four-phase termination",
       "llmMode": "job-cancel",
