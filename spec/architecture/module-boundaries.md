@@ -4,7 +4,7 @@
 
 ## 1. 范围
 
-本文冻结 UI、Control Plane（CP）、Agent、Runtime 四模块的职责边界和允许通信方向。HTTP 字段、SSE payload、MCP JSON-RPC 和数据库字段不在本文重复定义。
+本文冻结 UI、Control Plane（CP）、Agent、Runtime 四模块的职责边界和允许通信方向。HTTP 字段、SSE payload、MCP JSON-RPC 和数据库字段不在本文重复定义。Runtime 在宿主机上的进程结构、执行面与宿主机资源示意图见 [Runtime 运行拓扑](runtime-topology.md)。
 
 ## 2. 静态边界
 
