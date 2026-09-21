@@ -1903,7 +1903,7 @@ components:
     RagIngestResponse: { type: object, required: [status, chunks, docIds], properties: { status: { type: string }, chunks: { type: integer }, docIds: { type: array, items: { type: string } } } }
     RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
     WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef, storageMode, executionMode], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
-    WorkspaceEnvironment: { type: object, required: [workspaceId, status, storageBackend, storageRef, storageMode, executionMode, capability, runtime], properties: { workspaceId: { type: string }, status: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, capability: { $ref: '#/components/schemas/BackendCapabilitySnapshot' }, executionSpec: { type: object, additionalProperties: true }, runtime: { type: object, additionalProperties: true } } }
+    WorkspaceEnvironment: { type: object, required: [workspaceId, status, storageBackend, storageRef, storageMode, executionMode, capability, runtime], properties: { workspaceId: { type: string }, status: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, capability: { $ref: '#/components/schemas/BackendCapabilitySnapshot' }, jobCapability: { $ref: '#/components/schemas/WorkspaceJobCapability' }, executionSpec: { type: object, additionalProperties: true }, runtime: { type: object, additionalProperties: true } } }
     WorkspaceJob:
       type: object
       description: 'Workspace-scoped durable Job projection (PLAN-0390). Shared by the POST start response and the GET list items. Canonical identity is `operationItemId`; `jobId` is an opaque Runtime backend handle. `succeeded`/`timeout`/`orphaned` keep the Docker literal names in this batch; normalization to `completed`/`failed`/`timed_out` is deferred to the backend adapters.'
@@ -1943,6 +1943,24 @@ components:
         source: { type: string, enum: [ui, agent, runtime, system, mcp], default: ui }
         env: { type: object, additionalProperties: { type: string } }
     DirectAttachProbeRequest: { type: object, required: [storageMode, hostPath, executionMode], properties: { storageMode: { type: string, enum: [direct_attach] }, hostPath: { type: string }, executionMode: { type: string, enum: [windows-mxc, windows-host] } } }
+    WorkspaceJobCapability:
+      type: object
+      description: |
+        PLAN-0396: job availability for this workspace, proxied from the Runtime
+        `jobs/capabilities` entry (single source of truth). Always additive to
+        `executionMode`; a probe failure degrades this block only.
+      properties:
+        backendKind: { type: string, enum: [docker, windows-mxc, windows-host] }
+        backendRevision: { type: string }
+        maturity: { type: string }
+        executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }
+        canStart: { type: boolean }
+        canCancel: { type: boolean }
+        canStreamOutput: { type: boolean }
+        canIsolateFilesystem: { type: boolean, description: false for the unrestricted host backend; the UI must surface it. }
+        available: { type: boolean }
+        unavailableReason: { type: [string, 'null'], description: RUNTIME_UNREACHABLE / CONTAINER_JOBS_SERVED_BY_DOCKER / backend reason. }
+        checkedAt: { type: string, description: ISO-8601 read timestamp recorded by CP. }
     BackendCapabilitySnapshot: { type: object, required: [contractVersion, backendKind, backendRevision, maturity, executionMode, available], properties: { contractVersion: { type: string, enum: [v1] }, backendKind: { type: string }, backendRevision: { type: string }, maturity: { type: string, enum: [stable, experimental] }, executionMode: { type: string }, available: { type: boolean }, reason: { type: string }, diagnostics: { type: object, additionalProperties: true } } }
     PublishWorkspaceEventRequest: { type: object, required: [kind, source], properties: { kind: { type: string, enum: [file_changed, snapshot_required] }, path: { type: string, description: Workspace-relative POSIX path }, changeType: { type: string, enum: [created, modified, deleted] }, source: { type: string, enum: [runtime] }, reason: { type: string, enum: [overflow] } } }
     WorkspaceEventAccepted: { type: object, required: [accepted, workspaceId, sequence], properties: { accepted: { type: boolean }, workspaceId: { type: string }, sequence: { type: integer, format: int64 } } }
