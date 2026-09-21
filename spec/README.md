@@ -49,7 +49,7 @@ spec/
 
 | 领域 | 契约状态 | 实现状态 | Canonical owner | 承接关系 |
 |---|---|---|---|---|
-| architecture / communication | proposed | partial | 跨边界 owner | PLAN-0385 |
+| architecture / communication | proposed | partial | 跨边界 owner | PLAN-0385；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
 | ui interaction | proposed | partial | UI + 跨边界 owner | PLAN-0388；PLAN-0384 仅负责 feature flow |
 | agent execution / Context | proposed | partial | Agent owner | PLAN-0387；0381/0382 仍为局部规范 |
 | session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开 |
@@ -78,6 +78,7 @@ PLAN-0385 已建立第一批架构/通信/事件/账本草案。它们仍为 `pr
 
 - [模块边界](architecture/module-boundaries.md)
 - [模块通信](architecture/communication.md)
+- [Runtime 运行拓扑](architecture/runtime-topology.md)
 - [事件流](protocol/event-stream.md)
 - [MCP 通信边界](protocol/mcp.md)
 - [Operation Ledger](data/operation-ledger.md)
@@ -99,6 +100,21 @@ PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑�
 - [Chat Session 生命周期](session/chat-session.md)
 - [ChatRun 与 Operation 生命周期](session/chat-run-operation.md)
 - [Runtime MCP Session 生命周期](session/mcp-session.md)
+
+PLAN-0388 已建立 UI interaction/design/accessibility proposed 草案；它们只定义全局交互状态、设计系统和无障碍规则，不复制 OpenAPI/SSE schema 或 feature flow：
+
+- [UI 交互模型](ui/interaction-model.md)
+- [UI 设计系统与状态表现](ui/design-system.md)
+- [UI 无障碍与键盘契约](ui/accessibility.md)
+
+PLAN-0389 已建立 Workspace/Configuration proposed 草案；Workspace logical resource、execution binding、storage/checkpoint、import/events 和进程可见配置来源保持分层：
+
+- [Workspace 生命周期与绑定](workspace/lifecycle.md)
+- [Sandbox backend 与 capability](workspace/sandbox-backend.md)
+- [Workspace Storage 与 Checkpoint slice](workspace/storage-checkpoint.md)
+- [Workspace Import、Copy、Direct Attach 与 Reuse](workspace/import.md)
+- [Workspace 文件事件](workspace/events.md)
+- [配置 Effective Source 与进程可见性](configuration/env-effective.md)
 
 ## 5. Spec Impact 与写回
 

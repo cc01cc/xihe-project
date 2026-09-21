@@ -11,6 +11,8 @@ created: 2026-09-15
 # DEV-031: 沙盒后端契约
 
 > 面向 Runtime 开发者与换后端评估者：定义 `SandboxBackend` 的必备接口（动词 + 能力查询）、能力声明与跨后端语义约束（§1–5）、长驻 stdio MCP 的三档映射（§6），以及 Docker 后端的现状对照（§7）。能力快照还必须区分稳定 backend identity、成熟度、Runtime/执行平台和 provider 版本。设计原则见 `sandbox-backend-abstraction` skill；泄漏审计记录见 PLAN-0329。
+>
+> PLAN-0389 Workspace/Sandbox proposed SPEC 只引用本契约的 capability/fail-closed 语义，不把当前 Docker 实现当作 Windows MXC/host evidence。
 
 ## 1. 定位与边界
 

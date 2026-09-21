@@ -146,6 +146,7 @@ packages/
 - 一个根级 SPEC 文件同一时间只能由一个 active PLAN 承接；其他 PLAN 只能在自己的 `spec/` 中提出草案。Agent 可以提出写回建议，但不得自动改写 active SPEC。
 - 每个 XH PLAN 必须声明 Spec Impact：`none`、`read`、`create`、`update` 或 `supersede`，并在同一变更波次同步根级 SPEC、DEV 摘要、OpenAPI/事件 schema 和测试。XH 试点规则暂不改变 workspace 全局 PLAN 模板。
 - 根级 SPEC v1 仅作为 Agent/GitHub-only 契约入口，不纳入文档站 frontmatter 或渲染；DEV-030 和文档索引只提供导航。具体写作规则见 `spec/writing-guide.md`。
+- Workspace/Configuration proposed SPEC 见 `spec/workspace/`、`spec/configuration/`；它们只冻结 owner、状态、能力、storage/checkpoint/import/events 和进程可见性，不替代 DEV-003/015/031、OpenAPI、代码或 PLAN-0379/0384 的实现边界。
 
 ## Code Style
 

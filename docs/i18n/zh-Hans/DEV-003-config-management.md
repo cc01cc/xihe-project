@@ -13,6 +13,8 @@ updated: 2026-09-12
 
 > 面向开发者与运维：一次讲清配什么、放哪层、怎么改。前置阅读：DEV-002 §3（运行模式）。
 >
+> PLAN-0389 配置 proposed SPEC：[`spec/configuration/env-effective.md`](../../../spec/configuration/env-effective.md)。本文仍是 ConfigService/Config schema 的当前事实源；Runtime env/CLI 与 CP DB effective 分属不同进程边界。
+>
 > 现行模型（PLAN-0307 已落地）：**三层 `instance / workspace / user`**（解析链 `workspace > user > instance > 代码默认`）+ 凭证 **BYOK**（`provider_connections` 加密表，两级 `WORKSPACE > USER`；`SYSTEM` 归属已退役，见 PLAN-0364 M2）+ **env 覆盖锁定**（env 为最高部署权威，UI 显示 env 生效值并禁用该项）。端点以 `docs/api/openapi.yaml` 为准；认证、principal、授权和审计的冻结契约见根级 `spec/security/`（当前为 proposed）。
 
 ## 1. 三层所有权与九域

@@ -12,6 +12,8 @@ updated: 2026-09-20
 # DEV-015: Runtime 架构
 
 > Rust 1.97.1（edition 2024）+ rmcp 3.1.4 + Axum + Tokio + bollard。Runtime 负责实际文件、命令、容器和 stdio MCP 会话执行；CP 负责元数据、授权与健康。端口：宿主 12633（Docker 内 8001）；`/health` = liveness，`/ready` = readiness（不等全部 Sandbox 物化）。Runtime 与 CP 的通信和 Workspace 事件边界见根级 `spec/architecture/communication.md`、`spec/protocol/event-stream.md`。
+>
+> PLAN-0389 Workspace/Sandbox/Storage/Import/Events proposed SPEC：[`spec/workspace/`](../../../spec/workspace/)。Runtime 在宿主机上的进程/沙盒/宿主资源结构示意见根级 `spec/architecture/runtime-topology.md`（proposed）。本 DEV 和 Runtime 源码是当前实现事实；SPEC 不把 Runtime canonical state 与 CP/UI projection 合并。
 
 ## 1. 两 binary
 
