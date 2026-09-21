@@ -213,6 +213,44 @@ public class RuntimeJobClient {
     }
 
     /**
+     * PLAN-0396：Runtime `jobs/capabilities` 的三态结果。
+     *
+     * <p>`reachable=false` 表示 Runtime 不可达/超时；`containerJobs=true` 表示
+     * Runtime 明确回答「容器 Job 由 Docker 路径服务」（501）。两种情况下
+     * `capability` 为 null，由调用方折叠成显式 unavailable，而不是猜测可用性。
+     */
+    public record JobCapabilityResult(boolean reachable, boolean containerJobs, JsonNode capability) {
+
+        static JobCapabilityResult unreachableResult() {
+            return new JobCapabilityResult(false, false, null);
+        }
+
+        static JobCapabilityResult containerJobsResult() {
+            return new JobCapabilityResult(true, true, null);
+        }
+    }
+
+    public JobCapabilityResult jobCapabilities(String workspaceId) {
+        HttpResponse<String> response = post(workspaceId, "/jobs/capabilities", Map.of());
+        if (response == null) {
+            return JobCapabilityResult.unreachableResult();
+        }
+        if (response.statusCode() == 501) {
+            return JobCapabilityResult.containerJobsResult();
+        }
+        if (response.statusCode() / 100 != 2) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_job_capabilities_http_error workspaceId={} status={}",
+                    workspaceId, response.statusCode());
+            return JobCapabilityResult.unreachableResult();
+        }
+        JsonNode node = readTree(response.body());
+        if (node == null || !node.isObject()) {
+            return JobCapabilityResult.unreachableResult();
+        }
+        return new JobCapabilityResult(true, false, node);
+    }
+
+    /**
      * PLAN-0390 决策 #11：Runtime 进程 bootId（每次启动重新生成）。
      * 经 internal diagnostics 通道读取（`/health` 的 body 契约保持 `OK` 不变）。
      * 读不到（不可达/字段缺失）返回 null，调用方按「未知」处理而不误判重启。

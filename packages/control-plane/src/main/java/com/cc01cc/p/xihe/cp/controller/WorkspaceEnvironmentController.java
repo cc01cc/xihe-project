@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
@@ -40,6 +41,7 @@ public class WorkspaceEnvironmentController {
     private final WorkspaceService workspaceService;
     private final WorkspaceExecutionSpecService executionSpecService;
     private final RuntimeHeartbeatController heartbeatController;
+    private final RuntimeJobClient runtimeJobClient;
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
     private final String serviceToken;
@@ -49,6 +51,7 @@ public class WorkspaceEnvironmentController {
             WorkspaceService workspaceService,
             WorkspaceExecutionSpecService executionSpecService,
             RuntimeHeartbeatController heartbeatController,
+            RuntimeJobClient runtimeJobClient,
             RestTemplate restTemplate,
             @Value("${cp.mcp.runtime-url:http://localhost:12633}") String runtimeUrl,
             @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken) {
@@ -56,6 +59,7 @@ public class WorkspaceEnvironmentController {
         this.workspaceService = workspaceService;
         this.executionSpecService = executionSpecService;
         this.heartbeatController = heartbeatController;
+        this.runtimeJobClient = runtimeJobClient;
         this.restTemplate = restTemplate;
         this.runtimeUrl = runtimeUrl;
         this.serviceToken = serviceToken;
@@ -101,6 +105,11 @@ public class WorkspaceEnvironmentController {
         response.put("hostPath", workspace.getHostPath());
         response.put("executionMode", valueOrDefault(workspace.getExecutionMode(), "docker"));
         response.put("capability", workspaceService.capabilitySnapshot(workspace));
+        // PLAN-0396：Job 可用性来自 Runtime capabilities（单一事实源），
+        // 探测失败只降级本块，不影响 environment 其余字段。
+        response.put("jobCapability", jobCapabilityView(
+                valueOrDefault(workspace.getExecutionMode(), "docker"),
+                runtimeJobClient.jobCapabilities(workspaceId)));
 
         Map<String, Object> assignmentView = new LinkedHashMap<>();
         assignmentView.put("status", assignment == null ? "unassigned" : "assigned");
@@ -145,6 +154,41 @@ public class WorkspaceEnvironmentController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+    }
+
+    /**
+     * PLAN-0396 决策 #3/#6：能力块三态映射。能力字段只从 Runtime 回包白名单
+     * 透传，禁止键（pid/policyPath/tier 等）不进入 CP 响应。
+     */
+    static Map<String, Object> jobCapabilityView(
+            String executionMode,
+            RuntimeJobClient.JobCapabilityResult result) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        if (result == null || !result.reachable()) {
+            view.put("backendKind", executionMode);
+            view.put("available", false);
+            view.put("unavailableReason", "RUNTIME_UNREACHABLE");
+        } else if (result.containerJobs()) {
+            view.put("backendKind", "docker");
+            view.put("available", false);
+            view.put("unavailableReason", "CONTAINER_JOBS_SERVED_BY_DOCKER");
+        } else {
+            com.fasterxml.jackson.databind.JsonNode node = result.capability();
+            view.put("backendKind", node.path("backendKind").asText(executionMode));
+            view.put("backendRevision", node.path("backendRevision").asText(""));
+            view.put("maturity", node.path("maturity").asText(""));
+            view.put("executionMode", node.path("executionMode").asText(executionMode));
+            view.put("canStart", node.path("canStart").asBoolean(false));
+            view.put("canCancel", node.path("canCancel").asBoolean(false));
+            view.put("canStreamOutput", node.path("canStreamOutput").asBoolean(false));
+            view.put("canIsolateFilesystem", node.path("canIsolateFilesystem").asBoolean(false));
+            boolean available = node.path("available").asBoolean(false);
+            view.put("available", available);
+            String reason = node.path("unavailableReason").asText(null);
+            view.put("unavailableReason", reason == null || reason.isBlank() ? null : reason);
+        }
+        view.put("checkedAt", java.time.Instant.now().toString());
+        return view;
     }
 
     private Map<String, Object> readWorkspaceRuntimeStatus(String workspaceId) {

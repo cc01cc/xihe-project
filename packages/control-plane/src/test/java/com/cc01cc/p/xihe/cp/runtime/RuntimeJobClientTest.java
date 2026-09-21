@@ -57,6 +57,48 @@ class RuntimeJobClientTest {
     }
 
     @Test
+    void jobCapabilitiesParsesThe0390Shape() throws IOException {
+        String url = startServer((method, path) -> new Stub(200,
+                "{\"backendKind\":\"windows-host\",\"maturity\":\"stable\","
+                        + "\"canStart\":true,\"canIsolateFilesystem\":false,"
+                        + "\"available\":true,\"unavailableReason\":null}"));
+        RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
+
+        RuntimeJobClient.JobCapabilityResult result = client.jobCapabilities("ws-1");
+
+        assertTrue(result.reachable());
+        assertFalse(result.containerJobs());
+        assertEquals("windows-host", result.capability().path("backendKind").asText());
+        assertFalse(result.capability().path("canIsolateFilesystem").asBoolean(true));
+        assertEquals("POST", lastMethod.get());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/jobs/capabilities", lastPath.get());
+        assertEquals("Bearer test-token", lastAuth.get());
+    }
+
+    @Test
+    void jobCapabilitiesMaps501ToTheDockerPath() throws IOException {
+        String url = startServer((method, path) -> new Stub(501,
+                "{\"code\":\"JOB_BACKEND_LAUNCH_PENDING\"}"));
+        RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
+
+        RuntimeJobClient.JobCapabilityResult result = client.jobCapabilities("ws-1");
+
+        assertTrue(result.reachable());
+        assertTrue(result.containerJobs());
+    }
+
+    @Test
+    void jobCapabilitiesTreats5xxAsUnreachable() throws IOException {
+        String url = startServer((method, path) -> new Stub(500, "{\"code\":\"RUNTIME_ERROR\"}"));
+        RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
+
+        RuntimeJobClient.JobCapabilityResult result = client.jobCapabilities("ws-1");
+
+        assertFalse(result.reachable());
+        assertFalse(result.containerJobs());
+    }
+
+    @Test
     void cancelJobSendsJobIdAndParsesCancelled() throws IOException {
         String url = startServer((method, path) ->
                 new Stub(200, "{\"jobId\":\"job-1\",\"status\":\"cancelled\"}"));

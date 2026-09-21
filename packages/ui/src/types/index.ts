@@ -761,6 +761,23 @@ export interface WorkspaceEnvironment {
         reason?: string;
         diagnostics?: Record<string, unknown>;
     };
+    /**
+     * PLAN-0396：Job 可用性来自 Runtime capabilities（单一事实源）。字段缺省表示
+     * CP 未上报（旧版本/探测未接入），UI 按「能力未知」禁用启动。
+     */
+    jobCapability?: {
+        backendKind: string;
+        backendRevision?: string;
+        maturity?: string;
+        executionMode?: WorkspaceExecutionMode;
+        canStart?: boolean;
+        canCancel?: boolean;
+        canStreamOutput?: boolean;
+        canIsolateFilesystem?: boolean;
+        available?: boolean;
+        unavailableReason?: string | null;
+        checkedAt?: string;
+    };
     executionSpec?: {
         status: string;
         generation: number;

@@ -142,23 +142,73 @@ describe('WorkspaceEnvironmentView job projection', () => {
   })
 })
 
-describe('WorkspaceEnvironmentView deferred job-start capability', () => {
-  it('shows a disabled job-start hint with an explicit reason for non-docker modes', async () => {
-    mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment('windows-mxc') as never)
+describe('WorkspaceEnvironmentView job-start capability (PLAN-0396)', () => {
+  it('disables start with an explicit reason when the runtime never reported', async () => {
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment('windows-host') as never)
 
     const wrapper = await mountView()
 
     const hint = wrapper.get('[data-testid="workspace-job-start-hint"]')
     expect(hint.attributes('aria-disabled')).toBe('true')
-    expect(hint.text()).toContain('windows-mxc')
-    expect(hint.text()).toContain('尚无启动器')
+    expect(hint.text()).toContain('能力未知')
   })
 
-  it('leaves the hint enabled for the docker backend', async () => {
+  it('disables start and shows the runtime reason when unavailable', async () => {
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+      ...environment('windows-mxc'),
+      jobCapability: {
+        backendKind: 'windows-mxc',
+        canStart: true,
+        available: false,
+        unavailableReason: 'RUNTIME_UNREACHABLE',
+      },
+    } as never)
+
+    const wrapper = await mountView()
+
+    const hint = wrapper.get('[data-testid="workspace-job-start-hint"]')
+    expect(hint.attributes('aria-disabled')).toBe('true')
+    expect(hint.text()).toContain('RUNTIME_UNREACHABLE')
+    expect(hint.text()).not.toContain('尚无启动器')
+  })
+
+  it('enables start and marks the unrestricted host backend', async () => {
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+      ...environment('windows-host'),
+      jobCapability: {
+        backendKind: 'windows-host',
+        canStart: true,
+        canCancel: true,
+        canStreamOutput: true,
+        canIsolateFilesystem: false,
+        available: true,
+      },
+    } as never)
+
     const wrapper = await mountView()
 
     const hint = wrapper.get('[data-testid="workspace-job-start-hint"]')
     expect(hint.attributes('aria-disabled')).toBe('false')
-    expect(hint.text()).toContain('Docker')
+    expect(hint.text()).toContain('windows-host')
+    expect(hint.text()).toContain('无隔离')
+  })
+
+  it('enables start and marks the sandboxed mxc backend', async () => {
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+      ...environment('windows-mxc'),
+      jobCapability: {
+        backendKind: 'windows-mxc',
+        canStart: true,
+        canIsolateFilesystem: true,
+        available: true,
+      },
+    } as never)
+
+    const wrapper = await mountView()
+
+    const hint = wrapper.get('[data-testid="workspace-job-start-hint"]')
+    expect(hint.attributes('aria-disabled')).toBe('false')
+    expect(hint.text()).toContain('windows-mxc')
+    expect(hint.text()).toContain('沙盒隔离')
   })
 })

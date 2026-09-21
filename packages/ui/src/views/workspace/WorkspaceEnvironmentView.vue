@@ -155,14 +155,23 @@ function jobDetailText(job: WorkspaceJob): string {
   return parts.join(' · ')
 }
 
-// Backend launcher is only implemented for the Docker backend; other execution modes stay
-// visible but disabled with an explicit reason (deferred-capability convention).
-const jobStartAvailable = computed(() => environment.value?.executionMode === 'docker')
-const jobStartReason = computed(() =>
-  jobStartAvailable.value
-    ? '可启动 Job（Docker 后端）'
-    : `Job 启动暂不可用：${environment.value?.executionMode ?? '未知'} 后端尚无启动器`,
+// PLAN-0396：Job 可用性来自 Runtime capabilities（CP 透出），不再与
+// `executionMode === 'docker'` 绑定；不可用/未知时给显式原因并禁用入口。
+const jobCapability = computed(() => environment.value?.jobCapability)
+const jobStartAvailable = computed(
+  () => Boolean(jobCapability.value?.canStart) && jobCapability.value?.available === true,
 )
+const jobStartReason = computed(() => {
+  const capability = jobCapability.value
+  if (!capability) return 'Job 启动能力未知（Runtime 未上报）'
+  if (!jobStartAvailable.value) {
+    return `Job 启动不可用：${capability.unavailableReason ?? '后端未上报原因'}`
+  }
+  const backend = capability.backendKind || environment.value?.executionMode || '未知后端'
+  return capability.canIsolateFilesystem
+    ? `可启动 Job · ${backend}（沙盒隔离）`
+    : `可启动 Job · ${backend}（无隔离，可访问工作区外资源）`
+})
 
 async function loadEnvironment() {
   const id = workspaceId.value
