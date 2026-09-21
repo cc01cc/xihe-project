@@ -172,6 +172,11 @@ public class WorkspaceEnvironmentController {
             view.put("backendKind", "docker");
             view.put("available", false);
             view.put("unavailableReason", "CONTAINER_JOBS_SERVED_BY_DOCKER");
+        } else if (result.capability() == null) {
+            view.put("backendKind", executionMode);
+            view.put("available", false);
+            view.put("unavailableReason",
+                    result.problemCode() == null ? "RUNTIME_CAPABILITY_MISSING" : result.problemCode());
         } else {
             com.fasterxml.jackson.databind.JsonNode node = result.capability();
             view.put("backendKind", node.path("backendKind").asText(executionMode));

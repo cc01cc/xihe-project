@@ -24,7 +24,7 @@ class WorkspaceEnvironmentControllerTest {
 
     private RuntimeJobClient.JobCapabilityResult capability(String json) {
         try {
-            return new RuntimeJobClient.JobCapabilityResult(true, false, objectMapper.readTree(json));
+            return new RuntimeJobClient.JobCapabilityResult(true, false, objectMapper.readTree(json), null);
         } catch (Exception error) {
             throw new IllegalStateException(error);
         }
@@ -63,13 +63,13 @@ class WorkspaceEnvironmentControllerTest {
     @Test
     void containerJobsAndUnreachableRuntimeBothStayUnavailable() {
         Map<String, Object> container = WorkspaceEnvironmentController.jobCapabilityView(
-                "docker", new RuntimeJobClient.JobCapabilityResult(true, true, null));
+                "docker", new RuntimeJobClient.JobCapabilityResult(true, true, null, null));
         assertEquals("docker", container.get("backendKind"));
         assertEquals(false, container.get("available"));
         assertEquals("CONTAINER_JOBS_SERVED_BY_DOCKER", container.get("unavailableReason"));
 
         Map<String, Object> unreachable = WorkspaceEnvironmentController.jobCapabilityView(
-                "windows-host", new RuntimeJobClient.JobCapabilityResult(false, false, null));
+                "windows-host", new RuntimeJobClient.JobCapabilityResult(false, false, null, null));
         assertEquals("windows-host", unreachable.get("backendKind"));
         assertEquals(false, unreachable.get("available"));
         assertEquals("RUNTIME_UNREACHABLE", unreachable.get("unavailableReason"));
@@ -94,5 +94,15 @@ class WorkspaceEnvironmentControllerTest {
                         "unavailableReason", "checkedAt")
                         .containsAll(view.keySet()),
                 "unexpected keys: " + view.keySet());
+    }
+
+    @Test
+    void runtimeProblemCodeIsSurfacedInsteadOfUnreachable() {
+        Map<String, Object> view = WorkspaceEnvironmentController.jobCapabilityView(
+                "windows-host",
+                RuntimeJobClient.JobCapabilityResult.problemResult("DIRECTORY_NOT_FOUND"));
+
+        assertEquals(false, view.get("available"));
+        assertEquals("DIRECTORY_NOT_FOUND", view.get("unavailableReason"));
     }
 }

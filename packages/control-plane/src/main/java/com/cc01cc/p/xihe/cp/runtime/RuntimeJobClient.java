@@ -219,14 +219,19 @@ public class RuntimeJobClient {
      * Runtime 明确回答「容器 Job 由 Docker 路径服务」（501）。两种情况下
      * `capability` 为 null，由调用方折叠成显式 unavailable，而不是猜测可用性。
      */
-    public record JobCapabilityResult(boolean reachable, boolean containerJobs, JsonNode capability) {
+    public record JobCapabilityResult(boolean reachable, boolean containerJobs, JsonNode capability,
+                                      String problemCode) {
 
         static JobCapabilityResult unreachableResult() {
-            return new JobCapabilityResult(false, false, null);
+            return new JobCapabilityResult(false, false, null, null);
         }
 
         static JobCapabilityResult containerJobsResult() {
-            return new JobCapabilityResult(true, true, null);
+            return new JobCapabilityResult(true, true, null, null);
+        }
+
+        public static JobCapabilityResult problemResult(String problemCode) {
+            return new JobCapabilityResult(true, false, null, problemCode);
         }
     }
 
@@ -241,13 +246,18 @@ public class RuntimeJobClient {
         if (response.statusCode() / 100 != 2) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_capabilities_http_error workspaceId={} status={}",
                     workspaceId, response.statusCode());
-            return JobCapabilityResult.unreachableResult();
+            // A Runtime that answers with an error is reachable: surface its code
+            // instead of pretending the transport failed.
+            JsonNode problem = readTree(response.body());
+            String code = problem == null ? null : problem.path("code").asText(null);
+            return JobCapabilityResult.problemResult(
+                    code == null || code.isBlank() ? "RUNTIME_CAPABILITY_ERROR" : code);
         }
         JsonNode node = readTree(response.body());
         if (node == null || !node.isObject()) {
-            return JobCapabilityResult.unreachableResult();
+            return JobCapabilityResult.problemResult("RUNTIME_CAPABILITY_UNPARSABLE");
         }
-        return new JobCapabilityResult(true, false, node);
+        return new JobCapabilityResult(true, false, node, null);
     }
 
     /**

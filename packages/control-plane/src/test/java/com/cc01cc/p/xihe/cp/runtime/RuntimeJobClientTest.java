@@ -88,14 +88,16 @@ class RuntimeJobClientTest {
     }
 
     @Test
-    void jobCapabilitiesTreats5xxAsUnreachable() throws IOException {
-        String url = startServer((method, path) -> new Stub(500, "{\"code\":\"RUNTIME_ERROR\"}"));
+    void jobCapabilitiesSurfacesARuntimeProblemCodeInsteadOfUnreachable() throws IOException {
+        String url = startServer((method, path) -> new Stub(422,
+                "{\"code\":\"DIRECTORY_NOT_FOUND\",\"status\":422}"));
         RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
 
         RuntimeJobClient.JobCapabilityResult result = client.jobCapabilities("ws-1");
 
-        assertFalse(result.reachable());
+        assertTrue(result.reachable());
         assertFalse(result.containerJobs());
+        assertEquals("DIRECTORY_NOT_FOUND", result.problemCode());
     }
 
     @Test
