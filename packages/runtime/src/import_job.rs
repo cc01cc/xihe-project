@@ -318,7 +318,14 @@ mod tests {
         assert!(target_root.join("ws-1/src/main.ts").exists());
         assert!(target_root.join("ws-1/.git/config").exists());
         assert!(!target_root.join("ws-1/node_modules/ignored.js").exists());
-        assert_eq!(status.files_copied, 1);
+        // Three files are scanned; `node_modules` is the only excluded rule, so
+        // it is skipped and the remaining two (including `.git/config`, which is
+        // imported as-is so the workspace keeps its git history) are copied.
+        assert_eq!(status.files_scanned, 3);
+        assert_eq!(status.files_skipped, 1);
+        assert_eq!(status.files_copied, 2);
+        assert!(status.bytes_copied > 0);
+        assert!(status.bytes_skipped > 0);
     }
 
     #[test]
