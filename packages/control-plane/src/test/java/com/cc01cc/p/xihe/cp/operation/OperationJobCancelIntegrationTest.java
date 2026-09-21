@@ -8,11 +8,14 @@ import com.cc01cc.p.xihe.cp.entity.OperationEvent;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,6 +62,9 @@ class OperationJobCancelIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private WorkspaceUserRepository workspaceUserRepository;
 
     private String authToken;
     private String userId;
@@ -250,7 +256,7 @@ class OperationJobCancelIntegrationTest extends AbstractIntegrationTest {
                 .getBody().get("accessToken").toString();
         ResponseEntity<Map> foreign = postCancel(itemId, otherToken);
         assertEquals(HttpStatus.NOT_FOUND, foreign.getStatusCode());
-        assertEquals("OPERATION_ITEM_NOT_FOUND", foreign.getBody().get("code"));
+         assertEquals("WORKSPACE_NOT_FOUND", foreign.getBody().get("code"));
         verify(runtimeJobClient, never()).cancelJob(any(), any());
 
         // 无档案的 item：404 JOB_ARCHIVE_NOT_FOUND，不写审计（R3-2 处置）
@@ -261,6 +267,27 @@ class OperationJobCancelIntegrationTest extends AbstractIntegrationTest {
         assertEquals("JOB_ARCHIVE_NOT_FOUND", missing.getBody().get("code"));
 
         assertEquals(0, jobCancelEvents().size(), "404 paths must not leave job.cancel events");
+    }
+
+    @Test
+    void workspaceMemberCanCancelJob() {
+        String email = "job-cancel-member-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        AuthResponse registered = restTemplate.postForEntity(
+                baseUrl + "/api/v1/auth/register",
+                new RegisterRequest(email, TestDataFactory.PASSWORD, "Member"),
+                AuthResponse.class).getBody();
+        User member = userRepository.findByEmail(email).orElseThrow();
+        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId, member.getId().toString(), WorkspaceRole.MEMBER));
+
+        UUID itemId = newJobItem(UUID.randomUUID().toString(), "running");
+        when(runtimeJobClient.cancelJob(workspaceId, jobStateService.find(itemId).orElseThrow().jobId()))
+                .thenReturn(new RuntimeJobClient.JobCancelResult(true, true, "cancelled"));
+
+        ResponseEntity<Map> response = postCancel(itemId, registered.getAccessToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(Boolean.TRUE, response.getBody().get("changed"));
+        verify(runtimeJobClient).cancelJob(eq(workspaceId), anyString());
     }
 
     @Test

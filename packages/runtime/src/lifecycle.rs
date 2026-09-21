@@ -292,10 +292,37 @@ impl Lifecycle {
         generation: u64,
         spec_hash: &str,
     ) -> Result<(), RuntimeError> {
+        self.register_ready_with_mode(
+            ws_id,
+            workspace_path,
+            profile,
+            generation,
+            spec_hash,
+            "docker",
+        )
+        .await
+    }
+
+    pub async fn register_ready_with_mode(
+        &self,
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        generation: u64,
+        spec_hash: &str,
+        execution_mode: &str,
+    ) -> Result<(), RuntimeError> {
         let _guard = self.transitions.lock().await;
         self.ensure_legal(ws_id, LifecycleState::Ready).await?;
         self.registry
-            .register_with_spec(ws_id, workspace_path, profile, generation, spec_hash)
+            .register_with_spec_and_mode(
+                ws_id,
+                workspace_path,
+                profile,
+                generation,
+                spec_hash,
+                execution_mode,
+            )
             .await;
         info!(
             workspace_id = %ws_id,

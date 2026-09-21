@@ -4,12 +4,14 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.entity.OperationExtension;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,6 +47,9 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private OperationExtensionRepository operationExtensions;
 
     private String userId;
     private String workspaceId;
@@ -123,6 +128,53 @@ class JobStateServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals("session", archive.scope());
         assertEquals("running", archive.status());
         assertNull(archive.endedAt());
+    }
+
+    @Test
+    void explicitWorkspaceScopeIsPersistedWithoutChangingOperationItemIdentity() throws Exception {
+        UUID item = newItem("start_background_process");
+        String jobId = UUID.randomUUID().toString();
+        startJob(item, jobId);
+
+        jobStateService.upsert(item, Map.of("scope", JobStateService.SCOPE_WORKSPACE));
+
+        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
+        assertEquals(item.toString(), archive.itemId());
+        assertEquals("workspace", archive.scope());
+        assertEquals(jobId, archive.jobId());
+    }
+
+    @Test
+    void finalSchemaScopeIsStoredWithoutVersionBump() throws Exception {
+        UUID item = newItem("start_background_process");
+        String jobId = UUID.randomUUID().toString();
+        startJob(item, jobId);
+        jobStateService.upsert(item, Map.of("scope", JobStateService.SCOPE_WORKSPACE));
+
+        JobStateService.JobArchive archive = jobStateService.find(item).orElseThrow();
+        assertEquals("workspace", archive.scope());
+        assertEquals(1, operationExtensions.findByItemId(item.toString()).stream()
+                .map(OperationExtension::getSchemaVersion).max(Integer::compareTo).orElseThrow());
+    }
+
+    @Test
+    void workspaceJobProjectionUsesOperationItemIdentityAndScope() {
+        UUID jobOperation = operationService.startOperation(
+                userId, null, workspaceId, null, null,
+                "job", "ui", "user", userId,
+                "workspace-job-" + UUID.randomUUID(), "Workspace job projection").operationId();
+        OperationItem item = operationService.appendItem(
+                jobOperation, UUID.randomUUID().toString(), null, "job",
+                "execute_command", "ui", null, null, null);
+        jobStateService.upsert(item.getId(), Map.of(
+                "jobId", UUID.randomUUID().toString(),
+                "workspaceId", workspaceId,
+                "scope", JobStateService.SCOPE_WORKSPACE));
+
+        List<Map<String, Object>> jobs = operationService.listWorkspaceJobs(workspaceId);
+
+        assertTrue(jobs.stream().anyMatch(job -> item.getId().toString().equals(job.get("operationItemId"))
+                && "workspace".equals(job.get("scope"))));
     }
 
     @Test

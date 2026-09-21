@@ -5,6 +5,7 @@ import { toast } from 'vue-sonner'
 import { api, ApiError } from '../../composables/api'
 import WorkspaceCreateDialog from '../workspace/WorkspaceCreateDialog.vue'
 import WorkspaceSettingsDialog from '../workspace/WorkspaceSettingsDialog.vue'
+import { i18n } from '../../i18n'
 
 vi.mock('../../composables/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../composables/api')>()
@@ -84,7 +85,7 @@ describe('WorkspaceCreateDialog (M2)', () => {
 
   it('creates workspace with selected profile and clears state', async () => {
     mockedApi.createWorkspace.mockResolvedValue({ id: 'ws-new', name: 'Dev' })
-    const wrapper = mount(WorkspaceCreateDialog, { props: { open: true }, attachTo: document.body })
+    const wrapper = mount(WorkspaceCreateDialog, { props: { open: true }, attachTo: document.body, global: { plugins: [i18n] } })
     wrappers.push(wrapper)
 
     await setInput(wrapper, 'ws-create-name', 'Dev')
@@ -100,17 +101,19 @@ describe('WorkspaceCreateDialog (M2)', () => {
     await nextTick()
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(mockedApi.createWorkspace).toHaveBeenCalledWith({
+    expect(mockedApi.createWorkspace).toHaveBeenCalledWith(expect.objectContaining({
       name: 'Dev',
       description: null,
       profile: 'strict',
-    })
+      storageMode: 'managed_import',
+      idempotencyKey: expect.any(String),
+    }))
     expect(toast.success).toHaveBeenCalled()
   })
 
   it('blocks empty name and shows API error without crashing', async () => {
     mockedApi.createWorkspace.mockRejectedValue(problemError(409, 'WORKSPACE_ALREADY_EXISTS'))
-    const wrapper = mount(WorkspaceCreateDialog, { props: { open: true }, attachTo: document.body })
+    const wrapper = mount(WorkspaceCreateDialog, { props: { open: true }, attachTo: document.body, global: { plugins: [i18n] } })
     wrappers.push(wrapper)
 
     await setInput(wrapper, 'ws-create-name', 'Dup')
@@ -120,8 +123,46 @@ describe('WorkspaceCreateDialog (M2)', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(toast.error).toHaveBeenCalled()
+    const firstRequest = mockedApi.createWorkspace.mock.calls[0]?.[0]
+    await createBtn.trigger('click')
+    await nextTick()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockedApi.createWorkspace.mock.calls[1]?.[0].idempotencyKey).toBe(
+      firstRequest?.idempotencyKey,
+    )
     // stuck on dialog (no success, dialog still rendered)
     expect(wrapper.find('[data-testid="workspace-create-dialog"]').exists()).toBe(true)
+  })
+
+  it('creates a direct-attach workspace without Docker profile fields', async () => {
+    mockedApi.createWorkspace.mockResolvedValue({ id: 'ws-direct', name: 'Direct' })
+    const wrapper = mount(WorkspaceCreateDialog, { props: { open: true }, attachTo: document.body, global: { plugins: [i18n] } })
+    wrappers.push(wrapper)
+
+    await setInput(wrapper, 'ws-create-name', 'Direct')
+    clickBodyButton('ws-storage-direct')
+    await nextTick()
+    const fileInput = document.body.querySelector('input[webkitdirectory]') as HTMLInputElement | null
+    expect(fileInput).toBeTruthy()
+    const file = new File(['content'], 'README.md') as File & { path?: string }
+    Object.defineProperty(file, 'path', { value: 'C:\\workspace', configurable: true })
+    Object.defineProperty(fileInput!, 'files', { value: [file], configurable: true })
+    fileInput!.dispatchEvent(new Event('change', { bubbles: true }))
+    await nextTick()
+
+    const createBtn = wrapper.findAll('button').find((b) => b.text().trim() === '创建')!
+    await createBtn.trigger('click')
+    await nextTick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(mockedApi.createWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Direct',
+      storageMode: 'direct_attach',
+      hostPath: 'C:\\workspace',
+      executionMode: 'windows-mxc',
+      idempotencyKey: expect.any(String),
+    }))
+    expect(mockedApi.createWorkspace.mock.calls[0]?.[0].profile).toBeUndefined()
   })
 })
 

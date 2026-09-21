@@ -61,7 +61,9 @@ public class WorkspaceController {
 
     @PostMapping
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    public ResponseEntity<?> create(@RequestBody(required = false) CreateWorkspaceRequest request) {
+    public ResponseEntity<?> create(
+            @RequestBody(required = false) CreateWorkspaceRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
             return ProblemDetailsHandler.problemResponse(
@@ -70,9 +72,14 @@ public class WorkspaceController {
         try {
             String name = request == null || request.name() == null ? "Default Workspace" : request.name();
             String description = request == null ? null : request.description();
-            String profile = request == null || request.profile() == null ? "coding" : request.profile();
+            String profile = request == null ? null : request.profile();
             String image = request == null ? null : request.image();
-            Workspace workspace = workspaceService.createWorkspace(name, description, userId, profile, image);
+            String storageMode = request == null ? null : request.storageMode();
+            String hostPath = request == null ? null : request.hostPath();
+            String executionMode = request == null ? null : request.executionMode();
+            Workspace workspace = workspaceService.createWorkspace(
+                    name, description, userId, profile, image,
+                    storageMode, hostPath, executionMode, idempotencyKey);
             // toView already returns a ResponseEntity. Nesting it as the body
             // serializes `{body, headers, statusCode}` and hides workspace.id
             // from the UI response.
@@ -122,12 +129,22 @@ public class WorkspaceController {
         view.put("ownerId", workspace.getOwnerId());
         view.put("storageBackend", workspace.getStorageBackend());
         view.put("storageRef", workspace.getStorageRef());
+        view.put("storageMode", workspace.getStorageMode());
+        view.put("hostPath", workspace.getHostPath());
+        view.put("executionMode", workspace.getExecutionMode());
         view.put("generation", workspace.getGeneration());
         view.put("createdAt", workspace.getCreatedAt() == null ? null : workspace.getCreatedAt().toString());
         view.put("updatedAt", workspace.getUpdatedAt() == null ? null : workspace.getUpdatedAt().toString());
         return view;
     }
 
-    public record CreateWorkspaceRequest(String name, String description, String profile, String image) {}
+    public record CreateWorkspaceRequest(
+            String name,
+            String description,
+            String profile,
+            String image,
+            String storageMode,
+            String hostPath,
+            String executionMode) {}
     public record UpdateWorkspaceRequest(String name, String description) {}
 }

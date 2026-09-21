@@ -45,7 +45,7 @@ public class RuntimeWorkspaceEventController {
                 request.path(),
                 request.changeType(),
                 request.source(),
-                request.snapshotVersion(),
+                request.reason(),
                 request.status());
         return ResponseEntity.accepted().body(Map.of(
                 "accepted", true,
@@ -58,7 +58,7 @@ public class RuntimeWorkspaceEventController {
             String path,
             String changeType,
             String source,
-            String snapshotVersion,
+            String reason,
             String status) {
     }
 }

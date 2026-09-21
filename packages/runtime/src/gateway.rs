@@ -60,6 +60,7 @@ pub struct XiheRuntimeInstance {
     pub profile: SecurityProfile,
     pub generation: u64,
     pub spec_hash: String,
+    pub execution_mode: String,
     pub file_service_pid: Option<u32>,
     pub last_active: SystemTime,
     pub state: InstanceState,
@@ -77,12 +78,31 @@ impl XiheRuntimeInstance {
         generation: u64,
         spec_hash: &str,
     ) -> Self {
+        Self::new_with_spec_and_mode(
+            ws_id,
+            workspace_path,
+            profile,
+            generation,
+            spec_hash,
+            "docker",
+        )
+    }
+
+    pub fn new_with_spec_and_mode(
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        generation: u64,
+        spec_hash: &str,
+        execution_mode: &str,
+    ) -> Self {
         Self {
             ws_id: ws_id.to_string(),
             workspace_path: workspace_path.to_string(),
             profile,
             generation,
             spec_hash: spec_hash.to_string(),
+            execution_mode: execution_mode.to_string(),
             file_service_pid: None,
             last_active: SystemTime::now(),
             state: InstanceState::Active,
@@ -131,12 +151,33 @@ impl WorkspaceRegistry {
         generation: u64,
         spec_hash: &str,
     ) {
-        let instance = XiheRuntimeInstance::new_with_spec(
+        self.register_with_spec_and_mode(
             ws_id,
             workspace_path,
             profile,
             generation,
             spec_hash,
+            "docker",
+        )
+        .await;
+    }
+
+    pub(crate) async fn register_with_spec_and_mode(
+        &self,
+        ws_id: &str,
+        workspace_path: &str,
+        profile: SecurityProfile,
+        generation: u64,
+        spec_hash: &str,
+        execution_mode: &str,
+    ) {
+        let instance = XiheRuntimeInstance::new_with_spec_and_mode(
+            ws_id,
+            workspace_path,
+            profile,
+            generation,
+            spec_hash,
+            execution_mode,
         );
         self.instances
             .write()

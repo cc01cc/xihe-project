@@ -16,8 +16,10 @@ use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{Result, RuntimeError};
+use crate::fs;
 use crate::gateway::WorkspaceRegistry;
 use crate::hydrate::WorkspaceEnsurer;
+use crate::process_guard::{self, FilesystemPolicy, ProcessRequest};
 use crate::workspace::WorkspaceManager;
 
 /// How a registered execution ended (PLAN-0317 T2.3): a cancel request uses the
@@ -396,9 +398,220 @@ impl WorkspaceExecutionRouter {
         operation: &str,
         payload: Value,
     ) -> Result<Value> {
-        let _instance = self.ensure(workspace_id).await?;
+        let instance = self.ensure(workspace_id).await?;
+        let execution_mode = self.ensurer.execution_mode(workspace_id).await?;
+        if execution_mode != "docker" {
+            return self
+                .execute_direct_attach_operation(
+                    &instance.workspace_path,
+                    &execution_mode,
+                    operation,
+                    payload,
+                )
+                .await;
+        }
         self.exec_oneshot_inner(workspace_id, operation, payload)
             .await
+    }
+
+    async fn execute_direct_attach_operation(
+        &self,
+        workspace_path: &str,
+        execution_mode: &str,
+        operation: &str,
+        payload: Value,
+    ) -> Result<Value> {
+        let path = || payload.get("path").and_then(Value::as_str).unwrap_or("");
+        match operation {
+            "read_file" => Ok(serde_json::json!({
+                "content": fs::read_file(path(), workspace_path).await?
+            })),
+            "read_file_range" => {
+                let result = fs::read_file_range(
+                    path(),
+                    payload
+                        .get("offset")
+                        .and_then(Value::as_u64)
+                        .map(|v| v as usize),
+                    payload
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .map(|v| v as usize),
+                    workspace_path,
+                )
+                .await?;
+                serde_json::to_value(result).map_err(|error| {
+                    RuntimeError::Command(format!("serialize read result: {error}"))
+                })
+            }
+            "list_directory" => {
+                let directory_path = path().to_string();
+                let workspace_root = workspace_path.to_string();
+                let entries = tokio::task::spawn_blocking(move || {
+                    fs::list_directory(&directory_path, &workspace_root)
+                })
+                .await
+                .map_err(|error| RuntimeError::Command(format!("list directory task: {error}")))?
+                .map_err(|error| RuntimeError::Command(format!("list directory: {error}")))?;
+                serde_json::to_value(entries)
+                    .map(|entries| serde_json::json!({"entries": entries}))
+                    .map_err(|error| RuntimeError::Command(format!("serialize directory: {error}")))
+            }
+            "glob" => {
+                let matches = fs::glob_files(
+                    payload
+                        .get("pattern")
+                        .and_then(Value::as_str)
+                        .unwrap_or("*"),
+                    path(),
+                    workspace_path,
+                )?;
+                serde_json::to_value(matches).map_err(|error| {
+                    RuntimeError::Command(format!("serialize glob result: {error}"))
+                })
+            }
+            "grep" => {
+                let matches = fs::grep_files(
+                    payload.get("pattern").and_then(Value::as_str).unwrap_or(""),
+                    path(),
+                    workspace_path,
+                )?;
+                serde_json::to_value(matches).map_err(|error| {
+                    RuntimeError::Command(format!("serialize grep result: {error}"))
+                })
+            }
+            "get_file_info" => serde_json::to_value(fs::get_file_info(path(), workspace_path)?)
+                .map_err(|error| RuntimeError::Command(format!("serialize file info: {error}"))),
+            "edit_file" => {
+                let result = fs::edit_file(
+                    payload
+                        .get("filePath")
+                        .or_else(|| payload.get("file_path"))
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                    payload
+                        .get("oldString")
+                        .or_else(|| payload.get("old_string"))
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                    payload
+                        .get("newString")
+                        .or_else(|| payload.get("new_string"))
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                    payload
+                        .get("replaceAll")
+                        .or_else(|| payload.get("replace_all"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    workspace_path,
+                )
+                .await?;
+                serde_json::to_value(result).map_err(|error| {
+                    RuntimeError::Command(format!("serialize edit result: {error}"))
+                })
+            }
+            "execute_command" => {
+                let command = payload
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| RuntimeError::InvalidPath("command is required".to_string()))?;
+                let args = payload
+                    .get("args")
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let timeout_ms = payload
+                    .get("timeout")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(30_000)
+                    .saturating_mul(1_000);
+                let cwd = payload
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| Some(std::path::PathBuf::from(workspace_path)));
+                let env = payload
+                    .get("env")
+                    .and_then(Value::as_object)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|(key, value)| {
+                                value.as_str().map(|value| (key.clone(), value.to_string()))
+                            })
+                            .collect::<std::collections::BTreeMap<_, _>>()
+                    })
+                    .unwrap_or_default();
+                let result = process_guard::execute(ProcessRequest {
+                    contract_version: process_guard::CONTRACT_VERSION.to_string(),
+                    backend_kind: None,
+                    backend_revision: None,
+                    execution_mode: execution_mode.to_string(),
+                    program: command.to_string(),
+                    args,
+                    cwd,
+                    env,
+                    filesystem: FilesystemPolicy {
+                        read_only_roots: Vec::new(),
+                        read_write_roots: vec![std::path::PathBuf::from(workspace_path)],
+                    },
+                    timeout_ms,
+                    shell: payload
+                        .get("shell")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+                .await?;
+                Ok(serde_json::json!({
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "exit_code": result.exit_code.unwrap_or(-1),
+                    "success": result.exit_code == Some(0),
+                }))
+            }
+            "write_file" => Ok(serde_json::json!({
+                "message": fs::write_file(
+                    path(),
+                    payload.get("content").and_then(Value::as_str).unwrap_or(""),
+                    workspace_path,
+                )
+                .await?,
+            })),
+            "delete_file" => Ok(serde_json::json!({
+                "message": fs::delete_file(path(), workspace_path).await?
+            })),
+            "mkdir" => Ok(serde_json::json!({
+                "message": fs::mkdir(path(), workspace_path).await?
+            })),
+            "move_file" => Ok(serde_json::json!({
+                "message": fs::move_file(
+                    payload.get("from").and_then(Value::as_str).unwrap_or(""),
+                    payload.get("to").and_then(Value::as_str).unwrap_or(""),
+                    workspace_path,
+                )
+                .await?,
+            })),
+            "copy_file" => Ok(serde_json::json!({
+                "message": fs::copy_file(
+                    payload.get("from").and_then(Value::as_str).unwrap_or(""),
+                    payload.get("to").and_then(Value::as_str).unwrap_or(""),
+                    workspace_path,
+                )
+                .await?,
+            })),
+            _ => Err(RuntimeError::Unsupported {
+                capability: format!("direct-attach operation {operation}"),
+                reason: "PROCESS_BACKEND_LAUNCH_PENDING".to_string(),
+            }),
+        }
     }
 
     /// PLAN-0347 T1.1：`SandboxBackend::execute` 的通用入口（operation + payload）。

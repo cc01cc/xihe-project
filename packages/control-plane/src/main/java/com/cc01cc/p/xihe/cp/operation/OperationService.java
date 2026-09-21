@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.repository.OperationEventRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationExtensionRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -83,6 +84,8 @@ public class OperationService {
     private final OperationAttemptRepository attempts;
     private final OperationEventRepository events;
     private final OperationExtensionRepository extensions;
+    private final JobStateService jobStateService;
+    private final WorkspaceService workspaceService;
     // PLAN-0346 T1.8: bounds FOR UPDATE / conditional UPDATE / unique-index
     // INSERT waits so a stuck writer cannot pin Hikari connections forever.
     private final DbLockTimeout dbLockTimeout;
@@ -97,13 +100,17 @@ public class OperationService {
                             OperationAttemptRepository attempts,
                             OperationEventRepository events,
                             OperationExtensionRepository extensions,
-                            DbLockTimeout dbLockTimeout) {
+                            DbLockTimeout dbLockTimeout,
+                            JobStateService jobStateService,
+                            WorkspaceService workspaceService) {
         this.operations = operations;
         this.items = items;
         this.attempts = attempts;
         this.events = events;
         this.extensions = extensions;
         this.dbLockTimeout = dbLockTimeout;
+        this.jobStateService = jobStateService;
+        this.workspaceService = workspaceService;
     }
 
     private OperationService self() {
@@ -219,6 +226,40 @@ public class OperationService {
             return null;
         }
         return items.findById(UUID.fromString(itemId)).orElse(null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> listWorkspaceJobs(String workspaceId) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (LedgerOperation operation : operations
+                .findByWorkspaceIdAndKindOrderByCreatedAtDesc(workspaceId, "job")) {
+            for (OperationItem item : items.findByOperationIdOrderBySequenceAsc(operation.getId().toString())) {
+                if (!"job".equals(item.getKind())) {
+                    continue;
+                }
+                JobStateService.JobArchive archive = jobStateService.find(item.getId()).orElse(null);
+                if (archive == null) {
+                    continue;
+                }
+                Map<String, Object> view = new LinkedHashMap<>();
+                view.put("operationId", operation.getId().toString());
+                view.put("operationItemId", item.getId().toString());
+                view.put("workspaceId", operation.getWorkspaceId());
+                view.put("sessionId", operation.getSessionId());
+                view.put("runId", operation.getRunId());
+                view.put("source", operation.getSource());
+                view.put("scope", archive.scope());
+                view.put("status", archive.status());
+                view.put("jobId", archive.jobId());
+                view.put("startedAt", archive.startedAt());
+                view.put("endedAt", archive.endedAt());
+                view.put("exitCode", archive.exitCode());
+                view.put("timeoutSecs", archive.timeoutSecs());
+                view.put("cancelReason", archive.cancelReason());
+                result.add(view);
+            }
+        }
+        return result;
     }
 
     /**
@@ -974,6 +1015,19 @@ public class OperationService {
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
                         "Operation item not found"));
         requireOwnedOperation(UUID.fromString(item.getOperationId()), userId);
+        return item;
+    }
+
+    /** Job output/cancel access is scoped to Workspace membership, not Job creator. */
+    @Transactional(readOnly = true)
+    public OperationItem requireWorkspaceAccessibleItem(UUID itemId, String userId) {
+        OperationItem item = items.findById(itemId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
+                        "Operation item not found"));
+        LedgerOperation operation = operations.findById(UUID.fromString(item.getOperationId()))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
+        workspaceService.requireAccessibleWorkspace(operation.getWorkspaceId(), userId);
         return item;
     }
 

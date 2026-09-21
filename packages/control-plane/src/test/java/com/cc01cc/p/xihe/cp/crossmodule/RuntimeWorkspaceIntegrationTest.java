@@ -11,11 +11,13 @@ import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.util.UUID;
+import java.nio.file.Path;
 
 class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
@@ -34,6 +36,9 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     private WorkspaceUserRepository workspaceUserRepository;
 
     private Workspace createdWorkspace;
+
+    @TempDir
+    private Path tempWorkspace;
 
     @BeforeEach
     void setUp() {
@@ -63,6 +68,50 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals("host_directory", createdWorkspace.getStorageBackend());
 
         wireMock.verify(0, postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces")));
+    }
+
+    @Test
+    void directAttachCreationProbesRuntimeAndIsIdempotent() {
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/capabilities/direct-attach/probe"))
+                .withRequestBody(matchingJsonPath("$.storageMode", equalTo("direct_attach")))
+                .withRequestBody(matchingJsonPath("$.hostPath", equalTo(tempWorkspace.toString())))
+                .withRequestBody(matchingJsonPath("$.executionMode", equalTo("windows-host")))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"contractVersion\":\"v1\",\"backendKind\":\"windows-host\","
+                                + "\"backendRevision\":\"builtin\",\"maturity\":\"stable\","
+                                + "\"executionMode\":\"windows-host\",\"available\":true}")));
+
+        String ownerId = UUID.randomUUID().toString();
+        String idempotencyKey = "direct-attach-" + UUID.randomUUID();
+        createdWorkspace = workspaceService.createWorkspace(
+                "direct-attach", null, ownerId, null, null,
+                "direct_attach", tempWorkspace.toString(), "windows-host", idempotencyKey);
+
+        Workspace replay = workspaceService.createWorkspace(
+                "direct-attach", null, ownerId, null, null,
+                "direct_attach", tempWorkspace.toString(), "windows-host", idempotencyKey);
+
+        assertEquals(createdWorkspace.getId(), replay.getId());
+        assertEquals("direct_attach", createdWorkspace.getStorageMode());
+        assertEquals(tempWorkspace.toString(), createdWorkspace.getHostPath());
+        assertEquals("windows-host", createdWorkspace.getExecutionMode());
+        assertTrue(workspaceService.capabilitySnapshot(createdWorkspace).get("available") instanceof Boolean value && value);
+
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/capabilities/direct-attach/probe"))
+                .withRequestBody(matchingJsonPath("$.executionMode", equalTo("windows-mxc")))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"contractVersion\":\"v1\",\"backendKind\":\"windows-mxc\","
+                                + "\"backendRevision\":\"builtin\",\"maturity\":\"experimental\","
+                                + "\"executionMode\":\"windows-mxc\",\"available\":true}")));
+        Workspace switched = workspaceService.changeExecutionMode(
+                createdWorkspace.getId().toString(), ownerId, false, "windows-mxc");
+        assertEquals("windows-mxc", switched.getExecutionMode());
+        wireMock.verify(3, postRequestedFor(
+                urlEqualTo("/internal/v1/runtime/capabilities/direct-attach/probe")));
     }
 
     @Test

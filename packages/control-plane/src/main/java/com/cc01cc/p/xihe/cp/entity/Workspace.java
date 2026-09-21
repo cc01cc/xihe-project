@@ -31,6 +31,21 @@ public class Workspace {
     @Column(name = "storage_ref", length = 64)
     private String storageRef;
 
+    @Column(name = "storage_mode", nullable = false, length = 32)
+    private String storageMode = "managed_import";
+
+    @Column(name = "host_path", columnDefinition = "TEXT")
+    private String hostPath;
+
+    @Column(name = "execution_mode", nullable = false, length = 32)
+    private String executionMode = "docker";
+
+    @Column(name = "create_idempotency_key", length = 128)
+    private String createIdempotencyKey;
+
+    @Column(name = "create_request_hash", length = 64)
+    private String createRequestHash;
+
     @Column(name = "generation")
     private Integer generation = 0;
 
@@ -85,6 +100,21 @@ public class Workspace {
 
     public String getStorageRef() { return storageRef; }
     public void setStorageRef(String storageRef) { this.storageRef = storageRef; }
+
+    public String getStorageMode() { return storageMode; }
+    public void setStorageMode(String storageMode) { this.storageMode = storageMode; }
+
+    public String getHostPath() { return hostPath; }
+    public void setHostPath(String hostPath) { this.hostPath = hostPath; }
+
+    public String getExecutionMode() { return executionMode; }
+    public void setExecutionMode(String executionMode) { this.executionMode = executionMode; }
+
+    public String getCreateIdempotencyKey() { return createIdempotencyKey; }
+    public void setCreateIdempotencyKey(String createIdempotencyKey) { this.createIdempotencyKey = createIdempotencyKey; }
+
+    public String getCreateRequestHash() { return createRequestHash; }
+    public void setCreateRequestHash(String createRequestHash) { this.createRequestHash = createRequestHash; }
 
     public Integer getGeneration() { return generation; }
     public void setGeneration(Integer generation) { this.generation = generation; }

@@ -42,6 +42,20 @@ pub struct WorkspaceExecutionSpec {
     pub storage_backend: String,
     #[serde(rename = "storageRef")]
     pub storage_ref: String,
+    #[serde(rename = "storageMode", default = "default_storage_mode")]
+    pub storage_mode: String,
+    #[serde(rename = "hostPath", default)]
+    pub host_path: Option<String>,
+    #[serde(rename = "executionMode", default = "default_execution_mode")]
+    pub execution_mode: String,
+}
+
+fn default_storage_mode() -> String {
+    "managed_import".to_string()
+}
+
+fn default_execution_mode() -> String {
+    "docker".to_string()
 }
 
 impl WorkspaceExecutionSpec {
@@ -81,6 +95,24 @@ impl WorkspaceExecutionSpec {
                 workspace_id: workspace_id.to_string(),
                 detail: "storageRef must not be empty".to_string(),
             });
+        }
+        match self.storage_mode.as_str() {
+            "managed_import" if self.execution_mode == "docker" && self.host_path.is_none() => {}
+            "direct_attach"
+                if matches!(self.execution_mode.as_str(), "windows-mxc" | "windows-host")
+                    && self
+                        .host_path
+                        .as_ref()
+                        .is_some_and(|path| !path.trim().is_empty()) => {}
+            _ => {
+                return Err(RuntimeError::InvalidExecutionSpec {
+                    workspace_id: workspace_id.to_string(),
+                    detail: format!(
+                        "storageMode {:?}, hostPath presence, and executionMode {:?} are incompatible",
+                        self.storage_mode, self.execution_mode
+                    ),
+                });
+            }
         }
         if !self.sandbox_spec.is_object() {
             return Err(RuntimeError::InvalidExecutionSpec {
@@ -346,6 +378,16 @@ impl WorkspaceEnsurer {
             .map(|_| ())
     }
 
+    /// Return the validated execution mode for the targeted Workspace. The
+    /// execution router uses this to avoid sending a direct-attach operation
+    /// to the Docker-only path.
+    pub async fn execution_mode(&self, workspace_id: &str) -> Result<String> {
+        self.client
+            .fetch_for_workspace(workspace_id)
+            .await
+            .map(|spec| spec.execution_mode)
+    }
+
     pub async fn ensure_workspace_materialized(
         &self,
         workspace_id: &str,
@@ -401,29 +443,60 @@ impl WorkspaceEnsurer {
             Ok(profile) => profile,
             Err(error) => return self.failure(workspace_id, error).await,
         };
-        let host_root = match self.host_root.as_deref() {
-            Some(host_root) => host_root,
-            None => {
-                return self
-                    .failure(
-                        workspace_id,
-                        RuntimeError::WorkspaceMaterializationFailed {
-                            workspace_id: workspace_id.to_string(),
-                            detail: "XIHE_WORKSPACE_HOST_ROOT is not configured".to_string(),
-                        },
-                    )
-                    .await;
+        let workspace_path = if spec.storage_mode == "direct_attach" {
+            let raw_path = spec
+                .host_path
+                .as_deref()
+                .expect("validated direct-attach hostPath");
+            let candidate = PathBuf::from(raw_path);
+            match tokio::fs::canonicalize(&candidate).await {
+                Ok(path) if path.is_dir() => path,
+                Ok(_) => {
+                    return self
+                        .failure(
+                            workspace_id,
+                            RuntimeError::InvalidPath(
+                                "direct-attach hostPath is not a directory".to_string(),
+                            ),
+                        )
+                        .await;
+                }
+                Err(error) => {
+                    return self
+                        .failure(
+                            workspace_id,
+                            RuntimeError::InvalidPath(format!(
+                                "direct-attach hostPath is not accessible: {error}"
+                            )),
+                        )
+                        .await;
+                }
             }
-        };
-        let workspace_path = match storage::resolve_host_path(
-            &host_root.to_string_lossy(),
-            &spec.storage_ref,
-            workspace_id,
-        )
-        .await
-        {
-            Ok(path) => path,
-            Err(error) => return self.failure(workspace_id, error).await,
+        } else {
+            let host_root = match self.host_root.as_deref() {
+                Some(host_root) => host_root,
+                None => {
+                    return self
+                        .failure(
+                            workspace_id,
+                            RuntimeError::WorkspaceMaterializationFailed {
+                                workspace_id: workspace_id.to_string(),
+                                detail: "XIHE_WORKSPACE_HOST_ROOT is not configured".to_string(),
+                            },
+                        )
+                        .await;
+                }
+            };
+            match storage::resolve_host_path(
+                &host_root.to_string_lossy(),
+                &spec.storage_ref,
+                workspace_id,
+            )
+            .await
+            {
+                Ok(path) => path,
+                Err(error) => return self.failure(workspace_id, error).await,
+            }
         };
         let workspace_path_string = workspace_path.to_string_lossy().to_string();
         let image = spec.image(&self.default_image).to_string();
@@ -477,6 +550,26 @@ impl WorkspaceEnsurer {
         }
 
         self.lifecycle.begin_materialize(workspace_id).await;
+
+        if spec.storage_mode == "direct_attach" {
+            self.lifecycle
+                .register_ready_with_mode(
+                    workspace_id,
+                    &workspace_path_string,
+                    profile,
+                    spec.generation,
+                    &spec.sandbox_spec_hash,
+                    &spec.execution_mode,
+                )
+                .await?;
+            return self.registry.get(workspace_id).await.ok_or_else(|| {
+                RuntimeError::WorkspaceMaterializationFailed {
+                    workspace_id: workspace_id.to_string(),
+                    detail: "direct-attach registration did not create a runtime instance"
+                        .to_string(),
+                }
+            });
+        }
 
         // PLAN-0345 T2.1 (M-2, decision #16): a Paused container must be
         // unpaused, never force-recreated — recreation would destroy process
@@ -603,6 +696,9 @@ mod tests {
             sandbox_spec: serde_json::json!({"profile": "strict"}),
             storage_backend: "host_directory".to_string(),
             storage_ref: "ws-1".to_string(),
+            storage_mode: "managed_import".to_string(),
+            host_path: None,
+            execution_mode: "docker".to_string(),
         }
     }
 
@@ -626,6 +722,25 @@ mod tests {
             spec.security_profile("ws-1").unwrap(),
             SecurityProfile::Strict
         );
+    }
+
+    #[test]
+    fn execution_spec_deserializes_direct_attach_camel_case_fields() {
+        let spec: WorkspaceExecutionSpec = serde_json::from_value(serde_json::json!({
+            "workspaceId": "ws-direct",
+            "generation": 2,
+            "sandboxSpecHash": "a".repeat(64),
+            "sandboxSpec": {},
+            "storageBackend": "host_directory",
+            "storageRef": "ws-direct",
+            "storageMode": "direct_attach",
+            "hostPath": "C:/workspace",
+            "executionMode": "windows-host"
+        }))
+        .expect("direct attach execution spec");
+        assert_eq!(spec.storage_mode, "direct_attach");
+        assert_eq!(spec.host_path.as_deref(), Some("C:/workspace"));
+        assert_eq!(spec.execution_mode, "windows-host");
     }
 
     #[test]

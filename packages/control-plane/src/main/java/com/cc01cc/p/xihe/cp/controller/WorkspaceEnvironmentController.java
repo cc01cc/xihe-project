@@ -1,29 +1,13 @@
 package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-
-import java.util.UUID;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
-
-import java.util.UUID;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-
-import java.util.UUID;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
-
-import java.util.UUID;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
-
-import java.util.UUID;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
-
-import java.util.UUID;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
-
-import java.util.UUID;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
-
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +19,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -43,6 +29,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 public class WorkspaceEnvironmentController {
@@ -110,6 +97,10 @@ public class WorkspaceEnvironmentController {
         response.put("status", materializationStatus);
         response.put("storageBackend", valueOrDefault(workspace.getStorageBackend(), "host_directory"));
         response.put("storageRef", valueOrDefault(workspace.getStorageRef(), workspaceId));
+        response.put("storageMode", valueOrDefault(workspace.getStorageMode(), "managed_import"));
+        response.put("hostPath", workspace.getHostPath());
+        response.put("executionMode", valueOrDefault(workspace.getExecutionMode(), "docker"));
+        response.put("capability", workspaceService.capabilitySnapshot(workspace));
 
         Map<String, Object> assignmentView = new LinkedHashMap<>();
         assignmentView.put("status", assignment == null ? "unassigned" : "assigned");
@@ -129,6 +120,31 @@ public class WorkspaceEnvironmentController {
         }
         response.put("runtime", runtimeView);
         return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/api/v1/workspaces/{workspaceId}/execution-mode")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> changeExecutionMode(
+            @PathVariable String workspaceId,
+            @RequestBody(required = false) ExecutionModeRequest request,
+            Authentication authentication) {
+        String userId = authentication == null ? TenantContext.getUserId() : authentication.getName();
+        boolean isAdmin = authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+        try {
+            Workspace workspace = workspaceService.changeExecutionMode(
+                    workspaceId,
+                    userId,
+                    isAdmin,
+                    request == null ? null : request.executionMode());
+            return ResponseEntity.ok(Map.of(
+                    "workspaceId", workspace.getId(),
+                    "storageMode", workspace.getStorageMode(),
+                    "executionMode", workspace.getExecutionMode(),
+                    "status", "accepted"));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
     }
 
     private Map<String, Object> readWorkspaceRuntimeStatus(String workspaceId) {
@@ -174,6 +190,8 @@ public class WorkspaceEnvironmentController {
     private String valueOrDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
     }
+
+    public record ExecutionModeRequest(String executionMode) {}
 
     /**
      * PLAN-262 M4 (decision 12): explicit async materialization trigger.

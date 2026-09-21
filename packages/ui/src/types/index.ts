@@ -673,6 +673,63 @@ export interface FileNode {
     children?: FileNode[];
 }
 
+export type WorkspaceStorageMode = "managed_import" | "direct_attach";
+export type WorkspaceExecutionMode = "docker" | "windows-mxc" | "windows-host";
+
+export interface WorkspaceJob {
+    operationId: string;
+    operationItemId: string;
+    workspaceId: string;
+    sessionId: string | null;
+    runId: string | null;
+    source: string;
+    scope: "run" | "session" | "workspace";
+    status: string;
+    jobId?: string | null;
+    startedAt?: string | null;
+    endedAt?: string | null;
+    exitCode?: number | null;
+    timeoutSecs?: number | null;
+    cancelReason?: string | null;
+}
+
+export interface WorkspaceEnvironment {
+    workspaceId: string;
+    status: string;
+    storageBackend: string;
+    storageRef: string;
+    storageMode: WorkspaceStorageMode;
+    hostPath: string | null;
+    executionMode: WorkspaceExecutionMode;
+    capability?: {
+        contractVersion: string;
+        backendKind: string;
+        backendRevision: string;
+        maturity: "stable" | "experimental";
+        executionMode: WorkspaceExecutionMode;
+        available: boolean;
+        reason?: string;
+        diagnostics?: Record<string, unknown>;
+    };
+    executionSpec?: {
+        status: string;
+        generation: number;
+        sandboxSpecHash: string;
+    };
+    assignment?: {
+        status: string;
+        generation: number;
+        sandboxSpecHash: string;
+    };
+    runtime: {
+        status: string;
+        deviceId: string;
+        lastHeartbeatAt: string;
+        materializationState?: string;
+        lastError?: string;
+    };
+}
+
 export type WorkspaceEventKind =
     | "workspace_status"
     | "file_changed"
@@ -687,7 +744,7 @@ export interface WorkspaceEvent {
     path?: string;
     changeType?: string;
     source: string;
-    snapshotVersion?: string;
+    reason?: string;
     status?: string;
 }
 

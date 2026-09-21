@@ -46,6 +46,11 @@ CREATE TABLE workspaces (
     storage_path     VARCHAR(512),
     storage_backend  VARCHAR(32)  NOT NULL DEFAULT 'host_directory',
     storage_ref      VARCHAR(64),
+    storage_mode     VARCHAR(32)  NOT NULL DEFAULT 'managed_import',
+    host_path        TEXT,
+    execution_mode   VARCHAR(32)  NOT NULL DEFAULT 'docker',
+    create_idempotency_key VARCHAR(128),
+    create_request_hash VARCHAR(64),
     generation       INT          NOT NULL DEFAULT 0,
     sandbox_spec_hash VARCHAR(64),
     sandbox_spec     JSONB,
@@ -53,14 +58,22 @@ CREATE TABLE workspaces (
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     CONSTRAINT fk_workspaces_owner FOREIGN KEY (owner_id) REFERENCES users (id),
-    CONSTRAINT ck_workspaces_storage_backend CHECK (storage_backend IN ('host_directory'))
+    CONSTRAINT ck_workspaces_storage_backend CHECK (storage_backend IN ('host_directory')),
+    CONSTRAINT ck_workspaces_storage_mode CHECK (storage_mode IN ('managed_import', 'direct_attach')),
+    CONSTRAINT ck_workspaces_execution_mode CHECK (execution_mode IN ('docker', 'windows-mxc', 'windows-host')),
+    CONSTRAINT ck_workspaces_direct_attach_path CHECK (
+        storage_mode = 'managed_import' OR host_path IS NOT NULL
+    )
 );
 
 -- Partial uniques/indexes preserve soft-delete semantics.
-CREATE UNIQUE INDEX uq_workspaces_active_owner
+CREATE INDEX idx_workspaces_active_owner
     ON workspaces (owner_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_workspaces_owner_active
     ON workspaces (owner_id, created_at) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX uq_workspaces_create_idempotency
+    ON workspaces (owner_id, create_idempotency_key)
+    WHERE deleted_at IS NULL AND create_idempotency_key IS NOT NULL;
 
 CREATE TABLE workspace_users (
     workspace_id UUID        NOT NULL,

@@ -82,7 +82,7 @@ export function useWorkspaceSSE(
             sequence: event.sequence,
             kind: 'snapshot_required',
             source: 'ui-sequence-gap',
-            snapshotVersion: event.snapshotVersion ?? String(event.sequence),
+             reason: event.reason ?? 'sequence_gap',
           })
         }
         lastSequence.value = Math.max(lastSequence.value, event.sequence)

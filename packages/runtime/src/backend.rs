@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 use crate::error::{Result, RuntimeError};
 use crate::executor::WorkspaceExecutionRouter;
 use crate::hydrate::WorkspaceEnsurer;
+use crate::process_guard::BackendCapabilitySnapshot;
 use crate::sandbox::SecurityProfile;
 use crate::workspace::WorkspaceManager;
 
@@ -137,6 +138,14 @@ pub fn require_capability(capability: &str, cap: &Capability) -> Result<()> {
 /// 可选能力（`session` 等）按能力声明扩展；缺失能力显式失败，不做静默降级。
 pub trait SandboxBackend: Send + Sync {
     fn capabilities(&self) -> Capabilities;
+
+    /// Public backend identity used by CP preflight. The legacy capability
+    /// table remains the execution guard; this snapshot is only the stable
+    /// cross-process projection and is intentionally safe for existing backend
+    /// implementations through the default.
+    fn capability_snapshot(&self) -> BackendCapabilitySnapshot {
+        BackendCapabilitySnapshot::available("docker", "builtin", "stable", "docker", None)
+    }
 
     fn ensure<'a>(&'a self, spec: &'a SandboxSpec) -> BoxFuture<'a, Result<SandboxHandle>>;
 

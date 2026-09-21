@@ -8,14 +8,18 @@ import { toast } from 'vue-sonner'
 import { LoaderCircle, RefreshCw } from '@lucide/vue'
 
 type Environment = Awaited<ReturnType<typeof api.getWorkspaceEnvironment>>
+type WorkspaceJob = Awaited<ReturnType<typeof api.getWorkspaceJobs>>[number]
 
 const route = useRoute()
 const auth = useAuthStore()
 const environment = ref<Environment | null>(null)
+const jobs = ref<WorkspaceJob[]>([])
 const loading = ref(false)
 const error = ref('')
 const preparing = ref(false)
 const prepareError = ref('')
+const selectedExecutionMode = ref<'docker' | 'windows-mxc' | 'windows-host'>('docker')
+const changingExecutionMode = ref(false)
 const pollTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const workspaceId = computed(() => {
   const fromRoute = String(route.params.workspaceId ?? '').trim()
@@ -90,10 +94,37 @@ async function loadEnvironment() {
   error.value = ''
   try {
     environment.value = await api.getWorkspaceEnvironment(id)
+    selectedExecutionMode.value = environment.value.executionMode
+    try {
+      jobs.value = await api.getWorkspaceJobs(id)
+    } catch (cause) {
+      jobs.value = []
+      logger.warn('Workspace Job projection unavailable: ' + (cause instanceof Error ? cause.message : String(cause)))
+    }
   } catch (cause) {
     error.value = cause instanceof ApiError ? cause.message : 'Failed to load workspace environment'
   } finally {
     loading.value = false
+  }
+}
+
+async function handleExecutionModeChange(event: Event) {
+  const id = workspaceId.value
+  if (!id || !environment.value) return
+  const nextMode = (event.target as HTMLSelectElement).value as typeof selectedExecutionMode.value
+  if (nextMode === environment.value.executionMode) return
+  changingExecutionMode.value = true
+  try {
+    await api.updateWorkspaceExecutionMode(id, nextMode)
+    toast.success('执行模式已更新')
+    await loadEnvironment()
+  } catch (cause) {
+    selectedExecutionMode.value = environment.value.executionMode
+    const message = cause instanceof ApiError ? cause.message : '执行模式更新失败'
+    logger.error('Execution mode update failed', cause)
+    toast.error(message)
+  } finally {
+    changingExecutionMode.value = false
   }
 }
 
@@ -225,17 +256,37 @@ onBeforeUnmount(stopPolling)
         <div class="grid gap-5 md:grid-cols-2">
           <article class="rounded-lg border p-5">
              <h2 class="font-medium">存储</h2>
-            <dl class="mt-4 space-y-3 text-sm">
-               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">后端</dt><dd>{{ environment.storageBackend }}</dd></div>
-               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">引用</dt><dd class="break-all font-mono text-right">{{ environment.storageRef }}</dd></div>
-              <div class="flex justify-between gap-4"><dt class="text-muted-foreground">宿主机访问</dt><dd class="text-right text-emerald-700 dark:text-emerald-300">✓ 系统文件操作直访</dd></div>
-            </dl>
+             <dl class="mt-4 space-y-3 text-sm">
+                <div class="flex justify-between gap-4"><dt class="text-muted-foreground">后端</dt><dd>{{ environment.storageBackend }}</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-muted-foreground">存储方式</dt><dd>{{ environment.storageMode }}</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-muted-foreground">引用</dt><dd class="break-all font-mono text-right">{{ environment.storageRef }}</dd></div>
+               <div v-if="environment.hostPath" class="flex justify-between gap-4"><dt class="text-muted-foreground">宿主机目录</dt><dd class="break-all font-mono text-right">{{ environment.hostPath }}</dd></div>
+             </dl>
           </article>
           <article class="rounded-lg border p-5">
              <h2 class="font-medium">执行配置</h2>
-            <dl class="mt-4 space-y-3 text-sm">
-               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">状态</dt><dd>{{ (environment.executionSpec ?? environment.assignment)?.status ?? 'unknown' }}</dd></div>
-               <div class="flex justify-between gap-4"><dt class="text-muted-foreground">代数</dt><dd>{{ (environment.executionSpec ?? environment.assignment)?.generation ?? '—' }}</dd></div>
+             <dl class="mt-4 space-y-3 text-sm">
+                <div class="flex justify-between gap-4"><dt class="text-muted-foreground">状态</dt><dd>{{ (environment.executionSpec ?? environment.assignment)?.status ?? 'unknown' }}</dd></div>
+                <div class="flex items-center justify-between gap-4"><dt class="text-muted-foreground">执行模式</dt><dd>
+                  <select
+                    v-model="selectedExecutionMode"
+                    class="rounded border bg-background px-2 py-1 text-xs"
+                    :disabled="changingExecutionMode || environment.storageMode !== 'direct_attach'"
+                    data-testid="workspace-execution-mode"
+                    @change="handleExecutionModeChange"
+                  >
+                    <option value="docker" :disabled="environment.storageMode === 'direct_attach'">docker</option>
+                    <option value="windows-mxc" :disabled="environment.storageMode !== 'direct_attach'">windows-mxc</option>
+                    <option value="windows-host" :disabled="environment.storageMode !== 'direct_attach'">windows-host</option>
+                  </select>
+                </dd></div>
+                <div v-if="environment.capability" class="flex justify-between gap-4">
+                  <dt class="text-muted-foreground">能力探测</dt>
+                  <dd :class="environment.capability.available ? 'text-emerald-700 dark:text-emerald-300' : 'text-destructive'" class="text-right">
+                    {{ environment.capability.available ? `${environment.capability.maturity} / 可用` : `不可用：${environment.capability.reason ?? '未知原因'}` }}
+                  </dd>
+                </div>
+                <div class="flex justify-between gap-4"><dt class="text-muted-foreground">代数</dt><dd>{{ (environment.executionSpec ?? environment.assignment)?.generation ?? '—' }}</dd></div>
                <div class="flex justify-between gap-4"><dt class="text-muted-foreground">配置摘要</dt><dd class="break-all font-mono text-right">{{ (environment.executionSpec ?? environment.assignment)?.sandboxSpecHash || '无' }}</dd></div>
             </dl>
           </article>
@@ -246,6 +297,22 @@ onBeforeUnmount(stopPolling)
                <div><dt class="text-muted-foreground">设备</dt><dd class="mt-1 break-all font-mono">{{ environment.runtime.deviceId || '未观测到' }}</dd></div>
                <div><dt class="text-muted-foreground">最近心跳</dt><dd class="mt-1 break-all">{{ environment.runtime.lastHeartbeatAt || '未观测到' }}</dd></div>
             </dl>
+          </article>
+          <article class="rounded-lg border p-5 md:col-span-2" data-testid="workspace-jobs-panel">
+            <div class="flex items-center justify-between gap-3">
+              <h2 class="font-medium">Workspace Jobs</h2>
+              <span class="text-xs text-muted-foreground">{{ jobs.length }} 条</span>
+            </div>
+            <p v-if="jobs.length === 0" class="mt-3 text-sm text-muted-foreground">暂无 durable Job</p>
+            <ul v-else class="mt-3 divide-y text-sm">
+              <li v-for="job in jobs" :key="job.operationItemId" class="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div class="min-w-0">
+                  <p class="truncate font-mono text-xs">{{ job.operationItemId }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">{{ job.source }} · {{ job.scope }}</p>
+                </div>
+                <span class="rounded border px-2 py-1 text-xs">{{ job.status }}</span>
+              </li>
+            </ul>
           </article>
         </div>
       </div>

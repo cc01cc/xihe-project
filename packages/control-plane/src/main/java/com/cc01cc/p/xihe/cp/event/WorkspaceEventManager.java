@@ -71,7 +71,7 @@ public class WorkspaceEventManager {
                     null,
                     null,
                     "control-plane",
-                    Long.toString(currentSequence),
+                    "sequence_gap",
                     null);
             send(channel, subscriber, snapshotRequired);
             logger.info("[LIFECYCLE] service=cp event=workspace_sse_snapshot_required workspaceId={} "
@@ -91,7 +91,7 @@ public class WorkspaceEventManager {
             String path,
             String changeType,
             String source,
-            String snapshotVersion,
+            String reason,
             String status) {
         validateWorkspaceId(workspaceId);
         validateKind(kind);
@@ -106,7 +106,7 @@ public class WorkspaceEventManager {
                 path,
                 changeType,
                 source,
-                snapshotVersion,
+                reason,
                 status);
         for (Subscriber subscriber : channel.subscribers.values()) {
             send(channel, subscriber, event);

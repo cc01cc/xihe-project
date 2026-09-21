@@ -141,7 +141,7 @@ public class OperationController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "itemId must be a UUID");
         }
         try {
-            operationService.requireOwnedItem(itemUuid, userId);
+            operationService.requireWorkspaceAccessibleItem(itemUuid, userId);
             JobStateService.JobArchive archive = jobStateService.find(itemUuid)
                     .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "JOB_ARCHIVE_NOT_FOUND",
                             "No job archive for this operation item"));
@@ -180,7 +180,7 @@ public class OperationController {
     }
 
     /**
-     * PLAN-0366 T1.3：用户直连取消单个 durable job（owner-only；与 job-output 同键位）。
+     * PLAN-0366 T1.3：Workspace access 成员直连取消单个 durable job（与 job-output 同键位）。
      *
      * <p>语义冻结（spec §二）：取消 job ≠ run 终态；已终态幂等 200 + `changed:false`；
      * 终止未确认 → 502 `JOB_CANCEL_UNCONFIRMED`（不改档案）；Runtime 404 → 档案落
@@ -203,7 +203,7 @@ public class OperationController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "itemId must be a UUID");
         }
         try {
-            operationService.requireOwnedItem(itemUuid, userId);
+            operationService.requireWorkspaceAccessibleItem(itemUuid, userId);
             JobStateService.JobArchive archive = jobStateService.find(itemUuid)
                     .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "JOB_ARCHIVE_NOT_FOUND",
                             "No job archive for this operation item"));

@@ -31,6 +31,8 @@ public interface LedgerOperationRepository extends JpaRepository<LedgerOperation
 
     List<LedgerOperation> findByWorkspaceIdOrderByCreatedAtDesc(String workspaceId);
 
+    List<LedgerOperation> findByWorkspaceIdAndKindOrderByCreatedAtDesc(String workspaceId, String kind);
+
     @Query("select o from LedgerOperation o where o.userId = :userId "
             + "and (:sessionId is null or o.sessionId = :sessionId) "
             + "and (:workspaceId is null or o.workspaceId = :workspaceId) "

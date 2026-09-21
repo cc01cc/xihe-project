@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.controller;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
+import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,11 +23,14 @@ public class RuntimeExecutionSpecController {
     private static final Logger logger = LoggerFactory.getLogger(RuntimeExecutionSpecController.class);
 
     private final WorkspaceExecutionSpecService executionSpecService;
+    private final WorkspaceService workspaceService;
     private final ObjectMapper objectMapper;
 
     public RuntimeExecutionSpecController(WorkspaceExecutionSpecService executionSpecService,
+                                          WorkspaceService workspaceService,
                                           ObjectMapper objectMapper) {
         this.executionSpecService = executionSpecService;
+        this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
     }
 
@@ -36,13 +40,17 @@ public class RuntimeExecutionSpecController {
         try {
             Map<String, Object> sandboxSpec = objectMapper.readValue(
                     spec.getSandboxSpec(), new TypeReference<>() { });
+            var workspace = workspaceService.requireActiveWorkspace(workspaceId);
             return new WorkspaceExecutionSpecResponse(
                     spec.getWorkspaceId(),
                     spec.getGeneration(),
                     spec.getSandboxSpecHash(),
                     sandboxSpec,
                     spec.getStorageBackend(),
-                    spec.getStorageRef());
+                    spec.getStorageRef(),
+                    workspace.getStorageMode(),
+                    workspace.getHostPath(),
+                    workspace.getExecutionMode());
         } catch (JsonProcessingException e) {
             logger.error("Invalid persisted sandbox spec workspaceId={} generation={}",
                     spec.getWorkspaceId(), spec.getGeneration(), e);
@@ -60,6 +68,9 @@ public class RuntimeExecutionSpecController {
             String sandboxSpecHash,
             Map<String, Object> sandboxSpec,
             String storageBackend,
-            String storageRef) {
+            String storageRef,
+            String storageMode,
+            String hostPath,
+            String executionMode) {
     }
 }

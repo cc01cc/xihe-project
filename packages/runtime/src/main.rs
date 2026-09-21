@@ -55,6 +55,7 @@ use xihe_runtime::heartbeat;
 use xihe_runtime::hydrate::WorkspaceEnsurer;
 use xihe_runtime::lifecycle::LifecycleState;
 use xihe_runtime::mcp_session::{self, McpSessionManager, StdioServerSpec};
+use xihe_runtime::process_guard::{self, DirectAttachProbeRequest};
 use xihe_runtime::remote_mcp::{
     RemoteMcpConnector, RemoteMcpError, RequestStateBinding, RequestStateStore,
     validate_endpoint_dns, validate_endpoint_with_allowlist,
@@ -838,9 +839,13 @@ fn runtime_error_status(error: &RuntimeError) -> StatusCode {
         RuntimeError::ExecutionSpecUnavailable { .. }
         | RuntimeError::WorkspaceMaterializationFailed { .. }
         | RuntimeError::McpSessionUnavailable { .. }
+        | RuntimeError::Unsupported { .. }
         | RuntimeError::Docker(_) => StatusCode::SERVICE_UNAVAILABLE,
         RuntimeError::McpSessionFailed { .. } => StatusCode::BAD_GATEWAY,
         RuntimeError::McpSessionBusy { .. } => StatusCode::TOO_MANY_REQUESTS,
+        RuntimeError::ProcessTimeout { .. } => StatusCode::GATEWAY_TIMEOUT,
+        RuntimeError::ProcessCancelled { .. } => StatusCode::CONFLICT,
+        RuntimeError::ProcessTreeCleanupFailed { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         RuntimeError::InvalidExecutionSpec { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => {
             StatusCode::FORBIDDEN
@@ -863,10 +868,15 @@ fn runtime_error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::McpSessionUnavailable { .. } => "MCP_SESSION_UNAVAILABLE",
         RuntimeError::McpSessionFailed { .. } => "MCP_SESSION_FAILED",
         RuntimeError::McpSessionBusy { .. } => "MCP_SESSION_BUSY",
+        RuntimeError::ProcessTimeout { .. } => "PROCESS_TIMEOUT",
+        RuntimeError::ProcessCancelled { .. } => "PROCESS_CANCELLED",
+        RuntimeError::ProcessTreeCleanupFailed { .. } => "PROCESS_TREE_CLEANUP_FAILED",
+        RuntimeError::ProcessExited { .. } => "PROCESS_EXITED",
         RuntimeError::InvalidExecutionSpec { .. } => "EXECUTION_SPEC_INVALID",
         RuntimeError::WorkspaceMaterializationFailed { .. } => "WORKSPACE_MATERIALIZATION_FAILED",
         RuntimeError::WorkspaceDestroying { .. } => "WORKSPACE_DESTROYING",
         RuntimeError::WorkspaceBusy { .. } => "WORKSPACE_BUSY",
+        RuntimeError::Unsupported { .. } => "CAPABILITY_UNAVAILABLE",
         RuntimeError::PathTraversal { .. } | RuntimeError::SymlinkEscape { .. } => "FORBIDDEN",
         RuntimeError::InvalidPath(_) => "INVALID_REQUEST",
         _ => "RUNTIME_ERROR",
@@ -2306,6 +2316,22 @@ async fn runtime_diagnostics_handler(State(app): State<Arc<AppState>>) -> Respon
     .into_response()
 }
 
+/// Probe a direct-attach backend before CP persists a Workspace binding.
+///
+/// This endpoint reports backend availability only. It does not materialize a
+/// Workspace and never returns a host path to a caller other than CP.
+async fn direct_attach_probe_handler(
+    AxumJson(request): AxumJson<DirectAttachProbeRequest>,
+) -> Result<
+    AxumJson<process_guard::BackendCapabilitySnapshot>,
+    (StatusCode, AxumJson<serde_json::Value>),
+> {
+    process_guard::probe_direct_attach(request)
+        .await
+        .map(AxumJson)
+        .map_err(runtime_problem)
+}
+
 /// Host root for the Run-checkpoint shadow repositories. Mirrors the hydrate
 /// contract: `XIHE_WORKSPACE_HOST_ROOT` is the only source; the fallback keeps a
 /// misconfigured process from writing to an absolute system path.
@@ -2440,6 +2466,10 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/diagnostics",
             get(runtime_diagnostics_handler),
+        )
+        .route(
+            "/internal/v1/runtime/capabilities/direct-attach/probe",
+            post(direct_attach_probe_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/jobs/status",
@@ -3033,6 +3063,24 @@ async fn idle_reaper_loop(ctx: ReaperContext, ct: tokio_util::sync::Cancellation
                             "Idle reaper: workspace {} container already non-running (state={:?}); skipping active tier",
                             ws_id, instance.state
                         );
+                        continue;
+                    }
+
+                    // Direct-attach workspaces have no Docker container to
+                    // stop or pause. Their host watcher and registry entry
+                    // still need the same eviction boundary.
+                    if instance.execution_mode != "docker" {
+                        if tier == ReapTier::Evict {
+                            workspace_event_watchers.stop(ws_id).await;
+                            lifecycle.evict(ws_id).await;
+                            sessions.cleanup_workspace(ws_id).await;
+                            tracing::info!(
+                                workspace_id = %ws_id,
+                                execution_mode = %instance.execution_mode,
+                                event = "reap_evict",
+                                "Idle reaper: evicted direct-attach runtime entry"
+                            );
+                        }
                         continue;
                     }
 

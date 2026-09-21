@@ -39,6 +39,10 @@ import type {
     WorkspaceCheckpointRevertState,
     WorkspaceCheckpointRevertView,
     WorkspaceEvent,
+    WorkspaceEnvironment,
+    WorkspaceJob,
+    WorkspaceExecutionMode,
+    WorkspaceStorageMode,
 } from "../types";
 
 const API_BASE = "/api/v1";
@@ -65,6 +69,9 @@ export interface ApiWorkspace {
     ownerId?: string;
     storageBackend?: string;
     storageRef?: string;
+    storageMode?: WorkspaceStorageMode;
+    hostPath?: string | null;
+    executionMode?: WorkspaceExecutionMode;
     createdAt?: string;
     updatedAt?: string;
 }
@@ -808,6 +815,21 @@ function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
         storageBackend:
             typeof record.storageBackend === "string" ? record.storageBackend : undefined,
         storageRef: typeof record.storageRef === "string" ? record.storageRef : undefined,
+        storageMode: isEnumValue(record.storageMode, ["managed_import", "direct_attach"] as const)
+            ? record.storageMode
+            : undefined,
+        hostPath:
+            typeof record.hostPath === "string"
+                ? record.hostPath
+                : record.hostPath === null
+                  ? null
+                  : undefined,
+        executionMode: isEnumValue(
+            record.executionMode,
+            ["docker", "windows-mxc", "windows-host"] as const,
+        )
+            ? record.executionMode
+            : undefined,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
     };
@@ -890,7 +912,7 @@ export function normalizeWorkspaceEvent(
         path,
         changeType: typeof record.changeType === "string" ? record.changeType : undefined,
         source,
-        snapshotVersion: typeof record.snapshotVersion === "string" ? record.snapshotVersion : undefined,
+        reason: typeof record.reason === "string" ? record.reason : undefined,
         status: typeof record.status === "string" ? record.status : undefined,
     };
 }
@@ -1532,15 +1554,25 @@ export const api = {
         name?: string;
         description?: string | null;
         profile?: "strict" | "coding" | "isolated";
+        storageMode?: WorkspaceStorageMode;
+        hostPath?: string;
+        executionMode?: WorkspaceExecutionMode;
+        idempotencyKey?: string;
     }): Promise<ApiWorkspace> {
         const body: Record<string, unknown> = {};
         if (input.name !== undefined) body.name = input.name;
         if (input.description !== undefined) body.description = input.description;
         if (input.profile !== undefined) body.profile = input.profile;
+        if (input.storageMode !== undefined) body.storageMode = input.storageMode;
+        if (input.hostPath !== undefined) body.hostPath = input.hostPath;
+        if (input.executionMode !== undefined) body.executionMode = input.executionMode;
         // image is server-allowlisted (v1: xihe/workspace:latest); UI keeps it read-only.
         return normalizeWorkspaceResponse(
             await request<unknown>("/workspaces", {
                 method: "POST",
+                headers: {
+                    "Idempotency-Key": input.idempotencyKey ?? globalThis.crypto.randomUUID(),
+                },
                 body: JSON.stringify(body),
             }),
         );
@@ -1564,16 +1596,25 @@ export const api = {
         });
     },
     getWorkspaceEnvironment(wsId: string) {
+        return request<WorkspaceEnvironment>(`/workspaces/${encodeURIComponent(wsId)}/environment`, {
+            headers: workspaceHeaders(wsId),
+        });
+    },
+    getWorkspaceJobs(wsId: string) {
+        return request<WorkspaceJob[]>(`/workspaces/${encodeURIComponent(wsId)}/jobs`, {
+            headers: workspaceHeaders(wsId),
+        });
+    },
+    updateWorkspaceExecutionMode(wsId: string, executionMode: WorkspaceExecutionMode) {
         return request<{
             workspaceId: string;
+            storageMode: WorkspaceStorageMode;
+            executionMode: WorkspaceExecutionMode;
             status: string;
-            storageBackend: string;
-            storageRef: string;
-            executionSpec?: { status: string; generation: number; sandboxSpecHash: string };
-            assignment?: { status: string; generation: number; sandboxSpecHash: string };
-            runtime: { status: string; deviceId: string; lastHeartbeatAt: string };
-        }>(`/workspaces/${encodeURIComponent(wsId)}/environment`, {
+        }>(`/workspaces/${encodeURIComponent(wsId)}/execution-mode`, {
+            method: "PATCH",
             headers: workspaceHeaders(wsId),
+            body: JSON.stringify({ executionMode }),
         });
     },
     /** M4: trigger async materialization (202). Poll getWorkspaceEnvironment for progress. */

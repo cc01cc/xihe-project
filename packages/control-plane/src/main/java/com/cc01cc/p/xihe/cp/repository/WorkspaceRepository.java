@@ -17,6 +17,9 @@ public interface WorkspaceRepository extends JpaRepository<Workspace, UUID> {
 
     Optional<Workspace> findByIdAndDeletedAtIsNull(UUID id);
 
+    Optional<Workspace> findByOwnerIdAndCreateIdempotencyKeyAndDeletedAtIsNull(
+            String ownerId, String createIdempotencyKey);
+
     @Query("select w from Workspace w join WorkspaceUser wu on wu.id.workspaceId = w.id "
             + "where wu.id.userId = :userId and w.deletedAt is null order by w.createdAt asc")
     List<Workspace> findActiveByMemberUserId(@Param("userId") UUID userId);

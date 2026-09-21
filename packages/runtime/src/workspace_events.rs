@@ -186,7 +186,7 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{change_type, relative_path};
+    use super::{WorkspaceEventWatchers, change_type, relative_path};
     use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind};
     use std::path::Path;
 
@@ -220,5 +220,29 @@ mod tests {
             change_type(&EventKind::Modify(ModifyKind::Any)),
             Some("modified")
         );
+    }
+
+    #[tokio::test]
+    async fn direct_attach_directory_can_install_and_stop_a_bounded_watcher() {
+        let root = tempfile::tempdir().expect("temporary direct-attach root");
+        let watchers = WorkspaceEventWatchers::default();
+        let root_path = root.path().to_string_lossy().into_owned();
+        watchers
+            .ensure("ws-direct", &root_path)
+            .await
+            .expect("watcher should start for a direct-attach root");
+        watchers.stop("ws-direct").await;
+    }
+
+    #[tokio::test]
+    async fn watcher_rejects_a_non_directory_root() {
+        let root = tempfile::NamedTempFile::new().expect("temporary file");
+        let watchers = WorkspaceEventWatchers::default();
+        let root_path = root.path().to_string_lossy().into_owned();
+        let error = watchers
+            .ensure("ws-file", &root_path)
+            .await
+            .expect_err("file roots must not be watched as a workspace");
+        assert_eq!(error, "WATCHER_ROOT_NOT_DIRECTORY");
     }
 }

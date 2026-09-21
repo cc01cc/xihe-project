@@ -53,15 +53,15 @@ pub(crate) async fn report_workspace_event(workspace_id: &str, path: &str, chang
 }
 
 pub(crate) async fn report_workspace_snapshot_required(workspace_id: &str) {
-    post_workspace_event(
-        workspace_id,
-        serde_json::json!({
-            "kind": "snapshot_required",
-            "source": "runtime",
-            "snapshotVersion": "overflow",
-        }),
-    )
-    .await;
+    post_workspace_event(workspace_id, snapshot_required_payload()).await;
+}
+
+fn snapshot_required_payload() -> serde_json::Value {
+    serde_json::json!({
+        "kind": "snapshot_required",
+        "source": "runtime",
+        "reason": "overflow",
+    })
 }
 
 async fn post_workspace_event(workspace_id: &str, payload: serde_json::Value) {
@@ -97,6 +97,19 @@ async fn post_workspace_event(workspace_id: &str, payload: serde_json::Value) {
             "workspace event publish failed workspaceId={} reason={}",
             workspace_id, error
         ),
+    }
+}
+
+#[cfg(test)]
+mod event_contract_tests {
+    use super::snapshot_required_payload;
+
+    #[test]
+    fn overflow_event_uses_reason_not_snapshot_version() {
+        let payload = snapshot_required_payload();
+        assert_eq!(payload["kind"], "snapshot_required");
+        assert_eq!(payload["reason"], "overflow");
+        assert!(payload.get("snapshotVersion").is_none());
     }
 }
 

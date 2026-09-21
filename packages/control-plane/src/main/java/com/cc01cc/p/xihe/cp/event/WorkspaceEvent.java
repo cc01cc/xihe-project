@@ -12,6 +12,6 @@ public record WorkspaceEvent(
         String path,
         String changeType,
         String source,
-        String snapshotVersion,
+        String reason,
         String status) {
 }

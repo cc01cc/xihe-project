@@ -42,8 +42,11 @@ public class JobStateService {
 
     public static final String EXTENSION_KIND = "job_state";
     public static final int SCHEMA_VERSION = 1;
-    /** PLAN-0344 决策 #6：本计划固定写 session（模型 A 前向占位）。 */
+    /** Final fresh-baseline scope vocabulary. */
+    public static final String SCOPE_RUN = "run";
     public static final String SCOPE_SESSION = "session";
+    public static final String SCOPE_WORKSPACE = "workspace";
+    private static final Set<String> SCOPES = Set.of(SCOPE_RUN, SCOPE_SESSION, SCOPE_WORKSPACE);
 
     public static final String STATUS_RUNNING = "running";
     private static final Set<String> TERMINAL = Set.of("succeeded", "cancelled", "timeout", "orphaned");
@@ -54,7 +57,7 @@ public class JobStateService {
     private static final Set<String> JOB_TOOLS = Set.of(TOOL_START, TOOL_GET, TOOL_CANCEL);
 
     private static final List<String> MERGE_KEYS =
-            List.of("jobId", "workspaceId", "status", "startedAt", "exitCode", "timeoutSecs",
+            List.of("jobId", "workspaceId", "scope", "status", "startedAt", "exitCode", "timeoutSecs",
                     "cancelReason", "endedAt");
 
     private final OperationExtensionRepository extensions;
@@ -126,6 +129,7 @@ public class JobStateService {
         incoming.put("jobId", jobId);
         incoming.put("workspaceId", workspaceId);
         incoming.put("status", STATUS_RUNNING);
+        incoming.put("scope", SCOPE_SESSION);
         upsert(itemId, incoming);
     }
 
@@ -169,6 +173,9 @@ public class JobStateService {
         String status = mapRuntimeStatus(runtimeStatus);
         if (job.hasNonNull("jobId")) {
             incoming.put("jobId", job.get("jobId").asText());
+        }
+        if (job.hasNonNull("scope")) {
+            incoming.put("scope", normalizeScope(job.get("scope").asText()));
         }
         incoming.put("workspaceId", workspaceId);
         if (status != null) {
@@ -239,7 +246,7 @@ public class JobStateService {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("jobId", incoming.get("jobId"));
             payload.put("workspaceId", incoming.get("workspaceId"));
-            payload.put("scope", SCOPE_SESSION);
+            payload.put("scope", normalizeScope(incoming.get("scope")));
             payload.put("status", incoming.getOrDefault("status", STATUS_RUNNING));
             payload.put("startedAt", incoming.get("startedAt"));
             payload.put("exitCode", incoming.get("exitCode"));
@@ -256,6 +263,7 @@ public class JobStateService {
             return;
         }
         Map<String, Object> current = readJson(existing.getPayload());
+        current.putIfAbsent("scope", SCOPE_SESSION);
         Map<String, Object> merged = mergeForward(current, incoming);
         if (merged == null) {
             logger.warn("[LIFECYCLE] service=cp event=job_state_stale_write_dropped itemId={} current={} incoming={}",
@@ -309,8 +317,7 @@ public class JobStateService {
             return Optional.empty();
         }
         return extensions
-                .findByItemIdAndExtensionKindAndSchemaVersion(itemId.toString(), EXTENSION_KIND,
-                        SCHEMA_VERSION)
+                .findFirstByItemIdAndExtensionKindOrderBySchemaVersionDesc(itemId.toString(), EXTENSION_KIND)
                 .map(extension -> toArchive(itemId, extension));
     }
 
@@ -332,6 +339,24 @@ public class JobStateService {
             refs.add(new JobStateRef(parseUuid(extension.getItemId()), jobId, workspaceId));
         }
         return refs;
+    }
+
+    /** Returns whether a durable background job still owns this Workspace. */
+    @Transactional(readOnly = true)
+    public boolean hasRunningForWorkspace(String workspaceId) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            return false;
+        }
+        Instant since = Instant.now().minus(java.time.Duration.ofDays(30));
+        for (OperationExtension extension : extensions
+                .findByExtensionKindAndCreatedAtAfter(EXTENSION_KIND, since)) {
+            Map<String, Object> payload = readJson(extension.getPayload());
+            if (workspaceId.equals(str(payload.get("workspaceId")))
+                    && STATUS_RUNNING.equals(str(payload.get("status")))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -384,7 +409,7 @@ public class JobStateService {
     private JobArchive toArchive(UUID itemId, OperationExtension extension) {
         Map<String, Object> payload = readJson(extension.getPayload());
         return new JobArchive(itemId.toString(), str(payload.get("jobId")),
-                str(payload.get("workspaceId")), str(payload.get("scope")),
+                str(payload.get("workspaceId")), normalizeScope(payload.get("scope")),
                 str(payload.get("status")), str(payload.get("startedAt")),
                 payload.get("exitCode") instanceof Number number ? number.intValue() : null,
                 payload.get("timeoutSecs") instanceof Number number ? number.longValue() : null,
@@ -411,6 +436,11 @@ public class JobStateService {
         } catch (Exception e) {
             throw new IllegalStateException("job_state payload serialization failed", e);
         }
+    }
+
+    private static String normalizeScope(Object value) {
+        String scope = value == null ? SCOPE_SESSION : String.valueOf(value);
+        return SCOPES.contains(scope) ? scope : SCOPE_SESSION;
     }
 
     private static String str(Object value) {

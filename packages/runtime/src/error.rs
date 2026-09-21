@@ -44,6 +44,18 @@ pub enum RuntimeError {
     #[error("Execution cancelled (confirmed={confirmed}, {detail})")]
     Cancelled { detail: String, confirmed: bool },
 
+    #[error("Process timed out: {detail}")]
+    ProcessTimeout { detail: String },
+
+    #[error("Process cancelled (confirmed={confirmed}): {detail}")]
+    ProcessCancelled { detail: String, confirmed: bool },
+
+    #[error("Process tree cleanup failed: {detail}")]
+    ProcessTreeCleanupFailed { detail: String },
+
+    #[error("Process exited with code {code:?}")]
+    ProcessExited { code: Option<i32> },
+
     #[error("Watch error: {0}")]
     Watch(String),
 
