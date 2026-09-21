@@ -1836,19 +1836,15 @@ async fn workspace_job_capabilities_handler(
     })
     .await
     .map_err(runtime_problem)?;
-    Ok(AxumJson(serde_json::json!({
-        "backendKind": probe.backend_kind,
-        "backendRevision": probe.backend_revision,
-        "maturity": probe.maturity,
-        "executionMode": probe.execution_mode,
-        "canStart": true,
-        "canCancel": true,
-        "canStreamOutput": true,
-        "canIsolateFilesystem": instance.execution_mode == "windows-mxc",
-        "available": probe.available,
-        "unavailableReason": probe.reason,
-        "reason": probe.reason,
-    })))
+    // Capability content is adapter-owned (PLAN-0393 decision #15); the host
+    // adapter carries `canIsolateFilesystem=false` as the machine-readable
+    // "unrestricted" marker.
+    let capability = if instance.execution_mode == "windows-mxc" {
+        xihe_runtime::job_mxc_adapter::mxc_capability(&probe)
+    } else {
+        xihe_runtime::job_host_adapter::host_capability(&probe)
+    };
+    Ok(AxumJson(capability))
 }
 
 /// Resolved context for a non-Docker workspace's job routes: the execution
@@ -2106,24 +2102,26 @@ async fn start_direct_attach_job(
             Err(error) => Err(job_engine_problem(error)),
         };
     }
-    let plan = xihe_runtime::job_engine::LaunchPlan {
-        backend_kind: mode.to_string(),
-        backend_revision: "builtin".to_string(),
-        program: command.to_string(),
-        args,
-        cwd: cwd
-            .filter(|value| !value.trim().is_empty())
-            .map(std::path::PathBuf::from)
-            .or_else(|| Some(std::path::PathBuf::from(workspace_path))),
-        env: env.unwrap_or_default(),
-        timeout_ms: timeout_secs.saturating_mul(1_000),
-        shell: false,
-        grants: process_guard::FilesystemPolicy {
-            read_only_roots: Vec::new(),
-            read_write_roots: vec![std::path::PathBuf::from(workspace_path)],
+    // PLAN-0395: unrestricted host plan; the adapter owns the mapping and the
+    // "not an isolation boundary" marker. Switching to this mode is the
+    // owner/admin decision CP records; the Runtime adds an audit line.
+    let plan = xihe_runtime::job_host_adapter::build_host_job(
+        xihe_runtime::job_host_adapter::HostJobRequest {
+            workspace_path: workspace_path.to_string(),
+            command: command.to_string(),
+            args,
+            cwd,
+            env: env.unwrap_or_default(),
+            timeout_secs,
         },
-        policy_artifact: None,
-    };
+    )
+    .map_err(job_engine_problem)?;
+    tracing::warn!(
+        workspace_id = %workspace_path,
+        job_id = %operation_item_id,
+        backend_kind = plan.backend_kind,
+        "PLAN-0395: starting an unrestricted host job (no filesystem isolation)"
+    );
     match app.job_engine.start(operation_item_id, plan) {
         Ok(_handle) => Ok((
             StatusCode::ACCEPTED,
@@ -5696,6 +5694,15 @@ mod job_engine_route_tests {
         .await;
         let mxc = std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_default();
         let mxc_available = !mxc.is_empty() && std::path::Path::new(&mxc).exists();
+        // Capability content is adapter-owned: MXC claims filesystem isolation,
+        // host does not (asserted in the host route test).
+        let capability =
+            workspace_job_capabilities_handler(Path(ws_id.clone()), State(app.clone()))
+                .await
+                .expect("mxc capabilities");
+        let capability_body = body_json(capability.into_response()).await;
+        assert_eq!(capability_body["canIsolateFilesystem"], true);
+        assert_eq!(capability_body["backendKind"], "windows-mxc");
         if mxc_available {
             let (status, _) = result.expect("mxc job start");
             assert_eq!(status, StatusCode::ACCEPTED);

@@ -71,6 +71,26 @@ pub fn build_mxc_job(
     })
 }
 
+/// 0390-shaped capability for the MXC backend; `canIsolateFilesystem=true` is
+/// the only capability difference from the host adapter (decision #15 in
+/// PLAN-0393 keeps capability content adapter-owned).
+pub fn mxc_capability(
+    probe: &crate::process_guard::BackendCapabilitySnapshot,
+) -> serde_json::Value {
+    serde_json::json!({
+        "backendKind": probe.backend_kind,
+        "backendRevision": probe.backend_revision,
+        "maturity": probe.maturity,
+        "executionMode": probe.execution_mode,
+        "canStart": true,
+        "canCancel": true,
+        "canStreamOutput": true,
+        "canIsolateFilesystem": true,
+        "available": probe.available,
+        "unavailableReason": probe.reason,
+        "reason": probe.reason,
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
