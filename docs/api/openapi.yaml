@@ -1076,6 +1076,51 @@ paths:
         '501':
           description: JOB_BACKEND_LAUNCH_PENDING (backend has no job launcher; no process started)
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+  # PLAN-0393 Job cleanup / capabilities live next to the start path behind
+  # the same internal Bearer auth.
+  /internal/v1/runtime/workspaces/{workspaceId}/jobs/cleanup:
+    post:
+      operationId: cleanupRuntimeWorkspaceJob
+      description: |
+        PLAN-0393: reclaims one process-job handle (terminate the tree when still running,
+        remove the bounded output directory) and reports the 0390 `CleanupResult`
+        (`outcome` completed|failed, optional `reason`, `processes` reclaimed). Jobs are
+        Runtime-process scoped: after a Runtime restart the handle is unknown and the
+        route answers `404 JOB_NOT_FOUND`.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeJobHandleRequest' }
+      responses:
+        '200':
+          description: Cleanup result
+          content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeJobCleanupResponse' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404':
+          description: JOB_NOT_FOUND (unknown handle)
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/jobs/capabilities:
+    post:
+      operationId: runtimeWorkspaceJobCapabilities
+      description: |
+        PLAN-0393: engine capabilities for the workspace's execution mode in the 0390
+        `BackendCapability` shape. `windows-mxc`/`windows-host` report canStart/canCancel/
+        canStreamOutput, `canIsolateFilesystem` only for MXC, and `unavailableReason`
+        mirrors the probe's `reason` (kept for compatibility). Docker answers
+        `501 JOB_BACKEND_LAUNCH_PENDING` (container jobs are served by the Docker path).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Capability snapshot
+          content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeJobCapabilityResponse' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '501':
+          description: JOB_BACKEND_LAUNCH_PENDING (Docker workspaces)
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   # Runtime shadow-Git slice contract. CP is the caller; failures use RFC 9457
   # Problem Details with a stable `code` and `requestId`.
   /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/capture:
@@ -2002,6 +2047,34 @@ components:
         status: { type: string, enum: [running] }
         operationItemId: { type: string, format: uuid }
         bootId: { type: string, description: Runtime per-process boot id; a change makes unconfirmed Jobs interrupted without replay. }
+    RuntimeJobHandleRequest:
+      type: object
+      required: [jobId]
+      properties:
+        jobId: { type: string, description: canonical operationItemId (PLAN-0390 Job identity). }
+    RuntimeJobCleanupResponse:
+      type: object
+      required: [outcome, processes]
+      properties:
+        jobId: { type: string }
+        outcome: { type: string, enum: [completed, failed] }
+        reason: { type: [string, 'null'], description: Failure reason for outcome=failed; omitted/null on success. }
+        processes: { type: integer, minimum: 0, description: Processes reclaimed from the job object during this cleanup. }
+    RuntimeJobCapabilityResponse:
+      type: object
+      required: [backendKind, canStart, canCancel, canStreamOutput, canIsolateFilesystem, available]
+      properties:
+        backendKind: { type: string, enum: [windows-mxc, windows-host] }
+        backendRevision: { type: string }
+        maturity: { type: string, description: Backend maturity marker (MXC stays experimental). }
+        executionMode: { type: string, enum: [windows-mxc, windows-host] }
+        canStart: { type: boolean }
+        canCancel: { type: boolean }
+        canStreamOutput: { type: boolean }
+        canIsolateFilesystem: { type: boolean, description: true only for windows-mxc; windows-host is unrestricted by design. }
+        available: { type: boolean }
+        unavailableReason: { type: [string, 'null'], description: Stable reason when available=false. }
+        reason: { type: [string, 'null'], description: Legacy probe key kept in sync with unavailableReason. }
     OperationItemView:
       type: object
       required: [id, operationId, sequence, kind, source, status]

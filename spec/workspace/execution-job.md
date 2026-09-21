@@ -1,6 +1,6 @@
 # XH Execution Job scope 与 durable continuation
 
-> 契约状态：`proposed`；实现状态：`partial`（start/list projection、scope/幂等与 `interrupted` 对账已落地；backend JobHandle/adapter、release/resume 未完成）；Profile：`workspace/data/security`；Owner：CP durable-record + Runtime Job owners；来源：PLAN-0390；更新：2026-09-21。
+> 契约状态：`proposed`；实现状态：`partial`（start/list projection、scope/幂等与 `interrupted` 对账已落地；Windows 进程引擎（PLAN-0393）已提供 Job Object 归属/有界输出/取消确认/cleanup 与 internal `jobs/cleanup`+`jobs/capabilities` 入口，`windows-host` job 已通；`windows-mxc` policy 组装（0394）、release/resume 与 Docker adapter（0392）未完成）；Profile：`workspace/data/security`；Owner：CP durable-record + Runtime Job owners；来源：PLAN-0390；更新：2026-09-21。
 
 ## 1. 对象边界
 
@@ -35,7 +35,7 @@ pending -> running
 running -> succeeded | cancelled | timeout | orphaned | interrupted
 ```
 
-- 本批 Docker backend 保持字面量 `succeeded` / `timeout` / `orphaned`；归一化为 `completed` / `failed` / `timed_out` 由后续 adapter 批次承接。
+- 本批 Docker backend 保持字面量 `succeeded` / `timeout` / `orphaned`；归一化为 `completed` / `failed` / `timed_out` 由后续 adapter 批次承接。PLAN-0393 引擎内部产 `timed_out`，**HTTP 投影折回 wire 的 `timeout`**（CP 状态机暂只认后者），durable 归一化待 CP 批次。
 - `interrupted` 是 CP durable 终态：Runtime 重启或派发未确认；**不自动重放**。
 - `cleanupStatus` 独立记录 `not_started/running/completed/failed`。清理失败不伪造成功，也不触发自动 replay。
 - `cancelReason` 取值：`user_cancel` / `scope_run_end` / `scope_session_stop` / `workspace_destroy` / `runtime_restart` / `destroy_orphan` / `job_missing`。
@@ -53,6 +53,6 @@ running -> succeeded | cancelled | timeout | orphaned | interrupted
 - **Start**：`POST /api/v1/workspaces/{workspaceId}/jobs`，header `Idempotency-Key` 必填，body `{command, args, cwd, timeoutSecs, scope, sessionId, runId, source, env}`（仅 `command` 必填）。同 key 重放返回既有 projection（`200`，不产生第二个进程）；同 key 不同 `command/args/cwd/timeoutSecs` → `409 JOB_IDEMPOTENCY_CONFLICT`；缺 header → `400 IDEMPOTENCY_KEY_REQUIRED`；无 access/不存在 → `404 WORKSPACE_NOT_FOUND`；无 launcher 的 backend → `501 JOB_BACKEND_LAUNCH_PENDING`（不建 durable Job）；派发未确认 → `502 RUNTIME_UNAVAILABLE`（档案落 `interrupted`）。
 - **List**：`GET /api/v1/workspaces/{workspaceId}/jobs` 返回 Workspace-scoped Job projection（start 响应同形）；projection 字段为 `operationId, operationItemId, workspaceId, sessionId, runId, source, scope, status, jobId, startedAt, endedAt, exitCode, timeoutSecs, cancelReason, backendKind, executionMode, actorType, createdAt, cleanupStatus, errorCode`，与 `job_state` payload 的区别仅是后者多 `runtimeBootId`。
 - **续看/取消**：`GET /api/v1/operations/items/{itemId}/job-output`、`POST /api/v1/operations/items/{itemId}/cancel` 复用既有 operation 子资源（`operationItemId` 为键），不新增 `/api/v1/jobs/{jobId}` 平行 identity。
-- 所有 public route 使用 `/api/v1`、Bearer、Workspace access check 和 RFC 9457 Problem Details。
+- 引擎入口（internal，PLAN-0393）：`.../jobs/cleanup`（`CleanupResult`：outcome/reason/processes）与 `.../jobs/capabilities`（0390 形能力，含 `unavailableReason`）；进程 Job 的 handle 与有界输出**不跨 Runtime 重启**（重启后 404/`available=false`，不重放）。`n- 所有 public route 使用 `/api/v1`、Bearer、Workspace access check 和 RFC 9457 Problem Details。
 
 完整字段与 OpenAPI 以 [`docs/api/openapi.yaml`](../../docs/api/openapi.yaml) 与 [`docs/api/inventory.md`](../../docs/api/inventory.md) 为准；Flyway 与 adapter 细节由 PLAN-0390 与 PLAN-0392–0395 落地后同步。
