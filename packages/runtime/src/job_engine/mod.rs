@@ -410,6 +410,13 @@ impl JobEngine {
         }
     }
 
+    /// Output directory that this job id maps to. Adapters write backend
+    /// artifacts (for example the MXC policy) here so the existing cleanup,
+    /// TTL and orphan reaping paths remove them without extra logic.
+    pub fn output_dir(&self, job_id: &str) -> PathBuf {
+        OutputPaths::for_job(&self.output_root, job_id).dir
+    }
+
     pub fn handle(&self, job_id: &str) -> Result<JobHandle, JobEngineError> {
         self.get_entry(job_id)
             .map(|entry| entry.handle.clone())

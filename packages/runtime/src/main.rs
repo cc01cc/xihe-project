@@ -2063,9 +2063,48 @@ async fn start_direct_attach_job(
     timeout_secs: u64,
 ) -> Result<(StatusCode, AxumJson<serde_json::Value>), (StatusCode, AxumJson<serde_json::Value>)> {
     if mode == "windows-mxc" {
-        return Err(job_backend_launch_pending_problem(
-            "MXC job policy assembly is delivered by PLAN-0394",
-        ));
+        // PLAN-0394: probe first; the policy artifact is assembled by the MXC
+        // adapter into this job's output directory. A missing or unavailable
+        // backend stays fail-closed (never downgrades to bare host execution).
+        let probe = process_guard::probe_direct_attach(DirectAttachProbeRequest {
+            storage_mode: "direct_attach".to_string(),
+            host_path: workspace_path.to_string(),
+            execution_mode: mode.to_string(),
+        })
+        .await
+        .map_err(runtime_problem)?;
+        if !probe.available {
+            return Err(job_backend_launch_pending_problem(
+                probe
+                    .reason
+                    .as_deref()
+                    .unwrap_or("MXC backend is not available"),
+            ));
+        }
+        let plan = xihe_runtime::job_mxc_adapter::build_mxc_job(
+            xihe_runtime::job_mxc_adapter::MxcJobRequest {
+                workspace_path: workspace_path.to_string(),
+                command: command.to_string(),
+                args,
+                cwd,
+                env: env.unwrap_or_default(),
+                timeout_secs,
+            },
+            &app.job_engine.output_dir(operation_item_id),
+        )
+        .map_err(job_engine_problem)?;
+        return match app.job_engine.start(operation_item_id, plan) {
+            Ok(_handle) => Ok((
+                StatusCode::ACCEPTED,
+                AxumJson(serde_json::json!({
+                    "jobId": operation_item_id,
+                    "status": "running",
+                    "operationItemId": operation_item_id,
+                    "bootId": app.boot_id,
+                })),
+            )),
+            Err(error) => Err(job_engine_problem(error)),
+        };
     }
     let plan = xihe_runtime::job_engine::LaunchPlan {
         backend_kind: mode.to_string(),
@@ -5347,6 +5386,10 @@ mod job_engine_route_tests {
     /// Boots a direct-attach workspace (`windows-host`) against an in-test CP
     /// stub, so job routes run through the engine (no Docker).
     async fn direct_attach_app() -> DirectAttachApp {
+        direct_attach_app_with_mode("windows-host").await
+    }
+
+    async fn direct_attach_app_with_mode(execution_mode: &str) -> DirectAttachApp {
         let dir = tempfile::tempdir().expect("workspace dir");
         let ws_id = uuid::Uuid::new_v4().to_string();
         let host_path = dir.path().to_string_lossy().to_string();
@@ -5361,7 +5404,7 @@ mod job_engine_route_tests {
             "storageRef": ws_id,
             "storageMode": "direct_attach",
             "hostPath": host_path,
-            "executionMode": "windows-host",
+            "executionMode": execution_mode,
         });
         let route_body = spec_body.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -5626,6 +5669,85 @@ mod job_engine_route_tests {
         .await
         .expect_err("missing job must 404");
         assert_eq!(missing.0, StatusCode::NOT_FOUND);
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn mxc_job_route_is_probe_gated() {
+        let DirectAttachApp {
+            app,
+            ws_id,
+            dir,
+            _server,
+        } = direct_attach_app_with_mode("windows-mxc").await;
+        let job_id = uuid::Uuid::new_v4().to_string();
+        let result = workspace_job_start_handler(
+            Path(ws_id.clone()),
+            State(app.clone()),
+            axum::Json(JobStartRequest {
+                operation_item_id: job_id.clone(),
+                command: "cmd".to_string(),
+                args: vec!["/C".to_string(), "exit 0".to_string()],
+                timeout_secs: 30,
+                cwd: None,
+                env: None,
+            }),
+        )
+        .await;
+        let mxc = std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_default();
+        let mxc_available = !mxc.is_empty() && std::path::Path::new(&mxc).exists();
+        if mxc_available {
+            let (status, _) = result.expect("mxc job start");
+            assert_eq!(status, StatusCode::ACCEPTED);
+            let mut terminal = false;
+            for _ in 0..200 {
+                let response = workspace_job_status_handler(
+                    Path(ws_id.clone()),
+                    State(app.clone()),
+                    axum::Json(JobStatusRequest {
+                        job_id: job_id.clone(),
+                    }),
+                )
+                .await
+                .expect("status");
+                let body = body_json(response.into_response()).await;
+                if matches!(
+                    body["status"].as_str().unwrap_or_default(),
+                    "succeeded" | "failed" | "cancelled" | "timeout"
+                ) {
+                    terminal = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            assert!(terminal, "MXC job never reached a terminal state");
+            let cleanup = workspace_job_cleanup_handler(
+                Path(ws_id),
+                State(app.clone()),
+                axum::Json(JobStatusRequest {
+                    job_id: job_id.clone(),
+                }),
+            )
+            .await
+            .expect("cleanup");
+            let cleanup_body = body_json(cleanup.into_response()).await;
+            assert_eq!(cleanup_body["outcome"], "completed");
+            assert!(
+                !app.job_engine
+                    .output_dir(&job_id)
+                    .join("policy.json")
+                    .exists(),
+                "policy artifact must be reclaimed with the job output"
+            );
+        } else {
+            let problem = result.expect_err("MXC must fail closed without a backend");
+            assert_eq!(problem.0, StatusCode::NOT_IMPLEMENTED);
+            assert_eq!(problem.1.0["code"], "JOB_BACKEND_LAUNCH_PENDING");
+            assert!(
+                !app.job_engine.output_dir(&job_id).exists(),
+                "no artifact may be written when the probe fails"
+            );
+        }
         drop(dir);
     }
 

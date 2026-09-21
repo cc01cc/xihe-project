@@ -394,35 +394,16 @@ async fn execute_mxc(request: ProcessRequest) -> Result<ProcessResult> {
     {
         let executable =
             std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_else(|_| "wxc-exec.exe".to_string());
-        let command_line = std::iter::once(request.program.clone())
-            .chain(request.args.iter().cloned())
-            .map(|part| quote_windows_argument(&part))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let cwd = mxc_path(request.cwd.as_ref().expect("validated cwd"));
-        let mut process = serde_json::json!({
-            "commandLine": command_line,
-            "cwd": cwd,
-            "timeout": request.timeout_ms
-        });
-        if !request.env.is_empty() {
-            let mut environment = std::env::vars().collect::<BTreeMap<_, _>>();
-            environment.extend(request.env.clone());
-            process["env"] = serde_json::json!(
-                environment
-                    .iter()
-                    .map(|(key, value)| format!("{key}={value}"))
-                    .collect::<Vec<_>>()
-            );
-        }
-        let config = serde_json::json!({
-            "version": "0.8.0-alpha",
-            "containment": "processcontainer",
-            "process": process,
-            "filesystem": {
-                "readonlyPaths": request.filesystem.read_only_roots.iter().map(|path| mxc_path(path)).collect::<Vec<_>>(),
-                "readwritePaths": request.filesystem.read_write_roots.iter().map(|path| mxc_path(path)).collect::<Vec<_>>()
-            }
+        // PLAN-0394: the same builder serves one-shot and job paths.
+        let cwd = request.cwd.clone().expect("validated cwd");
+        let config = build_mxc_policy(&MxcPolicyRequest {
+            program: request.program.clone(),
+            args: request.args.clone(),
+            cwd,
+            env: request.env.clone(),
+            timeout_ms: request.timeout_ms,
+            read_only_roots: request.filesystem.read_only_roots.clone(),
+            read_write_roots: request.filesystem.read_write_roots.clone(),
         });
         let config_path = std::env::temp_dir().join(format!(
             "xihe-mxc-{}-{}.json",
@@ -557,6 +538,92 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
     (collected, truncated)
 }
 
+/// Inputs for the shared MXC policy builder (PLAN-0394 decision #5): both the
+/// one-shot path and the job adapter must generate the same field set.
+pub struct MxcPolicyRequest {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: PathBuf,
+    pub env: BTreeMap<String, String>,
+    pub timeout_ms: u64,
+    pub read_only_roots: Vec<PathBuf>,
+    pub read_write_roots: Vec<PathBuf>,
+}
+
+/// Builds the MXC v0.8 policy for one process.
+///
+/// Field set is the M0-verified minimum (`internal/A03-xihe/docs/evidence/
+/// 2026-09-19-mxc-process-sandbox/chrome-run.json` + 0393 probe3): a missing
+/// `readonlyPaths` entry for the program directory makes real programs die with
+/// `0xC0000142` before Rust could report anything.
+pub fn build_mxc_policy(request: &MxcPolicyRequest) -> serde_json::Value {
+    let command_line = std::iter::once(request.program.clone())
+        .chain(request.args.iter().cloned())
+        .map(|part| quote_windows_argument(&part))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut process = serde_json::json!({
+        "commandLine": command_line,
+        "cwd": mxc_path(&request.cwd),
+        // MXC requires a numeric timeout; the engine owns the real deadline.
+        "timeout": if request.timeout_ms == 0 {
+            MXC_UNBOUNDED_TIMEOUT_MS
+        } else {
+            request.timeout_ms
+        },
+    });
+    if !request.env.is_empty() {
+        let mut environment = std::env::vars().collect::<BTreeMap<_, _>>();
+        environment.extend(request.env.clone());
+        process["env"] = serde_json::json!(
+            environment
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+        );
+    }
+    let mut readonly: Vec<String> = request
+        .read_only_roots
+        .iter()
+        .map(|path| mxc_path(path))
+        .collect();
+    // The program's own directory must stay readable, otherwise the sandboxed
+    // process cannot initialize its DLLs.
+    if let Some(program_dir) = Path::new(&request.program).parent()
+        && !program_dir.as_os_str().is_empty()
+    {
+        let program_dir = mxc_path(program_dir);
+        if !readonly.contains(&program_dir) {
+            readonly.push(program_dir);
+        }
+    }
+    serde_json::json!({
+        "version": "0.8.0-alpha",
+        "containment": "processcontainer",
+        "process": process,
+        "filesystem": {
+            "readonlyPaths": readonly,
+            "readwritePaths": request
+                .read_write_roots
+                .iter()
+                .map(|path| mxc_path(path))
+                .collect::<Vec<_>>(),
+        },
+        "fallback": { "allowDaclMutation": true },
+        "network": {
+            "egress": { "default": "allow" },
+            "ingress": { "default": "allow", "hostLoopback": "allow" }
+        },
+        "processContainer": {
+            "capabilities": ["internetClient", "privateNetworkClientServer"]
+        },
+        "ui": { "disable": false }
+    })
+}
+
+/// MXC policy `process.timeout` when the caller asks for no deadline.
+const MXC_UNBOUNDED_TIMEOUT_MS: u64 = 86_400_000;
+
 #[cfg(windows)]
 async fn terminate_process_tree(pid: u32) -> Result<()> {
     let output = tokio::process::Command::new("taskkill")
@@ -682,8 +749,8 @@ async fn probe_mxc() -> Result<BackendCapabilitySnapshot> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(windows)]
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
     use super::{BackendCapabilitySnapshot, CONTRACT_VERSION, DirectAttachProbeRequest};
 
@@ -921,6 +988,58 @@ mod tests {
         assert!(
             matches!(result, super::RuntimeError::Unsupported { reason, .. } if reason == "CWD_OUTSIDE_GRANT")
         );
+    }
+
+    #[test]
+    fn mxc_policy_carries_the_verified_field_set() {
+        let policy = super::build_mxc_policy(&super::MxcPolicyRequest {
+            program: r"C:\tools\node\node.exe".to_string(),
+            args: vec!["-e".to_string(), "console.log(1)".to_string()],
+            cwd: PathBuf::from(r"C:\ws"),
+            env: BTreeMap::new(),
+            timeout_ms: 0,
+            read_only_roots: Vec::new(),
+            read_write_roots: vec![PathBuf::from(r"C:\ws")],
+        });
+        assert_eq!(policy["containment"], "processcontainer");
+        assert_eq!(policy["process"]["timeout"], 86_400_000u64);
+        assert!(
+            policy["process"]["commandLine"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("node.exe")
+        );
+        let readonly = policy["filesystem"]["readonlyPaths"]
+            .as_array()
+            .expect("readonlyPaths");
+        assert!(
+            readonly
+                .iter()
+                .any(|value| value.as_str().unwrap_or_default().ends_with("node")),
+            "the program directory must be readable: {readonly:?}"
+        );
+        assert_eq!(policy["fallback"]["allowDaclMutation"], true);
+        let capabilities = policy["processContainer"]["capabilities"]
+            .as_array()
+            .expect("capabilities");
+        assert!(capabilities.iter().any(|value| value == "internetClient"));
+        assert_eq!(policy["network"]["egress"]["default"], "allow");
+        assert_eq!(policy["network"]["ingress"]["hostLoopback"], "allow");
+        assert_eq!(policy["ui"]["disable"], false);
+    }
+
+    #[test]
+    fn mxc_policy_keeps_the_requested_timeout() {
+        let policy = super::build_mxc_policy(&super::MxcPolicyRequest {
+            program: "wxc-exec.exe".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from(r"C:\ws"),
+            env: BTreeMap::new(),
+            timeout_ms: 12_345,
+            read_only_roots: Vec::new(),
+            read_write_roots: vec![PathBuf::from(r"C:\ws")],
+        });
+        assert_eq!(policy["process"]["timeout"], 12_345u64);
     }
 
     #[cfg(windows)]

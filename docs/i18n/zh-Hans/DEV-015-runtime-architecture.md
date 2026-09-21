@@ -62,6 +62,14 @@ sequenceDiagram
 - FS 写路径经 rustix openat2 helper（create/open/rename/copy 四类），no-follow + revalidation + 原子写入，防 symlink/TOCTOU。
 - 执行事件走结构化日志（`info` 级，全经 `RedactingWriter` 脱敏）；`command`/`args`/`stdout` 与 job 输出内容永不进明文日志（由 `scan-log-secrets` 门禁覆盖）。
 
+### 3.1 进程 Job 引擎（非 Docker 执行模式，PLAN-0393/0394）
+
+- 每个 Job 独占一个 Windows Job Object（创建即设 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）；spawn 先挂 Job 再 resume，子进程无逃逸窗口；Runtime 崩溃由句柄关闭连锁终止（`job_engine/win.rs` 为唯一 `unsafe` 边界）。
+- 输出落 `<state_dir>/job-output/<jobId>/{stdout,stderr}.log`：每流上限 1 MiB、`truncated` 显式；读游标为 UTF-8 边界安全的字节偏移（缺省 64 KiB / 上限 1 MiB）；终态 15 分钟后由维护 tick 回收，`cleanup` 立即回收，启动时清理孤儿目录。
+- 取消 = `TerminateJobObject` + 轮询确认树空；未确认返回 `unconfirmed` 且不报成功；默认路径失败才记录并尝试 `taskkill` 兜底；引擎内部产 `timed_out`，HTTP 投影折回 wire 的 `timeout`（CP 状态机暂只认后者）。
+- MXC adapter（PLAN-0394）：`wxc-exec.exe <policy.json>`；policy 由 `process_guard::build_mxc_policy` 生成（one-shot 与 job 共用），字段集为 M0 实测最小可用集——`filesystem.readonlyPaths` **必须含被启动程序所在目录**（缺则真程序 `0xC0000142` 静默失败）、`fallback.allowDaclMutation`、`processContainer.capabilities`、`network`、`ui.disable`。policy artifact 写入该 job 的输出目录并随既有回收路径删除，路径不上行；启动前 probe，不可用一律 fail-closed（不降级宿主）。
+- 路由投影：保留 CP 已消费的旧键并增量追加 0390 键；禁止键（`pid`/`policyPath`/tier 等）不出现于任何响应。
+
 ## 4. Lazy 物化与生命周期（PLAN-222）
 
 - Runtime 启动只完成自身 liveness/readiness；经受保护的 targeted ExecutionSpec API 按 `workspaceId` 懒加载 Workspace，首次文件/命令/MCP 操作时才物化目标 Sandbox。
