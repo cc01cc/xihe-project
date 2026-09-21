@@ -1,6 +1,6 @@
 # XH Execution Job scope 与 durable continuation
 
-> 契约状态：`proposed`；实现状态：`partial`（start/list projection、scope/幂等与 `interrupted` 对账已落地；Windows 进程引擎（PLAN-0393）已提供 Job Object 归属/有界输出/取消确认/cleanup 与 internal `jobs/cleanup`+`jobs/capabilities` 入口，`windows-host` job 已通；`windows-mxc` policy 组装（0394）、release/resume 与 Docker adapter（0392）未完成）；Profile：`workspace/data/security`；Owner：CP durable-record + Runtime Job owners；来源：PLAN-0390；更新：2026-09-21。
+> 契约状态：`proposed`；实现状态：`partial`（start/list projection、scope/幂等与 `interrupted` 对账已落地；Windows 进程引擎（PLAN-0393）已提供 Job Object 归属/有界输出/取消确认/cleanup 与 internal `jobs/cleanup`+`jobs/capabilities` 入口，`windows-host` job 已通；`windows-mxc` policy 组装（0394）、`windows-host` adapter（0395）、能力透出（0396）与 one-shot 并入引擎（0397）已落地；release/resume 与 Docker adapter（0392）未完成）；Profile：`workspace/data/security`；Owner：CP durable-record + Runtime Job owners；来源：PLAN-0390；更新：2026-09-21。
 
 ## 1. 对象边界
 

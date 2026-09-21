@@ -1,11 +1,11 @@
 # Sandbox backend 与 capability
 
 > 契约状态：`proposed`  
-> 实现状态：`partial`（Docker seam 已有；Windows backend 未完成）  
+> 实现状态：`partial`（Docker seam 已有；Windows `windows-mxc`/`windows-host` 一次性执行与 Job 归属、MXC policy 字段集、能力透出已落地——PLAN-0379/0393/0394/0395/0397；release/resume 与 Docker Job adapter（0392）未完成）  
 > Owner：Runtime SandboxBackend  
 > 消费者：CP preflight、Workspace UI、Agent tool path、Runtime executor  
 > 来源：PLAN-0389、DEV-031、PLAN-0329/0347/0379  
-> 更新日期：2026-09-21
+> 更新日期：2026-09-21（状态同步：Windows backend 已落地）
 
 ## 公共能力快照
 
@@ -43,5 +43,5 @@ MCP 长驻 session 是可选能力；后端没有 session 但有 execute 时只�
 ## 验证映射
 
 - 当前 Runtime seam：`packages/runtime/src/backend.rs`、DEV-031。
-- Windows backend target/evidence：PLAN-0379；当前仍 partial。
+- Windows backend target/evidence：PLAN-0379（一次性执行）+ PLAN-0393/0394/0395/0397（Job 引擎、MXC/Host adapter、one-shot 收敛）；证据见各计划 `evidence/`，当前 partial 仅剩 release/resume 与 Docker Job adapter（0392）。
 - fail-closed、capability mismatch 和 explicit host：PLAN-0389 T3.2/V7，尚未完成真实 backend 证据。

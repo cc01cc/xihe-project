@@ -111,6 +111,7 @@ PLAN-0388 已建立 UI interaction/design/accessibility proposed 草案；它们
 PLAN-0389 已建立 Workspace/Configuration proposed 草案；Workspace logical resource、execution binding、storage/checkpoint、import/events 和进程可见配置来源保持分层：
 
 - [Workspace 生命周期与绑定](workspace/lifecycle.md)
+- [Execution Job scope 与 durable continuation](workspace/execution-job.md)
 - [Sandbox backend 与 capability](workspace/sandbox-backend.md)
 - [Workspace Storage 与 Checkpoint slice](workspace/storage-checkpoint.md)
 - [Workspace Import、Copy、Direct Attach 与 Reuse](workspace/import.md)

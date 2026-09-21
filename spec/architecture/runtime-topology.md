@@ -1,6 +1,6 @@
 # XH Runtime 运行拓扑
 
-> 契约状态：`proposed`；实现状态：`partial`（拓扑已落地；Windows backend 未完成）；Profile：`architecture`；Owner：Runtime owner；消费者：CP Workspace/Job owner、Agent tool path、UI Workspace、Security capability owner、审查者；来源：PLAN-0389（用户指示补充）；更新：2026-09-21。
+> 契约状态：`proposed`；实现状态：`partial`（拓扑已落地；Windows backend 一次性执行 + Job 引擎已落地——PLAN-0379/0393/0394/0395/0397；release/resume 与 Docker Job adapter 未完成）；Profile：`architecture`；Owner：Runtime owner；消费者：CP Workspace/Job owner、Agent tool path、UI Workspace、Security capability owner、审查者；来源：PLAN-0389（用户指示补充）；更新：2026-09-21。
 
 ## 1. 范围
 
@@ -115,12 +115,13 @@ flowchart TB
 读图结论与适用边界：
 
 - `executionMode` 决定执行实体；通道决定一次操作如何进出执行实体。Docker backend 支持三条通道；`session` 在其他 backend 是可选能力，缺失时按 `UNSUPPORTED` 显式返回，不因 Docker 支持就声称所有 backend 支持长驻会话。
-- MXC 首版以一次性命令执行为主；`windows-host` 直接在宿主产生裸进程，不经过任何收容。
+- MXC 与宿主执行均已支持一次性命令与后台 Job（Job Object 归属、kill-on-close、有界输出、取消确认，PLAN-0393/0397）；`windows-host` 直接在宿主产生裸进程，不经过任何收容。
 
 执行通道语义：
 
 | 通道 | 建立方式 | 生命周期 | 典型用途 |
 |---|---|---|---|
+| Job cleanup / capabilities | CP `.../jobs/cleanup`（`{jobId}` → outcome/reason/processes）、`.../jobs/capabilities`（0390 形能力，含 `unavailableReason`）；能力经 CP environment `jobCapability` 上行 UI | 非 Docker 模式由 `job_engine` 提供；Docker 模式 capabilities 显式 501 `JOB_BACKEND_LAUNCH_PENDING` |
 | backend-neutral Job start | CP `POST /internal/v1/runtime/workspaces/{ws_id}/jobs/start` → 该 Workspace backend 的 launcher | 由 backend 决定（Docker 走下方 detach job）；无 launcher 显式 `501 JOB_BACKEND_LAUNCH_PENDING` | Workspace Job（scope `run/session/workspace`）；CP 是 durable 唯一写者，Runtime 只返回 `{jobId,status,operationItemId,bootId}` |
 | per-request oneshot exec | create_exec → start_exec(attach) → 单帧 op JSON → 读首个完整 result JSON → EOF 清理 | 单次操作 | 文件/命令/PDF/审批后 apply_patch |
 | exec attach 长驻会话 | exec attach（非 TTY，换行分隔 JSON-RPC） | `(workspace, serverId)` 会话，FIFO 单飞 | stdio MCP server |
@@ -147,7 +148,7 @@ Sandbox 容器隔离基线（Docker backend 当前事实）：workspace 目录 b
 - 部分REST 文件操作仍直连 host filesystem（未统一走 executor router），已登记 Runtime 技术债（A03 AGENTS Known Issues）。
 - CP `Workspace.hostPath` 原值持久化与「CP 保存逻辑 binding、Runtime 保存 canonical path」目标存在 drift（PLAN-0389 `evidence/current-state.md`）。
 - `ensure/destroy` 接缝当前位于 WorkspaceManager/WorkspaceRegistry 双路径，收敛由后续生命周期专项承接（DEV-031 §1）。
-- `windows-mxc` / `windows-host` backend 实现与真实运行证据由 PLAN-0379 与 PLAN-0389 T3.2 承接，尚未完成。
+- `windows-mxc` / `windows-host` backend 实现与真实运行证据已落地（PLAN-0379 一次性执行 + 0393 Job 引擎 + 0394/0395 adapter + 0397 one-shot 收敛；10 条 conformance 两适配器 10/10，浏览器证据见 0396）。
 
 ## 8. 验证映射
 
