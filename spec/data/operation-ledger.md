@@ -1,6 +1,6 @@
 # XH Operation Ledger
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`data`；Owner：CP durable-record owner；来源：PLAN-0385；更新：2026-09-20。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`data`；Owner：CP durable-record owner；来源：PLAN-0385；更新：2026-09-21。
 
 ## 1. 对象边界
 
@@ -12,6 +12,8 @@
 | OperationEvent | append-only 状态/事实事件 | CP durable ledger |
 | Extension | 类型化附加事实，如 usage/job/policy | CP durable ledger + schema |
 | Tool pair | Agent/MCP 两侧同一 tool call 的只读配对投影 | CP projection |
+
+Workspace Job 复用本条 ledger 链：`ledger_operations(kind=job)` → `operation_items(kind=job)` → `operation_extensions(extension_kind='job_state', schema_version=1)`。`job_state` extension 由 **CP 独占持有与写入**（Runtime 只返回执行事实，不写 CP DB）；payload 键见 DEV-019 §3.7，Job 契约（scope/收口/`interrupted`/start route）见 [`spec/workspace/execution-job.md`](../workspace/execution-job.md)。
 
 ## 2. 关联键与来源
 

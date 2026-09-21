@@ -6,9 +6,14 @@ import { useAuthStore } from '../../stores/auth'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import { LoaderCircle, RefreshCw } from '@lucide/vue'
+import type {
+  WorkspaceJob,
+  WorkspaceJobCancelReason,
+  WorkspaceJobCleanupStatus,
+  WorkspaceJobStatus,
+} from '../../types'
 
 type Environment = Awaited<ReturnType<typeof api.getWorkspaceEnvironment>>
-type WorkspaceJob = Awaited<ReturnType<typeof api.getWorkspaceJobs>>[number]
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -83,6 +88,81 @@ const showPrepare = computed(() => {
   const s = (environment.value?.status ?? '').toLowerCase()
   return s === 'unbound' || s === 'pending' || s === 'blocked'
 })
+
+const TERMINAL_JOB_STATUSES: ReadonlySet<string> = new Set([
+  'succeeded',
+  'cancelled',
+  'timeout',
+  'orphaned',
+  'interrupted',
+])
+
+const JOB_STATUS_LABELS: Partial<Record<WorkspaceJobStatus, string>> = {
+  pending: '等待中',
+  running: '运行中',
+  succeeded: '已完成',
+  cancelled: '已取消',
+  timeout: '已超时',
+  orphaned: '已孤立',
+  interrupted: '已中断',
+}
+
+const JOB_CANCEL_REASON_LABELS: Partial<Record<WorkspaceJobCancelReason, string>> = {
+  user_cancel: '用户取消',
+  scope_run_end: 'Run 结束',
+  scope_session_stop: 'Session 停止',
+  workspace_destroy: '工作区销毁',
+  runtime_restart: 'Runtime 重启',
+  destroy_orphan: '销毁时清理孤儿',
+  job_missing: 'Job 记录缺失',
+}
+
+const JOB_CLEANUP_STATUS_LABELS: Partial<Record<WorkspaceJobCleanupStatus, string>> = {
+  not_started: '清理未开始',
+  running: '清理中',
+  completed: '清理完成',
+  failed: '清理失败',
+}
+
+function jobStatusLabel(status: string): string {
+  return JOB_STATUS_LABELS[status as WorkspaceJobStatus] ?? status
+}
+
+function jobCancelReasonLabel(reason: string): string {
+  return JOB_CANCEL_REASON_LABELS[reason as WorkspaceJobCancelReason] ?? reason
+}
+
+function jobCleanupStatusLabel(status: string): string {
+  return JOB_CLEANUP_STATUS_LABELS[status as WorkspaceJobCleanupStatus] ?? status
+}
+
+function isTerminalJob(status: string): boolean {
+  return TERMINAL_JOB_STATUSES.has(status)
+}
+
+/**
+ * One line of secondary job detail: terminal jobs surface `cancelReason` / `errorCode`,
+ * non-terminal jobs surface `cleanupStatus` once cleanup has actually started.
+ */
+function jobDetailText(job: WorkspaceJob): string {
+  const parts: string[] = []
+  if (isTerminalJob(job.status)) {
+    if (job.cancelReason) parts.push(jobCancelReasonLabel(job.cancelReason))
+    if (job.errorCode) parts.push(job.errorCode)
+  } else if (job.cleanupStatus && job.cleanupStatus !== 'not_started') {
+    parts.push(jobCleanupStatusLabel(job.cleanupStatus))
+  }
+  return parts.join(' · ')
+}
+
+// Backend launcher is only implemented for the Docker backend; other execution modes stay
+// visible but disabled with an explicit reason (deferred-capability convention).
+const jobStartAvailable = computed(() => environment.value?.executionMode === 'docker')
+const jobStartReason = computed(() =>
+  jobStartAvailable.value
+    ? '可启动 Job（Docker 后端）'
+    : `Job 启动暂不可用：${environment.value?.executionMode ?? '未知'} 后端尚无启动器`,
+)
 
 async function loadEnvironment() {
   const id = workspaceId.value
@@ -299,18 +379,34 @@ onBeforeUnmount(stopPolling)
             </dl>
           </article>
           <article class="rounded-lg border p-5 md:col-span-2" data-testid="workspace-jobs-panel">
-            <div class="flex items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
               <h2 class="font-medium">Workspace Jobs</h2>
-              <span class="text-xs text-muted-foreground">{{ jobs.length }} 条</span>
+              <div class="flex items-center gap-3">
+                <span
+                  class="rounded border px-2 py-1 text-xs text-muted-foreground"
+                  :class="jobStartAvailable ? '' : 'opacity-60 cursor-not-allowed'"
+                  :aria-disabled="!jobStartAvailable"
+                  :title="jobStartReason"
+                  data-testid="workspace-job-start-hint"
+                >
+                  {{ jobStartReason }}
+                </span>
+                <span class="text-xs text-muted-foreground">{{ jobs.length }} 条</span>
+              </div>
             </div>
             <p v-if="jobs.length === 0" class="mt-3 text-sm text-muted-foreground">暂无 durable Job</p>
             <ul v-else class="mt-3 divide-y text-sm">
               <li v-for="job in jobs" :key="job.operationItemId" class="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div class="min-w-0">
                   <p class="truncate font-mono text-xs">{{ job.operationItemId }}</p>
-                  <p class="mt-1 text-xs text-muted-foreground">{{ job.source }} · {{ job.scope }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground" data-testid="workspace-job-secondary">
+                    {{ job.source }} · {{ job.scope }} · {{ job.backendKind ?? '未知后端' }}
+                    <template v-if="jobDetailText(job)"> · {{ jobDetailText(job) }}</template>
+                  </p>
                 </div>
-                <span class="rounded border px-2 py-1 text-xs">{{ job.status }}</span>
+                <span class="rounded border px-2 py-1 text-xs" data-testid="workspace-job-status">
+                  {{ jobStatusLabel(job.status) }}
+                </span>
               </li>
             </ul>
           </article>

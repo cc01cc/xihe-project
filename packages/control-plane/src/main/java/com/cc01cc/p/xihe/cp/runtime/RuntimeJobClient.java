@@ -13,6 +13,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -158,6 +159,92 @@ public class RuntimeJobClient {
             return JobCancelResult.unreachableResult();
         }
         return new JobCancelResult(true, true, status);
+    }
+
+    /**
+     * PLAN-0390 M2：启动一个 durable Job（Runtime internal `jobs/start`）。
+     *
+     * <p>`launched=true` 表示 Runtime 返回 2xx 且带 jobId；`backendPending=true`
+     * 表示 backend 无 launcher（direct-attach，Runtime 501 `JOB_BACKEND_LAUNCH_PENDING`），
+     * 由 CP 折叠为 501，不 fallback 到其它 backend。
+     */
+    public record JobStartResult(boolean reachable, boolean launched, boolean backendPending,
+                                 String jobId, String errorCode) {
+
+        static JobStartResult unreachableResult() {
+            return new JobStartResult(false, false, false, null, null);
+        }
+    }
+
+    public JobStartResult startJob(String workspaceId, String operationItemId, String command,
+                                   List<String> args, String cwd, Long timeoutSecs,
+                                   Map<String, String> env) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("operationItemId", operationItemId);
+        body.put("command", command);
+        body.put("args", args == null ? List.of() : args);
+        if (cwd != null && !cwd.isBlank()) {
+            body.put("cwd", cwd);
+        }
+        body.put("timeoutSecs", timeoutSecs == null ? 0L : timeoutSecs);
+        if (env != null && !env.isEmpty()) {
+            body.put("env", env);
+        }
+        HttpResponse<String> response = post(workspaceId, "/jobs/start", body);
+        if (response == null) {
+            return JobStartResult.unreachableResult();
+        }
+        if (response.statusCode() == 501) {
+            return new JobStartResult(true, false, true, null, "JOB_BACKEND_LAUNCH_PENDING");
+        }
+        if (response.statusCode() / 100 != 2) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_job_start_http_error workspaceId={} status={}",
+                    workspaceId, response.statusCode());
+            return JobStartResult.unreachableResult();
+        }
+        JsonNode node = readTree(response.body());
+        String jobId = node == null ? null : node.path("jobId").asText(null);
+        if (jobId == null || jobId.isBlank()) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_job_start_missing_job_id workspaceId={}",
+                    workspaceId);
+            return JobStartResult.unreachableResult();
+        }
+        return new JobStartResult(true, true, false, jobId, null);
+    }
+
+    /**
+     * PLAN-0390 决策 #11：Runtime 进程 bootId（每次启动重新生成）。
+     * 经 internal diagnostics 通道读取（`/health` 的 body 契约保持 `OK` 不变）。
+     * 读不到（不可达/字段缺失）返回 null，调用方按「未知」处理而不误判重启。
+     */
+    public String runtimeBootId() {
+        HttpResponse<String> response = get("/internal/v1/runtime/diagnostics");
+        if (response == null || response.statusCode() / 100 != 2) {
+            return null;
+        }
+        JsonNode node = readTree(response.body());
+        if (node == null) {
+            return null;
+        }
+        String bootId = node.path("bootId").asText(null);
+        return bootId == null || bootId.isBlank() ? null : bootId;
+    }
+
+    private HttpResponse<String> get(String path) {
+        String url = runtimeUrl + path;
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + serviceToken)
+                    .GET()
+                    .timeout(CALL_TIMEOUT)
+                    .build();
+            return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_get_unreachable path={} error={}",
+                    path, e.getMessage());
+            return null;
+        }
     }
 
     private HttpResponse<String> post(String workspaceId, String suffix, Map<String, Object> body) {

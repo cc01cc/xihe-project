@@ -32,16 +32,19 @@ public class SessionController {
     private final ChatController chatController;
     private final ChatRunCancellationService chatRunCancellationService;
     private final SseEmitterManager sseEmitterManager;
+    private final com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService;
 
     public SessionController(SessionService sessionService, ContextService contextService,
                              ChatController chatController,
                              ChatRunCancellationService chatRunCancellationService,
-                             SseEmitterManager sseEmitterManager) {
+                             SseEmitterManager sseEmitterManager,
+                             com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService) {
         this.sessionService = sessionService;
         this.contextService = contextService;
         this.chatController = chatController;
         this.chatRunCancellationService = chatRunCancellationService;
         this.sseEmitterManager = sseEmitterManager;
+        this.jobScopeClosureService = jobScopeClosureService;
     }
 
     @GetMapping
@@ -150,6 +153,15 @@ public class SessionController {
                     sessionId, workspaceId, "session_deleted");
             chatRunCancellationService.awaitTerminalDelivery(
                     sessionId, inFlightRuns, SESSION_DELETE_SSE_WAIT);
+            // PLAN-0390 T1.3：session 硬删前关闭 scope=session 的 active Job。
+            // ledger_operations 随 session 级联删除，收口必须在删除前完成，
+            // 否则 Runtime 进程会失去 CP 侧引用（会话级 Job 不得跨 Session 存活）。
+            try {
+                jobScopeClosureService.closeSessionScope(sessionId);
+            } catch (RuntimeException e) {
+                logger.warn("[LIFECYCLE] service=cp event=job_scope_session_close_failed sessionId={} error={}",
+                        sessionId, e.getMessage());
+            }
             sessionService.delete(sessionId, userId, workspaceId);
             sseEmitterManager.complete(sessionId);
             logger.info("[LIFECYCLE] service=cp event=session_deleted sessionId={} inFlightRuns={} outcome=ok",

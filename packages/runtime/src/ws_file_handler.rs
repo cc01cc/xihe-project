@@ -439,6 +439,7 @@ mod tests {
             registry: registry.clone(),
             manager: manager.clone(),
             device_id: "test-device".to_string(),
+            boot_id: uuid::Uuid::new_v4().to_string(),
             ready: Arc::new(AtomicBool::new(true)),
             workspace_ensurer: workspace_ensurer.clone(),
             router: router.clone(),

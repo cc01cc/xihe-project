@@ -27,6 +27,15 @@ public interface LedgerOperationRepository extends JpaRepository<LedgerOperation
     Optional<LedgerOperation> findByUserIdAndSessionIdAndIdempotencyKey(
             String userId, String sessionId, String idempotencyKey);
 
+    /**
+     * PLAN-0390：Workspace 级 Job（session_id 为 NULL）的幂等键。
+     * 既有 {@code uq_session_operations_idempotency} 在 session_id NULL 时
+     * 不构成约束（Postgres 唯一索引把 NULL 视为互异），因此另加
+     * {@code uq_ledger_operations_workspace_job_idempotency} 承载该语义。
+     */
+    Optional<LedgerOperation> findByUserIdAndWorkspaceIdAndKindAndIdempotencyKey(
+            String userId, String workspaceId, String kind, String idempotencyKey);
+
     List<LedgerOperation> findBySessionIdOrderByCreatedAtDesc(String sessionId);
 
     List<LedgerOperation> findByWorkspaceIdOrderByCreatedAtDesc(String workspaceId);

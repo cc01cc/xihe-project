@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-09-16
-updated: 2026-09-17
+updated: 2026-09-21
 ---
 
 # DEV-032: 术语规范（一词多义与多词一义）
@@ -37,6 +37,10 @@ updated: 2026-09-17
 | | checkpoint 恢复层 L1/L2/L3 | **`checkpoint L1`** 等（中文：**检查点 L1 层**） | 裸 `L1` | 0338 |
 | **resume** | A. 会话 / ChatRun 恢复 | **`run resume`**（中文：**run 恢复**） | 裸 `resume` 指 unpause | 既有 chat 语义 |
 | | B. 工作区从 `paused` 回到可用 | **`unpause`**（中文：**解除暂停**） | 裸 `resume` 指 workspace；`恢复消费者` 作唯一正名 | 见 §2 unpause 路径 |
+| **scope** | A. Job 的存活边界 | **`job scope`**（值 `run/session/workspace`） | 裸 `scope` 指策略层 | 0390；canonical identity 是 `operationItemId` |
+| | B. 策略/工具面的作用层 | **`policy scope`**（`instance/workspace/user`；tool-face 另有 `builtin`） | 裸 `scope` 指 Job | 0328 |
+| **interrupted** | Job 因 Runtime 重启或派发未确认落定的终态 | **`job interrupted`** | 与 run `ambiguous` 混用；称「已恢复/已重放」 | 0390；不自动重放 |
+| **runtimeBootId** | Runtime 单进程 boot 标识 | **`runtimeBootId`** | 当作业务 identity | 0390；变化即把未确认 Job 判 `interrupted` |
 | **job** | 现行后台任务 | **`durable job`**（中文：**持久后台任务**） | 混指已删表 | 0344 |
 | | 历史表 | **`runtime_jobs`（历史，已删除）** | 当作现行 job | 0326 已删 |
 | **snapshot** | 现行写前恢复点 | **`checkpoint`**（中文：**检查点**） | 活动文档用 `snapshot` 表恢复点 | 0356/0357 已切换 |
@@ -91,6 +95,8 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | ensure single-flight | chat `409 CHAT_IN_PROGRESS` | 沙盒就绪 vs 会话单并发 run |
 | execution lease holder | workspace 角色 owner | 执行租约 vs RBAC 角色 |
 | run resume | unpause | 会话恢复 vs 容器解除暂停 |
+| **durable job 续看** | **Workspace `unpause` / `run resume`** | 读既有 Job 输出（`job-output`，只读游标）vs 重新激活执行；禁止把续看说成恢复/unpause |
+| **job `interrupted`** | **run `ambiguous`** | Job 因 Runtime 重启判死且不重放 vs run 终态未定、待人工确认 |
 | 收敛 | 收口 | 见 §1 两行 |
 
 ## 3. 推荐搭配（中英）
@@ -110,6 +116,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 |---|---|
 | 本文档发布（2026-09-16） | 未实施 XH PLAN README/spec 按 §1–§3 对齐；完成包不强制回写 |
 | 2026-09-17 增补 | 新增 §1.1（principal / membership / 协作≠委托）、`owner` 第三义（资源归属）、`role` 分域；未实施 PLAN 与 docs 按新正名；实现归 backlog BL-18（不实施） |
+| 2026-09-21 增补 | 新增 `scope` / `interrupted` / `runtimeBootId` 分义；§2.3 明确 **durable job 续看 ≠ Workspace `unpause` / `run resume`**（0390） |
 | 已完成 PLAN / archive / review | **不改**历史证据用词；再次编辑该文件时顺带对齐 |
 | 代码标识符 | 不在本文档批量改名；需改名另开 PLAN（参考 0356） |
 
@@ -117,6 +124,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 
 - 契约层正名 `ensure`：DEV-031、PLAN-0329
 - 生命周期 lease / unpause：PLAN-0345 `spec/workspace-lifecycle.md`
+- Job scope / interrupted / runtimeBootId：`spec/workspace/execution-job.md`、PLAN-0390
 - 主体/成员/归属与 Agent 主体化：workspace internal `xh-backlog-and-debt.md` BL-18（不入库分发）
 - prune / compaction：PLAN-0341
 - checkpoint 命名：PLAN-0356

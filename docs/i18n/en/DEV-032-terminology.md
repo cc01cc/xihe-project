@@ -6,7 +6,7 @@ lang: en
 sidebar_group: "Developer Guide"
 status: active
 created: 2026-09-16
-updated: 2026-09-16
+updated: 2026-09-21
 ---
 
 # DEV-032: Terminology (Polysemy and Synonyms)
@@ -34,6 +34,10 @@ updated: 2026-09-16
 | | Checkpoint restore layers | **`checkpoint L1`** | bare `L1` |
 | **resume** | Session / ChatRun recovery | **`run resume`** | bare `resume` for unpause |
 | | Leave workspace `paused` | **`unpause`** | bare `resume` / sole name “recovery consumer” |
+| **scope** | Job lifetime boundary | **`job scope`** (`run/session/workspace`) | bare `scope` for the policy layer |
+| | Policy / tool-face layer | **`policy scope`** (`instance/workspace/user`; tool faces also `builtin`) | bare `scope` for a Job |
+| **interrupted** | Job terminal caused by Runtime restart or unconfirmed start | **`job interrupted`** | blend with run `ambiguous`; call it “recovered/replayed” |
+| **runtimeBootId** | Runtime per-process boot id | **`runtimeBootId`** | treat as a business identity |
 | **job** | Current background job | **`durable job`** | mix with deleted table |
 | | Historical table | **`runtime_jobs` (legacy, deleted)** | treat as live |
 | **snapshot** | Current pre-write restore point | **`checkpoint`** | active docs using `snapshot` for restore point |
@@ -71,6 +75,8 @@ updated: 2026-09-16
 | ensure single-flight | chat `409 CHAT_IN_PROGRESS` |
 | execution lease holder | workspace role owner |
 | run resume | unpause |
+| **durable job continuation** | **Workspace `unpause` / `run resume`** — reading existing Job output (`job-output`, read-only cursor) is not reactivating execution |
+| **job `interrupted`** | **run `ambiguous`** — Job judged dead by a Runtime restart (never replayed) vs run terminal still undecided |
 | converge | route-to-seam |
 
 ## 3. Recommended phrasings
@@ -87,9 +93,10 @@ updated: 2026-09-16
 | Phase | Action |
 |---|---|
 | 2026-09-16 | Align unstarted XH PLAN README/spec to §1–§3 |
+| 2026-09-21 | Add `scope` / `interrupted` / `runtimeBootId`; §2.3 separates **durable job continuation** from Workspace `unpause` / `run resume` (PLAN-0390) |
 | Completed / archive / review | No historical rewrite; align when file is edited |
 | Code identifiers | Separate PLAN if renamed (cf. 0356) |
 
 ## 5. Related
 
-DEV-031 / PLAN-0329 (`ensure`); PLAN-0345 (lease, unpause); PLAN-0341 (prune, compaction); PLAN-0356 (checkpoint); DEV-030 (doc layout).
+DEV-031 / PLAN-0329 (`ensure`); PLAN-0345 (lease, unpause); PLAN-0341 (prune, compaction); PLAN-0356 (checkpoint); DEV-030 (doc layout); PLAN-0390 + `spec/workspace/execution-job.md` (`job scope` / `interrupted` / `runtimeBootId`).

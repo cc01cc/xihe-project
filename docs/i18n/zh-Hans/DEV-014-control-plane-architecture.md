@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 14
 status: active
 created: 2026-09-03
-updated: 2026-09-20
+updated: 2026-09-21
 ---
 
 # DEV-014: CP 架构
@@ -106,14 +106,17 @@ flowchart LR
 
 ## 9. Durable job 档案与续看（PLAN-0344）
 
-- **档案**：与 append-only 的账本 extension 不同，job 状态是可变事实——`job_state` extension v1 锚定 tool_call item，按状态机前进 upsert（行锁串行化 + 唯一索引竞争重试一次；running → 终态一次性、终态不可回退/异终态覆盖丢弃）。字段与状态机冻结口径见 [PLAN-0344 job-freeze](../../../../plans/archive/20260918/PLAN-0344-XH-durable-job-continuation/evidence/job-freeze.md)；`scope` 已支持 `run/session/workspace`，缺省仍为 `session`，Workspace scope 目标态由 PLAN-0390 承接。
+- **档案**：与 append-only 的账本 extension 不同，job 状态是可变事实——`job_state` extension v1 锚定 tool_call item，按状态机前进 upsert（行锁串行化 + 唯一索引竞争重试一次；running → 终态一次性、终态不可回退/异终态覆盖丢弃）。canonical identity 是 `operationItemId`（历史 Docker `jobId`、PID、host handle 只作 backend diagnostics）。字段与状态机冻结口径见 [PLAN-0344 job-freeze](../../../../plans/archive/20260918/PLAN-0344-XH-durable-job-continuation/evidence/job-freeze.md)。`scope` 取 `run/session/workspace`（缺省 `session`），是 Job 存活边界。
+- **Start 与幂等（PLAN-0390 M2）**：`POST /api/v1/workspaces/{workspaceId}/jobs`（header `Idempotency-Key` 必填）创建 `ledger_operations(kind=job)` 根与 job item 并派发执行；同 key 重放返回既有 projection（`200`，不产生第二个进程），同 key 但 `command/args/cwd/timeoutSecs` 不同 → `409 JOB_IDEMPOTENCY_CONFLICT`；缺 header → `400 IDEMPOTENCY_KEY_REQUIRED`；`executionMode` 非 `docker`（无 launcher）→ `501 JOB_BACKEND_LAUNCH_PENDING` 且不建 durable 档案；派发未确认 → `502 RUNTIME_UNAVAILABLE` 且档案落 `interrupted`。无 Session 的 Job root 的幂等由 V36 部分唯一索引 `uq_ledger_operations_workspace_job_idempotency (user_id, workspace_id, kind, idempotency_key) WHERE idempotency_key IS NOT NULL AND session_id IS NULL` 保护（此前 Postgres 视 NULL 互异，session-less root 无幂等）。
+- **Scope 收口**：run 进入终态收口该 `runId` 下 `scope=run` 的 active Job（`cancelReason=scope_run_end`）；session 硬删收口 `scope=session`（`scope_session_stop`）；Workspace 逻辑删除收口该 Workspace 全部 active Job（销毁路径落 `destroy_orphan`）。收口一律 best-effort 调 Runtime cancel，未确认时保留显式未确认态，不静默成功、不跨 scope 越界。
+- **恢复**：`JobReconciliationService` 对账时若 Runtime `bootId`（`GET /internal/v1/runtime/diagnostics` 暴露）与档案 `runtimeBootId` 不一致，则该 Job 落 `interrupted`（`cancelReason=runtime_restart`）且**不自动重放**；SSE/HTTP 断线不改变 Job 状态。
 - **三源回填**：① `McpProxyController` 在 start/get/cancel 工具成功后同步（best-effort，失败不影响派发）；② `JobReconciliationService` 周期（默认 5 分钟）只查档案内 running 的 jobId 走 Runtime `get_background_process`（不扫全容器），job 消失且非不可达 → `orphaned`；③ destroy 窗口内 Runtime `delete_workspace_handler` 在 destroying 标记后、容器 stop 前枚举存活 job 并随删除响应返回 `jobIds`，CP `markOrphanedForWorkspace` 落 orphaned（枚举失败 = fail-closed 全量落 orphaned）。
 - **续看**：`GET /api/v1/operations/items/{itemId}/job-output`（Workspace access：item → operation.workspaceId）经 Runtime 内部路由 `jobs/output` 读容器文件；分页按字节 `offset`（缺省 64KiB / 上限 1MiB），`nextOffset` 由 Runtime `utf8_safe_chunk` 保证恒为 UTF-8 rune 边界（CP 不做二次裁剪）；容器销毁 → 409 `JOB_OUTPUT_LOST`，终态但文件被 TTL 清理 → 409 `JOB_OUTPUT_EXPIRED`，Runtime 不可达 → 502。列 job 状态走 `jobs/status`。
 - **计时**：运行时限按累计运行时间——空闲回收暂停前 `mark_jobs_paused` 打点、unpause 激活后折算 `paused_total_secs`，enforce 判定扣除暂停时长（消除「解冻即 timeout」误杀）。
-- **唯一写者**：`job_state` 只由 CP 写（Runtime 不写数据库）；Runtime 侧只暴露内部读路由与删除响应枚举，MCP 工具面不变。
+- **唯一写者**：`job_state` 只由 CP 写（Runtime 不写数据库）；Runtime 只返回执行事实（内部 `jobs/start` 返回 `{jobId,status,operationItemId,bootId}`，`jobs/status`/`jobs/output`/`jobs/cancel` 只作读取或动作结果），MCP 工具面不变。
 - **单 job 取消（PLAN-0366）**：`POST /api/v1/operations/items/{itemId}/cancel`（Workspace access，与续看同键位）→ Runtime 内部路由 `jobs/cancel`（复用四阶段终止；`failed`=终止未确认）。已终态幂等 200 + 原状态 + `changed:false`；未确认 → 502 `JOB_CANCEL_UNCONFIRMED` 且档案不变；Runtime 404 → 档案落 `orphaned`（`cancelReason=job_missing`，与销毁/对账的 `destroy_orphan` 语义区分）；Runtime 不可达 → 502。取消 job ≠ 取消 run/对话终态；归属校验通过且存在档案的每次调用写 `operation_events`（`event_type=job.cancel`、`actor=user`、payload jobId/workspaceId/runId/result/changed），不改写 `ledger_operations.actor_type`。
 
-> **PLAN-0390 draft（2026-09-21）**：现行实现已支持最终 schema version 1 的 scope 字段和 Workspace access output/cancel；Workspace Job list projection 已落地。backend JobHandle、start/output cursor、release/resume 和完整 scope termination 仍由 PLAN-0390 M2、0392–0395、0391 承接。
+> **PLAN-0390 进度（2026-09-21）**：已落地 scope 字段（最终 schema version 1）、Workspace Job start（`Idempotency-Key` + V36 session-less 幂等）与 list projection、Workspace access output/cancel、`interrupted` 对账。backend-neutral JobHandle/adapter、output cursor 完善、release/resume 和完整 scope termination 仍由 PLAN-0390 后续、0392–0395、0391 承接（接口冻结见 workspace 根 `plans/PLAN-0390-XH-execution-job-backends/spec/job-handle-contract.md`）。
 
 ## 10. 摘要 provider seam 与 LLM 回退（PLAN-0354）
 

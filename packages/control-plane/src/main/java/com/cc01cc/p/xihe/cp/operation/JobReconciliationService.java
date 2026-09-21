@@ -45,6 +45,21 @@ public class JobReconciliationService {
         if (candidates.isEmpty()) {
             return;
         }
+        // PLAN-0390 T2.3（决策 #11）：Runtime 重启判据 = bootId 变化。
+        // 进程重启后旧 handle 一律失效：记录过旧 bootId 的 active Job 落
+        // interrupted（cancelReason=runtime_restart），不自动重放。
+        int interrupted = 0;
+        String currentBootId = runtimeJobClient.runtimeBootId();
+        if (currentBootId != null) {
+            List<String> workspaces = candidates.stream()
+                    .map(JobStateService.JobStateRef::workspaceId)
+                    .filter(java.util.Objects::nonNull)
+                    .distinct()
+                    .toList();
+            for (String workspaceId : workspaces) {
+                interrupted += jobStateService.markInterruptedForRuntimeRestart(workspaceId, currentBootId);
+            }
+        }
         int synced = 0;
         int orphaned = 0;
         int unreachable = 0;
@@ -69,7 +84,7 @@ public class JobReconciliationService {
             jobStateService.syncJobInfo(ref.itemId(), ref.workspaceId(), result.job());
             synced++;
         }
-        logger.info("[LIFECYCLE] service=cp event=job_reconcile_completed candidates={} synced={} orphaned={} unreachable={}",
-                candidates.size(), synced, orphaned, unreachable);
+        logger.info("[LIFECYCLE] service=cp event=job_reconcile_completed candidates={} synced={} orphaned={} unreachable={} interrupted={}",
+                candidates.size(), synced, orphaned, unreachable, interrupted);
     }
 }

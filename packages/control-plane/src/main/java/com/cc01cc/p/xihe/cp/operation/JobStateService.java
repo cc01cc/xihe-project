@@ -48,8 +48,25 @@ public class JobStateService {
     public static final String SCOPE_WORKSPACE = "workspace";
     private static final Set<String> SCOPES = Set.of(SCOPE_RUN, SCOPE_SESSION, SCOPE_WORKSPACE);
 
+    public static final String STATUS_PENDING = "pending";
     public static final String STATUS_RUNNING = "running";
-    private static final Set<String> TERMINAL = Set.of("succeeded", "cancelled", "timeout", "orphaned");
+    /**
+     * PLAN-0390 决策 #10：新增 `interrupted` 终态用于 Runtime 重启/启动未确认收口；
+     * Docker 既有 `succeeded/timeout/orphaned` 词汇本批不改名（归一化归 0392–0395）。
+     */
+    public static final String STATUS_INTERRUPTED = "interrupted";
+    private static final Set<String> ACTIVE = Set.of(STATUS_PENDING, STATUS_RUNNING);
+    private static final Set<String> TERMINAL =
+            Set.of("succeeded", "cancelled", "timeout", "orphaned", STATUS_INTERRUPTED);
+
+    /** `cancelReason` 冻结词汇（spec/execution-job-contract.md §Scope 收口）。 */
+    public static final String REASON_USER_CANCEL = "user_cancel";
+    public static final String REASON_SCOPE_RUN_END = "scope_run_end";
+    public static final String REASON_SCOPE_SESSION_STOP = "scope_session_stop";
+    public static final String REASON_WORKSPACE_DESTROY = "workspace_destroy";
+    public static final String REASON_RUNTIME_RESTART = "runtime_restart";
+    public static final String REASON_DESTROY_ORPHAN = "destroy_orphan";
+    public static final String REASON_JOB_MISSING = "job_missing";
 
     private static final String TOOL_START = "start_background_process";
     private static final String TOOL_GET = "get_background_process";
@@ -58,7 +75,8 @@ public class JobStateService {
 
     private static final List<String> MERGE_KEYS =
             List.of("jobId", "workspaceId", "scope", "status", "startedAt", "exitCode", "timeoutSecs",
-                    "cancelReason", "endedAt");
+                    "cancelReason", "endedAt", "backendKind", "executionMode", "source", "actorType",
+                    "createdAt", "cleanupStatus", "errorCode", "runtimeBootId", "sessionId", "runId");
 
     private final OperationExtensionRepository extensions;
     private final DbLockTimeout dbLockTimeout;
@@ -253,6 +271,16 @@ public class JobStateService {
             payload.put("timeoutSecs", incoming.get("timeoutSecs"));
             payload.put("cancelReason", incoming.get("cancelReason"));
             payload.put("endedAt", incoming.get("endedAt"));
+            payload.put("backendKind", incoming.get("backendKind"));
+            payload.put("executionMode", incoming.get("executionMode"));
+            payload.put("source", incoming.get("source"));
+            payload.put("actorType", incoming.get("actorType"));
+            payload.put("createdAt", incoming.getOrDefault("createdAt", Instant.now().toString()));
+            payload.put("cleanupStatus", incoming.getOrDefault("cleanupStatus", "not_started"));
+            payload.put("errorCode", incoming.get("errorCode"));
+            payload.put("runtimeBootId", incoming.get("runtimeBootId"));
+            payload.put("sessionId", incoming.get("sessionId"));
+            payload.put("runId", incoming.get("runId"));
             sealTerminal(payload);
             OperationExtension extension = new OperationExtension(itemId.toString(), null,
                     EXTENSION_KIND, SCHEMA_VERSION, writeJson(payload));
@@ -376,7 +404,7 @@ public class JobStateService {
                 .findByExtensionKindAndCreatedAtAfter(EXTENSION_KIND, since)) {
             Map<String, Object> payload = readJson(extension.getPayload());
             if (!workspaceId.equals(str(payload.get("workspaceId")))
-                    || !STATUS_RUNNING.equals(str(payload.get("status")))) {
+                    || !ACTIVE.contains(str(payload.get("status")))) {
                 continue;
             }
             if (aliveJobIds != null && !aliveJobIds.contains(str(payload.get("jobId")))) {
@@ -399,12 +427,22 @@ public class JobStateService {
 
     public record JobArchive(String itemId, String jobId, String workspaceId, String scope,
                              String status, String startedAt, Integer exitCode, Long timeoutSecs,
-                             String cancelReason, String endedAt) {
+                             String cancelReason, String endedAt,
+                             String backendKind, String executionMode, String source, String actorType,
+                             String createdAt, String cleanupStatus, String errorCode,
+                             String runtimeBootId, String sessionId, String runId) {
 
         public boolean terminal() {
             return TERMINAL.contains(status);
         }
+
+        public boolean active() {
+            return status != null && ACTIVE.contains(status);
+        }
     }
+
+    /** Active Job 档案 + durable item identity（scope 收口/对账用）。 */
+    public record ActiveJob(UUID itemId, JobArchive archive) { }
 
     private JobArchive toArchive(UUID itemId, OperationExtension extension) {
         Map<String, Object> payload = readJson(extension.getPayload());
@@ -413,7 +451,98 @@ public class JobStateService {
                 str(payload.get("status")), str(payload.get("startedAt")),
                 payload.get("exitCode") instanceof Number number ? number.intValue() : null,
                 payload.get("timeoutSecs") instanceof Number number ? number.longValue() : null,
-                str(payload.get("cancelReason")), str(payload.get("endedAt")));
+                str(payload.get("cancelReason")), str(payload.get("endedAt")),
+                str(payload.get("backendKind")), str(payload.get("executionMode")),
+                str(payload.get("source")), str(payload.get("actorType")),
+                str(payload.get("createdAt")), str(payload.get("cleanupStatus")),
+                str(payload.get("errorCode")), str(payload.get("runtimeBootId")),
+                str(payload.get("sessionId")), str(payload.get("runId")));
+    }
+
+    /**
+     * 该 Workspace 下仍 active（pending/running）的 Job 档案。窗口内扫描，
+     * 由调用方决定收口动作（scope 收口 / Workspace destroy / 对账）。
+     */
+    @Transactional(readOnly = true)
+    public List<ActiveJob> findActiveForWorkspace(String workspaceId) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            return List.of();
+        }
+        List<ActiveJob> active = new ArrayList<>();
+        for (OperationExtension extension : extensions
+                .findByExtensionKindAndCreatedAtAfter(EXTENSION_KIND, scanWindowStart())) {
+            Map<String, Object> payload = readJson(extension.getPayload());
+            if (!workspaceId.equals(str(payload.get("workspaceId")))) {
+                continue;
+            }
+            JobArchive archive = toArchive(parseUuid(extension.getItemId()), extension);
+            if (archive.active()) {
+                active.add(new ActiveJob(parseUuid(extension.getItemId()), archive));
+            }
+        }
+        return active;
+    }
+
+    /**
+     * 按 scope + 边界键过滤 active Job：
+     * {@code run} 用 runId、{@code session} 用 sessionId、{@code workspace} 用 workspaceId。
+     */
+    @Transactional(readOnly = true)
+    public List<ActiveJob> findActiveForScope(String scope, String boundaryKey) {
+        String normalized = normalizeScope(scope);
+        if (boundaryKey == null || boundaryKey.isBlank()) {
+            return List.of();
+        }
+        List<ActiveJob> active = new ArrayList<>();
+        for (OperationExtension extension : extensions
+                .findByExtensionKindAndCreatedAtAfter(EXTENSION_KIND, scanWindowStart())) {
+            JobArchive archive = toArchive(parseUuid(extension.getItemId()), extension);
+            if (!archive.active() || !normalized.equals(archive.scope())) {
+                continue;
+            }
+            String key = switch (normalized) {
+                case SCOPE_RUN -> archive.runId();
+                case SCOPE_SESSION -> archive.sessionId();
+                default -> archive.workspaceId();
+            };
+            if (boundaryKey.equals(key)) {
+                active.add(new ActiveJob(parseUuid(extension.getItemId()), archive));
+            }
+        }
+        return active;
+    }
+
+    /**
+     * Runtime 重启对账：把记录过旧 {@code runtimeBootId} 的 active Job 落
+     * {@code interrupted}（不重放）。返回实际收口数。
+     */
+    public int markInterruptedForRuntimeRestart(String workspaceId, String currentBootId) {
+        if (workspaceId == null || currentBootId == null || currentBootId.isBlank()) {
+            return 0;
+        }
+        int marked = 0;
+        for (ActiveJob job : findActiveForWorkspace(workspaceId)) {
+            String recorded = job.archive().runtimeBootId();
+            if (recorded == null || recorded.isBlank() || currentBootId.equals(recorded)) {
+                continue;
+            }
+            Map<String, Object> incoming = new LinkedHashMap<>();
+            incoming.put("status", STATUS_INTERRUPTED);
+            incoming.put("cancelReason", REASON_RUNTIME_RESTART);
+            incoming.put("errorCode", "RUNTIME_RESTART");
+            incoming.put("cleanupStatus", "failed");
+            upsert(job.itemId(), incoming);
+            marked++;
+        }
+        if (marked > 0) {
+            logger.info("[LIFECYCLE] service=cp event=job_state_runtime_restart workspaceId={} count={}",
+                    workspaceId, marked);
+        }
+        return marked;
+    }
+
+    private static Instant scanWindowStart() {
+        return Instant.now().minus(java.time.Duration.ofDays(30));
     }
 
     // ── 小工具 ─────────────────────────────────────────────────────────────

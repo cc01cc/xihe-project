@@ -27,6 +27,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -165,6 +167,32 @@ public class OperationService {
             }
             throw e;
         }
+        // PLAN-0390 T1.3：run 收口后关闭 scope=run 的 active Job。
+        // 放在 after-commit：收口要调 Runtime cancel（远程），不能持有 operation 行锁。
+        if (isTerminal(targetStatus)) {
+            scheduleRunScopeClosure(runId);
+        }
+    }
+
+    private void scheduleRunScopeClosure(String runId) {
+        Runnable closure = () -> {
+            try {
+                applicationContext.getBean(JobScopeClosureService.class).closeRunScope(runId);
+            } catch (RuntimeException e) {
+                logger.warn("[LIFECYCLE] service=cp event=job_scope_run_close_failed runId={} error={}",
+                        runId, e.getMessage());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    closure.run();
+                }
+            });
+        } else {
+            closure.run();
+        }
     }
 
     @Transactional(readOnly = true)
@@ -241,25 +269,57 @@ public class OperationService {
                 if (archive == null) {
                     continue;
                 }
-                Map<String, Object> view = new LinkedHashMap<>();
-                view.put("operationId", operation.getId().toString());
-                view.put("operationItemId", item.getId().toString());
-                view.put("workspaceId", operation.getWorkspaceId());
-                view.put("sessionId", operation.getSessionId());
-                view.put("runId", operation.getRunId());
-                view.put("source", operation.getSource());
-                view.put("scope", archive.scope());
-                view.put("status", archive.status());
-                view.put("jobId", archive.jobId());
-                view.put("startedAt", archive.startedAt());
-                view.put("endedAt", archive.endedAt());
-                view.put("exitCode", archive.exitCode());
-                view.put("timeoutSecs", archive.timeoutSecs());
-                view.put("cancelReason", archive.cancelReason());
-                result.add(view);
+                result.add(buildJobView(operation, item, archive));
             }
         }
         return result;
+    }
+
+    /** PLAN-0390：单个 Job projection（start 响应与 list 同形）。 */
+    @Transactional(readOnly = true)
+    public Map<String, Object> jobView(UUID itemId) {
+        if (itemId == null) {
+            return null;
+        }
+        OperationItem item = items.findById(itemId).orElse(null);
+        if (item == null) {
+            return null;
+        }
+        LedgerOperation operation = operations.findById(UUID.fromString(item.getOperationId())).orElse(null);
+        if (operation == null) {
+            return null;
+        }
+        JobStateService.JobArchive archive = jobStateService.find(itemId).orElse(null);
+        if (archive == null) {
+            return null;
+        }
+        return buildJobView(operation, item, archive);
+    }
+
+    private static Map<String, Object> buildJobView(LedgerOperation operation, OperationItem item,
+                                                    JobStateService.JobArchive archive) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("operationId", operation.getId().toString());
+        view.put("operationItemId", item.getId().toString());
+        view.put("workspaceId", operation.getWorkspaceId());
+        view.put("sessionId", operation.getSessionId());
+        view.put("runId", operation.getRunId());
+        view.put("source", operation.getSource());
+        view.put("scope", archive.scope());
+        view.put("status", archive.status());
+        view.put("jobId", archive.jobId());
+        view.put("startedAt", archive.startedAt());
+        view.put("endedAt", archive.endedAt());
+        view.put("exitCode", archive.exitCode());
+        view.put("timeoutSecs", archive.timeoutSecs());
+        view.put("cancelReason", archive.cancelReason());
+        view.put("backendKind", archive.backendKind());
+        view.put("executionMode", archive.executionMode());
+        view.put("actorType", archive.actorType());
+        view.put("createdAt", archive.createdAt());
+        view.put("cleanupStatus", archive.cleanupStatus());
+        view.put("errorCode", archive.errorCode());
+        return view;
     }
 
     /**
@@ -480,6 +540,122 @@ public class OperationService {
                 operation.getId(), kind, sessionId, runId);
         return new OperationStartResult(operation.getId(), false);
     }
+
+    /**
+     * PLAN-0390 M2：Workspace Job 的 durable root/item 创建（幂等）。
+     *
+     * <p>复用既有 `ledger_operations(kind=job)` → `operation_items(kind=job)`，
+     * 不新建平行 Job 表。`operationItemId` 即 canonical Job identity。
+     * 幂等键：session 绑定走既有 `(user, session, key)`；session-less
+     * （scope=run|workspace）走 V36 的 `(user, workspace, kind, key)` 部分唯一索引。
+     * 同 key 但 `inputHash` 不同 → 409 `JOB_IDEMPOTENCY_CONFLICT`。
+     */
+    public WorkspaceJobStart startWorkspaceJob(String userId, String workspaceId, String sessionId,
+                                               String runId, String source, String actorType,
+                                               String idempotencyKey, String inputHash,
+                                               String summary, String argumentsPreview) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "IDEMPOTENCY_KEY_REQUIRED",
+                    "Idempotency-Key is required to start a Workspace job");
+        }
+        // Fast path: a committed root with the same key is an idempotent replay.
+        WorkspaceJobStart replay = self().findWorkspaceJobForReplay(
+                userId, workspaceId, sessionId, idempotencyKey, inputHash);
+        if (replay != null) {
+            return replay;
+        }
+        try {
+            return self().insertWorkspaceJob(userId, workspaceId, sessionId, runId, source, actorType,
+                    idempotencyKey, inputHash, summary, argumentsPreview);
+        } catch (DataIntegrityViolationException e) {
+            // PLAN-0390：并发同 key 时唯一索引只允许一个赢家。这里**不在**失败的
+            // 事务里继续工作（返回会触发 UnexpectedRollbackException），而是让
+            // REQUIRES_NEW 的插入事务自行回滚后在本方法（无事务）重读赢家。
+            logger.warn("[LIFECYCLE] service=cp event=job_start_conflict workspaceId={} reason={}",
+                    workspaceId, e.getMessage());
+            WorkspaceJobStart winner = self().findWorkspaceJobForReplay(
+                    userId, workspaceId, sessionId, idempotencyKey, inputHash);
+            if (winner != null) {
+                return winner;
+            }
+            throw new CpApiException(HttpStatus.CONFLICT, "JOB_IDEMPOTENCY_CONFLICT",
+                    "A job with the same idempotency key already exists");
+        }
+    }
+
+    /** PLAN-0390：durable Job root/item 的实际插入（独立事务，冲突只回滚本事务）。 */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public WorkspaceJobStart insertWorkspaceJob(String userId, String workspaceId, String sessionId,
+                                                String runId, String source, String actorType,
+                                                String idempotencyKey, String inputHash,
+                                                String summary, String argumentsPreview) {
+        dbLockTimeout.apply();
+        LedgerOperation operation = new LedgerOperation();
+        operation.setId(UUID.randomUUID());
+        operation.setUserId(userId);
+        operation.setSessionId(sessionId);
+        operation.setWorkspaceId(workspaceId);
+        operation.setRunId(runId);
+        operation.setKind("job");
+        operation.setSource(source);
+        operation.setActorType(actorType);
+        operation.setIdempotencyKey(idempotencyKey);
+        operation.setInputHash(inputHash);
+        operation.setStatus("accepted");
+        operation.setStartedAt(Instant.now());
+        operation.setSummary(summary);
+        operations.saveAndFlush(operation);
+        appendEvent(operation.getId(), null, null, "operation.started", "accepted", actorType, null);
+        OperationItem item = appendItem(operation.getId(), null, null, "job", null, source,
+                argumentsPreview, null, null);
+        logger.info("[LIFECYCLE] service=cp event=workspace_job_started operationId={} itemId={} workspaceId={}",
+                operation.getId(), item.getId(), workspaceId);
+        return new WorkspaceJobStart(operation.getId(), item.getId(), false);
+    }
+
+    private OperationItem findJobItem(UUID operationId) {
+        for (OperationItem item : items.findByOperationIdOrderBySequenceAsc(operationId.toString())) {
+            if ("job".equals(item.getKind())) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * PLAN-0390：幂等重读（REQUIRES_NEW，脱离已中止/回滚的事务）。
+     * 返回既有 Job root/item；不存在（或没有 job item）返回 null。
+     * 同 key 但 `inputHash` 不同 → 409 `JOB_IDEMPOTENCY_CONFLICT`。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public WorkspaceJobStart findWorkspaceJobForReplay(String userId, String workspaceId,
+                                                       String sessionId, String idempotencyKey,
+                                                       String inputHash) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return null;
+        }
+        LedgerOperation existing = (sessionId == null || sessionId.isBlank())
+                ? operations.findByUserIdAndWorkspaceIdAndKindAndIdempotencyKey(
+                        userId, workspaceId, "job", idempotencyKey).orElse(null)
+                : operations.findByUserIdAndSessionIdAndIdempotencyKey(
+                        userId, sessionId, idempotencyKey).orElse(null);
+        if (existing == null) {
+            return null;
+        }
+        if (existing.getInputHash() != null && inputHash != null
+                && !existing.getInputHash().equals(inputHash)) {
+            throw new CpApiException(HttpStatus.CONFLICT, "JOB_IDEMPOTENCY_CONFLICT",
+                    "Idempotency key was already used with a different job request");
+        }
+        OperationItem jobItem = findJobItem(existing.getId());
+        if (jobItem == null) {
+            return null;
+        }
+        return new WorkspaceJobStart(existing.getId(), jobItem.getId(), true);
+    }
+
+    /** PLAN-0390：Workspace Job durable root/item 标识；{@code replayed} = 幂等命中。 */
+    public record WorkspaceJobStart(UUID operationId, UUID itemId, boolean replayed) { }
 
     @Transactional
     public void transitionOperation(UUID operationId, String targetStatus,

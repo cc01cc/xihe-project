@@ -41,6 +41,7 @@ import type {
     WorkspaceEvent,
     WorkspaceEnvironment,
     WorkspaceJob,
+    WorkspaceJobStartRequest,
     WorkspaceExecutionMode,
     WorkspaceStorageMode,
 } from "../types";
@@ -842,6 +843,43 @@ export class ApiError extends Error {
     }
 }
 
+/** Stable Problem codes returned by the Workspace Job start route. */
+export const WORKSPACE_JOB_ERROR_CODES = [
+    "IDEMPOTENCY_KEY_REQUIRED",
+    "WORKSPACE_NOT_FOUND",
+    "JOB_IDEMPOTENCY_CONFLICT",
+    "JOB_BACKEND_LAUNCH_PENDING",
+    "RUNTIME_UNAVAILABLE",
+] as const;
+
+export type WorkspaceJobErrorCode = (typeof WORKSPACE_JOB_ERROR_CODES)[number];
+
+const WORKSPACE_JOB_ERROR_REASONS: Record<WorkspaceJobErrorCode, string> = {
+    IDEMPOTENCY_KEY_REQUIRED: "缺少 Idempotency-Key，无法安全启动 Job",
+    WORKSPACE_NOT_FOUND: "工作区不存在或无权访问",
+    JOB_IDEMPOTENCY_CONFLICT: "幂等键冲突：相同键对应了不同的启动参数",
+    JOB_BACKEND_LAUNCH_PENDING: "当前执行后端尚未提供 Job 启动器，暂不可用",
+    RUNTIME_UNAVAILABLE: "Runtime 暂不可达，请确认服务已启动后重试",
+};
+
+function isWorkspaceJobErrorCode(code: string | null | undefined): code is WorkspaceJobErrorCode {
+    return typeof code === "string" && (WORKSPACE_JOB_ERROR_CODES as readonly string[]).includes(code);
+}
+
+/**
+ * Human-readable reason for a Workspace Job start failure. Recognized stable codes map to fixed
+ * copy; anything else falls back to the server detail or the raw error message.
+ */
+export function workspaceJobErrorReason(error: unknown): string {
+    if (error instanceof ApiError) {
+        if (isWorkspaceJobErrorCode(error.problem.code)) {
+            return WORKSPACE_JOB_ERROR_REASONS[error.problem.code];
+        }
+        return error.problem.detail || error.message;
+    }
+    return error instanceof Error ? error.message : String(error);
+}
+
 function normalizeSession(value: unknown): SessionResponse {
     const root = asRecord(value);
     const record = asRecord(root?.session) ?? root;
@@ -1603,6 +1641,25 @@ export const api = {
     getWorkspaceJobs(wsId: string) {
         return request<WorkspaceJob[]>(`/workspaces/${encodeURIComponent(wsId)}/jobs`, {
             headers: workspaceHeaders(wsId),
+        });
+    },
+    /**
+     * Start a Workspace Job (202 new / 200 idempotent replay). The `Idempotency-Key` header is
+     * required by the server; the same key replays the existing projection instead of launching
+     * a second process.
+     */
+    startWorkspaceJob(
+        wsId: string,
+        body: WorkspaceJobStartRequest,
+        idempotencyKey: string,
+    ): Promise<WorkspaceJob> {
+        return request<WorkspaceJob>(`/workspaces/${encodeURIComponent(wsId)}/jobs`, {
+            method: "POST",
+            headers: {
+                ...workspaceHeaders(wsId),
+                "Idempotency-Key": idempotencyKey,
+            },
+            body: JSON.stringify(body),
         });
     },
     updateWorkspaceExecutionMode(wsId: string, executionMode: WorkspaceExecutionMode) {

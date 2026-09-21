@@ -676,6 +676,37 @@ export interface FileNode {
 export type WorkspaceStorageMode = "managed_import" | "direct_attach";
 export type WorkspaceExecutionMode = "docker" | "windows-mxc" | "windows-host";
 
+/** Durable job lifecycle scope (`spec/execution-job-contract.md` §Scope 收口). */
+export type WorkspaceJobScope = "run" | "session" | "workspace";
+
+/** Execution backend identity; legacy/MCP-projected archives may carry `null`. */
+export type WorkspaceJobBackendKind = "docker" | "windows-mxc" | "windows-host";
+
+export type WorkspaceJobStatus =
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "cancelled"
+    | "timeout"
+    | "orphaned"
+    | "interrupted";
+
+/** Frozen cancel vocabulary; `null` while a job has not been cancelled. */
+export type WorkspaceJobCancelReason =
+    | "user_cancel"
+    | "scope_run_end"
+    | "scope_session_stop"
+    | "workspace_destroy"
+    | "runtime_restart"
+    | "destroy_orphan"
+    | "job_missing";
+
+export type WorkspaceJobCleanupStatus = "not_started" | "running" | "completed" | "failed";
+
+/**
+ * Workspace Job projection (`GET/POST /api/v1/workspaces/{workspaceId}/jobs`).
+ * Every projection key is present; nullable value fields use `null` rather than omission.
+ */
 export interface WorkspaceJob {
     operationId: string;
     operationItemId: string;
@@ -683,14 +714,33 @@ export interface WorkspaceJob {
     sessionId: string | null;
     runId: string | null;
     source: string;
-    scope: "run" | "session" | "workspace";
-    status: string;
-    jobId?: string | null;
-    startedAt?: string | null;
-    endedAt?: string | null;
-    exitCode?: number | null;
-    timeoutSecs?: number | null;
-    cancelReason?: string | null;
+    scope: WorkspaceJobScope;
+    status: WorkspaceJobStatus;
+    jobId: string | null;
+    startedAt: string | null;
+    endedAt: string | null;
+    exitCode: number | null;
+    timeoutSecs: number | null;
+    cancelReason: WorkspaceJobCancelReason | null;
+    backendKind: WorkspaceJobBackendKind | null;
+    executionMode: WorkspaceExecutionMode | null;
+    actorType: string | null;
+    createdAt: string | null;
+    cleanupStatus: WorkspaceJobCleanupStatus | null;
+    errorCode: string | null;
+}
+
+/** Body of `POST /api/v1/workspaces/{workspaceId}/jobs` (wire camelCase). */
+export interface WorkspaceJobStartRequest {
+    command: string;
+    args: string[];
+    cwd?: string;
+    timeoutSecs?: number;
+    scope?: WorkspaceJobScope;
+    sessionId?: string;
+    runId?: string;
+    source?: string;
+    env?: Record<string, string>;
 }
 
 export interface WorkspaceEnvironment {

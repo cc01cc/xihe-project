@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { api, normalizeApprovalRequest, normalizeOperationPolicy } from '../api'
+import {
+  api,
+  ApiError,
+  normalizeApprovalRequest,
+  normalizeOperationPolicy,
+  workspaceJobErrorReason,
+} from '../api'
 
 let fetchSpy: ReturnType<typeof vi.spyOn>
 const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`
@@ -905,5 +911,92 @@ describe('normalizeOperationPolicy', () => {
   it('rejects a non-boolean reused value instead of guessing the annotation', () => {
     expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: 'yes' })).toBeUndefined()
     expect(normalizeOperationPolicy({ ...OPERATION_POLICY, reused: 1 })).toBeUndefined()
+  })
+})
+
+describe('api.startWorkspaceJob (PLAN-0390)', () => {
+  it('sends the start body with the Idempotency-Key and workspace headers', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: () => Promise.resolve({
+        operationId: OPERATION_ID,
+        operationItemId: 'item-1',
+        workspaceId: WORKSPACE_ID,
+        scope: 'session',
+        status: 'pending',
+      }),
+    } as Response)
+
+    const result = await api.startWorkspaceJob(
+      WORKSPACE_ID,
+      { command: 'echo', args: ['hi'], scope: 'session' },
+      'idem-key-123',
+    )
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/api/v1/workspaces/${WORKSPACE_ID}/jobs`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ command: 'echo', args: ['hi'], scope: 'session' }),
+        headers: expect.objectContaining({
+          'Idempotency-Key': 'idem-key-123',
+          'X-Workspace-Id': WORKSPACE_ID,
+        }),
+      }),
+    )
+    expect(result.status).toBe('pending')
+  })
+
+  it('returns the replayed projection on an idempotent 200', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        operationId: OPERATION_ID,
+        operationItemId: 'item-existing',
+        workspaceId: WORKSPACE_ID,
+        scope: 'session',
+        status: 'running',
+      }),
+    } as Response)
+
+    const result = await api.startWorkspaceJob(
+      WORKSPACE_ID,
+      { command: 'echo', args: [] },
+      'idem-key-123',
+    )
+
+    expect(result.operationItemId).toBe('item-existing')
+    expect(result.status).toBe('running')
+  })
+})
+
+describe('workspaceJobErrorReason', () => {
+  function apiError(status: number, code: string, detail?: string) {
+    return new ApiError({ status, code, detail, requestId: 'req-1' })
+  }
+
+  it('maps the stable Job start codes to human-readable reasons', () => {
+    const launchPending = workspaceJobErrorReason(
+      apiError(501, 'JOB_BACKEND_LAUNCH_PENDING', 'no launcher'),
+    )
+    expect(launchPending).toContain('启动器')
+    expect(launchPending).not.toContain('JOB_BACKEND_LAUNCH_PENDING')
+
+    const conflict = workspaceJobErrorReason(
+      apiError(409, 'JOB_IDEMPOTENCY_CONFLICT', 'conflict'),
+    )
+    expect(conflict).toContain('幂等键冲突')
+    expect(conflict).not.toContain('JOB_IDEMPOTENCY_CONFLICT')
+
+    expect(workspaceJobErrorReason(apiError(400, 'IDEMPOTENCY_KEY_REQUIRED'))).toContain('Idempotency-Key')
+    expect(workspaceJobErrorReason(apiError(404, 'WORKSPACE_NOT_FOUND'))).toContain('工作区')
+    expect(workspaceJobErrorReason(apiError(502, 'RUNTIME_UNAVAILABLE'))).toContain('Runtime')
+  })
+
+  it('falls back to the server detail for unknown codes and to the message otherwise', () => {
+    expect(workspaceJobErrorReason(apiError(500, 'SOMETHING_ELSE', 'boom'))).toBe('boom')
+    expect(workspaceJobErrorReason(new Error('network down'))).toBe('network down')
   })
 })

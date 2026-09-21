@@ -74,6 +74,10 @@ pub struct AppState {
     pub registry: Arc<WorkspaceRegistry>,
     pub manager: Arc<Mutex<WorkspaceManager>>,
     pub device_id: String,
+    /// PLAN-0390: process-boot identity, regenerated on every Runtime start
+    /// (unlike the persisted `device_id`). Exposed on the probes so CP can tell
+    /// a restarted Runtime from a long-lived one.
+    pub boot_id: String,
     pub workspace_ensurer: Arc<WorkspaceEnsurer>,
     pub router: Arc<WorkspaceExecutionRouter>,
     /// PLAN-0347 T1.3: stdio MCP sessions (`exec attach`), replacing the
@@ -809,6 +813,9 @@ fn with_timeout_target(filter: &str) -> String {
     format!("{filter},timeout=info")
 }
 
+/// Liveness probe. The body contract (`OK`) is documented in DEV-002 and is
+/// intentionally left unchanged; process-boot identity is exposed on
+/// `/internal/v1/runtime/diagnostics` (`bootId`) for CP, not here.
 async fn health() -> &'static str {
     "OK"
 }
@@ -1637,6 +1644,29 @@ pub struct JobOutputRequest {
     limit: Option<u64>,
 }
 
+/// PLAN-0390: internal job-start request from CP. camelCase to match the
+/// Xihe-owned JSON contract (`operationItemId` / `timeoutSecs`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobStartRequest {
+    /// Operation-ledger item that owns this job (durable anchor).
+    pub operation_item_id: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// `0` means "no timeout", matching the MCP `start_background_process`
+    /// contract (container `resolve_job_timeout` maps `Some(0)` to unlimited).
+    #[serde(default)]
+    pub timeout_secs: u64,
+    /// Accepted for contract compatibility. The current Docker path cannot
+    /// carry `cwd`/`env` through `start_background_process`; backend adapters
+    /// (PLAN-0392+) will consume them.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub env: Option<std::collections::BTreeMap<String, String>>,
+}
+
 fn job_not_found_problem(ws_id: &str, job_id: &str) -> (StatusCode, AxumJson<serde_json::Value>) {
     (
         StatusCode::NOT_FOUND,
@@ -1712,6 +1742,89 @@ fn job_cancel_response(job_id: &str, value: &serde_json::Value) -> serde_json::V
         _ => "failed",
     };
     serde_json::json!({"jobId": job_id, "status": status})
+}
+
+/// PLAN-0390: normalize the `start_background_process` result into the opaque
+/// job id string. The executor currently returns a bare `String`, but the
+/// contract allows a future object payload, so accept a string `Value`, an
+/// object with `jobId`, or an object with snake_case `job_id`; anything else
+/// falls back to the raw `Value` rendering.
+fn normalize_job_id(value: &serde_json::Value) -> String {
+    if let Some(id) = value.as_str() {
+        return id.to_string();
+    }
+    if let Some(id) = value
+        .get("jobId")
+        .or_else(|| value.get("job_id"))
+        .and_then(|inner| inner.as_str())
+    {
+        return id.to_string();
+    }
+    value.to_string()
+}
+
+/// PLAN-0390: `PROCESS_BACKEND_LAUNCH_PENDING` is not a client error — the
+/// direct-attach backend adapter is not implemented yet. Map it to 501 with the
+/// same Problem-Details shape as `runtime_problem`, carrying the reason as the
+/// `detail` message.
+fn job_backend_launch_pending_problem(reason: &str) -> (StatusCode, AxumJson<serde_json::Value>) {
+    let status = StatusCode::NOT_IMPLEMENTED;
+    (
+        status,
+        AxumJson(serde_json::json!({
+            "type": "https://xihe.dev/problems/job-backend-launch-pending",
+            "title": status.canonical_reason().unwrap_or("Not Implemented"),
+            "status": status.as_u16(),
+            "code": "JOB_BACKEND_LAUNCH_PENDING",
+            "detail": reason,
+            "requestId": uuid::Uuid::new_v4().to_string(),
+        })),
+    )
+}
+
+/// PLAN-0390: CP-facing job start path. Reuses the MCP background-process
+/// launcher; the workspace's backend decides whether the job can actually run.
+async fn workspace_job_start_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(req): AxumJson<JobStartRequest>,
+) -> Result<(StatusCode, AxumJson<serde_json::Value>), (StatusCode, AxumJson<serde_json::Value>)> {
+    let JobStartRequest {
+        operation_item_id,
+        command,
+        args,
+        timeout_secs,
+        // Backend adapters (PLAN-0392+) will consume these; the current Docker
+        // `start_background_process` signature carries neither.
+        cwd: _,
+        env: _,
+    } = req;
+    // `timeout_secs == 0` stays `Some(0)` so the container treats it as
+    // unlimited (matching the MCP tool contract).
+    match app
+        .router
+        .start_background_process(&ws_id, &command, args, Some(timeout_secs))
+        .await
+    {
+        Ok(job_id) => {
+            let job_id = normalize_job_id(&serde_json::Value::String(job_id));
+            Ok((
+                StatusCode::ACCEPTED,
+                AxumJson(serde_json::json!({
+                    "jobId": job_id,
+                    "status": "running",
+                    "operationItemId": operation_item_id,
+                    "bootId": app.boot_id,
+                })),
+            ))
+        }
+        Err(RuntimeError::Unsupported { reason, .. })
+            if reason == "PROCESS_BACKEND_LAUNCH_PENDING" =>
+        {
+            Err(job_backend_launch_pending_problem(&reason))
+        }
+        Err(error) => Err(runtime_problem(error)),
+    }
 }
 
 /// PLAN-262 M4 (decision 12): explicit async materialization trigger.
@@ -2310,6 +2423,7 @@ async fn runtime_diagnostics_handler(State(app): State<Arc<AppState>>) -> Respon
     let checkpoint = app.checkpoints.diagnostics().await;
     AxumJson(serde_json::json!({
         "deviceId": app.device_id,
+        "bootId": app.boot_id,
         "status": "ok",
         "checkpoint": checkpoint,
     }))
@@ -2484,6 +2598,10 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
             post(workspace_job_cancel_handler),
         )
         .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/jobs/start",
+            post(workspace_job_start_handler),
+        )
+        .route(
             "/internal/v1/runtime/workspaces/{ws_id}/files/read",
             post(ws_file_handler::handle_read_file),
         )
@@ -2626,6 +2744,7 @@ async fn run() -> anyhow::Result<()> {
         registry: registry.clone(),
         manager: manager.clone(),
         device_id: device_id.clone(),
+        boot_id: uuid::Uuid::new_v4().to_string(),
         workspace_ensurer: workspace_ensurer.clone(),
         router: router.clone(),
         mcp_sessions: mcp_sessions.clone(),
@@ -3452,6 +3571,7 @@ mod remote_handler_tests {
             registry: registry.clone(),
             manager: manager.clone(),
             device_id: "test-device".to_string(),
+            boot_id: uuid::Uuid::new_v4().to_string(),
             workspace_ensurer: ensurer.clone(),
             router: router.clone(),
             mcp_sessions: Arc::new(
@@ -3698,6 +3818,70 @@ mod remote_handler_tests {
         let (status, _, body) = remote_mcp_error_response(RemoteMcpError::Timeout);
         assert_eq!(status, StatusCode::REQUEST_TIMEOUT);
         assert_eq!(body.0["code"], "TIMEOUT");
+    }
+
+    #[tokio::test]
+    async fn boot_id_is_stable_uuid_shaped_across_reads() {
+        let app = test_state("http://127.0.0.1:1").await;
+        let first = app.boot_id.clone();
+        let second = app.boot_id.clone();
+        assert_eq!(first, second, "boot_id must be stable for one AppState");
+        assert!(!first.trim().is_empty());
+        assert_eq!(first.len(), 36);
+        assert!(
+            uuid::Uuid::parse_str(&first).is_ok(),
+            "boot_id must be UUID-shaped: {first}"
+        );
+    }
+
+    #[test]
+    fn job_start_request_deserializes_camel_case_fields() {
+        let req: JobStartRequest = serde_json::from_value(serde_json::json!({
+            "operationItemId": "x",
+            "command": "echo",
+            "args": ["a"],
+            "timeoutSecs": 5,
+        }))
+        .expect("camelCase job start request");
+        assert_eq!(req.operation_item_id, "x");
+        assert_eq!(req.command, "echo");
+        assert_eq!(req.args, vec!["a".to_string()]);
+        assert_eq!(req.timeout_secs, 5);
+        assert!(req.cwd.is_none());
+        assert!(req.env.is_none());
+    }
+
+    #[test]
+    fn job_start_request_defaults_args_and_timeout() {
+        let req: JobStartRequest = serde_json::from_value(serde_json::json!({
+            "operationItemId": "x",
+            "command": "echo",
+        }))
+        .expect("minimal job start request");
+        assert!(req.args.is_empty());
+        assert_eq!(req.timeout_secs, 0);
+    }
+
+    #[test]
+    fn normalize_job_id_reads_string_and_object_shapes() {
+        assert_eq!(normalize_job_id(&serde_json::json!("job-str")), "job-str");
+        assert_eq!(
+            normalize_job_id(&serde_json::json!({"jobId": "job-camel"})),
+            "job-camel"
+        );
+        assert_eq!(
+            normalize_job_id(&serde_json::json!({"job_id": "job-snake"})),
+            "job-snake"
+        );
+    }
+
+    #[test]
+    fn backend_launch_pending_problem_maps_to_501_contract() {
+        let (status, body) = job_backend_launch_pending_problem("PROCESS_BACKEND_LAUNCH_PENDING");
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(body.0["status"], 501);
+        assert_eq!(body.0["code"], "JOB_BACKEND_LAUNCH_PENDING");
+        assert_eq!(body.0["detail"], "PROCESS_BACKEND_LAUNCH_PENDING");
     }
 }
 

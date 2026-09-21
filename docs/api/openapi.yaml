@@ -713,7 +713,56 @@ paths:
   /api/v1/workspaces/{workspaceId}/environment:
      get: { operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvironment' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/jobs:
-     get: { operationId: listWorkspaceJobs, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace-scoped durable Job projection, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceJob' } } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+     get: { operationId: listWorkspaceJobs, description: 'Workspace-scoped durable Job projection (PLAN-0390); canonical identity is `operationItemId`. Each item carries the full WorkspaceJob projection.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace-scoped durable Job projection, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceJob' } } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+     post:
+       operationId: startWorkspaceJob
+       summary: Start a Workspace-scoped durable Job
+       description: |
+         Creates a `ledger_operations(kind=job)` root with its job item and dispatches execution
+         (PLAN-0390). `Idempotency-Key` is required: repeating the same key returns the existing Job
+         projection with `200` and never starts a second process, while the same key with a different
+         command/args/cwd/timeoutSecs returns `409 JOB_IDEMPOTENCY_CONFLICT`. Only the `docker`
+         execution mode currently has a launcher; other modes fail explicitly with `501
+         JOB_BACKEND_LAUNCH_PENDING` and create no durable Job. When the Runtime dispatch cannot be
+         confirmed the durable state becomes `interrupted` (never replayed) and the call answers
+         `502 RUNTIME_UNAVAILABLE`.
+       security: [{ bearerAuth: [] }]
+       parameters:
+         - { in: path, name: workspaceId, required: true, schema: { type: string } }
+         - in: header
+           name: Idempotency-Key
+           required: true
+           schema: { type: string, maxLength: 128 }
+           description: Required. Replays the same request to the existing Job projection; a different command/args/cwd/timeoutSecs returns 409.
+       requestBody:
+         required: true
+         content:
+           application/json:
+             schema: { $ref: '#/components/schemas/WorkspaceJobStartRequest' }
+       responses:
+         '202':
+           description: Job accepted and dispatched; body is the Job projection
+           content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJob' } } }
+         '200':
+           description: Idempotent replay of the existing Job projection for the same Idempotency-Key
+           content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJob' } } }
+         '400':
+           description: 'IDEMPOTENCY_KEY_REQUIRED (header missing) or INVALID_REQUEST (command missing)'
+           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+         '401': { $ref: '#/components/responses/Problem' }
+         '403': { $ref: '#/components/responses/Problem' }
+         '404':
+           description: WORKSPACE_NOT_FOUND (missing or no Workspace access; no 403 leak)
+           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+         '409':
+           description: JOB_IDEMPOTENCY_CONFLICT (same key, different command/args/cwd/timeoutSecs)
+           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+         '501':
+           description: JOB_BACKEND_LAUNCH_PENDING (Workspace executionMode has no job launcher yet, e.g. direct-attach/windows-*)
+           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+         '502':
+           description: RUNTIME_UNAVAILABLE (dispatch unconfirmed; durable Job state becomes interrupted)
+           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/workspaces/{workspaceId}/execution-mode:
      patch: { operationId: updateWorkspaceExecutionMode, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [executionMode], properties: { executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } } } } }, responses: { '200': { description: Updated execution mode }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/materialize:
@@ -1001,6 +1050,32 @@ paths:
     post: { operationId: cancelRuntimeExecution, description: 'PLAN-0317 T2.3: cancels an in-flight execution identified by operationItemId and waits (bounded) for termination confirmation; scope is limited to the workspace in the path.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: itemId, required: true, schema: { type: string } }], responses: { '200': { description: 'Cancellation outcome (cancelled | unconfirmed | already_finished)', content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [cancelled, unconfirmed, already_finished] }, confirmed: { type: boolean } }, required: [status, confirmed] } } } }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/operations/items/{itemId}/late-termination:
     post: { operationId: recordLateTermination, description: 'PLAN-0317 T2.9: records a late (retried) termination reported by the Runtime after an unconfirmed cancel; appends an item.terminated.late event without rewriting the item terminal state.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: itemId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirmed: { type: boolean } }, required: [confirmed] } } } }, responses: { '200': { description: Recorded }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '503': { description: OPERATION_LOCK_TIMEOUT — bounded database lock wait exceeded; safe to retry } } }
+  # PLAN-0390 Job start / status / output / cancel live behind the same internal
+  # Bearer auth; only the start path is listed here.
+  /internal/v1/runtime/workspaces/{workspaceId}/jobs/start:
+    post:
+      operationId: startRuntimeWorkspaceJob
+      description: |
+        PLAN-0390: CP-facing Job start path. Reuses the MCP background-process launcher; the
+        Workspace backend decides whether the job can actually run. A backend without a launcher
+        (direct-attach) answers `501 JOB_BACKEND_LAUNCH_PENDING` and starts nothing. `cwd`/`env`
+        are accepted but currently ignored by the Docker path (backend adapters realize them later).
+        The caller (CP) is the single durable writer; this route only returns an execution fact.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeJobStartRequest' }
+      responses:
+        '202':
+          description: Job dispatched (jobId/status/operationItemId/bootId)
+          content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeJobStartResponse' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '501':
+          description: JOB_BACKEND_LAUNCH_PENDING (backend has no job launcher; no process started)
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   # Runtime shadow-Git slice contract. CP is the caller; failures use RFC 9457
   # Problem Details with a stable `code` and `requestId`.
   /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/capture:
@@ -1784,7 +1859,44 @@ components:
     RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
     WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef, storageMode, executionMode], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
     WorkspaceEnvironment: { type: object, required: [workspaceId, status, storageBackend, storageRef, storageMode, executionMode, capability, runtime], properties: { workspaceId: { type: string }, status: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, capability: { $ref: '#/components/schemas/BackendCapabilitySnapshot' }, executionSpec: { type: object, additionalProperties: true }, runtime: { type: object, additionalProperties: true } } }
-    WorkspaceJob: { type: object, required: [operationId, operationItemId, workspaceId, scope, status], properties: { operationId: { type: string }, operationItemId: { type: string }, workspaceId: { type: string }, sessionId: { type: [string, 'null'] }, runId: { type: [string, 'null'] }, source: { type: string }, scope: { type: string, enum: [run, session, workspace] }, status: { type: string }, jobId: { type: [string, 'null'] }, startedAt: { type: [string, 'null'] }, endedAt: { type: [string, 'null'] }, exitCode: { type: [integer, 'null'] }, timeoutSecs: { type: [integer, 'null'] }, cancelReason: { type: [string, 'null'] } } }
+    WorkspaceJob:
+      type: object
+      description: 'Workspace-scoped durable Job projection (PLAN-0390). Shared by the POST start response and the GET list items. Canonical identity is `operationItemId`; `jobId` is an opaque Runtime backend handle. `succeeded`/`timeout`/`orphaned` keep the Docker literal names in this batch; normalization to `completed`/`failed`/`timed_out` is deferred to the backend adapters.'
+      required: [operationId, operationItemId, workspaceId, scope, status]
+      properties:
+        operationId: { type: string, format: uuid }
+        operationItemId: { type: string, format: uuid }
+        workspaceId: { type: string }
+        sessionId: { type: [string, 'null'] }
+        runId: { type: [string, 'null'] }
+        source: { type: string, enum: [ui, agent, runtime, system, mcp] }
+        scope: { type: string, enum: [run, session, workspace], default: session }
+        status: { type: string, enum: [pending, running, succeeded, cancelled, timeout, orphaned, interrupted] }
+        jobId: { type: [string, 'null'], description: Opaque Runtime backend job handle; not a business identity. }
+        startedAt: { type: [string, 'null'], format: date-time }
+        endedAt: { type: [string, 'null'], format: date-time }
+        exitCode: { type: [integer, 'null'] }
+        timeoutSecs: { type: [integer, 'null'] }
+        cancelReason: { type: [string, 'null'], enum: [user_cancel, scope_run_end, scope_session_stop, workspace_destroy, runtime_restart, destroy_orphan, job_missing, null] }
+        backendKind: { type: [string, 'null'], enum: [docker, windows-mxc, windows-host, null] }
+        executionMode: { type: [string, 'null'], enum: [docker, windows-mxc, windows-host, null] }
+        actorType: { type: [string, 'null'], enum: [user, agent, system, service, null] }
+        createdAt: { type: [string, 'null'], format: date-time }
+        cleanupStatus: { type: [string, 'null'], enum: [not_started, running, completed, failed, null] }
+        errorCode: { type: [string, 'null'] }
+    WorkspaceJobStartRequest:
+      type: object
+      required: [command]
+      properties:
+        command: { type: string }
+        args: { type: array, items: { type: string }, default: [] }
+        cwd: { type: string }
+        timeoutSecs: { type: integer, format: int64, default: 0, description: '0 means unlimited; positive values bound cumulative runtime.' }
+        scope: { type: string, enum: [run, session, workspace], default: session }
+        sessionId: { type: [string, 'null'] }
+        runId: { type: [string, 'null'] }
+        source: { type: string, enum: [ui, agent, runtime, system, mcp], default: ui }
+        env: { type: object, additionalProperties: { type: string } }
     DirectAttachProbeRequest: { type: object, required: [storageMode, hostPath, executionMode], properties: { storageMode: { type: string, enum: [direct_attach] }, hostPath: { type: string }, executionMode: { type: string, enum: [windows-mxc, windows-host] } } }
     BackendCapabilitySnapshot: { type: object, required: [contractVersion, backendKind, backendRevision, maturity, executionMode, available], properties: { contractVersion: { type: string, enum: [v1] }, backendKind: { type: string }, backendRevision: { type: string }, maturity: { type: string, enum: [stable, experimental] }, executionMode: { type: string }, available: { type: boolean }, reason: { type: string }, diagnostics: { type: object, additionalProperties: true } } }
     PublishWorkspaceEventRequest: { type: object, required: [kind, source], properties: { kind: { type: string, enum: [file_changed, snapshot_required] }, path: { type: string, description: Workspace-relative POSIX path }, changeType: { type: string, enum: [created, modified, deleted] }, source: { type: string, enum: [runtime] }, reason: { type: string, enum: [overflow] } } }
@@ -1872,6 +1984,24 @@ components:
         jobId: { type: string }
         status: { type: string, enum: [succeeded, cancelled, timeout, orphaned] }
         changed: { type: boolean }
+    RuntimeJobStartRequest:
+      type: object
+      required: [operationItemId, command]
+      properties:
+        operationItemId: { type: string, format: uuid, description: Durable operation item that owns this job (the CP-side anchor). }
+        command: { type: string }
+        args: { type: array, items: { type: string }, default: [] }
+        timeoutSecs: { type: integer, format: int64, default: 0, description: '0 means unlimited.' }
+        cwd: { type: string, description: Accepted but currently ignored by the Docker path. }
+        env: { type: object, additionalProperties: { type: string }, description: Accepted but currently ignored by the Docker path. }
+    RuntimeJobStartResponse:
+      type: object
+      required: [jobId, status, operationItemId, bootId]
+      properties:
+        jobId: { type: string }
+        status: { type: string, enum: [running] }
+        operationItemId: { type: string, format: uuid }
+        bootId: { type: string, description: Runtime per-process boot id; a change makes unconfirmed Jobs interrupted without replay. }
     OperationItemView:
       type: object
       required: [id, operationId, sequence, kind, source, status]
