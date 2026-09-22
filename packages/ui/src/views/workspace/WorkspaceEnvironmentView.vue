@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, ApiError } from '../../composables/api'
+import { useI18n } from 'vue-i18n'
+import { api, ApiError, isExecutionModeSwitchProbeFailure } from '../../composables/api'
 import { useAuthStore } from '../../stores/auth'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
@@ -17,6 +18,7 @@ type Environment = Awaited<ReturnType<typeof api.getWorkspaceEnvironment>>
 
 const route = useRoute()
 const auth = useAuthStore()
+const { t } = useI18n()
 const environment = ref<Environment | null>(null)
 const jobs = ref<WorkspaceJob[]>([])
 const loading = ref(false)
@@ -205,13 +207,21 @@ async function handleExecutionModeChange(event: Event) {
   changingExecutionMode.value = true
   try {
     await api.updateWorkspaceExecutionMode(id, nextMode)
-    toast.success('执行模式已更新')
+    toast.success(t('workspace.executionModeUpdated'))
     await loadEnvironment()
   } catch (cause) {
     selectedExecutionMode.value = environment.value.executionMode
-    const message = cause instanceof ApiError ? cause.message : '执行模式更新失败'
     logger.error('Execution mode update failed', cause)
-    toast.error(message)
+    const code = cause instanceof ApiError ? cause.problem.code : null
+    if (code === 'WORKSPACE_BUSY') {
+      // PLAN-0384 T2.4: an active Job blocks the switch; guide the user to stop it first.
+      toast.error(t('workspace.executionModeBusy'))
+    } else if (nextMode === 'windows-mxc' && isExecutionModeSwitchProbeFailure(code)) {
+      // MXC probe failure: offer an explicit switch to host; never fall back automatically.
+      toast.error(t('workspace.executionModeMxcFailed'))
+    } else {
+      toast.error(cause instanceof ApiError ? cause.message : t('workspace.executionModeUpdateFailed'))
+    }
   } finally {
     changingExecutionMode.value = false
   }

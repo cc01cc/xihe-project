@@ -216,11 +216,6 @@ watch(routeWorkspaceId, () => {
     <p class="max-w-md text-xs text-muted-foreground border-t border-dashed pt-3">
       每账号同时持有 1 个活动工作区 · 物理目录由系统按 hostRoot/workspaceId 派生，宿主机可直接访问
     </p>
-    <WorkspaceCreateDialog
-      :open="showCreateDialog"
-      @close="showCreateDialog = false"
-      @created="handleWorkspaceCreated"
-    />
   </div>
   <div v-else class="flex h-full min-w-0">
     <!-- File tree: 240px tree ⇄ narrow rail (desktop; mobile keeps the Files sheet). -->
@@ -255,6 +250,7 @@ watch(routeWorkspaceId, () => {
         @upload="handleUpload"
         @import-source="showSourceImportDialog = true"
         @settings="showSettingsDialog = true"
+        @add-workspace="showCreateDialog = true"
         @files="showMobileFiles = true"
         @toggle-tree="toggleTree"
         @toggle-code="toggleAux('code')"
@@ -368,6 +364,7 @@ watch(routeWorkspaceId, () => {
     <MobileWorkspaceSheet
       :open="showMobileFiles"
       @close="showMobileFiles = false"
+      @add-workspace="showCreateDialog = true"
     />
 
     <MobileChangesSheet
@@ -379,4 +376,11 @@ watch(routeWorkspaceId, () => {
 
     <MobileChatSheet v-if="sessionId" :session-id="sessionId" />
   </div>
+
+  <!-- PLAN-0384 T1.1: one creation entry for both the empty state and existing workspaces. -->
+  <WorkspaceCreateDialog
+    :open="showCreateDialog"
+    @close="showCreateDialog = false"
+    @created="handleWorkspaceCreated"
+  />
 </template>

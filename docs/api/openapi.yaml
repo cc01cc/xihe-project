@@ -524,7 +524,12 @@ paths:
         including Workspaces without a Session. The stream carries compact `file_changed` hints;
         file contents and directory listings are always re-read through the existing Workspace HTTP/MCP APIs.
         Each event has a Workspace-local sequence. v1 keeps no replay log: a gap or reconnect may require
-        an HTTP/MCP refresh. Heartbeats are transport-only and do not represent file changes.
+        an HTTP/MCP refresh. An overflow, or a stale `Last-Event-ID` gap, is signalled with
+        `kind: snapshot_required` plus a `reason` (`overflow` for a Runtime buffer overflow,
+        `sequence_gap` for a reconnect past the retained sequence); it carries no `snapshotVersion`,
+        so the client must re-read state through the Workspace HTTP/MCP APIs rather than apply a
+        partial replay.
+        Heartbeats are transport-only and do not represent file changes.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path
@@ -712,6 +717,43 @@ paths:
      get: { operationId: getWorkspaceMcpServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: 'Stdio MCP session snapshots: servers[{serverId,state,attempt,lastError,sinceMs,epoch}] + count; state literals are starting/ready/restarting/failed/stopped', content: { application/json: { schema: { $ref: '#/components/schemas/McpServerStatusList' } } } }, '404': { description: 'WORKSPACE_NOT_FOUND (CP inaccessible or Runtime passthrough)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'WORKSPACE_DESTROYING or WORKSPACE_BUSY passed through from Runtime', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'RUNTIME_UNAVAILABLE (Runtime unreachable, timeout, unparseable, or unknown error code)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { description: 'WORKSPACE_MATERIALIZATION_FAILED passed through from Runtime (first query may trigger materialization; retry)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/workspaces/{workspaceId}/environment:
      get: { operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvironment' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+  # PLAN-0384 T1.3/V2: public capability preflight so the create/import UI can
+  # show the real execution backend before a Workspace is persisted.
+  /api/v1/workspaces/capabilities/preflight:
+    post:
+      operationId: preflightWorkspaceCapability
+      summary: Preflight the execution backend capability before creating a Workspace
+      description: |
+        Probes the Runtime direct-attach backend so the create/import UI can show the real
+        execution capability before any Workspace is persisted. `storageMode` defaults to and
+        must be `direct_attach`; any other storage/execution combination is `400`. A reachable
+        Runtime always answers `200`, including `available:false` with its `reason` (for example
+        `MXC_EXECUTABLE_MISSING`) — that is a valid result, not an error. Only an unreachable
+        Runtime or invalid JSON maps to `502 RUNTIME_UNAVAILABLE`, reusing Problem Details.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceCapabilityPreflightRequest' }
+      responses:
+        '200':
+          description: 'Backend capability snapshot plus checkedAt (available:false is a valid 200 result)'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/BackendCapabilitySnapshot'
+                  - type: object
+                    properties:
+                      checkedAt: { type: string, format: date-time, description: CP read timestamp (ISO-8601). }
+        '400':
+          description: 'INVALID_STORAGE_MODE / INVALID_EXECUTION_MODE / INVALID_HOST_PATH (storageMode must be direct_attach)'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '502':
+          description: 'RUNTIME_UNAVAILABLE (Runtime unreachable or invalid JSON)'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/workspaces/{workspaceId}/jobs:
      get: { operationId: listWorkspaceJobs, description: 'Workspace-scoped durable Job projection (PLAN-0390); canonical identity is `operationItemId`. Each item carries the full WorkspaceJob projection.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace-scoped durable Job projection, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceJob' } } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
      post:
@@ -1943,6 +1985,7 @@ components:
         source: { type: string, enum: [ui, agent, runtime, system, mcp], default: ui }
         env: { type: object, additionalProperties: { type: string } }
     DirectAttachProbeRequest: { type: object, required: [storageMode, hostPath, executionMode], properties: { storageMode: { type: string, enum: [direct_attach] }, hostPath: { type: string }, executionMode: { type: string, enum: [windows-mxc, windows-host] } } }
+    WorkspaceCapabilityPreflightRequest: { type: object, required: [hostPath], properties: { storageMode: { type: string, enum: [direct_attach], default: direct_attach, description: Omitted defaults to direct_attach; managed_import is rejected with 400 INVALID_STORAGE_MODE. }, hostPath: { type: string, description: Absolute host directory to attach. }, executionMode: { type: string, enum: [windows-mxc, windows-host], default: windows-mxc, description: Omitted defaults to windows-mxc on direct_attach. } } }
     WorkspaceJobCapability:
       type: object
       description: |

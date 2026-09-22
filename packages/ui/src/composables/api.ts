@@ -44,6 +44,8 @@ import type {
     WorkspaceJobStartRequest,
     WorkspaceExecutionMode,
     WorkspaceStorageMode,
+    WorkspaceCapabilityPreflight,
+    WorkspaceDirectAttachExecutionMode,
 } from "../types";
 
 const API_BASE = "/api/v1";
@@ -880,6 +882,32 @@ export function workspaceJobErrorReason(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+/** Stable Problem codes returned by the Workspace capability preflight route. */
+export const WORKSPACE_PREFLIGHT_ERROR_CODES = [
+    "INVALID_STORAGE_MODE",
+    "INVALID_EXECUTION_MODE",
+    "INVALID_HOST_PATH",
+    "RUNTIME_UNAVAILABLE",
+] as const;
+
+export type WorkspacePreflightErrorCode = (typeof WORKSPACE_PREFLIGHT_ERROR_CODES)[number];
+
+/**
+ * Stable Problem code carried by a failed execution-mode switch (`PATCH .../execution-mode`).
+ * `WORKSPACE_BUSY` means an active Job must be stopped first; probe codes mean the target
+ * backend could not be validated (the UI must not silently fall back).
+ */
+export const EXECUTION_MODE_SWITCH_PROBE_CODES = [
+    "DIRECT_ATTACH_UNAVAILABLE",
+    "DIRECT_ATTACH_PROBE_FAILED",
+    "RUNTIME_UNAVAILABLE",
+] as const;
+
+export function isExecutionModeSwitchProbeFailure(code: string | null | undefined): boolean {
+    return typeof code === "string"
+        && (EXECUTION_MODE_SWITCH_PROBE_CODES as readonly string[]).includes(code);
+}
+
 function normalizeSession(value: unknown): SessionResponse {
     const root = asRecord(value);
     const record = asRecord(root?.session) ?? root;
@@ -1570,6 +1598,24 @@ export const api = {
         entries: Array<{ name: string; kind: string; readable: boolean; size: number }>;
     }> {
         return request(`/workspaces/import-sources?path=${encodeURIComponent(path)}`);
+    },
+    /**
+     * PLAN-0384 T1.3: Runtime-backed direct-attach capability preflight. A reachable Runtime
+     * always answers 200 (including `available:false` with a stable `reason`); an unreachable
+     * Runtime or invalid JSON is a 502 `RUNTIME_UNAVAILABLE` rejection.
+     */
+    preflightDirectAttach(input: {
+        hostPath: string;
+        executionMode: WorkspaceDirectAttachExecutionMode;
+    }): Promise<WorkspaceCapabilityPreflight> {
+        return request<WorkspaceCapabilityPreflight>("/workspaces/capabilities/preflight", {
+            method: "POST",
+            body: JSON.stringify({
+                storageMode: "direct_attach",
+                hostPath: input.hostPath,
+                executionMode: input.executionMode,
+            }),
+        });
     },
     async startWorkspaceImport(workspaceId: string, input: {
         sourcePath: string;

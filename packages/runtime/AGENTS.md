@@ -44,6 +44,7 @@ src/
 ├── mcp_session.rs     # stdio MCP 会话（exec attach 直连；状态机/预算/kill 回收）
 ├── remote_mcp.rs      # 远程 MCP 出网
 ├── ws_file_handler.rs # workspace 文件处理
+├── workspace_events.rs # host notify watcher（materialize/direct-attach 后安装，有界队列 + 防抖合并；overflow → `snapshot_required`/`reason=overflow`；销毁/eviction 时停止）
 ├── fetch.rs           # HTTP 出网
 ├── log_redact.rs      # 日志脱敏
 └── error.rs           # 错误处理

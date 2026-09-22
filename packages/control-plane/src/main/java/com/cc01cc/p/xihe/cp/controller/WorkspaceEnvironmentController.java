@@ -157,6 +157,32 @@ public class WorkspaceEnvironmentController {
     }
 
     /**
+     * PLAN-0384 T1.3/V2: public capability preflight so the create/import UI can
+     * show the real execution backend before a Workspace is persisted. A
+     * reachable Runtime reporting {@code available:false} is a 200 with its
+     * {@code reason}; only an unreachable Runtime or invalid JSON is 502
+     * {@code RUNTIME_UNAVAILABLE}.
+     */
+    @PostMapping("/api/v1/workspaces/capabilities/preflight")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> preflightWorkspaceCapability(
+            @RequestBody(required = false) WorkspaceCapabilityPreflightRequest request) {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
+        }
+        try {
+            return ResponseEntity.ok(workspaceService.preflightDirectAttach(
+                    request == null ? null : request.storageMode(),
+                    request == null ? null : request.hostPath(),
+                    request == null ? null : request.executionMode()));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
      * PLAN-0396 决策 #3/#6：能力块三态映射。能力字段只从 Runtime 回包白名单
      * 透传，禁止键（pid/policyPath/tier 等）不进入 CP 响应。
      */
@@ -250,6 +276,12 @@ public class WorkspaceEnvironmentController {
     }
 
     public record ExecutionModeRequest(String executionMode) {}
+
+    /** PLAN-0384 T1.3: preflight body; {@code storageMode} defaults to {@code direct_attach}. */
+    public record WorkspaceCapabilityPreflightRequest(
+            String storageMode,
+            String hostPath,
+            String executionMode) {}
 
     /**
      * PLAN-262 M4 (decision 12): explicit async materialization trigger.

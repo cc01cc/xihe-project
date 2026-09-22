@@ -38,7 +38,7 @@ updated: 2026-09-03
 ## 2. 视图分层
 
 - **ChatView**（`components/chat/ChatView.vue`）：全屏 chat，含标题栏；内嵌 `ChatPanel :session-id`；挂载时从后端加载历史消息。
-- **WorkspaceView**（`components/workspace/WorkspaceView.vue`）：左文件树（`w-60`，`FileTree` + reka-ui `TreeRoot/TreeItem` 受控 expanded）+ 中编辑器/工具栏 + 右 `ChatPanel`（`w-96` 固定宽）；无 workspace 时显示空态（决策 11：唯一的创建入口）+ `WorkspaceCreateDialog`（名称/描述/profile 三选/image 只读白名单）；`WorkspaceSettingsDialog`（改名/PATCH、删除/DELETE + 二次确认）；移动端（<768px）为独立 IA（§7：树 Sheet + Chat 底部抽屉）。
+- **WorkspaceView**（`components/workspace/WorkspaceView.vue`）：左文件树（`w-60`，`FileTree` + reka-ui `TreeRoot/TreeItem` 受控 expanded）+ 中编辑器/工具栏 + 右 `ChatPanel`（`w-96` 固定宽）；创建入口统一为 `WorkspaceCreateDialog`（PLAN-0384：空态入口 + 工具栏「添加 Workspace」共用同一弹窗）。流程 = 存储方式（托管副本/直接使用目录）→ 仅 direct-attach 走 Runtime-visible source browser 选目录 → 真实 capability 预检驱动的执行模式卡片（MXC experimental / windows-host 高风险 / docker 后置禁用）→ 确认摘要与宿主风险确认 → 创建（`Idempotency-Key`）。托管副本 v1 仅文件导入（Docker 执行后置），不提供执行模式选择；`WorkspaceSettingsDialog`（改名/PATCH、删除/DELETE + 二次确认）；移动端（<768px）为独立 IA（§7：树 Sheet + Chat 底部抽屉）。
 - **ChatPanel**（`components/chat/ChatPanel.vue`）：唯一可嵌入对话组件（消息列表 + 输入框 + SSEStream）；接收 `sessionId` prop；附件写入入口 `handleSend`。
 - **WorkspaceToolbar**：Session 下拉（保留 workspace route 切换）+ 「切换回 chat」按钮 + Environment 入口 + Workspace settings 入口 + 上传/刷新。
 - **FileNodeMenu**（`components/workspace/FileNodeMenu.vue`）：reka-ui `ContextMenu` 封装；文件：Rename/Move/Duplicate/Copy Path/Delete；目录：New File/New Directory/Rename/Move；文本走 `write_file` MCP，二进制走 `POST /api/v1/files/upload` FormData（PLAN-262 M0/B-3）。

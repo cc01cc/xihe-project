@@ -17,6 +17,7 @@ Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、
 - `chat/`：ChatRun、SSE、审批与 checkpoint API。
 - `mcp/`：MCP 代理、请求重写与工具面。
 - `operation/`：Operation ledger 与投影。
+- `event/`：Workspace 事件信封与 SSE 扇出（`WorkspaceEvent` 只携带相对路径，`WorkspaceEventManager` 负责按 workspace 订阅/发布、序列号定序与 `snapshot_required`）。
 - `runtime/`、`agent/`、`config/`：Runtime/Agent 客户端及配置/认证边界。
 - `service/`、`entity/`、`repository/`：应用服务、持久化模型与仓储。
 

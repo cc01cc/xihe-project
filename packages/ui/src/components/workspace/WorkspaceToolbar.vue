@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
-import { Code, FileDiff, FolderOpen, FolderTree, PanelLeft, RefreshCw, Settings2, Upload } from '@lucide/vue'
+import { Code, FileDiff, FolderOpen, FolderTree, PanelLeft, Plus, RefreshCw, Settings2, Upload } from '@lucide/vue'
 
 const props = defineProps<{
   workspaceId: string
@@ -18,6 +18,7 @@ const emit = defineEmits<{
   upload: []
   importSource: []
   settings: []
+  addWorkspace: []
   files: []
   toggleTree: []
   toggleCode: []
@@ -71,6 +72,7 @@ function switchSession(id: string) {
       class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
       title="Files"
       aria-label="Files"
+      data-testid="workspace-toolbar-files-mobile"
       @click="emit('files')"
     >
       <PanelLeft class="size-3.5" />
@@ -175,6 +177,15 @@ function switchSession(id: string) {
         @click="emit('settings')"
       >
         <Settings2 class="size-3.5" />
+      </button>
+      <button
+        data-testid="workspace-toolbar-add"
+        class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
+        :title="t('workspace.addWorkspace')"
+        :aria-label="t('workspace.addWorkspace')"
+        @click="emit('addWorkspace')"
+      >
+        <Plus class="size-3.5" />
       </button>
       <button
         data-testid="workspace-toolbar-import-source"

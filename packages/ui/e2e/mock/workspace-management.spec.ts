@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test'
 import { setupMockAuth, setupMockSessions } from './helpers/auth'
 
+let createPayload: Record<string, unknown> | null = null
+
 test.describe('Workspace management dialogs (PLAN-262 M2)', () => {
   test.beforeEach(async ({ page }) => {
+    createPayload = null
     await setupMockAuth(page)
     await setupMockSessions(page, {
       sessions: [{ id: 'session-1', title: 'Session 1' }],
@@ -12,6 +15,7 @@ test.describe('Workspace management dialogs (PLAN-262 M2)', () => {
     await page.route('**/api/v1/workspaces', async (route) => {
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON() as Record<string, unknown>
+        createPayload = body
         await route.fulfill({
           status: 201,
           contentType: 'application/json',
@@ -58,7 +62,7 @@ test.describe('Workspace management dialogs (PLAN-262 M2)', () => {
     })
   })
 
-  test('empty state offers creation; create dialog posts profile and shows strict selection', async ({ page }) => {
+  test('empty state offers creation; managed create posts storage and execution mode', async ({ page }) => {
     // No workspace in storage -> empty state (PLAN-262 decision 11)
     await page.addInitScript(() => {
       localStorage.removeItem('xihe-workspace')
@@ -69,12 +73,20 @@ test.describe('Workspace management dialogs (PLAN-262 M2)', () => {
 
     const dialog = page.getByTestId('workspace-create-dialog')
     await expect(dialog).toBeVisible()
-    await dialog.getByPlaceholder('My Workspace').fill('E2E Workspace')
-    // strict profile card
-    await dialog.getByText('Strict', { exact: true }).click()
-    await dialog.getByRole('button', { name: '创建' }).click()
+    // PLAN-0384 progressive flow: managed import → execution mode → confirm.
+    await dialog.getByTestId('workspace-storage-managed').click()
+    await dialog.getByTestId('workspace-execution-next').click()
+    await dialog.getByTestId('workspace-create-name').fill('E2E Workspace')
+    await dialog.getByTestId('workspace-create-submit').click()
 
     await expect(page).toHaveURL(/\/workspace\/ws-new/)
+    expect(createPayload).toMatchObject({
+      name: 'E2E Workspace',
+      storageMode: 'managed_import',
+      executionMode: 'windows-mxc',
+    })
+    expect(createPayload?.profile).toBeUndefined()
+    expect(createPayload?.hostPath).toBeUndefined()
   })
 
   test('settings dialog saves rename and enforces exact-name delete guard', async ({ page }) => {

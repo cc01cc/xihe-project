@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+import { Plus } from '@lucide/vue'
 import Sheet from '../ui/sheet/Sheet.vue'
 import SheetContent from '../ui/sheet/SheetContent.vue'
 import SheetHeader from '../ui/sheet/SheetHeader.vue'
@@ -14,7 +16,10 @@ withDefaults(defineProps<{
 
 const emit = defineEmits<{
   close: []
+  addWorkspace: []
 }>()
+
+const { t } = useI18n()
 
 function handleOpenChange(open: boolean) {
   if (!open) emit('close')
@@ -28,6 +33,18 @@ function handleOpenChange(open: boolean) {
         <SheetTitle>文件</SheetTitle>
         <SheetDescription>浏览和管理当前 workspace 的文件。</SheetDescription>
       </SheetHeader>
+      <div class="flex items-center justify-end px-4 pb-2">
+        <!-- PLAN-0384 T1.1: mobile creation entry (desktop toolbar can overflow on narrow viewports). -->
+        <button
+          type="button"
+          data-testid="mobile-workspace-add"
+          class="flex items-center gap-1 rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+          @click="emit('addWorkspace')"
+        >
+          <Plus class="size-3.5" aria-hidden="true" />
+          {{ t('workspace.addWorkspace') }}
+        </button>
+      </div>
       <div class="flex-1 min-h-0 overflow-hidden">
         <FileTreePanel />
       </div>

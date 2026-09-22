@@ -676,6 +676,29 @@ export interface FileNode {
 export type WorkspaceStorageMode = "managed_import" | "direct_attach";
 export type WorkspaceExecutionMode = "docker" | "windows-mxc" | "windows-host";
 
+/** Execution modes a direct-attach binding can preflight (Docker is postponed). */
+export type WorkspaceDirectAttachExecutionMode = "windows-mxc" | "windows-host";
+
+/** Backend maturity vocabulary reported by Runtime capability snapshots. */
+export type WorkspaceBackendMaturity = "stable" | "preview" | "experimental";
+
+/**
+ * `POST /api/v1/workspaces/capabilities/preflight` result (PLAN-0384).
+ * A reachable Runtime always answers `available` (possibly `false` with a `reason`);
+ * an unreachable Runtime is a `502 RUNTIME_UNAVAILABLE` instead of a body.
+ */
+export interface WorkspaceCapabilityPreflight {
+    contractVersion: string;
+    backendKind: string;
+    backendRevision: string;
+    maturity: WorkspaceBackendMaturity;
+    executionMode: WorkspaceDirectAttachExecutionMode;
+    available: boolean;
+    reason?: string | null;
+    diagnostics?: Record<string, unknown>;
+    checkedAt: string;
+}
+
 /** Durable job lifecycle scope (`spec/execution-job-contract.md` §Scope 收口). */
 export type WorkspaceJobScope = "run" | "session" | "workspace";
 

@@ -480,7 +480,8 @@ public class WorkspaceService {
                     "available", true);
         }
         try {
-            return probeDirectAttach("direct_attach", workspace.getHostPath(), workspace.getExecutionMode());
+            return probeDirectAttachSnapshot("direct_attach", workspace.getHostPath(),
+                    workspace.getExecutionMode());
         } catch (CpApiException e) {
             logger.warn("DIRECT_ATTACH_CAPABILITY_UNAVAILABLE workspaceId={} executionMode={} code={}",
                     workspace.getId(), workspace.getExecutionMode(), e.getCode());
@@ -495,7 +496,63 @@ public class WorkspaceService {
         }
     }
 
+    /**
+     * Public capability preflight (PLAN-0384 T1.3/V2). Reuses the Workspace
+     * storage/execution/host-path normalization, but a reachable Runtime that
+     * reports {@code available:false} is a valid result returned with its
+     * {@code reason} rather than a 503. Only an unreachable Runtime or invalid
+     * JSON maps to {@code 502 RUNTIME_UNAVAILABLE}.
+     */
+    public Map<String, Object> preflightDirectAttach(String storageMode, String hostPath,
+            String executionMode) {
+        String requested = storageMode == null || storageMode.isBlank() ? "direct_attach" : storageMode;
+        String normalizedStorageMode = normalizeStorageMode(requested);
+        if (!"direct_attach".equals(normalizedStorageMode)) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_STORAGE_MODE",
+                    "capability preflight only supports storageMode=direct_attach");
+        }
+        String normalizedExecutionMode = normalizeExecutionMode(executionMode, normalizedStorageMode);
+        String normalizedHostPath = normalizeHostPath(hostPath, normalizedStorageMode);
+        final Map<String, Object> snapshot;
+        try {
+            snapshot = probeDirectAttachSnapshot(normalizedStorageMode, normalizedHostPath,
+                    normalizedExecutionMode);
+        } catch (CpApiException e) {
+            // probeDirectAttachSnapshot only throws for transport/parse failures;
+            // a reachable Runtime reporting unavailable is returned normally.
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.BAD_GATEWAY,
+                    "RUNTIME_UNAVAILABLE",
+                    "Runtime capability probe is unavailable",
+                    e);
+        }
+        Map<String, Object> body = new LinkedHashMap<>(snapshot);
+        body.put("checkedAt", Instant.now().toString());
+        return body;
+    }
+
     private Map<String, Object> probeDirectAttach(String storageMode, String hostPath, String executionMode) {
+        Map<String, Object> snapshot = probeDirectAttachSnapshot(storageMode, hostPath, executionMode);
+        if (!Boolean.TRUE.equals(snapshot.get("available"))) {
+            String reason = snapshot.get("reason") instanceof String value ? value : "CAPABILITY_UNAVAILABLE";
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                    "DIRECT_ATTACH_UNAVAILABLE",
+                    "direct attach backend is unavailable: " + reason);
+        }
+        return snapshot;
+    }
+
+    /**
+     * Raw Runtime direct-attach capability projection. A reachable Runtime that
+     * reports {@code available:false} is returned as-is (its {@code reason} is
+     * preserved); only an unreachable Runtime, a non-2xx response, or invalid
+     * JSON throws {@code DIRECT_ATTACH_PROBE_FAILED}.
+     */
+    private Map<String, Object> probeDirectAttachSnapshot(String storageMode, String hostPath,
+            String executionMode) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -507,6 +564,14 @@ public class WorkspaceService {
             ResponseEntity<String> response = restTemplate.postForEntity(
                     runtimeUrl + "/internal/v1/runtime/capabilities/direct-attach/probe",
                     new HttpEntity<>(body, headers), String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                logger.error("DIRECT_ATTACH_PROBE_REJECTED executionMode={} status={}",
+                        executionMode, response.getStatusCode());
+                throw new CpApiException(
+                        org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "DIRECT_ATTACH_PROBE_FAILED",
+                        "Runtime direct-attach probe was rejected");
+            }
             final JsonNode root;
             try {
                 root = objectMapper.readTree(response.getBody());
@@ -517,13 +582,6 @@ public class WorkspaceService {
                         org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
                         "DIRECT_ATTACH_PROBE_FAILED",
                         "Runtime direct-attach probe returned invalid JSON");
-            }
-            if (!response.getStatusCode().is2xxSuccessful() || !root.path("available").asBoolean(false)) {
-                String reason = root.path("reason").asText("CAPABILITY_UNAVAILABLE");
-                throw new CpApiException(
-                        org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
-                        "DIRECT_ATTACH_UNAVAILABLE",
-                        "direct attach backend is unavailable: " + reason);
             }
             return objectMapper.convertValue(root, new TypeReference<Map<String, Object>>() {});
         } catch (CpApiException e) {
