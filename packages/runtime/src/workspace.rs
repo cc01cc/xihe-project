@@ -598,28 +598,34 @@ impl WorkspaceManager {
                 .map_err(|e| {
                     RuntimeError::Docker(format!("strict probe {label} start exec: {e}"))
                 })?;
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let info = docker
-                .inspect_exec(&exec.id)
-                .await
-                .map_err(|e| RuntimeError::Docker(format!("strict probe {label} inspect: {e}")))?;
-            match info.exit_code {
-                Some(0) => {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            let exit_code = loop {
+                let info = docker
+                    .inspect_exec(&exec.id)
+                    .await
+                    .map_err(|e| RuntimeError::Docker(format!("strict probe {label} inspect: {e}")))?;
+                if let Some(code) = info.exit_code {
+                    break code;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(RuntimeError::Docker(format!(
+                        "strict probe {label}: no exit code for {} within 5s",
+                        state.ws_id
+                    )));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            };
+            match exit_code {
+                0 => {
                     info!("strict probe passed: ws_id={} probe={}", state.ws_id, label);
                 }
-                Some(code) => {
+                code => {
                     return Err(RuntimeError::Io(std::io::Error::new(
                         std::io::ErrorKind::PermissionDenied,
                         format!(
                             "STRICT_PROBE_FAILED: {} probe failed for {}: exit code {} (isolation broken)",
                             label, state.ws_id, code
                         ),
-                    )));
-                }
-                None => {
-                    return Err(RuntimeError::Docker(format!(
-                        "strict probe {label}: no exit code for {}",
-                        state.ws_id
                     )));
                 }
             }

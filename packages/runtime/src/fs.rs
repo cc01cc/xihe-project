@@ -149,13 +149,25 @@ pub async fn apply_patch_at(workspace: &str, patches: &[serde_json::Value]) -> R
         }
         .await;
         if let Err(error) = result {
-            for applied_index in applied.iter().rev() {
+            let mut rollback_indices = applied.clone();
+            rollback_indices.push(index);
+            let mut rollback_errors = Vec::new();
+            for applied_index in rollback_indices.iter().rev() {
                 let (_, previous, existed, original, _) = &prepared[*applied_index];
                 if *existed {
-                    let _ = tokio::fs::write(previous, original).await;
+                    if let Err(rollback_error) = tokio::fs::write(previous, original).await {
+                        rollback_errors.push(rollback_error.to_string());
+                    }
                 } else {
-                    let _ = tokio::fs::remove_file(previous).await;
+                    if let Err(rollback_error) = tokio::fs::remove_file(previous).await {
+                        rollback_errors.push(rollback_error.to_string());
+                    }
                 }
+            }
+            if !rollback_errors.is_empty() {
+                return Err(RuntimeError::PartialRollbackFailed {
+                    detail: rollback_errors.join("; "),
+                });
             }
             return Err(RuntimeError::Io(error));
         }
@@ -231,15 +243,14 @@ fn lexically_safe(path: &str, workspace: &Path) -> Result<PathBuf> {
 /// Stage 2: Filesystem validation — canonicalize resolves symlinks,
 /// then check the real path still lies within the workspace root.
 fn resolve_canonical(path: &Path, workspace: &Path) -> Result<PathBuf> {
+    if std::env::var_os("XIHE_FILE_WORKER").is_some() {
+        // The outer Runtime has already performed path preflight and assembled
+        // the MXC filesystem policy. The data-plane worker must not resolve
+        // host ancestors or discover paths outside its authorized root.
+        return Ok(path.to_path_buf());
+    }
     let canonical = match path.canonicalize() {
         Ok(canonical) => canonical,
-        Err(_) if std::env::var_os("XIHE_FILE_WORKER").is_some() => {
-            // MXC's deny-by-default filesystem proxy can reject canonicalize's
-            // ancestor traversal even for an explicitly granted Workspace root.
-            // The fixed worker has no arbitrary process surface; its lexical
-            // checks plus MXC's physical policy remain the boundary.
-            return Ok(path.to_path_buf());
-        }
         Err(_) => {
             return Err(RuntimeError::PathTraversal {
                 path: path.to_string_lossy().to_string(),
@@ -249,15 +260,6 @@ fn resolve_canonical(path: &Path, workspace: &Path) -> Result<PathBuf> {
 
     let ws_canonical = match workspace.canonicalize() {
         Ok(canonical) => canonical,
-        Err(_) if std::env::var_os("XIHE_FILE_WORKER").is_some() => {
-            if windows_path_within(&canonical, workspace) {
-                return Ok(path.to_path_buf());
-            }
-            return Err(RuntimeError::SymlinkEscape {
-                path: path.to_string_lossy().to_string(),
-                resolved: canonical.to_string_lossy().to_string(),
-            });
-        }
         Err(_) => {
             return Err(RuntimeError::WorkspaceNotFound(
                 workspace.to_string_lossy().to_string(),

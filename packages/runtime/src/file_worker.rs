@@ -254,18 +254,10 @@ async fn dispatch(
             }
             Ok(serde_json::json!({"message": fs::copy_file(from, to, workspace).await?}))
         }
-        "extract_pdf_text" => Ok(serde_json::json!({
-            "content": fs::extract_pdf_text(path(), workspace).await?
-        })),
-        "watch_directory" => {
-            let path = path().to_string();
-            let workspace = workspace.to_string();
-            let events =
-                tokio::task::spawn_blocking(move || fs::watch_directory(&path, &workspace))
-                    .await
-                    .map_err(|error| RuntimeError::Join(error.to_string()))??;
-            Ok(serde_json::json!({"events": events}))
-        }
+        "watch_directory" | "extract_pdf_text" => Err(RuntimeError::Unsupported {
+            capability: format!("file-operation:{}", request.operation),
+            reason: "UNSUPPORTED".into(),
+        }),
         "apply_patch" => serde_json::to_value(
             fs::apply_patch_at(
                 workspace,
@@ -296,6 +288,7 @@ fn map_error(error: &RuntimeError) -> (String, String) {
         RuntimeError::InvalidPath(_) => "INVALID_PATH",
         RuntimeError::FileNotFound(_) => "FILE_NOT_FOUND",
         RuntimeError::Unsupported { .. } => "UNSUPPORTED",
+        RuntimeError::PartialRollbackFailed { .. } => "PARTIAL_ROLLBACK_FAILED",
         _ => "EXEC_FAILED",
     };
     let message = match error {
@@ -312,6 +305,9 @@ fn map_error(error: &RuntimeError) -> (String, String) {
             "FILE_NOT_FOUND" => "Workspace file was not found".to_string(),
             "INVALID_PATH" => "Invalid workspace file path".to_string(),
             "UNSUPPORTED" => "Workspace file operation is unsupported".to_string(),
+            "PARTIAL_ROLLBACK_FAILED" => {
+                "Workspace file operation partially applied and rollback failed".to_string()
+            }
             _ => "Workspace file operation failed".to_string(),
         },
     };

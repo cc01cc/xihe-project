@@ -14,6 +14,16 @@ created: 2026-09-15
 >
 > PLAN-0389 Workspace/Sandbox proposed SPEC 只引用本契约的 capability/fail-closed 语义，不把当前 Docker 实现当作 Windows MXC/host evidence。
 
+## Runtime ExecutionRoot 与 backend policy
+
+Runtime 的统一执行抽象使用 `ExecutionRoot`/`ExecutionRoots`/`ExecutionSpec`，不是 MXC 的 `binding`。
+
+- `workspace` 是默认 `ExecutionRoot`；额外目录必须由 Runtime/CP 显式配置并带 read/readwrite 权限。
+- Runtime 外侧负责 root/path preflight、capability、policy 组装、worker 生命周期和审计；执行 backend 只接收转换后的 policy。
+- MXC 将 ExecutionRoots 转换为 `readwritePaths`/`readonlyPaths`；Docker 将其转换为 mounts；Host 只做 path guard，不得宣称进程级隔离。
+- `ExecutionRoot`/宿主绝对路径不得泄漏到 Agent/UI 公共契约；对外使用 capability/availability projection 和 Workspace-relative path。
+- v1 跨 ExecutionRoot `move/copy` 返回 `UNSUPPORTED`；长驻 watcher、PDF transform 和 Docker file worker 分别由 BL-62、后续 transform 计划和 PLAN-0380 承接。
+
 ## 1. 定位与边界
 
 - 契约描述「上层如何请求执行环境」；**Docker / 端口发布 / 容器内 HTTP 一律不进入本层**。

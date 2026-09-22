@@ -184,6 +184,7 @@ pub(crate) fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
         | RuntimeError::Docker(_) => StatusCode::SERVICE_UNAVAILABLE,
         RuntimeError::InvalidExecutionSpec { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         RuntimeError::PayloadTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        RuntimeError::PartialRollbackFailed { .. } => StatusCode::CONFLICT,
         RuntimeError::InvalidPath(_) => StatusCode::BAD_REQUEST,
         RuntimeError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -193,6 +194,9 @@ pub(crate) fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
         StatusCode::NOT_FOUND => "FILE_NOT_FOUND",
         StatusCode::BAD_REQUEST => "INVALID_REQUEST",
         StatusCode::PAYLOAD_TOO_LARGE => "PAYLOAD_TOO_LARGE",
+        StatusCode::CONFLICT if matches!(e, RuntimeError::PartialRollbackFailed { .. }) => {
+            "PARTIAL_ROLLBACK_FAILED"
+        }
         _ => "RUNTIME_ERROR",
     };
     problem(status, code, "Runtime file operation failed")

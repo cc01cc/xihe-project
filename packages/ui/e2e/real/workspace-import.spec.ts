@@ -17,6 +17,7 @@ test.describe('@host Workspace import', () => {
   test.setTimeout(240000)
 
   let sourceDir = ''
+  let oversizedFile = ''
   const bulkDirs: string[] = []
   const users: ImportUser[] = []
 
@@ -79,6 +80,8 @@ test.describe('@host Workspace import', () => {
     fs.writeFileSync(path.join(sourceDir, 'src', 'imported.md'), '# Imported\n')
     fs.mkdirSync(path.join(sourceDir, 'node_modules'))
     fs.writeFileSync(path.join(sourceDir, 'node_modules', 'ignored.js'), 'ignored\n')
+    oversizedFile = path.join(sourceDir, 'oversized.bin')
+    fs.writeFileSync(oversizedFile, Buffer.alloc(64 * 1024 * 1024 + 1))
   })
 
   test.afterAll(async ({ request }) => {
@@ -167,5 +170,19 @@ test.describe('@host Workspace import', () => {
 
     // PLAN-0384 V5: the failure is visible in the UI (durable status carries the reason).
     await expect(page.getByTestId('workspace-import-status')).toContainText(/导入失败/, { timeout: 45000 })
+  })
+
+  test('rejects Workspace file-tool payloads above 64 MiB before transport', async ({ page, request }) => {
+    const user = await registerUser(request, 'oversized')
+    seedPage(page, user)
+    await page.goto(`/workspace/${user.wsId}`, { waitUntil: 'load' })
+    await page.getByTitle('Upload files').click()
+    const uploadInput = page.locator('input[type="file"]').last()
+    await expect(uploadInput).toBeAttached()
+    await uploadInput.setInputFiles(oversizedFile)
+    await page.getByRole('button', { name: '导入' }).click()
+    const bodyText = await page.locator('body').innerText()
+    await expect(page.locator('[title*="PAYLOAD_TOO_LARGE"]'), bodyText).toBeVisible()
+    await expect(page.getByText('oversized.bin')).toBeVisible()
   })
 })

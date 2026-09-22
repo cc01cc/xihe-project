@@ -12,6 +12,11 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -217,6 +222,19 @@ fn mxc_file_worker_real_boundary_matrix() {
         }
     }
 
+    for operation in ["watch_directory", "extract_pdf_text"] {
+        let (status, response, _) = run_worker(
+            workspace.path(),
+            text_frame(operation, serde_json::json!({"path": "source.txt"})),
+        );
+        assert_eq!(status, JobStatus::Succeeded);
+        assert_eq!(response["ok"], false, "{operation}: {response}");
+        assert_eq!(
+            response["errorCode"], "UNSUPPORTED",
+            "{operation}: {response}"
+        );
+    }
+
     let (status, mkdir, _) = run_worker(
         workspace.path(),
         text_frame("mkdir", serde_json::json!({"path": "nested"})),
@@ -334,4 +352,54 @@ fn mxc_file_worker_real_boundary_matrix() {
     assert_eq!(delete["ok"], false);
     assert_eq!(delete["errorCode"], "BOUNDARY_DENIED");
     assert!(outside.path().exists(), "outside directory was deleted");
+
+    let race_dir = workspace.path().join("race");
+    fs::create_dir(&race_dir).expect("race directory");
+    let stop_race = Arc::new(AtomicBool::new(false));
+    let stop_race_thread = Arc::clone(&stop_race);
+    let race_dir_thread = race_dir.clone();
+    let outside_thread = outside.path().to_path_buf();
+    let toggler = thread::spawn(move || {
+        let mut junction = false;
+        while !stop_race_thread.load(Ordering::Relaxed) {
+            let _ = fs::remove_dir(&race_dir_thread);
+            if junction {
+                let _ = fs::create_dir(&race_dir_thread);
+            } else {
+                let _ = std::process::Command::new("cmd")
+                    .args([
+                        "/C",
+                        "mklink",
+                        "/J",
+                        &race_dir_thread.to_string_lossy(),
+                        &outside_thread.to_string_lossy(),
+                    ])
+                    .status();
+            }
+            junction = !junction;
+        }
+        let _ = fs::remove_dir(&race_dir_thread);
+    });
+    for index in 0..6 {
+        let (status, response, _) = run_worker(
+            workspace.path(),
+            text_frame(
+                "write_file",
+                serde_json::json!({
+                    "path": format!("race/file-{index}.txt"),
+                    "content": "race"
+                }),
+            ),
+        );
+        assert_eq!(status, JobStatus::Succeeded);
+        assert!(response["ok"] == true || response["errorCode"] == "BOUNDARY_DENIED");
+    }
+    stop_race.store(true, Ordering::Relaxed);
+    toggler.join().expect("race toggler");
+    assert!(!outside.path().join("file-0.txt").exists());
+    assert!(!outside.path().join("file-1.txt").exists());
+    assert!(!outside.path().join("file-2.txt").exists());
+    assert!(!outside.path().join("file-3.txt").exists());
+    assert!(!outside.path().join("file-4.txt").exists());
+    assert!(!outside.path().join("file-5.txt").exists());
 }

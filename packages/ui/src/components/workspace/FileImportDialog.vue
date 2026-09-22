@@ -39,9 +39,11 @@ function removeItem(index: number) {
   checkLargePdf()
 }
 
-function handleImport() {
-  ws.executeUpload(targetDir.value, splitPreference.value)
-  ws.closeImportDialog()
+async function handleImport() {
+  await ws.executeUpload(targetDir.value, splitPreference.value)
+  if (!ws.uploadQueue.some(item => item.status === 'error')) {
+    ws.closeImportDialog()
+  }
 }
 
 function handleCancel() {

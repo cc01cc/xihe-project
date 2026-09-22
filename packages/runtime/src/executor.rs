@@ -380,10 +380,14 @@ fn preflight_file_operation(workspace: &str, operation: &str, payload: &Value) -
             .ok_or_else(|| RuntimeError::InvalidPath(format!("missing {key}")))
     };
     match operation {
-        "read_file" | "read_file_range" | "list_directory" | "get_file_info" | "glob"
-        | "grep" | "watch_directory" | "extract_pdf_text" => read_path(path("path")?),
+        "read_file" | "read_file_range" | "list_directory" | "get_file_info" | "glob" | "grep"
+        | "watch_directory" | "extract_pdf_text" => read_path(path("path")?),
         "write_file" | "edit_file" | "write_binary" | "mkdir" => {
-            let key = if operation == "edit_file" { "filePath" } else { "path" };
+            let key = if operation == "edit_file" {
+                "filePath"
+            } else {
+                "path"
+            };
             write_path(path(key)?)
         }
         "delete_file" | "delete_directory" => read_path(path("path")?),
@@ -681,6 +685,12 @@ impl WorkspaceExecutionRouter {
         payload: Value,
     ) -> Result<Value> {
         validate_file_operation_payload(operation, &payload)?;
+        if matches!(operation, "watch_directory" | "extract_pdf_text") {
+            return Err(RuntimeError::Unsupported {
+                capability: format!("file-operation:{operation}"),
+                reason: "UNSUPPORTED".into(),
+            });
+        }
         if execution_mode == "windows-mxc" {
             return self
                 .execute_mxc_file_operation(workspace_id, workspace_path, operation, payload, None)
@@ -1546,11 +1556,16 @@ impl WorkspaceExecutionRouter {
         let operations = operation_names
             .into_iter()
             .map(|name| {
+                let v1_unsupported = matches!(name, "watch_directory" | "extract_pdf_text");
                 (
                     name.to_string(),
                     serde_json::json!({
-                        "available": backend_available,
-                        "reason": backend_reason.clone(),
+                        "available": backend_available && !v1_unsupported,
+                        "reason": if v1_unsupported {
+                            serde_json::json!("UNSUPPORTED")
+                        } else {
+                            backend_reason.clone()
+                        },
                         "cap": if FILE_MUTATIONS.contains(&name) {
                             serde_json::json!(FILE_OPERATION_MAX_PAYLOAD_BYTES)
                         } else {

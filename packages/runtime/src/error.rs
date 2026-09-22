@@ -23,6 +23,9 @@ pub enum RuntimeError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Partial rollback failed: {detail}")]
+    PartialRollbackFailed { detail: String },
+
     #[error("Pattern error: {0}")]
     Pattern(String),
 
