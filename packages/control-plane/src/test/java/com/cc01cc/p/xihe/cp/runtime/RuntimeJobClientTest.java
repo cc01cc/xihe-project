@@ -143,14 +143,53 @@ class RuntimeJobClientTest {
     }
 
     @Test
-    void cancelJobTreats5xxAndUnknownStatusAsUnreachable() throws IOException {
+    void cancelJobPreservesRuntimeProblemInsteadOfCallingItUnreachable() throws IOException {
         String url = startServer((method, path) -> new Stub(500, "{\"code\":\"RUNTIME_ERROR\"}"));
         RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
-        assertFalse(client.cancelJob("ws-1", "job-3").reachable());
+        RuntimeJobClient.JobCancelResult problem = client.cancelJob("ws-1", "job-3");
+        assertTrue(problem.reachable());
+        assertEquals("RUNTIME_ERROR", problem.errorCode());
+        assertEquals(500, problem.statusCode());
 
         String weird = startServer((method, path) -> new Stub(200, "{\"status\":\"weird\"}"));
         RuntimeJobClient second = new RuntimeJobClient(weird, "test-token");
-        assertFalse(second.cancelJob("ws-1", "job-4").reachable(),
-                "unknown status must not be reported as a successful cancel");
+        RuntimeJobClient.JobCancelResult unknownStatus = second.cancelJob("ws-1", "job-4");
+        assertFalse(unknownStatus.reachable());
+        assertFalse(unknownStatus.found(), "unknown status must not be reported as a successful cancel");
+    }
+
+    @Test
+    void unknownRuntimeCodeIsMappedToUnmappedErrorWithReasonAndRequestId() throws IOException {
+        String url = startServer((method, path) -> new Stub(422,
+                "{\"code\":\"NEW_RUNTIME_CODE\",\"detail\":\"why\","
+                        + "\"requestId\":\"runtime-rid\",\"status\":422}"));
+        RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
+
+        RuntimeJobClient.JobCancelResult result = client.cancelJob("ws-1", "job-5");
+
+        assertTrue(result.reachable());
+        assertEquals("UNMAPPED_ERROR", result.errorCode());
+        assertEquals("why", result.reason());
+        assertEquals("runtime-rid", result.requestId());
+        assertEquals(422, result.statusCode());
+    }
+
+    @Test
+    void startStatusAndOutputPreserveReachableRuntimeProblemCodes() throws IOException {
+        String url = startServer((method, path) -> new Stub(422,
+                "{\"code\":\"INVALID_PATH\",\"detail\":\"cwd rejected\","
+                        + "\"requestId\":\"runtime-rid-2\",\"status\":422}"));
+        RuntimeJobClient client = new RuntimeJobClient(url, "test-token");
+
+        RuntimeJobClient.JobStartResult start = client.startJob("ws-1", "item-1", "echo",
+                java.util.List.of(), "../outside", 0L, java.util.Map.of());
+        RuntimeJobClient.JobStatusResult status = client.jobStatus("ws-1", "job-1");
+        RuntimeJobClient.JobOutputResult output = client.jobOutput("ws-1", "job-1", "stdout", 0L, 100L);
+
+        assertEquals("INVALID_PATH", start.errorCode());
+        assertEquals("INVALID_PATH", status.errorCode());
+        assertEquals("INVALID_PATH", output.errorCode());
+        assertEquals("runtime-rid-2", start.requestId());
+        assertEquals(422, output.statusCode());
     }
 }

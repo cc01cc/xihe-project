@@ -30,7 +30,14 @@ public class ProblemDetailsHandler {
     }
 
     public static ResponseEntity<Map<String, Object>> problemResponse(HttpStatus status, String code, String detail) {
-        String requestId = UUID.randomUUID().toString();
+        return problemResponse(status, code, detail, UUID.randomUUID().toString());
+    }
+
+    public static ResponseEntity<Map<String, Object>> problemResponse(
+            HttpStatus status, String code, String detail, String requestId) {
+        if (requestId == null || requestId.isBlank()) {
+            requestId = UUID.randomUUID().toString();
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", "https://xihe.dev/problems/" + code.toLowerCase());
         body.put("title", status.getReasonPhrase());
@@ -62,7 +69,10 @@ public class ProblemDetailsHandler {
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception, HttpServletRequest request) {
         if (exception instanceof CpApiException apiException) {
             logger.warn("Domain failure at {}: {}", request.getRequestURI(), apiException.getMessage());
-            return problem(apiException.getStatus(), apiException.getCode(), apiException.getMessage(), request);
+            return apiException.getRequestId() == null
+                    ? problem(apiException.getStatus(), apiException.getCode(), apiException.getMessage(), request)
+                    : problem(apiException.getStatus(), apiException.getCode(), apiException.getMessage(),
+                    apiException.getRequestId());
         }
         logger.warn("Bad request at {}", request.getRequestURI(), exception);
         return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request validation failed", request);

@@ -205,20 +205,50 @@ class WorkspaceJobStartIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void nonDockerWorkspaceIsRefusedWithoutCreatingDurableJob() {
+    void windowsHostWorkspaceDispatchesRuntimeJob() {
         var workspace = workspaceRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
         workspace.setExecutionMode("windows-host");
         workspaceRepository.save(workspace);
+        stubDispatch("host-job");
+
+        ResponseEntity<Map> response = postStart("key-5", body("echo", "workspace"));
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        assertEquals("host-job", response.getBody().get("jobId"));
+        verify(runtimeJobClient).startJob(eq(workspaceId), anyString(), anyString(), any(), any(), any(), any());
+    }
+
+    @Test
+    void windowsMxcWorkspaceDispatchesRuntimeJob() {
+        var workspace = workspaceRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
+        workspace.setExecutionMode("windows-mxc");
+        workspaceRepository.save(workspace);
+        stubDispatch("mxc-job");
+
+        ResponseEntity<Map> response = postStart("key-5-mxc", body("echo", "workspace"));
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        assertEquals("mxc-job", response.getBody().get("jobId"));
+        verify(runtimeJobClient).startJob(eq(workspaceId), anyString(), anyString(), any(), any(), any(), any());
+    }
+
+    @Test
+    void runtime501ForWindowsWorkspaceFailsClosedWithoutFallback() {
+        var workspace = workspaceRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
+        workspace.setExecutionMode("windows-mxc");
+        workspaceRepository.save(workspace);
+        when(runtimeJobClient.startJob(eq(workspaceId), anyString(), anyString(), any(), any(), any(), any()))
+                .thenReturn(new RuntimeJobClient.JobStartResult(true, false, true, null,
+                        "JOB_BACKEND_LAUNCH_PENDING"));
 
         HttpServerErrorException error = org.junit.jupiter.api.Assertions.assertThrows(
                 HttpServerErrorException.class,
-                () -> postStart("key-5", body("echo", "workspace")));
+                () -> postStart("key-5-pending", body("echo", "workspace")));
 
         assertEquals(HttpStatus.NOT_IMPLEMENTED, error.getStatusCode());
         assertTrue(error.getResponseBodyAsString().contains("JOB_BACKEND_LAUNCH_PENDING"));
-        verify(runtimeJobClient, never()).startJob(any(), any(), any(), any(), any(), any(), any());
-        assertTrue(operationService.listWorkspaceJobs(workspaceId).isEmpty(),
-                "no durable Job row may be created for an unavailable backend");
+        verify(runtimeJobClient, times(1)).startJob(any(), any(), any(), any(), any(), any(), any());
+        assertEquals("interrupted", operationService.listWorkspaceJobs(workspaceId).get(0).get("status"));
     }
 
     @Test

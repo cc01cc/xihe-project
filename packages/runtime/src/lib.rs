@@ -11,6 +11,7 @@ pub mod environment;
 pub mod error;
 pub mod executor;
 pub mod fetch;
+pub mod file_worker;
 pub mod fs;
 pub mod gateway;
 pub mod heartbeat;

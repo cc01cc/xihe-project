@@ -309,8 +309,8 @@ Loading large files entirely to the frontend causes OOM (PDF >10MB pdfjs.render 
 | File Type | Size Range | Strategy | Path |
 |-----------|-----------|----------|------|
 | PDF | <10MB | Full load | MCP `runtime__read_file` |
-| PDF | 10MB–500MB | CP-side PDFBox splits into 10-page groups, loads current group | UI → CP(/upload) → PDFBox → Runtime(REST write) |
-| PDF | >500MB or >500 pages | Reject splitting, prompt user to download | CP-side Content-Length check |
+| PDF | 10MB–64MB | CP-side PDFBox splits into 10-page groups, loads current group | UI → CP(/upload) → PDFBox → Runtime(REST write) |
+| PDF | >64MB or >500 pages | Reject Workspace file-tool upload; Chat attachments use their separate 500MB contract | CP-side Content-Length check |
 | Text/Code | <10MB | Full load | REST `read` (no max_bytes) |
 | Text/Code | 10MB–100MB | Server-side max_bytes=1MB truncation | REST `read` (max_bytes=1MB) |
 | Text/Code | ≥100MB | Frontend intercept, Toast, empty content | Frontend fileService.ts check |

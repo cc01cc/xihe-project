@@ -69,6 +69,133 @@ pub struct FileEventList {
     pub events: Vec<FileEvent>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchResult {
+    pub changed: Vec<String>,
+    pub diff: String,
+    pub new_hashes: std::collections::HashMap<String, String>,
+}
+
+/// Shared safe-coding-loop patch core used by Docker and the MXC file worker.
+pub async fn apply_patch_at(workspace: &str, patches: &[serde_json::Value]) -> Result<PatchResult> {
+    const DIFF_LIMIT: usize = 256 * 1024;
+    if patches.is_empty() {
+        return Err(RuntimeError::InvalidPath("empty patches array".into()));
+    }
+    let mut prepared = Vec::with_capacity(patches.len());
+    let mut seen = std::collections::HashSet::new();
+    for patch in patches {
+        let relative = patch
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| RuntimeError::InvalidPath("missing path in patch".into()))?;
+        let expected = patch
+            .get("expectedHash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| RuntimeError::InvalidPath("missing expectedHash in patch".into()))?;
+        if !seen.insert(relative.to_string()) {
+            return Err(RuntimeError::InvalidPath("duplicate patch path".into()));
+        }
+        let absolute = resolve_write_path(relative, workspace)?;
+        let original_exists = absolute.exists();
+        let original = if original_exists {
+            tokio::fs::read_to_string(&absolute).await?
+        } else {
+            String::new()
+        };
+        if (original_exists && sha256_text(&original) != expected)
+            || (!original_exists && !expected.is_empty())
+        {
+            return Err(RuntimeError::InvalidPath("patch hash mismatch".into()));
+        }
+        let hunks = patch
+            .get("hunks")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| RuntimeError::InvalidPath("missing hunks in patch".into()))?;
+        let mut content = original.clone();
+        for hunk in hunks {
+            let before = hunk
+                .get("before")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let after = hunk
+                .get("after")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if before.is_empty() && content.is_empty() {
+                content = after.to_string();
+            } else if let Some(index) = content.find(before) {
+                content.replace_range(index..index + before.len(), after);
+            } else {
+                return Err(RuntimeError::InvalidPath("patch hunk not found".into()));
+            }
+        }
+        prepared.push((
+            relative.to_string(),
+            absolute,
+            original_exists,
+            original,
+            content,
+        ));
+    }
+    let mut applied = Vec::new();
+    for (index, (_, absolute, _, _, content)) in prepared.iter().enumerate() {
+        let result = async {
+            if let Some(parent) = absolute.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            tokio::fs::write(absolute, content).await
+        }
+        .await;
+        if let Err(error) = result {
+            for applied_index in applied.iter().rev() {
+                let (_, previous, existed, original, _) = &prepared[*applied_index];
+                if *existed {
+                    let _ = tokio::fs::write(previous, original).await;
+                } else {
+                    let _ = tokio::fs::remove_file(previous).await;
+                }
+            }
+            return Err(RuntimeError::Io(error));
+        }
+        applied.push(index);
+    }
+    let changed = prepared
+        .iter()
+        .map(|(path, _, _, _, _)| path.clone())
+        .collect();
+    let new_hashes = prepared
+        .iter()
+        .map(|(path, _, _, _, content)| (path.clone(), sha256_text(content)))
+        .collect();
+    let mut diff = String::new();
+    for (path, _, _, _, content) in &prepared {
+        diff.push_str(&format!("--- a/{path}\n+++ b/{path}\n"));
+        for line in content.lines() {
+            if diff.len() + line.len() + 2 > DIFF_LIMIT {
+                diff.push_str("[diff truncated]\n");
+                break;
+            }
+            diff.push('+');
+            diff.push_str(line);
+            diff.push('\n');
+        }
+    }
+    Ok(PatchResult {
+        changed,
+        diff,
+        new_hashes,
+    })
+}
+
+fn sha256_text(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 /// Stage 1: Lexical validation — no filesystem access.
 /// Rejects absolute paths, resolves `.` and `..` lexically,
 /// and ensures the normalized path stays within the workspace root.
@@ -104,17 +231,41 @@ fn lexically_safe(path: &str, workspace: &Path) -> Result<PathBuf> {
 /// Stage 2: Filesystem validation — canonicalize resolves symlinks,
 /// then check the real path still lies within the workspace root.
 fn resolve_canonical(path: &Path, workspace: &Path) -> Result<PathBuf> {
-    let canonical = path
-        .canonicalize()
-        .map_err(|_| RuntimeError::PathTraversal {
-            path: path.to_string_lossy().to_string(),
-        })?;
+    let canonical = match path.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(_) if std::env::var_os("XIHE_FILE_WORKER").is_some() => {
+            // MXC's deny-by-default filesystem proxy can reject canonicalize's
+            // ancestor traversal even for an explicitly granted Workspace root.
+            // The fixed worker has no arbitrary process surface; its lexical
+            // checks plus MXC's physical policy remain the boundary.
+            return Ok(path.to_path_buf());
+        }
+        Err(_) => {
+            return Err(RuntimeError::PathTraversal {
+                path: path.to_string_lossy().to_string(),
+            });
+        }
+    };
 
-    let ws_canonical = workspace
-        .canonicalize()
-        .map_err(|_| RuntimeError::WorkspaceNotFound(workspace.to_string_lossy().to_string()))?;
+    let ws_canonical = match workspace.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(_) if std::env::var_os("XIHE_FILE_WORKER").is_some() => {
+            if windows_path_within(&canonical, workspace) {
+                return Ok(path.to_path_buf());
+            }
+            return Err(RuntimeError::SymlinkEscape {
+                path: path.to_string_lossy().to_string(),
+                resolved: canonical.to_string_lossy().to_string(),
+            });
+        }
+        Err(_) => {
+            return Err(RuntimeError::WorkspaceNotFound(
+                workspace.to_string_lossy().to_string(),
+            ));
+        }
+    };
 
-    if !canonical.starts_with(&ws_canonical) {
+    if !windows_path_within(&canonical, &ws_canonical) {
         return Err(RuntimeError::SymlinkEscape {
             path: path.to_string_lossy().to_string(),
             resolved: canonical.to_string_lossy().to_string(),
@@ -122,6 +273,27 @@ fn resolve_canonical(path: &Path, workspace: &Path) -> Result<PathBuf> {
     }
 
     Ok(canonical)
+}
+
+fn windows_path_within(path: &Path, root: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let normalize = |value: &Path| {
+            value
+                .to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches("//?/")
+                .trim_end_matches('/')
+                .to_ascii_lowercase()
+        };
+        let path = normalize(path);
+        let root = normalize(root);
+        path == root || path.starts_with(&(root + "/"))
+    }
+    #[cfg(not(windows))]
+    {
+        path.starts_with(root)
+    }
 }
 
 /// Resolve a path for read operations.
@@ -825,6 +997,19 @@ pub fn watch_directory(path: &str, workspace: &str) -> Result<Vec<FileEvent>> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_path_comparison_normalizes_case_and_extended_prefix() {
+        assert!(windows_path_within(
+            Path::new(r"\\?\H:\Work\Workspace\file.txt"),
+            Path::new(r"h:\work\workspace")
+        ));
+        assert!(!windows_path_within(
+            Path::new(r"h:\work\workspace-other\file.txt"),
+            Path::new(r"h:\work\workspace")
+        ));
+    }
 
     #[test]
     fn test_resolve_path_rejects_absolute() {

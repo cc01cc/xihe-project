@@ -2,8 +2,10 @@ package com.cc01cc.p.xihe.cp.runtime;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cc01cc.p.xihe.cp.logging.RequestIdFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +17,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * PLAN-0344 T1.2：CP → Runtime 的内部 job 读/取消通道
@@ -29,6 +32,18 @@ public class RuntimeJobClient {
 
     private static final Logger logger = LoggerFactory.getLogger(RuntimeJobClient.class);
     private static final Duration CALL_TIMEOUT = Duration.ofSeconds(10);
+    private static final Set<String> CANONICAL_ERROR_CODES = Set.of(
+            "WORKSPACE_NOT_FOUND", "EXECUTION_SPEC_UNAVAILABLE", "MCP_SESSION_UNAVAILABLE",
+            "MCP_SESSION_FAILED", "MCP_SESSION_BUSY", "PROCESS_TIMEOUT", "PROCESS_CANCELLED",
+            "PROCESS_TREE_CLEANUP_FAILED", "PROCESS_EXITED", "EXECUTION_SPEC_INVALID",
+            "WORKSPACE_MATERIALIZATION_FAILED", "WORKSPACE_DESTROYING", "WORKSPACE_BUSY",
+            "CAPABILITY_UNAVAILABLE", "FORBIDDEN", "INVALID_REQUEST", "RUNTIME_ERROR",
+            "RUNTIME_UNAVAILABLE", "JOB_NOT_FOUND", "JOB_OUTPUT_LOST", "JOB_OUTPUT_EXPIRED",
+            "JOB_BACKEND_LAUNCH_PENDING", "PROCESS_BACKEND_LAUNCH_PENDING", "JOB_CANCEL_UNCONFIRMED",
+            "DIRECTORY_NOT_FOUND", "FILE_NOT_FOUND", "INVALID_PATH", "PATH_TRAVERSAL",
+            "SYMLINK_ESCAPE", "TIMEOUT", "CANCELLED", "EXEC_FAILED", "UNSUPPORTED_PLATFORM",
+            "RUNTIME_CAPABILITY_ERROR", "RUNTIME_CAPABILITY_UNPARSABLE",
+            "CONTAINER_JOBS_SERVED_BY_DOCKER");
 
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
@@ -45,10 +60,15 @@ public class RuntimeJobClient {
     }
 
     /** found=false：Runtime 明确没有该 job（404）；unreachable=true：调用失败。 */
-    public record JobStatusResult(boolean found, boolean unreachable, JsonNode job) {
+    public record JobStatusResult(boolean found, boolean unreachable, JsonNode job,
+                                  String errorCode, String reason, String requestId, int statusCode) {
+
+        public JobStatusResult(boolean found, boolean unreachable, JsonNode job) {
+            this(found, unreachable, job, null, null, null, 0);
+        }
 
         static JobStatusResult notFound() {
-            return new JobStatusResult(false, false, null);
+            return new JobStatusResult(false, false, null, "JOB_NOT_FOUND", null, null, 404);
         }
 
         static JobStatusResult unreachableResult() {
@@ -57,10 +77,15 @@ public class RuntimeJobClient {
     }
 
     /** available=false：job 或输出文件缺失（由调用方决定 LOST/EXPIRED）；unreachable=true：调用失败。 */
-    public record JobOutputResult(boolean available, boolean unreachable, JsonNode chunk) {
+    public record JobOutputResult(boolean available, boolean unreachable, JsonNode chunk,
+                                  String errorCode, String reason, String requestId, int statusCode) {
+
+        public JobOutputResult(boolean available, boolean unreachable, JsonNode chunk) {
+            this(available, unreachable, chunk, null, null, null, 0);
+        }
 
         static JobOutputResult unavailable() {
-            return new JobOutputResult(false, false, null);
+            return new JobOutputResult(false, false, null, "JOB_OUTPUT_LOST", null, null, 404);
         }
 
         static JobOutputResult unreachableResult() {
@@ -69,18 +94,24 @@ public class RuntimeJobClient {
     }
 
     /**
-     * reachable=false：调用失败（不可达/超时/非 2xx/响应不可解析）；
+     * reachable=false：调用失败（不可达/超时/响应不可解析）；非 2xx 的 Runtime
+     * Problem Details 保持 reachable=true，交由 CP 映射；
      * found=false：Runtime 明确没有该 job（404 `JOB_NOT_FOUND`）；
      * status：`cancelled` 或 `failed`（终止未确认，由 CP 折叠 502）。
      */
-    public record JobCancelResult(boolean reachable, boolean found, String status) {
+    public record JobCancelResult(boolean reachable, boolean found, String status,
+                                  String errorCode, String reason, String requestId, int statusCode) {
+
+        public JobCancelResult(boolean reachable, boolean found, String status) {
+            this(reachable, found, status, null, null, null, 0);
+        }
 
         static JobCancelResult unreachableResult() {
             return new JobCancelResult(false, false, null);
         }
 
         static JobCancelResult notFound() {
-            return new JobCancelResult(true, false, null);
+            return new JobCancelResult(true, false, null, "JOB_NOT_FOUND", null, null, 404);
         }
     }
 
@@ -92,12 +123,12 @@ public class RuntimeJobClient {
             return JobStatusResult.unreachableResult();
         }
         if (response.statusCode() == 404) {
-            return JobStatusResult.notFound();
+            return statusProblem(parseProblem(response));
         }
         if (response.statusCode() / 100 != 2) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_status_http_error workspaceId={} jobId={} status={}",
                     workspaceId, jobId, response.statusCode());
-            return JobStatusResult.unreachableResult();
+            return statusProblem(parseProblem(response));
         }
         JsonNode job = readTree(response.body());
         return job == null ? JobStatusResult.unreachableResult() : new JobStatusResult(true, false, job);
@@ -115,12 +146,12 @@ public class RuntimeJobClient {
             return JobOutputResult.unreachableResult();
         }
         if (response.statusCode() == 404) {
-            return JobOutputResult.unavailable();
+            return outputProblem(parseProblem(response));
         }
         if (response.statusCode() / 100 != 2) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_output_http_error workspaceId={} jobId={} status={}",
                     workspaceId, jobId, response.statusCode());
-            return JobOutputResult.unreachableResult();
+            return outputProblem(parseProblem(response));
         }
         JsonNode chunk = readTree(response.body());
         if (chunk == null) {
@@ -144,12 +175,12 @@ public class RuntimeJobClient {
             return JobCancelResult.unreachableResult();
         }
         if (response.statusCode() == 404) {
-            return JobCancelResult.notFound();
+            return cancelProblem(parseProblem(response));
         }
         if (response.statusCode() / 100 != 2) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_cancel_http_error workspaceId={} jobId={} status={}",
                     workspaceId, jobId, response.statusCode());
-            return JobCancelResult.unreachableResult();
+            return cancelProblem(parseProblem(response));
         }
         JsonNode node = readTree(response.body());
         String status = node == null ? null : node.path("status").asText(null);
@@ -169,7 +200,13 @@ public class RuntimeJobClient {
      * 由 CP 折叠为 501，不 fallback 到其它 backend。
      */
     public record JobStartResult(boolean reachable, boolean launched, boolean backendPending,
-                                 String jobId, String errorCode) {
+                                 String jobId, String errorCode, String reason, String requestId,
+                                 int statusCode) {
+
+        public JobStartResult(boolean reachable, boolean launched, boolean backendPending,
+                              String jobId, String errorCode) {
+            this(reachable, launched, backendPending, jobId, errorCode, null, null, 0);
+        }
 
         static JobStartResult unreachableResult() {
             return new JobStartResult(false, false, false, null, null);
@@ -195,12 +232,16 @@ public class RuntimeJobClient {
             return JobStartResult.unreachableResult();
         }
         if (response.statusCode() == 501) {
-            return new JobStartResult(true, false, true, null, "JOB_BACKEND_LAUNCH_PENDING");
+            RuntimeProblem problem = parseProblem(response);
+            return new JobStartResult(true, false, "JOB_BACKEND_LAUNCH_PENDING".equals(problem.code()),
+                    null, problem.code(), problem.reason(), problem.requestId(), problem.statusCode());
         }
         if (response.statusCode() / 100 != 2) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_start_http_error workspaceId={} status={}",
                     workspaceId, response.statusCode());
-            return JobStartResult.unreachableResult();
+            RuntimeProblem problem = parseProblem(response);
+            return new JobStartResult(true, false, false, null, problem.code(), problem.reason(),
+                    problem.requestId(), problem.statusCode());
         }
         JsonNode node = readTree(response.body());
         String jobId = node == null ? null : node.path("jobId").asText(null);
@@ -220,7 +261,12 @@ public class RuntimeJobClient {
      * `capability` 为 null，由调用方折叠成显式 unavailable，而不是猜测可用性。
      */
     public record JobCapabilityResult(boolean reachable, boolean containerJobs, JsonNode capability,
-                                      String problemCode) {
+                                      String problemCode, String reason, String requestId, int statusCode) {
+
+        public JobCapabilityResult(boolean reachable, boolean containerJobs, JsonNode capability,
+                                   String problemCode) {
+            this(reachable, containerJobs, capability, problemCode, null, null, 0);
+        }
 
         static JobCapabilityResult unreachableResult() {
             return new JobCapabilityResult(false, false, null, null);
@@ -248,10 +294,9 @@ public class RuntimeJobClient {
                     workspaceId, response.statusCode());
             // A Runtime that answers with an error is reachable: surface its code
             // instead of pretending the transport failed.
-            JsonNode problem = readTree(response.body());
-            String code = problem == null ? null : problem.path("code").asText(null);
-            return JobCapabilityResult.problemResult(
-                    code == null || code.isBlank() ? "RUNTIME_CAPABILITY_ERROR" : code);
+            RuntimeProblem problem = parseProblem(response);
+            return new JobCapabilityResult(true, false, null, problem.code(), problem.reason(),
+                    problem.requestId(), problem.statusCode());
         }
         JsonNode node = readTree(response.body());
         if (node == null || !node.isObject()) {
@@ -305,6 +350,7 @@ public class RuntimeJobClient {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Authorization", "Bearer " + serviceToken)
+                    .header(RequestIdFilter.HEADER, requestId())
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(payload))
                     .timeout(CALL_TIMEOUT)
@@ -324,5 +370,66 @@ public class RuntimeJobClient {
             logger.warn("[LIFECYCLE] service=cp event=runtime_job_response_unparseable error={}", e.getMessage());
             return null;
         }
+    }
+
+    private static String requestId() {
+        String requestId = MDC.get(RequestIdFilter.MDC_KEY);
+        return requestId == null || requestId.isBlank() ? "" : requestId;
+    }
+
+    private RuntimeProblem parseProblem(HttpResponse<String> response) {
+        JsonNode node = readTree(response.body());
+        String rawCode = node == null ? null : node.path("code").asText(null);
+        String code = canonicalCode(rawCode);
+        String reason = firstText(node, "reason", "detail");
+        String requestId = node == null ? null : node.path("requestId").asText(null);
+        if (requestId == null || requestId.isBlank()) {
+            requestId = response.headers().firstValue(RequestIdFilter.HEADER).orElse(null);
+        }
+        if (requestId == null || requestId.isBlank()) {
+            requestId = requestId();
+        }
+        int statusCode = node != null && node.path("status").canConvertToInt()
+                ? node.path("status").asInt() : response.statusCode();
+        return new RuntimeProblem(code, reason == null || reason.isBlank()
+                ? "Runtime rejected the job request" : reason, requestId, statusCode);
+    }
+
+    private static String firstText(JsonNode node, String... names) {
+        if (node == null) {
+            return null;
+        }
+        for (String name : names) {
+            String value = node.path(name).asText(null);
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private static String canonicalCode(String rawCode) {
+        if (rawCode == null || rawCode.isBlank()) {
+            return "UNMAPPED_ERROR";
+        }
+        String code = rawCode.trim().toUpperCase(java.util.Locale.ROOT);
+        return CANONICAL_ERROR_CODES.contains(code) ? code : "UNMAPPED_ERROR";
+    }
+
+    private record RuntimeProblem(String code, String reason, String requestId, int statusCode) { }
+
+    private static JobStatusResult statusProblem(RuntimeProblem problem) {
+        return new JobStatusResult(false, false, null, problem.code(), problem.reason(),
+                problem.requestId(), problem.statusCode());
+    }
+
+    private static JobOutputResult outputProblem(RuntimeProblem problem) {
+        return new JobOutputResult(false, false, null, problem.code(), problem.reason(),
+                problem.requestId(), problem.statusCode());
+    }
+
+    private static JobCancelResult cancelProblem(RuntimeProblem problem) {
+        return new JobCancelResult(true, false, null, problem.code(), problem.reason(),
+                problem.requestId(), problem.statusCode());
     }
 }

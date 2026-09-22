@@ -35,13 +35,27 @@ pub fn build_mxc_job(
         .unwrap_or_else(|| workspace.clone());
     let executable =
         std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_else(|_| "wxc-exec.exe".to_string());
+    let file_worker = request.args.iter().any(|arg| arg == "--file-worker");
+    let file_worker_parent = workspace.parent().map(Path::to_path_buf);
+    let mut worker_env = request.env;
+    if file_worker {
+        worker_env.insert("XIHE_FILE_WORKER".to_string(), "1".to_string());
+    }
     let policy = build_mxc_policy(&MxcPolicyRequest {
         program: request.command,
         args: request.args,
         cwd: cwd.clone(),
-        env: request.env,
+        env: worker_env,
         timeout_ms: request.timeout_secs.saturating_mul(1_000),
-        read_only_roots: Vec::new(),
+        // Rust's canonicalize needs traverse/read access to the workspace's
+        // parent on MXC. Keep this extra read grant limited to the fixed
+        // file-worker executable; its lexical/canonical checks still reject
+        // every caller-supplied path outside WorkspaceStorage.
+        read_only_roots: if file_worker {
+            file_worker_parent.into_iter().collect()
+        } else {
+            Vec::new()
+        },
         read_write_roots: vec![workspace.clone()],
     });
     std::fs::create_dir_all(job_output_dir).map_err(|error| {

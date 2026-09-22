@@ -8,6 +8,8 @@ import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
@@ -32,7 +34,7 @@ public class WorkspaceController {
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
         }
         return workspaceService.findCurrentWorkspace(userId)
-                .<ResponseEntity<?>>map(this::toView)
+                .<ResponseEntity<?>>map(workspace -> toView(workspace, userId, isAdmin()))
                 .orElseGet(() -> ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found"));
     }
@@ -45,7 +47,8 @@ public class WorkspaceController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
         }
-        return ResponseEntity.ok(workspaceService.getWorkspacesByUser(userId).stream().map(this::toMap).toList());
+        return ResponseEntity.ok(workspaceService.getWorkspacesByUser(userId).stream()
+                .map(workspace -> toMap(workspace, userId, isAdmin())).toList());
     }
 
     @GetMapping("/{workspaceId}")
@@ -53,7 +56,7 @@ public class WorkspaceController {
     public ResponseEntity<?> get(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
         try {
-            return toView(workspaceService.requireAccessibleWorkspace(workspaceId, userId));
+            return toView(workspaceService.requireAccessibleWorkspace(workspaceId, userId), userId, isAdmin());
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -83,7 +86,7 @@ public class WorkspaceController {
             // toView already returns a ResponseEntity. Nesting it as the body
             // serializes `{body, headers, statusCode}` and hides workspace.id
             // from the UI response.
-            return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace));
+            return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace, userId, isAdmin()));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -99,7 +102,7 @@ public class WorkspaceController {
             String name = request == null ? null : request.name();
             String description = request == null ? null : request.description();
             Workspace workspace = workspaceService.updateWorkspace(workspaceId, userId, name, description);
-            return toView(workspace);
+            return toView(workspace, userId, isAdmin());
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -117,11 +120,11 @@ public class WorkspaceController {
         }
     }
 
-    private ResponseEntity<Map<String, Object>> toView(Workspace workspace) {
-        return ResponseEntity.ok(toMap(workspace));
+    private ResponseEntity<Map<String, Object>> toView(Workspace workspace, String userId, boolean admin) {
+        return ResponseEntity.ok(toMap(workspace, userId, admin));
     }
 
-    private Map<String, Object> toMap(Workspace workspace) {
+    static Map<String, Object> toMap(Workspace workspace, String userId, boolean admin) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", workspace.getId());
         view.put("name", workspace.getName());
@@ -130,12 +133,19 @@ public class WorkspaceController {
         view.put("storageBackend", workspace.getStorageBackend());
         view.put("storageRef", workspace.getStorageRef());
         view.put("storageMode", workspace.getStorageMode());
-        view.put("hostPath", workspace.getHostPath());
+        view.put("hostPath", admin || (userId != null && userId.equals(workspace.getOwnerId()))
+                ? workspace.getHostPath() : null);
         view.put("executionMode", workspace.getExecutionMode());
         view.put("generation", workspace.getGeneration());
         view.put("createdAt", workspace.getCreatedAt() == null ? null : workspace.getCreatedAt().toString());
         view.put("updatedAt", workspace.getUpdatedAt() == null ? null : workspace.getUpdatedAt().toString());
         return view;
+    }
+
+    private boolean isAdmin() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
     }
 
     public record CreateWorkspaceRequest(

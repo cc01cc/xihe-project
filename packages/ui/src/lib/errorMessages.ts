@@ -37,6 +37,18 @@ export function humanizeErrorCode(code: string | undefined | null, detail?: stri
       return '对话流中断，请重试'
     case 'SESSION_NOT_FOUND':
       return '会话不存在或已删除'
+    case 'PATH_OUT_OF_SCOPE':
+      return '路径超出工作区范围，操作已拒绝'
+    case 'CAPABILITY_UNAVAILABLE':
+      return '执行能力当前不可用，请检查 Runtime 或后端状态'
+    case 'PROCESS_TIMEOUT':
+      return '进程执行超时，任务已终止'
+    case 'PROCESS_CANCELLED':
+      return '进程已取消'
+    case 'JOB_BACKEND_LAUNCH_PENDING':
+      return '当前执行后端尚未提供 Job 启动器，暂不可用'
+    case 'UNMAPPED_ERROR':
+      return '执行失败，后端未映射具体错误'
     default:
       break
   }

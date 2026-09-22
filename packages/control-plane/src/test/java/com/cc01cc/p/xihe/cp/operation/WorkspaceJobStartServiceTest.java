@@ -76,15 +76,19 @@ class WorkspaceJobStartServiceTest {
     }
 
     @Test
-    void refusesNonDockerBackendWithoutCreatingDurableJob() {
-        workspace("windows-mxc");
+    void windowsHostDispatchUsesRuntimeWithoutFallback() {
+        workspace("windows-host");
+        when(operationService.startWorkspaceJob(eq("user-1"), eq(WORKSPACE_ID), any(), any(),
+                eq("ui"), eq("user"), eq("key-1"), anyString(), anyString(), anyString()))
+                .thenReturn(new OperationService.WorkspaceJobStart(operationId, itemId, false));
+        when(runtimeJobClient.startJob(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new RuntimeJobClient.JobStartResult(true, true, false, "host-job", null));
+        when(operationService.jobView(itemId)).thenReturn(Map.of("status", "running", "jobId", "host-job"));
 
-        CpApiException error = assertThrows(CpApiException.class,
-                () -> service.start(WORKSPACE_ID, "user-1", request(), "key-1"));
+        WorkspaceJobStartService.StartOutcome outcome = service.start(WORKSPACE_ID, "user-1", request(), "key-1");
 
-        assertEquals("JOB_BACKEND_LAUNCH_PENDING", error.getCode());
-        assertEquals(501, error.getStatus().value());
-        verify(operationService, never()).startWorkspaceJob(any(), any(), any(), any(), any(), any(),
+        assertEquals("host-job", outcome.job().get("jobId"));
+        verify(runtimeJobClient).startJob(eq(WORKSPACE_ID), eq(itemId.toString()), eq("echo"),
                 any(), any(), any(), any());
     }
 
@@ -152,7 +156,7 @@ class WorkspaceJobStartServiceTest {
 
     @Test
     void runtimeBackendPendingFailsDurableJobWithoutFallback() {
-        workspace("docker");
+        workspace("windows-mxc");
         when(operationService.startWorkspaceJob(eq("user-1"), eq(WORKSPACE_ID), any(), any(),
                 eq("ui"), eq("user"), eq("key-1"), anyString(), anyString(), anyString()))
                 .thenReturn(new OperationService.WorkspaceJobStart(operationId, itemId, false));
@@ -166,7 +170,7 @@ class WorkspaceJobStartServiceTest {
         assertEquals("JOB_BACKEND_LAUNCH_PENDING", error.getCode());
         ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
         verify(jobStateService, Mockito.times(2)).upsert(eq(itemId), captor.capture());
-        assertEquals("failed", captor.getAllValues().get(1).get("status"));
+        assertEquals(JobStateService.STATUS_INTERRUPTED, captor.getAllValues().get(1).get("status"));
     }
 
     @Test

@@ -152,6 +152,9 @@ public class OperationController {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime job read failed");
             }
+            if (result.errorCode() != null && result.statusCode() != 404) {
+                return runtimeProblem(result.errorCode(), result.reason(), result.requestId(), result.statusCode());
+            }
             if (!result.available()) {
                 // PLAN-0344：LOST = 容器销毁/job 失联（含 orphaned 收口）；
                 // EXPIRED = 正常终态（succeeded/cancelled/timeout）但文件已被 TTL 清理。
@@ -221,6 +224,9 @@ public class OperationController {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime job cancel failed");
             }
+            if (result.errorCode() != null && result.statusCode() != 404) {
+                return runtimeProblem(result.errorCode(), result.reason(), result.requestId(), result.statusCode());
+            }
             if (!result.found()) {
                 // Runtime 已无该 job（失联/容器重建）：fail-closed 落 orphaned（不臆造已取消）。
                 Map<String, Object> incoming = new LinkedHashMap<>();
@@ -267,6 +273,16 @@ public class OperationController {
         body.put("status", status);
         body.put("changed", changed);
         return body;
+    }
+
+    private static ResponseEntity<Map<String, Object>> runtimeProblem(
+            String code, String reason, String requestId, int statusCode) {
+        HttpStatus status = HttpStatus.resolve(statusCode);
+        if (status == null || status.is2xxSuccessful()) {
+            status = HttpStatus.BAD_GATEWAY;
+        }
+        return ProblemDetailsHandler.problemResponse(status, code == null ? "UNMAPPED_ERROR" : code,
+                reason == null || reason.isBlank() ? "Runtime job request failed" : reason, requestId);
     }
 
     static Map<String, Object> toSummary(LedgerOperation operation) {

@@ -528,6 +528,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'rs', 'java', 'go',
     'vue', 'svelte', 'css', 'scss', 'html', 'sh', 'bash', 'sql', 'log', 'gitignore',
   ])
+  const MAX_WORKSPACE_FILE_BYTES = 64 * 1024 * 1024
 
   function isTextualFile(file: File): boolean {
     if (file.type.startsWith('text/')) return true
@@ -541,6 +542,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function executeUpload(targetDir: string, splitPreference?: boolean) {
     for (const item of uploadQueue.value) {
       if (item.status === 'cancelled') continue
+      if (item.size > MAX_WORKSPACE_FILE_BYTES) {
+        item.status = 'error'
+        item.error = 'PAYLOAD_TOO_LARGE: Workspace file exceeds the 64 MiB file-tool limit'
+        continue
+      }
       item.status = 'uploading'
       try {
         const isLargePdf = item.name.toLowerCase().endsWith('.pdf') && item.size > 10 * 1024 * 1024

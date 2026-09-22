@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import WorkspaceEnvironmentView from '../WorkspaceEnvironmentView.vue'
 import { api } from '../../../composables/api'
+import { i18n } from '../../../i18n'
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({
@@ -47,6 +48,14 @@ function environment(executionMode: 'docker' | 'windows-mxc' | 'windows-host') {
   }
 }
 
+function setPrincipal(user: { id: string; role?: string }, ownerId: string) {
+  localStorage.setItem('xihe-user', JSON.stringify(user))
+  localStorage.setItem(
+    'xihe-workspace',
+    JSON.stringify({ id: 'workspace-1', name: 'Workspace', ownerId }),
+  )
+}
+
 function job(overrides: Record<string, unknown>) {
   return {
     operationId: 'op-1',
@@ -74,7 +83,9 @@ function job(overrides: Record<string, unknown>) {
 }
 
 async function mountView(): Promise<VueWrapper> {
-  const wrapper = mount(WorkspaceEnvironmentView)
+  const wrapper = mount(WorkspaceEnvironmentView, {
+    global: { plugins: [i18n] },
+  })
   await flushPromises()
   return wrapper
 }
@@ -126,7 +137,8 @@ describe('WorkspaceEnvironmentView job projection', () => {
     expect(secondary[1].text()).toContain('run')
     expect(secondary[1].text()).toContain('docker')
     expect(secondary[1].text()).toContain('用户取消')
-    expect(secondary[1].text()).toContain('RUNTIME_UNAVAILABLE')
+    expect(wrapper.get('[data-testid="workspace-job-error"]').text()).toContain('RUNTIME_UNAVAILABLE')
+    expect(wrapper.get('[data-testid="workspace-job-error"]').text()).toContain('Runtime')
     expect(statuses[1].text()).toBe('已取消')
   })
 
@@ -210,5 +222,76 @@ describe('WorkspaceEnvironmentView job-start capability (PLAN-0396)', () => {
     expect(hint.attributes('aria-disabled')).toBe('false')
     expect(hint.text()).toContain('windows-mxc')
     expect(hint.text()).toContain('沙盒隔离')
+  })
+
+  it('does not claim unrestricted access when isolation capability is omitted', async () => {
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+      ...environment('windows-mxc'),
+      jobCapability: {
+        backendKind: 'windows-mxc',
+        canStart: true,
+        available: true,
+      },
+    } as never)
+
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="workspace-job-start-hint"]').text()).toContain('隔离能力未知')
+    expect(wrapper.get('[data-testid="workspace-job-start-hint"]').text()).not.toContain('无隔离')
+  })
+})
+
+describe('WorkspaceEnvironmentView hostPath disclosure', () => {
+  it('hides a raw host path from a regular member', async () => {
+    setPrincipal({ id: 'member-1', role: 'USER' }, 'owner-1')
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+      ...environment('windows-host'),
+      storageMode: 'direct_attach',
+      hostPath: 'C:\\private\\repo',
+    } as never)
+
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-testid="workspace-host-path"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('C:\\private\\repo')
+  })
+
+  it('shows a raw host path to the workspace owner', async () => {
+    setPrincipal({ id: 'owner-1', role: 'USER' }, 'owner-1')
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+      ...environment('windows-host'),
+      storageMode: 'direct_attach',
+      hostPath: 'C:\\private\\repo',
+    } as never)
+
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="workspace-host-path"]').text()).toContain('C:\\private\\repo')
+  })
+
+  it('shows a raw host path to an instance admin', async () => {
+    setPrincipal({ id: 'admin-1', role: 'ADMIN' }, 'owner-1')
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+      ...environment('windows-host'),
+      storageMode: 'direct_attach',
+      hostPath: 'C:\\private\\repo',
+    } as never)
+
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="workspace-host-path"]').text()).toContain('C:\\private\\repo')
+  })
+
+  it('does not invent a host path when the server sends a safe null projection', async () => {
+    setPrincipal({ id: 'owner-1', role: 'USER' }, 'owner-1')
+    mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+      ...environment('windows-host'),
+      storageMode: 'direct_attach',
+      hostPath: null,
+    } as never)
+
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-testid="workspace-host-path"]').exists()).toBe(false)
   })
 })

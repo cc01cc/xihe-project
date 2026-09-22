@@ -696,7 +696,7 @@ paths:
     get: { operationId: getFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '200': { description: File content } } }
     delete: { operationId: deleteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/files/upload:
-    post: { operationId: uploadFile, security: [{ bearerAuth: [] }], responses: { '201': { description: Uploaded } } }
+    post: { operationId: uploadFile, security: [{ bearerAuth: [] }], description: WorkspaceStorage file upload (maximum 64 MiB; Chat attachments use a separate route and limit), responses: { '201': { description: Uploaded }, '413': { description: Workspace file exceeds 64 MiB limit } } }
   /api/v1/rag/stats:
     get: { operationId: ragStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics } } }
   /api/v1/rag/ingest:
@@ -748,7 +748,7 @@ paths:
                     properties:
                       checkedAt: { type: string, format: date-time, description: CP read timestamp (ISO-8601). }
         '400':
-          description: 'INVALID_STORAGE_MODE / INVALID_EXECUTION_MODE / INVALID_HOST_PATH (storageMode must be direct_attach)'
+          description: 'INVALID_STORAGE_MODE / INVALID_EXECUTION_MODE / INVALID_REQUEST (storageMode must be direct_attach; hostPath is required)'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '502':
@@ -763,11 +763,12 @@ paths:
          Creates a `ledger_operations(kind=job)` root with its job item and dispatches execution
          (PLAN-0390). `Idempotency-Key` is required: repeating the same key returns the existing Job
          projection with `200` and never starts a second process, while the same key with a different
-         command/args/cwd/timeoutSecs returns `409 JOB_IDEMPOTENCY_CONFLICT`. Only the `docker`
-         execution mode currently has a launcher; other modes fail explicitly with `501
-         JOB_BACKEND_LAUNCH_PENDING` and create no durable Job. When the Runtime dispatch cannot be
-         confirmed the durable state becomes `interrupted` (never replayed) and the call answers
-         `502 RUNTIME_UNAVAILABLE`.
+          command/args/cwd/timeoutSecs returns `409 JOB_IDEMPOTENCY_CONFLICT`. `windows-host` and
+          `windows-mxc` direct-attach workspaces dispatch through the Runtime Job engine. A Runtime
+          probe/launcher response of `501 JOB_BACKEND_LAUNCH_PENDING` is fail-closed and never falls
+          back to another backend. When Runtime dispatch cannot be confirmed the durable state becomes
+          `interrupted` (never replayed) and the call answers `502 RUNTIME_UNAVAILABLE`; other Runtime
+          Problem Details codes are preserved.
        security: [{ bearerAuth: [] }]
        parameters:
          - { in: path, name: workspaceId, required: true, schema: { type: string } }
@@ -796,12 +797,8 @@ paths:
          '404':
            description: WORKSPACE_NOT_FOUND (missing or no Workspace access; no 403 leak)
            content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
-         '409':
-           description: JOB_IDEMPOTENCY_CONFLICT (same key, different command/args/cwd/timeoutSecs)
-           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
-         '501':
-           description: JOB_BACKEND_LAUNCH_PENDING (Workspace executionMode has no job launcher yet, e.g. direct-attach/windows-*)
-           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+         '409': { description: JOB_IDEMPOTENCY_CONFLICT (same key, different command/args/cwd/timeoutSecs), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+         '501': { description: JOB_BACKEND_LAUNCH_PENDING (Runtime launcher/probe unavailable; no fallback and no new process), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
          '502':
            description: RUNTIME_UNAVAILABLE (dispatch unconfirmed; durable Job state becomes interrupted)
            content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
@@ -1093,15 +1090,15 @@ paths:
   /internal/v1/operations/items/{itemId}/late-termination:
     post: { operationId: recordLateTermination, description: 'PLAN-0317 T2.9: records a late (retried) termination reported by the Runtime after an unconfirmed cancel; appends an item.terminated.late event without rewriting the item terminal state.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: itemId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirmed: { type: boolean } }, required: [confirmed] } } } }, responses: { '200': { description: Recorded }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '503': { description: OPERATION_LOCK_TIMEOUT — bounded database lock wait exceeded; safe to retry } } }
   # PLAN-0390 Job start / status / output / cancel live behind the same internal
-  # Bearer auth; only the start path is listed here.
+  # Bearer auth.
   /internal/v1/runtime/workspaces/{workspaceId}/jobs/start:
     post:
       operationId: startRuntimeWorkspaceJob
       description: |
-        PLAN-0390: CP-facing Job start path. Reuses the MCP background-process launcher; the
-        Workspace backend decides whether the job can actually run. A backend without a launcher
-        (direct-attach) answers `501 JOB_BACKEND_LAUNCH_PENDING` and starts nothing. `cwd`/`env`
-        are accepted but currently ignored by the Docker path (backend adapters realize them later).
+        PLAN-0390: CP-facing Job start path. The Workspace backend decides whether the job can run;
+        Windows Host/MXC direct-attach modes use the Runtime process Job engine. A backend probe or
+        launcher failure answers `501 JOB_BACKEND_LAUNCH_PENDING` and starts nothing. `cwd`/`env`
+        are consumed by Windows adapters and remain accepted by Docker compatibility paths.
         The caller (CP) is the single durable writer; this route only returns an execution fact.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
@@ -1115,9 +1112,58 @@ paths:
           description: Job dispatched (jobId/status/operationItemId/bootId)
           content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeJobStartResponse' } } }
         '401': { $ref: '#/components/responses/Problem' }
-        '501':
-          description: JOB_BACKEND_LAUNCH_PENDING (backend has no job launcher; no process started)
-          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+        '501': { description: JOB_BACKEND_LAUNCH_PENDING (Runtime probe/launcher unavailable; no process started), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /internal/v1/runtime/workspaces/{workspaceId}/jobs/status:
+    post:
+      operationId: statusRuntimeWorkspaceJob
+      description: Runtime Job status lookup. A missing handle is `404 JOB_NOT_FOUND`; reachable Runtime Problem Details retain code, reason and requestId.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeJobHandleRequest' }
+      responses:
+        '200': { description: Job status snapshot }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+  /internal/v1/runtime/workspaces/{workspaceId}/jobs/output:
+    post:
+      operationId: outputRuntimeWorkspaceJob
+      description: Runtime Job output page. `available:false` is a valid output-missing result; reachable Problem Details retain canonical code/reason/requestId.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeJobOutputRequest' }
+      responses:
+        '200': { description: Output chunk or available=false result }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+  /internal/v1/runtime/workspaces/{workspaceId}/jobs/cancel:
+    post:
+      operationId: cancelRuntimeWorkspaceJob
+      description: Runtime Job cancellation. `cancelled`/`failed` remain the wire status; reachable Problem Details are not collapsed into RUNTIME_UNAVAILABLE.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeJobHandleRequest' }
+      responses:
+        '200': { description: Cancellation outcome }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
   # PLAN-0393 Job cleanup / capabilities live next to the start path behind
   # the same internal Bearer auth.
   /internal/v1/runtime/workspaces/{workspaceId}/jobs/cleanup:
@@ -1152,7 +1198,7 @@ paths:
         `BackendCapability` shape. `windows-mxc`/`windows-host` report canStart/canCancel/
         canStreamOutput, `canIsolateFilesystem` only for MXC, and `unavailableReason`
         mirrors the probe's `reason` (kept for compatibility). Docker answers
-        `501 JOB_BACKEND_LAUNCH_PENDING` (container jobs are served by the Docker path).
+         `501 CONTAINER_JOBS_SERVED_BY_DOCKER` (container jobs are served by the Docker path).
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
       responses:
@@ -1161,7 +1207,7 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeJobCapabilityResponse' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '501':
-          description: JOB_BACKEND_LAUNCH_PENDING (Docker workspaces)
+          description: CONTAINER_JOBS_SERVED_BY_DOCKER (Docker workspaces)
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   # Runtime shadow-Git slice contract. CP is the caller; failures use RFC 9457
   # Problem Details with a stable `code` and `requestId`.
@@ -1334,8 +1380,8 @@ components:
     RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: string } } }
-    Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
-    WorkspaceCreateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile.' }, image: { type: string, description: 'Docker-only allowlisted image.' }, storageMode: { type: string, enum: [managed_import, direct_attach], default: managed_import }, hostPath: { type: string, description: 'Required for direct_attach; Runtime validates the absolute directory.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
+    Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    WorkspaceCreateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile.' }, image: { type: string, description: 'Docker-only allowlisted image.' }, storageMode: { type: string, enum: [managed_import, direct_attach], default: managed_import }, hostPath: { type: string, description: 'Required for direct_attach; Runtime validates the absolute directory. This request field is never echoed to ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
     WorkspaceUpdateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
     CheckpointChangedFile:
        type: object
@@ -1945,7 +1991,7 @@ components:
     RagIngestResponse: { type: object, required: [status, chunks, docIds], properties: { status: { type: string }, chunks: { type: integer }, docIds: { type: array, items: { type: string } } } }
     RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
     WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef, storageMode, executionMode], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
-    WorkspaceEnvironment: { type: object, required: [workspaceId, status, storageBackend, storageRef, storageMode, executionMode, capability, runtime], properties: { workspaceId: { type: string }, status: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, capability: { $ref: '#/components/schemas/BackendCapabilitySnapshot' }, jobCapability: { $ref: '#/components/schemas/WorkspaceJobCapability' }, executionSpec: { type: object, additionalProperties: true }, runtime: { type: object, additionalProperties: true } } }
+    WorkspaceEnvironment: { type: object, required: [workspaceId, status, storageBackend, storageRef, storageMode, executionMode, capability, jobCapability, runtime], properties: { workspaceId: { type: string }, status: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, capability: { $ref: '#/components/schemas/BackendCapabilitySnapshot' }, jobCapability: { $ref: '#/components/schemas/WorkspaceJobCapability' }, executionSpec: { type: object, additionalProperties: true }, runtime: { type: object, additionalProperties: true } } }
     WorkspaceJob:
       type: object
       description: 'Workspace-scoped durable Job projection (PLAN-0390). Shared by the POST start response and the GET list items. Canonical identity is `operationItemId`; `jobId` is an opaque Runtime backend handle. `succeeded`/`timeout`/`orphaned` keep the Docker literal names in this batch; normalization to `completed`/`failed`/`timed_out` is deferred to the backend adapters.'
@@ -1985,7 +2031,7 @@ components:
         source: { type: string, enum: [ui, agent, runtime, system, mcp], default: ui }
         env: { type: object, additionalProperties: { type: string } }
     DirectAttachProbeRequest: { type: object, required: [storageMode, hostPath, executionMode], properties: { storageMode: { type: string, enum: [direct_attach] }, hostPath: { type: string }, executionMode: { type: string, enum: [windows-mxc, windows-host] } } }
-    WorkspaceCapabilityPreflightRequest: { type: object, required: [hostPath], properties: { storageMode: { type: string, enum: [direct_attach], default: direct_attach, description: Omitted defaults to direct_attach; managed_import is rejected with 400 INVALID_STORAGE_MODE. }, hostPath: { type: string, description: Absolute host directory to attach. }, executionMode: { type: string, enum: [windows-mxc, windows-host], default: windows-mxc, description: Omitted defaults to windows-mxc on direct_attach. } } }
+    WorkspaceCapabilityPreflightRequest: { type: object, required: [hostPath], properties: { storageMode: { type: string, enum: [direct_attach], default: direct_attach, description: Omitted defaults to direct_attach; managed_import is rejected with 400 INVALID_STORAGE_MODE. }, hostPath: { type: string, description: Absolute host directory to attach; invalid/missing values return 400 INVALID_REQUEST. }, executionMode: { type: string, enum: [windows-mxc, windows-host], default: windows-mxc, description: Omitted defaults to windows-mxc on direct_attach. } } }
     WorkspaceJobCapability:
       type: object
       description: |
@@ -2003,7 +2049,24 @@ components:
         canIsolateFilesystem: { type: boolean, description: false for the unrestricted host backend; the UI must surface it. }
         available: { type: boolean }
         unavailableReason: { type: [string, 'null'], description: RUNTIME_UNREACHABLE / CONTAINER_JOBS_SERVED_BY_DOCKER / backend reason. }
+        fileOperations: { $ref: '#/components/schemas/FileOperationsCapability' }
         checkedAt: { type: string, description: ISO-8601 read timestamp recorded by CP. }
+    FileOperationsCapability:
+      type: object
+      required: [contractVersion, executionMode, maxMutationBytes, workerLifecycle, operations]
+      properties:
+        contractVersion: { type: string, enum: [v1] }
+        executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }
+        maxMutationBytes: { type: integer, format: int64, minimum: 1, description: Workspace file-tool payload cap. }
+        workerLifecycle: { type: string, enum: [per-operation] }
+        operations: { type: object, additionalProperties: { $ref: '#/components/schemas/FileOperationCapability' } }
+    FileOperationCapability:
+      type: object
+      required: [available, reason]
+      properties:
+        available: { type: boolean }
+        reason: { type: [string, 'null'] }
+        cap: { type: [integer, 'null'], format: int64 }
     BackendCapabilitySnapshot: { type: object, required: [contractVersion, backendKind, backendRevision, maturity, executionMode, available], properties: { contractVersion: { type: string, enum: [v1] }, backendKind: { type: string }, backendRevision: { type: string }, maturity: { type: string, enum: [stable, experimental] }, executionMode: { type: string }, available: { type: boolean }, reason: { type: string }, diagnostics: { type: object, additionalProperties: true } } }
     PublishWorkspaceEventRequest: { type: object, required: [kind, source], properties: { kind: { type: string, enum: [file_changed, snapshot_required] }, path: { type: string, description: Workspace-relative POSIX path }, changeType: { type: string, enum: [created, modified, deleted] }, source: { type: string, enum: [runtime] }, reason: { type: string, enum: [overflow] } } }
     WorkspaceEventAccepted: { type: object, required: [accepted, workspaceId, sequence], properties: { accepted: { type: boolean }, workspaceId: { type: string }, sequence: { type: integer, format: int64 } } }
@@ -2113,6 +2176,14 @@ components:
       required: [jobId]
       properties:
         jobId: { type: string, description: canonical operationItemId (PLAN-0390 Job identity). }
+    RuntimeJobOutputRequest:
+      type: object
+      required: [jobId, stream, offset, limit]
+      properties:
+        jobId: { type: string, description: Opaque Runtime job handle. }
+        stream: { type: string, enum: [stdout, stderr] }
+        offset: { type: integer, format: int64, minimum: 0 }
+        limit: { type: integer, format: int64, minimum: 1, maximum: 1048576 }
     RuntimeJobCleanupResponse:
       type: object
       required: [outcome, processes]

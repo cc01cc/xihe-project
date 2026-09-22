@@ -42,7 +42,7 @@ public class WorkspaceJobController {
             workspaceService.requireAccessibleWorkspace(workspaceId, TenantContext.getUserId());
             return ResponseEntity.ok(operationService.listWorkspaceJobs(workspaceId));
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage(), e.getRequestId());
         }
     }
 
@@ -72,7 +72,7 @@ public class WorkspaceJobController {
                     ? ResponseEntity.ok(outcome.job())
                     : ResponseEntity.accepted().body(outcome.job());
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage(), e.getRequestId());
         }
     }
 }

@@ -395,7 +395,7 @@ impl JobEngine {
     /// Starts a job. Re-starts with the same `job_id` are idempotent and return
     /// the existing handle (decision #20).
     pub fn start(&self, job_id: &str, plan: LaunchPlan) -> Result<JobHandle, JobEngineError> {
-        self.start_in_workspace(None, job_id, plan)
+        self.start_in_workspace_with_stdin(None, job_id, plan, None)
     }
 
     /// PLAN-0379 T3.5: like [`Self::start`], but records the owning workspace so
@@ -407,18 +407,30 @@ impl JobEngine {
         job_id: &str,
         plan: LaunchPlan,
     ) -> Result<JobHandle, JobEngineError> {
+        self.start_in_workspace_with_stdin(workspace_id, job_id, plan, None)
+    }
+
+    /// Starts one job and writes a bounded one-shot stdin frame after the
+    /// suspended process has been assigned to its Job Object.
+    pub fn start_in_workspace_with_stdin(
+        &self,
+        workspace_id: Option<&str>,
+        job_id: &str,
+        plan: LaunchPlan,
+        stdin: Option<Vec<u8>>,
+    ) -> Result<JobHandle, JobEngineError> {
         if let Some(existing) = self.get_entry(job_id) {
             return Ok(existing.handle.clone());
         }
 
         #[cfg(windows)]
         {
-            self.start_windows(workspace_id, job_id, plan)
+            self.start_windows(workspace_id, job_id, plan, stdin)
         }
 
         #[cfg(not(windows))]
         {
-            let _ = (workspace_id, job_id, plan);
+            let _ = (workspace_id, job_id, plan, stdin);
             Err(JobEngineError::Unsupported(
                 "windows process job engine requires windows".to_string(),
             ))
@@ -678,6 +690,7 @@ impl JobEngine {
         workspace_id: Option<&str>,
         job_id: &str,
         plan: LaunchPlan,
+        stdin: Option<Vec<u8>>,
     ) -> Result<JobHandle, JobEngineError> {
         use std::os::windows::io::AsRawHandle;
 
@@ -686,7 +699,11 @@ impl JobEngine {
         command
             .current_dir(&cwd)
             .envs(&plan.env)
-            .stdin(Stdio::null())
+            .stdin(if stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         {
@@ -719,6 +736,23 @@ impl JobEngine {
             return Err(JobEngineError::Unavailable(format!(
                 "resume failed (os error {error})"
             )));
+        }
+
+        if let Some(bytes) = stdin {
+            let Some(mut pipe) = child.stdin.take() else {
+                let _ = job_object.terminate(1);
+                let _ = child.kill();
+                return Err(JobEngineError::Unavailable(
+                    "file worker stdin pipe was not created".to_string(),
+                ));
+            };
+            if let Err(error) = pipe.write_all(&bytes) {
+                let _ = job_object.terminate(1);
+                let _ = child.kill();
+                return Err(JobEngineError::Unavailable(format!(
+                    "file worker stdin write failed: {error}"
+                )));
+            }
         }
 
         let outputs = OutputPaths::for_job(&self.output_root, job_id);

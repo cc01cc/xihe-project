@@ -70,12 +70,6 @@ public class WorkspaceJobStartService {
         Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
         String executionMode = workspace.getExecutionMode() == null || workspace.getExecutionMode().isBlank()
                 ? "docker" : workspace.getExecutionMode();
-        if (!"docker".equals(executionMode)) {
-            // 0390 决策 #9：direct-attach 的 JobHandle/launcher 由 PLAN-0394/0395 承接。
-            // 显式拒绝且不创建 durable Job，避免留下永远无法启动的 pending 档案。
-            throw new CpApiException(HttpStatus.NOT_IMPLEMENTED, "JOB_BACKEND_LAUNCH_PENDING",
-                    "Job execution for backend '" + executionMode + "' is not available yet");
-        }
         String scope = normalizeScope(request.scope());
         String source = normalizeSource(request.source());
         List<String> args = request.args() == null ? List.of() : request.args();
@@ -120,9 +114,17 @@ public class WorkspaceJobStartService {
         }
         if (!result.launched()) {
             // Runtime 显式声明该 backend 无 launcher（mode 漂移兜底）；不 fallback。
-            markSettled(start.itemId(), "failed", "JOB_BACKEND_LAUNCH_PENDING", "not_started");
-            throw new CpApiException(HttpStatus.NOT_IMPLEMENTED, "JOB_BACKEND_LAUNCH_PENDING",
-                    "Job execution backend has no launcher");
+            String code = result.errorCode() == null ? "UNMAPPED_ERROR" : result.errorCode();
+            if (result.backendPending()) {
+                markSettled(start.itemId(), JobStateService.STATUS_INTERRUPTED,
+                        "JOB_BACKEND_LAUNCH_PENDING", "not_started");
+                throw new CpApiException(HttpStatus.NOT_IMPLEMENTED, "JOB_BACKEND_LAUNCH_PENDING",
+                        "Job execution backend has no launcher", result.requestId());
+            }
+            markSettled(start.itemId(), JobStateService.STATUS_INTERRUPTED, code, "not_started");
+            throw new CpApiException(runtimeStatus(result.statusCode()), code,
+                    result.reason() == null ? "Runtime rejected the job start" : result.reason(),
+                    result.requestId());
         }
         Map<String, Object> running = new LinkedHashMap<>();
         running.put("jobId", result.jobId());
@@ -136,6 +138,11 @@ public class WorkspaceJobStartService {
         logger.info("[LIFECYCLE] service=cp event=workspace_job_dispatched itemId={} jobId={} workspaceId={}",
                 start.itemId(), result.jobId(), workspaceId);
         return new StartOutcome(operationService.jobView(start.itemId()), false);
+    }
+
+    private static HttpStatus runtimeStatus(int statusCode) {
+        HttpStatus status = HttpStatus.resolve(statusCode);
+        return status == null || status.is2xxSuccessful() ? HttpStatus.BAD_GATEWAY : status;
     }
 
     private void markSettled(java.util.UUID itemId, String status, String errorCode, String cleanupStatus) {

@@ -121,4 +121,19 @@ class WorkspaceJobControllerTest {
         assertEquals(HttpStatus.NOT_IMPLEMENTED, response.getStatusCode());
         assertNotNull(response.getBody());
     }
+
+    @Test
+    void startPreservesRuntimeProblemRequestId() {
+        when(workspaceJobStartService.start(eq("workspace-1"), eq("user-1"), any(), eq("key-2")))
+                .thenThrow(new CpApiException(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_PATH",
+                        "cwd rejected", "runtime-request-1"));
+
+        ResponseEntity<?> response = controller.start("workspace-1", "key-2",
+                new WorkspaceJobStartService.StartRequest("echo", List.of(), null, 0L,
+                        "workspace", null, null, "ui", null));
+
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, response.getStatusCode());
+        assertEquals("runtime-request-1", ((Map<?, ?>) response.getBody()).get("requestId"));
+        assertEquals("INVALID_PATH", ((Map<?, ?>) response.getBody()).get("code"));
+    }
 }

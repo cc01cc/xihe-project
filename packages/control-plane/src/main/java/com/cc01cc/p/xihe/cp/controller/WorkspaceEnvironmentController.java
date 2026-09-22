@@ -102,7 +102,7 @@ public class WorkspaceEnvironmentController {
         response.put("storageBackend", valueOrDefault(workspace.getStorageBackend(), "host_directory"));
         response.put("storageRef", valueOrDefault(workspace.getStorageRef(), workspaceId));
         response.put("storageMode", valueOrDefault(workspace.getStorageMode(), "managed_import"));
-        response.put("hostPath", workspace.getHostPath());
+        response.put("hostPath", visibleHostPath(workspace, userId, isAdmin));
         response.put("executionMode", valueOrDefault(workspace.getExecutionMode(), "docker"));
         response.put("capability", workspaceService.capabilitySnapshot(workspace));
         // PLAN-0396：Job 可用性来自 Runtime capabilities（单一事实源），
@@ -194,15 +194,18 @@ public class WorkspaceEnvironmentController {
             view.put("backendKind", executionMode);
             view.put("available", false);
             view.put("unavailableReason", "RUNTIME_UNREACHABLE");
+            view.put("fileOperations", unavailableFileOperations(executionMode, "RUNTIME_UNREACHABLE"));
         } else if (result.containerJobs()) {
             view.put("backendKind", "docker");
             view.put("available", false);
             view.put("unavailableReason", "CONTAINER_JOBS_SERVED_BY_DOCKER");
+            view.put("fileOperations", unavailableFileOperations("docker", "DEFERRED_DOCKER_FILE_WORKER"));
         } else if (result.capability() == null) {
             view.put("backendKind", executionMode);
             view.put("available", false);
-            view.put("unavailableReason",
-                    result.problemCode() == null ? "RUNTIME_CAPABILITY_MISSING" : result.problemCode());
+            String reason = result.problemCode() == null ? "RUNTIME_CAPABILITY_MISSING" : result.problemCode();
+            view.put("unavailableReason", reason);
+            view.put("fileOperations", unavailableFileOperations(executionMode, reason));
         } else {
             com.fasterxml.jackson.databind.JsonNode node = result.capability();
             view.put("backendKind", node.path("backendKind").asText(executionMode));
@@ -217,9 +220,41 @@ public class WorkspaceEnvironmentController {
             view.put("available", available);
             String reason = node.path("unavailableReason").asText(null);
             view.put("unavailableReason", reason == null || reason.isBlank() ? null : reason);
+            if (node.has("fileOperations")) {
+                view.put("fileOperations", node.get("fileOperations"));
+            } else {
+                view.put("fileOperations", unavailableFileOperations(executionMode,
+                        available ? "FILE_CAPABILITY_MISSING" : "FILE_CAPABILITY_UNAVAILABLE"));
+            }
         }
         view.put("checkedAt", java.time.Instant.now().toString());
         return view;
+    }
+
+    private static Map<String, Object> unavailableFileOperations(String executionMode, String reason) {
+        List<String> names = List.of(
+                "read_file", "read_file_range", "list_directory", "get_file_info", "glob", "grep",
+                "watch_directory", "extract_pdf_text", "write_file", "write_binary", "edit_file",
+                "delete_file", "delete_directory", "mkdir", "move_file", "copy_file", "apply_patch");
+        Map<String, Object> operations = new LinkedHashMap<>();
+        for (String name : names) {
+            Map<String, Object> operation = new LinkedHashMap<>();
+            operation.put("available", false);
+            operation.put("reason", reason);
+            operations.put(name, operation);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("contractVersion", "v1");
+        result.put("executionMode", executionMode);
+        result.put("maxMutationBytes", RuntimeWorkspaceFileClient.MAX_WORKSPACE_FILE_BYTES);
+        result.put("workerLifecycle", "per-operation");
+        result.put("operations", operations);
+        return result;
+    }
+
+    static String visibleHostPath(Workspace workspace, String userId, boolean admin) {
+        return admin || (userId != null && userId.equals(workspace.getOwnerId()))
+                ? workspace.getHostPath() : null;
     }
 
     private Map<String, Object> readWorkspaceRuntimeStatus(String workspaceId) {

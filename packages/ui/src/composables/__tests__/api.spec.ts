@@ -970,6 +970,68 @@ describe('api.startWorkspaceJob (PLAN-0390)', () => {
     expect(result.operationItemId).toBe('item-existing')
     expect(result.status).toBe('running')
   })
+
+  it.each([
+    ['windows-host', 'host-job-1'],
+    ['windows-mxc', 'mxc-job-1'],
+  ] as const)('returns a successful %s Job projection without backend fallback', async (backendKind, jobId) => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: () => Promise.resolve({
+        operationId: OPERATION_ID,
+        operationItemId: `${backendKind}-item`,
+        workspaceId: WORKSPACE_ID,
+        scope: 'workspace',
+        status: 'pending',
+        backendKind,
+        executionMode: backendKind,
+        jobId,
+      }),
+    } as Response)
+
+    const result = await api.startWorkspaceJob(
+      WORKSPACE_ID,
+      { command: 'node', args: ['-e', 'process.exit(0)'], scope: 'workspace' },
+      `${backendKind}-idempotency-key`,
+    )
+
+    expect(result.backendKind).toBe(backendKind)
+    expect(result.jobId).toBe(jobId)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces a 501 launch-pending Problem Details response and does not retry or fallback', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 501,
+      headers: new Headers({ 'X-Request-Id': 'req-launch-pending' }),
+      json: () => Promise.resolve({
+        type: 'https://xihe.dev/problems/job-backend-launch-pending',
+        title: 'Job launcher unavailable',
+        status: 501,
+        code: 'JOB_BACKEND_LAUNCH_PENDING',
+        detail: 'windows-host launcher is not enabled',
+        requestId: 'req-launch-pending',
+      }),
+    } as Response)
+
+    await expect(
+      api.startWorkspaceJob(
+        WORKSPACE_ID,
+        { command: 'node', args: [] },
+        'host-idempotency-key',
+      ),
+    ).rejects.toMatchObject({
+      problem: {
+        status: 501,
+        code: 'JOB_BACKEND_LAUNCH_PENDING',
+        requestId: 'req-launch-pending',
+        detail: 'windows-host launcher is not enabled',
+      },
+    })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('workspaceJobErrorReason', () => {
@@ -993,6 +1055,11 @@ describe('workspaceJobErrorReason', () => {
     expect(workspaceJobErrorReason(apiError(400, 'IDEMPOTENCY_KEY_REQUIRED'))).toContain('Idempotency-Key')
     expect(workspaceJobErrorReason(apiError(404, 'WORKSPACE_NOT_FOUND'))).toContain('工作区')
     expect(workspaceJobErrorReason(apiError(502, 'RUNTIME_UNAVAILABLE'))).toContain('Runtime')
+    expect(workspaceJobErrorReason(apiError(422, 'PATH_OUT_OF_SCOPE'))).toContain('超出工作区范围')
+    expect(workspaceJobErrorReason(apiError(503, 'CAPABILITY_UNAVAILABLE'))).toContain('能力当前不可用')
+    expect(workspaceJobErrorReason(apiError(408, 'PROCESS_TIMEOUT'))).toContain('进程执行超时')
+    expect(workspaceJobErrorReason(apiError(499, 'PROCESS_CANCELLED'))).toContain('进程已取消')
+    expect(workspaceJobErrorReason(apiError(500, 'UNMAPPED_ERROR'))).toContain('未映射具体错误')
   })
 
   it('falls back to the server detail for unknown codes and to the message otherwise', () => {

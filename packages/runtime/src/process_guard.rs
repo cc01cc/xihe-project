@@ -754,6 +754,21 @@ mod tests {
 
     use super::{BackendCapabilitySnapshot, CONTRACT_VERSION, DirectAttachProbeRequest};
 
+    #[cfg(windows)]
+    fn mxc_available_for_test() -> bool {
+        let Some(path) = std::env::var_os("XIHE_MXC_EXECUTABLE") else {
+            eprintln!("SKIP: XIHE_MXC_EXECUTABLE is not configured; MXC boundary is unmeasured");
+            return false;
+        };
+        if !std::path::Path::new(&path).is_file() {
+            eprintln!(
+                "SKIP: XIHE_MXC_EXECUTABLE does not point to a file; MXC boundary is unmeasured"
+            );
+            return false;
+        }
+        true
+    }
+
     #[test]
     fn capability_contract_has_stable_identity_and_available_reason() {
         let snapshot = BackendCapabilitySnapshot::unavailable(
@@ -863,6 +878,9 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn mxc_execution_captures_process_output() {
+        if !mxc_available_for_test() {
+            return;
+        }
         let directory = tempfile::tempdir().expect("temporary workspace directory");
         let executable = std::env::var("XIHE_MXC_EXECUTABLE")
             .expect("XIHE_MXC_EXECUTABLE must point to the installed MXC binary");
@@ -893,6 +911,9 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn mxc_execution_passes_cwd_and_environment() {
+        if !mxc_available_for_test() {
+            return;
+        }
         let directory = tempfile::tempdir().expect("temporary workspace directory");
         let executable = std::env::var("XIHE_MXC_EXECUTABLE")
             .expect("XIHE_MXC_EXECUTABLE must point to the installed MXC binary");
@@ -938,6 +959,9 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn mxc_timeout_terminates_the_wrapper_process_tree() {
+        if !mxc_available_for_test() {
+            return;
+        }
         let directory = tempfile::tempdir().expect("temporary workspace directory");
         let error = super::execute(super::ProcessRequest {
             contract_version: CONTRACT_VERSION.to_string(),
@@ -964,6 +988,9 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn mxc_execution_rejects_cwd_outside_granted_root() {
+        if !mxc_available_for_test() {
+            return;
+        }
         let allowed = tempfile::tempdir().expect("allowed directory");
         let outside = tempfile::tempdir().expect("outside directory");
         let result = super::execute(super::ProcessRequest {

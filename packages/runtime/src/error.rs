@@ -8,6 +8,9 @@ pub enum RuntimeError {
     #[error("Invalid path: {0}")]
     InvalidPath(String),
 
+    #[error("File operation payload too large: {actual} bytes (limit {limit})")]
+    PayloadTooLarge { actual: usize, limit: usize },
+
     #[error("File not found: {0}")]
     FileNotFound(String),
 

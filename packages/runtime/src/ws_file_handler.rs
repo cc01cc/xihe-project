@@ -1,4 +1,4 @@
-use axum::body::Bytes;
+use axum::body::{Body, to_bytes};
 use axum::{
     Json,
     extract::{Path, State},
@@ -183,6 +183,7 @@ pub(crate) fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
         | RuntimeError::McpSessionFailed { .. }
         | RuntimeError::Docker(_) => StatusCode::SERVICE_UNAVAILABLE,
         RuntimeError::InvalidExecutionSpec { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        RuntimeError::PayloadTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         RuntimeError::InvalidPath(_) => StatusCode::BAD_REQUEST,
         RuntimeError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -191,6 +192,7 @@ pub(crate) fn map_error(e: RuntimeError) -> (StatusCode, Json<Value>) {
         StatusCode::FORBIDDEN => "FORBIDDEN",
         StatusCode::NOT_FOUND => "FILE_NOT_FOUND",
         StatusCode::BAD_REQUEST => "INVALID_REQUEST",
+        StatusCode::PAYLOAD_TOO_LARGE => "PAYLOAD_TOO_LARGE",
         _ => "RUNTIME_ERROR",
     };
     problem(status, code, "Runtime file operation failed")
@@ -229,7 +231,7 @@ pub async fn handle_read_file(
 pub async fn handle_write_binary(
     State(app): State<Arc<AppState>>,
     Path((ws_id, raw_path)): Path<(String, String)>,
-    body: Bytes,
+    body: Body,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let path = percent_encoding::percent_decode_str(&raw_path)
         .decode_utf8()
@@ -246,13 +248,22 @@ pub async fn handle_write_binary(
                 })),
             )
         })?;
-    let ws = app.ensure_workspace(&ws_id).await.map_err(map_error)?;
+    app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
-    // PLAN-274 explicit exception: binary writes stay on the host direct path
-    // because the Docker-exec JSON frame only carries UTF-8 strings and would
-    // corrupt arbitrary bytes. Path safety still uses the shared fs helper
-    // (lexical + canonical symlink checks); consistency is fail-closed above.
-    let msg = fs::write_file_binary(&path, &body, &ws.workspace_path)
+    let body = to_bytes(
+        body,
+        xihe_runtime::executor::FILE_OPERATION_MAX_PAYLOAD_BYTES + 1,
+    )
+    .await
+    .map_err(|_| {
+        map_error(RuntimeError::PayloadTooLarge {
+            actual: xihe_runtime::executor::FILE_OPERATION_MAX_PAYLOAD_BYTES + 1,
+            limit: xihe_runtime::executor::FILE_OPERATION_MAX_PAYLOAD_BYTES,
+        })
+    })?;
+    let msg = app
+        .router
+        .write_file_binary(&ws_id, &path, &body)
         .await
         .map_err(map_error)?;
     Ok(Json(serde_json::json!({ "message": msg })))
@@ -516,7 +527,7 @@ mod tests {
         // URL-encoded path "test/hello.txt"
         let state = State(app);
         let path = Path((ws_id, "test%2Fhello.txt".to_string()));
-        let body = Bytes::from("Hello, Binary!");
+        let body = Body::from("Hello, Binary!");
         let result = handle_write_binary(state, path, body).await.unwrap();
         assert!(
             result
@@ -652,7 +663,7 @@ mod tests {
         let state = State(app.clone());
         let path = Path((ws_id.clone(), "binary.bin".to_string()));
         let bin_data: Vec<u8> = vec![0x00, 0x01, 0x02, 0xFF, 0xFE];
-        let body = Bytes::from(bin_data.clone());
+        let body = Body::from(bin_data.clone());
         let _ = handle_write_binary(state, path, body).await.unwrap();
 
         // Stat via handler

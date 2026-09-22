@@ -14,9 +14,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
 use xihe_runtime::job_engine::{
     CancelOutcome, JobEngine, JobSnapshot, JobStatus, LaunchPlan, STREAM_CAP_BYTES,
 };
+use xihe_runtime::job_mxc_adapter::{MxcJobRequest, build_mxc_job};
 use xihe_runtime::process_guard::FilesystemPolicy;
 
 fn temp_root(label: &str) -> PathBuf {
@@ -58,6 +61,33 @@ fn wait_terminal(engine: &JobEngine, job_id: &str) -> JobSnapshot {
         );
         std::thread::sleep(Duration::from_millis(25));
     }
+}
+
+fn directory_manifest(root: &Path) -> String {
+    let mut entries = Vec::new();
+    if let Ok(read_dir) = fs::read_dir(root) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy();
+            let metadata = fs::symlink_metadata(&path).expect("manifest metadata");
+            let bytes = if metadata.is_file() {
+                fs::read(&path).expect("manifest file")
+            } else {
+                Vec::new()
+            };
+            let mut hasher = Sha256::new();
+            hasher.update(bytes);
+            entries.push(format!(
+                "{}|{}|{}|{}",
+                relative.replace('\\', "/"),
+                metadata.is_dir(),
+                metadata.len(),
+                format_args!("{:x}", hasher.finalize())
+            ));
+        }
+    }
+    entries.sort();
+    entries.join("\n")
 }
 
 /// True when the PID no longer exists (independent of the job object's view).
@@ -375,6 +405,285 @@ fn mxc_readwrite_grant_allows_writes_inside_the_workspace() {
         "the sandboxed write must land in the workspace"
     );
     engine.cleanup(&job_id).expect("cleanup");
+}
+
+#[test]
+fn mxc_command_bypass_matrix_rejects_outside_writes() {
+    if std::env::var("XIHE_JOB_MXC").ok().as_deref() != Some("1") {
+        eprintln!("SKIP: set XIHE_JOB_MXC=1 and XIHE_MXC_EXEC to run the MXC bypass matrix");
+        return;
+    }
+    let _mxc = std::env::var("XIHE_MXC_EXEC").expect("XIHE_MXC_EXEC");
+    let node = String::from_utf8_lossy(
+        &Command::new("where")
+            .arg("node")
+            .output()
+            .expect("where node")
+            .stdout,
+    )
+    .lines()
+    .next()
+    .unwrap_or_default()
+    .trim()
+    .to_string();
+    assert!(!node.is_empty(), "node.exe not found on PATH");
+    let node_dir = PathBuf::from(&node)
+        .parent()
+        .expect("node dir")
+        .to_path_buf();
+
+    let root = temp_root("mxc-bypass-matrix");
+    let outside = temp_root("mxc-bypass-outside");
+    let script = root.join("bypass-fixture.js");
+    fs::write(
+        &script,
+        r#"const fs=require('fs');const path=require('path');const mode=process.argv[2];let target=process.argv[3];if(mode==='encoded'){target=Buffer.from(target,'base64').toString('utf8')}if(mode==='build'){fs.mkdirSync(path.dirname(target),{recursive:true})}fs.writeFileSync(target,`outside-${mode}`);"#,
+    )
+    .expect("fixture script");
+
+    let cases: Vec<(&str, String, Vec<String>)> = vec![
+        (
+            "direct",
+            node.clone(),
+            vec![script.to_string_lossy().to_string(), "direct".to_string()],
+        ),
+        (
+            "absolute",
+            node.clone(),
+            vec![script.to_string_lossy().to_string(), "absolute".to_string()],
+        ),
+        (
+            "nested-shell",
+            "cmd.exe".to_string(),
+            vec![
+                "/D".to_string(),
+                "/S".to_string(),
+                "/C".to_string(),
+                format!("\"{}\" \"{}\" nested-shell", node, script.to_string_lossy()),
+            ],
+        ),
+        (
+            "encoded",
+            node.clone(),
+            vec![script.to_string_lossy().to_string(), "encoded".to_string()],
+        ),
+        (
+            "build-like",
+            node.clone(),
+            vec![script.to_string_lossy().to_string(), "build".to_string()],
+        ),
+    ];
+
+    for (label, program, mut args) in cases {
+        let target = outside.join(format!("{label}.txt"));
+        if label == "encoded" {
+            args.push(
+                base64::engine::general_purpose::STANDARD
+                    .encode(target.to_string_lossy().as_bytes()),
+            );
+        } else {
+            args.push(target.to_string_lossy().to_string());
+        }
+        let before = directory_manifest(&outside);
+        let output_dir = root.join("job-output").join(label);
+        let mut plan = build_mxc_job(
+            MxcJobRequest {
+                workspace_path: root.to_string_lossy().into_owned(),
+                command: program,
+                args,
+                cwd: Some(root.to_string_lossy().into_owned()),
+                env: BTreeMap::new(),
+                timeout_secs: 30,
+            },
+            &output_dir,
+        )
+        .expect("build MXC fixture job");
+        plan.grants.read_only_roots.push(node_dir.clone());
+
+        let engine = JobEngine::new("boot-it", root.clone());
+        let job_id = uuid::Uuid::new_v4().to_string();
+        engine.start(&job_id, plan).expect("start matrix job");
+        let snapshot = wait_terminal(&engine, &job_id);
+        let after = directory_manifest(&outside);
+        assert_eq!(
+            before, after,
+            "outside manifest changed for {label}: {snapshot:?}"
+        );
+        assert!(!target.exists(), "outside marker was created for {label}");
+        engine.cleanup(&job_id).expect("cleanup matrix job");
+    }
+}
+
+#[test]
+fn mxc_path_normalization_and_missing_tool_are_classified() {
+    if std::env::var("XIHE_JOB_MXC").ok().as_deref() != Some("1") {
+        eprintln!("SKIP: set XIHE_JOB_MXC=1 and XIHE_MXC_EXEC to run the MXC path matrix");
+        return;
+    }
+    let _mxc = std::env::var("XIHE_MXC_EXEC").expect("XIHE_MXC_EXEC");
+    let node = String::from_utf8_lossy(
+        &Command::new("where")
+            .arg("node")
+            .output()
+            .expect("where node")
+            .stdout,
+    )
+    .lines()
+    .next()
+    .unwrap_or_default()
+    .trim()
+    .to_string();
+    assert!(!node.is_empty(), "node.exe not found on PATH");
+    let root = temp_root("mxc-path-matrix");
+    let script = root.join("path-fixture.js");
+    fs::write(
+        &script,
+        r#"const fs=require('fs');fs.writeFileSync(process.argv[2],'outside-path-matrix')"#,
+    )
+    .expect("fixture script");
+
+    let parent_target = root
+        .parent()
+        .expect("temp parent")
+        .join(format!("mxc-parent-{}.txt", uuid::Uuid::new_v4()));
+    let case_target = PathBuf::from(root.to_string_lossy().to_uppercase())
+        .join("..")
+        .join(format!("mxc-case-{}.txt", uuid::Uuid::new_v4()));
+
+    for target in [parent_target, case_target] {
+        let output_dir = root
+            .join("job-output")
+            .join(uuid::Uuid::new_v4().to_string());
+        let plan = build_mxc_job(
+            MxcJobRequest {
+                workspace_path: root.to_string_lossy().into_owned(),
+                command: node.clone(),
+                args: vec![
+                    script.to_string_lossy().into_owned(),
+                    target.to_string_lossy().into_owned(),
+                ],
+                cwd: Some(root.to_string_lossy().into_owned()),
+                env: BTreeMap::new(),
+                timeout_secs: 30,
+            },
+            &output_dir,
+        )
+        .expect("build path matrix job");
+        let engine = JobEngine::new("boot-it", root.clone());
+        let job_id = uuid::Uuid::new_v4().to_string();
+        engine.start(&job_id, plan).expect("start path matrix job");
+        let _snapshot = wait_terminal(&engine, &job_id);
+        assert!(
+            !target.exists(),
+            "path normalization escaped workspace: {target:?}"
+        );
+        engine.cleanup(&job_id).expect("cleanup path matrix job");
+    }
+
+    let output_dir = root.join("job-output").join("missing-tool");
+    let plan = build_mxc_job(
+        MxcJobRequest {
+            workspace_path: root.to_string_lossy().into_owned(),
+            command: root.join("missing-tool.exe").to_string_lossy().into_owned(),
+            args: Vec::new(),
+            cwd: Some(root.to_string_lossy().into_owned()),
+            env: BTreeMap::new(),
+            timeout_secs: 5,
+        },
+        &output_dir,
+    )
+    .expect("build missing-tool plan");
+    let engine = JobEngine::new("boot-it", root.clone());
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let result = engine.start(&job_id, plan);
+    if result.is_ok() {
+        let snapshot = wait_terminal(&engine, &job_id);
+        assert_ne!(
+            snapshot.status,
+            JobStatus::Succeeded,
+            "missing tool must not be reported as a successful job"
+        );
+        engine.cleanup(&job_id).expect("cleanup missing-tool job");
+    }
+
+    let package_target = root
+        .parent()
+        .expect("package parent")
+        .join(format!("mxc-package-{}.txt", uuid::Uuid::new_v4()));
+    let npm_cli = PathBuf::from(&node)
+        .parent()
+        .expect("node dir")
+        .join("node_modules")
+        .join("npm")
+        .join("bin")
+        .join("npm-cli.js");
+    assert!(
+        npm_cli.exists(),
+        "npm CLI fixture is unavailable: {npm_cli:?}"
+    );
+    fs::write(
+        root.join("package.json"),
+        format!(
+            r#"{{"scripts":{{"build":"node -e \"require('fs').writeFileSync('package-ran.txt','ran');require('fs').writeFileSync('{}','package-outside')\""}}}}"#,
+            package_target
+                .display()
+                .to_string()
+                .replace('\\', "/")
+                .replace('"', "\\\"")
+        ),
+    )
+    .expect("package fixture");
+    let package_plan = build_mxc_job(
+        MxcJobRequest {
+            workspace_path: root.to_string_lossy().into_owned(),
+            command: node,
+            args: vec![
+                "--preserve-symlinks".to_string(),
+                "--preserve-symlinks-main".to_string(),
+                npm_cli.to_string_lossy().into_owned(),
+                "run".to_string(),
+                "build".to_string(),
+            ],
+            cwd: Some(root.to_string_lossy().into_owned()),
+            env: BTreeMap::from([
+                (
+                    "npm_config_cache".to_string(),
+                    root.join(".npm-cache").to_string_lossy().into_owned(),
+                ),
+                (
+                    "npm_config_userconfig".to_string(),
+                    root.join(".npmrc").to_string_lossy().into_owned(),
+                ),
+                (
+                    "npm_config_update_notifier".to_string(),
+                    "false".to_string(),
+                ),
+                ("npm_config_fund".to_string(), "false".to_string()),
+                ("npm_config_audit".to_string(), "false".to_string()),
+            ]),
+            timeout_secs: 30,
+        },
+        &root.join("job-output").join("package"),
+    )
+    .expect("build package fixture job");
+    let package_engine = JobEngine::new("boot-it", root.clone());
+    let package_job = uuid::Uuid::new_v4().to_string();
+    package_engine
+        .start(&package_job, package_plan)
+        .expect("start package fixture");
+    let package_snapshot = wait_terminal(&package_engine, &package_job);
+    assert_ne!(
+        package_snapshot.status,
+        JobStatus::Succeeded,
+        "package fixture must not write outside the workspace"
+    );
+    assert!(
+        !package_target.exists(),
+        "package fixture escaped workspace"
+    );
+    package_engine
+        .cleanup(&package_job)
+        .expect("cleanup package fixture");
 }
 
 /// Engine restart: handles are not persisted, so a restarted Runtime cannot see

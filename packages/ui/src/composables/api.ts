@@ -852,6 +852,11 @@ export const WORKSPACE_JOB_ERROR_CODES = [
     "JOB_IDEMPOTENCY_CONFLICT",
     "JOB_BACKEND_LAUNCH_PENDING",
     "RUNTIME_UNAVAILABLE",
+    "PATH_OUT_OF_SCOPE",
+    "CAPABILITY_UNAVAILABLE",
+    "PROCESS_TIMEOUT",
+    "PROCESS_CANCELLED",
+    "UNMAPPED_ERROR",
 ] as const;
 
 export type WorkspaceJobErrorCode = (typeof WORKSPACE_JOB_ERROR_CODES)[number];
@@ -862,6 +867,11 @@ const WORKSPACE_JOB_ERROR_REASONS: Record<WorkspaceJobErrorCode, string> = {
     JOB_IDEMPOTENCY_CONFLICT: "幂等键冲突：相同键对应了不同的启动参数",
     JOB_BACKEND_LAUNCH_PENDING: "当前执行后端尚未提供 Job 启动器，暂不可用",
     RUNTIME_UNAVAILABLE: "Runtime 暂不可达，请确认服务已启动后重试",
+    PATH_OUT_OF_SCOPE: "路径超出工作区范围，操作已拒绝",
+    CAPABILITY_UNAVAILABLE: "执行能力当前不可用，请检查 Runtime 或后端状态",
+    PROCESS_TIMEOUT: "进程执行超时，任务已终止",
+    PROCESS_CANCELLED: "进程已取消",
+    UNMAPPED_ERROR: "执行失败，后端未映射具体错误",
 };
 
 function isWorkspaceJobErrorCode(code: string | null | undefined): code is WorkspaceJobErrorCode {

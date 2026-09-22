@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { api, ApiError, isExecutionModeSwitchProbeFailure } from '../../composables/api'
 import { useAuthStore } from '../../stores/auth'
 import { logger } from '../../lib/logger'
+import { humanizeErrorCode } from '../../lib/errorMessages'
 import { toast } from 'vue-sonner'
 import { LoaderCircle, RefreshCw } from '@lucide/vue'
 import type {
@@ -143,18 +144,21 @@ function isTerminalJob(status: string): boolean {
 }
 
 /**
- * One line of secondary job detail: terminal jobs surface `cancelReason` / `errorCode`,
+ * One line of secondary job detail: terminal jobs surface `cancelReason`,
  * non-terminal jobs surface `cleanupStatus` once cleanup has actually started.
  */
 function jobDetailText(job: WorkspaceJob): string {
   const parts: string[] = []
   if (isTerminalJob(job.status)) {
     if (job.cancelReason) parts.push(jobCancelReasonLabel(job.cancelReason))
-    if (job.errorCode) parts.push(job.errorCode)
   } else if (job.cleanupStatus && job.cleanupStatus !== 'not_started') {
     parts.push(jobCleanupStatusLabel(job.cleanupStatus))
   }
   return parts.join(' · ')
+}
+
+function jobErrorText(job: WorkspaceJob): string {
+  return job.errorCode ? humanizeErrorCode(job.errorCode) : ''
 }
 
 // PLAN-0396：Job 可用性来自 Runtime capabilities（CP 透出），不再与
@@ -170,9 +174,26 @@ const jobStartReason = computed(() => {
     return `Job 启动不可用：${capability.unavailableReason ?? '后端未上报原因'}`
   }
   const backend = capability.backendKind || environment.value?.executionMode || '未知后端'
-  return capability.canIsolateFilesystem
-    ? `可启动 Job · ${backend}（沙盒隔离）`
-    : `可启动 Job · ${backend}（无隔离，可访问工作区外资源）`
+  if (capability.canIsolateFilesystem === true) {
+    return `可启动 Job · ${backend}（沙盒隔离）`
+  }
+  if (capability.canIsolateFilesystem === false) {
+    return `可启动 Job · ${backend}（无隔离，可访问工作区外资源）`
+  }
+  return `可启动 Job · ${backend}（隔离能力未知）`
+})
+
+// `hostPath` is a privileged projection. A null/safe projection must never be
+// replaced with a locally cached path, and a raw path is only shown to an
+// instance admin or the workspace owner.
+const canViewRawHostPath = computed(() => {
+  if (!auth.user) return false
+  if (auth.isAdmin) return true
+  return Boolean(auth.workspace?.ownerId && auth.workspace.ownerId === auth.user.id)
+})
+const disclosedHostPath = computed(() => {
+  const path = environment.value?.hostPath
+  return canViewRawHostPath.value && typeof path === 'string' && path.length > 0 ? path : null
 })
 
 async function loadEnvironment() {
@@ -359,7 +380,7 @@ onBeforeUnmount(stopPolling)
                 <div class="flex justify-between gap-4"><dt class="text-muted-foreground">后端</dt><dd>{{ environment.storageBackend }}</dd></div>
                 <div class="flex justify-between gap-4"><dt class="text-muted-foreground">存储方式</dt><dd>{{ environment.storageMode }}</dd></div>
                 <div class="flex justify-between gap-4"><dt class="text-muted-foreground">引用</dt><dd class="break-all font-mono text-right">{{ environment.storageRef }}</dd></div>
-               <div v-if="environment.hostPath" class="flex justify-between gap-4"><dt class="text-muted-foreground">宿主机目录</dt><dd class="break-all font-mono text-right">{{ environment.hostPath }}</dd></div>
+                <div v-if="disclosedHostPath" data-testid="workspace-host-path" class="flex justify-between gap-4"><dt class="text-muted-foreground">宿主机目录</dt><dd class="break-all font-mono text-right">{{ disclosedHostPath }}</dd></div>
              </dl>
           </article>
           <article class="rounded-lg border p-5">
@@ -421,6 +442,14 @@ onBeforeUnmount(stopPolling)
                   <p class="mt-1 text-xs text-muted-foreground" data-testid="workspace-job-secondary">
                     {{ job.source }} · {{ job.scope }} · {{ job.backendKind ?? '未知后端' }}
                     <template v-if="jobDetailText(job)"> · {{ jobDetailText(job) }}</template>
+                  </p>
+                  <p
+                    v-if="job.errorCode"
+                    class="mt-1 text-xs text-destructive"
+                    data-testid="workspace-job-error"
+                    role="alert"
+                  >
+                    {{ jobErrorText(job) }} <code class="font-mono">({{ job.errorCode }})</code>
                   </p>
                 </div>
                 <span class="rounded border px-2 py-1 text-xs" data-testid="workspace-job-status">

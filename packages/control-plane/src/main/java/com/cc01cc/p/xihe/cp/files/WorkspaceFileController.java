@@ -35,7 +35,7 @@ import java.util.UUID;
 public class WorkspaceFileController {
 
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceFileController.class);
-    private static final long MAX_UPLOAD_SIZE = 500L * 1024 * 1024;
+    private static final long MAX_UPLOAD_SIZE = RuntimeWorkspaceFileClient.MAX_WORKSPACE_FILE_BYTES;
 
     private final FileRepository fileRepository;
     private final SessionRepository sessionRepository;
@@ -125,7 +125,8 @@ public class WorkspaceFileController {
             }
             if (file.getSize() > MAX_UPLOAD_SIZE) {
                 return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", "File exceeds the upload limit");
+                        HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE",
+                        "Workspace file exceeds the 64 MiB file-tool limit");
             }
             String originalName = file.getOriginalFilename();
             if (originalName == null || originalName.isBlank()) {

@@ -19,6 +19,9 @@ import java.util.Optional;
 @Component
 public class RuntimeWorkspaceFileClient {
 
+    /** Workspace file-tool payload cap; Chat attachments use a separate contract. */
+    public static final long MAX_WORKSPACE_FILE_BYTES = 64L * 1024 * 1024;
+
     private static final Logger logger = LoggerFactory.getLogger(RuntimeWorkspaceFileClient.class);
 
     private final RestTemplate restTemplate;
@@ -57,6 +60,11 @@ public class RuntimeWorkspaceFileClient {
     }
 
     public boolean writeBinary(String workspaceId, String path, byte[] data) {
+        if (data.length > MAX_WORKSPACE_FILE_BYTES) {
+            logger.warn("Runtime file write rejected before transport workspaceId={} path={} size={}",
+                    workspaceId, path, data.length);
+            return false;
+        }
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);

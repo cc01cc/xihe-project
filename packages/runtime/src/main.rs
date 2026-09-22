@@ -1839,11 +1839,21 @@ async fn workspace_job_capabilities_handler(
     // Capability content is adapter-owned (PLAN-0393 decision #15); the host
     // adapter carries `canIsolateFilesystem=false` as the machine-readable
     // "unrestricted" marker.
-    let capability = if instance.execution_mode == "windows-mxc" {
+    let mut capability = if instance.execution_mode == "windows-mxc" {
         xihe_runtime::job_mxc_adapter::mxc_capability(&probe)
     } else {
         xihe_runtime::job_host_adapter::host_capability(&probe)
     };
+    if let Some(object) = capability.as_object_mut() {
+        let file_projection =
+            xihe_runtime::executor::WorkspaceExecutionRouter::file_operations_capability(
+                &instance.execution_mode,
+                Some(&probe),
+            );
+        if let Some(file_operations) = file_projection.get("fileOperations") {
+            object.insert("fileOperations".to_string(), file_operations.clone());
+        }
+    }
     Ok(AxumJson(capability))
 }
 
@@ -2957,9 +2967,15 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
 }
 
 fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--file-worker") {
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(xihe_runtime::file_worker::run(&args));
+    }
     // PLAN-0307 T3.1/T3.5: config loading (env chain + CLI --set) runs before the
     // Tokio runtime starts so process-env writes stay on the main thread.
-    let args: Vec<String> = std::env::args().skip(1).collect();
     let cli_overrides = dotenv_loader::parse_cli_overrides(&args).map_err(anyhow::Error::msg)?;
     dotenv_loader::load(&cli_overrides);
     // PLAN-0307 T3.4: reject dangerous factory defaults in prod (WARN in dev/test).

@@ -16,6 +16,7 @@ use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{Result, RuntimeError};
+use crate::file_worker::{self, MAX_FILE_OPERATION_BYTES};
 use crate::fs;
 use crate::gateway::WorkspaceRegistry;
 use crate::hydrate::WorkspaceEnsurer;
@@ -339,6 +340,73 @@ struct OperationError {
     message: String,
 }
 
+pub const FILE_OPERATION_MAX_PAYLOAD_BYTES: usize = MAX_FILE_OPERATION_BYTES;
+
+const FILE_MUTATIONS: &[&str] = &[
+    "write_file",
+    "write_binary",
+    "edit_file",
+    "delete_file",
+    "delete_directory",
+    "mkdir",
+    "move_file",
+    "copy_file",
+    "apply_patch",
+];
+
+fn validate_file_operation_payload(operation: &str, payload: &Value) -> Result<()> {
+    if !FILE_MUTATIONS.contains(&operation) {
+        return Ok(());
+    }
+    let size = serde_json::to_vec(payload)
+        .map_err(|error| RuntimeError::InvalidPath(format!("serialize file payload: {error}")))?
+        .len();
+    if size > FILE_OPERATION_MAX_PAYLOAD_BYTES {
+        return Err(RuntimeError::PayloadTooLarge {
+            actual: size,
+            limit: FILE_OPERATION_MAX_PAYLOAD_BYTES,
+        });
+    }
+    Ok(())
+}
+
+fn preflight_file_operation(workspace: &str, operation: &str, payload: &Value) -> Result<()> {
+    let read_path = |path: &str| crate::fs::resolve_read_path(path, workspace).map(|_| ());
+    let write_path = |path: &str| crate::fs::resolve_write_path(path, workspace).map(|_| ());
+    let path = |key: &str| {
+        payload
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| RuntimeError::InvalidPath(format!("missing {key}")))
+    };
+    match operation {
+        "read_file" | "read_file_range" | "list_directory" | "get_file_info" | "glob"
+        | "grep" | "watch_directory" | "extract_pdf_text" => read_path(path("path")?),
+        "write_file" | "edit_file" | "write_binary" | "mkdir" => {
+            let key = if operation == "edit_file" { "filePath" } else { "path" };
+            write_path(path(key)?)
+        }
+        "delete_file" | "delete_directory" => read_path(path("path")?),
+        "move_file" | "copy_file" => {
+            read_path(path("from")?)?;
+            write_path(path("to")?)
+        }
+        "apply_patch" => payload
+            .get("patches")
+            .and_then(Value::as_array)
+            .ok_or_else(|| RuntimeError::InvalidPath("missing patches array".into()))?
+            .iter()
+            .try_for_each(|patch| {
+                let path = patch
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| RuntimeError::InvalidPath("missing patch path".into()))?;
+                write_path(path)
+            }),
+        _ => Ok(()),
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct WorkspaceExecutionRouter {
@@ -361,6 +429,132 @@ impl std::fmt::Debug for WorkspaceExecutionRouter {
 }
 
 impl WorkspaceExecutionRouter {
+    async fn execute_mxc_file_operation(
+        &self,
+        workspace_id: &str,
+        workspace_path: &str,
+        operation: &str,
+        payload: Value,
+        binary: Option<&[u8]>,
+    ) -> Result<Value> {
+        preflight_file_operation(workspace_path, operation, &payload)?;
+        let capability = crate::process_guard::probe_direct_attach(
+            crate::process_guard::DirectAttachProbeRequest {
+                storage_mode: "direct_attach".to_string(),
+                host_path: workspace_path.to_string(),
+                execution_mode: "windows-mxc".to_string(),
+            },
+        )
+        .await?;
+        if !capability.available {
+            return Err(RuntimeError::Unsupported {
+                capability: "windows-mxc-file-worker".to_string(),
+                reason: capability
+                    .reason
+                    .unwrap_or_else(|| "CAPABILITY_UNAVAILABLE".to_string()),
+            });
+        }
+        let frame = if let Some(data) = binary {
+            file_worker::encode_binary_request(
+                payload.get("path").and_then(Value::as_str).unwrap_or(""),
+                data,
+            )?
+        } else {
+            let request = OperationRequest {
+                operation: operation.to_string(),
+                payload,
+                request_id: Some(uuid::Uuid::new_v4().to_string()),
+            };
+            let mut frame = serde_json::to_vec(&request).map_err(|error| {
+                RuntimeError::InvalidPath(format!("serialize file worker request: {error}"))
+            })?;
+            frame.push(b'\n');
+            frame
+        };
+        let worker = std::env::current_exe()
+            .map_err(|error| RuntimeError::Command(format!("resolve file worker: {error}")))?;
+        let job_id = format!("file-worker-{workspace_id}-{}", uuid::Uuid::new_v4());
+        let plan = crate::job_mxc_adapter::build_mxc_job(
+            crate::job_mxc_adapter::MxcJobRequest {
+                workspace_path: workspace_path.to_string(),
+                command: worker.to_string_lossy().into_owned(),
+                args: vec![
+                    "--file-worker".to_string(),
+                    "--workspace".to_string(),
+                    workspace_path.to_string(),
+                ],
+                cwd: Some(workspace_path.to_string()),
+                env: std::collections::BTreeMap::new(),
+                timeout_secs: 30,
+            },
+            &self.job_engine.output_dir(&job_id),
+        )
+        .map_err(job_engine_error)?;
+        self.job_engine
+            .start_in_workspace_with_stdin(Some(workspace_id), &job_id, plan, Some(frame))
+            .map_err(job_engine_error)?;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(35);
+        let snapshot = loop {
+            let snapshot = self
+                .job_engine
+                .snapshot(&job_id)
+                .map_err(job_engine_error)?;
+            if snapshot.status.is_terminal() {
+                break snapshot;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = self.job_engine.cancel(&job_id);
+                let _ = self.job_engine.cleanup(&job_id);
+                return Err(RuntimeError::ProcessTimeout {
+                    detail: "file worker exceeded 30s".to_string(),
+                });
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let output = self
+            .job_engine
+            .read_output(&job_id, "stdout", Some(0), Some(1024 * 1024))
+            .map_err(job_engine_error)?
+            .data;
+        let cleanup = self.job_engine.cleanup(&job_id).map_err(job_engine_error)?;
+        if cleanup.outcome != crate::job_engine::CleanupOutcome::Completed {
+            return Err(RuntimeError::Command(
+                cleanup
+                    .reason
+                    .unwrap_or_else(|| "file worker cleanup failed".to_string()),
+            ));
+        }
+        let response: OperationResponse = output
+            .lines()
+            .rfind(|line| !line.trim().is_empty())
+            .ok_or_else(|| RuntimeError::Command("file worker returned no response".to_string()))
+            .and_then(|line| {
+                serde_json::from_str(line).map_err(|error| {
+                    RuntimeError::Command(format!("parse file worker response: {error}"))
+                })
+            })?;
+        if response.ok {
+            if snapshot.status == crate::job_engine::JobStatus::Succeeded {
+                Ok(response.result)
+            } else {
+                Err(RuntimeError::Command(format!(
+                    "file worker exited with {:?}",
+                    snapshot.status
+                )))
+            }
+        } else {
+            let code = response
+                .error_code
+                .unwrap_or_else(|| "EXEC_FAILED".to_string());
+            let message = response
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "file worker failed".to_string());
+            Err(Self::map_sandbox_error(&code, message))
+        }
+    }
+
     pub fn new(
         ensurer: Arc<WorkspaceEnsurer>,
         manager: Arc<Mutex<WorkspaceManager>>,
@@ -458,6 +652,7 @@ impl WorkspaceExecutionRouter {
         operation: &str,
         payload: Value,
     ) -> Result<Value> {
+        validate_file_operation_payload(operation, &payload)?;
         let instance = self.ensure(workspace_id).await?;
         // The mode travels with the materialized instance: re-fetching the spec
         // here would let a concurrent mode switch route a stale instance.
@@ -485,6 +680,12 @@ impl WorkspaceExecutionRouter {
         operation: &str,
         payload: Value,
     ) -> Result<Value> {
+        validate_file_operation_payload(operation, &payload)?;
+        if execution_mode == "windows-mxc" {
+            return self
+                .execute_mxc_file_operation(workspace_id, workspace_path, operation, payload, None)
+                .await;
+        }
         let path = || payload.get("path").and_then(Value::as_str).unwrap_or("");
         match operation {
             "read_file" => Ok(serde_json::json!({
@@ -750,6 +951,17 @@ impl WorkspaceExecutionRouter {
                     workspace_path,
                 )
                 .await?,
+            })),
+            "delete_directory" => Ok(serde_json::json!({
+                "message": fs::delete_directory(
+                    path(),
+                    payload.get("recursive").and_then(Value::as_bool).unwrap_or(false),
+                    workspace_path,
+                )
+                .await?
+            })),
+            "extract_pdf_text" => Ok(serde_json::json!({
+                "content": fs::extract_pdf_text(path(), workspace_path).await?
             })),
             "delete_file" => Ok(serde_json::json!({
                 "message": fs::delete_file(path(), workspace_path).await?
@@ -1063,6 +1275,7 @@ impl WorkspaceExecutionRouter {
     fn map_sandbox_error(code: &str, msg: String) -> RuntimeError {
         match code {
             "PATH_TRAVERSAL" => RuntimeError::PathTraversal { path: msg },
+            "BOUNDARY_DENIED" => RuntimeError::PathTraversal { path: msg },
             "SYMLINK_ESCAPE" => RuntimeError::SymlinkEscape {
                 path: msg.clone(),
                 resolved: msg,
@@ -1070,6 +1283,14 @@ impl WorkspaceExecutionRouter {
             "INVALID_PATH" => RuntimeError::InvalidPath(msg),
             "FILE_NOT_FOUND" => RuntimeError::FileNotFound(msg),
             "WORKSPACE_NOT_FOUND" => RuntimeError::WorkspaceNotFound(msg),
+            "PAYLOAD_TOO_LARGE" => RuntimeError::PayloadTooLarge {
+                actual: FILE_OPERATION_MAX_PAYLOAD_BYTES.saturating_add(1),
+                limit: FILE_OPERATION_MAX_PAYLOAD_BYTES,
+            },
+            "UNSUPPORTED" => RuntimeError::Unsupported {
+                capability: "file-operation".to_string(),
+                reason: msg,
+            },
             "TIMEOUT" => RuntimeError::Timeout {
                 detail: format!(
                     "{}{} mechanism=guard",
@@ -1127,6 +1348,36 @@ impl WorkspaceExecutionRouter {
             .and_then(|v| v.as_str())
             .unwrap_or("ok")
             .to_string())
+    }
+
+    /// Writes raw bytes through the same Router seam as every other Workspace
+    /// file operation. MXC uses the one-shot framed worker; Docker and the
+    /// explicit unrestricted host mode retain their existing host-storage path.
+    pub async fn write_file_binary(
+        &self,
+        workspace_id: &str,
+        path: &str,
+        data: &[u8],
+    ) -> Result<String> {
+        file_worker::ensure_payload_size(data.len())?;
+        let instance = self.ensure(workspace_id).await?;
+        if instance.execution_mode == "windows-mxc" {
+            let result = self
+                .execute_mxc_file_operation(
+                    workspace_id,
+                    &instance.workspace_path,
+                    "write_binary",
+                    serde_json::json!({"path": path}),
+                    Some(data),
+                )
+                .await?;
+            return Ok(result
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("ok")
+                .to_string());
+        }
+        fs::write_file_binary(path, data, &instance.workspace_path).await
     }
 
     pub async fn list_directory(&self, workspace_id: &str, path: &str) -> Result<Value> {
@@ -1248,6 +1499,84 @@ impl WorkspaceExecutionRouter {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string())
+    }
+
+    /// Router-level file capability projection. A missing MXC probe is
+    /// intentionally unavailable; callers must not infer support from the
+    /// backend name or fall back to unrestricted host execution.
+    pub fn file_operations_capability(
+        execution_mode: &str,
+        probe: Option<&crate::process_guard::BackendCapabilitySnapshot>,
+    ) -> Value {
+        let backend_available = match execution_mode {
+            "windows-host" => cfg!(windows),
+            "windows-mxc" => probe.is_some_and(|value| value.available),
+            "docker" => false,
+            _ => false,
+        };
+        let backend_reason = if backend_available {
+            Value::Null
+        } else {
+            Value::String(match execution_mode {
+                "docker" => "DEFERRED_DOCKER_FILE_WORKER".to_string(),
+                "windows-mxc" if probe.is_none() => "PROBE_REQUIRED".to_string(),
+                _ => probe
+                    .and_then(|value| value.reason.clone())
+                    .unwrap_or_else(|| "UNSUPPORTED".to_string()),
+            })
+        };
+        let operation_names = [
+            "read_file",
+            "read_file_range",
+            "list_directory",
+            "get_file_info",
+            "glob",
+            "grep",
+            "watch_directory",
+            "extract_pdf_text",
+            "write_file",
+            "write_binary",
+            "edit_file",
+            "delete_file",
+            "delete_directory",
+            "mkdir",
+            "move_file",
+            "copy_file",
+        ];
+        let operations = operation_names
+            .into_iter()
+            .map(|name| {
+                (
+                    name.to_string(),
+                    serde_json::json!({
+                        "available": backend_available,
+                        "reason": backend_reason.clone(),
+                        "cap": if FILE_MUTATIONS.contains(&name) {
+                            serde_json::json!(FILE_OPERATION_MAX_PAYLOAD_BYTES)
+                        } else {
+                            Value::Null
+                        },
+                    }),
+                )
+            })
+            .chain(std::iter::once((
+                "apply_patch".to_string(),
+                serde_json::json!({
+                    "available": backend_available,
+                    "reason": if backend_available { Value::Null } else { backend_reason.clone() },
+                    "cap": FILE_OPERATION_MAX_PAYLOAD_BYTES,
+                }),
+            )))
+            .collect::<serde_json::Map<_, _>>();
+        serde_json::json!({
+            "fileOperations": {
+                "contractVersion": "v1",
+                "executionMode": execution_mode,
+                "maxMutationBytes": FILE_OPERATION_MAX_PAYLOAD_BYTES,
+                "workerLifecycle": "per-operation",
+                "operations": operations,
+            }
+        })
     }
 
     pub async fn execute_command(
@@ -1592,5 +1921,56 @@ mod sandbox_error_mapping_tests {
             }
             other => panic!("expected Cancelled, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod file_operation_tests {
+    use super::*;
+
+    #[test]
+    fn mutation_payload_cap_is_checked_before_dispatch() {
+        let payload = serde_json::json!({"path": "large.txt", "content": "x".repeat(FILE_OPERATION_MAX_PAYLOAD_BYTES)});
+        let error = validate_file_operation_payload("write_file", &payload)
+            .expect_err("serialized payload must exceed the cap");
+        assert!(matches!(error, RuntimeError::PayloadTooLarge { .. }));
+    }
+
+    #[test]
+    fn capability_projection_fails_closed_without_mxc_probe() {
+        let projection = WorkspaceExecutionRouter::file_operations_capability("windows-mxc", None);
+        assert_eq!(
+            projection["fileOperations"]["maxMutationBytes"],
+            FILE_OPERATION_MAX_PAYLOAD_BYTES
+        );
+        assert_eq!(
+            projection["fileOperations"]["operations"]["write_binary"]["available"],
+            false
+        );
+        assert_eq!(
+            projection["fileOperations"]["operations"]["write_binary"]["reason"],
+            "PROBE_REQUIRED"
+        );
+        assert_eq!(
+            WorkspaceExecutionRouter::file_operations_capability("docker", None)["fileOperations"]
+                ["operations"]["write_file"]["reason"],
+            "DEFERRED_DOCKER_FILE_WORKER"
+        );
+    }
+
+    #[test]
+    fn file_worker_error_codes_keep_boundary_and_cap_distinct() {
+        assert!(matches!(
+            WorkspaceExecutionRouter::map_sandbox_error("BOUNDARY_DENIED", "outside".into()),
+            RuntimeError::PathTraversal { .. }
+        ));
+        assert!(matches!(
+            WorkspaceExecutionRouter::map_sandbox_error("PAYLOAD_TOO_LARGE", "too large".into()),
+            RuntimeError::PayloadTooLarge { .. }
+        ));
+        assert!(matches!(
+            WorkspaceExecutionRouter::map_sandbox_error("UNSUPPORTED", "deferred".into()),
+            RuntimeError::Unsupported { .. }
+        ));
     }
 }
