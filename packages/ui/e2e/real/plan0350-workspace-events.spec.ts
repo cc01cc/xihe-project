@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
+import { actionableErrors, collectPageErrors } from './helpers/console'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -18,6 +19,15 @@ test.describe('@host PLAN-0350 workspace file events', () => {
   let otherAuth: string
   let wsId = ''
   let hostPath = ''
+  let pageErrors: string[] = []
+
+  test.beforeEach(async ({ page }) => {
+    pageErrors = collectPageErrors(page)
+  })
+
+  test.afterEach(async () => {
+    expect(actionableErrors(pageErrors), pageErrors.join('\n')).toEqual([])
+  })
 
   async function registerUser(request: import('@playwright/test').APIRequestContext, tag: string) {
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()

@@ -1631,6 +1631,13 @@ export const api = {
     async getWorkspaceImport(importId: string): Promise<Record<string, unknown>> {
         return request(`/workspace-imports/${encodeURIComponent(importId)}`);
     },
+    /** PLAN-0384 V5: durable import records for a workspace, used to recover an in-flight import. */
+    async listWorkspaceImports(workspaceId: string): Promise<Array<Record<string, unknown>>> {
+        const result = await request<unknown>(`/workspaces/${encodeURIComponent(workspaceId)}/imports`, {
+            headers: workspaceHeaders(workspaceId),
+        });
+        return Array.isArray(result) ? result as Array<Record<string, unknown>> : [];
+    },
     async cancelWorkspaceImport(importId: string): Promise<Record<string, unknown>> {
         return request(`/workspace-imports/${encodeURIComponent(importId)}/cancel`, { method: 'POST' });
     },

@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
+import { actionableErrors, collectPageErrors } from './helpers/console'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -19,6 +20,16 @@ test.describe('@host PLAN-0384 workspace add flow', () => {
   let seedWs = ''
   let hostRoot = ''
   let addDir = ''
+  let pageErrors: string[] = []
+
+  test.beforeEach(async ({ page }) => {
+    pageErrors = collectPageErrors(page)
+  })
+
+  test.afterEach(async () => {
+    // V9: the flow must not emit actionable console/page errors.
+    expect(actionableErrors(pageErrors), pageErrors.join('\n')).toEqual([])
+  })
 
   test.beforeAll(async ({ request }) => {
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
@@ -26,7 +37,10 @@ test.describe('@host PLAN-0384 workspace add flow', () => {
       data: { email: `plan0384-add-${Date.now()}@test.com`, password, name: 'Plan0384Add' },
     })
     expect([200, 201], `register failed: ${reg.status()} ${await reg.text()}`).toContain(reg.status())
-    sharedAuth = (await reg.json()).accessToken
+    const regBody = await reg.json()
+    sharedAuth = regBody.accessToken as string
+    const refreshToken = regBody.refreshToken as string
+    const defaultWsId = String(regBody.workspaceId ?? '')
     mkdirSync(EVIDENCE_DIR, { recursive: true })
 
     hostRoot = process.env.XIHE_WORKSPACE_HOST_ROOT || os.tmpdir()
@@ -47,6 +61,17 @@ test.describe('@host PLAN-0384 workspace add flow', () => {
     expect(created.ok(), `seed workspace failed: ${created.status()} ${await created.text()}`).toBeTruthy()
     seedWs = String((await created.json()).id ?? '')
     expect(seedWs).toBeTruthy()
+
+    // Rebind the access token so its workspace context matches the seed workspace: the
+    // browser page and MCP calls otherwise 403 on the auto-created default workspace.
+    await request.delete(`${CP_URL}/api/v1/workspaces/${defaultWsId}`, {
+      headers: { Authorization: `Bearer ${sharedAuth}` },
+    })
+    const refreshed = await request.post(`${CP_URL}/api/v1/auth/refresh`, { data: { refreshToken } })
+    expect(refreshed.ok(), `refresh failed: ${refreshed.status()} ${await refreshed.text()}`).toBeTruthy()
+    const refreshedBody = await refreshed.json()
+    expect(String(refreshedBody.workspaceId)).toBe(seedWs)
+    sharedAuth = refreshedBody.accessToken as string
   })
 
   function seedPage(page: import('@playwright/test').Page) {
