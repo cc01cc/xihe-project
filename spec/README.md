@@ -57,8 +57,8 @@ spec/
 | agent role/scope binding | proposed | partial | Agent owner | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
 | capability / approval / audit | proposed | partial | Runtime/Security/CP owners | PLAN-0386/0389；能力策略、审批、审计分别建模 |
 | workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | PLAN-0389 |
-| execution job / scope / durable continuation | proposed | unimplemented | CP durable-record + Runtime Job owners | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
-| configuration / env | proposed | implemented | CP ConfigService owner | PLAN-0389；以现行配置模型整合历史来源 |
+| execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
+| configuration / env | proposed | partial | CP ConfigService owner | PLAN-0389；以现行配置模型整合历史来源 |
 | protocol / data | proposed | partial | 对应协议和 durable-record owners | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
 
 ## 4. Agent 读取规则
