@@ -47,6 +47,15 @@ class WorkspaceEnvironmentControllerTest {
         assertEquals(true, view.get("available"));
         assertNull(view.get("unavailableReason"));
         assertNotNull(view.get("checkedAt"));
+        // PLAN-0406 T1.2：fileOperations 形状断言（归一兼容 fallback Map 与 Runtime 透传 JsonNode）
+        assertNotNull(view.get("fileOperations"));
+        com.fasterxml.jackson.databind.JsonNode fileOps = objectMapper.convertValue(
+                view.get("fileOperations"), com.fasterxml.jackson.databind.JsonNode.class);
+        assertTrue(fileOps.isObject(), "fileOperations must be an object: " + fileOps);
+        assertEquals(
+                "v1",
+                fileOps.path("contractVersion").asText(null),
+                "contractVersion must be v1: " + fileOps);
     }
 
     @Test
@@ -86,12 +95,12 @@ class WorkspaceEnvironmentControllerTest {
         for (String forbidden : new String[]{"policyPath", "pid", "wrapperPid", "mxcTier"}) {
             assertFalse(view.containsKey(forbidden), "leaked " + forbidden + ": " + view);
         }
-        // 白名单之外一律不出现（含 checkedAt 共 11 个键）。
+        // 白名单之外一律不出现（含 checkedAt 共 12 个键；fileOperations 由 PLAN-0400 交付、PLAN-0406 入册）。
         assertTrue(
                 java.util.Set.of(
                         "backendKind", "backendRevision", "maturity", "executionMode", "canStart",
                         "canCancel", "canStreamOutput", "canIsolateFilesystem", "available",
-                        "unavailableReason", "checkedAt")
+                        "unavailableReason", "fileOperations", "checkedAt")
                         .containsAll(view.keySet()),
                 "unexpected keys: " + view.keySet());
     }
