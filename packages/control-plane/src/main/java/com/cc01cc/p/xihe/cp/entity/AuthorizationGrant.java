@@ -12,6 +12,7 @@ import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.UUID;
 
+/** permissions stores the canonical PLAN-0407 permission atom array. */
 @Entity
 @Table(name = "grants")
 public class AuthorizationGrant {

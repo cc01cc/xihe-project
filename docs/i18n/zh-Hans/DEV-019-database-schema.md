@@ -325,7 +325,7 @@ erDiagram
 | id | UUID | PK | — |
 | granter_type / granter_id | VARCHAR(24) / UUID | nullable，成对检查 `ck_grants_granter_ref` | 授权来源 principal；系统 seed 可为空 |
 | subject_type / subject_id | VARCHAR(24) / UUID | NOT NULL | 实际接收权限的 principal（user/agent） |
-| permissions | JSONB | NOT NULL | 权限集合与 resource scope |
+| permissions | JSONB atom array | NOT NULL | canonical `[{actionClass, resource?}]`；省略 resource 等于 `*`；未列即 deny，无 effect/priority 字段 |
 | source | VARCHAR(16) | NOT NULL，`ck_grants_source` | `default/spawn/direct/template` |
 | role_name / template_name | TEXT | nullable | 来源名称快照 |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 创建时间 |
