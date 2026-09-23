@@ -195,7 +195,17 @@ function Do-Start {
     $env:XIHE_ENV = "dev"
     $env:XIHE_CP_PORT = "12631"
     $env:XIHE_CP_DATASOURCE_URL = "jdbc:postgresql://localhost:12634/xihe"
-    $env:XIHE_CP_API_TOKEN = "dev-token-not-secure"
+    if ([string]::IsNullOrWhiteSpace($env:XIHE_CP_API_TOKEN)) {
+      $serviceTokenBytes = [byte[]]::new(32)
+      [System.Security.Cryptography.RandomNumberGenerator]::Fill($serviceTokenBytes)
+      $env:XIHE_CP_API_TOKEN = [Convert]::ToBase64String($serviceTokenBytes)
+    }
+    $env:XIHE_AGENT_API_TOKEN = $env:XIHE_CP_API_TOKEN
+    if ([string]::IsNullOrWhiteSpace($env:XIHE_MCP_SESSION_ID_HMAC_SECRET)) {
+      $sessionIdHmacBytes = [byte[]]::new(32)
+      [System.Security.Cryptography.RandomNumberGenerator]::Fill($sessionIdHmacBytes)
+      $env:XIHE_MCP_SESSION_ID_HMAC_SECRET = [Convert]::ToBase64String($sessionIdHmacBytes)
+    }
     $env:XIHE_AGENT_PORT = "12632"
     $env:XIHE_RUNTIME_PORT = "12633"
     $env:XIHE_CP_URL = "http://localhost:12631"

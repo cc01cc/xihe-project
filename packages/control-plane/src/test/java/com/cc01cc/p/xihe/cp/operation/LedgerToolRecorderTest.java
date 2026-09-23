@@ -108,6 +108,27 @@ class LedgerToolRecorderTest {
     }
 
     @Test
+    void toolCall_argumentsPreviewPreservesOriginalPayloadText() {
+        stubRunLookup();
+        OperationItem created = agentItem("pending");
+        when(operationService.appendItem(any(), anyString(), isNull(), eq("tool_call"),
+                eq("write_file"), eq("agent"), anyString(), isNull(), isNull())).thenReturn(created);
+        when(operationService.startAttempt(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(new OperationAttempt());
+        Map<String, Object> payload = toolCallPayload("write_file");
+        payload.put("arguments", Map.of("path", "secret.txt", "token", "literal-user-data"));
+
+        recorder.record("tool_call", payload, TEST_RUN_ID, null, newLedger());
+
+        ArgumentCaptor<String> preview = ArgumentCaptor.forClass(String.class);
+        verify(operationService).appendItem(any(), anyString(), isNull(), eq("tool_call"),
+                eq("write_file"), eq("agent"), preview.capture(), isNull(), isNull());
+        assertTrue(preview.getValue().contains("literal-user-data"));
+        assertTrue(preview.getValue().contains("secret.txt"));
+        assertFalse(preview.getValue().contains("***redacted***"));
+    }
+
+    @Test
     void toolResult_success_completesItemAndAttempt() {
         stubRunLookup();
         OperationItem item = agentItem("running");

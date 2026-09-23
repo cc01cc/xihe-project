@@ -3,12 +3,14 @@ package com.cc01cc.p.xihe.cp.mcp;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.lang.reflect.Field;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+@SpringBootTest(properties = "cp.mcp.session-id.hmac-secret=test-only-key")
+@ActiveProfiles("h2")
 class McpForwardTimeoutTest {
 
     @Autowired

@@ -50,6 +50,7 @@ services:
       XIHE_AGENT_URL: "http://agent:8000/internal/v1/agent/chat"
       XIHE_AGENT_BASE_URL: "http://agent:8000"
       XIHE_RUNTIME_URL: "http://runtime:8001"
+      XIHE_MCP_SESSION_ID_HMAC_SECRET: "${XIHE_MCP_SESSION_ID_HMAC_SECRET:-dev-only-hmac}"
       XIHE_CP_API_TOKEN: "${XIHE_CP_API_TOKEN:-dev-token-not-secure}"
       XIHE_AGENT_API_TOKEN: "${XIHE_AGENT_API_TOKEN:-${XIHE_CP_API_TOKEN:-dev-token-not-secure}}"
       SPRING_PROFILES_ACTIVE: "dev"

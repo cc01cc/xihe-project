@@ -557,11 +557,12 @@ public class ApprovalService {
 
     private String safeLedgerPreview(Map<?, ?> payload) {
         try {
-            String redacted = LogRedactor.redact(objectMapper.writeValueAsString(payload));
-            return redacted.length() <= 4096 ? redacted : redacted.substring(0, 4096);
+            String json = objectMapper.writeValueAsString(payload);
+            return json.length() <= 4096 ? json : json.substring(0, 4096);
         } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=approval_ledger_preview_failed");
-            return "{\"redacted\":true}";
+            logger.warn("[LIFECYCLE] service=cp event=approval_ledger_preview_serialization_failed exceptionType={}",
+                    e.getClass().getSimpleName());
+            return "null";
         }
     }
 

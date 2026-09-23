@@ -61,6 +61,15 @@ class McpProxyTest {
     private McpProxyController controller;
     private org.springframework.mock.env.MockEnvironment environment;
 
+    @Test
+    void safeLedgerPreviewPreservesOriginalRequestText() {
+        String body = "{\"params\":{\"arguments\":{\"token\":\"literal-user-data\"}}}";
+
+        String preview = ReflectionTestUtils.invokeMethod(controller, "safeLedgerPreview", body);
+
+        assertEquals(body, preview);
+    }
+
     @BeforeEach
     void setUp() {
         requestRewriter = mock(RequestRewriter.class);
@@ -87,6 +96,7 @@ class McpProxyTest {
                 new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy(),
                 environment
         );
+        ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
         when(policyEngine.loadContext(any(), any(), any())).thenReturn(PolicyContext.EMPTY);
@@ -153,6 +163,13 @@ class McpProxyTest {
         String signed = (String) ReflectionTestUtils.invokeMethod(controller, "signSessionId", "ws-42", "auth-token");
         String wsId = (String) ReflectionTestUtils.invokeMethod(controller, "verifySessionId", signed);
         assertEquals("ws-42", wsId);
+    }
+
+    @Test
+    void validateSessionIdHmacSecret_rejectsBlankValue() {
+        ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", " ");
+
+        assertThrows(IllegalStateException.class, controller::validateSessionIdHmacSecret);
     }
 
     @Test

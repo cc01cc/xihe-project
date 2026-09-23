@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.beans.factory.annotation.Value;
+import jakarta.annotation.PostConstruct;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
@@ -36,7 +37,6 @@ import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
-import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -61,7 +61,9 @@ public class McpProxyController {
     private static final Logger logger = LoggerFactory.getLogger(McpProxyController.class);
     private static final Duration CACHE_TTL = Duration.ofMinutes(5);
     private static final String HMAC_ALGORITHM = "HmacSHA256";
-    private static final String HMAC_SECRET = "xihe-mcp-session-hmac-key-2026";
+
+    @Value("${cp.mcp.session-id.hmac-secret}")
+    private String sessionIdHmacSecret;
     private static final String REMOTE_SCOPE = "mcp:tools";
     /** T1.7/T1.9 post-gate approval lifetime: the durable row expires after five minutes. */
     private static final long APPROVAL_REQUEST_TTL_SECONDS = 300;
@@ -111,6 +113,13 @@ public class McpProxyController {
     // proxies can be given room without a recompile.
     @org.springframework.beans.factory.annotation.Value("${xihe.mcp.forward-timeout-s:30}")
     private long forwardTimeoutS;
+
+    @PostConstruct
+    void validateSessionIdHmacSecret() {
+        if (sessionIdHmacSecret == null || sessionIdHmacSecret.isBlank()) {
+            throw new IllegalStateException("XIHE_MCP_SESSION_ID_HMAC_SECRET must be configured");
+        }
+    }
     /** T3.1 评审修复：遗留超限 remote 配置只告警一次，避免逐请求重复刷 WARN。 */
     private final Set<String> warnedRemoteTimeouts = ConcurrentHashMap.newKeySet();
     private final RequestRewriter rewriter;
@@ -1482,8 +1491,8 @@ public class McpProxyController {
     }
 
     private String safeLedgerPreview(String body) {
-        String redacted = LogRedactor.redact(body == null ? "" : body);
-        return redacted.length() <= 4096 ? redacted : redacted.substring(0, 4096);
+        String preview = body == null ? "" : body;
+        return preview.length() <= 4096 ? preview : preview.substring(0, 4096);
     }
 
     /**
@@ -1915,7 +1924,7 @@ public class McpProxyController {
             long timestamp = Instant.now().getEpochSecond();
             String payload = wsId + ":" + rawSessionId + ":" + timestamp;
             Mac mac = Mac.getInstance(HMAC_ALGORITHM);
-            SecretKeySpec key = new SecretKeySpec(HMAC_SECRET.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM);
+            SecretKeySpec key = new SecretKeySpec(sessionIdHmacSecret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM);
             mac.init(key);
             byte[] signature = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
             String sigB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(signature);
@@ -1939,7 +1948,7 @@ public class McpProxyController {
 
             // Verify signature
             Mac mac = Mac.getInstance(HMAC_ALGORITHM);
-            SecretKeySpec key = new SecretKeySpec(HMAC_SECRET.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM);
+            SecretKeySpec key = new SecretKeySpec(sessionIdHmacSecret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM);
             mac.init(key);
             byte[] expectedSig = mac.doFinal(Base64.getUrlDecoder().decode(payloadB64));
             String expectedSigB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(expectedSig);

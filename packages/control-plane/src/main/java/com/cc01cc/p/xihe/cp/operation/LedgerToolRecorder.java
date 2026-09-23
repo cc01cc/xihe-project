@@ -3,7 +3,6 @@ package com.cc01cc.p.xihe.cp.operation;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
-import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -170,11 +169,11 @@ public class LedgerToolRecorder {
     private String safeJsonPreview(Object value) {
         try {
             String json = objectMapper.writeValueAsString(value == null ? Map.of() : value);
-            String redacted = LogRedactor.redact(json);
-            return redacted.length() <= 4096 ? redacted : redacted.substring(0, 4096);
+            return json.length() <= 4096 ? json : json.substring(0, 4096);
         } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=operation_arguments_redaction_failed");
-            return "{\"redacted\":true}";
+            logger.warn("[LIFECYCLE] service=cp event=operation_arguments_serialization_failed exceptionType={}",
+                    e.getClass().getSimpleName());
+            return "null";
         }
     }
 

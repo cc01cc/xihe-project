@@ -228,11 +228,11 @@ sessionId: base64(payload) + "." + base64(HMAC-SHA256(payload))
 
 ### R3: 密钥安全
 
-- HMAC 密钥不得硬编码在客户端代码中
-- 生产环境密钥通过环境变量或密钥管理服务注入
+- HMAC 密钥不得硬编码在任何应用代码中
+- CP 必须从 `XIHE_MCP_SESSION_ID_HMAC_SECRET` 读取非空密钥；生产由部署环境/密钥管理服务注入至少 32 个随机字节，各 CP 副本保持相同密钥
 - 开发/测试环境可使用固定占位密钥
 
-> ⚠️ 已知违规（待修）：当前 `McpProxyController.HMAC_SECRET` 为硬编码 dev 默认值，无环境变量覆盖；R3 作为目标规则保留，实现合规前不得声称满足。
+已完成：`McpProxyController` 不再含密钥常量；缺失/空值会在 CP 启动时 fail-fast。旧 HMAC key 已暴露在 Git 历史，部署者须在所有 CP 部署注入新随机值并重启；更换 key 会使现存签名 session-id 立即失效（其验签年龄窗口最多 24 小时），MCP 客户端需重新初始化。该轮只完成代码侧外置与步骤记录，未访问或修改任何宿主/部署 secret。
 
 ## 验证方法
 
@@ -247,6 +247,7 @@ grep -rn "Base64.*encodeToString.*payload" packages/ --include="*.java" | grep -
 □ 每个 MCP session-id 签发点使用 HMAC-SHA256 签名
 □ 每个 session-id 验签点检查 HMAC 签名完整性
 □ 无仅 Base64 编码的 session-id 构造逻辑
-□ 签名密钥通过环境变量配置，非硬编码
+□ `XIHE_MCP_SESSION_ID_HMAC_SECRET` 通过环境变量配置，CP 无硬编码 fallback
+□ 生产密钥已轮换、所有 CP 副本保持一致；轮换后客户端重新初始化
 □ 篡改 payload 的请求被拒绝（返回 null 或 403）
 ```

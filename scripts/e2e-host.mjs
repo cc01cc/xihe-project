@@ -1228,6 +1228,7 @@ async function main() {
       XIHE_CP_DATASOURCE_USERNAME: pgUser,
       XIHE_CP_DATASOURCE_PASSWORD: pgPassword,
       XIHE_CP_JWT_SECRET: `e2e-${e2eRunId}-jwt-secret`,
+      XIHE_MCP_SESSION_ID_HMAC_SECRET: randomBytes(32).toString('base64url'),
        XIHE_AGENT_URL: `http://127.0.0.1:${agentPort}/internal/v1/agent/chat`,
        XIHE_AGENT_BASE_URL: `http://127.0.0.1:${agentPort}`,
        XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,

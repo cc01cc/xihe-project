@@ -16,6 +16,7 @@ const fakeMcpPort = process.env.XIHE_FAKE_MCP_PORT ?? String(portSeed + 11)
 const fakeMcpAccessToken = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN ?? `e2e-${randomBytes(24).toString('hex')}`
 process.env.XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL ??= 'true'
 process.env.XIHE_CP_API_TOKEN ??= `e2e-${randomBytes(24).toString('hex')}`
+process.env.XIHE_MCP_SESSION_ID_HMAC_SECRET ??= randomBytes(32).toString('base64url')
 process.env.XIHE_AGENT_API_TOKEN = process.env.XIHE_CP_API_TOKEN
 process.env.XIHE_E2E_EXTERNAL_SERVER = 'true'
 const e2eProfile = process.env.XIHE_E2E_PROFILE ?? 'compose'

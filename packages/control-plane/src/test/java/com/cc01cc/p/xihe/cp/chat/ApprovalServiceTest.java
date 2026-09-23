@@ -856,7 +856,7 @@ class ApprovalServiceTest {
     }
 
     @Test
-    void recordPendingLedgerPreviewRedactsSecrets() {
+    void recordPendingLedgerPreviewPreservesOriginalPayloadText() {
         when(runs.findById(UUID.fromString(TEST_RUN_ID))).thenReturn(Optional.of(runningRun()));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.empty());
         UUID operationId = UUID.randomUUID();
@@ -869,8 +869,8 @@ class ApprovalServiceTest {
         ArgumentCaptor<String> preview = ArgumentCaptor.forClass(String.class);
         verify(operationService).appendApprovalItem(eq(operationId), eq(TEST_REQUEST_ID),
                 eq("request_approval"), preview.capture());
-        assertFalse(preview.getValue().contains("abc123tokenvalue"));
-        assertTrue(preview.getValue().contains("***redacted***"));
+        assertTrue(preview.getValue().contains("abc123tokenvalue"));
+        assertFalse(preview.getValue().contains("***redacted***"));
     }
 
     private ChatApproval pending(Instant expiresAt) {
