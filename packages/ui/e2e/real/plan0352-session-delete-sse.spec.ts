@@ -57,7 +57,7 @@ async function openChat(page: Page, auth: Auth) {
         },
         { token: auth.accessToken, workspaceId: auth.workspaceId },
     );
-    await page.goto("/chat", { waitUntil: "load" });
+    await page.goto("/workspace", { waitUntil: "load" });
     await expect(page.getByTestId("session-item").first()).toBeVisible({ timeout: 15000 });
 }
 

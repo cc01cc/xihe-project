@@ -45,7 +45,7 @@ test.describe('Auth — Real Backend', () => {
     await page.fill('input[name="email"]', email)
     await page.fill('input[type="password"]', SHARED_PASSWORD)
     await page.click('button[type="submit"]')
-    await page.waitForURL(/\/chat/, { timeout: 10000 })
+    await page.waitForURL(/\/workspace/, { timeout: 10000 })
     await expect(page.locator('#app')).toBeAttached()
   })
 })

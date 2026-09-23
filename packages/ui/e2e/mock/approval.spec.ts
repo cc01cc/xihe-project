@@ -143,7 +143,7 @@ async function installPolicyModeRoute(page: import('@playwright/test').Page) {
 }
 
 async function openApprovalChat(page: import('@playwright/test').Page) {
-  await page.goto(`/chat/${SESSION_ID}`)
+  await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`)
   await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 })
 }
 
@@ -164,7 +164,7 @@ test.describe('Chat approval flow', () => {
     await setupMockSessions(page, { sessions: [
       { id: SESSION_ID, title: 'Approval Flow' },
       { id: SECOND_SESSION_ID, title: 'Second Session' },
-    ] })
+    ], workspaceId: WORKSPACE_ID })
     await installPolicyModeRoute(page)
     await installApprovalSSE(page)
   })
@@ -407,7 +407,7 @@ test.describe('Chat approval flow', () => {
     await expect(banner).toContainText('2')
     await banner.locator('[data-testid="global-pending-approval-go-to"]').click()
 
-    await expect(page).toHaveURL(new RegExp(`/chat/${SECOND_SESSION_ID}$`))
+    await expect(page).toHaveURL(new RegExp(`/workspace/${WORKSPACE_ID}/chat/${SECOND_SESSION_ID}$`))
   })
 
   test('shows auto mode warning and closes it through the mode control', async ({ page }) => {
@@ -553,7 +553,7 @@ test.describe('Chat approval flow', () => {
     await page.locator('[data-testid="chat-send-button"]').click()
     await expect(page.locator('[data-testid="chat-stop-button"]')).toBeVisible({ timeout: 5000 })
     await pushApproval(page, approvalEvent(REQUEST_ID))
-    await page.goto(`/chat/${SECOND_SESSION_ID}`)
+    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SECOND_SESSION_ID}`)
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 })
     await expect(page.locator('[data-testid="chat-stop-button"]')).toBeHidden()
     expect(cancelCalls).toHaveLength(0)

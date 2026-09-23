@@ -87,6 +87,15 @@ export const useChatStore = defineStore('chat', () => {
     messages.value[sessionId] = sessionMessages
   }
 
+  function detachLiveSession(sessionId: string) {
+    const messageId = streamingMessageId.value[sessionId]
+    if (messageId) {
+      messages.value[sessionId] = (messages.value[sessionId] ?? []).filter((message) => message.id !== messageId)
+    }
+    streamingMessageId.value[sessionId] = null
+    delete sessionRunStates.value[sessionId]
+  }
+
   function deleteMessage(sessionId: string, messageId: string) {
     const sessionMessages = messages.value[sessionId]
     if (!sessionMessages) return
@@ -502,6 +511,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     addMessage,
     loadMessages,
+    detachLiveSession,
     deleteMessage,
     addMarker,
     createStreamingMessage,

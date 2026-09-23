@@ -4,16 +4,19 @@ import { useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
+import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import SessionItem from './SessionItem.vue'
+import { workspaceChatPath } from '../../lib/routes'
 
 const { t } = useI18n()
 const router = useRouter()
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
+const auth = useAuthStore()
 
 const timeGroupLabels: Record<string, string> = {
   today: 'sidebar.today',
@@ -23,7 +26,9 @@ const timeGroupLabels: Record<string, string> = {
 
 function handleSelect(id: string) {
   sessionStore.selectSession(id)
-  router.push(`/chat/${id}`)
+  const session = sessionStore.sessions.find((item) => item.id === id)
+  const workspaceId = session?.workspaceId ?? auth.currentWorkspaceId
+  if (workspaceId) router.push(workspaceChatPath(workspaceId, id))
 }
 
 function handleRename(id: string, title: string) {

@@ -9,8 +9,8 @@ interface Route {
 const allRoutes: Route[] = [
   { path: '/login', name: 'login', requiresAuth: false },
   { path: '/register', name: 'register', requiresAuth: false },
-  { path: '/chat', name: 'chat-default', requiresAuth: true },
-  { path: '/chat/test-session', name: 'chat-session', requiresAuth: true },
+  { path: '/workspace', name: 'workspace-default', requiresAuth: true },
+  { path: '/workspace/workspace-1/chat/test-session', name: 'workspace-chat-session', requiresAuth: true },
   { path: '/settings/config', name: 'settings-config', requiresAuth: true },
   { path: '/settings/knowledge', name: 'settings-knowledge', requiresAuth: true },
   { path: '/settings/data', name: 'settings-data', requiresAuth: true },
@@ -32,7 +32,7 @@ for (const route of allRoutes) {
       })
     }
 
-    if (route.path === '/chat/test-session') {
+    if (route.path === '/workspace/workspace-1/chat/test-session') {
       await page.addInitScript(() => {
         localStorage.setItem('xihe-sessions', JSON.stringify([
           { id: 'test-session', title: 'Test Session', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
@@ -54,6 +54,48 @@ for (const route of allRoutes) {
 
 
     await page.route('**/api/v1/**', async (route2) => {
+      const requestUrl = new URL(route2.request().url())
+      const workspaceMatch = requestUrl.pathname.match(/\/api\/v1\/workspaces\/([^/]+)$/)
+      if (workspaceMatch) {
+        await route2.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: workspaceMatch[1], name: 'Screenshot Workspace' }),
+        })
+        return
+      }
+      if (requestUrl.pathname.endsWith('/sessions')) {
+        await route2.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ sessions: [] }),
+        })
+        return
+      }
+      const sessionMatch = requestUrl.pathname.match(/\/api\/v1\/sessions\/([^/]+)$/)
+      if (sessionMatch) {
+        await route2.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: sessionMatch[1],
+            title: 'Screenshot Session',
+            workspaceId: 'workspace-1',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            archived: false,
+          }),
+        })
+        return
+      }
+      if (requestUrl.pathname.endsWith('/policy/mode')) {
+        await route2.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ sessionId: 'test-session', mode: 'manual', sessionRules: 0 }),
+        })
+        return
+      }
       await route2.fulfill({
         status: 200,
         contentType: 'application/json',

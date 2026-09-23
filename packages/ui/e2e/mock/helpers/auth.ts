@@ -31,6 +31,7 @@ export interface MockSessionRecord {
 
 export interface MockSessionOptions {
   sessions?: MockSessionRecord[]
+  workspaceId?: string
   messages?: Record<string, Array<Record<string, unknown>>>
   createSession?: boolean
 }
@@ -155,8 +156,78 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
 
   await page.route('**/api/v1/**', async (route) => {
     const url = route.request().url()
-    if (url.includes('/events') || url.includes('/chat') || url.includes('/models')) {
+    if (url.includes('/api/v1/workspaces/') && url.includes('/events')) {
+      await route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+        body: 'retry: 1000\n\n',
+      })
+      return
+    }
+    if (url.includes('/api/v1/events') || url.includes('/chat') || url.includes('/models')) {
       return route.fallback()
+    }
+    const workspaceMatch = url.match(/\/api\/v1\/workspaces\/([^/?]+)$/)
+    if (workspaceMatch?.[1] === 'current' && route.request().method() === 'GET') {
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({ code: 'WORKSPACE_NOT_FOUND', detail: 'No active workspace' }),
+      })
+      return
+    }
+    if (workspaceMatch && workspaceMatch[1] !== 'current' && route.request().method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: workspaceMatch[1],
+          name: 'Mock Workspace',
+          status: 'ready',
+        }),
+      })
+      return
+    }
+    const sessionMatch = url.match(/\/api\/v1\/sessions\/([^/?]+)/)
+    if (sessionMatch && route.request().method() === 'GET') {
+      if (url.includes('/messages')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([]),
+        })
+        return
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: sessionMatch[1],
+          title: 'Mock Session',
+          workspaceId: 'workspace-1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          archived: false,
+        }),
+      })
+      return
+    }
+    if (url.match(/\/api\/v1\/sessions(?:\?.*)?$/) && route.request().method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ sessions: [] }),
+      })
+      return
+    }
+    if (url.includes('/api/v1/policy/mode') && route.request().method() === 'GET') {
+      const sessionId = new URL(url).searchParams.get('sessionId') ?? 'mock-session'
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ sessionId, mode: 'manual', sessionRules: 0 }),
+      })
+      return
     }
     await route.fulfill({
       status: 200,
@@ -173,7 +244,7 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     title: session.title,
     createdAt: session.createdAt ?? now,
     updatedAt: session.updatedAt ?? session.createdAt ?? now,
-    workspaceId: session.workspaceId ?? 'workspace-1',
+    workspaceId: session.workspaceId ?? options.workspaceId ?? 'workspace-1',
     modelProvider: null,
     modelName: null,
     archived: false,

@@ -6,6 +6,7 @@ import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
 import { Code, FileDiff, FolderOpen, FolderTree, PanelLeft, Plus, RefreshCw, Settings2, Upload } from '@lucide/vue'
+import { workspaceChatPath } from '../../lib/routes'
 
 const props = defineProps<{
   workspaceId: string
@@ -52,7 +53,8 @@ function handleRefresh() {
 
 function switchToChat() {
   const id = sessionStore.currentSessionId
-  if (id) router.push(`/chat/${id}`)
+  const workspaceId = props.workspaceId || auth.currentWorkspaceId
+  if (id && workspaceId) router.push(workspaceChatPath(workspaceId, id))
 }
 
 function openEnvironment() {
@@ -62,7 +64,7 @@ function openEnvironment() {
 
 function switchSession(id: string) {
   sessionStore.selectSession(id)
-  router.push(`/chat/${id}`)
+  router.push(workspaceChatPath(props.workspaceId, id))
 }
 </script>
 

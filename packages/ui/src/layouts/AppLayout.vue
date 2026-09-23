@@ -7,6 +7,7 @@ import Sidebar from '../components/sidebar/Sidebar.vue'
 import { useAgentStore } from '../stores/agent'
 import { useAuthStore } from '../stores/auth'
 import { useSessionStore } from '../stores/session'
+import { workspaceChatPath } from '../lib/routes'
 
 const mobileMediaQuery = typeof window === 'undefined' || typeof window.matchMedia !== 'function'
   ? null
@@ -31,7 +32,7 @@ const mainMargin = computed(() => {
 const currentRouteSessionId = computed(() => {
   const sessionId = route.params.sessionId
   if (typeof sessionId === 'string' && sessionId !== 'default') return sessionId
-  if (route.path === '/chat/default' || route.path.startsWith('/workspace/')) {
+  if (route.path === '/workspace' || route.path.startsWith('/workspace/')) {
     return sessionStore.currentSessionId
   }
   return null
@@ -63,7 +64,10 @@ function refreshPendingApprovals() {
 
 function goToFirstPendingSession() {
   const pending = firstPendingOtherSession.value
-  if (pending) void router.push(`/chat/${encodeURIComponent(pending.sessionId)}`)
+  const currentWorkspaceId = (route.params.workspaceId as string | undefined) ?? auth.currentWorkspaceId
+  if (pending && currentWorkspaceId) {
+    void router.push(workspaceChatPath(currentWorkspaceId, pending.sessionId))
+  }
 }
 
 function updateViewport() {

@@ -1,4 +1,5 @@
 import { generateE2EPassword } from './helpers/password'
+import { gotoWorkspaceWithChat } from './helpers/chat'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
@@ -37,16 +38,14 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     const token = await registerAndGetToken('chain')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
 
-    await page.goto('/chat')
-    await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
+    await gotoWorkspaceWithChat(page)
   })
 
   test('sends message and renders response in the UI', async ({ page, request }) => {
     const auth = await registerAuth('chain-msg')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), auth.accessToken)
 
-    await page.goto('/chat')
-    await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
+    await gotoWorkspaceWithChat(page)
 
     const testMessage = `Hello ${Date.now()}`
     const textarea = page.locator('textarea')

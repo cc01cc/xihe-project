@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -452,6 +453,7 @@ async fn execute_mxc(request: ProcessRequest) -> Result<ProcessResult> {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 struct CappedCapture {
     exit_code: Option<i32>,
     stdout: String,
@@ -460,6 +462,7 @@ struct CappedCapture {
     stderr_truncated: bool,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 /// Waits for the child with a deadline while capturing both streams under a
 /// per-stream cap; the remainder is drained (never buffered) and flagged.
 async fn capture_capped(
@@ -504,6 +507,7 @@ async fn capture_capped(
     })
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 /// Reads up to `cap` bytes, then keeps draining so the child never blocks.
 async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
     mut reader: R,
@@ -643,7 +647,6 @@ async fn terminate_process_tree(pid: u32) -> Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
 fn mxc_path(path: &Path) -> String {
     let value = path.to_string_lossy();
     if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
@@ -653,7 +656,6 @@ fn mxc_path(path: &Path) -> String {
     }
 }
 
-#[cfg(windows)]
 fn quote_windows_argument(value: &str) -> String {
     if value.is_empty() || value.chars().any(char::is_whitespace) {
         format!("\"{}\"", value.replace('"', "\\\""))

@@ -8,7 +8,6 @@ import {
   LogOut,
   PanelLeftClose,
   Plus,
-  Search,
   Settings,
 } from '@lucide/vue'
 import { useSessionStore } from '../../stores/session'
@@ -18,6 +17,7 @@ import { ApiError } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import SessionList from './SessionList.vue'
+import { workspaceChatPath, workspacePath } from '../../lib/routes'
 
 const props = defineProps<{
   open: boolean
@@ -45,13 +45,17 @@ const sidebarStyle = computed(() => ({
 
 async function startNewChat() {
   if (!auth.currentWorkspaceId) {
+    await auth.hydrateWorkspace()
+  }
+  if (!auth.currentWorkspaceId) {
     toast.error(t('sidebar.noWorkspace'))
     return
   }
+  const workspaceId = auth.currentWorkspaceId
   try {
     const session = await sessionStore.createSession()
     chatStore.clearSession(session.id)
-    router.push(`/chat/${session.id}`)
+    router.push(workspaceChatPath(session.workspaceId ?? workspaceId, session.id))
   } catch (cause) {
     const message = cause instanceof ApiError ? cause.message : 'Failed to create session'
     logger.error('Create session failed', cause)
@@ -82,13 +86,16 @@ function handleResizeStart(e: MouseEvent) {
   document.addEventListener('mouseup', onMouseUp)
 }
 
-function navigateToWorkspace() {
+async function navigateToWorkspace() {
+  if (!auth.currentWorkspaceId) {
+    await auth.hydrateWorkspace()
+  }
   const workspaceId = auth.currentWorkspaceId
   if (!workspaceId) {
     toast.error(t('sidebar.noWorkspace'))
     return
   }
-  router.push(`/workspace/${workspaceId}`)
+  router.push(workspacePath(workspaceId))
 }
 
 function navigateSettings() {
@@ -132,17 +139,6 @@ function handleLogout() {
         <Plus class="size-4" />
         {{ t('sidebar.newChat') }}
       </button>
-    </div>
-
-    <div class="px-3 pb-2">
-      <div class="relative">
-        <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-        <input
-          v-model="sessionStore.searchQuery"
-          class="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border bg-sidebar-accent/50 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-sidebar-ring"
-          :placeholder="t('sidebar.search')"
-        />
-      </div>
     </div>
 
     <SessionList />

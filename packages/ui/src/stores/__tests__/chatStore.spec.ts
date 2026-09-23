@@ -178,6 +178,26 @@ describe('useChatStore', () => {
     expect(store.isStreaming('s1')).toBe(true)
   })
 
+  it('detaches a live session so a later history load can replace it', () => {
+    const store = useChatStore()
+    store.createStreamingMessage('s1', 'run-1')
+    store.appendToParts('s1', { type: 'text', content: 'partial' })
+
+    store.detachLiveSession('s1')
+
+    expect(store.isStreaming('s1')).toBe(false)
+    expect(store.getSessionRunId('s1')).toBeUndefined()
+    expect(store.getMessages('s1')).toEqual([])
+    store.loadMessages('s1', [{
+      id: 'server-assistant',
+      sessionId: 's1',
+      role: 'assistant',
+      content: 'terminal response',
+      timestamp: '2026-01-01T00:00:00Z',
+    }])
+    expect(store.getMessages('s1')[0]?.content).toBe('terminal response')
+  })
+
   it('appendToParts appends text parts to streaming message content', () => {
     const store = useChatStore()
     store.createStreamingMessage('s1')

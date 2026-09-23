@@ -1536,7 +1536,7 @@ export const api = {
                 modified?: string;
             }>;
         }>("list_directory", { path }, workspaceId);
-        const entries = (raw.entries ?? []).map((e) => ({
+        const entries = (raw?.entries ?? []).map((e) => ({
             name: e.name,
             path: e.path,
             type: e.type ?? (e.is_dir ? "directory" : "file"),

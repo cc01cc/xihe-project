@@ -4,7 +4,7 @@ import { setupMockAuth } from './helpers/auth'
 test.describe('Toast notifications', () => {
   test.beforeEach(async ({ page }) => {
     await setupMockAuth(page)
-    await page.goto('/chat')
+    await page.goto('/workspace')
     await page.waitForLoadState('load')
   })
 

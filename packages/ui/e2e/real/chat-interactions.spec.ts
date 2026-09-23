@@ -1,4 +1,5 @@
 import { generateE2EPassword } from './helpers/password'
+import { gotoWorkspaceWithChat } from './helpers/chat'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
@@ -28,8 +29,7 @@ test.describe('Chat — Interaction & UI States', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
-    await page.goto('/chat', { waitUntil: 'load' })
-    await page.locator('textarea').waitFor({ state: 'visible', timeout: 10000 })
+    await gotoWorkspaceWithChat(page)
   })
 
   test('captures immediate state after sending a message', async ({ page }) => {
@@ -101,24 +101,23 @@ test.describe('Chat — Session sidebar interaction', () => {
   test('creating session twice shows two entries without overlap', async ({ page }) => {
     const token = await registerAndGetToken('sidebar-two')
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), token)
-    await page.goto('/chat')
+    await page.goto('/workspace')
     const newBtn = page.locator('button').filter({ hasText: /new|新建/i }).first()
     await expect(newBtn).toBeVisible({ timeout: 8000 })
-    await newBtn.click()
-    await page.waitForTimeout(600)
-    await newBtn.click()
-    await page.waitForTimeout(600)
-
     const items = page.locator('[data-testid="sidebar"] [data-testid="session-item"]')
-    const count = await items.count()
-    expect(count).toBeGreaterThanOrEqual(2)
+
+    // Sequence the clicks on explicit readiness: a fixed sleep could hit the
+    // store's create single-flight and return the same Session twice.
+    await newBtn.click()
+    await expect.poll(() => items.count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1)
+    await newBtn.click()
+    await expect.poll(() => items.count(), { timeout: 15000 }).toBeGreaterThanOrEqual(2)
 
     const boxes = await items.evaluateAll((els) =>
       els.slice(0, 2).map((el) => el.getBoundingClientRect().toJSON()),
     )
-    if (boxes.length === 2) {
-      expect(Math.abs(boxes[0].y - boxes[1].y)).toBeGreaterThan(4)
-    }
+    expect(boxes).toHaveLength(2)
+    expect(Math.abs(boxes[0].y - boxes[1].y)).toBeGreaterThan(4)
   })
 })
 

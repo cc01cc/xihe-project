@@ -44,7 +44,7 @@ test.describe('@host Journey D — overflow retry (CTX-1)', () => {
 
     // Chat route uses toolMode=none (WorkspaceView hardcodes workspace tools,
     // which fails on --skip-runtime when MCP cannot bind another workspace).
-    await page.goto('/chat/default', { waitUntil: 'load' })
+    await page.goto('/workspace', { waitUntil: 'load' })
     await ensureChatReady(page)
     await sendChat(page, 'XIHE-E2E-OVERFLOW please answer after context shrink')
     await awaitLastOperationCompleted(page.request, sharedHeaders)

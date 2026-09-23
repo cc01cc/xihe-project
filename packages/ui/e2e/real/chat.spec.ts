@@ -1,4 +1,5 @@
 import { generateE2EPassword } from './helpers/password'
+import { gotoWorkspaceWithChat } from './helpers/chat'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
@@ -22,8 +23,7 @@ test.describe('Chat — Real Backend', () => {
     await page.addInitScript((t) => {
       localStorage.setItem('xihe-token', t)
     }, authToken)
-    await page.goto('/chat', { waitUntil: 'load' })
-    await page.locator('textarea').waitFor({ state: 'visible', timeout: 10000 })
+    await gotoWorkspaceWithChat(page)
   })
 
   test('chat page renders with sidebar and input area', async ({ page }) => {

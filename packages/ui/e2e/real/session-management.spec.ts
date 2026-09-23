@@ -25,7 +25,7 @@ test.describe('Session Management — Real Backend', () => {
   })
 
   test('creates new session and navigates to chat', async ({ page }) => {
-    await page.goto('/chat')
+    await page.goto('/workspace')
     await page.waitForLoadState('load')
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 8000 })
     await expect(page).toHaveScreenshot('real-session-list.png')

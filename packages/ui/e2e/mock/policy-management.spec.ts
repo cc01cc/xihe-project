@@ -338,7 +338,7 @@ test.describe('Policy management (desktop)', () => {
     await installApprovalSSE(page)
     const calls = installDecisionRoute(page)
 
-    await page.goto(`/chat/${SESSION_ID}`)
+    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`)
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 })
     await pushApproval(page, unclassifiedApprovalEvent())
 
@@ -396,14 +396,20 @@ test.describe('Policy management (mobile)', () => {
     await installApprovalSSE(page)
     const calls = installDecisionRoute(page)
 
-    await page.goto(`/chat/${SESSION_ID}`)
+    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`)
+    await page.getByRole('button', { name: 'Open chat' }).click()
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 })
     await pushApproval(page, unclassifiedApprovalEvent())
 
     const dialog = page.locator('[data-testid="modal-content"]')
     await expect(dialog).toBeVisible({ timeout: 5000 })
     await dialog.locator('[data-testid="approval-classify-entry"]').click()
-    await dialog.locator('[data-testid="approval-classify-action-class"]').fill('exec')
+    const actionClass = dialog.locator('[data-testid="approval-classify-action-class"]')
+    await expect(actionClass).toBeVisible()
+    await actionClass.click()
+    await actionClass.pressSequentially('exec')
+    await expect(actionClass).toHaveValue('exec')
+    await expect(dialog.locator('[data-testid="approval-classify-submit"]')).toBeEnabled()
     await dialog.locator('[data-testid="approval-classify-submit"]').click()
 
     await expect.poll(() => state.classifications.length).toBe(1)

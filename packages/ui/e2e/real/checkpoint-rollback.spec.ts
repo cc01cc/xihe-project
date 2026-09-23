@@ -423,7 +423,7 @@ async function writeFileRunThroughUi(
  * `previewBodies` collects the raw preview responses so callers can prove payload purity.
  *
  * No page reload here: the workspace chat surface does not hydrate persisted messages on
- * load (only `/chat/:sessionId` does, ChatView.vue:64-118), so a reload drops the whole
+ * load (only the Workspace Chat route does, ChatView.vue:64-118), so a reload drops the whole
  * timeline including the marker (reported as a product gap; see the batch evidence).
  */
 async function revertThroughUi(

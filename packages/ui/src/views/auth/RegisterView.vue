@@ -31,7 +31,7 @@ async function handleSubmit() {
   const ok = await auth.register(email.value, password.value, name)
   loading.value = false
   if (ok) {
-    router.push('/chat')
+    router.push('/workspace')
   } else {
     localError.value = auth.error
   }

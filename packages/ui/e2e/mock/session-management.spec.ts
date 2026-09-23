@@ -14,7 +14,7 @@ test.describe('Session Management', () => {
   })
 
   test('sidebar lists all seeded sessions', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
 
     await expect(page.locator('aside >> text=Alpha')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('aside >> text=Beta')).toBeVisible()
@@ -23,7 +23,7 @@ test.describe('Session Management', () => {
   })
 
   test('clicking a session selects it as active', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
 
     await page.locator('aside >> text=Beta').click()
 
@@ -31,49 +31,14 @@ test.describe('Session Management', () => {
   })
 
   test('sidebar time group headers are visible', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
 
     await expect(page.locator('aside >> text=今天').first()).toBeVisible({ timeout: 5000 })
     await expect(page).toHaveScreenshot('session-time-groups.png')
   })
 
-  test('search filters sessions by title', async ({ page }) => {
-    await page.goto('/chat/sid-1')
-
-    const searchInput = page.locator('input[placeholder*="搜索"]')
-    await searchInput.fill('Alpha')
-
-    await expect(page.locator('aside >> text=Alpha')).toBeVisible()
-    await expect(page.locator('aside >> text=Beta')).toBeHidden({ timeout: 3000 })
-    await expect(page.locator('aside >> text=Gamma')).toBeHidden({ timeout: 3000 })
-    await expect(page).toHaveScreenshot('session-search-filtered.png')
-  })
-
-  test('clearing search restores all sessions', async ({ page }) => {
-    await page.goto('/chat/sid-1')
-
-    const searchInput = page.locator('input[placeholder*="搜索"]')
-    await searchInput.fill('Alpha')
-    await expect(page.locator('aside >> text=Beta')).toBeHidden({ timeout: 3000 })
-
-    await searchInput.fill('')
-    await expect(page.locator('aside >> text=Alpha')).toBeVisible()
-    await expect(page.locator('aside >> text=Beta')).toBeVisible()
-    await expect(page.locator('aside >> text=Gamma')).toBeVisible()
-  })
-
-  test('search with no match shows empty state', async ({ page }) => {
-    await page.goto('/chat/sid-1')
-
-    const searchInput = page.locator('input[placeholder*="搜索"]')
-    await searchInput.fill('NonExistent')
-
-    await expect(page.locator('text=暂无对话')).toBeVisible({ timeout: 3000 })
-    await expect(page).toHaveScreenshot('session-search-no-match.png')
-  })
-
   test('sidebar toggle hides sidebar', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
 
     const sidebar = page.locator('aside')
     await expect(sidebar).toBeVisible()

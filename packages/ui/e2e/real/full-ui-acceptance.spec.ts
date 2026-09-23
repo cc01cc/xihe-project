@@ -57,7 +57,7 @@ test.describe('@host PLAN-269 full UI acceptance: real core flows', () => {
   test('real session rename and delete are visible in the sidebar', async ({ page, request }) => {
     const auth = await register(request, 'session-lifecycle')
     await installAuth(page, auth)
-    await page.goto('/chat')
+    await page.goto('/workspace')
 
     const session = page.getByTestId('session-item').first()
     await expect(session).toBeVisible({ timeout: 15000 })

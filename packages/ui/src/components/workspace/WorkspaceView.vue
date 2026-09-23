@@ -24,6 +24,7 @@ import FileImportDialog from './FileImportDialog.vue'
 import WorkspaceSourceImportDialog from './WorkspaceSourceImportDialog.vue'
 import WorkspaceChangesPanel from './WorkspaceChangesPanel.vue'
 import ChatPanel from '../chat/ChatPanel.vue'
+import { workspaceChatPath } from '../../lib/routes'
 
 const route = useRoute()
 const router = useRouter()
@@ -53,7 +54,10 @@ const usageCostTitle = computed(() => {
   return usage.costNote ?? 'no pricing entry'
 })
 
-const routeWorkspaceId = computed(() => (route.params.workspaceId as string | undefined) ?? '')
+const routeWorkspaceId = computed(() => {
+  const value = route.params.workspaceId as string | undefined
+  return value && value !== 'new' ? value : ''
+})
 
 const showCreateDialog = ref(false)
 const showSettingsDialog = ref(false)
@@ -96,11 +100,18 @@ function handleWorkspaceCreated(id: string) {
 
 function handleWorkspaceDeleted() {
   sessionStore.resetForUserSwitch()
-  router.push('/chat/default')
+  router.push('/workspace')
 }
+
+const routeSessionId = computed(() => (route.params.sessionId as string | undefined) ?? '')
 
 const sessionId = computed(() => {
   const current = sessionStore.currentSession
+  if (routeSessionId.value) {
+    return current?.id === routeSessionId.value && current.workspaceId === workspaceId.value
+      ? current.id
+      : null
+  }
   if (current?.workspaceId === workspaceId.value) return current.id
   return null
 })
@@ -116,9 +127,14 @@ async function selectSessionForWorkspace() {
   try {
     await auth.selectWorkspace(workspaceId.value)
     await sessionStore.loadSessions()
-    const existing = sessionStore.sessions.find(
-      (session) => session.workspaceId === workspaceId.value,
+    let existing = sessionStore.sessions.find((session) =>
+      session.workspaceId === workspaceId.value &&
+      (routeSessionId.value ? session.id === routeSessionId.value : true),
     )
+    if (!existing && routeSessionId.value) {
+      const loaded = await sessionStore.loadSession(routeSessionId.value)
+      if (loaded.workspaceId === workspaceId.value) existing = loaded
+    }
     if (existing) {
       sessionStore.selectSession(existing.id)
       return existing.id
@@ -134,10 +150,12 @@ async function selectSessionForWorkspace() {
 }
 
 async function createSessionForWorkspace() {
+  if (!workspaceId.value) await auth.hydrateWorkspace()
   if (!workspaceId.value) return null
   try {
     await auth.selectWorkspace(workspaceId.value)
     const session = await sessionStore.createSession()
+    await router.push(workspaceChatPath(workspaceId.value, session.id))
     return session.id
   } catch (cause) {
     const message = cause instanceof ApiError ? cause.message : 'Failed to create session'
@@ -191,7 +209,7 @@ onMounted(() => {
   void selectSessionForWorkspace()
 })
 
-watch(routeWorkspaceId, () => {
+watch([workspaceId, routeSessionId], () => {
   void selectSessionForWorkspace()
 })
 </script>
@@ -199,7 +217,7 @@ watch(routeWorkspaceId, () => {
 <template>
   <!-- Empty state per PLAN-262 decision 11: only reachable when no active workspace.
        The create dialog is the sole creation entry (409 makes it purely defensive). -->
-  <div v-if="!auth.workspace" class="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+  <div v-if="!auth.workspace && !workspaceId" class="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
     <div class="flex size-16 items-center justify-center rounded-2xl border border-dashed">
        <FolderTree class="size-7 text-muted-foreground" aria-hidden="true" />
     </div>

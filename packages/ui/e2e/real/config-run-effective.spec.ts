@@ -59,7 +59,7 @@ test.describe('@host PLAN-0307 V17 — UI config reaches the Agent run', () => {
 
     // 2. Start a real run from the chat UI. Wait until the app refreshed the
     //    resolved config cache, so the UI cannot fall back to the stale store.
-    await page.goto('/chat', { waitUntil: 'load' })
+    await page.goto('/workspace', { waitUntil: 'load' })
     await page.waitForFunction((expected) => {
       const raw = localStorage.getItem('xihe-config-merged')
       if (!raw) return false

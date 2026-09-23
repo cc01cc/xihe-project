@@ -15,8 +15,8 @@ interface Route {
 const allRoutes: Route[] = [
   { path: '/login', name: 'real-login', requiresAuth: false },
   { path: '/register', name: 'real-register', requiresAuth: false },
-  { path: '/chat', name: 'real-chat-default', requiresAuth: true },
-  { path: '/chat/test-session', name: 'real-chat-session', requiresAuth: true },
+  { path: '/workspace', name: 'real-workspace-default', requiresAuth: true },
+  { path: '/workspace/workspace-1/chat/test-session', name: 'real-workspace-chat-session', requiresAuth: true },
   { path: '/settings/config', name: 'real-settings-config', requiresAuth: true },
   { path: '/settings/knowledge', name: 'real-settings-knowledge', requiresAuth: true },
   { path: '/settings/data', name: 'real-settings-data', requiresAuth: true },

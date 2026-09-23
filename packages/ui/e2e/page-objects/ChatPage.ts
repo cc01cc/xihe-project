@@ -21,8 +21,8 @@ export class ChatPage {
     this.uploadIndicator = page.locator('[data-testid="attachment-uploading-indicator"]')
   }
 
-  async goto(sessionId?: string): Promise<void> {
-    const path = sessionId ? `/chat/${sessionId}` : '/chat'
+  async goto(sessionId?: string, workspaceId = 'workspace-1'): Promise<void> {
+    const path = sessionId ? `/workspace/${workspaceId}/chat/${sessionId}` : '/workspace'
     await this.page.goto(path)
     await this.input.waitFor({ state: 'visible' })
   }

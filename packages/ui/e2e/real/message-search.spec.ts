@@ -20,7 +20,7 @@ test.describe('Message Search', () => {
 
   test('chat page loads with real auth and shows search placeholder', async ({ page }) => {
     expect(authToken).toBeTruthy()
-    await page.goto('/chat')
+    await page.goto('/workspace')
     await page.evaluate((t) => {
       localStorage.setItem('xihe-token', t)
       localStorage.setItem('xihe-user', JSON.stringify({ id: 'real', name: 'Test' }))

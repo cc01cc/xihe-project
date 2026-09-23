@@ -76,7 +76,7 @@ test('@host PLAN-281 User Audit persists Chat operation trace', async ({ page, r
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
 
-  await page.goto('/chat', { waitUntil: 'load' })
+  await page.goto('/workspace', { waitUntil: 'load' })
   const textarea = page.locator('textarea')
   await expect(textarea).toBeVisible({ timeout: 20000 })
   await expect.poll(() => agentLlmReadiness(request, auth), { timeout: 60000 }).toBe('ready')

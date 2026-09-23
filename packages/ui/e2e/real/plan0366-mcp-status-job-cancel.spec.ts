@@ -270,7 +270,7 @@ test.describe('@host PLAN-0366 MCP status + single job cancel', () => {
     // 重进会话路由：消息 DTO 带回 jobSummary（0344 口径；SSE 结束时卡片尚无档案）。
     // 工具调用会双份渲染（流式 parts + 持久化 tool-result 消息），且重载后 arguments
     // 不返回，因此用档案 jobId（面板可见）定位卡片，只取带 job-status 徽章的持久化卡。
-    await page.goto('/chat/' + sessionId, { waitUntil: 'load' })
+    await page.goto('/workspace/' + auth.workspaceId + '/chat/' + sessionId, { waitUntil: 'load' })
     const summaries = await jobSummaries(request, sessionId)
     expect(summaries.length, 'two same-run job archives').toBe(2)
     const targetJobId = summaries[0].jobId

@@ -41,7 +41,7 @@ test.describe('Model Popover', () => {
   })
 
   test('model popover trigger button is visible', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
     await page.waitForTimeout(2000)
 
     const popover = new ModelPopoverPage(page)
@@ -49,7 +49,7 @@ test.describe('Model Popover', () => {
   })
 
   test('clicking trigger opens popover with provider groups', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
     await page.waitForTimeout(2000)
 
     const popover = new ModelPopoverPage(page)
@@ -63,7 +63,7 @@ test.describe('Model Popover', () => {
   })
 
   test('selecting a model updates trigger text and persists to localStorage', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
     await page.waitForTimeout(2000)
 
     const popover = new ModelPopoverPage(page)
@@ -82,7 +82,7 @@ test.describe('Model Popover', () => {
   })
 
   test('search filters models', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
     await page.waitForTimeout(2000)
 
     const popover = new ModelPopoverPage(page)
@@ -97,7 +97,7 @@ test.describe('Model Popover', () => {
   })
 
   test('selected model persists after page reload', async ({ page }) => {
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
     await page.waitForTimeout(2000)
 
     const popover = new ModelPopoverPage(page)
@@ -118,7 +118,7 @@ test.describe('Model Popover', () => {
       localStorage.setItem('xihe-model-favorites', '[]')
     })
 
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
     await page.waitForTimeout(2000)
 
     const popover = new ModelPopoverPage(page)

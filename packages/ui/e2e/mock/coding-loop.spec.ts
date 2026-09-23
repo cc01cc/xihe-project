@@ -55,7 +55,7 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
     })
 
     test('approval_request event triggers approval modal with tool info', async ({ page }) => {
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       await page.evaluate(({ requestId, runId, sessionId, workspaceId }) => {
@@ -78,7 +78,7 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
     })
 
     test('approval modal shows approve and reject buttons', async ({ page }) => {
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       await page.evaluate(({ requestId, runId, sessionId, workspaceId }) => {
@@ -103,7 +103,7 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
 
   test.describe('DiffViewer', () => {
     test('renders unified diff with changed files', async ({ page }) => {
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       await page.evaluate(() => {
@@ -144,7 +144,7 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
         })
       })
 
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       // Verify route is registered by making a fetch from page context
@@ -175,7 +175,7 @@ test.describe('PLAN-275: Safe Coding Loop E2E', () => {
         })
       })
 
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       const result = await page.evaluate(async (runId) => {

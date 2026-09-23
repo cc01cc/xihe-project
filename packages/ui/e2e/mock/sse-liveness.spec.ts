@@ -53,7 +53,7 @@ async function push(page: import('@playwright/test').Page, name: string, data: u
 }
 
 async function startRun(page: import('@playwright/test').Page) {
-  await page.goto(`/chat/${SESSION_ID}`)
+  await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
   await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
   await page.locator('textarea').fill('run a long task')
   await page.locator('textarea').press('Enter')
@@ -102,7 +102,7 @@ test.describe('SSE liveness timer (S-1)', () => {
   })
 
   test('silence before the first token also reports AGENT_TIMEOUT', async ({ page }) => {
-    await page.goto(`/chat/${SESSION_ID}`)
+    await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
     await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
     await page.locator('textarea').fill('quick question')
     await page.locator('textarea').press('Enter')
@@ -128,7 +128,7 @@ test.describe('SSE liveness timer (S-1, real time)', () => {
 
   test('pre-content silence shows a visible AGENT_TIMEOUT toast in real time', async ({ page }) => {
     test.setTimeout(90_000)
-    await page.goto(`/chat/${SESSION_ID}`)
+    await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
     await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
     await page.locator('textarea').fill('quick question')
     await page.locator('textarea').press('Enter')

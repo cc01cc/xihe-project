@@ -6,7 +6,7 @@ test.describe('BaseModal', () => {
     await page.addInitScript(() => {
       localStorage.setItem('xihe-token', 'mock-token-for-testing')
     })
-    await page.goto('/chat')
+    await page.goto('/workspace')
     await page.waitForLoadState('load')
 
     const modal = new BaseModalPage(page)

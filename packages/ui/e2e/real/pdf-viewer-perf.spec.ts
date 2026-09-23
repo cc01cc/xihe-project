@@ -31,7 +31,7 @@ test.describe('PdfViewer — Performance Benchmark', () => {
     await page.addInitScript((t) => {
       localStorage.setItem('xihe-token', t)
     }, authToken)
-    await page.goto('/chat')
+    await page.goto('/workspace')
     await page.waitForLoadState('load')
   })
 

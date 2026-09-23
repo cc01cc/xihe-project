@@ -4,7 +4,7 @@ import { generateE2EPassword } from './helpers/password'
 /**
  * PLAN-0337 M1 真实链路验收（@host）：
  * - Workspace 级 `approval-policy.mode` 有真实 UI 写入面，刷新后仍生效（读回 DB）；
- * - Session 级模式落库（V24），`/chat/<sessionId>` 的模式控件与 DB 一致；
+   * - Session 级模式落库（V24），Workspace Chat 路由的模式控件与 DB 一致；
  * - 断言 request/response 与页面可见结果一致，不依赖 mock。
  *
  * 依赖：`mise run dev:host`（或 `scripts/e2e-host.mjs` 提供的隔离栈）。CP 重启后的保留性由
@@ -139,7 +139,7 @@ test('@host PLAN-0337 Session approval mode is persisted and reflected by the ch
   // 落库读回：模式来自 sessions.approval_mode（V24），非进程内存。
   await expect.poll(() => readSessionMode(request, auth, sessionId), { timeout: 10000 }).toBe('auto')
 
-  await page.goto(`/chat/${sessionId}`, { waitUntil: 'load' })
+  await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: 'load' })
   await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 15000 })
   // 模式控件是 <select>：断言选中值（文本是各选项标签拼接，不能整段比对）。
   await expect(page.getByTestId('session-policy-mode')).toHaveValue('auto')

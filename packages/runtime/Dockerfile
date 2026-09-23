@@ -25,6 +25,5 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/xihe-runtime /usr/local/bin/
 COPY --from=builder /app/target/release/xihe-container-runtime /usr/local/bin/
-COPY --from=builder /app/target/release/xihe-mcp-bridge /usr/local/bin/
 EXPOSE 8001
 CMD ["xihe-runtime"]

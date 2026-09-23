@@ -100,7 +100,7 @@ test.describe('PLAN-269 full UI acceptance: routes and auth', () => {
     await mockSettingsApis(page)
 
     const routes = [
-      { path: '/chat/session-1', marker: page.locator('textarea') },
+      { path: '/workspace/workspace-1/chat/session-1', marker: page.locator('textarea') },
       { path: '/settings/config', marker: page.getByTestId('settings-config-heading') },
       { path: '/settings/knowledge', marker: page.getByTestId('settings-knowledge-heading') },
       { path: '/settings/data', marker: page.getByTestId('settings-data-heading') },
@@ -122,7 +122,7 @@ test.describe('PLAN-269 full UI acceptance: routes and auth', () => {
     await setupMockSessions(page, { sessions: [{ id: 'session-1', title: 'Session 1' }] })
     await mockSettingsApis(page)
 
-    await page.goto('/chat/session-1')
+    await page.goto('/workspace/workspace-1/chat/session-1')
     await page.getByTestId('sidebar-workspace').click()
     await expect(page).toHaveURL(/\/workspace\/workspace-1$/)
     await expect(page.getByTestId('sidebar-workspace')).toHaveAttribute('aria-current', 'page')
@@ -170,7 +170,7 @@ test.describe('PLAN-269 full UI acceptance: routes and auth', () => {
         ],
       },
     })
-    await page.goto('/chat/session-search')
+    await page.goto('/workspace/workspace-1/chat/session-search')
     await expect(page.getByText('keep this result')).toBeVisible()
     await page.getByTestId('message-search-toggle').click()
     await page.getByPlaceholder('搜索消息…').fill('keep')
@@ -502,7 +502,7 @@ test.describe('PLAN-269 full UI acceptance: workspace and mobile', () => {
         },
       })
     })
-    await page.goto('/chat/session-1')
+    await page.goto('/workspace/workspace-1/chat/session-1')
     await expect(page.locator('textarea')).toBeVisible()
     await page.getByTitle('截取屏幕').click()
     await expect(page.getByTestId('selected-attachment')).toBeVisible({ timeout: 10000 })

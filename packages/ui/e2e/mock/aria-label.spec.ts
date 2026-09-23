@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 
 test.describe('Accessibility — aria-label', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/chat/test-session')
+    await page.goto('/workspace/workspace-1/chat/test-session')
   })
 
   test('close tab button has aria-label', async ({ page }) => {

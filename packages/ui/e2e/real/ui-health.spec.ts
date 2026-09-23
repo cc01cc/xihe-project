@@ -15,7 +15,7 @@ interface HealthPage {
 }
 
 const pages: HealthPage[] = [
-  { path: '/chat', name: 'chat', requiresAuth: true, keySelector: 'textarea', benign: [] as string[] },
+  { path: '/workspace', name: 'workspace', requiresAuth: true, keySelector: 'textarea', benign: [] as string[] },
   { path: '/settings/config', name: 'settings-config', requiresAuth: true, keySelector: '[data-testid="settings-config-heading"]', benign: [] as string[] },
   { path: '/settings/knowledge', name: 'settings-knowledge', requiresAuth: true, keySelector: '[data-testid="settings-knowledge-heading"]', benign: ['status of 502'] },
   { path: '/settings/data', name: 'settings-data', requiresAuth: true, keySelector: '[data-testid="settings-data-heading"]', benign: [] as string[] },
@@ -39,6 +39,12 @@ test.describe('UI Health — Console, Overflow, Hit-Test', () => {
     const auth = await r.json()
     authToken = auth.accessToken
     workspaceId = auth.workspaceId
+    // Workspace-first landing never auto-creates a Session (PLAN-0328 M3 T3.7);
+    // seed one so the health key selector (textarea) exists on every visit.
+    await request.post(`${CP_URL}/api/v1/sessions`, {
+      headers: { Authorization: `Bearer ${authToken}`, 'X-Workspace-Id': workspaceId },
+      data: {},
+    })
   })
 
   for (const p of pages) {
@@ -82,7 +88,7 @@ test.describe('UI Health — Console, Overflow, Hit-Test', () => {
 
   test('chat key controls are clickable via elementFromPoint hit-test', async ({ page }) => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
-    await page.goto('/chat', { waitUntil: 'load' })
+    await page.goto('/workspace', { waitUntil: 'load' })
     await page.locator('textarea').waitFor({ state: 'visible', timeout: 10000 })
 
     const targets = [

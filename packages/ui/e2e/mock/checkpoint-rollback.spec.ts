@@ -200,7 +200,7 @@ async function installCheckpointRoutes(page: Page, state: MockState) {
 }
 
 async function openChat(page: Page) {
-    await page.goto(`/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
 }
 

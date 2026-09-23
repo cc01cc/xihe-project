@@ -7,6 +7,7 @@ import { useAgentStore } from "../../stores/agent";
 import { useAuthStore } from "../../stores/auth";
 import { useCheckpointStore } from "../../stores/checkpoint";
 import { ApiError, api } from "../../composables/api";
+import { parseRawToParts } from "../../composables/useStreamParser";
 import { logger } from "../../lib/logger";
 import type {
     ApprovalDecisionEnvelope,
@@ -64,8 +65,51 @@ const showApproval = computed(() => pendingApproval.value !== null);
 /** Classification authority hint (server still enforces): workspace OWNER / instance ADMIN. */
 const canClassifyApproval = computed(() => authStore.canClassifyTools);
 
+async function loadSessionMessages(sessionId: string) {
+    try {
+        const rawMessages = await api.getMessages(sessionId);
+        if (!Array.isArray(rawMessages)) return;
+        chatStore.loadMessages(
+            sessionId,
+            rawMessages.map((message) => ({
+                id: message.id,
+                sessionId: message.sessionId,
+                role: message.role.toLowerCase() as Message["role"],
+                content: message.content,
+                parts:
+                    message.role.toLowerCase() === "assistant"
+                        ? parseRawToParts(message.content)
+                        : undefined,
+                timestamp: message.createdAt,
+                runId: message.runId,
+                runStatus: message.runStatus as Message["runStatus"],
+                terminalOutcome: message.terminalOutcome as Message["terminalOutcome"],
+                errorCode: message.errorCode,
+                error: message.error,
+                retryable: message.retryable,
+            })),
+        );
+    } catch (cause) {
+        if (cause instanceof ApiError && cause.problem.code === "MESSAGE_NOT_FOUND") return;
+        logger.error("Failed to load session messages", cause);
+    }
+}
+
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null);
 const inputComponent = ref<InstanceType<typeof InputArea> | null>(null);
+let previousSessionId: string | null = null;
+
+watch(
+    () => props.sessionId,
+    (sessionId) => {
+        if (previousSessionId && previousSessionId !== sessionId) {
+            chatStore.detachLiveSession(previousSessionId);
+        }
+        previousSessionId = sessionId;
+        if (sessionId) void loadSessionMessages(sessionId);
+    },
+    { immediate: true },
+);
 
 async function handleSend(content: string, attachments?: AttachmentFile[]) {
     const id = props.sessionId;

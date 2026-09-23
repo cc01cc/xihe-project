@@ -12,7 +12,7 @@ test.describe("PLAN-0378 B: Journey D overflow surface", () => {
     });
 
     test("shows the retry toast and official retry reply", async ({ page }) => {
-        await page.goto(`/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible();
         await page.locator('[data-testid="chat-input"]').fill("overflow");
         await page.locator('[data-testid="chat-send-button"]').click();

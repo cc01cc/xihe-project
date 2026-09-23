@@ -115,7 +115,7 @@ describe('Sidebar', () => {
     expect(store.sessions.length).toBe(1)
     expect(store.sessions[0].id).toBe('srv-1')
     expect(store.sessions[0].title).toBe('New Chat')
-    expect(pushSpy).toHaveBeenCalledWith('/chat/srv-1')
+    expect(pushSpy).toHaveBeenCalledWith('/workspace/ws-test/chat/srv-1')
   })
 
   it('clicking new chat shows toast when no current workspace is set', async () => {
@@ -129,9 +129,40 @@ describe('Sidebar', () => {
     await newChatBtn!.trigger('click')
     await flushPromises()
 
-    expect(spy).not.toHaveBeenCalled()
+    // The click first tries to resolve the workspace (hydrate), then refuses;
+    // a Session must never be created without workspace context.
+    expect(spy).not.toHaveBeenCalledWith(
+      '/api/v1/sessions',
+      expect.objectContaining({ method: 'POST' }),
+    )
     expect(store.sessions.length).toBe(0)
     expect(pushSpy).not.toHaveBeenCalled()
+  })
+
+  it('clicking new chat hydrates the workspace before creating a session', async () => {
+    const auth = useAuthStore()
+    auth.$patch({ token: 'mock', user: { id: 'u-1', email: 'x@xihe.local' } })
+    const spy = vi.spyOn(globalThis, 'fetch')
+    spy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ id: 'ws-late', name: 'Late Workspace', ownerId: 'u-1' }),
+    } as Response)
+      .mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve(stubSessionResponse({ id: 'late-1' })),
+    } as Response)
+    const store = useSessionStore()
+    const wrapper = await mountSidebar()
+    const buttons = wrapper.findAll('button')
+    const newChatBtn = buttons.find((b) => b.text().trim() === '新建对话')
+    await newChatBtn!.trigger('click')
+    await flushPromises()
+
+    expect(store.sessions.length).toBe(1)
+    expect(store.sessions[0].id).toBe('late-1')
+    expect(pushSpy).toHaveBeenCalledWith(expect.stringContaining('/chat/late-1'))
   })
 
   it('renders empty state when no sessions exist', async () => {
@@ -167,14 +198,6 @@ describe('Sidebar', () => {
     expect(wrapper.text()).toContain('退出登录')
   })
 
-  it('renders search input', async () => {
-    mockAuth()
-    const wrapper = await mountSidebar()
-    const input = wrapper.find('input')
-    expect(input.exists()).toBe(true)
-    expect(input.attributes('placeholder')).toBe('搜索对话...')
-  })
-
   it('shows the pending approval count on the matching session row', async () => {
     mockAuth()
     const sessions = useSessionStore()
@@ -196,32 +219,6 @@ describe('Sidebar', () => {
 
     expect(wrapper.find('[data-testid="session-pending-badge"]').text()).toContain('3')
     expect(wrapper.find('[data-testid="session-pending-badge"]').text()).toContain('待审批')
-  })
-
-  it('search input filters sessions via store', async () => {
-    mockAuth()
-    const store = useSessionStore()
-    const spy = vi.spyOn(globalThis, 'fetch')
-    spy.mockResolvedValueOnce({
-      ok: true,
-      status: 201,
-      json: () => Promise.resolve(stubSessionResponse({ id: 'filter-a', title: 'Alpha' })),
-    } as Response)
-    await store.createSession('Alpha')
-    spy.mockResolvedValueOnce({
-      ok: true,
-      status: 201,
-      json: () => Promise.resolve(stubSessionResponse({ id: 'filter-b', title: 'Beta' })),
-    } as Response)
-    await store.createSession('Beta')
-
-    const wrapper = await mountSidebar()
-    const input = wrapper.find('input')
-    await input.setValue('Alpha')
-
-    expect(store.searchQuery).toBe('Alpha')
-    expect(store.filteredSessions.length).toBe(1)
-    expect(store.filteredSessions[0].title).toBe('Alpha')
   })
 
   it('starts hidden when open is false', async () => {

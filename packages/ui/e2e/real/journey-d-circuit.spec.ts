@@ -64,7 +64,7 @@ test.describe('@host Journey D — compaction circuit (U4)', () => {
     expect(batch.ok(), `batch status=${batch.status()} ${await batch.text()}`).toBe(true)
 
     seedPage(page, { authToken: ctx.authToken, workspaceId: ctx.workspaceId, headers: ctx.headers })
-    await page.goto(`/chat/${sessionId}`, { waitUntil: 'load' })
+    await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: 'load' })
 
     // Public compact triggers applyRecoveryBand → SSE circuit open → U4 toast.
     const compact = await request.post(`${CP_URL}/api/v1/sessions/${sessionId}/compact`, {

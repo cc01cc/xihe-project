@@ -51,6 +51,7 @@ services:
       XIHE_AGENT_BASE_URL: "http://agent:8000"
       XIHE_RUNTIME_URL: "http://runtime:8001"
       XIHE_CP_API_TOKEN: "${XIHE_CP_API_TOKEN:-dev-token-not-secure}"
+      XIHE_AGENT_API_TOKEN: "${XIHE_AGENT_API_TOKEN:-${XIHE_CP_API_TOKEN:-dev-token-not-secure}}"
       SPRING_PROFILES_ACTIVE: "dev"
     volumes:
       - ./logs/cp:/logs
@@ -85,6 +86,7 @@ services:
       XIHE_CP_PORT: "8080"
       XIHE_CP_URL: "http://control-plane:8080"
       XIHE_CP_API_TOKEN: "${XIHE_CP_API_TOKEN:-dev-token-not-secure}"
+      XIHE_AGENT_API_TOKEN: "${XIHE_AGENT_API_TOKEN:-${XIHE_CP_API_TOKEN:-dev-token-not-secure}}"
       # PLAN-0307 T3.3/T3.7: provider keys are offline fallback only and never live in
       # committed files; export them in the shell or use `docker compose --env-file .env.local up`.
       XIHE_XIAOMI_API_KEY: "${XIHE_XIAOMI_API_KEY:-}"
@@ -125,6 +127,7 @@ services:
       XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL: "${XIHE_E2E_EXTERNAL_SERVER:-false}"
     volumes:
       - ./logs/runtime:/logs
+      - /var/run/docker.sock:/var/run/docker.sock
     mem_limit: 128m
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]

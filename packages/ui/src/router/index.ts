@@ -5,26 +5,39 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      redirect: '/chat',
+      redirect: '/workspace',
     },
     {
-      path: '/chat',
+      path: '/workspace',
       component: () => import('../layouts/AppLayout.vue'),
       meta: { requiresAuth: true },
       children: [
         {
           path: '',
-          redirect: '/chat/default',
+          name: 'workspace-home',
+          component: () => import('../components/workspace/WorkspaceView.vue'),
+        },
+      ],
+    },
+    {
+      path: '/workspace/:workspaceId',
+      component: () => import('../layouts/AppLayout.vue'),
+      meta: { requiresAuth: true },
+      children: [
+        {
+          path: '',
+          name: 'workspace',
+          component: () => import('../components/workspace/WorkspaceView.vue'),
         },
         {
-          path: 'new',
-          name: 'chat-new',
-          redirect: '/chat/default',
+          path: 'chat/:sessionId',
+          name: 'workspace-chat',
+          component: () => import('../components/workspace/WorkspaceView.vue'),
         },
         {
-          path: ':sessionId',
-          name: 'chat',
-          component: () => import('../components/chat/ChatView.vue'),
+          path: 'environment',
+          name: 'workspace-environment',
+          component: () => import('../views/workspace/WorkspaceEnvironmentView.vue'),
         },
       ],
     },
@@ -85,22 +98,10 @@ const router = createRouter({
       component: () => import('../views/auth/RegisterView.vue'),
     },
     {
-      path: '/workspace/:workspaceId',
-      name: 'workspace',
-      component: () => import('../layouts/AppLayout.vue'),
-      meta: { requiresAuth: true },
-      children: [
-        {
-          path: '',
-          name: 'workspace-session',
-          component: () => import('../components/workspace/WorkspaceView.vue'),
-        },
-        {
-          path: 'environment',
-          name: 'workspace-environment',
-          component: () => import('../views/workspace/WorkspaceEnvironmentView.vue'),
-        },
-      ],
+      // Legacy bookmarks (e.g. removed /chat/:sessionId) recover to the
+      // Workspace-first landing instead of a blank unmatched-route view.
+      path: '/:pathMatch(.*)*',
+      redirect: '/workspace',
     },
   ],
 })
@@ -112,7 +113,7 @@ router.beforeEach((to) => {
   if (requiresAuth && !token) {
     return { name: 'login', query: { redirect: to.fullPath } }
   } else if ((to.name === 'login' || to.name === 'register') && token) {
-    return { path: '/chat' }
+    return { path: '/workspace' }
   }
 
   return true

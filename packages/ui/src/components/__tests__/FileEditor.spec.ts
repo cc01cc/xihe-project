@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import FileEditor from '../../components/workspace/FileEditor.vue'
+import { i18n } from '../../i18n'
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
@@ -15,7 +16,7 @@ describe('FileEditor', () => {
     const ws = await import('../../stores/workspace')
     ws.useWorkspaceStore().activeFilePath = 'test.ts'
     const wrapper = mount(FileEditor, {
-      global: { stubs: { EditorTabBar: true, CodeEditor: true, DiffViewer: true, MdEditor: true, ImagePreview: true, PdfViewer: true, UnknownFileNotice: true } },
+      global: { plugins: [i18n], stubs: { EditorTabBar: true, CodeEditor: true, DiffViewer: true, MdEditor: true, ImagePreview: true, PdfViewer: true, UnknownFileNotice: true } },
     })
     expect(wrapper.find('div').exists()).toBe(true)
   })
@@ -25,7 +26,7 @@ describe('FileEditor', () => {
     const ws = await import('../../stores/workspace')
     ws.useWorkspaceStore().activeFilePath = 'doc.pdf'
     const wrapper = mount(FileEditor, {
-      global: { stubs: { EditorTabBar: true, CodeEditor: true, DiffViewer: true, MdEditor: true, ImagePreview: true, PdfViewer: true, UnknownFileNotice: true } },
+      global: { plugins: [i18n], stubs: { EditorTabBar: true, CodeEditor: true, DiffViewer: true, MdEditor: true, ImagePreview: true, PdfViewer: true, UnknownFileNotice: true } },
     })
     expect(wrapper.find('div').exists()).toBe(true)
   })
@@ -35,7 +36,7 @@ describe('FileEditor', () => {
     const ws = await import('../../stores/workspace')
     ws.useWorkspaceStore().activeFilePath = 'main.py'
     const wrapper = mount(FileEditor, {
-      global: { stubs: { EditorTabBar: true, CodeEditor: true, DiffViewer: true, MdEditor: true, ImagePreview: true, PdfViewer: true, UnknownFileNotice: true } },
+      global: { plugins: [i18n], stubs: { EditorTabBar: true, CodeEditor: true, DiffViewer: true, MdEditor: true, ImagePreview: true, PdfViewer: true, UnknownFileNotice: true } },
     })
     expect(wrapper.find('div').exists()).toBe(true)
   })
@@ -43,7 +44,7 @@ describe('FileEditor', () => {
   it('renders empty state without active file', async () => {
     setActivePinia(createPinia())
     const wrapper = mount(FileEditor, {
-      global: { stubs: { EditorTabBar: true, CodeEditor: true, DiffViewer: true, MdEditor: true, ImagePreview: true, PdfViewer: true, UnknownFileNotice: true } },
+      global: { plugins: [i18n], stubs: { EditorTabBar: true, CodeEditor: true, DiffViewer: true, MdEditor: true, ImagePreview: true, PdfViewer: true, UnknownFileNotice: true } },
     })
     expect(wrapper.find('div').exists()).toBe(true)
   })

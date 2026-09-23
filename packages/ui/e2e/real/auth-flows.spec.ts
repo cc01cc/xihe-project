@@ -1,4 +1,5 @@
 import { generateE2EPassword } from './helpers/password'
+import { ensureWorkspaceChat } from './helpers/chat'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -13,7 +14,7 @@ test.describe('Auth — UI Flows & Error States', () => {
     await page.locator('input[type="password"]').nth(0).fill(SHARED_PASSWORD)
     await page.locator('input[type="password"]').nth(1).fill(SHARED_PASSWORD)
     await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/chat/, { timeout: 15000 })
+    await page.waitForURL(/\/workspace/, { timeout: 15000 })
 
     const logoutBtn = page.locator('[data-testid="sidebar"] button').filter({ hasText: /logout|退出/i }).first()
     await expect(logoutBtn).toBeVisible({ timeout: 8000 })
@@ -23,8 +24,8 @@ test.describe('Auth — UI Flows & Error States', () => {
     await page.locator('input[type="text"]').first().fill(email)
     await page.locator('input[type="password"]').first().fill(SHARED_PASSWORD)
     await page.locator('button[type="submit"]').click()
-    await page.waitForURL(/\/chat/, { timeout: 15000 })
-    await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
+    await page.waitForURL(/\/workspace/, { timeout: 15000 })
+    await ensureWorkspaceChat(page)
   })
 
   test('wrong password shows Problem Details error without layout breakage', async ({ page, request }) => {
@@ -55,8 +56,8 @@ test.describe('Auth — UI Flows & Error States', () => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), body.accessToken)
 
     await page.goto('/login')
-    await page.waitForURL(/\/chat/, { timeout: 10000 })
-    expect(page.url()).toContain('/chat')
+    await page.waitForURL(/\/workspace/, { timeout: 10000 })
+    expect(page.url()).toContain('/workspace')
   })
 
   test('session persists across page refresh without sidebar flicker', async ({ page, request }) => {
@@ -66,10 +67,10 @@ test.describe('Auth — UI Flows & Error States', () => {
     const body = await reg.json()
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), body.accessToken)
 
-    await page.goto('/chat')
+    await page.goto('/workspace')
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 10000 })
     await page.reload()
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 10000 })
-    expect(page.url()).toContain('/chat')
+    expect(page.url()).toContain('/workspace')
   })
 })

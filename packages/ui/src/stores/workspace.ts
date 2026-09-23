@@ -75,7 +75,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function fetchDirectoryTree(dirPath: string): Promise<FileNode[]> {
     const nodes: FileNode[] = []
     const res = await api.listDirectory(dirPath, requireWorkspaceId())
-    const entries = (res.entries ?? []).filter((entry: any) => !isRuntimeArtifact(entry.name))
+    const entries = (res?.entries ?? []).filter((entry: any) => !isRuntimeArtifact(entry.name))
     const dirs = entries.filter((e: any) => e.type === 'directory').sort((a: any, b: any) => a.name.localeCompare(b.name))
     const files = entries.filter((e: any) => e.type === 'file').sort((a: any, b: any) => a.name.localeCompare(b.name))
     for (const dir of dirs) {

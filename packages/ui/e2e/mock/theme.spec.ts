@@ -12,14 +12,14 @@ test.describe('Theme Switching', () => {
   })
 
   test('default theme is light', async ({ page }) => {
-    await page.goto('/chat/test-session')
+    await page.goto('/workspace/workspace-1/chat/test-session')
     await expect(page.locator('textarea')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('html')).not.toHaveClass(/dark/)
     await expect(page).toHaveScreenshot('theme-default-light.png')
   })
 
   test('dark mode applies correct class to html element', async ({ page }) => {
-    await page.goto('/chat/test-session')
+    await page.goto('/workspace/workspace-1/chat/test-session')
 
     await page.evaluate(() => {
       localStorage.setItem('xihe-theme', 'dark')
@@ -34,13 +34,13 @@ test.describe('Theme Switching', () => {
       localStorage.setItem('xihe-theme', 'dark')
     })
 
-    await page.goto('/chat/test-session')
+    await page.goto('/workspace/workspace-1/chat/test-session')
 
     await page.evaluate(() => {
       document.documentElement.classList.add('dark')
     })
 
-    await page.goto('/chat/test-session')
+    await page.goto('/workspace/workspace-1/chat/test-session')
 
     const theme = await page.evaluate(() => localStorage.getItem('xihe-theme'))
     expect(theme).toBe('dark')

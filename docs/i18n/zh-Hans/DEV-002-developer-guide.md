@@ -97,7 +97,7 @@ sequenceDiagram
 
 ### 模式 B：Docker Compose 全栈（一次性基线）
 
-> ⚠️ **拓扑限制（先读）**：当前 Compose 不提供 Runtime 建 Sandbox 所需的 Docker Engine socket 与容器内 WorkspaceStorage 映射（`docker-compose.yml` 中 runtime 仅挂载 `./logs/runtime:/logs`）。因此 Compose 模式**不能替代 `dev:host` 主链路**，workspace/MCP/截图类验证必须在 host 模式执行，不得把 Compose 失败归因于 host v1。
+> ⚠️ **拓扑限制（先读）**：当前 Compose 已挂载 Runtime 的 Docker Engine socket 并对齐 `XIHE_AGENT_API_TOKEN`/`XIHE_CP_API_TOKEN`（PLAN-0401 修复），但容器内 WorkspaceStorage 映射仍缺（runtime 挂载 `./logs/runtime:/logs` 与 `/var/run/docker.sock`，无宿主工作区目录映射）。因此 Compose 模式**仍不能替代 `dev:host` 主链路**，workspace/MCP/截图类验证必须在 host 模式执行，不得把 Compose 失败归因于 host v1。另：Agent 单 workspace MCP 绑定与“每 E2E 用例独立 workspace”冲突属架构级已知边界（见项目 AGENTS Known Issues）。
 
 ```bash
 docker compose up -d --build   # 或 mise run dev:full（CP ready 后按导入语义处理 config.import.local.jsonc，见下）

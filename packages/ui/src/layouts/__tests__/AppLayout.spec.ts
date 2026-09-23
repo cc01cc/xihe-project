@@ -40,13 +40,14 @@ function createTestRouter() {
   return createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/chat/:sessionId?', component: { template: '<div data-testid="route-view" />' } },
+      { path: '/workspace/:workspaceId/chat/:sessionId', component: { template: '<div data-testid="route-view" />' } },
+      { path: '/workspace', component: { template: '<div data-testid="route-view" />' } },
       { path: '/workspace/:workspaceId', component: { template: '<div data-testid="route-view" />' } },
     ],
   })
 }
 
-async function mountLayout(router: ReturnType<typeof createTestRouter>, path = '/chat/current') {
+async function mountLayout(router: ReturnType<typeof createTestRouter>, path = '/workspace/workspace-1/chat/current') {
   await router.push(path)
   await router.isReady()
   const wrapper = mount(AppLayout, {
@@ -93,7 +94,7 @@ describe('AppLayout pending approval indicators', () => {
     await wrapper.find('[data-testid="global-pending-approval-go-to"]').trigger('click')
     await flushPromises()
 
-    expect(router.currentRoute.value.fullPath).toBe('/chat/other-session')
+    expect(router.currentRoute.value.fullPath).toBe('/workspace/workspace-1/chat/other-session')
     expect(api.decideChatApproval).not.toHaveBeenCalled()
   })
 
@@ -110,7 +111,7 @@ describe('AppLayout pending approval indicators', () => {
     expect(wrapper.find('[data-testid="pending-approval-live"]').text()).toContain('1')
   })
 
-  it('uses the session store current session for /chat/default', async () => {
+  it('uses the session store current session for the workspace landing route', async () => {
     useSessionStore().selectSession('current')
     vi.mocked(api.getPendingApprovals).mockResolvedValue([{
       sessionId: 'current',
@@ -118,7 +119,7 @@ describe('AppLayout pending approval indicators', () => {
       count: 1,
       oldestRequestedAt: '2026-09-14T12:00:00Z',
     }])
-    const wrapper = await mountLayout(createTestRouter(), '/chat/default')
+    const wrapper = await mountLayout(createTestRouter(), '/workspace')
 
     expect(wrapper.find('[data-testid="global-pending-approval-banner"]').exists()).toBe(false)
   })

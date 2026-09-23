@@ -65,7 +65,7 @@ test.describe('@host PLAN-0344 durable job resume', () => {
     await expect(page.getByText('Background job started.')).toBeVisible({ timeout: 60000 })
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'job-started-live.png'), fullPage: false })
 
-    // 刷新恢复：整页重载后重新进入会话（/chat/{sid}）。workspace 视图重载后
+    // 刷新恢复：整页重载后重新进入 Workspace 会话。workspace 视图重载后
     // 默认落在文件树，不承载聊天面板；卡片只能从 messages DTO 的 jobSummary
     // 重建（tool_result 不持久化）——这里同时以 API 断言该数据源存在。
     const sessionsRes = await page.request.get(`${CP_URL}/api/v1/sessions`, { headers: sharedHeaders })
@@ -86,7 +86,7 @@ test.describe('@host PLAN-0344 durable job resume', () => {
     expect(summary?.itemId, 'jobSummary archived in the messages DTO').toBeTruthy()
     const itemId = summary?.itemId ?? ''
 
-    await page.goto('/chat/' + sessionId, { waitUntil: 'load' })
+    await page.goto('/workspace/' + sharedWs + '/chat/' + sessionId, { waitUntil: 'load' })
     const card = page
       .locator('[data-testid="tool-card-toggle"]')
       .filter({ hasText: 'start_background_process' })

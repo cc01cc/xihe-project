@@ -53,7 +53,7 @@ async function openChat(page: Page, auth: Auth) {
     localStorage.setItem('xihe-user', JSON.stringify({ workspaceId }))
     localStorage.setItem('xihe-workspace', JSON.stringify({ id: workspaceId, name: 'Default Workspace' }))
   }, { token: auth.accessToken, workspaceId: auth.workspaceId })
-  await page.goto('/chat', { waitUntil: 'load' })
+  await page.goto('/workspace', { waitUntil: 'load' })
   await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 }
 

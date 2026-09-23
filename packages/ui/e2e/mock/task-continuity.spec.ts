@@ -50,7 +50,7 @@ test.describe('PLAN-276: Task Continuity E2E', () => {
     })
 
     test('SSE token events stream correctly', async ({ page }) => {
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       await page.evaluate(() => {
@@ -96,7 +96,7 @@ test.describe('PLAN-276: Task Continuity E2E', () => {
         })
       })
 
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       // Usage event should be processed (UI may or may not display it visibly)
@@ -123,7 +123,7 @@ test.describe('PLAN-276: Task Continuity E2E', () => {
         })
       })
 
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       const result = await page.evaluate(async () => {
@@ -143,7 +143,7 @@ test.describe('PLAN-276: Task Continuity E2E', () => {
 
   test.describe('TaskPlan event structure', () => {
     test('taskplan events have correct structure', async ({ page }) => {
-      await page.goto(`/chat/${SESSION_ID}`)
+      await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`)
       await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
 
       // Verify event structure by examining the context

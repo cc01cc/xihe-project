@@ -111,6 +111,6 @@ test.describe('Workspace management dialogs (PLAN-262 M2)', () => {
 
     await confirm.locator('#ws-delete-confirm').fill('Renamed Workspace')
     await confirm.getByRole('button', { name: '确认删除' }).click()
-    await expect(page).toHaveURL(/\/chat\/default/)
+    await expect(page).toHaveURL(/\/workspace$/)
   })
 })

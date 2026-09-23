@@ -1,4 +1,5 @@
 import { generateE2EPassword } from './helpers/password'
+import { gotoWorkspaceWithChat } from './helpers/chat'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
@@ -18,6 +19,12 @@ test.describe('Mobile Viewport (390x844)', () => {
     const body = await r.json()
     authToken = body.accessToken
     authWorkspaceId = body.workspaceId
+    // On mobile the conversation column is unmounted (WorkspaceView v-if);
+    // the chat FAB only renders once a Session exists. Seed one via API.
+    await request.post(`${CP_URL}/api/v1/sessions`, {
+      headers: { Authorization: `Bearer ${authToken}`, 'X-Workspace-Id': authWorkspaceId },
+      data: {},
+    })
   })
 
   async function assertNoHorizontalOverflow(page: import('@playwright/test').Page) {
@@ -37,8 +44,7 @@ test.describe('Mobile Viewport (390x844)', () => {
 
   test('chat page input area stays on screen on mobile', async ({ page }) => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
-    await page.goto('/chat', { waitUntil: 'load' })
-    await page.locator('textarea').waitFor({ state: 'visible', timeout: 10000 })
+    await gotoWorkspaceWithChat(page)
 
     const textarea = page.locator('textarea')
     const box = await textarea.boundingBox()
@@ -65,10 +71,17 @@ test.describe('Mobile Viewport (390x844)', () => {
 
   test('mobile chat dialogs remain closable', async ({ page }) => {
     await page.addInitScript((t) => localStorage.setItem('xihe-token', t), authToken)
-    await page.goto('/chat', { waitUntil: 'load' })
-    await page.locator('textarea').waitFor({ state: 'visible', timeout: 10000 })
-    const dialogs = page.locator('[role="dialog"]')
-    expect(await dialogs.count()).toBe(0)
+    await page.goto('/workspace', { waitUntil: 'load' })
+    const fab = page.getByRole('button', { name: 'Open chat' })
+    await expect(fab).toBeVisible({ timeout: 10000 })
+    expect(await page.locator('[role="dialog"]').count()).toBe(0)
+
+    await fab.click()
+    await expect(page.locator('textarea')).toBeVisible({ timeout: 10000 })
+    await page.keyboard.press('Escape')
+    await expect
+      .poll(async () => page.locator('[role="dialog"]').count(), { timeout: 5000 })
+      .toBe(0)
   })
 })
 

@@ -17,6 +17,7 @@ const messages = {
         },
         sidebar: {
             newChat: "新建对话",
+            noWorkspace: "当前没有可用工作区",
             search: "搜索对话...",
             today: "今天",
             yesterday: "昨天",
@@ -744,6 +745,7 @@ const messages = {
         },
         sidebar: {
             newChat: "New Chat",
+            noWorkspace: "No workspace available yet",
             search: "Search conversations...",
             today: "Today",
             yesterday: "Yesterday",

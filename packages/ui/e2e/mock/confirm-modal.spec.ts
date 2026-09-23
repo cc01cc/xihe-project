@@ -8,7 +8,7 @@ test.describe('ConfirmModal', () => {
   })
 
   test('renders confirm dialog and captures snapshot', async ({ page }) => {
-    await page.goto('/chat')
+    await page.goto('/workspace')
     await page.waitForLoadState('load')
 
     await page.evaluate(() => {

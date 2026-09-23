@@ -3,7 +3,7 @@ import { test } from '@playwright/test'
 test.describe('Accessibility — prefers-reduced-motion', () => {
   test('animations are disabled when prefers-reduced-motion is set', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
-    await page.goto('/chat/test-session')
+    await page.goto('/workspace/workspace-1/chat/test-session')
     await page.waitForLoadState('load')
 
     await page.evaluate(() => {

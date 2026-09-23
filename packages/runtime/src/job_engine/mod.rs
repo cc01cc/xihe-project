@@ -248,6 +248,7 @@ impl OutputStream {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CleanupState {
+    #[cfg_attr(not(windows), allow(dead_code))]
     NotStarted,
     Running,
     Completed,
@@ -1026,6 +1027,7 @@ fn reap_child(entry: &Arc<JobEntry>) -> Option<i32> {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn build_command(plan: &LaunchPlan) -> Command {
     if plan.shell {
         let mut command = Command::new("cmd");
@@ -1038,6 +1040,7 @@ fn build_command(plan: &LaunchPlan) -> Command {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 /// The `cwd` must resolve inside the authorized grants; anything else fails
 /// closed (spec invariant #2).
 fn validate_cwd(plan: &LaunchPlan) -> Result<PathBuf, JobEngineError> {
@@ -1075,6 +1078,7 @@ fn validate_cwd(plan: &LaunchPlan) -> Result<PathBuf, JobEngineError> {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn normalize_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('/', "\\")
@@ -1082,6 +1086,7 @@ fn normalize_path(path: &Path) -> String {
         .to_lowercase()
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn path_is_within(candidate: &str, root: &str) -> bool {
     if candidate == root {
         return true;
@@ -1114,6 +1119,7 @@ fn iso8601(time: SystemTime) -> String {
     chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 /// Captures a stream into `path`, keeping at most [`STREAM_CAP_BYTES`] and
 /// draining the rest so the child never blocks on a full pipe.
 fn pump_stream<R: Read>(mut reader: R, path: &Path, counters: &OutputCounters) {
@@ -1174,6 +1180,7 @@ fn pump_stream<R: Read>(mut reader: R, path: &Path, counters: &OutputCounters) {
     let _ = file.flush();
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn drain<R: Read>(reader: &mut R) {
     let mut buffer = [0u8; 16 * 1024];
     while let Ok(read) = reader.read(&mut buffer) {

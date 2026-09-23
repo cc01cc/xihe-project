@@ -27,7 +27,7 @@ test.describe('Chat', () => {
   })
 
   test('empty chat page renders correctly', async ({ page }) => {
-    await page.goto('/chat/test-session')
+    await page.goto('/workspace/workspace-1/chat/test-session')
     await expect(page.locator('textarea')).toBeVisible({ timeout: 5000 })
     await expect(page).toHaveScreenshot('chat-empty.png')
   })
@@ -43,7 +43,7 @@ test.describe('Chat', () => {
       },
     })
 
-    await page.goto('/chat/test-session')
+    await page.goto('/workspace/workspace-1/chat/test-session')
     await expect(page.locator('text=What is TypeScript?')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=TypeScript is a typed superset of JavaScript')).toBeVisible({ timeout: 5000 })
     await expect(page).toHaveScreenshot('chat-with-messages.png')
@@ -51,9 +51,9 @@ test.describe('Chat', () => {
 
   test('shows session in sidebar after creating new chat', async ({ page }) => {
     await setupMockSessions(page, { createSession: true })
-    await page.goto('/chat')
+    await page.goto('/workspace')
 
-    const newChatBtn = page.locator('button:has-text("新建对话")')
+    const newChatBtn = page.getByTestId('sidebar-new-chat')
     await newChatBtn.click()
 
     const sessionItem = page.locator('[class*="group"]').first()
@@ -68,7 +68,7 @@ test.describe('Chat', () => {
       ],
     })
 
-    await page.goto('/chat/sid-1')
+    await page.goto('/workspace/workspace-1/chat/sid-1')
 
     await expect(page.locator('aside >> text=TypeScript Help')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('aside >> text=Rust Borrow Checker')).toBeVisible({ timeout: 5000 })
@@ -78,7 +78,7 @@ test.describe('Chat', () => {
   test('empty state in sidebar when no sessions', async ({ page }) => {
     await setupMockSessions(page)
 
-    await page.goto('/chat/default')
+    await page.goto('/workspace')
     await expect(page.locator('text=暂无对话')).toBeVisible({ timeout: 5000 })
     await expect(page).toHaveScreenshot('chat-sidebar-empty.png')
   })
@@ -87,7 +87,7 @@ test.describe('Chat', () => {
     await setupMockAuth(page, { sse: { tokens: markdownResponseTokens() } })
     await setupMockSessions(page, { sessions: [{ id: 'stream-session', title: 'Stream Test' }] })
 
-    await page.goto('/chat/stream-session')
+    await page.goto('/workspace/workspace-1/chat/stream-session')
 
     const textarea = page.locator('textarea')
     await textarea.fill('Show me markdown')
@@ -116,7 +116,7 @@ test.describe('Chat', () => {
       body: JSON.stringify({ sourceKey: 'AGENTS.md', status: 'updated', hashPrefix: 'abc12345' }),
     }))
 
-    await page.goto('/chat/context-session')
+    await page.goto('/workspace/workspace-1/chat/context-session')
     await expect(page.getByTestId('u1-toggle')).toBeVisible()
     await page.getByTestId('u1-toggle').click()
     await expect(page.getByTestId('u1-source-line')).toContainText('AGENTS.md')
@@ -134,7 +134,7 @@ test.describe('Chat', () => {
     })
     await setupMockSessions(page, { sessions: [{ id: 'usage-session', title: 'Usage line' }] })
 
-    await page.goto('/chat/usage-session')
+    await page.goto('/workspace/workspace-1/chat/usage-session')
     await page.getByTestId('chat-input').fill('show usage')
     await page.getByTestId('chat-input').press('Enter')
     await expect(page.getByText('in 120 · out 30')).toBeVisible({ timeout: 10000 })
@@ -151,7 +151,7 @@ test.describe('Chat', () => {
     })
     await setupMockSessions(page, { sessions: [{ id: 'stop-session', title: 'Stop Test' }] })
 
-    await page.goto('/chat/stop-session')
+    await page.goto('/workspace/workspace-1/chat/stop-session')
 
     const textarea = page.locator('textarea')
     await textarea.fill('Keep going')
@@ -180,7 +180,7 @@ test.describe('Chat', () => {
     })
     await setupMockSessions(page, { sessions: [{ id: 'retry-session', title: 'Retry Test' }] })
 
-    await page.goto('/chat/retry-session')
+    await page.goto('/workspace/workspace-1/chat/retry-session')
     const textarea = page.locator('textarea')
     await textarea.fill('Try again')
     await textarea.press('Enter')
@@ -217,7 +217,7 @@ test.describe('Chat', () => {
     await setupMockAuth(page)
     await setupMockSessions(page, { sessions: [{ id: 'voice-session', title: 'Voice Test' }] })
 
-    await page.goto('/chat/voice-session')
+    await page.goto('/workspace/workspace-1/chat/voice-session')
     const voiceButton = page.getByTitle('语音输入')
     await expect(voiceButton).toBeVisible()
     await voiceButton.click()
@@ -243,7 +243,7 @@ test.describe('Chat', () => {
       body: JSON.stringify({ code: 'ATTACHMENT_UPLOAD_FAILED', detail: 'Attachment service unavailable' }),
     }))
 
-    await page.goto('/chat/upload-failure-session')
+    await page.goto('/workspace/workspace-1/chat/upload-failure-session')
     await page.getByTestId('file-upload-input').setInputFiles({
       name: 'notes.md',
       mimeType: 'text/markdown',
@@ -266,7 +266,7 @@ test.describe('Chat', () => {
     })
     await setupMockSessions(page, { sessions: [{ id: 'anchor-session', title: 'Anchor Test' }] })
 
-    await page.goto('/chat/anchor-session')
+    await page.goto('/workspace/workspace-1/chat/anchor-session')
 
     const textarea = page.locator('textarea')
     await textarea.fill('Anchor me')

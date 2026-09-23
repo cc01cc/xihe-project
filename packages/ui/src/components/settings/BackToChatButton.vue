@@ -3,17 +3,23 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '../../stores/session'
 import { ArrowLeft } from '@lucide/vue'
+import { useAuthStore } from '../../stores/auth'
+import { workspaceChatPath, workspacePath } from '../../lib/routes'
 
 const router = useRouter()
 const { t } = useI18n()
 const sessionStore = useSessionStore()
+const auth = useAuthStore()
 
 function goBack() {
   const id = sessionStore.currentSessionId
   if (id) {
-    router.push(`/chat/${id}`)
+    const workspaceId = sessionStore.currentSession?.workspaceId ?? auth.currentWorkspaceId
+    if (workspaceId) router.push(workspaceChatPath(workspaceId, id))
+    else router.push('/workspace')
   } else {
-    router.push('/chat')
+    const workspaceId = auth.currentWorkspaceId
+    router.push(workspaceId ? workspacePath(workspaceId) : '/workspace')
   }
 }
 </script>

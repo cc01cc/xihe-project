@@ -27,7 +27,7 @@ async function handleSubmit() {
     config.loadAllDomains().catch(() => {
       // 后端不可用时使用本地持久化配置；错误已在 store 中记录
     })
-    const redirect = (route.query.redirect as string) || '/chat'
+    const redirect = (route.query.redirect as string) || '/workspace'
     router.push(redirect)
   } else {
     errorMsg.value = auth.error
