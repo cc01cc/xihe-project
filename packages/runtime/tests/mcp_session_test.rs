@@ -145,6 +145,21 @@ async fn session_request_self_heals_and_cleans_up() {
         "attach probe records success"
     );
 
+    // 1.5) 跨 workspace 隔离：cleanup 其他 workspace 不得波及本会话
+    // （PLAN-0387 T3.1：MCP session 不串状态）
+    manager.cleanup_workspace("ws_isolation_probe").await;
+    assert!(
+        !manager.servers(&ws_id).await.is_empty(),
+        "cleanup of a foreign workspace must not touch this workspace's sessions"
+    );
+    let isolated = manager
+        .request(&ws_id, &echo, request.clone(), DEFAULT_REQUEST_TIMEOUT)
+        .await;
+    assert!(
+        isolated.is_ok(),
+        "request after foreign cleanup must still succeed: {isolated:?}"
+    );
+
     // 2) 杀死会话进程 → 下一次请求自愈（重启并成功）
     let kill = "ps -eo pid,args | grep -F -e 'while IFS=' | grep -v grep | awk '{print $1}' | xargs -r kill".to_string();
     exec_detached(
