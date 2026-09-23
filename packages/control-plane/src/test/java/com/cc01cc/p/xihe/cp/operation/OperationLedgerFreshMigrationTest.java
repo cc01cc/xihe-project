@@ -171,7 +171,7 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
@@ -219,6 +219,25 @@ class OperationLedgerFreshMigrationTest {
         insertGrant("direct", subjectId);
         assertEquals(2, scalarInt("SELECT count(*) FROM grants WHERE source = 'direct' AND subject_id = '"
                 + subjectId + "'"), "non-default grants for one subject may coexist");
+    }
+
+    @Test
+    void v39ChatRunOriginAndSpawnEventUniquenessApplied() throws SQLException {
+        assertEquals("NO", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'chat_runs' AND column_name = 'origin'"),
+                "chat_runs.origin must be required after existing rows are backfilled");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'ck_chat_runs_origin'"),
+                "only user_submission and spawn are valid origins");
+        String indexDefinition = scalarString(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname = 'uq_chat_runs_spawn_event_idempotency'");
+        assertTrue(indexDefinition.contains("user_id, idempotency_key"));
+        assertTrue(indexDefinition.contains("spawn"), "spawn event uniqueness must be partial by origin");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '39' AND success = true"),
+                "V39 must be recorded as applied");
     }
 
     private static void insertGrant(String source, UUID subjectId) throws SQLException {
@@ -738,10 +757,10 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
-    void v34UpgradeFromV33PreservesExtensionRowsAndSwitchesCascade() throws SQLException {
-        // PLAN-0367 V4: apply V33 first (pre-V34 state), seed an extension row,
-        // then migrate to head: the row must survive and the delete rule switches.
-        String upgradeDb = "xihe_cp_upgrade_v34";
+    void v39UpgradeFromV33BackfillsOriginAndPreservesExtensionRows() throws SQLException {
+        // Seed pre-origin ChatRun data at V33; V39 must backfill it while later
+        // migrations preserve operation extensions and add spawn-only uniqueness.
+        String upgradeDb = "xihe_cp_upgrade_v39";
         String adminUrl = postgres.getJdbcUrl();
         try (Connection admin = DriverManager.getConnection(
                 adminUrl, postgres.getUsername(), postgres.getPassword());
@@ -759,12 +778,22 @@ class OperationLedgerFreshMigrationTest {
                 .migrate();
 
         UUID userId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        UUID chatRunId = UUID.randomUUID();
         UUID operationId = UUID.randomUUID();
         UUID itemId = UUID.randomUUID();
         try (Connection c = DriverManager.getConnection(
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'upgrade-" + userId + "@test.local', 'hash')");
+            executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                    + "'::uuid, 'upgrade-workspace', '" + userId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
+                    + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'upgrade-session')");
+            executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                    + "request_hash, status) VALUES ('" + chatRunId + "'::uuid, '" + sessionId + "'::uuid, '"
+                    + userId + "'::uuid, '" + workspaceId + "'::uuid, 'old-submit', 'old-hash', 'accepted')");
             executeUpdate(c, "INSERT INTO ledger_operations (id, user_id, kind, source, actor_type, status) "
                     + "VALUES ('" + operationId + "'::uuid, '" + userId
                     + "'::uuid, 'system', 'system', 'system', 'accepted')");
@@ -788,7 +817,10 @@ class OperationLedgerFreshMigrationTest {
         try (Connection c = DriverManager.getConnection(
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
-                    + "WHERE version = '34' AND success = true"), "V34 must be applied on upgrade");
+                    + "WHERE version = '39' AND success = true"), "V39 must be applied on upgrade");
+            assertEquals("user_submission", scalarString(c,
+                    "SELECT origin FROM chat_runs WHERE id = '" + chatRunId + "'::uuid"),
+                    "legacy ChatRuns must be backfilled as user submissions");
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM operation_extensions WHERE item_id = '"
                     + itemId + "'::uuid"), "existing extension rows must survive the upgrade");
             assertEquals("c", scalarString(c,
@@ -797,6 +829,24 @@ class OperationLedgerFreshMigrationTest {
             executeUpdate(c, "DELETE FROM operation_items WHERE id = '" + itemId + "'::uuid");
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM operation_extensions WHERE item_id = '"
                     + itemId + "'::uuid"), "post-upgrade item delete must cascade the extension");
+
+            UUID childSessionA = UUID.randomUUID();
+            UUID childSessionB = UUID.randomUUID();
+            UUID spawnEventId = UUID.randomUUID();
+            executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + childSessionA
+                    + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'spawn-a')");
+            executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + childSessionB
+                    + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'spawn-b')");
+            executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                    + "request_hash, status, origin) VALUES ('" + UUID.randomUUID() + "'::uuid, '" + childSessionA
+                    + "'::uuid, '" + userId + "'::uuid, '" + workspaceId + "'::uuid, '" + spawnEventId
+                    + "', 'spawn-hash', 'accepted', 'spawn')");
+            assertThrows(SQLException.class, () -> executeUpdate(c,
+                    "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                            + "request_hash, status, origin) VALUES ('" + UUID.randomUUID() + "'::uuid, '"
+                            + childSessionB + "'::uuid, '" + userId + "'::uuid, '" + workspaceId
+                            + "'::uuid, '" + spawnEventId + "', 'spawn-hash', 'accepted', 'spawn')"),
+                    "the partial unique index must deduplicate one parent event across child sessions");
         }
     }
 }

@@ -1786,6 +1786,7 @@ export const api = {
     async getChatRunStatus(runId: string): Promise<{
         runId: string;
         sessionId: string;
+        origin: "user_submission" | "spawn";
         status: string;
         terminalOutcome?: string | null;
         leaseExpired: boolean;
@@ -1798,6 +1799,9 @@ export const api = {
         if (!record || typeof record.sessionId !== "string") {
             throw new Error("Invalid chat run response: missing sessionId");
         }
+        if (record.origin !== "user_submission" && record.origin !== "spawn") {
+            throw new Error("Invalid chat run response: missing origin");
+        }
         const rawApprovals = Array.isArray(record.pendingApprovals) ? record.pendingApprovals : [];
         const pendingApprovals = rawApprovals
             .map((approval) => normalizeApprovalRequest(approval, record.sessionId as string))
@@ -1806,6 +1810,7 @@ export const api = {
         return {
             runId: typeof record.runId === "string" ? record.runId : runId,
             sessionId: record.sessionId,
+            origin: record.origin,
             status: typeof record.status === "string" ? record.status : "unknown",
             terminalOutcome:
                 typeof record.terminalOutcome === "string" || record.terminalOutcome === null

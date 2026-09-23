@@ -41,11 +41,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -345,6 +343,12 @@ public class ChatController {
                 .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
                 .orElse(null);
         if (existingRun != null) {
+            if (!ChatRun.ORIGIN_USER_SUBMISSION.equals(existingRun.getOrigin())) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.CONFLICT,
+                        "IDEMPOTENCY_KEY_CONFLICT",
+                        "Idempotency-Key belongs to a derived run");
+            }
             if (!requestHash.equals(existingRun.getRequestHash())) {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.CONFLICT,
@@ -391,6 +395,7 @@ public class ChatController {
                     handedOff = true;
                     return ResponseEntity.accepted().body(Map.of(
                         "status", "queued",
+                        "origin", chatRun.getOrigin(),
                         "sessionId", sessionId,
                         "messageId", userMessage.getId(),
                         "runId", runId,
@@ -407,6 +412,7 @@ public class ChatController {
             handedOff = true;
             return ResponseEntity.accepted().body(Map.of(
                 "status", "accepted",
+                "origin", chatRun.getOrigin(),
                 "sessionId", sessionId,
                 "messageId", userMessage.getId(),
                 "runId", runId,
@@ -452,6 +458,7 @@ public class ChatController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runId", runId);
         body.put("sessionId", run.getSessionId());
+        body.put("origin", run.getOrigin());
         body.put("status", effectiveStatus);
         body.put("terminalOutcome", run.getTerminalOutcome());
         body.put("leaseExpired", leaseExpired);
@@ -1101,27 +1108,14 @@ public class ChatController {
     private String requestHash(String content, String provider, String model,
                                String toolMode, List<String> attachmentIds,
                                Map<String, Integer> toolTimeouts) {
-        try {
-            Map<String, Object> canonical = new LinkedHashMap<>();
-            canonical.put("content", content == null ? "" : content);
-            canonical.put("provider", provider == null ? "" : provider);
-            canonical.put("model", model == null ? "" : model);
-            canonical.put("toolMode", toolMode == null || toolMode.isBlank() ? "none" : toolMode);
-            canonical.put("attachments", attachmentIds == null ? List.of() : attachmentIds);
-            // per-call 超时改变本次运行行为：纳入幂等键指纹（键排序后才计算，与请求里的书写顺序无关）。
-            if (toolTimeouts != null && !toolTimeouts.isEmpty()) {
-                canonical.put("toolTimeouts", new java.util.TreeMap<>(toolTimeouts));
-            }
-            byte[] bytes = objectMapper.writeValueAsBytes(canonical);
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Unable to calculate request hash", e);
-        }
+        return ChatRequestHash.calculate(objectMapper, content, provider, model,
+                toolMode, attachmentIds, toolTimeouts);
     }
 
     private Map<String, Object> runResponse(ChatRun run) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("status", run.getStatus());
+        response.put("origin", run.getOrigin());
         response.put("sessionId", run.getSessionId());
         response.put("runId", run.getId());
         response.put("providerConnectionId", run.getProviderConnectionId());

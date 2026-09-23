@@ -22,6 +22,9 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     Optional<ChatRun> findByUserIdAndSessionIdAndIdempotencyKey(
             String userId, String sessionId, String idempotencyKey);
 
+    Optional<ChatRun> findByUserIdAndIdempotencyKeyAndOrigin(
+            String userId, String idempotencyKey, String origin);
+
     /** PLAN-0352 T1.2：会话删除路径枚举非终态 run（含 cancelling）。 */
     List<ChatRun> findBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
 

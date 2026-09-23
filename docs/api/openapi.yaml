@@ -1510,7 +1510,7 @@ components:
     SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
-    ChatRunResponse: { type: object, required: [status, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, succeeded, failed, partial, ambiguous, cancelled] }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, operationId: { type: string, format: uuid, readOnly: true, description: Durable Operation Ledger root for this ChatRun }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+    ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, operationId: { type: string, format: uuid, readOnly: true, description: Durable Operation Ledger root for this ChatRun }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     ChatApprovalDecisionRequest:
       type: object
       additionalProperties: false
@@ -1565,10 +1565,11 @@ components:
     ChatRunStatusResponse:
       type: object
       additionalProperties: false
-      required: [runId, sessionId, status, terminalOutcome, leaseExpired, pendingApprovals]
+      required: [runId, sessionId, origin, status, terminalOutcome, leaseExpired, pendingApprovals]
       properties:
         runId: { type: string, format: uuid }
         sessionId: { type: string, format: uuid }
+        origin: { type: string, enum: [user_submission, spawn], readOnly: true }
         status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, cancelling, dispatching, succeeded, failed, partial, ambiguous, cancelled] }
         terminalOutcome: { type: [string, 'null'], enum: [success, error, partial, ambiguous, cancelled] }
         leaseExpired: { type: boolean }

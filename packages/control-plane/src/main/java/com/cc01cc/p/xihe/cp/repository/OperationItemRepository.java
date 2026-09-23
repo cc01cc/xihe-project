@@ -1,7 +1,9 @@
 package com.cc01cc.p.xihe.cp.repository;
 
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,6 +21,10 @@ public interface OperationItemRepository extends JpaRepository<OperationItem, UU
 
     /** PLAN-0326 决策 #9：行身份 = (operation_id, source, tool_call_id)，幂等收敛限定同源。 */
     Optional<OperationItem> findByOperationIdAndSourceAndToolCallId(String operationId, String source, String toolCallId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from OperationItem i where i.id = :id")
+    Optional<OperationItem> findByIdForUpdate(@Param("id") UUID id);
 
     List<OperationItem> findByParentItemId(String parentItemId);
 

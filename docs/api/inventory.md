@@ -31,8 +31,8 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `/sessions`, `/sessions/{sessionId}` | unchanged under `/api/v1/sessions/...` | user Bearer + current workspace | UI |
 | CP | `/sessions/{sessionId}/compact` | `POST /api/v1/sessions/{sessionId}/compact`（`upToSequence` 可选；活跃 run 409 `CHAT_IN_PROGRESS`） | user Bearer + session ownership | UI 手动压缩（PLAN-294/0341；行为不变，openapi 已补登） |
 | CP | `/files/**`, `/rag/**` | `/api/v1/...` equivalent | user Bearer | UI |
-| CP | `POST /api/v1/chat` | `POST /api/v1/chat` (requires active SSE, single in-flight, `202` + `runId` + durable `operationId`, `409 SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`) | user Bearer + current workspace | UI — enqueues async Agent relay; streams `token` → `done` on persistent SSE |
-| CP | `GET /api/v1/chat/runs/{runId}` | unchanged under `/api/v1/chat/runs/{runId}` | user Bearer + current workspace/run ownership | UI — reconnect/reload recovery; returns run status, lease expiry, and pending approvals |
+| CP | `POST /api/v1/chat` | `POST /api/v1/chat` (requires active SSE, single in-flight, `202` + `origin=user_submission` + `runId` + durable `operationId`, `409 SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`) | user Bearer + current workspace | UI — enqueues async Agent relay; streams `token` → `done` on persistent SSE |
+| CP | `GET /api/v1/chat/runs/{runId}` | unchanged under `/api/v1/chat/runs/{runId}` | user Bearer + current workspace/run ownership | UI — reconnect/reload recovery; returns origin, run status, lease expiry, and pending approvals |
 | CP | `POST /api/v1/chat/approvals/{requestId}/decision` | unchanged under `/api/v1/chat/approvals/{requestId}/decision` | user Bearer + authoritative request/session/run/workspace ownership | UI approval modal — CP persists/locks decision then forwards Agent service Bearer; same decision is idempotent |
 | CP | `GET /api/v1/approvals/pending` | unchanged under `/api/v1/approvals/pending` | user Bearer + current workspace/user | UI cross-session indicator for live actionable approval/retry states (`pending` and `dispatch_unknown`) — counts and oldest timestamps only; no tool arguments, details or rule text |
 | CP | `GET /api/v1/policy/mode?sessionId=` | unchanged under `/api/v1/policy/mode?sessionId=` | user Bearer + current workspace/user + session ownership | UI session policy control — reads one session's fixed mode set: `manual`, `auto` |
@@ -98,7 +98,12 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
   defined by MCP `2026-07-28`.
 - Cross-module operation correlation uses `X-Operation-Id`,
   `X-Operation-Item-Id`, and `X-Operation-Attempt-Id`; Chat responses expose the
-  durable root `operationId` without exposing prompt contents.
+  durable root `operationId` without exposing prompt contents. ChatRun responses
+  expose server-set `origin` (`user_submission` or `spawn`); public `POST /chat`
+  cannot choose the origin.
+- Spawn creation is a CP-internal `ChatSubmissionService` path, not an HTTP route;
+  it validates the parent run/item and child Session provenance, uses the parent
+  OperationItem UUID as its idempotency key, and skips only the browser SSE gate.
 - Errors use `application/problem+json` with `type`, `title`, `status`,
   `code`, `detail`, and `requestId`.
 - No query-string tokens, `X-Api-Token`, old path aliases, or field fallbacks.
@@ -130,7 +135,7 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 
 - **Persistence**: `GET /api/v1/events?sessionId=` is a session-scoped long-lived SSE. `done` terminates a *run*, not the SSE. Only client disconnect, session deletion, or explicit server termination closes it. Heartbeat `event: heartbeat` every 15s; never enters UI `MessagePart`.
 - **Identity**: One active emitter per `sessionId` (v1). `SseEmitterManager` stores `{sessionId, generation, emitter}` and uses `compareAndRemove`; new connection replaces old (`chat_sse_replaced`) and old `onCompletion`/`onTimeout`/`onError` that no longer own the entry are logged as `chat_sse_stale_cleanup_ignored`.
-- **Gate**: `POST /api/v1/chat` checks `hasEmitter(sessionId)` *before* persisting the user message. On miss: `409 SSE_SUBSCRIPTION_REQUIRED`; on concurrent run: `409 CHAT_IN_PROGRESS` / `429` / `503 AGENT_CIRCUIT_OPEN`.
+- **Gate**: `POST /api/v1/chat` checks `hasEmitter(sessionId)` *before* persisting the user message. On miss: `409 SSE_SUBSCRIPTION_REQUIRED`; on concurrent run: `409 CHAT_IN_PROGRESS`; Agent circuit open returns `503 AGENT_CIRCUIT_OPEN`.
 - **Events per run**: `connected` (SSE open) → optional `status`/`thinking` → optional `tool_call`/`tool_result` → `token` (≥1) → `done` (exactly one; `error` + `done(error)` on failure). Real MiMo long replies produce ≥2 `token` events; `on_chat_model_end` fallback fires only when no `on_chat_model_stream` was emitted (`LangGraphEventAdapter` per `run_id`).
 - **Diagnostics (PLAN-0342)**: a failed, parseable command result may add an optional `diagnostics` bundle (`{items, total, confidence}`; `items` is the Top-N slice of `total`) to the `tool_result` data — copied from the Agent tool-message artifact channel and relayed unchanged by CP; the model-visible `<diagnostics>` block stays inside the untrusted envelope.
 - **Approval**: `approval_request` is persisted by CP before dispatch to the UI and its live/replay envelope contains canonical `requestId/runId/sessionId/workspaceId/tool/action/details/expiresAt/replayed` (`requestId` is a UUID), with optional legacy-preserved `argumentsHash/state`, the durable creation `origin` (`cp_gate` for CP-gate rows, `agent_relay` for model-initiated `request_approval`; null for pre-V25 rows), plus an optional safe `policy` summary (`effect/sourceLayer/matchedRule/reason/mode/actionClass/shape/reused`, with `modeAtGrant` when emitted); it never includes raw tool arguments. Browser decisions use `POST /api/v1/chat/approvals/{requestId}/decision`, while CP alone calls Agent `/internal/v1/agent/approval/respond`. The Agent `/internal/v1/agent/approval/{requestId}` status is a separate raw coordinator response and does not carry the CP policy summary or replay/state fields. Reconnect replays live approval/retry requests for the same authorized session only; `dispatching` is in-flight and not actionable in the UI. Post-gate (T1.7/T1.9): a run-scoped ASK without a valid consume or session grant creates/reuses the durable pending row and answers `409` with a JSON-RPC error frame whose `error.data` carries `approvalRequestId/tool/expiresAt/retryHeader/statusUrl/policy`; without a run context the gate keeps the legacy problem+json 409 without extension.
@@ -139,8 +144,10 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 
 ## ChatRun Contract (PLAN-247)
 
-- CP creates a durable `ChatRun` only after readiness, SSE subscription, authorization, and single-flight gates pass. The run is unique by `(userId, sessionId, Idempotency-Key)` and stores a request hash.
-- Duplicate keys with the same payload return the existing run without starting Agent again; a different payload returns `409 IDEMPOTENCY_KEY_CONFLICT`.
+- Public CP `POST /api/v1/chat` creates only `origin=user_submission`, after readiness, SSE subscription, authorization, and single-flight gates pass. User submission idempotency is `(userId, sessionId, Idempotency-Key)` with request-hash comparison; any client-supplied `origin` is ignored and never controls persistence.
+- CP-internal `ChatSubmissionService.createSpawn` accepts only a durable `spawn_agent` tool-call item, validates its parent run and the child Session provenance, and bypasses only the browser SSE subscription gate. Its event key is the parent `operation_items.id` UUID; V39 enforces `(user_id, idempotency_key) WHERE origin='spawn'`. Same event/hash replays the existing run; a different hash returns `409 IDEMPOTENCY_KEY_CONFLICT`.
+- Spawn accepts attachment IDs only; CP reconstructs summary/hash from child-owned File rows. Parent Session files and caller-supplied attachment JSON are not implicitly shared.
+- Public `POST /api/v1/chat` cannot replay or return a spawn run, even if the caller reuses the same key; it returns `409 IDEMPOTENCY_KEY_CONFLICT`. The production Agent caller is scheduled with the initial Session/grant transaction in PLAN-0407 T2.4; `createSpawn` is the CP persistence path, not a standalone HTTP endpoint.
 - Terminal outcomes are `success`, `error`, `partial`, and `ambiguous`. A provider disconnect with uncertain execution is `ambiguous` and must not be automatically retried. Manual retry uses a new key.
 - `/api/v1/exec` is intentionally absent; callers use `/api/v1/chat`.
 

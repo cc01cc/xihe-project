@@ -276,17 +276,7 @@ export interface Message {
     status?: string;
     runId?: string;
     operationId?: string;
-    runStatus?:
-        | "queued"
-        | "accepted"
-        | "running"
-        | "streaming"
-        | "succeeded"
-        | "failed"
-        | "partial"
-        | "ambiguous"
-        | "cancelled"
-        | "interrupted";
+    runStatus?: ChatRunResponse["status"] | "interrupted";
     terminalOutcome?: "success" | "error" | "partial" | "ambiguous";
     errorCode?: string;
     error?: string;
@@ -353,11 +343,15 @@ export interface SSEEvent {
 }
 
 export interface ChatRunResponse {
+    origin: "user_submission";
     status:
         | "queued"
         | "accepted"
+        | "dispatching"
         | "running"
         | "streaming"
+        | "awaiting_approval"
+        | "cancelling"
         | "succeeded"
         | "failed"
         | "partial"

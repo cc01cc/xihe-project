@@ -18,6 +18,9 @@ import java.util.UUID;
         columnNames = {"user_id", "session_id", "idempotency_key"}))
 public class ChatRun {
 
+    public static final String ORIGIN_USER_SUBMISSION = "user_submission";
+    public static final String ORIGIN_SPAWN = "spawn";
+
     @Id
     @Column(name = "id", columnDefinition = "uuid")
     private UUID id;
@@ -39,6 +42,9 @@ public class ChatRun {
 
     @Column(name = "request_hash", nullable = false, length = 64)
     private String requestHash;
+
+    @Column(name = "origin", nullable = false, length = 24)
+    private String origin = ORIGIN_USER_SUBMISSION;
 
     @Column(length = 50)
     private String provider;
@@ -135,6 +141,8 @@ public class ChatRun {
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
     public String getRequestHash() { return requestHash; }
     public void setRequestHash(String requestHash) { this.requestHash = requestHash; }
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
     public String getProvider() { return provider; }
     public void setProvider(String provider) { this.provider = provider; }
     public String getModel() { return model; }

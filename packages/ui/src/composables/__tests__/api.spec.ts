@@ -379,12 +379,29 @@ describe('api policy mode', () => {
 })
 
 describe('api.getChatRunStatus approval recovery', () => {
+  it('preserves the server-set ChatRun origin', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        runId: RUN_ID,
+        sessionId: SESSION_ID,
+        origin: 'spawn',
+        status: 'succeeded',
+        leaseExpired: false,
+        pendingApprovals: [],
+      }),
+    } as Response)
+
+    await expect(api.getChatRunStatus(RUN_ID)).resolves.toMatchObject({ origin: 'spawn' })
+  })
+
   it('normalizes and preserves nested policy evidence', async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({
         runId: RUN_ID,
         sessionId: SESSION_ID,
+        origin: 'user_submission',
         status: 'awaiting_approval',
         leaseExpired: false,
         pendingApprovals: [{
@@ -435,6 +452,7 @@ describe('api.getChatRunStatus approval recovery', () => {
       json: () => Promise.resolve({
         runId: RUN_ID,
         sessionId: SESSION_ID,
+        origin: 'user_submission',
         status: 'awaiting_approval',
         pendingApprovals: [{
           requestId: APPROVAL_ID,
@@ -458,6 +476,7 @@ describe('api.getChatRunStatus approval recovery', () => {
       json: () => Promise.resolve({
         runId: RUN_ID_2,
         sessionId: SESSION_ID,
+        origin: 'user_submission',
         status: 'awaiting_approval',
         pendingApprovals: [{
           requestId: APPROVAL_ID_2,

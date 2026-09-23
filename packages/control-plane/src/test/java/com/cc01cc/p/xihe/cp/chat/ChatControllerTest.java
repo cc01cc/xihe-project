@@ -258,6 +258,7 @@ class ChatControllerTest extends AbstractH2Test {
                 "content", "Message with attachment",
                 "workspaceId", workspaceId,
                 "userId", userId,
+                "origin", ChatRun.ORIGIN_SPAWN,
                 "attachments", List.of(file.getId())
         );
         HttpHeaders headers = new HttpHeaders();
@@ -270,6 +271,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         assertEquals("accepted", response.getBody().get("status"));
+        assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, response.getBody().get("origin"));
 
         // Wait for async persistence
         List<Message> messages = pollMessages(5000);
@@ -290,6 +292,10 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals("success", run.getTerminalOutcome());
         assertEquals(userMsg.getId().toString(), run.getUserMessageId());
         assertEquals(assistantMsg.getId().toString(), run.getAssistantMessageId());
+        ResponseEntity<Map> recovered = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + run.getId(), HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class);
+        assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, recovered.getBody().get("origin"));
         String operationId = (String) response.getBody().get("operationId");
         assertNotNull(operationId);
         assertEquals(operationId, ledgerOperationRepository.findByRunId(run.getId().toString()).orElseThrow().getId().toString());
@@ -409,6 +415,8 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
         assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
         assertEquals(first.getBody().get("runId"), second.getBody().get("runId"));
+        assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, first.getBody().get("origin"));
+        assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, second.getBody().get("origin"));
         assertEquals(first.getBody().get("operationId"), second.getBody().get("operationId"));
         Thread.sleep(500);
         assertEquals(1, agentCalls.get());
@@ -425,6 +433,34 @@ class ChatControllerTest extends AbstractH2Test {
                 new HttpEntity<>(conflictingRequest, headers), Map.class);
         assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
         assertEquals("IDEMPOTENCY_KEY_CONFLICT", conflict.getBody().get("code"));
+    }
+
+    @Test
+    void publicChatDoesNotReplaySpawnRun() {
+        String key = UUID.randomUUID().toString();
+        ChatRun spawnRun = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,
+                key, "same-request-hash", "provider", "model", "workspace", "accepted");
+        spawnRun.setOrigin(ChatRun.ORIGIN_SPAWN);
+        chatRunRepository.saveAndFlush(spawnRun);
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Same payload",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", key);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals("IDEMPOTENCY_KEY_CONFLICT", response.getBody().get("code"));
+        assertEquals("Idempotency-Key belongs to a derived run", response.getBody().get("detail"));
     }
 
     @Test

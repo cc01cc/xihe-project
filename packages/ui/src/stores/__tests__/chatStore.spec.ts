@@ -369,7 +369,7 @@ describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
   async function mockStatus(status: string, extra: Record<string, unknown> = {}) {
     const { api } = await import('../../composables/api')
     vi.mocked(api.getChatRunStatus).mockResolvedValue({
-      runId: RUN_ID, sessionId: SESSION_ID, status, leaseExpired: false, pendingApprovals: [], ...extra,
+      runId: RUN_ID, sessionId: SESSION_ID, origin: 'user_submission', status, leaseExpired: false, pendingApprovals: [], ...extra,
     })
   }
 
@@ -430,6 +430,7 @@ describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
     let resolveOld: ((value: {
       runId: string
       sessionId: string
+      origin: 'user_submission' | 'spawn'
       status: string
       leaseExpired: boolean
       pendingApprovals: never[]
@@ -439,6 +440,7 @@ describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
       .mockResolvedValueOnce({
         runId: NEW_RUN_ID,
         sessionId: SESSION_ID,
+        origin: 'user_submission',
         status: 'cancelled',
         leaseExpired: false,
         pendingApprovals: [],
@@ -450,6 +452,7 @@ describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
     resolveOld?.({
       runId: OLD_RUN_ID,
       sessionId: SESSION_ID,
+      origin: 'user_submission',
       status: 'awaiting_approval',
       leaseExpired: false,
       pendingApprovals: [],
@@ -464,6 +467,7 @@ describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
     let resolveStatus: ((value: {
       runId: string
       sessionId: string
+      origin: 'user_submission' | 'spawn'
       status: string
       leaseExpired: boolean
       pendingApprovals: never[]
@@ -475,6 +479,7 @@ describe('refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)', () => {
     resolveStatus?.({
       runId: RUN_ID,
       sessionId: SESSION_ID,
+      origin: 'user_submission',
       status: 'awaiting_approval',
       leaseExpired: false,
       pendingApprovals: [],
