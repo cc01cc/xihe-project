@@ -202,6 +202,7 @@ class ChatSpawnSubmissionIntegrationTest extends AbstractIntegrationTest {
         child.setSpawnedFromSessionId(parentSession.getId());
         child.setSpawnedFromRunId(parentRun.getId());
         child.setSpawnedAt(Instant.now());
+        child.setKind(Session.KIND_SPAWN);
         Session saved = sessionRepository.save(child);
         sessionIds.add(saved.getId());
         return saved;

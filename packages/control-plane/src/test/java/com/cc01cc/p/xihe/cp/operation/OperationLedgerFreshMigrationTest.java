@@ -171,7 +171,7 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
@@ -757,10 +757,10 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
-    void v39UpgradeFromV33BackfillsOriginAndPreservesExtensionRows() throws SQLException {
-        // Seed pre-origin ChatRun data at V33; V39 must backfill it while later
-        // migrations preserve operation extensions and add spawn-only uniqueness.
-        String upgradeDb = "xihe_cp_upgrade_v39";
+    void v40UpgradeFromV33BackfillsOriginAndAddsSessionKind() throws SQLException {
+        // Seed pre-origin ChatRun data at V33; V39 backfills it and V40 adds kind
+        // while preserving operation extensions.
+        String upgradeDb = "xihe_cp_upgrade_v40";
         String adminUrl = postgres.getJdbcUrl();
         try (Connection admin = DriverManager.getConnection(
                 adminUrl, postgres.getUsername(), postgres.getPassword());
@@ -817,10 +817,24 @@ class OperationLedgerFreshMigrationTest {
         try (Connection c = DriverManager.getConnection(
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
-                    + "WHERE version = '39' AND success = true"), "V39 must be applied on upgrade");
+                    + "WHERE version = '40' AND success = true"), "V40 must be applied on upgrade");
             assertEquals("user_submission", scalarString(c,
                     "SELECT origin FROM chat_runs WHERE id = '" + chatRunId + "'::uuid"),
                     "legacy ChatRuns must be backfilled as user submissions");
+            assertNull(scalarString(c, "SELECT kind FROM sessions WHERE id = '" + sessionId + "'::uuid"),
+                    "legacy root sessions remain un-derived");
+            UUID forkSessionId = UUID.randomUUID();
+            executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title, spawned_from_session_id, "
+                    + "spawned_from_run_id, spawned_at, kind) VALUES ('" + forkSessionId + "'::uuid, '"
+                    + workspaceId + "'::uuid, '" + userId + "'::uuid, 'fork-session', '" + sessionId
+                    + "'::uuid, '" + chatRunId + "'::uuid, NOW(), 'fork')");
+            assertEquals("fork", scalarString(c,
+                    "SELECT kind FROM sessions WHERE id = '" + forkSessionId + "'::uuid"));
+            assertThrows(SQLException.class, () -> executeUpdate(c,
+                    "INSERT INTO sessions (id, workspace_id, user_id, title, spawned_from_session_id) "
+                            + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, '"
+                            + userId + "'::uuid, 'partial-provenance', '" + sessionId + "'::uuid)"),
+                    "provenance fields must be all-null or all-present");
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM operation_extensions WHERE item_id = '"
                     + itemId + "'::uuid"), "existing extension rows must survive the upgrade");
             assertEquals("c", scalarString(c,

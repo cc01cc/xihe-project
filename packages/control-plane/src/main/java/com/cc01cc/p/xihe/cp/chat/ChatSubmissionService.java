@@ -118,7 +118,8 @@ public class ChatSubmissionService {
                 || !spawn.workspaceId().equals(childSession.getWorkspaceId())
                 || !UUID.fromString(spawn.parentSessionId()).equals(childSession.getSpawnedFromSessionId())
                 || !UUID.fromString(spawn.parentRunId()).equals(childSession.getSpawnedFromRunId())
-                || childSession.getSpawnedAt() == null) {
+                || childSession.getSpawnedAt() == null
+                || !Session.KIND_SPAWN.equals(childSession.getKind())) {
             throw spawnProvenanceConflict("Child session provenance does not match the parent run");
         }
 

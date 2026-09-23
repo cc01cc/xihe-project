@@ -69,7 +69,7 @@ flowchart LR
 ## 6. ChatRun 与错误终态（PLAN-247）
 
 - 公开 `POST /api/v1/chat` 的 readiness gate、SSE subscription 和 single-flight 通过后，CP 才创建 `origin=user_submission` 的 `ChatRun` 与 user `Message`；gate 前失败不产生历史消息。`origin` 不接受请求方设置。
-- `ChatRun.origin ∈ {user_submission, spawn}`；公开提交固定为前者。CP 内部 `ChatSubmissionService.createSpawn` 只接受父 Agent `spawn_agent` tool_call 的 durable `operation_items.id` UUID 作为 idempotency key，校验父 run/item 与 child Session provenance，并绕过浏览器 SSE gate。Spawn 只接受 fileId；CP 校验 child Session 所有权并从 File 行重建摘要/幂等 hash，不接受调用方附件 JSON，也不隐式共享 parent Session 文件。T1.4 已提供 CP persistence service contract；生产 Agent caller 与 authenticated internal entrypoint 在 PLAN-0407 T2.4 接线前尚未启用。
+- `ChatRun.origin ∈ {user_submission, spawn}`；公开提交固定为前者。CP 内部 `ChatSubmissionService.createSpawn` 只接受父 Agent `spawn_agent` tool_call 的 durable `operation_items.id` UUID 作为 idempotency key，校验父 run/item 与 child Session provenance，并绕过浏览器 SSE gate。Spawn 只接受 fileId；CP 校验 child Session 所有权并从 File 行重建摘要/幂等 hash，不接受调用方附件 JSON，也不隐式共享 parent Session 文件。T1.4 已提供 CP persistence service contract；生产 Agent caller 与 authenticated internal entrypoint 在 PLAN-0407 T2.10（grant gate 启用后）接线。
 - user submission 以 `(userId, sessionId, Idempotency-Key)` 唯一约束；spawn 另以 `(userId, idempotencyKey) WHERE origin='spawn'` 部分唯一索引防跨 child-session 并发重复。同事件同 request hash 返回既有 run，不同 hash 返回 `IDEMPOTENCY_KEY_CONFLICT`。
 - Agent provider failure 进入 `failed`/`partial`，流断开或缺少终态进入 `ambiguous`；`ambiguous` 不自动 retry，人工确认后使用新的幂等键。
 - `/api/v1/exec` 已删除，所有聊天 caller 统一迁移至 `/api/v1/chat`。

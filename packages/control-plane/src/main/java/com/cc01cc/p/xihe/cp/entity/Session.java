@@ -8,6 +8,9 @@ import java.util.UUID;
 @Table(name = "sessions")
 public class Session {
 
+    public static final String KIND_SPAWN = "spawn";
+    public static final String KIND_FORK = "fork";
+
     @Id
     @Column(name = "id", columnDefinition = "uuid")
     private UUID id;
@@ -44,6 +47,9 @@ public class Session {
 
     @Column(name = "spawned_at")
     private Instant spawnedAt;
+
+    @Column(name = "kind", length = 16)
+    private String kind;
 
     /**
      * PLAN-0337: session-scoped approval mode. {@code null} inherits the workspace
@@ -112,6 +118,8 @@ public class Session {
 
     public Instant getSpawnedAt() { return spawnedAt; }
     public void setSpawnedAt(Instant spawnedAt) { this.spawnedAt = spawnedAt; }
+    public String getKind() { return kind; }
+    public void setKind(String kind) { this.kind = kind; }
 
     public String getApprovalMode() { return approvalMode; }
     public void setApprovalMode(String approvalMode) { this.approvalMode = approvalMode; }
