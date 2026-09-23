@@ -600,10 +600,9 @@ impl WorkspaceManager {
                 })?;
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
             let exit_code = loop {
-                let info = docker
-                    .inspect_exec(&exec.id)
-                    .await
-                    .map_err(|e| RuntimeError::Docker(format!("strict probe {label} inspect: {e}")))?;
+                let info = docker.inspect_exec(&exec.id).await.map_err(|e| {
+                    RuntimeError::Docker(format!("strict probe {label} inspect: {e}"))
+                })?;
                 if let Some(code) = info.exit_code {
                     break code;
                 }

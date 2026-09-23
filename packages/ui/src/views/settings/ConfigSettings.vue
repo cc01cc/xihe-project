@@ -38,6 +38,7 @@ const domainLabels: Record<string, string> = {
   'user-preference': t('settings.domainUserPreference'),
   'logging': t('settings.domainLogging'),
   'approval-policy': t('settings.domainApprovalPolicy'),
+  'job-policy': t('settings.domainJobPolicy'),
 }
 
 const providerOptions = [
@@ -82,6 +83,10 @@ const domainSchemas: Record<string, DomainField[]> = {
       { label: t('settings.approvalModeManual'), value: 'manual' },
       { label: t('settings.approvalModeAuto'), value: 'auto' },
     ] },
+  ],
+  'job-policy': [
+    { key: 'defaultTimeoutSecs', label: t('settings.fieldDefaultTimeoutSecs'), type: 'number' },
+    { key: 'maxTimeoutSecs', label: t('settings.fieldMaxTimeoutSecs'), type: 'number' },
   ],
   'embedding': [
     { key: 'model', label: t('settings.fieldModel'), type: 'text' },

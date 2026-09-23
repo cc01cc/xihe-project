@@ -60,6 +60,16 @@
   // user 层不可写（显式例外）。缺省即 `manual`（fail-closed）。
   // "approval-policy": { "mode": "manual" },
 
+  // job-policy — job 运行时限（PLAN-0373 BL-22）：**instance 层默认值与硬上限权威，
+  // workspace 可在上限内下调**，user 层不可写。maxTimeoutSecs=0 表示未设上限（不钳制）。
+  // CP 在 tools/call 出站前无条件覆写 timeout：未传→默认、>0→min(参数,上限)、0→钳到上限
+  // （决策 #2/#8）。env 覆盖键 XIHE_JOB_TIMEOUT_DEFAULT_SECS / XIHE_JOB_TIMEOUT_MAX_SECS
+  // 命中即锁定（EnvOverlayRegistry，UI 显示锁定态）。
+  "job-policy": {
+    "defaultTimeoutSecs": 3600,
+    "maxTimeoutSecs": 0
+  },
+
   // embedding — 检索嵌入
   "embedding": {
     "model": "text-embedding-3-small",

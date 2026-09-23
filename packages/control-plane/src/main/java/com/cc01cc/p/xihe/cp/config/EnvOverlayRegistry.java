@@ -34,6 +34,11 @@ public class EnvOverlayRegistry {
     static {
         Map<String, List<String>> mapping = new LinkedHashMap<>();
         mapping.put("embedding.model", List.of("XIHE_EMBEDDING_MODEL"));
+        // PLAN-0373 decision #7: job runtime-limit keys are the second registered
+        // overlap — machine-injected deployment defaults (BL-59 packaging), locked
+        // in the UI and resolved through this front door (risk R4 / DEV-003 §2).
+        mapping.put("job-policy.defaultTimeoutSecs", List.of("XIHE_JOB_TIMEOUT_DEFAULT_SECS"));
+        mapping.put("job-policy.maxTimeoutSecs", List.of("XIHE_JOB_TIMEOUT_MAX_SECS"));
         MAPPING = Map.copyOf(mapping);
     }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { useConfigStore } from '../config'
+import { useConfigStore, INSTANCE_DOMAINS, LAYER_DOMAINS } from '../config'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -253,16 +253,33 @@ describe('useConfigStore', () => {
 
       await store.loadLayerDomains('workspace', 'ws-1')
 
-      expect(calls).toHaveLength(6)
+      // PLAN-0373: workspace 层新增 job-policy → 7 域。
+      expect(calls).toHaveLength(7)
       for (const call of calls) {
         expect(call.url).toContain('layer=workspace')
         expect(call.url).toContain('includeMeta=true')
         expect(call.url).toContain('workspaceId=ws-1')
       }
-      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(6)
+      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(7)
       expect(store.layerConfig.workspace['embedding']).toEqual({ 'workspace-embedding-key': 'value' })
       expect(store.envOverridden['embedding']).toEqual({ model: 'env-model' })
       expect(store.envOverridden['rag']).toEqual({})
+    })
+
+    it('job-policy is instance+workspace writable but absent from the user layer (PLAN-0373)', async () => {
+      const calls = mockLayerFetch()
+      const store = useConfigStore()
+
+      expect(INSTANCE_DOMAINS).toContain('job-policy')
+      expect(LAYER_DOMAINS.workspace).toContain('job-policy')
+      expect(LAYER_DOMAINS.user).not.toContain('job-policy')
+
+      await store.loadLayerDomains('instance')
+      expect(calls.some(c => c.url.includes('/config/job-policy?layer=instance'))).toBe(true)
+      expect(Object.keys(store.layerConfig.instance)).toHaveLength(INSTANCE_DOMAINS.length)
+
+      await store.loadLayerDomains('user')
+      expect(store.layerConfig.user['job-policy']).toBeUndefined()
     })
 
     it('loadLayerDomains loads the seven user domains without workspace query', async () => {

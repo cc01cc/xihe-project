@@ -11,12 +11,14 @@ export type ConfigLayer = 'instance' | 'workspace' | 'user'
 export const INSTANCE_DOMAINS = [
   'llm-provider', 'context-policy', 'embedding', 'rag',
   'agent-runtime', 'agent-profile', 'user-preference', 'logging',
-  'approval-policy',
+  'approval-policy', 'job-policy',
 ] as const
 
 /**
  * Full domain set. PLAN-0364 决策 #9（supersede PLAN-0337 选项①）：`approval-policy` 在
  * instance 层可写默认、workspace 可覆盖；user 层仍不可写（显式例外，见 DEV-003）。
+ * PLAN-0373：`job-policy`（job 运行时限）同构——instance 默认+硬上限、workspace 上限内
+ * 下调、user 层不可写（决策 #1）。
  */
 export const CONFIG_DOMAINS = INSTANCE_DOMAINS
 
@@ -25,7 +27,7 @@ export type ConfigDomain = typeof CONFIG_DOMAINS[number]
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
   instance: INSTANCE_DOMAINS,
   user: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'agent-profile', 'user-preference'],
-  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'approval-policy'],
+  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'approval-policy', 'job-policy'],
 }
 
 export interface ConfigImportReport {

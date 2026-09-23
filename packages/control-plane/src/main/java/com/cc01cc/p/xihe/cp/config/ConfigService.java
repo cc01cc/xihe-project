@@ -37,15 +37,17 @@ public class ConfigService {
     private static final Logger log = LoggerFactory.getLogger(ConfigService.class);
 
     /**
-     * Nine-domain target set (decision #13/#17/#37, extended by PLAN-0337): {@code approval-policy}
-     * carries the workspace-level approval mode. It is workspace-writable only — the user layer must
-     * not expose a third place to set the approval mode, and instance-level lockdown is expressed by
-     * locked deny/ask rules instead.
+     * Config domain target set (decision #13/#17/#37, extended by PLAN-0337 and PLAN-0373):
+     * {@code approval-policy} carries the workspace-level approval mode (workspace-writable only —
+     * the user layer must not expose a third place to set the approval mode, and instance-level
+     * lockdown is expressed by locked deny/ask rules instead); {@code job-policy} (PLAN-0373) is
+     * the job runtime-limit domain — instance default + hard cap, workspace can lower within the
+     * cap, user layer never writable.
      */
     public static final Set<String> DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
         "agent-runtime", "agent-profile", "user-preference", "logging",
-        "approval-policy", "pricing");
+        "approval-policy", "pricing", "job-policy");
 
     private static final Set<String> USER_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
@@ -53,7 +55,7 @@ public class ConfigService {
 
     private static final Set<String> WORKSPACE_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag", "agent-runtime",
-        "approval-policy");
+        "approval-policy", "job-policy");
 
     /** Decision #17: instructions is instance-level behaviour, never user/workspace writable. */
     private static final Map<String, Set<String>> INSTANCE_ONLY_KEYS = Map.of(
@@ -82,7 +84,13 @@ public class ConfigService {
             "logLevel", "INFO",
             "levelCp", "INFO",
             "levelAgent", "INFO",
-            "levelRuntime", "INFO"));
+            "levelRuntime", "INFO"),
+        // PLAN-0373 decision #8: job-policy code defaults — default 3600s (aligned
+        // with the Runtime job fallback); max 0 = no cap configured (no clamping
+        // until instance/env sets a positive ceiling).
+        "job-policy", Map.of(
+            "defaultTimeoutSecs", "3600",
+            "maxTimeoutSecs", "0"));
 
     @Autowired
     private ConfigJpaRepository repo;

@@ -513,4 +513,88 @@ class ConfigServiceTest {
         assertTrue(report.warnings().get(0).contains("never restore credentials"));
         assertEquals(0, providerConnections.count());
     }
+
+    // ------------------------------------------------------------------
+    // PLAN-0373 (BL-22): job-policy domain — 写层 / schema / 代码默认 / env 锁定
+    // ------------------------------------------------------------------
+
+    @Test
+    void putLayer_jobPolicy_isInstanceAndWorkspaceWritableButNeverUserWritable() {
+        configService.putLayer("instance", "job-policy",
+            Map.of("defaultTimeoutSecs", "7200", "maxTimeoutSecs", "3600"), "admin", null, null);
+        assertEquals("7200",
+            configService.resolve("job-policy", "defaultTimeoutSecs", null, wsA));
+
+        // workspace 在解析链上覆盖 instance（上限内下调的生效路径；上限钳制在 CP 执行点）。
+        configService.putLayer("workspace", "job-policy",
+            Map.of("defaultTimeoutSecs", "1800"), "user", null, wsA);
+        assertEquals("1800",
+            configService.resolve("job-policy", "defaultTimeoutSecs", null, wsA));
+        assertEquals("workspace",
+            configService.effective("job-policy", null, wsA).source());
+
+        assertThrows(ConfigService.ConfigAccessException.class, () ->
+            configService.putLayer("user", "job-policy",
+                Map.of("defaultTimeoutSecs", "60"), "user", userA, null));
+    }
+
+    @Test
+    void effective_jobPolicy_includesCodeDefaultsWhenUnset() {
+        ConfigService.EffectiveConfig effective = configService.effective("job-policy", null, null);
+
+        assertEquals("default", effective.source());
+        assertEquals("3600", effective.entries().get("defaultTimeoutSecs"));
+        assertEquals("0", effective.entries().get("maxTimeoutSecs"));
+    }
+
+    @Test
+    void putLayer_jobPolicySchemaRejectsInvalidValues() {
+        // defaultTimeoutSecs ≥1；maxTimeoutSecs ≥0（0 = 上限未设）；未知键 additionalProperties 拒绝。
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "job-policy",
+                Map.of("defaultTimeoutSecs", "0"), "admin", null, null));
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "job-policy",
+                Map.of("maxTimeoutSecs", "-1"), "admin", null, null));
+        Map<String, String> extra = new java.util.LinkedHashMap<>();
+        extra.put("defaultTimeoutSecs", "3600");
+        extra.put("unknownField", "1");
+        assertThrows(IllegalArgumentException.class, () ->
+            configService.putLayer("instance", "job-policy", extra, "admin", null, null));
+    }
+
+    @Test
+    void resolve_jobPolicy_envOverlayBeatsDatabaseRows() {
+        // env 命中即锁定（决策 #7/P3）：resolve/effective 取 env 值并署名 env，
+        // UI 经 envOverriddenKeys 渲染锁定态（镜像 embedding.model 机制）。
+        configService.putLayer("instance", "job-policy",
+            Map.of("defaultTimeoutSecs", "3600"), "admin", null, null);
+        Object originalOverlay = org.springframework.test.util.ReflectionTestUtils
+            .getField(configService, "envOverlay");
+        Map<String, String> env = Map.of("XIHE_JOB_TIMEOUT_DEFAULT_SECS", "7200");
+        org.springframework.test.util.ReflectionTestUtils.setField(
+            configService, "envOverlay", new EnvOverlayRegistry(env::get));
+        try {
+            assertEquals("7200",
+                configService.resolve("job-policy", "defaultTimeoutSecs", null, null));
+            assertTrue(configService.envOverriddenKeys("job-policy")
+                .contains("defaultTimeoutSecs"));
+            assertEquals("env", configService.effective("job-policy", null, null).source());
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(
+                configService, "envOverlay", originalOverlay);
+        }
+    }
+
+    @Test
+    void importJsonc_acceptsJobPolicySection() {
+        String jsonc = "{\"job-policy\":{\"defaultTimeoutSecs\":1800,\"maxTimeoutSecs\":600}}";
+
+        configService.importJsonc(jsonc, "instance", null, null);
+
+        Map<String, String> entries =
+            configService.layerEntries("instance", "job-policy", null, null);
+        assertEquals("1800", entries.get("defaultTimeoutSecs"));
+        assertEquals("600", entries.get("maxTimeoutSecs"));
+    }
 }

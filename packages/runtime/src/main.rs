@@ -664,7 +664,9 @@ impl XiheRuntime {
             .map(Json)
     }
 
-    #[tool(description = "Execute a long-running command in the background and return a jobId")]
+    #[tool(
+        description = "Execute a long-running command in the background and return a jobId; timeout is in seconds and is clamped to the configured maximum — an omitted timeout uses the configured default, an explicit 0 is clamped to the maximum, and a maximum of 0 means no limit"
+    )]
     async fn start_background_process(
         &self,
         Parameters(ExecuteCommandRequest {

@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 3
 status: active
 created: 2026-09-03
-updated: 2026-09-12
+updated: 2026-09-23
 ---
 
 # DEV-003: 配置管理
@@ -17,9 +17,9 @@ updated: 2026-09-12
 >
 > 现行模型（PLAN-0307 已落地）：**三层 `instance / workspace / user`**（解析链 `workspace > user > instance > 代码默认`）+ 凭证 **BYOK**（`provider_connections` 加密表，两级 `WORKSPACE > USER`；`SYSTEM` 归属已退役，见 PLAN-0364 M2）+ **env 覆盖锁定**（env 为最高部署权威，UI 显示 env 生效值并禁用该项）。端点以 `docs/api/openapi.yaml` 为准；认证、principal、授权和审计的冻结契约见根级 `spec/security/`（当前为 proposed）。
 
-## 1. 三层所有权与九域
+## 1. 三层所有权与十一域
 
-ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合为 `instance(9)`、`user(7)`、`workspace(6)`。`approval-policy` 自 PLAN-0364 决策 #9 起在 instance 层可写默认、workspace 可覆盖、user 层不可写（唯一的显式例外）；由此 **`instance ⊇ user` 与 `instance ⊇ workspace` 恢复成立**，而 `workspace ⊄ user`、`user ⊄ workspace` 仍成立：
+ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合为 `instance(11)`、`user(7)`、`workspace(7)`。`approval-policy`（PLAN-0364 决策 #9）与 `job-policy`（PLAN-0373 决策 #1）为**双显式例外**：instance 层可写默认、workspace 可覆盖、user 层不可写；由此 **`instance ⊇ user` 与 `instance ⊇ workspace` 恢复成立**，而 `workspace ⊄ user`、`user ⊄ workspace` 仍成立：
 
 | Domain | instance | user | workspace | 备注 |
 |--------|----------|------|-----------|------|
@@ -27,11 +27,13 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 | `context-policy` | ✅ | ✅ | ✅ | 压缩策略；结构化值为 JSON 文本 |
 | `embedding` | ✅ | ✅ | ✅ | `model` / `dimensions` |
 | `rag` | ✅ | ✅ | ✅ | `chunkSize` / `chunkOverlap` / `topK` / `minScore` |
+| `pricing` | ✅ | ❌ | ❌ | `models`（provider/model → per-MTok 计价条目；instance-only 计价权威，PLAN-0343） |
 | `agent-runtime` | ✅ | ✅ | ✅ | `useRegistry` / `useSupervisor` / `workersDir`；`instructions` **仅 instance**（决策 #17） |
 | `agent-profile` | ✅（默认） | ✅（个人） | ❌ | `userName` |
 | `user-preference` | ✅（默认） | ✅（个人） | ❌ | `theme` / `language` |
 | `logging` | ✅ | ❌ | ❌ | instance 层唯一权威，可热更（决策 #23） |
 | `approval-policy` | ✅（平台 ADMIN） | ❌ | ✅ | 审批模式 `mode`（`manual` / `auto`）；**instance 层可写默认、workspace 可覆盖**，user 层不可写（显式例外）；审计来源层由 `DbPolicyContextProvider` 按 `ConfigService.effective(...).source` 回填（PLAN-0364 决策 #9，supersede PLAN-0337 选项①；env 命中视为 instance 钉死） |
+| `job-policy` | ✅（平台 ADMIN） | ❌ | ✅ | `defaultTimeoutSecs` / `maxTimeoutSecs`（job 运行时限默认与硬上限，PLAN-0373 BL-22）；**instance 默认+上限权威、workspace 上限内下调、user 不可写**（与 approval-policy 同构的第二显式例外，决策 #1）；`maxTimeoutSecs=0`=上限未设不钳制（决策 #8），执行点在 CP `tools/call` 路由分叉前无条件覆写工具 `timeout`（决策 #5） |
 
 已裁撤域：`infrastructure`（→ env）、`workspace-config`（→ env / 工作区 API）、`mcp`（→ `mcp_stdio_servers` / `mcp_remote_servers` 表，决策 #27）；键迁移：`llm-provider.contextPolicy` → `context-policy`、`user-preference.{defaultModel,maxTokens,temperature}` → `llm-provider`（决策 #13/#16/#39）。
 
@@ -61,7 +63,7 @@ flowchart TD
 
 锚点：`ConfigService.resolve()` / `EnvOverlayRegistry`（env↔DB 键映射唯一登记点）。
 
-UI 入口 `/settings/config` 为**三个设置条目**：实例（仅 ADMIN，9 域）、工作区（当前 workspace，6 域，含 `approval-policy`）、个人（user 层 7 域）。读取统一 `GET /api/v1/config/{domain}?layer=<instance|workspace|user>&includeMeta=true`——`envOverridden` 列出被 env 覆盖的键及其 env 生效值，UI 对这些键禁用编辑并展示 env 值；保存体自动剔除锁定键。`includeMeta=true` 在 resolved（不带 layer）与单层视图下都返回该元数据。
+UI 入口 `/settings/config` 为**三个设置条目**：实例（仅 ADMIN，10 域）、工作区（当前 workspace，7 域，含 `approval-policy`、`job-policy`）、个人（user 层 7 域）。读取统一 `GET /api/v1/config/{domain}?layer=<instance|workspace|user>&includeMeta=true`——`envOverridden` 列出被 env 覆盖的键及其 env 生效值，UI 对这些键禁用编辑并展示 env 值；保存体自动剔除锁定键。`includeMeta=true` 在 resolved（不带 layer）与单层视图下都返回该元数据。
 
 ## 2. 启动环境变量（.env 文件链 + CLI --set）
 
@@ -82,7 +84,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 
 引导变量（不写文件）：`XIHE_ENV`（dev/test/prod）、`XIHE_LOAD_DOTENV=0`（逃逸开关）、`XIHE_ENV_FILE`（指定单文件）。**禁止 `.env.prod.local`**：生产配置只来自 `.env.prod` 入库基线或部署注入（IaC/CI secret）。
 
-**业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表唯一重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL`（`.env` base 提供默认值）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效，`layerEntries` 对锁定键剔除，避免 UI 看到的层值与实际生效值不一致），日志记录冲突与胜者。
+**业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表重合键为两组：`embedding.model ← XIHE_EMBEDDING_MODEL`（`.env` base 提供默认值）与 `job-policy.{defaultTimeoutSecs,maxTimeoutSecs} ← XIHE_JOB_TIMEOUT_{DEFAULT,MAX}_SECS`（**job-policy 两键定性为装机注入类**——BL-59 打包需求，PLAN-0373 决策 #8/风险 R4：走 EnvOverlayRegistry 登记正门 + 启动日志 `logStartupOverlays` + UI 锁定，**不得写成业务域可泛化的先例**）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效，`layerEntries` 对锁定键剔除，避免 UI 看到的层值与实际生效值不一致），日志记录冲突与胜者。
 **超时覆盖键**（`XIHE_MCP_TOOL_TIMEOUT_S` Agent / `XIHE_EXEC_COLLECT_TIMEOUT_S` Runtime / `xihe.mcp.forward-timeout-s` CP）登记为**本跳部署者覆盖**类：显式设置时该跳精确取该值并压制 CP 下发值；不参与 DB 域解析，正常路径由 CP 预算派生（PLAN-0308 决策 #21/#25）。
 
 | 变量 | 说明 |
@@ -93,11 +95,13 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注）
 | `XIHE_CP_JWT_SECRET` | JWT 签名密钥（仅 CP 自身初始化） |
 | `XIHE_WORKSPACE_HOST_ROOT` | host workspace 根（默认 `A03-xihe/.xihe-workspaces`；由 mise/scripts 注入，非 `.env` 模板项） |
 | `XIHE_WORKSPACE_MATERIALIZE_TIMEOUT_SECS` | Runtime 物化总时限（秒；默认 600，自取得 per-workspace 锁后计时、排队不计入；超时置 `failed` 并署名，PLAN-0323 M-1） |
+| `XIHE_JOB_TIMEOUT_DEFAULT_SECS` | `job-policy.defaultTimeoutSecs`（job 运行时限默认值，秒；PLAN-0373 决策 #7/#8——装机注入类重合键，env 命中即锁定，UI 显示 env 值且该字段不可改） |
+| `XIHE_JOB_TIMEOUT_MAX_SECS` | `job-policy.maxTimeoutSecs`（job 运行时限硬上限，秒；PLAN-0373 决策 #7/#8——`0`=上限未设不钳制；env 命中即锁定，UI 显示 env 值且该字段不可改） |
 | `XIHE_SANDBOX_MEMORY_MB` / `XIHE_SANDBOX_CPUS` / `XIHE_SANDBOX_PIDS_LIMIT` | 沙盒容器资源（默认 512MB / 2 CPU / 100 pids；env 部署权威，非法或越界值按字段回退默认并告警，创建容器时记录生效值） |
 | `XIHE_LOAD_DOTENV` | `0`：各模块不从 `.env` 读取应用层配置 |
 | `XIHE_LOG_LEVEL` / `XIHE_LOG_LEVEL_<MODULE>` | 日志启动引导等级（运行期权威为 DB `logging` 域，详见 DEV-004） |
 
-**业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表唯一重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL`：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效），日志记录冲突与胜者。目标态为逐步把业务键移出 `.env*`。
+**业务域键禁入 env（硬约束）**：业务配置（模型/provider/域参数）以 DB 为唯一权威；env 与 DB 的重合属兜底路径，必须显式暴露（决策 #22）。当前注册表重合键为 `embedding.model ← XIHE_EMBEDDING_MODEL` 与 `job-policy.{defaultTimeoutSecs,maxTimeoutSecs} ← XIHE_JOB_TIMEOUT_{DEFAULT,MAX}_SECS`（后者为装机注入类，PLAN-0373 决策 #8）：命中时 CP resolved/effective 使用 env 值，UI 锁定显示（绕 UI 改 DB 无效），日志记录冲突与胜者。目标态为逐步把业务键移出 `.env*`。
 
 **Agent env 兜底（离线/无租约路径，决策 #40）**：`XIHE_{PROVIDER}_API_KEY`（`openai`/`deepseek`/`xiaomi`/`anthropic`/`dashscope`）与 `llm-provider` 的非密钥 base/model 共同构成无 CP 租约时的兜底；**常规路径是 `provider_connections` 租约**（见 §3）。无租约且无兜底 key 的 run 在 `/chat` fail-closed 返回 503 `LLM_NOT_CONFIGURED`。
 
@@ -149,7 +153,7 @@ curl -X POST http://localhost:12631/api/v1/provider-connections \
 **方式 B：JSONC 导入**（批量初始化）
 
 ```bash
-cp config.import.example.jsonc config.import.local.jsonc  # 按九域模型填写非密钥配置（凭证走 provider_connections）
+cp config.import.example.jsonc config.import.local.jsonc  # 按十一域模型填写非密钥配置（凭证走 provider_connections）
 curl -X POST "http://localhost:12631/api/v1/config/import?layer=instance" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -160,7 +164,7 @@ curl -X POST "http://localhost:12631/api/v1/config/import?layer=instance" \
 
 **导入导出契约（决策 #36/#37，T2.21/T2.25）**：导出 `GET /api/v1/config/export?layer=instance&includeSecrets=<bool>`（ADMIN）—— config KV + `provider-connections` 元数据（label/status/modelDiscovery/manualModels/enabled/ownerType/ownerId/baseUrl）；`includeSecrets=false` 仅排除明文 `apiKey`，**任何模式都不输出库内密文**；导出写 AUDIT sink（actor/时间/是否含密钥，不记响应体）且响应 `Cache-Control: no-store`。导入**不恢复任何凭证**——`provider-connections` 条目整体跳过并在响应 `{imported, skipped, warnings}` 中列出（owner id 跨实例不可映射），需人工经凭证 API/UI 重建。导出产物落盘使用 `config.export*.jsonc`（gitignored）。UI 实例页内提供导出（含可选明文密钥开关）与导入（文件 + WARN 清单）入口。
 
-**配置 key 三方同步（硬约束）**：新增/修改 domain key 必须同步三处——（a）CP `config-schemas/*.json`（JSON Schema，同时约束 import 与 UI 保存）、（b）`config.import.example.jsonc` 模板、（c）UI `/settings/config` 表单；任一漏改会导致 import 与保存同时 400。
+**配置 key 多点同步（硬约束）**：新增/修改 domain key 必须同步四处——（a）CP `config-schemas/*.json`（JSON Schema，同时约束 import 与 UI 保存）、（b）`config.import.example.jsonc` 模板、（c）UI `/settings/config` 表单、（d）UI `stores/config.ts` 域列表（`INSTANCE_DOMAINS` / `LAYER_DOMAINS`，决定各 tab 呈现与 `loadLayerDomains` 拉取范围；PLAN-0373 对账 V4 新增同步点）；任一漏改会导致 import 与保存同时 400，或该域在 UI 域列表漏拉取/漏渲染。
 
 各模块客户端（层封闭，决策 #19）：instance/workspace 合并值经 `GET /internal/v1/config/effective/{domain}` 拉取（CP 按 workspace 上下文合并，含 env 覆盖）；user/workspace 覆盖随 run payload push（`userOverrides`/`workspaceOverrides`，决策 #3a；env 锁定键由 CP 剔除）：
 

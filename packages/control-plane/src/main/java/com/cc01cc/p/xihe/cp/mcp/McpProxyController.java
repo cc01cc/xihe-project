@@ -85,6 +85,23 @@ public class McpProxyController {
     /** PLAN-0344 T1.2：job 工具集（结果需同步到 job_state 档案）。 */
     private static final Set<String> JOB_TOOLS = Set.of(
             "start_background_process", "get_background_process", "cancel_background_process");
+    /**
+     * PLAN-0373 决策 #9（supersede #5「全 tools/call」字面）：job 时限注入面 =
+     * 仅 {@code start_background_process}（job 工具面）每次覆写；其他工具完全不碰 body
+     * （{@code execute_command}/{@code web_fetch} 共享 {@code timeout} 键会被注入改写语义，
+     * remote MCP {@code additionalProperties:false} 可能拒收注入键）。
+     */
+    static final String JOB_TIMEOUT_TOOL = "start_background_process";
+    /** PLAN-0373 (BL-22) job 运行时限配置域与键（决策 #7 命名冻结）。 */
+    static final String JOB_POLICY_DOMAIN = "job-policy";
+    static final String JOB_DEFAULT_TIMEOUT_KEY = "defaultTimeoutSecs";
+    static final String JOB_MAX_TIMEOUT_KEY = "maxTimeoutSecs";
+    /**
+     * PLAN-0373 decision #8 代码默认（须与 {@code ConfigService.CODE_DEFAULTS} 的
+     * job-policy 条目保持一致）：默认 3600s；上限 0 = 未设上限（不钳制）。
+     */
+    static final long JOB_CODE_DEFAULT_TIMEOUT_SECS = 3600L;
+    static final long JOB_CODE_MAX_TIMEOUT_SECS = 0L;
 
     private final HttpClient httpClient;
 
@@ -526,6 +543,29 @@ public class McpProxyController {
                 waits.agentSeconds(),
                 outputLimit == null ? "-" : outputLimit, sessionId);
 
+        // PLAN-0373 T1.5 + 决策 #9（supersede #5 字面「全 tools/call」）：job 时限注入面
+        // = 仅 start_background_process 每次覆写；其他工具（execute_command/web_fetch 等
+        // 共享 timeout 键、remote MCP 严格 schema）完全不碰 body、不产 clamp 日志。
+        // 注入点仍在 rewrite()/policy/approval 之后、路由分叉之前，且同时回写 body 与
+        // rewritten 两变量，保证 job 工具三个出口携带同一覆写值：
+        //   __system__ 转发原 body、remote 转发 rewritten 且在 forwardRemoteToRuntime
+        //   重解析装 envelope、stdio 转发 rewritten。
+        if (JOB_TIMEOUT_TOOL.equals(toolName)) {
+            JobTimeoutConfig jobTimeout = resolveJobTimeoutConfig(wsId, access.userId());
+            Long jobParam = extractJobTimeoutParam(body);
+            long jobEffective = computeJobTimeoutValue(
+                    jobParam, jobTimeout.defaultSecs(), jobTimeout.maxSecs());
+            logger.info(
+                    "[LIFECYCLE] service=cp event=job_timeout_clamp tool={} toolCallId={} runId={}"
+                            + " param={} value={} valueOrigin={} max={} maxOrigin={} sessionId={}",
+                    toolName, idOrDash(headers.getFirst("X-Operation-Item-Id")),
+                    idOrDash(headers.getFirst("X-Chat-Run-Id")),
+                    jobParam == null ? "absent" : jobParam, jobEffective, jobTimeout.defaultOrigin(),
+                    jobTimeout.maxSecs(), jobTimeout.maxOrigin(), sessionId);
+            body = writeJobTimeoutArgument(body, jobEffective);
+            rewritten = writeJobTimeoutArgument(rewritten, jobEffective);
+        }
+
         if ("__system__".equals(serverId)) {
             return forwardToRuntime(wsId, null, body, headers, sessionId, access, forwardWait, policySummary);
         }
@@ -644,6 +684,157 @@ public class McpProxyController {
         } catch (Exception e) {
             logger.warn("tool output limit config unavailable: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /** PLAN-0373 job 时限配置解析结果 + 各键四级来源（env/workspace/user/instance/default）。 */
+    record JobTimeoutConfig(long defaultSecs, long maxSecs, String defaultOrigin, String maxOrigin) {}
+
+    /**
+     * PLAN-0373 T1.3/T1.5：按 ConfigService 四级解析链读取 job-policy 默认值与硬上限
+     * （env 覆盖优先，决策 #7/#8）；解析失败回落代码默认并署名 {@code default}。
+     */
+    private JobTimeoutConfig resolveJobTimeoutConfig(String wsId, String userId) {
+        UUID user = uuidOrNull(userId);
+        UUID ws = uuidOrNull(wsId);
+        String defaultRaw;
+        String maxRaw;
+        try {
+            defaultRaw = configService.resolve(JOB_POLICY_DOMAIN, JOB_DEFAULT_TIMEOUT_KEY, user, ws);
+            maxRaw = configService.resolve(JOB_POLICY_DOMAIN, JOB_MAX_TIMEOUT_KEY, user, ws);
+        } catch (Exception e) {
+            logger.warn("job timeout config unavailable, falling back to code defaults: {}",
+                    e.getMessage());
+            return new JobTimeoutConfig(JOB_CODE_DEFAULT_TIMEOUT_SECS,
+                    JOB_CODE_MAX_TIMEOUT_SECS, "default", "default");
+        }
+        long defaultSecs = parseJobTimeoutSeconds(
+                defaultRaw, JOB_CODE_DEFAULT_TIMEOUT_SECS, JOB_DEFAULT_TIMEOUT_KEY);
+        long maxSecs = parseJobTimeoutSeconds(
+                maxRaw, JOB_CODE_MAX_TIMEOUT_SECS, JOB_MAX_TIMEOUT_KEY);
+        return new JobTimeoutConfig(defaultSecs, maxSecs,
+                jobTimeoutOrigin(JOB_DEFAULT_TIMEOUT_KEY, user, ws),
+                jobTimeoutOrigin(JOB_MAX_TIMEOUT_KEY, user, ws));
+    }
+
+    /** 配置字符串 → 秒数；空/非法/负值告警一次并回落代码默认（schema 侧已拦常规非法写入）。 */
+    private long parseJobTimeoutSeconds(String raw, long fallback, String key) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            long value = Long.parseLong(raw.trim());
+            if (value < 0) {
+                logger.warn("job timeout config {}={} is negative; falling back to {}",
+                        key, value, fallback);
+                return fallback;
+            }
+            return value;
+        } catch (NumberFormatException e) {
+            logger.warn("job timeout config {}={} is not a number; falling back to {}",
+                    key, raw, fallback);
+            return fallback;
+        }
+    }
+
+    /**
+     * 单键来源回填（P4 四级：env / workspace / instance / 默认；user 层镜像解析链但
+     * job-policy 不在 USER_WRITABLE，实际不可达）——与 {@code ConfigService.resolve}
+     * 的判定顺序一致，用于 job_timeout_clamp 日志署名。
+     */
+    private String jobTimeoutOrigin(String key, UUID userId, UUID ws) {
+        try {
+            if (configService.envOverriddenKeys(JOB_POLICY_DOMAIN).contains(key)) {
+                return "env";
+            }
+            if (ws != null
+                    && configService.layerEntries("workspace", JOB_POLICY_DOMAIN, null, ws)
+                            .containsKey(key)) {
+                return "workspace";
+            }
+            if (userId != null
+                    && configService.layerEntries("user", JOB_POLICY_DOMAIN, userId, null)
+                            .containsKey(key)) {
+                return "user";
+            }
+            if (configService.layerEntries("instance", JOB_POLICY_DOMAIN, null, null)
+                    .containsKey(key)) {
+                return "instance";
+            }
+        } catch (Exception e) {
+            logger.warn("job timeout origin unavailable for {}: {}", key, e.getMessage());
+        }
+        return "default";
+    }
+
+    /**
+     * PLAN-0373 P2 钳制矩阵（决策 #2/#8，纯函数供单测）：
+     * 未传/负值 → 默认（上限已设时 {@code min(默认, 上限)}，保住硬上限不变式）；
+     * {@code >0} → {@code min(参数, 上限)}（上限 0 = 不钳）；显式 {@code 0} → 钳到上限
+     * （上限 0 时 = 0 = 不限，即决策 #8「上限未设」语义）。
+     */
+    static long computeJobTimeoutValue(Long paramSecs, long defaultSecs, long maxSecs) {
+        if (paramSecs == null || paramSecs < 0) {
+            return maxSecs > 0 ? Math.min(defaultSecs, maxSecs) : defaultSecs;
+        }
+        if (paramSecs == 0L) {
+            return maxSecs;
+        }
+        return maxSecs > 0 ? Math.min(paramSecs, maxSecs) : paramSecs;
+    }
+
+    /** 从原始 tools/call body 提取模型参数 {@code timeout}（缺失/非数值 → null）。 */
+    private Long extractJobTimeoutParam(String body) {
+        try {
+            JsonNode args = objectMapper.readTree(body).path("params").path("arguments");
+            if (!args.isObject()) {
+                return null;
+            }
+            JsonNode node = args.path("timeout");
+            if (node.isNumber()) {
+                return node.asLong();
+            }
+            if (node.isTextual()) {
+                try {
+                    return Long.parseLong(node.asText().trim());
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            logger.debug("Failed to extract job timeout param: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 把覆写值写回 {@code params.arguments.timeout} 并重序列化；解析失败或形状不符时
+     * 原样返回（不阻断派发，job_timeout_clamp 日志已记录生效值）。
+     */
+    private String writeJobTimeoutArgument(String payload, long value) {
+        try {
+            JsonNode parsed = objectMapper.readTree(payload);
+            JsonNode paramsNode = parsed.get("params");
+            if (!(paramsNode instanceof ObjectNode params)) {
+                return payload;
+            }
+            JsonNode argsNode = params.get("arguments");
+            ObjectNode args;
+            if (argsNode instanceof ObjectNode existing) {
+                args = existing;
+            } else if (argsNode == null || argsNode.isNull() || argsNode.isMissingNode()) {
+                args = objectMapper.createObjectNode();
+                params.set("arguments", args);
+            } else {
+                logger.warn("tools/call arguments is not an object; skipping job timeout override");
+                return payload;
+            }
+            args.put("timeout", value);
+            return parsed.toString();
+        } catch (Exception e) {
+            logger.warn("Job timeout override failed, forwarding unchanged: {}", e.getMessage());
+            return payload;
         }
     }
 

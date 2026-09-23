@@ -37,4 +37,28 @@ class EnvOverlayRegistryTest {
         assertEquals("m", registry.overlayValue("embedding", "model").orElseThrow());
         assertTrue(registry.overlayValue("embedding", "unknown").isEmpty());
     }
+
+    @Test
+    void activeOverrides_mapsJobTimeoutKeysFromEnv() {
+        // PLAN-0373 decision #7：job-policy 两键为注册表第二组成 overlap（装机注入类）。
+        EnvOverlayRegistry registry = registryWith(Map.of(
+            "XIHE_JOB_TIMEOUT_DEFAULT_SECS", "7200",
+            "XIHE_JOB_TIMEOUT_MAX_SECS", "3600"));
+
+        assertEquals(
+            Map.of("defaultTimeoutSecs", "7200", "maxTimeoutSecs", "3600"),
+            registry.activeOverrides("job-policy"));
+        assertEquals("7200",
+            registry.overlayValue("job-policy", "defaultTimeoutSecs").orElseThrow());
+        assertTrue(registry.activeOverrides("approval-policy").isEmpty());
+    }
+
+    @Test
+    void activeOverrides_jobTimeoutPartialEnvOnlyLocksPresentKey() {
+        EnvOverlayRegistry registry =
+            registryWith(Map.of("XIHE_JOB_TIMEOUT_MAX_SECS", "1800"));
+
+        assertEquals(Map.of("maxTimeoutSecs", "1800"),
+            registry.activeOverrides("job-policy"));
+    }
 }
