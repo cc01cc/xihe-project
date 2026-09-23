@@ -323,6 +323,7 @@ public class ApprovalService {
                 throw new CpApiException(HttpStatus.CONFLICT, "APPROVAL_DECISION_IN_PROGRESS",
                         "Approval decision is already being dispatched");
             }
+            returnRunFromAwaitingApproval(approval.getRunId());
             throw new CpApiException(HttpStatus.GONE, "APPROVAL_EXPIRED", "Approval request expired");
         }
         if (isTerminal(approval.getState())) {
@@ -391,11 +392,23 @@ public class ApprovalService {
             logger.error("[LIFECYCLE] service=cp event=chat_approval_decide_transition_lost requestId={} expected dispatching state", requestId);
         }
         operationService.resolveApprovalItem(requestId, approved);
+        returnRunFromAwaitingApproval(approval.getRunId());
         audit.record(approval.getSessionId(), approval.getTool(), "approval_decision",
                 decision.kind().wireName() + (decision.feedback() == null ? "" : " feedback=" + safeFeedback(decision.feedback())));
         int propagated = propagate(approval, decision);
         return decisionResponse(requestId, "accepted", approved, decision.kind().wireName(), propagated,
                 plan, modeAtGrant);
+    }
+
+    private void returnRunFromAwaitingApproval(String runId) {
+        if (runId == null || runId.isBlank()) {
+            return;
+        }
+        int updated = chatRunRepository.transition(UUID.fromString(runId),
+                List.of("awaiting_approval"), "running", null, null, null, 0, 0);
+        operationService.transitionOperationForRun(runId, "running", null, null);
+        logger.info("[LIFECYCLE] service=cp event=chat_approval_run_returned runId={} updated={}",
+                runId, updated);
     }
 
     /**

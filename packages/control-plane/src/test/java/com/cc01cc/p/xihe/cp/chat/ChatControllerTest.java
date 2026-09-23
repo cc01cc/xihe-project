@@ -51,6 +51,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.mockito.ArgumentCaptor;
 
@@ -148,6 +150,7 @@ class ChatControllerTest extends AbstractH2Test {
     static void configureProperties(DynamicPropertyRegistry registry) {
         try {
             agentServer = HttpServer.create(new InetSocketAddress(0), 0);
+            agentServer.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
             agentServer.createContext("/internal/v1/agent/health", exchange -> {
                 if (!AGENT_AVAILABLE.get()) {
                     exchange.sendResponseHeaders(503, -1);
@@ -1005,6 +1008,141 @@ class ChatControllerTest extends AbstractH2Test {
             ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
             assertEquals("succeeded", run.getStatus());
         });
+        verify(runCheckpointService, timeout(5000)).requestCapture(runId);
+    }
+
+    @Test
+    void chat_streamingMarkedApprovalThenToolCompletionReachesSuccessTerminalAndSeals() {
+        CountDownLatch releaseStream = new CountDownLatch(1);
+        doReturn(Map.of("status", "accepted")).when(approvalAgentClient)
+                .respond(anyString(), anyBoolean(), anyString(), any());
+        String toolCallId = UUID.randomUUID().toString();
+        String pendingApprovalId = UUID.randomUUID().toString();
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(("event: token\ndata: {\"content\":\"first\"}\n\n"
+                        + "event: approval_request\n"
+                        + "data: {\"requestId\":\"" + pendingApprovalId + "\",\"tool\":\"write_file\","
+                        + "\"action\":\"Execute write_file\",\"details\":\"preview\","
+                        + "\"expiresAt\":\"2099-01-01T00:00:00Z\"}\n\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                try {
+                    releaseStream.await(15, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                out.write(("event: tool_call\n"
+                        + "data: {\"type\":\"tool_call\",\"tool\":\"write_file\","
+                        + "\"arguments\":{\"path\":\"a.txt\"},\"run_id\":\"" + toolCallId + "\"}\n\n"
+                        + "event: tool_result\n"
+                        + "data: {\"type\":\"tool_result\",\"tool\":\"write_file\",\"result\":\"ok\","
+                        + "\"run_id\":\"" + toolCallId + "\"}\n\n"
+                        + "event: token\ndata: {\"content\":\"done\"}\n\n"
+                        + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "stream then approve",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+        String operationId = (String) response.getBody().get("operationId");
+
+        try {
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+                assertEquals("awaiting_approval",
+                        chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
+            });
+            verify(sseEmitterManager, timeout(5000).atLeastOnce()).send(eq(sessionId), eq("token"), any());
+            verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any());
+
+            String approvalRequestId = approvalService.findActiveForRun(runId, userId, workspaceId).stream()
+                    .map(row -> (String) row.get("requestId"))
+                    .findFirst()
+                    .orElseThrow();
+            ResponseEntity<Map> decision = restTemplate.exchange(
+                    baseUrl + "/api/v1/chat/approvals/" + approvalRequestId + "/decision",
+                    HttpMethod.POST, new HttpEntity<>(Map.of("approved", true), headers), Map.class);
+            assertEquals(HttpStatus.OK, decision.getStatusCode());
+
+            assertEquals("running",
+                    chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
+            assertEquals("running",
+                    ledgerOperationRepository.findById(UUID.fromString(operationId)).orElseThrow().getStatus());
+        } finally {
+            releaseStream.countDown();
+        }
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertEquals("succeeded",
+                    chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
+        });
+        assertEquals("completed",
+                ledgerOperationRepository.findById(UUID.fromString(operationId)).orElseThrow().getStatus());
+        verify(runCheckpointService, timeout(5000)).requestCapture(runId);
+        List<?> toolItems = operationItemRepository.findByOperationIdOrderBySequenceAsc(operationId).stream()
+                .filter(item -> "tool_call".equals(
+                        ((com.cc01cc.p.xihe.cp.entity.OperationItem) item).getKind()))
+                .toList();
+        assertEquals(1, toolItems.size());
+        assertEquals("completed",
+                ((com.cc01cc.p.xihe.cp.entity.OperationItem) toolItems.get(0)).getStatus());
+    }
+
+    @Test
+    void chat_terminalSuccessWhileAwaitingApprovalStillTransitionsAndSeals() {
+        String pendingApprovalId = UUID.randomUUID().toString();
+        String sseBody = "event: token\ndata: {\"content\":\"first\"}\n\n"
+                + "event: approval_request\n"
+                + "data: {\"requestId\":\"" + pendingApprovalId + "\",\"tool\":\"write_file\","
+                + "\"action\":\"Execute write_file\",\"details\":\"preview\","
+                + "\"expiresAt\":\"2099-01-01T00:00:00Z\"}\n\n"
+                + "event: token\ndata: {\"content\":\"second\"}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+            exchange.sendResponseHeaders(200, sseBody.getBytes(StandardCharsets.UTF_8).length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(sseBody.getBytes(StandardCharsets.UTF_8));
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "terminal while awaiting approval",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+        String operationId = (String) response.getBody().get("operationId");
+
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any());
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertEquals("succeeded",
+                    chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
+        });
+        assertEquals("completed",
+                ledgerOperationRepository.findById(UUID.fromString(operationId)).orElseThrow().getStatus());
         verify(runCheckpointService, timeout(5000)).requestCapture(runId);
     }
 

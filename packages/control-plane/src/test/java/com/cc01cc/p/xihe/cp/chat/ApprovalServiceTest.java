@@ -281,6 +281,63 @@ class ApprovalServiceTest {
     }
 
     @Test
+    void decideApprovedReturnsTheRunFromAwaitingApprovalOnly() {
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
+                any(), any(), any(), any(Instant.class)))
+                .thenReturn(1);
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
+                .thenReturn(1);
+        when(agent.respond(TEST_REQUEST_ID, true, "once", null))
+                .thenReturn(Map.of("status", "accepted"));
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.once());
+
+        assertEquals("accepted", response.get("status"));
+        verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), eq(List.of("awaiting_approval")),
+                eq("running"), any(), any(), any(), eq(0), eq(0));
+        verify(operationService).transitionOperationForRun(TEST_RUN_ID, "running", null, null);
+    }
+
+    @Test
+    void decideRejectedReturnsTheRunFromAwaitingApprovalOnly() {
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(false), any(),
+                any(), any(), any(), any(Instant.class)))
+                .thenReturn(1);
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("rejected"), eq("reject"), any(Instant.class)))
+                .thenReturn(1);
+        when(agent.respond(TEST_REQUEST_ID, false, "reject", null))
+                .thenReturn(Map.of("status", "accepted"));
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.reject(null));
+
+        assertEquals("accepted", response.get("status"));
+        verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), eq(List.of("awaiting_approval")),
+                eq("running"), any(), any(), any(), eq(0), eq(0));
+        verify(operationService).transitionOperationForRun(TEST_RUN_ID, "running", null, null);
+    }
+
+    @Test
+    void decideExpiredReturnsTheRunFromAwaitingApprovalOnly() {
+        ChatApproval approval = pending(Instant.now().minusSeconds(1));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markExpired(eq(UUID.fromString(TEST_REQUEST_ID)), any(Instant.class))).thenReturn(1);
+
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, ApprovalDecision.once()));
+
+        assertEquals("APPROVAL_EXPIRED", error.getCode());
+        verify(runs).transition(eq(UUID.fromString(TEST_RUN_ID)), eq(List.of("awaiting_approval")),
+                eq("running"), any(), any(), any(), eq(0), eq(0));
+        verify(operationService).transitionOperationForRun(TEST_RUN_ID, "running", null, null);
+    }
+
+    @Test
     void replayIsScopedToTheAuthorizedSessionAndWorkspace() {
         ChatApproval approval = pending(Instant.now().plusSeconds(60));
         when(approvals.findBySessionIdAndUserIdAndWorkspaceIdAndStateInOrderByCreatedAtAsc(TEST_SESSION, TEST_USER, TEST_WORKSPACE, List.of("pending", "dispatching", "dispatch_unknown")))

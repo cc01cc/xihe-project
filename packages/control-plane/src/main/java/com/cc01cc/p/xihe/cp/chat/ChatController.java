@@ -736,7 +736,7 @@ public class ChatController {
                         : "partial".equals(outcome) ? "partial" : "ambiguous".equals(outcome) ? "ambiguous" : "failed";
                 transitionRun(
                         runId,
-                        List.of("running", "streaming"),
+                        List.of("running", "streaming", "awaiting_approval"),
                         status,
                         outcome,
                         relayResult.errorCode(),

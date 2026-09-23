@@ -327,6 +327,44 @@ class ApprovalIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void decideApprovedMovesRunOutOfAwaitingApproval() {
+        activeRun("awaiting_approval");
+        pendingApproval(requestId, Instant.now().plusSeconds(300));
+
+        ResponseEntity<Map> response = decide(requestId, true);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertNotEquals("awaiting_approval", run.getStatus());
+        assertEquals("running", run.getStatus());
+    }
+
+    @Test
+    void decideRejectedMovesRunOutOfAwaitingApproval() {
+        activeRun("awaiting_approval");
+        pendingApproval(requestId, Instant.now().plusSeconds(300));
+
+        ResponseEntity<Map> response = decide(requestId, false);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertNotEquals("awaiting_approval", run.getStatus());
+        assertEquals("running", run.getStatus());
+    }
+
+    @Test
+    void decideOnAlreadyTerminalRunDoesNotReviveTheRun() {
+        activeRun("succeeded");
+        pendingApproval(requestId, Instant.now().plusSeconds(300));
+
+        ResponseEntity<Map> response = decide(requestId, true);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("succeeded",
+                chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
+    }
+
+    @Test
     void decideIsIdempotentForSameDecision() {
         activeRun("running");
         pendingApproval(requestId, Instant.now().plusSeconds(300));
