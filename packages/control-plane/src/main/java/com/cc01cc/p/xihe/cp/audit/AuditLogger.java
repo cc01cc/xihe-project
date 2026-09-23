@@ -1,7 +1,10 @@
 package com.cc01cc.p.xihe.cp.audit;
 
+import com.cc01cc.p.xihe.cp.entity.AuditLog;
+import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import java.time.Instant;
@@ -11,8 +14,8 @@ import java.util.regex.Pattern;
 
 /**
  * AuditLogger records all MCP tool calls and policy decisions.
- * Persists to a dedicated audit JSONL file (logback logger "AUDIT") and keeps
- * a bounded in-memory recent-records view. Future: DB/ELK integration.
+ * Persists operational audit records to JSONL and durable change records to the
+ * existing audit_logs table; also keeps a bounded in-memory recent-records view.
  */
 @Component
 public class AuditLogger {
@@ -28,9 +31,17 @@ public class AuditLogger {
 
     private final Map<String, AuditRecord> recentRecords = new ConcurrentHashMap<>();
     private final boolean logToConsole;
+    private final AuditLogRepository auditLogRepository;
 
-    public AuditLogger(@Value("${cp.audit.log-to-console:true}") boolean logToConsole) {
+    @Autowired
+    public AuditLogger(@Value("${cp.audit.log-to-console:true}") boolean logToConsole,
+            AuditLogRepository auditLogRepository) {
         this.logToConsole = logToConsole;
+        this.auditLogRepository = auditLogRepository;
+    }
+
+    AuditLogger(boolean logToConsole) {
+        this(logToConsole, null);
     }
 
     public void record(String sessionId, String toolName, String action, String detail) {
@@ -105,6 +116,28 @@ public class AuditLogger {
                 includeSecrets,
                 connectionCount
             );
+        }
+    }
+
+    /** Persists sensitive state changes in the existing audit_logs stream. */
+    public void recordDurableChange(String actorUserId, String workspaceId, String action,
+            String resourceType, String resourceId, String detail) {
+        if (auditLogRepository == null) {
+            throw new IllegalStateException("Durable audit repository is not configured");
+        }
+        String safeDetail = sanitize(detail);
+        AuditLog entry = new AuditLog(action, resourceType);
+        entry.setUserId(actorUserId);
+        entry.setWorkspaceId(workspaceId);
+        entry.setResourceId(resourceId);
+        entry.setDetails(safeDetail);
+        auditLogRepository.save(entry);
+
+        auditLog.info("action={} | actor={} | workspace={} | resourceType={} | resourceId={} | detail={}",
+                action, actorUserId, workspaceId, resourceType, resourceId, safeDetail);
+        if (logToConsole) {
+            logger.info("[AUDIT] action={} | actor={} | workspace={} | resourceType={} | resourceId={} | detail={}",
+                    action, actorUserId, workspaceId, resourceType, resourceId, safeDetail);
         }
     }
 

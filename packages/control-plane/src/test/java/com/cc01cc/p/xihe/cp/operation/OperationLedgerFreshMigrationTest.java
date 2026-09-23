@@ -201,6 +201,39 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
+    void v38GrantsDefaultUniquenessIsScopedToSubjectAndSource() throws SQLException {
+        assertEquals(2, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname IN ('idx_grants_subject', 'uq_grants_default_subject')"),
+                "grant subject lookup and partial uniqueness indexes must be applied");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '38' AND success = true"),
+                "V38 must be recorded as applied");
+
+        UUID subjectId = UUID.randomUUID();
+        insertGrant("default", subjectId);
+        assertThrows(SQLException.class, () -> insertGrant("default", subjectId),
+                "a subject can have only one default permission set");
+
+        insertGrant("direct", subjectId);
+        insertGrant("direct", subjectId);
+        assertEquals(2, scalarInt("SELECT count(*) FROM grants WHERE source = 'direct' AND subject_id = '"
+                + subjectId + "'"), "non-default grants for one subject may coexist");
+    }
+
+    private static void insertGrant(String source, UUID subjectId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "INSERT INTO grants (id, subject_type, subject_id, permissions, source) "
+                        + "VALUES (?, 'user', ?, CAST(? AS JSONB), ?)")) {
+            statement.setObject(1, UUID.randomUUID());
+            statement.setObject(2, subjectId);
+            statement.setString(3, "[]");
+            statement.setString(4, source);
+            statement.executeUpdate();
+        }
+    }
+
+    @Test
     void v28LegacySnapshotRetirementApplied() throws SQLException {
         // PLAN-0357: the V4/V5 legacy snapshot objects are retired on a fresh chain.
         assertEquals(1, scalarInt(

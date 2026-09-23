@@ -1,7 +1,13 @@
 package com.cc01cc.p.xihe.cp.audit;
 
+import com.cc01cc.p.xihe.cp.entity.AuditLog;
+import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class AuditLoggerTest {
 
@@ -62,5 +68,25 @@ class AuditLoggerTest {
     @Test
     void sanitize_preservesNonSensitiveAuditContext() {
         assertEquals("policy=allow reason=classified", AuditLogger.sanitize("policy=allow reason=classified"));
+    }
+
+    @Test
+    void recordDurableChange_persistsSanitizedAuditRow() {
+        AuditLogRepository repository = mock(AuditLogRepository.class);
+        AuditLogger durableLogger = new AuditLogger(false, repository);
+
+        durableLogger.recordDurableChange("actor-id", "workspace-id", "grant_changed",
+                "grant", "grant-id", "source=direct apiKey=secret-value");
+
+        ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
+        verify(repository).save(captor.capture());
+        AuditLog row = captor.getValue();
+        assertEquals("actor-id", row.getUserId());
+        assertEquals("workspace-id", row.getWorkspaceId());
+        assertEquals("grant_changed", row.getAction());
+        assertEquals("grant", row.getResourceType());
+        assertEquals("grant-id", row.getResourceId());
+        assertFalse(row.getDetails().contains("secret-value"));
+        assertTrue(row.getDetails().contains("***redacted***"));
     }
 }

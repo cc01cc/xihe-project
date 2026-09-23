@@ -4,7 +4,11 @@ import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.AuditLog;
+import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -35,7 +39,11 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     @Autowired
     private WorkspaceUserRepository workspaceUserRepository;
 
+    @Autowired
+    private AuditLogRepository auditLogRepository;
+
     private Workspace createdWorkspace;
+    private UUID createdOwnerId;
 
     @TempDir
     private Path tempWorkspace;
@@ -55,6 +63,10 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                     workspaceUserRepository.findByIdWorkspaceId(createdWorkspace.getId()));
             workspaceRepository.deleteById(createdWorkspace.getId());
             createdWorkspace = null;
+        }
+        if (createdOwnerId != null) {
+            userRepository.deleteById(createdOwnerId);
+            createdOwnerId = null;
         }
     }
 
@@ -87,6 +99,10 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
                                 + "\"executionMode\":\"windows-host\",\"available\":true}")));
 
         String ownerId = UUID.randomUUID().toString();
+        User owner = userRepository.save(new User("owner-" + ownerId + "@test.com", "hash",
+                UserRole.USER, "Owner"));
+        ownerId = owner.getId().toString();
+        createdOwnerId = owner.getId();
         String idempotencyKey = "direct-attach-" + UUID.randomUUID();
         createdWorkspace = workspaceService.createWorkspace(
                 "direct-attach", null, ownerId, null, null,
@@ -113,6 +129,13 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         Workspace switched = workspaceService.changeExecutionMode(
                 createdWorkspace.getId().toString(), ownerId, false, "windows-mxc");
         assertEquals("windows-mxc", switched.getExecutionMode());
+        AuditLog modeAudit = auditLogRepository.findByWorkspaceIdOrderByCreatedAtDesc(
+                        createdWorkspace.getId().toString()).stream()
+                .filter(entry -> "workspace_execution_mode_changed".equals(entry.getAction()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("from=windows-host to=windows-mxc", modeAudit.getDetails().substring(
+                modeAudit.getDetails().indexOf("from=")));
         wireMock.verify(3, postRequestedFor(
                 urlEqualTo("/internal/v1/runtime/capabilities/direct-attach/probe")));
     }

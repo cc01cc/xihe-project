@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -66,6 +67,7 @@ public class WorkspaceService {
     private final JobStateService jobStateService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final WorkspaceEventManager workspaceEventManager;
+    private final AuditLogger auditLogger;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceUserRepository workspaceUserRepository,
@@ -76,7 +78,8 @@ public class WorkspaceService {
                             @Value("${cp.agent-api-token:dev-token-not-secure}") String serviceToken,
                             JobStateService jobStateService,
                             com.fasterxml.jackson.databind.ObjectMapper objectMapper,
-                            WorkspaceEventManager workspaceEventManager) {
+                            WorkspaceEventManager workspaceEventManager,
+                            AuditLogger auditLogger) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.userRepository = userRepository;
@@ -87,6 +90,7 @@ public class WorkspaceService {
         this.jobStateService = jobStateService;
         this.objectMapper = objectMapper;
         this.workspaceEventManager = workspaceEventManager;
+        this.auditLogger = auditLogger;
     }
 
     /**
@@ -271,6 +275,7 @@ public class WorkspaceService {
         if ("direct_attach".equals(workspace.getStorageMode())) {
             probeDirectAttach("direct_attach", workspace.getHostPath(), normalizedMode);
         }
+        String previousMode = workspace.getExecutionMode();
         workspace.setExecutionMode(normalizedMode);
         String sandboxSpec = workspace.getSandboxSpec();
         if (sandboxSpec == null || sandboxSpec.isBlank()) {
@@ -279,6 +284,9 @@ public class WorkspaceService {
         workspaceRepository.save(workspace);
         executionSpecService.createExecutionSpec(workspaceId, sandboxSpec,
                 actorId == null ? "admin" : actorId, "execution-mode-change");
+        auditLogger.recordDurableChange(actorId, workspaceId, "workspace_execution_mode_changed",
+                "workspace", workspaceId,
+                "actorType=" + (admin ? "admin" : "user") + " from=" + previousMode + " to=" + normalizedMode);
         return workspace;
     }
 
