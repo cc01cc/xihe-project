@@ -5,8 +5,8 @@
 > Profile：`ui`  
 > Owner：UI + 跨边界 owner  
 > 消费者：UI、CP、Agent、Session、Workspace、可访问性审查者  
-> 来源：PLAN-0388、DEV-010/017、UI stores/SSE/E2E  
-> 更新日期：2026-09-20
+> 来源：PLAN-0388、PLAN-0401、DEV-010/017、UI stores/SSE/E2E  
+> 更新日期：2026-09-23
 
 ## 范围
 
@@ -16,12 +16,21 @@
 
 | Surface | 用户动作 | canonical 数据源 | UI projection |
 |---|---|---|---|
-| Sidebar/Chat | 新建、搜索、切换 Session | CP Session API | `useSessionStore` + Chat route |
+| Sidebar/Chat | 新建、切换 Session（导航到 Workspace Chat） | CP Session API | `useSessionStore` + workspace-chat route |
 | Chat stream | 发送、停止、重试、查看 tool/diagnostic | CP ChatRun/Operation + Chat SSE | `useChatStore`、`useAgentStore` |
 | Approval | 查看、批准、拒绝、保存规则 | CP approval/policy API + SSE | `ApprovalModal`、pending summary |
 | Workspace | 打开、切换、刷新、文件操作 | CP Workspace + Runtime + Workspace SSE | `useWorkspaceStore` |
-| Workspace Chat | 在 Workspace 内发送 tool-mode Chat | Session/Agent/Workspace contracts | `ChatPanel` + Session store |
+| Workspace Chat | 在当前 Workspace 上下文中发送 Chat（含 tool-mode） | Session/Agent/Workspace contracts | `ChatPanel` + Session store |
 | Global feedback | loading/error/reconnect/empty | API Problem Details/SSE/transport | inline error、Toast、status region |
+
+## Workspace-first 导航归属（PLAN-0401）
+
+- Chat 是 Workspace 的子入口：Session 只能经 `/workspace/:workspaceId/chat/:sessionId` 进入；顶层 `/chat` 路由已移除，Session 列表与新建动作一律导航到该路径。
+- 未知或遗留路径（含旧 `/chat/:sessionId` 书签）MUST 由 catch-all 恢复到 `/workspace` 落地；不得呈现空白的未匹配路由。
+- `workspaceId` 未就绪（hydrate 未完成）时，新建/切换/跳转类动作 MUST 先解析当前 Workspace 再执行 guard；不得静默丢弃用户动作或回退到不可恢复错误。
+- 切换 Workspace 允许切走在飞 ChatRun：静默断开该会话的 Chat SSE 订阅，回切时重连并回放终态；Session 永不 rebind 到另一 Workspace。
+- 移动端（≤767px）不挂载对话列；Chat 经 MobileChatSheet 进入，其入口控件依赖当前 Session 已存在。
+- 普通 Chat（`toolMode=none`）与 Workspace Chat（`toolMode=workspace`）保留为运行能力差异，不构成两个并列的一级导航入口。
 
 ## 用户动作闭环
 
@@ -61,3 +70,4 @@
 - 动作矩阵：PLAN-0388 `evidence/action-matrix.md`。
 - Session/Agent/Workspace 边界：`../session/`、`../agent/`、`../security/` 与 Workspace proposed SPEC。
 - 真实浏览器闭环：PLAN-0388 T3/V5/V6，当前未完成。
+- Workspace-first 导航落地：PLAN-0401 `spec/ui-shell.md` 草案与 `evidence/browser-flows.md`（真实 Compose E2E 轮次与旧路由恢复用例）。
