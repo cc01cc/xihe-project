@@ -379,6 +379,21 @@ describe('ApprovalModal', () => {
     expect(wrapper.emitted('approve')).toBeUndefined()
   })
 
+  it('returns to the decision view from saved-rule confirmation on Escape without deciding', async () => {
+    const wrapper = mountModal({ approval: { ...baseApproval, policy }, show: true })
+    await wrapper.find('[data-testid="approval-save-rule"]').trigger('click')
+    expect(wrapper.find('[data-testid="approval-save-confirm"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="approval-rule-resource"]').trigger('keydown', { key: 'Escape' })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="approval-save-confirm"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(true)
+    expect(wrapper.emitted('reject')).toBeUndefined()
+    expect(wrapper.emitted('approve')).toBeUndefined()
+    expect(wrapper.emitted('dismiss')).toBeUndefined()
+  })
+
   it('traps focus within its own teleported modal when another modal is open', async () => {
     const mountAttached = (requestId: string) => mount(ApprovalModal, {
       props: { approval: { ...baseApproval, requestId }, show: true },
