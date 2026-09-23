@@ -178,6 +178,29 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
+    void v37SessionProvenanceColumnsAndIndexesApplied() throws SQLException {
+        for (String column : new String[]{"spawned_from_session_id", "spawned_from_run_id", "spawned_at"}) {
+            assertNotNull(scalarString(
+                    "SELECT column_name FROM information_schema.columns "
+                            + "WHERE table_schema = 'public' AND table_name = 'sessions' "
+                            + "AND column_name = '" + column + "'"),
+                    "sessions." + column + " must exist after V37");
+            assertEquals("YES", scalarString(
+                    "SELECT is_nullable FROM information_schema.columns "
+                            + "WHERE table_schema = 'public' AND table_name = 'sessions' "
+                            + "AND column_name = '" + column + "'"),
+                    "sessions." + column + " must remain nullable for existing sessions");
+        }
+        assertEquals(2, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname IN ('idx_sessions_spawned_from_session', 'idx_sessions_spawned_from_run')"),
+                "both provenance lookup indexes must be applied");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '37' AND success = true"),
+                "V37 must be recorded as applied");
+    }
+
+    @Test
     void v28LegacySnapshotRetirementApplied() throws SQLException {
         // PLAN-0357: the V4/V5 legacy snapshot objects are retired on a fresh chain.
         assertEquals(1, scalarInt(

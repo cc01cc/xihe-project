@@ -36,6 +36,15 @@ public class Session {
     @Column(name = "connection_revision")
     private Long connectionRevision;
 
+    @Column(name = "spawned_from_session_id", columnDefinition = "uuid")
+    private UUID spawnedFromSessionId;
+
+    @Column(name = "spawned_from_run_id", columnDefinition = "uuid")
+    private UUID spawnedFromRunId;
+
+    @Column(name = "spawned_at")
+    private Instant spawnedAt;
+
     /**
      * PLAN-0337: session-scoped approval mode. {@code null} inherits the workspace
      * {@code approval-policy.mode}; only {@code manual} / {@code auto} may be stored (V24 CHECK).
@@ -94,6 +103,15 @@ public class Session {
 
     public Long getConnectionRevision() { return connectionRevision; }
     public void setConnectionRevision(Long connectionRevision) { this.connectionRevision = connectionRevision; }
+
+    public UUID getSpawnedFromSessionId() { return spawnedFromSessionId; }
+    public void setSpawnedFromSessionId(UUID spawnedFromSessionId) { this.spawnedFromSessionId = spawnedFromSessionId; }
+
+    public UUID getSpawnedFromRunId() { return spawnedFromRunId; }
+    public void setSpawnedFromRunId(UUID spawnedFromRunId) { this.spawnedFromRunId = spawnedFromRunId; }
+
+    public Instant getSpawnedAt() { return spawnedAt; }
+    public void setSpawnedAt(Instant spawnedAt) { this.spawnedAt = spawnedAt; }
 
     public String getApprovalMode() { return approvalMode; }
     public void setApprovalMode(String approvalMode) { this.approvalMode = approvalMode; }
