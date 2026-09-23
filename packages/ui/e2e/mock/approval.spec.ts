@@ -505,7 +505,7 @@ test.describe('Chat approval flow', () => {
     await expect(dialog).toBeHidden({ timeout: 5000 })
   })
 
-  test('Escape submits one structured rejection', async ({ page }) => {
+  test('Escape dismisses locally with zero decisions and the reopen pill restores the modal', async ({ page }) => {
     const calls = await installDecisionRoute(page, 200, {
       status: 'accepted',
       requestId: REQUEST_ID,
@@ -519,7 +519,25 @@ test.describe('Chat approval flow', () => {
     await expect(dialog).toBeVisible({ timeout: 5000 })
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden({ timeout: 5000 })
-    expect(calls).toEqual([{ requestId: REQUEST_ID, body: { decision: 'reject' } }])
+    expect(calls).toHaveLength(0)
+
+    const pill = page.locator('[data-testid="pending-approval-reopen-pill"]')
+    await expect(pill).toBeVisible({ timeout: 5000 })
+    await expect(pill).toHaveRole('button')
+    const pillName = (await pill.getAttribute('aria-label')) ?? (await pill.textContent()) ?? ''
+    expect(pillName.trim().length).toBeGreaterThan(0)
+    await page.locator('[data-testid="chat-input"]').focus()
+    await page.keyboard.press('Shift+Tab')
+    await expect(pill).toBeFocused()
+
+    await pill.click()
+    await expect(dialog).toBeVisible({ timeout: 5000 })
+    await expect(pill).toHaveCount(0)
+
+    await dialog.locator('[data-testid="approval-reject"]').click()
+    await expect(dialog).toBeHidden({ timeout: 5000 })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toEqual({ requestId: REQUEST_ID, body: { decision: 'reject' } })
   })
 
   test('workspace chat keeps the auto warning and close action visible', async ({ page }) => {

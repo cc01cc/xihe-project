@@ -281,23 +281,60 @@ describe('ApprovalModal', () => {
     expect(wrapper.emitted('reject')).toBeUndefined()
   })
 
-  it('turns the normal close action into one structured rejection', async () => {
+  it('closes via the X button with a dismiss and never a decision', async () => {
     const wrapper = mountModal({ approval: baseApproval, show: true })
     await wrapper.find('[data-testid="approval-feedback"]').setValue('  \n  ')
 
     await wrapper.find('button[aria-label="Close"]').trigger('click')
 
-    expect(wrapper.emitted('reject')).toEqual([[{ decision: 'reject', requestId: REQUEST_ID }]])
+    expect(wrapper.emitted('dismiss')).toHaveLength(1)
+    expect(wrapper.emitted('reject')).toBeUndefined()
+    expect(wrapper.emitted('approve')).toBeUndefined()
   })
 
-  it('rejects on Escape without granting the approval', async () => {
+  it('dismisses on Escape without granting or rejecting', async () => {
     const wrapper = mountModal({ approval: baseApproval, show: true })
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await nextTick()
 
-    expect(wrapper.emitted('reject')).toEqual([[{ decision: 'reject', requestId: REQUEST_ID }]])
+    expect(wrapper.emitted('dismiss')).toHaveLength(1)
+    expect(wrapper.emitted('reject')).toBeUndefined()
     expect(wrapper.emitted('approve')).toBeUndefined()
+  })
+
+  it('keeps surface Enter as exactly one allow-once decision', async () => {
+    const wrapper = mountModal({ approval: baseApproval, show: true })
+    const content = wrapper.find('.approval-content')
+
+    await content.trigger('keydown', { key: 'Enter' })
+    await content.trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('approve')).toEqual([[{ decision: 'once', requestId: REQUEST_ID }]])
+    expect(wrapper.emitted('approve')).toHaveLength(1)
+  })
+
+  it('restores focus to the triggering element after a dismiss close', async () => {
+    const trigger = document.createElement('button')
+    trigger.textContent = 'reopen chat input'
+    document.body.appendChild(trigger)
+    trigger.focus()
+
+    const wrapper = mount(ApprovalModal, {
+      props: { approval: baseApproval, show: false },
+      attachTo: document.body,
+      global: { plugins: [i18n] },
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect(document.activeElement).toBe(wrapper.find('[data-testid="approval-approve"]').element)
+
+    await wrapper.setProps({ show: false })
+    await flushPromises()
+
+    expect(document.activeElement).toBe(trigger)
+    wrapper.unmount()
+    trigger.remove()
   })
 
   it('does not offer saved rules without structured policy evidence', async () => {

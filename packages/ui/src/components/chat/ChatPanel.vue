@@ -61,7 +61,39 @@ const pendingApproval = computed(
 );
 const approvalSubmitting = ref(false);
 const approvalError = ref<string | null>(null);
-const showApproval = computed(() => pendingApproval.value !== null);
+const dismissedRequestIds = ref(new Set<string>());
+const showApproval = computed(() => {
+    const approval = pendingApproval.value;
+    if (!approval) return false;
+    if (approval.state === "dispatch_unknown") return true;
+    return !dismissedRequestIds.value.has(approval.requestId);
+});
+const showReopenPill = computed(() => {
+    const approval = pendingApproval.value;
+    return (
+        approval !== null &&
+        !showApproval.value &&
+        dismissedRequestIds.value.has(approval.requestId)
+    );
+});
+
+function handleApprovalDismiss() {
+    const approval = pendingApproval.value;
+    if (!approval) return;
+    dismissedRequestIds.value.add(approval.requestId);
+}
+
+function reopenApproval() {
+    const approval = pendingApproval.value;
+    if (!approval) return;
+    dismissedRequestIds.value.delete(approval.requestId);
+}
+
+watch(pendingApproval, (approval, previous) => {
+    if (previous && (!approval || approval.requestId !== previous.requestId)) {
+        dismissedRequestIds.value.delete(previous.requestId);
+    }
+});
 /** Classification authority hint (server still enforces): workspace OWNER / instance ADMIN. */
 const canClassifyApproval = computed(() => authStore.canClassifyTools);
 
@@ -364,6 +396,26 @@ watch(
             </div>
         </div>
 
+        <button
+            v-if="showReopenPill"
+            type="button"
+            data-testid="pending-approval-reopen-pill"
+            class="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm transition hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            @click="reopenApproval"
+        >
+            <span class="flex min-w-0 items-center gap-2">
+                <span class="shrink-0 font-medium">{{
+                    t("chat.pendingApprovalReopenLabel")
+                }}</span>
+                <span class="truncate text-muted-foreground">{{
+                    pendingApproval?.tool
+                }}</span>
+            </span>
+            <span class="shrink-0 font-medium text-primary">{{
+                t("chat.pendingApprovalReopenAction")
+            }}</span>
+        </button>
+
         <InputArea
             ref="inputComponent"
             :session-id="sessionId"
@@ -380,6 +432,7 @@ watch(
             :can-classify="canClassifyApproval"
             @approve="decideApproval"
             @reject="decideApproval"
+            @dismiss="handleApprovalDismiss"
         />
 
         <RevertPreviewDialog

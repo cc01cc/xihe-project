@@ -110,3 +110,95 @@ describe('ChatPanel approval decision correlation (PLAN-0328 T1.14)', () => {
     expect(decideChatApproval).toHaveBeenCalledWith(REQUEST_ID, { decision: 'session' })
   })
 })
+
+describe('ChatPanel approval dismiss and reopen pill (PLAN-0404)', () => {
+  it('dismisses locally with zero decisions and reopens from the pill', async () => {
+    const decideChatApproval = vi.mocked(api.decideChatApproval)
+    decideChatApproval.mockResolvedValue({
+      status: 'accepted',
+      requestId: REQUEST_ID,
+      approved: true,
+      decision: 'once',
+    })
+    const wrapper = mountPanel()
+    useAgentStore().addApprovalRequest(approval)
+    await nextTick()
+    await flushPromises()
+
+    const modal = wrapper.findComponent(ApprovalModal)
+    expect(modal.props('show')).toBe(true)
+
+    modal.vm.$emit('dismiss')
+    await nextTick()
+
+    expect(decideChatApproval).not.toHaveBeenCalled()
+    expect(modal.props('show')).toBe(false)
+    const pill = wrapper.find('[data-testid="pending-approval-reopen-pill"]')
+    expect(pill.exists()).toBe(true)
+    expect(pill.attributes('type')).toBe('button')
+    expect((pill.text() ?? '').trim().length).toBeGreaterThan(0)
+
+    await pill.trigger('click')
+    await nextTick()
+
+    expect(modal.props('show')).toBe(true)
+    expect(wrapper.find('[data-testid="pending-approval-reopen-pill"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="approval-approve"]').trigger('click')
+    await flushPromises()
+
+    expect(decideChatApproval).toHaveBeenCalledTimes(1)
+    expect(decideChatApproval).toHaveBeenCalledWith(REQUEST_ID, { decision: 'once' })
+  })
+
+  it('keeps the dispatch_unknown recovery entry shown after a dismiss', async () => {
+    const wrapper = mountPanel()
+    useAgentStore().addApprovalRequest({ ...approval, state: 'dispatch_unknown' })
+    await nextTick()
+    await flushPromises()
+
+    const modal = wrapper.findComponent(ApprovalModal)
+    expect(modal.props('show')).toBe(true)
+
+    modal.vm.$emit('dismiss')
+    await nextTick()
+
+    expect(modal.props('show')).toBe(true)
+    expect(wrapper.find('[data-testid="pending-approval-reopen-pill"]').exists()).toBe(false)
+    expect(vi.mocked(api.decideChatApproval)).not.toHaveBeenCalled()
+  })
+
+  it('drops the local dismiss record once the pending approval disappears', async () => {
+    const wrapper = mountPanel()
+    const store = useAgentStore()
+    store.addApprovalRequest(approval)
+    await nextTick()
+    await flushPromises()
+
+    const modal = wrapper.findComponent(ApprovalModal)
+    modal.vm.$emit('dismiss')
+    await nextTick()
+    expect(modal.props('show')).toBe(false)
+    expect(wrapper.find('[data-testid="pending-approval-reopen-pill"]').exists()).toBe(true)
+
+    store.agentState.pendingApprovals.splice(0)
+    await nextTick()
+    expect(wrapper.find('[data-testid="pending-approval-reopen-pill"]').exists()).toBe(false)
+
+    store.addApprovalRequest(approval)
+    await nextTick()
+    expect(modal.props('show')).toBe(true)
+    expect(wrapper.find('[data-testid="pending-approval-reopen-pill"]').exists()).toBe(false)
+  })
+
+  it('ships reopen pill i18n keys in zh-CN and en-US without placeholders', () => {
+    const keys = ['pendingApprovalReopenLabel', 'pendingApprovalReopenAction']
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      const messages = i18n.global.getLocaleMessage(locale) as { chat: Record<string, string> }
+      for (const key of keys) {
+        expect(messages.chat[key], `${locale}.${key}`).toBeTruthy()
+        expect(messages.chat[key], `${locale}.${key}`).not.toMatch(/\{[^}]*\}/)
+      }
+    }
+  })
+})

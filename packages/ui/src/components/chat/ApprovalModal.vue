@@ -23,6 +23,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   approve: [decision: ApprovalDecisionEnvelope]
   reject: [decision: ApprovalDecisionEnvelope]
+  dismiss: []
 }>()
 
 const { t } = useI18n()
@@ -331,7 +332,7 @@ async function submitClassification() {
 
 function handleClose() {
   if (saveConfirming.value && !canSubmit.value) return
-  submitReject()
+  emit('dismiss')
 }
 
 function handleContentKeydown(event: KeyboardEvent) {
