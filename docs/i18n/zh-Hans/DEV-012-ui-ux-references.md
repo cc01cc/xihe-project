@@ -25,6 +25,7 @@ updated: 2026-09-03
 | **Lobe Chat** | `lobehub/lobe-chat` | 暗色/亮色主题一致性、消息气泡、模型选择 Popover、插件市场、PWA 布局 | `packages/ui/src/components/chat/` |
 | **Open WebUI** | `open-webui/open-webui` | 3-tier 配置分层、Admin Panel、文档 RAG、pipeline 式模型管理 | `packages/ui/src/views/settings/ConfigSettings.vue` |
 | **NextChat** | `ChatGPTNextWeb/NextChat` | 极简输入区、Preset/Mask、Artifact 弹窗、响应式侧边栏 | `packages/ui/src/components/chat/` |
+| **pi-coding-agent** | `badlogic/pi-mono` / [pi.dev](https://pi.dev/) | 运行中 steering、完成后 follow-up、可分支 session tree；仅借鉴交互语义，不复制实现 | `packages/ui/src/components/chat/`（后置，见 BL-63） |
 
 ## Agent 编排与可视化
 
