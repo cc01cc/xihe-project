@@ -17,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     boolean existsBySessionId(String sessionId);
 
+    boolean existsBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
+
     List<String> ACTIVE_LEASE_STATUSES = List.of(
             "accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching");
 

@@ -355,6 +355,7 @@ public class ChatSubmissionService {
                                String leaseOwner, String requestId, String content, String attachmentsJson,
                                List<String> attachmentIds, String requestedPrincipalId) {
         bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
+        rejectConcurrentSubmission(sessionId, userId, idempotencyKey);
 
         ChatRun chatRun = new ChatRun(
                 runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,
@@ -384,6 +385,26 @@ public class ChatSubmissionService {
                 userId, sessionId, workspaceId, runId, requestId,
                 "chat", "ui", "user", userId, idempotencyKey, "Chat operation");
         return new Submission(chatRun, userMessage, operation);
+    }
+
+    /**
+     * 锁内纵深防御（Session 行锁已由 {@link #bindOrValidateAgentSession} 持有）：
+     * ChatController 的 {@code activeRuns} 只是 JVM 内单飞守卫，绕过 controller 的
+     * 调用方（未来 caller、多实例）仍可能重复建 run。在插入 ChatRun 之前复查
+     * 幂等键与在途（非终态）run，命中都按 CHAT_IN_PROGRESS 409 拒绝——幂等键
+     * 命中时让重试方下一次在 controller 层拿到 replay，而不是撞唯一约束 500。
+     */
+    private void rejectConcurrentSubmission(String sessionId, String userId, String idempotencyKey) {
+        if (idempotencyKey != null && chatRunRepository
+                .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey).isPresent()) {
+            throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
+                    "Idempotency-Key already has a run for this session");
+        }
+        if (chatRunRepository.existsBySessionIdAndStatusIn(
+                sessionId, ChatRunCancellationService.NON_TERMINAL_STATUSES)) {
+            throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
+                    "A chat run is already active for this session");
+        }
     }
 
     private void bindOrValidateAgentSession(String sessionId, String userId, String workspaceId,

@@ -29,8 +29,11 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.Map;
 
@@ -80,6 +83,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceUserRepository workspaceUserRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -262,6 +268,47 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals("SESSION_PRINCIPAL_BINDING_CONFLICT", rejected.getCode());
         assertNull(sessionRepository.findById(session.getId()).orElseThrow().getAgentPrincipalId());
         assertFalse(chatRunRepository.findById(UUID.fromString(runId)).isPresent());
+    }
+
+    /**
+     * 守卫绕过反向验证：直接调用服务层（不经 ChatController 的 activeRuns 单飞守卫），
+     * 对同一 Session 的第二次 create 必须在 Session 行锁内被 CHAT_IN_PROGRESS 拒绝。
+     * 两次 submit 的 runId 不同，因此幂等 key（"idem-" + runId）也不同——这道拒绝只能
+     * 来自锁内在途复查；若缺少该检查，本用例会建出两条 ChatRun。
+     */
+    @Test
+    void secondCreateWhileRunInFlightIsRejectedInsideSessionRowLock() {
+        User user = userRepository.save(new User(
+                "chat-inflight-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "In-flight test"));
+        Workspace workspace = workspaceRepository.save(new Workspace("Chat In-flight Workspace", user.getId().toString()));
+        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
+                user.getId().toString(), WorkspaceRole.OWNER));
+        Session session = new Session(workspace.getId().toString(), user.getId().toString(), "In-flight Session");
+        session.setId(UUID.randomUUID());
+        Session persistedSession = sessionRepository.saveAndFlush(session);
+        AgentPrincipal principal = savePrincipal(user);
+        sessionRepository.saveAndFlush(boundSession(persistedSession, principal));
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                workspace.getId().toString(), objectMapper.createArrayNode()));
+
+        ChatSubmissionService.Submission first = submit(UUID.randomUUID().toString(),
+                persistedSession, user, workspace, "first message", principal.getId().toString());
+        assertTrue(chatRunRepository.findById(first.run().getId()).isPresent());
+
+        String rejectedRunId = UUID.randomUUID().toString();
+        CpApiException conflict = assertThrows(CpApiException.class, () -> submit(rejectedRunId,
+                persistedSession, user, workspace, "second message", principal.getId().toString()));
+        assertEquals("CHAT_IN_PROGRESS", conflict.getCode());
+        assertEquals(HttpStatus.CONFLICT, conflict.getStatus());
+
+        String sessionId = persistedSession.getId().toString();
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?",
+                Integer.class, sessionId));
+        List<Message> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        assertEquals(1, messages.size());
+        assertEquals("first message", messages.get(0).getContent());
+        assertTrue(chatRunRepository.findById(UUID.fromString(rejectedRunId)).isEmpty());
     }
 
     private Session saveEmptySession(User user, Workspace workspace, String title) {

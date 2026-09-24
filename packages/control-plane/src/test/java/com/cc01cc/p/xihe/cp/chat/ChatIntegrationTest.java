@@ -49,9 +49,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -401,6 +403,122 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         synchronized (sseTranscript) {
             assertTrue(countSseEvents("token") >= 2);
             assertTrue(countSseEvents("done") >= 2);
+        }
+    }
+
+    /**
+     * 守卫绕过反向验证（HTTP 并发）：同 session、不同 key+content 的两个并发 POST
+     * 必须恰好一个 202、一个 409（code=CHAT_IN_PROGRESS），DB 该 session 只有一行
+     * ChatRun。假 Agent 在 HOLD 模式持有在飞 run，判定点稳定落在并发窗口内。
+     */
+    @Test
+    void concurrentPostChatWithDifferentKeysAdmitsExactlyOneRun() throws Exception {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        openSse(sessionId);
+        HOLD_CHAT_STREAM.set(true);
+        cancelSignal = new java.util.concurrent.CountDownLatch(1);
+        try {
+            List<ResponseEntity<Map>> responses = postChatConcurrently(sessionId,
+                    List.of("concurrent content A", "concurrent content B"),
+                    List.of("conc-diff-key-a", "conc-diff-key-b"));
+
+            assertEquals(1, countByStatus(responses, HttpStatus.ACCEPTED),
+                    "exactly one submission must be admitted: " + describeStatuses(responses));
+            assertEquals(1, countByStatus(responses, HttpStatus.CONFLICT),
+                    "exactly one submission must conflict: " + describeStatuses(responses));
+            ResponseEntity<Map> conflict = responses.stream()
+                    .filter(response -> response.getStatusCode() == HttpStatus.CONFLICT)
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals("CHAT_IN_PROGRESS", conflict.getBody().get("code"));
+            assertEquals(1, countRunRows(sessionId));
+            assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                    .filter(message -> message.getRole() == MessageRole.USER).count());
+        } finally {
+            HOLD_CHAT_STREAM.set(false);
+            cancelSignal.countDown();
+        }
+    }
+
+    /**
+     * 并发幂等：同 key+content 的两个并发 POST 状态只能 ∈ {202, 409}（绝不能 500——
+     * uq_chat_runs_user_session_idempotency 的重复插入必须被锁内幂等复查挡下），
+     * DB 该 session run 行数 == 1；若两者都 202 则 runId 必须相同。
+     */
+    @Test
+    void concurrentPostChatWithSameKeyNeverProducesServerError() throws Exception {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        openSse(sessionId);
+        HOLD_CHAT_STREAM.set(true);
+        cancelSignal = new java.util.concurrent.CountDownLatch(1);
+        try {
+            List<ResponseEntity<Map>> responses = postChatConcurrently(sessionId,
+                    List.of("same concurrent content", "same concurrent content"),
+                    List.of("conc-same-key", "conc-same-key"));
+
+            for (ResponseEntity<Map> response : responses) {
+                assertTrue(response.getStatusCode() == HttpStatus.ACCEPTED
+                                || response.getStatusCode() == HttpStatus.CONFLICT,
+                        "only 202/409 are allowed, got " + response.getStatusCode()
+                                + ": " + describeStatuses(responses));
+            }
+            assertEquals(1, countRunRows(sessionId));
+            List<String> acceptedRunIds = responses.stream()
+                    .filter(response -> response.getStatusCode() == HttpStatus.ACCEPTED)
+                    .map(response -> (String) response.getBody().get("runId"))
+                    .toList();
+            if (acceptedRunIds.size() == 2) {
+                assertEquals(acceptedRunIds.get(0), acceptedRunIds.get(1),
+                        "an idempotent replay must return the original runId");
+            }
+        } finally {
+            HOLD_CHAT_STREAM.set(false);
+            cancelSignal.countDown();
+        }
+    }
+
+    private int countByStatus(List<ResponseEntity<Map>> responses, HttpStatus status) {
+        return (int) responses.stream()
+                .filter(response -> response.getStatusCode() == status)
+                .count();
+    }
+
+    private String describeStatuses(List<ResponseEntity<Map>> responses) {
+        return responses.stream()
+                .map(response -> String.valueOf(response.getStatusCode().value()))
+                .toList()
+                .toString();
+    }
+
+    private int countRunRows(String sessionId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?",
+                Integer.class, sessionId);
+    }
+
+    private List<ResponseEntity<Map>> postChatConcurrently(String sessionId, List<String> contents,
+                                                           List<String> idempotencyKeys) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        List<Future<ResponseEntity<Map>>> futures = new ArrayList<>(contents.size());
+        for (int i = 0; i < contents.size(); i++) {
+            String content = contents.get(i);
+            String idempotencyKey = idempotencyKeys.get(i);
+            futures.add(executor.submit(() -> {
+                barrier.await(10, TimeUnit.SECONDS);
+                return postChat(sessionId, content, null, idempotencyKey);
+            }));
+        }
+        try {
+            List<ResponseEntity<Map>> responses = new ArrayList<>(futures.size());
+            for (Future<ResponseEntity<Map>> future : futures) {
+                responses.add(future.get(30, TimeUnit.SECONDS));
+            }
+            return responses;
+        } finally {
+            executor.shutdownNow();
         }
     }
 
