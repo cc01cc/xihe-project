@@ -41,6 +41,7 @@ mvn -o -q checkstyle:check
 
 - 公开接口统一 `/api/v1`、Bearer 认证、`TenantContext` 租户隔离与 RFC 9457 Problem Details（含 `code`、`requestId`）。
 - 服务间接口统一 `/internal/v1` 与 Bearer service auth；禁止把公开 token 或用户上下文混作服务认证。
+- Branch-aware context（PLAN-0410/V43）：internal snapshot 接受 `?branchId`/`?runId`（并存不一致 409、未知/外 Session 404、缺省=root），events 请求体禁带 `branch_id`（correlation 由 CP 派生）；分支只过滤上下文、不替代授权；公开 `ChatRequest.branchId`/compact `branchId`/branch CRUD/`BRANCH_LOCK` 归 PLAN-0409。内部面见 [`DEV-014 §8d`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)。
 - Route、OpenAPI、调用方 inventory、SSE/AgentEvent、Flyway durable record 必须在同一变更波次同步；以 [`inventory.md`](../../docs/api/inventory.md) 为清单，不复制完整规范。
 - 审批、checkpoint、revert 的当前契约以 [`DEV-014-control-plane-architecture.md`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)、[`DEV-015-runtime-architecture.md`](../../docs/i18n/zh-Hans/DEV-015-runtime-architecture.md) 与 inventory 为准；本文件只列边界，禁止在此重复完整字段/状态机规格。
 

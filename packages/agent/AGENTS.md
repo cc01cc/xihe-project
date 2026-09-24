@@ -47,6 +47,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - `interfaces/` 目录下禁止直接 import `langchain*`；LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph
 - Context 通过 `ContextProvider.load()` 获取 CP 投影后的 `AgentContext` 快照；事件持久化由 `EventStore` 写入 CP
+- 分支上下文（PLAN-0410）：`CPContextServiceClient` 的 snapshot 请求携 `runId`/`branchId`，`AgentContext.branch_id` 只能来自 CP（Agent 从不自填）；选择器解析失败 fail-closed（404/409），禁止回退整 Session history；run-scoped 写点带 `correlation_id=runId`，必需 append 失败使 Run 收敛失败
 - Agent 执行、role/scope 绑定传播和 Context/Tool 边界的项目级 proposed SPEC 见 `../../spec/agent/`；通用授权正文仍归 `../../spec/security/`
 - **Agent principal / spawn caller**：Agent 不本地推导 principal；spawn 仅经 CP `POST /internal/v1/agents/spawn`（service Bearer）传 `{parentRunId, toolCallId}`，主体/Workspace 由 CP durable 数据派生；真实 caller 由 PLAN-0407 T2.10 落地。契约见 `../../spec/agent/principal-workspace-binding.md`。
 - **Diagnostics security**：诊断内容是不可信输入；模型可见诊断必须在不可信信封内，结构化 artifact 不得进入 model wire。当前通道与边界见 [`DEV-013 §3.5`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。

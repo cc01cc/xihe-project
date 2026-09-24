@@ -1,12 +1,13 @@
 # Session 分支上下文隔离
 
 > 契约状态：`proposed`  
-> 实现状态：`unimplemented`  
 > Profile：`protocol`  
 > Owner：CP Context + Agent Context owners（PLAN-0410）  
 > 消费者：CP Chat/EventStore/Context、Agent Context、PLAN-0407、PLAN-0409  
 > 来源：PLAN-0410  
-> 更新日期：2026-09-24
+> 更新日期：2026-09-25
+>
+> 实现状态：`partial`（PLAN-0410 M0–M3 数据面已实现：V43 schema、branch path/cursor、per-branch 投影与 Agent 输入、并发与 fail-closed 验证；公开 branch selector、fork 动作与浏览器验收归 PLAN-0409）
 
 ## 范围
 

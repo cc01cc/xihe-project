@@ -30,7 +30,7 @@ public class ChatRun {
     private String sessionId;
 
     /** PLAN-0410 T1.3: durable branch binding (V43 NOT NULL, immutable). */
-    @Column(name = "branch_id", nullable = false, length = 36)
+    @Column(name = "branch_id", nullable = false, length = 36, updatable = false)
     @Convert(converter = UuidStringConverter.class)
     private String branchId;
 

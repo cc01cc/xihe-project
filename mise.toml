@@ -155,7 +155,7 @@ description = "Run T2 cross-module stub integration tests (no Docker required)"
 alias = "test:integration:t2"
 
 [tasks."test:integration:t3"]
-run = "bash scripts/mise/integration-test-t3.sh"
+run = "C:/Progra~1/Git/bin/bash.exe scripts/mise/integration-test-t3.sh"
 description = "Run T3 cross-module real integration tests (requires Docker)"
 alias = "test:integration:t3"
 

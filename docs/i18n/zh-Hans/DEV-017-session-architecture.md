@@ -22,6 +22,7 @@ Session、ChatRun/Operation 和 Runtime MCP session 的目标态生命周期边�
 - [`spec/session/chat-session.md`](../../../spec/session/chat-session.md)
 - [`spec/session/chat-run-operation.md`](../../../spec/session/chat-run-operation.md)
 - [`spec/session/mcp-session.md`](../../../spec/session/mcp-session.md)
+- [`spec/session/branch-context-isolation.md`](../../../spec/session/branch-context-isolation.md)（同一 Session 内的分支可见性与 cursor；PLAN-0410）
 
 这些文档不把三类生命周期合并，也不改变本 DEV 文档和 CP/Runtime 代码的当前事实源。
 
@@ -53,6 +54,13 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 - `sessions.agent_principal_id` 与 `agent_permissions_snapshot` 是 Agent 身份与 instance cap 的唯一来源；交互式 `POST /api/v1/sessions` 必须显式携带 `agentPrincipalId`，Chat admission 只接受已绑定 Session，无 lazy-create。
 - principal-null 空 Session（附件占位/导入历史）首次 Chat 必须显式提交 principal：无 ChatRun、message、user-direct Operation 或 tool ContextEvent 时由 row CAS 与 ChatRun/Message/Operation 同事务绑定；缺省 403、异 principal 409。
 - `user_id` 仅表达 owner/visibility，不参与 Agent 授权；binding 缺失/撤销时 Agent 动作 fail-closed，历史 Session 保留。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)，wire 以 OpenAPI 为准。
+
+### 1.2 Session 分支（PLAN-0410 / V43）
+
+- 每个 Session 恰有一个 root `session_branches` 行（partial unique）；非 root 分支携带 `parent_branch_id` + `fork_point_message_id/run_id/sequence`（同 Session、同 parent branch 由 anchor composite FK 保证）。`messages`/`chat_runs`/`context_projections.branch_id NOT NULL`、`context_events.branch_id NULL`；投影唯一键 `(session_id, projection_type, branch_id)`。
+- 每个 ChatRun/Message 创建时由 CP 固化 branchId 且 Run 分支不可变；可见集 = Session/global 事件 ∪ 每层祖先段至 child `fork_point_sequence` ∪ 当前分支（cursor 仍是 Session 全局 sequence，不引入 per-branch 计数）。
+- anchor 必须属于 terminal Run：`'USER'` 锚取该 Run 唯一 `prompt.admitted` sequence、`'ASSISTANT'` 锚取 Run 最大 correlated sequence；不可锚定（legacy 无 correlation/无 cursor）一律 409 fail-closed，不用 wall-clock 猜测。
+- 同 Session 单飞不变（`409 CHAT_IN_PROGRESS`）；公开 branch 创建/切换、`409 BRANCH_LOCK`、`ChatRequest.branchId` 与浏览器验收归 **PLAN-0409**。契约见 [`spec/session/branch-context-isolation.md`](../../../spec/session/branch-context-isolation.md)，内部 API 见 DEV-014 §8d。
 
 ## 2. Store 职责边界（选项 B：共享 + 视图分离）
 

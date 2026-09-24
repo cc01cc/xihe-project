@@ -53,7 +53,7 @@ spec/
 | ui interaction | proposed | partial | UI + 跨边界 owner | PLAN-0388；PLAN-0384 仅负责 feature flow |
 | agent execution / Context | proposed | partial | Agent owner | PLAN-0387；0381/0382 仍为局部规范 |
 | session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开 |
-| session branch context isolation | proposed | unimplemented | CP Context + Agent Context owners | PLAN-0410；公开 fork/branch action 由 PLAN-0409 消费，不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
+| session branch context isolation | proposed | partial | CP Context + Agent Context owners | PLAN-0410；V43 数据面已实现（root/branch schema、branch path/cursor、per-branch 投影与 Agent 输入、并发与 fail-closed 验证），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费，不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
 | authentication / authorization | proposed | partial | Security owner | PLAN-0386；principal/role/scope 归 Security |
 | agent role/scope binding | proposed | partial | Agent owner | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
 | agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | PLAN-0374；V42 绑定/Session/API/UI 波次已实现；fork 创建归 PLAN-0409、模板 CRUD 归 0374 T3.1 |

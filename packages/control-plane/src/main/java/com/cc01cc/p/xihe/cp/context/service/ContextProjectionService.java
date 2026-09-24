@@ -102,6 +102,11 @@ public class ContextProjectionService {
         String effectiveBranch = (branchId == null || branchId.isBlank())
                 ? branchPathService.ensureRootBranchId(sessionId)
                 : branchId;
+        // PLAN-0410 T3.1: serialize the three-key upsert on the Session row
+        // BEFORE reading the event set — concurrent first writes otherwise
+        // both INSERT and the loser dies on uq_context_projections_*
+        // (HTTP 500); serializing also keeps the stored payload monotonic.
+        branchPathService.lockSessionRow(sessionId);
         com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility =
                 branchPathService.resolveVisibility(sessionId, effectiveBranch);
         ObjectNode context = project(sessionId, afterSequence, visibility);

@@ -96,6 +96,7 @@ flowchart TD
 
 - CP 是唯一真相源，负责事件持久化与投影。
 - Agent 无状态，通过 `/internal/v1/context/{sessionId}/snapshot` 获取投影快照。
+- **分支上下文（PLAN-0410/V43）**：snapshot 携 `?runId`/`?branchId` 选择器（两者并存必须一致，未知/伪造 404、冲突 409 fail-closed，缺省=root）；Agent 只消费 CP 给定的 branch（`AgentContext.branch_id`），从不自选或回退整 Session history；run-scoped Event 写 `correlation_id=runId`，必需 append 失败使 Run 收敛失败而非静默续跑。
 - 事件写入当前为同步；性能测试显示批量写入已足够快（~17k events/s），未引入异步队列。
 
 ### 3.1b 收缩管道与 prune（PLAN-0341）
@@ -150,6 +151,7 @@ flowchart TD
 - `epoch` — 当前系统上下文 epoch（`system_messages` + Context Sources）。
 - `runtime_state` — 请求级运行时状态。
 - `latest_sequence` — 已投影到的最新事件序列号。
+- `branch_id` — CP 为该 Run/snapshot 解析的分支（PLAN-0410；Agent 从不自行填写，缺省空串表示早于分支感知的旧快照）。
 
 Agent 侧分工：
 

@@ -71,6 +71,12 @@ public class BranchPathService {
      * Returns the Session root Branch id, creating the root row when missing.
      * Read happens first so existing Sessions never take the write path (the
      * entity callbacks call this inside persist transactions).
+     *
+     * <p>PLAN-0410 T3.1: first-root creation is serialized on the Session row.
+     * Without the lock two concurrent first bindings both INSERT, the loser
+     * aborts its transaction on {@code uq_session_branches_root} and can never
+     * read the winner's committed row (SQLSTATE 25P02) — the read-then-insert
+     * fallback only works for autocommit callers.
      */
     public String ensureRootBranchId(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
@@ -78,6 +84,11 @@ public class BranchPathService {
                     "sessionId is required to resolve the root branch");
         }
         String existing = findRootBranchId(sessionId);
+        if (existing != null) {
+            return existing;
+        }
+        lockSessionRow(sessionId);
+        existing = findRootBranchId(sessionId);
         if (existing != null) {
             return existing;
         }
@@ -91,13 +102,34 @@ public class BranchPathService {
                             + "NULL, NULL, CURRENT_TIMESTAMP)",
                     branchId, sessionId);
         } catch (RuntimeException insertFailure) {
-            String raced = findRootBranchId(sessionId);
-            if (raced != null) {
-                return raced;
+            try {
+                String raced = findRootBranchId(sessionId);
+                if (raced != null) {
+                    return raced;
+                }
+            } catch (RuntimeException readFailure) {
+                // The transaction may already be aborted by the failed INSERT;
+                // report the original failure instead of masking it with 25P02.
+                insertFailure.addSuppressed(readFailure);
             }
             throw insertFailure;
         }
         return branchId;
+    }
+
+    /**
+     * PLAN-0410 T3.1: takes the Session row lock that serializes durable
+     * branch writes (first root creation, three-key projection upsert) — the
+     * same paradigm as the {@code context_events} sequence lock (PLAN-0346).
+     * Runs on raw JDBC so it is safe inside entity {@code @PrePersist}
+     * callbacks. A missing Session row returns no row: there is nothing to
+     * serialize on and the caller's FK/unique constraints still apply.
+     */
+    public void lockSessionRow(String sessionId) {
+        requireText(sessionId, "sessionId");
+        jdbcTemplate.queryForList(
+                "SELECT id FROM sessions WHERE id = CAST(? AS UUID) FOR UPDATE",
+                UUID.class, sessionId);
     }
 
     /**
