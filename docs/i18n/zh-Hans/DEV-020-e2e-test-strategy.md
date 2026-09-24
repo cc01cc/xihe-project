@@ -105,6 +105,8 @@ xihe 使用单个浏览器 project（chromium），通过 `XIHE_E2E_PROFILE` 区
 
 依赖 Docker Engine socket、`XIHE_WORKSPACE_HOST_ROOT` 或 Runtime Sandbox 的用例必须标记 `@host`。
 
+受本机 Docker/Playwright 内存预算约束，Mock、Compose 和 Host E2E profile 应分开串行执行；不要并发启动多个浏览器/Docker 测试套件，以免 OOM 后产生不可靠失败。
+
 禁止通过 `test.skip()` 或放宽断言掩盖拓扑缺失。
 
 ## 2. 截图与视觉回归方案

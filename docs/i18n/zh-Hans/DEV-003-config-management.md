@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 3
 status: active
 created: 2026-09-03
-updated: 2026-09-23
+updated: 2026-09-24
 ---
 
 # DEV-003: 配置管理
@@ -142,6 +142,8 @@ curl -X PUT "http://localhost:12631/api/v1/config/workspace/rag?workspaceId=$WS"
 ```
 
 凭证**不写 config 层**（`rejectProviderSecrets` 会以 403 拒绝任何 `*ApiKey`/secret/password/token 类键），统一走 `provider_connections`：
+
+`isProviderSecretKey` 对通用 `token` 键名匹配必须排除 `maxTokens`：它是 `llm-provider` 的数值配置，不是凭证；`ConfigServiceTest.importJsonc_acceptsNumericValues` 覆盖该行为。
 
 ```bash
 # 创建凭证连接（USER 默认；WORKSPACE 需为该 workspace owner；SYSTEM 已废除）
