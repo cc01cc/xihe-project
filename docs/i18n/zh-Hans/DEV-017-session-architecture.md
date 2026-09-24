@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 status: active
 sidebar_order: 17
 created: 2026-09-03
-updated: 2026-09-19
+updated: 2026-09-25
 ---
 
 # DEV-017: Session 架构
@@ -47,6 +47,12 @@ Chat 用 `sessionId`，Workspace 用 `workspaceId`，禁止互充（PLAN-222）�
 Session 的模型绑定 canonical 形态为 `modelProvider + modelName`；`modelId` 不再由 UI 写入或推断。刷新时按服务端 pair rehydrate，provider/model catalog 不可用时不创建本地有效 binding。
 
 ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`terminalOutcome`、`errorCode` 和 `partial` 不能在刷新时被当作普通成功 assistant；`ambiguous` 需要人工确认后使用新的幂等键重试。
+
+### 1.1 Agent principal 绑定（PLAN-0374）
+
+- `sessions.agent_principal_id` 与 `agent_permissions_snapshot` 是 Agent 身份与 instance cap 的唯一来源；交互式 `POST /api/v1/sessions` 必须显式携带 `agentPrincipalId`，Chat admission 只接受已绑定 Session，无 lazy-create。
+- principal-null 空 Session（附件占位/导入历史）首次 Chat 必须显式提交 principal：无 ChatRun、message、user-direct Operation 或 tool ContextEvent 时由 row CAS 与 ChatRun/Message/Operation 同事务绑定；缺省 403、异 principal 409。
+- `user_id` 仅表达 owner/visibility，不参与 Agent 授权；binding 缺失/撤销时 Agent 动作 fail-closed，历史 Session 保留。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)，wire 以 OpenAPI 为准。
 
 ## 2. Store 职责边界（选项 B：共享 + 视图分离）
 

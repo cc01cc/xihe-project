@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 13
 status: active
 created: 2026-07-07
-updated: 2026-09-03
+updated: 2026-09-25
 ---
 
 # DEV-013: Agent 架构与接口抽象
@@ -24,13 +24,14 @@ Agent 模块负责 LLM 编排、工具调用与上下文管理。为降低对 La
 
 ### SPEC 指针
 
-Agent 执行、role/scope 绑定传播和 Context/Tool 消费边界见根级 proposed SPEC：
+Agent 执行、role/scope 绑定传播、Context/Tool 消费边界与 principal/Workspace 绑定契约见根级 SPEC：
 
 - [`spec/agent/execution.md`](../../../spec/agent/execution.md)
 - [`spec/agent/role-scope-binding.md`](../../../spec/agent/role-scope-binding.md)
 - [`spec/agent/context-tool.md`](../../../spec/agent/context-tool.md)
+- [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)（`active`，PLAN-0374 V42 波次已实现）
 
-上述 SPEC 是目标态边界，不代表独立 Agent principal/schema 或 PLAN-0381/0382 未冻结字段已经实现。
+execution/role/context 三份仍是目标态边界；独立 Agent principal、Workspace 绑定与 Session principal schema/入口已由 PLAN-0374 实现，PLAN-0381/0382 未冻结字段仍未实现。
 
 ## 2. 接口层
 

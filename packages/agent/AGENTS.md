@@ -48,6 +48,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph
 - Context 通过 `ContextProvider.load()` 获取 CP 投影后的 `AgentContext` 快照；事件持久化由 `EventStore` 写入 CP
 - Agent 执行、role/scope 绑定传播和 Context/Tool 边界的项目级 proposed SPEC 见 `../../spec/agent/`；通用授权正文仍归 `../../spec/security/`
+- **Agent principal / spawn caller**：Agent 不本地推导 principal；spawn 仅经 CP `POST /internal/v1/agents/spawn`（service Bearer）传 `{parentRunId, toolCallId}`，主体/Workspace 由 CP durable 数据派生；真实 caller 由 PLAN-0407 T2.10 落地。契约见 `../../spec/agent/principal-workspace-binding.md`。
 - **Diagnostics security**：诊断内容是不可信输入；模型可见诊断必须在不可信信封内，结构化 artifact 不得进入 model wire。当前通道与边界见 [`DEV-013 §3.5`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。
 - **Streaming and logs**：流式 token 不得因 end-event fallback 重复；日志必须脱敏 `Authorization`，不得记录 token 内容。实现导航见 [`DEV-013`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。
 - **Approval/grant**：CP gate 后仅可对同一 request id 等待并重试一次；grant 必须绑定同一工具及 canonical arguments SHA-256，错配、过期、复用、重复 gate 或传输失败均 fail-closed。不可用截断 preview 授权。

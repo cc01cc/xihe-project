@@ -55,6 +55,7 @@ spec/
 | session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开 |
 | authentication / authorization | proposed | partial | Security owner | PLAN-0386；principal/role/scope 归 Security |
 | agent role/scope binding | proposed | partial | Agent owner | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
+| agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | PLAN-0374；V42 绑定/Session/API/UI 波次已实现；fork 创建归 PLAN-0409、模板 CRUD 归 0374 T3.1 |
 | capability / approval / audit | proposed | partial | Runtime/Security/CP owners | PLAN-0386/0389；能力策略、审批、审计分别建模 |
 | workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | PLAN-0389 |
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
@@ -101,6 +102,10 @@ PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑�
 - [Chat Session 生命周期](session/chat-session.md)
 - [ChatRun 与 Operation 生命周期](session/chat-run-operation.md)
 - [Runtime MCP Session 生命周期](session/mcp-session.md)
+
+PLAN-0374 冻结 Agent principal 与 Workspace 绑定契约（V42 schema、Session admission、管理 API/UI 波次已实现；fork 创建归 PLAN-0409、模板 CRUD 归 0374 T3.1；Security principal/grant canonical 归 PLAN-0407）：
+
+- [Agent principal 与 Workspace 绑定](agent/principal-workspace-binding.md)
 
 PLAN-0388 已建立 UI interaction/design/accessibility proposed 草案；它们只定义全局交互状态、设计系统和无障碍规则，不复制 OpenAPI/SSE schema 或 feature flow：
 
