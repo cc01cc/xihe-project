@@ -96,6 +96,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     private UUID principalId;
     private UUID parentRunId;
     private final List<UUID> sessionIds = new ArrayList<>();
+    private final List<UUID> chatRunIds = new ArrayList<>();
     private final List<UUID> grantIds = new ArrayList<>();
     private final List<WorkspaceAgentId> workspaceAgentIds = new ArrayList<>();
     private final List<UUID> configIds = new ArrayList<>();
@@ -107,6 +108,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         if (parentRunId != null) {
             chatRunRepository.deleteById(parentRunId);
         }
+        chatRunIds.forEach(chatRunRepository::deleteById);
         sessionIds.forEach(sessionRepository::deleteById);
         workspaceAgentRepository.deleteAllById(workspaceAgentIds);
         if (principalId != null) {
@@ -295,6 +297,75 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void spawnAncestorChainsAndWorkspaceMembershipStayIndependentPerSubject() {
+        User user = userRepository.save(new User("grant-chain-" + UUID.randomUUID() + "@test.com",
+                "hash", UserRole.USER, "Grant chain test"));
+        userId = user.getId().toString();
+        Workspace workspace = workspaceRepository.save(new Workspace("Grant chain test", userId));
+        workspaceId = workspace.getId();
+        WorkspaceUser membership = workspaceUserRepository.saveAndFlush(
+                new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
+
+        AgentPrincipal principal = new AgentPrincipal();
+        principal.setName("Grant chain agent");
+        principal.setCreatedByUserId(userId);
+        principal.setTemplateSnapshot(objectMapper.createObjectNode());
+        principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "default", null, null,
+                atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "default", null, null, atoms("read", "write"));
+        bindPrincipal(workspaceId, atoms("read", "write"));
+
+        Session memberSession = saveAgentSession(workspaceId, userId, "Member agent", atoms("read", "write"));
+        PolicyRequest agentWrite = request(workspaceId, userId, memberSession, "write", "src/main.java");
+        assertTrue(grantAuthorizationService.allows(agentWrite));
+
+        workspaceUserRepository.delete(membership);
+        assertTrue(grantAuthorizationService.allows(agentWrite),
+                "Agent actions follow the WorkspaceAgent binding, not human WorkspaceUser membership");
+        assertFalse(grantAuthorizationService.allowsUserOnly(agentWrite),
+                "revoking human membership denies the user-only path immediately");
+        workspaceUserRepository.saveAndFlush(new WorkspaceUser(
+                workspaceId.toString(), userId, WorkspaceRole.OWNER));
+
+        WorkspaceAgentId bindingId = new WorkspaceAgentId(principalId, workspaceId);
+        workspaceAgentRepository.deleteById(bindingId);
+        workspaceAgentIds.remove(bindingId);
+        assertFalse(grantAuthorizationService.allows(agentWrite),
+                "a Workspace member without a WorkspaceAgent binding cannot act as the Agent");
+        assertTrue(grantAuthorizationService.allowsUserOnly(agentWrite),
+                "human membership keeps the user-only path independent of the Agent binding");
+        bindPrincipal(workspaceId, atoms("read", "write"));
+
+        parentRunId = UUID.randomUUID();
+        ChatRun parentRun = chatRunRepository.saveAndFlush(new ChatRun(
+                parentRunId.toString(), memberSession.getId().toString(), userId, workspaceId.toString(),
+                "chain-run", "chain-hash", "provider", "model", "workspace", "running"));
+        Session spawnChild = saveDerivedSession(workspaceId, userId, memberSession, parentRun,
+                Session.KIND_SPAWN, atoms("write"));
+        UUID spawnRunId = UUID.randomUUID();
+        ChatRun spawnRun = chatRunRepository.saveAndFlush(new ChatRun(
+                spawnRunId.toString(), spawnChild.getId().toString(), userId, workspaceId.toString(),
+                "spawn-run", "spawn-hash", "provider", "model", "workspace", "running"));
+        chatRunIds.add(spawnRunId);
+        Session grandChild = saveDerivedSession(workspaceId, userId, spawnChild, spawnRun,
+                Session.KIND_SPAWN, atoms("read", "write"));
+
+        assertTrue(grantAuthorizationService.allows(
+                        request(workspaceId, userId, grandChild, "write", "src/main.java")),
+                "every ancestor Session cap permits the action through the full spawn chain");
+        assertFalse(grantAuthorizationService.allows(
+                        request(workspaceId, userId, grandChild, "read", "src/main.java")),
+                "an intermediate spawn cap denies an action the root Session would allow");
+
+        memberSession.setAgentPermissionsSnapshot(atoms("read"));
+        sessionRepository.saveAndFlush(memberSession);
+        assertFalse(grantAuthorizationService.allows(
+                        request(workspaceId, userId, grandChild, "write", "src/main.java")),
+                "narrowing the root Session cap re-denies the next tool-boundary evaluation");
+    }
+
+    @Test
     void principalLifecycleAndWorkspaceCapsAreAuditedWithoutChangingGlobalGrants() {
         User user = userRepository.save(new User("principal-lifecycle-" + UUID.randomUUID() + "@test.com",
                 "hash", UserRole.USER, "Principal lifecycle test"));
@@ -303,6 +374,8 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         workspaceId = workspace.getId();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
         addGrant("user", UUID.fromString(userId), "default", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "direct", null, null,
+                atoms("MANAGE_WORKSPACE_AGENTS"));
 
         ObjectNode snapshot = objectMapper.createObjectNode();
         snapshot.put("templateId", "template-code");
