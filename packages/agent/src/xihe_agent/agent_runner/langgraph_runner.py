@@ -50,6 +50,38 @@ from xihe_agent.interfaces.usage import RunUsage
 # message → walk back so the preceding call stays paired).
 HISTORY_TRUNCATION_LIMIT = 20
 
+# PLAN-0410 T2.3: per-run ledger of required EventStore append failures kept on
+# the run's AgentContext.metadata (not a wire field; never sent back to CP).
+EVENT_STORE_FAILURES_KEY = "eventStoreAppendFailures"
+
+
+def _run_correlation(context: AgentContext) -> str | None:
+    """PLAN-0410 T2.3: run-scoped events carry `correlation_id=runId`.
+
+    CP validates the correlation against the durable ChatRun and derives the
+    branch (Agent never submits a branch). A context without runId writes no
+    correlation — CP then treats the event as Session/global and, per spec §7,
+    it can never serve as a branch anchor cursor (fail-closed, no silent root).
+    """
+    run_id = context.metadata.get("runId")
+    if run_id is None:
+        return None
+    value = str(run_id).strip()
+    return value or None
+
+
+def _record_event_store_failure(context: AgentContext, event_type: str, error: Exception) -> None:
+    failures = context.metadata.setdefault(EVENT_STORE_FAILURES_KEY, [])
+    failures.append({"type": event_type, "error": str(error)})
+
+
+def _raise_if_event_store_failed(context: AgentContext) -> None:
+    """PLAN-0410 T2.3/spec §4: required prompt/assistant/tool appends that did
+    not land converge the Run to failure — never a context-less success."""
+    failures = context.metadata.get(EVENT_STORE_FAILURES_KEY)
+    if failures:
+        raise RuntimeError(f"required context event append failed: {failures}")
+
 # PLAN-294 #17 / PLAN-0341 T1.2: cheapest-first prune of historical tool
 # results. Rules (decision #30/#47/#60):
 #   - only history OUTSIDE the keep-recent tail is eligible;
@@ -419,12 +451,18 @@ class LCToolAdapter(BaseTool):
                         "operation_item_id": call_id,
                     },
                     created_at=datetime.now(UTC),
+                    correlation_id=_run_correlation(self._context),
                 )
             )
         except ApprovalTerminalError:
             raise
         except Exception as e:
-            logger.warning("Failed to append tool.called event: {}", e)
+            # PLAN-0410 T2.3: a required tool event that does not land must
+            # surface (LangGraph may absorb a raised tool error into a
+            # ToolMessage — the run-level check still converges the run).
+            logger.error("Failed to append tool.called event: {}", e, exc_info=True)
+            _record_event_store_failure(self._context, "tool.called", e)
+            raise
 
     async def _append_tool_result(
         self,
@@ -452,10 +490,14 @@ class LCToolAdapter(BaseTool):
                     type="tool.result",
                     payload=payload,
                     created_at=datetime.now(UTC),
+                    correlation_id=_run_correlation(self._context),
                 )
             )
         except Exception as e:
-            logger.warning("Failed to append tool.result event: {}", e)
+            # PLAN-0410 T2.3: required tool event — observable + run-failing.
+            logger.error("Failed to append tool.result event: {}", e, exc_info=True)
+            _record_event_store_failure(self._context, "tool.result", e)
+            raise
 
 
 class LangGraphRunner(AgentRunner):
@@ -481,6 +523,15 @@ class LangGraphRunner(AgentRunner):
         config: RunnerConfig,
     ) -> AsyncIterator[AgentEvent]:
         context = config.context or AgentContext.empty(aggregate_id=str(uuid4()))
+        # PLAN-0410 T2.3: the prompt is assembled ONLY from the branch CP gave
+        # this run — a config/context branch mismatch fails closed instead of
+        # silently building a prompt from a different path.
+        config_branch = (getattr(config, "branch_id", "") or "").strip()
+        context_branch = (context.branch_id or "").strip()
+        if config_branch and context_branch and config_branch != context_branch:
+            raise RuntimeError(
+                f"runner branch {config_branch} does not match the CP-given context branch {context_branch}"
+            )
         await self._append_prompt_admitted(messages, context)
 
         usage = RunUsage()
@@ -593,6 +644,10 @@ class LangGraphRunner(AgentRunner):
             )
         except Exception as e:
             logger.error("LangGraph stream failed", exc_info=e)
+            # PLAN-0410 T2.3: this error already surfaces as the terminal
+            # outcome — drop the failure ledger so the post-run check below
+            # does not re-raise a duplicate of the same failure.
+            context.metadata.pop(EVENT_STORE_FAILURES_KEY, None)
             yield AgentEvent(type="error", data={"error": str(e)})
         finally:
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
@@ -613,16 +668,27 @@ class LangGraphRunner(AgentRunner):
                                 "runId": context.metadata.get("runId"),
                             },
                             created_at=datetime.now(UTC),
+                            correlation_id=_run_correlation(context),
                         )
                     )
                 except Exception as e:
-                    logger.warning("Failed to append assistant.responded event: {}", e)
+                    # PLAN-0410 T2.3: required assistant event — recorded here,
+                    # converged to a failing run by the post-run check below
+                    # (raising inside `finally` would mask the original outcome
+                    # and break GeneratorExit cleanup).
+                    logger.error("Failed to append assistant.responded event: {}", e, exc_info=True)
+                    _record_event_store_failure(context, "assistant.responded", e)
             if cancelled:
                 yield AgentEvent(
                     type="error",
                     data={"error": "Run cancelled", "code": "cancelled"},
                 )
             yield AgentEvent(type="usage", data=usage.to_event_payload())
+
+        # PLAN-0410 T2.3/spec §4: required prompt/assistant/tool appends that
+        # failed (including ones a downstream framework absorbed) converge the
+        # run to failure — never a context-less success.
+        _raise_if_event_store_failed(context)
 
     async def create_agent(
         self,
@@ -659,10 +725,17 @@ class LangGraphRunner(AgentRunner):
                         type="prompt.admitted",
                         payload={"message": {"role": message.role, "content": message.content}},
                         created_at=datetime.now(UTC),
+                        # PLAN-0410 T2.3/spec §7: prompt.admitted MUST carry the
+                        # durable run correlation — its sequence is the User
+                        # anchor cursor, and an uncorrelated row is explicitly
+                        # unanchorable (409), never a silent root guess.
+                        correlation_id=_run_correlation(context),
                     )
                 )
             except Exception as e:
-                logger.warning("Failed to append prompt.admitted event: {}", e)
+                logger.error("Failed to append prompt.admitted event: {}", e, exc_info=True)
+                _record_event_store_failure(context, "prompt.admitted", e)
+                raise
 
     async def _append_prune_event(self, context: AgentContext, tombstones: list[PruneTombstone]) -> None:
         """PLAN-0341 T1.2/I5: eventize prune as durable tombstones."""
@@ -680,6 +753,8 @@ class LangGraphRunner(AgentRunner):
                         "runId": context.metadata.get("runId"),
                     },
                     created_at=datetime.now(UTC),
+                    # PLAN-0410 T2.3: tombstones follow their Run's branch.
+                    correlation_id=_run_correlation(context),
                 )
             )
             logger.info(
@@ -688,7 +763,9 @@ class LangGraphRunner(AgentRunner):
                 [t.reason for t in tombstones],
             )
         except Exception as e:
-            logger.warning("Failed to append context.prune event: {}", e)
+            # Not in the spec §4 required set, but never silent: observable
+            # error with stacktrace (anti-resurrection facts may be missing).
+            logger.error("Failed to append context.prune event: {}", e, exc_info=True)
 
     def _build_system_messages(
         self,

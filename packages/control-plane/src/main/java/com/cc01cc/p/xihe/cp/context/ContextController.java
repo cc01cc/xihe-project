@@ -110,16 +110,26 @@ public class ContextController {
     }
 
 
+    /**
+     * PLAN-0410 T2.3 (field-matrix §6): the snapshot selector is either a
+     * CP-validated {@code branchId} or a {@code runId} whose durable branch
+     * resolves it — when both are supplied they must agree (409). Invalid or
+     * foreign selectors fail closed (404/409) and never fall back to the
+     * Session root. Omitting both keeps the legacy Session-root snapshot.
+     */
     @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
     @GetMapping("/{sessionId}/snapshot")
     public ResponseEntity<?> getSnapshot(
             @PathVariable String sessionId,
-            @RequestParam(name = "afterSequence", defaultValue = "0") Long afterSequence) {
+            @RequestParam(name = "afterSequence", defaultValue = "0") Long afterSequence,
+            @RequestParam(name = "branchId", required = false) String branchId,
+            @RequestParam(name = "runId", required = false) String runId) {
         if (!verifyAccess(sessionId)) {
             return forbidden();
         }
         ObjectNode snapshot = contextService.getSnapshot(
-                sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), afterSequence);
+                sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), afterSequence,
+                branchId, runId);
         // Jackson tree types from the legacy mapper are serialized as bean
         // metadata by the Spring Boot 4 converter. Return the JSON payload
         // explicitly so Agent receives the projected context object.
@@ -177,6 +187,11 @@ public class ContextController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * PLAN-0410 T2.2 (field-matrix §6): manual compaction accepts the
+     * CP-validated {@code branchId} — the whole flow (input projection,
+     * prior summary, recovery band, written events) stays on that branch path.
+     */
     @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
     @PostMapping("/{sessionId}/compact")
     public ResponseEntity<?> compact(
@@ -188,8 +203,14 @@ public class ContextController {
         Long upToSequence = body.get("upToSequence") != null
                 ? Long.valueOf(body.get("upToSequence").toString())
                 : null;
+        Object rawBranchId = body.get("branchId");
+        String branchId = rawBranchId == null ? null : String.valueOf(rawBranchId).trim();
+        if (branchId != null && branchId.isEmpty()) {
+            branchId = null;
+        }
         var event = contextService.compact(
-                sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), upToSequence);
+                sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), upToSequence,
+                "auto", null, branchId);
         return ResponseEntity.ok(Map.of(
                 "sequence", event.getSequence(),
                 "eventType", event.getEventType(),

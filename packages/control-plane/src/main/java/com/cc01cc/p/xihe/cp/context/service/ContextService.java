@@ -31,6 +31,7 @@ public class ContextService {
     private final SummaryProvider summaryProvider;
     private final UsageCostMapper usageCostMapper;
     private final ConstraintExtractor constraintExtractor;
+    private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
 
     public ContextService(EventStoreService eventStoreService,
                           ContextProjectionService projectionService,
@@ -38,7 +39,8 @@ public class ContextService {
                           com.cc01cc.p.xihe.cp.chat.SseEmitterManager sseManager,
                           SummaryProvider summaryProvider,
                           UsageCostMapper usageCostMapper,
-                          ConstraintExtractor constraintExtractor) {
+                          ConstraintExtractor constraintExtractor,
+                          com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService) {
         this.eventStoreService = eventStoreService;
         this.objectMapper = objectMapper;
         this.projectionService = projectionService;
@@ -46,6 +48,47 @@ public class ContextService {
         this.summaryProvider = summaryProvider;
         this.usageCostMapper = usageCostMapper;
         this.constraintExtractor = constraintExtractor;
+        this.branchPathService = branchPathService;
+    }
+
+    /**
+     * PLAN-0410 T2.2/T2.3: one resolved branch scope shared by every
+     * compaction / usage / circuit read and write of a call.
+     *
+     * <p>Selector precedence: an explicit CP-validated {@code branchId}
+     * (409 {@code BRANCH_RUN_MISMATCH} when it disagrees with {@code runId});
+     * else the durable branch derived from {@code runId} (fail-closed on
+     * unknown/cross-Session runs); else the Session root (legacy entry points
+     * without any selector — bootstrap, not a fallback for a FAILED lookup).
+     */
+    private String resolveScopeBranch(String sessionId, String runId, String branchId) {
+        boolean explicit = branchId != null && !branchId.isBlank();
+        boolean hasRun = runId != null && !runId.isBlank();
+        if (hasRun) {
+            String derived = branchPathService.deriveBranchForRun(sessionId, runId);
+            if (explicit && !derived.equals(branchId)) {
+                throw new com.cc01cc.p.xihe.cp.config.CpApiException(
+                        org.springframework.http.HttpStatus.CONFLICT, "BRANCH_RUN_MISMATCH",
+                        "runId resolves to a different branch than the requested branchId");
+            }
+            return derived;
+        }
+        if (explicit) {
+            // Fail-closed validation of a caller-supplied branch (404 codes).
+            branchPathService.resolveVisibility(sessionId, branchId);
+            return branchId;
+        }
+        return branchPathService.ensureRootBranchId(sessionId);
+    }
+
+    /** PLAN-0410 T2.2: resolved branch scope carried through one compaction/gate call. */
+    private record BranchScope(String branchId, String runId,
+                               com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
+    }
+
+    private BranchScope resolveScope(String sessionId, String runId, String branchId) {
+        String scopeBranch = resolveScopeBranch(sessionId, runId, branchId);
+        return new BranchScope(scopeBranch, runId, branchPathService.resolveVisibility(sessionId, scopeBranch));
     }
 
     @Transactional
@@ -67,10 +110,26 @@ public class ContextService {
         return eventStoreService.appendBatch(sessionId, workspaceId, userId, payloads);
     }
 
-    @Transactional(readOnly = true)
+    // PLAN-0410 T2.1: snapshot/replay upsert the durable projection cache row
+    // (per-branch key), so their transaction is write-capable — the former
+    // readOnly hint could silently skip the INSERT on PostgreSQL.
+    @Transactional
     public ObjectNode getSnapshot(String sessionId, String workspaceId, String userId, Long afterSequence) {
+        return getSnapshot(sessionId, workspaceId, userId, afterSequence, null, null);
+    }
+
+    /**
+     * PLAN-0410 T2.3: internal snapshot with a CP-validated branch selector.
+     * {@code branchId} and {@code runId} may both be supplied and must then
+     * agree; invalid/foreign selectors fail closed (404/409) instead of
+     * silently falling back to the Session root.
+     */
+    @Transactional
+    public ObjectNode getSnapshot(String sessionId, String workspaceId, String userId, Long afterSequence,
+                                  String branchId, String runId) {
         long effectiveAfter = afterSequence != null ? afterSequence : 0L;
-        return projectionService.projectAndSave(sessionId, workspaceId, userId, effectiveAfter);
+        String scopeBranch = resolveScopeBranch(sessionId, runId, branchId);
+        return projectionService.projectAndSave(sessionId, workspaceId, userId, effectiveAfter, scopeBranch);
     }
 
     @Transactional(readOnly = true)
@@ -78,7 +137,7 @@ public class ContextService {
         return eventStoreService.read(sessionId, afterSequence);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Map<String, Object> replay(String sessionId, String workspaceId, String userId, Long afterSequence) {
         long effectiveAfter = afterSequence != null ? afterSequence : 0L;
         ObjectNode snapshot = projectionService.projectAndSave(sessionId, workspaceId, userId, effectiveAfter);
@@ -139,20 +198,35 @@ public class ContextService {
 
     public ContextEvent compact(String sessionId, String workspaceId, String userId, Long upToSequence,
                                 String trigger, String runId) {
-        long latestSequence = eventStoreService.getLatestSequence(sessionId);
-        long effectiveUpTo = upToSequence != null ? Math.min(upToSequence, latestSequence) : latestSequence;
+        return compact(sessionId, workspaceId, userId, upToSequence, trigger, runId, null);
+    }
+
+    /**
+     * PLAN-0410 T2.2: the whole compaction flow — projection input, prior
+     * summary cursor, recovery band and the events it writes — runs on ONE
+     * resolved branch path (auto/overflow derive it from the triggering Run,
+     * manual compaction from the CP-validated branchId of field-matrix §6).
+     */
+    public ContextEvent compact(String sessionId, String workspaceId, String userId, Long upToSequence,
+                                String trigger, String runId, String branchId) {
+        BranchScope scope = resolveScope(sessionId, runId, branchId);
+        // PLAN-0410 T2.2: the cursor is clamped to this branch path's latest
+        // visible sequence — sibling Run events never enter the compacted
+        // prefix nor the cooldown math that reuses this cursor.
+        long branchLatest = latestVisibleSequence(sessionId, scope);
+        long effectiveUpTo = upToSequence != null ? Math.min(upToSequence, branchLatest) : branchLatest;
         String effectiveTrigger = trigger == null || trigger.isBlank() ? "auto" : trigger;
 
         // PLAN-294 decision #16 (appendix D.3): resume from the previous
         // compaction cursor instead of re-summarizing from sequence 0 — the
         // prior summary is merged with the increment, never recomputed.
-        com.fasterxml.jackson.databind.JsonNode previous = latestCompaction(sessionId);
+        com.fasterxml.jackson.databind.JsonNode previous = latestCompaction(sessionId, scope.visibility());
         long previousCursor = previous != null && previous.has("up_to_sequence")
                 ? previous.get("up_to_sequence").asLong() : 0L;
         String previousSummary = previous != null && previous.has("summary")
                 ? previous.get("summary").asText() : null;
 
-        ObjectNode context = projectionService.projectUpTo(sessionId, effectiveUpTo);
+        ObjectNode context = projectionService.projectUpTo(sessionId, effectiveUpTo, scope.visibility());
 
         // PLAN-0354 Q4/Q5: statistical observation fields around the provider
         // hop; summary text remains in the existing `summary` field only.
@@ -176,7 +250,7 @@ public class ContextService {
             logger.warn("[LIFECYCLE] service=cp event=compaction_shrink_failed sessionId={} trigger={} summaryChars={} priorChars={}",
                     sessionId, effectiveTrigger, summary.length(),
                     previousSummary == null ? 0 : previousSummary.length());
-            recordIneffectiveCompaction(sessionId, workspaceId, userId);
+            recordIneffectiveCompaction(sessionId, workspaceId, userId, scope);
             summary = buildTruncationOnlySummary(sessionId, context, previousSummary);
             provider = "rule";
             model = "";
@@ -230,11 +304,15 @@ public class ContextService {
             String usageModel = usage.get("model") instanceof String s && !s.isBlank() ? s : model;
             payload.put("usage", usageCostMapper.withCost(usageModel, usage, sessionId));
         }
-        ContextEvent applied = eventStoreService.append(sessionId, workspaceId, userId, "compaction.applied", payload);
+        // PLAN-0410 T2.3: compaction.applied is run/branch-scoped (spec §3 —
+        // never a global event); correlation + derived branch ride together.
+        ContextEvent applied = eventStoreService.append(
+                sessionId, workspaceId, userId, "compaction.applied", payload,
+                scope.runId(), scope.branchId());
 
         // PLAN-0341 T1.3 recovery band (I3): residual must fall below
         // recoveryBand × window, else pause auto compaction (event, no table).
-        applyRecoveryBand(sessionId, workspaceId, userId, context, effectiveTrigger);
+        applyRecoveryBand(sessionId, workspaceId, userId, context, effectiveTrigger, scope);
         return applied;
     }
 
@@ -314,19 +392,20 @@ public class ContextService {
         return sb.toString();
     }
 
-    private void recordIneffectiveCompaction(String sessionId, String workspaceId, String userId) {
+    private void recordIneffectiveCompaction(String sessionId, String workspaceId, String userId,
+                                             BranchScope scope) {
         // Consecutive ineffective counter is auxiliary (#23); recovery band is
         // the primary circuit. This event is the observability trail (V8).
         eventStoreService.append(sessionId, workspaceId, userId, "context.compaction_ineffective", Map.of(
                 "reason", "shrink_validation_failed"
-        ));
+        ), scope.runId(), scope.branchId());
     }
 
     /** PLAN-0341 T1.3 I3: open the auto-compact circuit when residual stays high. */
     private void applyRecoveryBand(String sessionId, String workspaceId, String userId,
-                                   ObjectNode context, String trigger) {
+                                   ObjectNode context, String trigger, BranchScope scope) {
         long residual = estimateInputTokens(context);
-        long window = resolveWindowTokens(sessionId, null);
+        long window = resolveWindowTokens(sessionId, scope, null);
         long bandLimit = (long) (window * SOFT_THRESHOLD_PCT * RECOVERY_BAND);
         if (residual < bandLimit) {
             return;
@@ -339,7 +418,7 @@ public class ContextService {
                 "residualTokens", residual,
                 "bandLimit", bandLimit,
                 "trigger", trigger == null ? "auto" : trigger
-        ));
+        ), scope.runId(), scope.branchId());
         // PLAN-0341 U4: surface the circuit to the session UI.
         try {
             sseManager.send(sessionId, "context_compaction_circuit", Map.of(
@@ -362,18 +441,24 @@ public class ContextService {
      *                                 usage-reported window, then a conservative default
      */
     public boolean preflightRetryAfterOverflow(String sessionId, Long configuredMaxInputTokens) {
+        return preflightRetryAfterOverflow(sessionId, configuredMaxInputTokens, null);
+    }
+
+    /** PLAN-0410 T2.2: preflight estimates the SAME branch path the run compacts. */
+    public boolean preflightRetryAfterOverflow(String sessionId, Long configuredMaxInputTokens, String runId) {
+        BranchScope scope = resolveScope(sessionId, runId, null);
         ObjectNode context = projectionService.projectUpTo(
-                sessionId, eventStoreService.getLatestSequence(sessionId));
+                sessionId, eventStoreService.getLatestSequence(sessionId), scope.visibility());
         if (context == null) {
             return false;
         }
         long estimate = estimateInputTokens(context);
-        long threshold = resolveWindowTokens(sessionId, configuredMaxInputTokens);
+        long threshold = resolveWindowTokens(sessionId, scope, configuredMaxInputTokens);
         // Safety margin 10%: rule-based summarization has no LLM guarantee.
         long limit = (long) (threshold * SOFT_THRESHOLD_PCT * 1.10);
         boolean canRetry = estimate < limit;
-        logger.info("[LIFECYCLE] service=cp event=context_overflow_preflight sessionId={} estimate={} threshold={} limit={} canRetry={}",
-                sessionId, estimate, threshold, limit, canRetry);
+        logger.info("[LIFECYCLE] service=cp event=context_overflow_preflight sessionId={} branchId={} estimate={} threshold={} limit={} canRetry={}",
+                sessionId, scope.branchId(), estimate, threshold, limit, canRetry);
         return canRetry;
     }
 
@@ -401,13 +486,15 @@ public class ContextService {
 
     /**
      * Window resolution priority (T1.6): configured maxInputTokens → last
-     * usage-reported windowTokens → conservative code default.
+     * usage-reported windowTokens → conservative code default. The usage
+     * lookup is branch-scoped (PLAN-0410 T2.2): a sibling Run's window never
+     * sets this branch's threshold.
      */
-    private long resolveWindowTokens(String sessionId, Long configuredMaxInputTokens) {
+    private long resolveWindowTokens(String sessionId, BranchScope scope, Long configuredMaxInputTokens) {
         if (configuredMaxInputTokens != null && configuredMaxInputTokens > 0) {
             return configuredMaxInputTokens;
         }
-        com.fasterxml.jackson.databind.JsonNode usage = latestUsage(sessionId);
+        com.fasterxml.jackson.databind.JsonNode usage = latestUsage(sessionId, scope.visibility());
         if (usage != null) {
             long window = usage.path("usage").path("windowTokens").asLong(
                     usage.path("windowTokens").asLong(0));
@@ -420,9 +507,19 @@ public class ContextService {
         return 128_000L;
     }
 
-    /** Latest compaction.applied event payload for the session, or null. */
-    private com.fasterxml.jackson.databind.JsonNode latestCompaction(String sessionId) {
-        List<com.cc01cc.p.xihe.cp.context.entity.ContextEvent> events = eventStoreService.read(sessionId, 0L);
+    /**
+     * Latest compaction.applied payload visible on {@code branchId}'s path
+     * (PLAN-0410 T2.2: sibling summaries never feed this branch's cursor).
+     */
+    public com.fasterxml.jackson.databind.JsonNode latestCompaction(String sessionId, String branchId) {
+        BranchScope scope = resolveScope(sessionId, null, branchId);
+        return latestCompaction(sessionId, scope.visibility());
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode latestCompaction(
+            String sessionId, com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
+        List<com.cc01cc.p.xihe.cp.context.entity.ContextEvent> events =
+                eventStoreService.read(sessionId, 0L, visibility);
         for (int i = events.size() - 1; i >= 0; i--) {
             com.cc01cc.p.xihe.cp.context.entity.ContextEvent e = events.get(i);
             if ("compaction.applied".equals(e.getEventType())) {
@@ -444,6 +541,16 @@ public class ContextService {
         return Math.min(KEEP_RECENT_MESSAGES, messages.size());
     }
 
+    /**
+     * PLAN-0410 T2.2: max sequence visible on this branch path (0 when empty).
+     * Session/global events are always visible, so this sits between the
+     * global cursor and the branch's own cursor and never counts siblings.
+     */
+    private long latestVisibleSequence(String sessionId, BranchScope scope) {
+        List<ContextEvent> events = eventStoreService.read(sessionId, 0L, scope.visibility());
+        return events.isEmpty() ? 0L : events.get(events.size() - 1).getSequence();
+    }
+
     // PLAN-294 decisions #5/#11/#18 (M3): the pre-run compaction gate.
     // Soft threshold (default 70% of the model window) triggers a从容 compaction
     // before the run; hysteresis parameters (appendix G / E.5) keep a full
@@ -458,9 +565,24 @@ public class ContextService {
     /** Significant growth (× soft threshold) that closes an open circuit. */
     static final double CIRCUIT_RECOVERY_GROWTH = 1.0;
 
-    /** Latest llm_usage payload for the session's runs, or null. */
+    /** Latest llm_usage payload for the session's runs, or null (root path). */
     public com.fasterxml.jackson.databind.JsonNode latestUsage(String sessionId) {
-        List<com.cc01cc.p.xihe.cp.context.entity.ContextEvent> events = eventStoreService.read(sessionId, 0L);
+        return latestUsage(sessionId, branchPathService.rootVisibility(sessionId));
+    }
+
+    /**
+     * PLAN-0410 T2.2: latest llm.usage visible on {@code branchId}'s path —
+     * a sibling Run's usage never drives this branch's compaction threshold.
+     */
+    public com.fasterxml.jackson.databind.JsonNode latestUsage(String sessionId, String branchId) {
+        BranchScope scope = resolveScope(sessionId, null, branchId);
+        return latestUsage(sessionId, scope.visibility());
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode latestUsage(
+            String sessionId, com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
+        List<com.cc01cc.p.xihe.cp.context.entity.ContextEvent> events =
+                eventStoreService.read(sessionId, 0L, visibility);
         for (int i = events.size() - 1; i >= 0; i--) {
             com.cc01cc.p.xihe.cp.context.entity.ContextEvent e = events.get(i);
             // The relay bridges the agent's usage SSE event into the context
@@ -479,21 +601,36 @@ public class ContextService {
     }
 
     public boolean shouldAutoCompact(String sessionId) {
+        return shouldAutoCompact(sessionId, (String) null);
+    }
+
+    /**
+     * PLAN-0410 T2.2: the pre-run gate evaluates ONE branch path — cooldown
+     * cursor, usage signal, circuit and projection all come from the Run's
+     * branch (a null runId keeps the legacy Session-root path).
+     */
+    public boolean shouldAutoCompact(String sessionId, String runId) {
+        BranchScope scope = resolveScope(sessionId, runId, null);
+        return shouldAutoCompact(sessionId, scope);
+    }
+
+    private boolean shouldAutoCompact(String sessionId, BranchScope scope) {
         // projectUpTo (inclusive of the latest event) — the historical
         // shouldAutoCompact passed latestSeq into project(afterSequence),
         // whose exclusive-lower-bound semantics made the projection EMPTY
         // (the dead-code bug that stayed hidden while nothing called it).
         ObjectNode context = projectionService.projectUpTo(
-                sessionId, eventStoreService.getLatestSequence(sessionId));
+                sessionId, eventStoreService.getLatestSequence(sessionId), scope.visibility());
         if (context == null) return false;
 
         // PLAN-0341 T1.3: recovery-band circuit. Open circuit pauses AUTO
         // compaction only; overflow force-compact bypasses this gate entirely.
         // Recovery criterion (#53): significant growth past the soft threshold.
-        if (isCompactionCircuitOpen(sessionId)) {
-            if (hasSignificantGrowth(sessionId, context)) {
-                closeCompactionCircuit(sessionId, context);
-                logger.info("[LIFECYCLE] service=cp event=context_compaction_circuit_closed sessionId={}", sessionId);
+        if (isCompactionCircuitOpen(sessionId, scope)) {
+            if (hasSignificantGrowth(sessionId, scope, context)) {
+                closeCompactionCircuit(sessionId, context, scope);
+                logger.info("[LIFECYCLE] service=cp event=context_compaction_circuit_closed sessionId={} branchId={}",
+                        sessionId, scope.branchId());
             } else {
                 return false;
             }
@@ -503,11 +640,13 @@ public class ContextService {
         // COMPACTION_COOLDOWN_EVENTS new events before the next one.
         // PLAN-0341 decision #3: overflow-triggered compaction clears the
         // cooldown gate so the next normal turn can still auto-compact.
-        com.fasterxml.jackson.databind.JsonNode previous = latestCompaction(sessionId);
+        // PLAN-0410 T2.2: both sides of the cooldown math are branch-scoped —
+        // sibling Run events must not age out this branch's cooldown.
+        com.fasterxml.jackson.databind.JsonNode previous = latestCompaction(sessionId, scope.visibility());
         if (previous != null && previous.has("up_to_sequence")) {
             String previousTrigger = previous.path("trigger").asText("auto");
             if (!"overflow".equals(previousTrigger)) {
-                long latestSeq = eventStoreService.getLatestSequence(sessionId);
+                long latestSeq = latestVisibleSequence(sessionId, scope);
                 if (latestSeq - previous.get("up_to_sequence").asLong() < COMPACTION_COOLDOWN_EVENTS) {
                     return false;
                 }
@@ -520,7 +659,7 @@ public class ContextService {
         // Primary signal: the provider/estimated token count of the last run
         // (decision #5 ②③; real when available, estimated otherwise). The
         // window size comes from the compaction contextPolicy when present.
-        com.fasterxml.jackson.databind.JsonNode usage = latestUsage(sessionId);
+        com.fasterxml.jackson.databind.JsonNode usage = latestUsage(sessionId, scope.visibility());
         if (usage != null) {
             long inputTokens = usage.path("usage").path("inputTokens").asLong(
                     usage.path("inputTokens").asLong(0));
@@ -548,9 +687,18 @@ public class ContextService {
         return false;
     }
 
-    /** Latest non-closed compaction circuit event, or null. */
-    private com.fasterxml.jackson.databind.JsonNode latestOpenCircuit(String sessionId) {
-        List<ContextEvent> events = eventStoreService.read(sessionId, 0L);
+    /**
+     * PLAN-0410 T2.2: latest non-closed compaction circuit visible on
+     * {@code branchId}'s path, or null — a sibling branch's open circuit
+     * never pauses this branch's auto compaction.
+     */
+    public com.fasterxml.jackson.databind.JsonNode latestOpenCircuit(String sessionId, String branchId) {
+        BranchScope scope = resolveScope(sessionId, null, branchId);
+        return latestOpenCircuit(sessionId, scope);
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode latestOpenCircuit(String sessionId, BranchScope scope) {
+        List<ContextEvent> events = eventStoreService.read(sessionId, 0L, scope.visibility());
         for (int i = events.size() - 1; i >= 0; i--) {
             ContextEvent e = events.get(i);
             if ("context.compaction_circuit".equals(e.getEventType())) {
@@ -569,14 +717,14 @@ public class ContextService {
         return null;
     }
 
-    private boolean isCompactionCircuitOpen(String sessionId) {
-        return latestOpenCircuit(sessionId) != null;
+    private boolean isCompactionCircuitOpen(String sessionId, BranchScope scope) {
+        return latestOpenCircuit(sessionId, scope) != null;
     }
 
     /** PLAN-0341 T1.3 recovery criterion (#53): growth past the residual
      *  recorded when the circuit opened — not merely re-crossing soft. */
-    private boolean hasSignificantGrowth(String sessionId, ObjectNode context) {
-        var open = latestOpenCircuit(sessionId);
+    private boolean hasSignificantGrowth(String sessionId, BranchScope scope, ObjectNode context) {
+        var open = latestOpenCircuit(sessionId, scope);
         if (open == null) {
             return false;
         }
@@ -586,14 +734,14 @@ public class ContextService {
         return residualAtOpen > 0 && current >= (long) (residualAtOpen * 1.15);
     }
 
-    private void closeCompactionCircuit(String sessionId, ObjectNode context) {
+    private void closeCompactionCircuit(String sessionId, ObjectNode context, BranchScope scope) {
         eventStoreService.append(sessionId,
                 context.path("workspace_id").asText(""),
                 context.path("user_id").asText(""),
                 "context.compaction_circuit", Map.of(
                         "state", "closed",
                         "reason", "significant_growth"
-                ));
+                ), scope.runId(), scope.branchId());
         try {
             sseManager.send(sessionId, "context_compaction_circuit", Map.of(
                     "type", "context_compaction_circuit",

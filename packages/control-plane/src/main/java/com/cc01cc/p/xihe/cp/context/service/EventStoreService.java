@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.context.service;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
@@ -9,6 +10,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -71,14 +73,29 @@ public class EventStoreService {
     @Transactional
     public ContextEvent append(String sessionId, String workspaceId, String userId,
                                String eventType, Object payload, String correlationId) {
+        return append(sessionId, workspaceId, userId, eventType, payload, correlationId, null);
+    }
+
+    /**
+     * PLAN-0410 T2.2/T2.3: run-scoped writers additionally carry the resolved
+     * branch. A derived branch (from {@code correlation_id}) always wins; an
+     * explicitly supplied branch that disagrees fails closed. An explicit
+     * branch without correlation is validated against the Session before the
+     * row is written (manual compaction on a CP-validated branch — field-matrix
+     * §6), so the caller never chooses a foreign Session's branch.
+     */
+    @Transactional
+    public ContextEvent append(String sessionId, String workspaceId, String userId,
+                               String eventType, Object payload, String correlationId,
+                               String branchId) {
         dbLockTimeout.apply();
-        String branchId = resolveBranchForCorrelation(sessionId, correlationId);
+        String effectiveBranch = resolveEffectiveBranch(sessionId, correlationId, branchId);
         lockSessionForSequence(UUID.fromString(sessionId));
         Long nextSequence = getLatestSequence(sessionId) + 1;
         String payloadJson = toJson(payload);
         ContextEvent event = new ContextEvent(sessionId, workspaceId, userId, eventType, nextSequence, payloadJson);
         event.setCorrelationId(correlationId);
-        event.setBranchId(branchId);
+        event.setBranchId(effectiveBranch);
         return eventStoreRepository.save(event);
     }
 
@@ -114,6 +131,23 @@ public class EventStoreService {
             return eventStoreRepository.findBySessionIdOrderBySequenceAsc(sessionId);
         }
         return eventStoreRepository.findBySessionIdAndSequenceGreaterThanOrderBySequenceAsc(sessionId, afterSequence);
+    }
+
+    /**
+     * PLAN-0410 T2.1: branch-path filtered read (global + ancestor prefix +
+     * current branch events, field-matrix §5). {@code visibility == null}
+     * keeps the legacy Session-wide read for callers without a branch scope.
+     */
+    @Transactional(readOnly = true)
+    public List<ContextEvent> read(String sessionId, Long afterSequence,
+                                   BranchPathService.BranchVisibility visibility) {
+        List<ContextEvent> events = read(sessionId, afterSequence);
+        if (visibility == null) {
+            return events;
+        }
+        return events.stream()
+                .filter(event -> visibility.isVisible(event.getBranchId(), event.getSequence()))
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -157,6 +191,28 @@ public class EventStoreService {
             return null;
         }
         return branchPathService.deriveBranchForRun(sessionId, correlationId);
+    }
+
+    /**
+     * PLAN-0410 T2.2: combine correlation-derived and explicitly requested
+     * branch assignment. Both present must agree (409); explicit-only is
+     * validated against the Session path; neither present stays Session/global.
+     */
+    private String resolveEffectiveBranch(String sessionId, String correlationId, String branchId) {
+        String derived = resolveBranchForCorrelation(sessionId, correlationId);
+        boolean explicit = branchId != null && !branchId.isBlank();
+        if (derived != null) {
+            if (explicit && !derived.equals(branchId)) {
+                throw new CpApiException(HttpStatus.CONFLICT, "BRANCH_RUN_MISMATCH",
+                        "correlation_id resolves to a different branch than the requested branchId");
+            }
+            return derived;
+        }
+        if (explicit) {
+            branchPathService.resolveVisibility(sessionId, branchId);
+            return branchId;
+        }
+        return null;
     }
 
     private String toJson(Object payload) {

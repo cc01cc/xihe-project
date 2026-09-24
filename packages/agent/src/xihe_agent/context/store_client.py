@@ -21,10 +21,21 @@ class CPContextServiceClient:
         self,
         session_id: str,
         after_sequence: int = 0,
+        run_id: str | None = None,
+        branch_id: str | None = None,
     ) -> dict[str, Any]:
-        """Fetch the projected `AgentContext` snapshot for a session."""
+        """Fetch the projected `AgentContext` snapshot for a session.
+
+        PLAN-0410 T2.3: the branch selector rides as `runId` (CP derives the
+        durable branch) and/or the CP-given `branchId`; CP validates both and
+        fails closed (404/409) instead of degrading to the full Session.
+        """
         url = f"{self._base_url}/internal/v1/context/{session_id}/snapshot"
-        params = {"afterSequence": after_sequence}
+        params: dict[str, Any] = {"afterSequence": after_sequence}
+        if run_id:
+            params["runId"] = run_id
+        if branch_id:
+            params["branchId"] = branch_id
         response = await self._client.get(
             url,
             params=params,

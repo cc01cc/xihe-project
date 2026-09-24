@@ -56,6 +56,9 @@ class AgentContext:
     epoch: ContextEpoch | None = None
     runtime_state: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # PLAN-0410 T2.3: the branch CP resolved for this snapshot ("" when the
+    # snapshot predates branch awareness). The Agent never fills this itself.
+    branch_id: str = ""
 
     def add_message(self, message: Message) -> "AgentContext":
         self.messages.append(message)
@@ -329,6 +332,7 @@ class AgentContext:
         return {
             "aggregate_id": self.aggregate_id,
             "latest_sequence": self.latest_sequence,
+            "branch_id": self.branch_id,
             "messages": [{"role": m.role, "content": m.content} for m in self.messages],
             "epoch": self._epoch_to_dict() if self.epoch else None,
             "runtime_state": self.runtime_state,
@@ -346,6 +350,7 @@ class AgentContext:
             latest_sequence=snapshot.get("latest_sequence", 0),
             runtime_state=snapshot.get("runtime_state", {}),
             metadata=snapshot.get("metadata", {}),
+            branch_id=snapshot.get("branch_id", "") or "",
         )
         for raw in snapshot.get("messages", []):
             role = raw.get("role", "human")
@@ -410,6 +415,16 @@ class ContextProvider(ABC):
     """Abstract provider that loads an `AgentContext` snapshot."""
 
     @abstractmethod
-    async def load(self, aggregate_id: str, after_sequence: int = 0) -> AgentContext:
-        """Load the projected context for the aggregate."""
+    async def load(
+        self,
+        aggregate_id: str,
+        after_sequence: int = 0,
+        run_id: str | None = None,
+    ) -> AgentContext:
+        """Load the projected context for the aggregate.
+
+        PLAN-0410 T2.3: when `run_id` is given, CP scopes the snapshot to that
+        Run's branch; the returned context is the ONLY history the runner may
+        consume (never a Session-wide reread).
+        """
         ...

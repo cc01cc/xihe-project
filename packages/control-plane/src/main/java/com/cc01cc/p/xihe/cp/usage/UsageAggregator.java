@@ -20,6 +20,9 @@ import java.util.UUID;
  * Recomputation contract (V3): sums are derived from the per-run snapshots;
  * legacy rows without a {@code model} key count toward {@code partial} but
  * contribute nothing to cost sums and never trigger alerts (spec §2.2).
+ *
+ * PLAN-0410 T2.2: aggregation runs on ONE branch path — a sibling branch's
+ * usage never enters this branch's sums.
  */
 @Service
 public class UsageAggregator {
@@ -27,26 +30,47 @@ public class UsageAggregator {
     private static final Logger log = LoggerFactory.getLogger(UsageAggregator.class);
 
     private final EventStoreService eventStore;
+    private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
     private final ObjectMapper objectMapper;
 
-    public UsageAggregator(EventStoreService eventStore, ObjectMapper objectMapper) {
+    public UsageAggregator(EventStoreService eventStore,
+                           com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
+                           ObjectMapper objectMapper) {
         this.eventStore = eventStore;
+        this.branchPathService = branchPathService;
         this.objectMapper = objectMapper;
     }
 
     /**
-     * Aggregated usage for all runs of the session.
-     * {@code sumCost} is null when no row carries a cost; {@code partial} is
+     * Aggregated usage for the Session root path (legacy selector-less entry;
+     * a Session without a root row can only hold Session/global events).
+     */
+    public Agg aggregate(UUID sessionId) {
+        return aggregate(sessionId, null);
+    }
+
+    /**
+     * Aggregated usage visible on {@code branchId}'s path. {@code branchId}
+     * null selects the Session root path; a supplied foreign/forged branch
+     * fails closed via branch path resolution.
+     *
+     * <p>{@code sumCost} is null when no row carries a cost; {@code partial} is
      * true when any snapshot lacks a computable cost (unmapped, fallback or
      * legacy row without a model key).
      */
-    public Agg aggregate(UUID sessionId) {
+    public Agg aggregate(UUID sessionId, String branchId) {
         long sumIn = 0;
         long sumOut = 0;
         BigDecimal sumCost = null;
         int withCost = 0;
         int withoutCost = 0;
-        List<ContextEvent> events = eventStore.read(sessionId.toString(), 0L);
+        String branch = (branchId == null || branchId.isBlank())
+                ? null
+                : branchId;
+        var visibility = (branch == null)
+                ? branchPathService.rootVisibility(sessionId.toString())
+                : branchPathService.resolveVisibility(sessionId.toString(), branch);
+        List<ContextEvent> events = eventStore.read(sessionId.toString(), 0L, visibility);
         for (ContextEvent event : events) {
             if (!"llm.usage".equals(event.getEventType())) {
                 continue;

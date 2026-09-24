@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.RootBranchBinder;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.SessionBranch;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
@@ -15,8 +16,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -102,9 +106,57 @@ public class BranchPathService {
      * cyclic parent chains all fail closed.
      */
     public String resolvePath(String sessionId, String branchId) {
+        List<SessionBranch> path = walkToRoot(sessionId, branchId);
+        return path.get(path.size() - 1).getId().toString();
+    }
+
+    /**
+     * PLAN-0410 T2.1: resolves the branch path visibility filter for one
+     * Session branch (spec §3 / field-matrix §5): Session/global events
+     * (both association slots NULL) + every ancestor segment up to its child's
+     * {@code fork_point_sequence} + all events of the current branch.
+     *
+     * <p>A non-root branch without a trusted fork-point cursor fails closed
+     * ({@code BRANCH_ANCHOR_UNAVAILABLE}) — the visible prefix is never guessed.
+     */
+    public BranchVisibility resolveVisibility(String sessionId, String branchId) {
+        List<SessionBranch> path = walkToRoot(sessionId, branchId);
+        Map<String, Long> cutoffs = new HashMap<>();
+        for (int i = 0; i < path.size() - 1; i++) {
+            SessionBranch child = path.get(i);
+            if (child.getForkPointSequence() == null) {
+                throw new CpApiException(HttpStatus.CONFLICT, "BRANCH_ANCHOR_UNAVAILABLE",
+                        "Branch has no trusted fork-point cursor");
+            }
+            cutoffs.put(path.get(i + 1).getId().toString(), child.getForkPointSequence());
+        }
+        // path.get(0) is the requested branch itself; the tail is the root.
+        String current = path.get(0).getId().toString();
+        return new BranchVisibility(current, Map.copyOf(cutoffs));
+    }
+
+    /**
+     * PLAN-0410 T2.1: read-only root visibility for projection/compaction READ
+     * paths (never bootstraps a row, so it is safe inside read-only
+     * transactions). A Session without a root row cannot hold branch-tagged
+     * rows either — write paths bootstrap the root — so in that state only
+     * Session/global (both-slot NULL) events are visible, which is exactly the
+     * set that exists.
+     */
+    public BranchVisibility rootVisibility(String sessionId) {
+        String rootId = findRootBranchId(sessionId);
+        if (rootId == null) {
+            return new BranchVisibility(null, Map.of());
+        }
+        return resolveVisibility(sessionId, rootId);
+    }
+
+    /** Shared fail-closed walk from {@code branchId} to the Session root. */
+    private List<SessionBranch> walkToRoot(String sessionId, String branchId) {
         requireText(sessionId, "sessionId");
         requireText(branchId, "branchId");
         Set<String> visited = new HashSet<>();
+        List<SessionBranch> path = new ArrayList<>();
         String current = branchId;
         int depth = 0;
         while (true) {
@@ -131,8 +183,9 @@ public class BranchPathService {
                 throw new CpApiException(HttpStatus.NOT_FOUND, "BRANCH_CROSS_SESSION",
                         "Branch belongs to a different Session");
             }
+            path.add(branch);
             if (branch.getParentBranchId() == null || branch.getParentBranchId().isBlank()) {
-                return branch.getId().toString();
+                return path;
             }
             current = branch.getParentBranchId();
         }
@@ -279,5 +332,28 @@ public class BranchPathService {
 
     /** message/run/sequence triple fixed inside the Branch creation transaction. */
     public record AnchorResolution(String branchId, String messageId, String runId, long cursor) {
+    }
+
+    /**
+     * PLAN-0410 T2.1: visibility filter of one resolved branch path.
+     * {@code ancestorCutoffs} maps each ancestor branch id to its child's
+     * {@code fork_point_sequence}: ancestor events at or before that cursor
+     * are visible, later ones belong to sibling/parallel paths.
+     * A {@code null} {@code currentBranchId} is the root-less read state where
+     * no branch-tagged row can exist (see {@link #rootVisibility(String)}).
+     */
+    public record BranchVisibility(String currentBranchId, Map<String, Long> ancestorCutoffs) {
+
+        /** Session/global facts (both association slots NULL) are visible on every path. */
+        public boolean isVisible(String eventBranchId, long sequence) {
+            if (eventBranchId == null || eventBranchId.isBlank()) {
+                return true;
+            }
+            if (eventBranchId.equals(currentBranchId)) {
+                return true;
+            }
+            Long cutoff = ancestorCutoffs.get(eventBranchId);
+            return cutoff != null && sequence <= cutoff;
+        }
     }
 }

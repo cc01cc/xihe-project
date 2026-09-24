@@ -39,10 +39,24 @@ public class ContextProjectionService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * PLAN-0410 T2.1: Session-root scoped read (the pre-branch default; a
+     * Session without a root row can only hold Session/global events).
+     */
     @Transactional(readOnly = true)
     public ObjectNode projectUpTo(String sessionId, long upToSequence) {
+        return projectUpTo(sessionId, upToSequence, branchPathService.rootVisibility(sessionId));
+    }
+
+    /**
+     * PLAN-0410 T2.1: branch-path filtered projection up to
+     * {@code upToSequence} (global + ancestor prefix + current branch events).
+     */
+    @Transactional(readOnly = true)
+    public ObjectNode projectUpTo(String sessionId, long upToSequence,
+                                  com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
         ObjectNode context = emptyContext(sessionId);
-        List<ContextEvent> events = eventStoreService.read(sessionId, 0L);
+        List<ContextEvent> events = eventStoreService.read(sessionId, 0L, visibility);
         for (ContextEvent event : events) {
             if (event.getSequence() > upToSequence) {
                 break;
@@ -54,8 +68,15 @@ public class ContextProjectionService {
 
     @Transactional(readOnly = true)
     public ObjectNode project(String sessionId, Long afterSequence) {
+        return project(sessionId, afterSequence, branchPathService.rootVisibility(sessionId));
+    }
+
+    /** PLAN-0410 T2.1: branch-path filtered projection of the visible events. */
+    @Transactional(readOnly = true)
+    public ObjectNode project(String sessionId, Long afterSequence,
+                              com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
         ObjectNode context = emptyContext(sessionId);
-        List<ContextEvent> events = eventStoreService.read(sessionId, afterSequence);
+        List<ContextEvent> events = eventStoreService.read(sessionId, afterSequence, visibility);
         for (ContextEvent event : events) {
             context = apply(context, event);
         }
@@ -64,20 +85,37 @@ public class ContextProjectionService {
 
     @Transactional
     public ObjectNode projectAndSave(String sessionId, String workspaceId, String userId, long afterSequence) {
-        ObjectNode context = project(sessionId, afterSequence);
+        return projectAndSave(sessionId, workspaceId, userId, afterSequence, null);
+    }
+
+    /**
+     * PLAN-0410 T2.1/T2.3: projection upsert keyed by
+     * (session_id, projection_type, branch_id) — the cache key carries the
+     * branchId. A null branchId bootstraps the Session root (legacy callers);
+     * a supplied branchId must resolve inside this Session (fail-closed).
+     * The projected payload carries {@code branch_id} so Agent-side consumers
+     * know which branch CP resolved for them.
+     */
+    @Transactional
+    public ObjectNode projectAndSave(String sessionId, String workspaceId, String userId, long afterSequence,
+                                     String branchId) {
+        String effectiveBranch = (branchId == null || branchId.isBlank())
+                ? branchPathService.ensureRootBranchId(sessionId)
+                : branchId;
+        com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility =
+                branchPathService.resolveVisibility(sessionId, effectiveBranch);
+        ObjectNode context = project(sessionId, afterSequence, visibility);
         long latestSequence = context.get("latest_sequence").asLong();
+        context.put("branch_id", effectiveBranch);
 
         // PLAN-0410 field-matrix §2 #6: explicit three-key lookup + insert.
-        // M1 has no branch selector yet, so the Session root projection is the
-        // one upserted (per-branch replay arrives with T2.1).
-        String branchId = branchPathService.ensureRootBranchId(sessionId);
         Optional<ContextProjection> existing =
                 projectionRepository.findBySessionIdAndProjectionTypeAndBranchId(
-                        sessionId, AGENT_CONTEXT_TYPE, branchId);
+                        sessionId, AGENT_CONTEXT_TYPE, effectiveBranch);
         ContextProjection projection = existing.orElseGet(() -> {
             ContextProjection created =
                     new ContextProjection(sessionId, workspaceId, userId, context.toString());
-            created.setBranchId(branchId);
+            created.setBranchId(effectiveBranch);
             return created;
         });
         projection.setWorkspaceId(workspaceId);

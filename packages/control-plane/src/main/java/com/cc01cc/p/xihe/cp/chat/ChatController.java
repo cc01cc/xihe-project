@@ -540,7 +540,9 @@ public class ChatController {
                 // gate compresses history before the run consumes it. Context
                 // service owns the cooldown/anti-thrash rules.
                 try {
-                    if (contextService.shouldAutoCompact(sessionId)) {
+                    // PLAN-0410 T2.2: the gate resolves THIS Run's branch path —
+                    // sibling Run usage/summary/circuit never drive the decision.
+                    if (contextService.shouldAutoCompact(sessionId, runId)) {
                         contextService.compact(sessionId, workspaceId, userId, null, "auto", runId);
                         logger.info("[LIFECYCLE] service=cp event=chat_pre_run_compaction sessionId={} runId={}", sessionId, runId);
                     }
@@ -811,10 +813,12 @@ public class ChatController {
         try {
             Long maxInputTokens = resolveMaxInputTokens(userId, workspaceId, model);
             contextService.compactForOverflow(sessionId, workspaceId, userId, runId);
+            // PLAN-0410 T2.3 (matrix §4): overflow_retry is run-scoped — the
+            // durable correlation lets CP derive its branch on append.
             contextService.appendEvent(sessionId, workspaceId, userId, "context.overflow_retry", Map.of(
                     "runId", runId == null ? "" : runId,
                     "requestId", requestId == null ? "" : requestId,
-                    "maxInputTokens", maxInputTokens == null ? 0 : maxInputTokens));
+                    "maxInputTokens", maxInputTokens == null ? 0 : maxInputTokens), runId);
             sseManager.send(sessionId, "context_overflow_retry", Map.of(
                     "type", "context_overflow_retry",
                     "requestId", requestId == null ? "" : requestId,
@@ -822,7 +826,7 @@ public class ChatController {
                     "message", "上下文超限，已压缩并重试一次"));
             logger.info("[LIFECYCLE] service=cp event=chat_overflow_recovery sessionId={} runId={} maxInputTokens={}",
                     sessionId, runId, maxInputTokens);
-            return contextService.preflightRetryAfterOverflow(sessionId, maxInputTokens);
+            return contextService.preflightRetryAfterOverflow(sessionId, maxInputTokens, runId);
         } catch (Exception e) {
             logger.error("[LIFECYCLE] service=cp event=chat_overflow_recovery_failed sessionId={} runId={}",
                     sessionId, runId, e);
@@ -1355,8 +1359,11 @@ public class ChatController {
             if (usageRun != null) {
                 Map<String, Object> usageEnvelope = new java.util.HashMap<>();
                 usageEnvelope.put("usage", asMap(enriched).get("usage"));
+                // PLAN-0410 T2.3 (matrix §4): llm.usage is run-scoped — carry
+                // correlation_id=runId so CP derives the durable branch.
                 eventStoreService.append(sessionId, usageRun.getWorkspaceId().toString(),
-                        usageRun.getUserId().toString(), "llm.usage", usageEnvelope);
+                        usageRun.getUserId().toString(), "llm.usage", usageEnvelope,
+                        usageRun.getId().toString());
             }
             // PLAN-294 ①2: success visibility — the estimated/real token
             // counts reaching the ledger is the calibration baseline; without

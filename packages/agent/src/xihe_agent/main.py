@@ -1141,7 +1141,9 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 terminal_sent = True
                 yield render_sse("done", correlated_data({"type": "done"}))
             else:
-                context = await context_provider.load(session_id, after_sequence=0)
+                # PLAN-0410 T2.3: the snapshot is scoped to this Run's branch;
+                # CP resolves/validates the branch from the durable runId.
+                context = await context_provider.load(session_id, after_sequence=0, run_id=run_id)
                 context.runtime_state["user_name"] = user_name
                 context.runtime_state["instructions"] = instructions
                 context.runtime_state["toolWaits"] = tool_waits
@@ -1155,6 +1157,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         "sessionId": session_id,
                         "workspaceId": workspace_id,
                         "operationId": operation_id,
+                        "branchId": context.branch_id,
                     }
                 )
 
@@ -1176,6 +1179,7 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         user_overrides,
                         workspace_overrides,
                     ).prune_window_chars,
+                    branch_id=context.branch_id,
                 )
 
                 llm_request_started = True

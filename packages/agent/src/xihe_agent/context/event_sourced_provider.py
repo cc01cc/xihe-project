@@ -14,6 +14,14 @@ class EventSourcedContextProvider(ContextProvider):
         self,
         aggregate_id: str,
         after_sequence: int = 0,
+        run_id: str | None = None,
     ) -> AgentContext:
-        snapshot = await self._cp_client.get_context_snapshot(aggregate_id, after_sequence=after_sequence)
+        """PLAN-0410 T2.3: `run_id` scopes the snapshot to the Run's branch.
+
+        CP resolves and validates the branch; the Agent never submits an
+        authoritative branch it chose itself.
+        """
+        snapshot = await self._cp_client.get_context_snapshot(
+            aggregate_id, after_sequence=after_sequence, run_id=run_id
+        )
         return AgentContext.from_snapshot(snapshot)

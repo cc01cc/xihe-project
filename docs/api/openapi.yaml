@@ -1069,7 +1069,22 @@ paths:
         '503': { $ref: '#/components/responses/Problem' }
   /internal/v1/context/{sessionId}/events:
     get: { operationId: readContextEvents, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Events } } }
-    post: { operationId: appendContextEvent, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '201': { description: Appended } } }
+    post:
+      operationId: appendContextEvent
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: { type: string }
+                payload: { type: object, additionalProperties: true }
+                correlation_id:
+                  type: string
+                  description: 'PLAN-0410: run-scoped events; CP validates the same-Session ChatRun and derives branch_id. A body branch_id is rejected (400).'
+      responses: { '201': { description: Appended }, '400': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } }
   /internal/v1/runtime/workspaces/{workspaceId}/mcp:
     post: { operationId: runtimeMcp, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP JSON-RPC response } } }
   /internal/v1/runtime/remote-mcp/{workspaceId}/{serverId}/call:
@@ -1131,9 +1146,34 @@ paths:
   /internal/v1/agent/registry/workers/{workerId}/disable:
     post: { operationId: disableWorker, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workerId, required: true, schema: { type: string } }], responses: { '200': { description: Disabled } } }
   /internal/v1/context/{sessionId}/snapshot:
-    get: { operationId: contextSnapshot, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Snapshot } } }
+    get:
+      operationId: contextSnapshot
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string } }
+        - { in: query, name: afterSequence, schema: { type: integer, format: int64, default: 0 } }
+        - { in: query, name: branchId, schema: { type: string }, description: 'PLAN-0410: CP-validated branch selector; unknown/foreign branch fails closed (404).' }
+        - { in: query, name: runId, schema: { type: string }, description: 'PLAN-0410: resolves the durable Run branch; must agree with branchId when both are given (409).' }
+      responses: { '200': { description: Branch-scoped snapshot }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } }
   /internal/v1/context/{sessionId}/events/batch:
-    post: { operationId: appendContextEvents, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '201': { description: Appended } } }
+    post:
+      operationId: appendContextEvents
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  type: { type: string }
+                  payload: { type: object, additionalProperties: true }
+                  correlation_id:
+                    type: string
+                    description: 'PLAN-0410: run-scoped; validated per item, batch aborts whole on failure.'
+      responses: { '201': { description: Appended }, '400': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } }
   /internal/v1/context/{sessionId}/events/latest:
     get: { operationId: latestContextSequence, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Sequence } } }
   /internal/v1/context/{sessionId}/refresh-sources:
@@ -1143,7 +1183,21 @@ paths:
   /internal/v1/context/{sessionId}/replay:
     post: { operationId: replayContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Replayed } } }
   /internal/v1/context/{sessionId}/compact:
-    post: { operationId: compactContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Compacted } } }
+    post:
+      operationId: compactContext
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                upToSequence: { type: integer, format: int64 }
+                branchId:
+                  type: string
+                  description: 'PLAN-0410: CP-validated branch path; projection input, prior summary, recovery band and written events all stay on it (404 when unknown/foreign).'
+      responses: { '200': { description: Compacted }, '404': { $ref: '#/components/responses/Problem' } }
   /internal/v1/context/{sourceSessionId}/fork:
     post: { operationId: forkContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sourceSessionId, required: true, schema: { type: string } }], responses: { '201': { description: Forked } } }
   /internal/v1/runtime/workspaces/{workspaceId}/git-facts:
