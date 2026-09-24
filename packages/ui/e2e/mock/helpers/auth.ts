@@ -24,6 +24,7 @@ export interface MockAuthOptions {
 export interface MockSessionRecord {
   id: string
   title: string
+  agentPrincipalId?: string | null
   createdAt?: string
   updatedAt?: string
   workspaceId?: string
@@ -261,10 +262,11 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
       return
     }
     if (route.request().method() === 'POST' && options.createSession) {
-      const body = route.request().postDataJSON() as { title?: string } | null
+      const body = route.request().postDataJSON() as { title?: string; agentPrincipalId?: string } | null
       const created = {
         id: `mock-session-${Date.now()}`,
         title: body?.title ?? 'New Chat',
+        agentPrincipalId: body?.agentPrincipalId ?? null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         workspaceId: 'workspace-1',

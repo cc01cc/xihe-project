@@ -1,6 +1,9 @@
 package com.cc01cc.p.xihe.cp.entity;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -22,6 +25,14 @@ public class Session {
     @Column(name = "user_id", nullable = false, length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String userId;
+
+    @Column(name = "agent_principal_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
+    private String agentPrincipalId;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "agent_permissions_snapshot", columnDefinition = "jsonb")
+    private JsonNode agentPermissionsSnapshot;
 
     @Column(length = 255)
     private String title;
@@ -94,6 +105,14 @@ public class Session {
 
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
+
+    public String getAgentPrincipalId() { return agentPrincipalId; }
+    public void setAgentPrincipalId(String agentPrincipalId) { this.agentPrincipalId = agentPrincipalId; }
+
+    public JsonNode getAgentPermissionsSnapshot() { return agentPermissionsSnapshot; }
+    public void setAgentPermissionsSnapshot(JsonNode agentPermissionsSnapshot) {
+        this.agentPermissionsSnapshot = agentPermissionsSnapshot;
+    }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }

@@ -10,14 +10,10 @@ import {
   Plus,
   Settings,
 } from '@lucide/vue'
-import { useSessionStore } from '../../stores/session'
-import { useChatStore } from '../../stores/chat'
 import { useAuthStore } from '../../stores/auth'
-import { ApiError } from '../../composables/api'
-import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import SessionList from './SessionList.vue'
-import { workspaceChatPath, workspacePath } from '../../lib/routes'
+import { workspacePath } from '../../lib/routes'
 
 const props = defineProps<{
   open: boolean
@@ -33,8 +29,6 @@ const emit = defineEmits<{
 const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
-const sessionStore = useSessionStore()
-const chatStore = useChatStore()
 const auth = useAuthStore()
 
 const isWorkspaceRoute = computed(() => route?.path?.startsWith('/workspace') ?? false)
@@ -52,15 +46,7 @@ async function startNewChat() {
     return
   }
   const workspaceId = auth.currentWorkspaceId
-  try {
-    const session = await sessionStore.createSession()
-    chatStore.clearSession(session.id)
-    router.push(workspaceChatPath(session.workspaceId ?? workspaceId, session.id))
-  } catch (cause) {
-    const message = cause instanceof ApiError ? cause.message : 'Failed to create session'
-    logger.error('Create session failed', cause)
-    toast.error(message)
-  }
+  await router.push({ path: workspacePath(workspaceId), query: { newChat: '1' } })
 }
 
 function toggleSidebar() {

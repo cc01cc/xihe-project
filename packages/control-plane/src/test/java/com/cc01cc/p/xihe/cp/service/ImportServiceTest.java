@@ -22,7 +22,7 @@ class ImportServiceTest {
 
     private ImportService createService() {
         when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
-        return new ImportService(sessionRepo, messageRepo, objectMapper, grantDefaultService, transactionManager);
+        return new ImportService(sessionRepo, messageRepo, objectMapper, transactionManager);
     }
 
     @Test
@@ -36,8 +36,9 @@ class ImportServiceTest {
         assertEquals(1, result.getImported());
         assertEquals(0, result.getSkipped());
         assertNull(result.getLastError());
-        verify(grantDefaultService).ensureAgentSessionDefault(any(Session.class));
-        verify(sessionRepo).save(argThat(session -> "workspace-1".equals(session.getWorkspaceId())));
+        verifyNoInteractions(grantDefaultService);
+        verify(sessionRepo).save(argThat(session -> "workspace-1".equals(session.getWorkspaceId())
+                && session.getAgentPrincipalId() == null && session.getAgentPermissionsSnapshot() == null));
     }
 
     @Test

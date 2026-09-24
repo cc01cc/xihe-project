@@ -13,6 +13,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.*;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -22,17 +23,20 @@ import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -41,6 +45,8 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -81,6 +87,9 @@ class ChatControllerTest extends AbstractH2Test {
     private WorkspaceUserRepository workspaceUserRepository;
 
     @Autowired
+    private WorkspaceAgentRepository workspaceAgentRepository;
+
+    @Autowired
     private SessionRepository sessionRepository;
 
     @Autowired
@@ -91,6 +100,9 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Autowired
     private ChatRunRepository chatRunRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private LedgerOperationRepository ledgerOperationRepository;
@@ -106,6 +118,12 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Autowired
     private OperationService operationService;
+
+    @Autowired
+    private AgentPrincipalService agentPrincipalService;
+
+    @Autowired
+    private AgentTemplateService agentTemplateService;
 
     @Autowired
     private ApprovalService approvalService;
@@ -200,9 +218,18 @@ class ChatControllerTest extends AbstractH2Test {
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
 
+        var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
+        AgentPrincipal principal = agentPrincipalService.createPrincipal(
+                userId, "Chat controller test principal", null, defaultTemplate.snapshot());
+        var permissions = principal.getTemplateSnapshot().get("permissions");
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
+                principal.getId().toString(), workspaceId, permissions.deepCopy()));
+
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Chat Test");
         session.setId(UUID.fromString(sessionId));
+        session.setAgentPrincipalId(principal.getId().toString());
+        session.setAgentPermissionsSnapshot(permissions.deepCopy());
         sessionRepository.save(session);
     }
 
@@ -226,6 +253,34 @@ class ChatControllerTest extends AbstractH2Test {
                 // context may not exist; ignore
             }
         }
+    }
+
+    @Test
+    void chatRejectsSessionWithoutStableAgentPrincipalBeforeCreatingRun() {
+        Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        session.setAgentPrincipalId(null);
+        session.setAgentPermissionsSnapshot(null);
+        sessionRepository.saveAndFlush(session);
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Must not create an Agent run",
+                "workspaceId", workspaceId,
+                "userId", userId
+        );
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(request, headers), Map.class);
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertEquals("FORBIDDEN", response.getBody().get("code"));
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
+        assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
+        assertTrue(ledgerOperationRepository.findBySessionIdOrderByCreatedAtDesc(sessionId).isEmpty());
     }
 
     @Test

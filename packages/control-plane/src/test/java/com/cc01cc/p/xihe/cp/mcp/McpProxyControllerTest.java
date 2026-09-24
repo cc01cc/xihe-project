@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
@@ -15,6 +17,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
+import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.UserRole;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -31,6 +47,32 @@ class McpProxyControllerTest {
 
     @Autowired
     private com.cc01cc.p.xihe.cp.service.WorkspaceService workspaceService;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private SessionRepository sessionRepository;
+
+    @Autowired
+    private LedgerOperationRepository ledgerOperationRepository;
+
+    @Autowired
+    private AgentPrincipalRepository agentPrincipalRepository;
+
+    @Autowired
+    private AuthorizationGrantRepository authorizationGrantRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
+    }
 
     @Test
     void controllerLoads() {
@@ -84,6 +126,67 @@ class McpProxyControllerTest {
         com.cc01cc.p.xihe.cp.config.TenantContext.clear();
         assertNull(com.cc01cc.p.xihe.cp.config.TenantContext.getWorkspacePath());
         assertNull(com.cc01cc.p.xihe.cp.config.TenantContext.getWorkspaceId());
+    }
+
+    @Test
+    void mcpUserFallbackCreatesPrincipalNullSessionAndUserLedger() throws Exception {
+        User user = userRepository.saveAndFlush(new User("mcp-fallback-" + UUID.randomUUID() + "@test.com",
+                "hash", UserRole.USER, "MCP fallback test"));
+        Workspace workspace = workspaceRepository.saveAndFlush(
+                new Workspace("MCP fallback workspace", user.getId().toString()));
+        TenantContext.setUserId(user.getId().toString());
+        TenantContext.setWorkspaceId(workspace.getId().toString());
+
+        Object attempt = invokeStartUserMutationLedger("{\"method\":\"tools/call\"}", "mcp-init");
+
+        assertNotNull(attempt);
+        Session created = sessionRepository.findByWorkspaceIdAndUserIdAndArchivedFalseOrderByCreatedAtDesc(
+                workspace.getId().toString(), user.getId().toString()).getFirst();
+        assertNull(created.getAgentPrincipalId());
+        assertNull(created.getAgentPermissionsSnapshot());
+        assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "agent", created.getId(), "default"));
+        LedgerOperation operation = ledgerOperationRepository
+                .findBySessionIdOrderByCreatedAtDesc(created.getId().toString()).getFirst();
+        assertEquals("user", operation.getActorType());
+    }
+
+    @Test
+    void mcpUserLedgerReusesBoundSessionWithoutChangingPrincipal() throws Exception {
+        User user = userRepository.saveAndFlush(new User("mcp-reuse-" + UUID.randomUUID() + "@test.com",
+                "hash", UserRole.USER, "MCP reuse test"));
+        Workspace workspace = workspaceRepository.saveAndFlush(
+                new Workspace("MCP reuse workspace", user.getId().toString()));
+        AgentPrincipal principal = new AgentPrincipal();
+        principal.setName("Existing principal");
+        principal.setCreatedByUserId(user.getId().toString());
+        principal.setTemplateSnapshot(objectMapper.createObjectNode().put("templateName", "Existing"));
+        principal = agentPrincipalRepository.saveAndFlush(principal);
+        Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Bound session");
+        session.setId(UUID.randomUUID());
+        session.setAgentPrincipalId(principal.getId().toString());
+        session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        sessionRepository.saveAndFlush(session);
+        TenantContext.setUserId(user.getId().toString());
+        TenantContext.setWorkspaceId(workspace.getId().toString());
+
+        Object attempt = invokeStartUserMutationLedger("{\"method\":\"tools/call\"}", "mcp-init");
+
+        assertNotNull(attempt);
+        Session reused = sessionRepository.findById(session.getId()).orElseThrow();
+        assertEquals(principal.getId().toString(), reused.getAgentPrincipalId());
+        LedgerOperation operation = ledgerOperationRepository
+                .findBySessionIdOrderByCreatedAtDesc(session.getId().toString()).getFirst();
+        assertEquals("user", operation.getActorType());
+    }
+
+    private Object invokeStartUserMutationLedger(String body, String sessionId) throws Exception {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Request-Id", UUID.randomUUID().toString());
+        var method = McpProxyController.class.getDeclaredMethod(
+                "startUserMutationLedger", String.class, String.class, HttpHeaders.class, String.class);
+        method.setAccessible(true);
+        return method.invoke(controller, "read_file", body, headers, sessionId);
     }
 
     private String invokeExtractMethod(String body) {

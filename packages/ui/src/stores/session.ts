@@ -41,6 +41,7 @@ function toSession(record: ApiSession): Session {
         createdAt: record.createdAt ?? now,
         updatedAt: record.updatedAt ?? record.createdAt ?? now,
         workspaceId: record.workspaceId,
+        agentPrincipalId: record.agentPrincipalId ?? null,
         modelProvider: record.modelProvider,
         modelName: record.modelName,
         providerConnectionId: record.providerConnectionId,
@@ -177,10 +178,10 @@ export const useSessionStore = defineStore("session", () => {
         else sessions.value.unshift(session);
     }
 
-    async function createSession(title = "New Chat"): Promise<Session> {
+    async function createSession(agentPrincipalId: string, title = "New Chat"): Promise<Session> {
         if (createPromise) return createPromise;
         createPromise = (async () => {
-            const response = await api.createSession(title);
+            const response = await api.createSession(agentPrincipalId, title);
             const session = toSession(response);
             upsertSession(session);
             currentSessionId.value = session.id;
@@ -235,6 +236,12 @@ export const useSessionStore = defineStore("session", () => {
 
     function selectSession(id: string) {
         currentSessionId.value = id;
+    }
+
+    function setSessionAgentPrincipal(id: string, agentPrincipalId: string) {
+        sessions.value = sessions.value.map((session) => session.id === id
+            ? { ...session, agentPrincipalId }
+            : session);
     }
 
     function clearCurrentSession() {
@@ -314,6 +321,7 @@ export const useSessionStore = defineStore("session", () => {
         deleteSession,
         renameSession,
         selectSession,
+        setSessionAgentPrincipal,
         clearCurrentSession,
         updateSessionTitle,
         updateSession,

@@ -22,6 +22,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
+import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -50,6 +51,9 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private FileRepository fileRepository;
+
+    @Autowired
+    private AuthorizationGrantRepository authorizationGrantRepository;
 
     @Autowired
     private WorkspaceUserRepository workspaceUserRepository;
@@ -109,6 +113,8 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void uploadAndServeAttachment_fullFlow() throws IOException {
+        sessionRepository.deleteById(UUID.fromString(sessionId));
+        sessionId = UUID.randomUUID().toString();
         java.io.File tempFile = java.io.File.createTempFile("int", ".txt");
         Files.write(tempFile.toPath(), "integration test content".getBytes());
 
@@ -125,6 +131,11 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
                 HttpMethod.POST, request, Map.class);
 
         assertEquals(HttpStatus.OK, uploadResponse.getStatusCode());
+        Session placeholder = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        assertNull(placeholder.getAgentPrincipalId());
+        assertNull(placeholder.getAgentPermissionsSnapshot());
+        assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "agent", UUID.fromString(sessionId), "default"));
         Map<String, Object> result = uploadResponse.getBody();
         List<?> success = (List<?>) result.get("success");
         assertEquals(1, success.size());

@@ -10,6 +10,7 @@ import java.util.UUID;
 
 @Repository
 public interface EventStoreRepository extends JpaRepository<ContextEvent, UUID> {
+    boolean existsBySessionId(String sessionId);
 
     List<ContextEvent> findBySessionIdOrderBySequenceAsc(String sessionId);
 

@@ -112,7 +112,7 @@ async function createSessionInStore(id: string, title: string) {
     status: 201,
     json: () => Promise.resolve(stubSessionResponse({ id, title })),
   } as Response)
-  await store.createSession(title)
+  await store.createSession('principal-test', title)
 }
 
 describe('ModelPopover', () => {

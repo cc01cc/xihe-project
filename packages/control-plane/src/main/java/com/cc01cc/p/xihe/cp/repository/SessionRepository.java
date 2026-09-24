@@ -5,6 +5,7 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
@@ -28,4 +29,13 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Session s where s.id = :id")
     Optional<Session> findByIdForUpdate(@Param("id") UUID id);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "UPDATE sessions SET agent_principal_id = CAST(:principalId AS uuid), "
+            + "agent_permissions_snapshot = CAST(:permissionsSnapshot AS jsonb) "
+            + "WHERE id = :id AND agent_principal_id IS NULL AND agent_permissions_snapshot IS NULL",
+            nativeQuery = true)
+    int bindAgentPrincipalIfNull(@Param("id") UUID id,
+                                 @Param("principalId") String principalId,
+                                 @Param("permissionsSnapshot") String permissionsSnapshot);
 }

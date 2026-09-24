@@ -22,6 +22,9 @@ public class ToolFaceRegistry {
     public static final String ACTION_EXEC = "exec";
     public static final String ACTION_NETWORK = "network";
     public static final String ACTION_CREDENTIAL = "credential";
+    public static final String ACTION_CREATE_ACCOUNT = "CREATE_ACCOUNT";
+    public static final String ACTION_CREATE_TEMPLATE = "CREATE_TEMPLATE";
+    public static final String ACTION_MANAGE_WORKSPACE_AGENTS = "MANAGE_WORKSPACE_AGENTS";
 
     private static final Set<String> READ_TOOLS = Set.of(
             "read_file", "read_file_range", "list_directory", "glob", "grep",
@@ -74,6 +77,7 @@ public class ToolFaceRegistry {
 
     /** Built-in action classes; callers may add their own (e.g. {@code db-migration}). */
     public static Set<String> builtinActionClasses() {
-        return Set.of(ACTION_READ, ACTION_WRITE, ACTION_DELETE, ACTION_EXEC, ACTION_NETWORK, ACTION_CREDENTIAL);
+        return Set.of(ACTION_READ, ACTION_WRITE, ACTION_DELETE, ACTION_EXEC, ACTION_NETWORK, ACTION_CREDENTIAL,
+                ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS);
     }
 }

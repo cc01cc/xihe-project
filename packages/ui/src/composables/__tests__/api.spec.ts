@@ -168,33 +168,70 @@ describe('api.createSession', () => {
       json: () => Promise.resolve(mockSession),
     } as Response)
 
-    const result = await api.createSession('New Chat')
+    const result = await api.createSession('principal-1', 'New Chat')
 
     expect(fetchSpy).toHaveBeenCalledWith(
       '/api/v1/sessions',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ title: 'New Chat' }),
+        body: JSON.stringify({ title: 'New Chat', agentPrincipalId: 'principal-1' }),
       }),
     )
     expect(result.id).toBe('3')
     expect(result.title).toBe('New Chat')
   })
 
-  it('sends POST without title when omitted', async () => {
+  it('sends POST with the selected principal when title is omitted', async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ id: '4', title: 'Untitled' }),
     } as Response)
 
-    await api.createSession()
+    await api.createSession('principal-1')
 
     expect(fetchSpy).toHaveBeenCalledWith(
       '/api/v1/sessions',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ title: undefined }),
+        body: JSON.stringify({ agentPrincipalId: 'principal-1' }),
       }),
+    )
+  })
+})
+
+describe('Workspace Agent management API', () => {
+  it('creates a principal without creating a Workspace binding', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        principalId: 'principal-1', templateId: null, templateName: null, createdAt: '2026-09-24T00:00:00Z',
+      }),
+    } as Response)
+
+    const result = await api.createAgentPrincipal('Research Agent')
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/agent-principals', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ name: 'Research Agent' }),
+    }))
+    expect(result.principalId).toBe('principal-1')
+  })
+
+  it('writes only the Workspace cap and supports independent unbinding', async () => {
+    fetchSpy.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ permissions: [] }) } as Response)
+    await api.updateWorkspaceAgentCap('workspace/1', 'principal 1', [{ actionClass: 'read', resource: 'src/*' }])
+    expect(fetchSpy).toHaveBeenNthCalledWith(1,
+      '/api/v1/workspaces/workspace%2F1/agents/principal%201',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ permissions: [{ actionClass: 'read', resource: 'src/*' }] }),
+      }),
+    )
+
+    fetchSpy.mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+    await api.deleteWorkspaceAgent('workspace/1', 'principal 1')
+    expect(fetchSpy).toHaveBeenNthCalledWith(2,
+      '/api/v1/workspaces/workspace%2F1/agents/principal%201',
+      expect.objectContaining({ method: 'DELETE' }),
     )
   })
 })

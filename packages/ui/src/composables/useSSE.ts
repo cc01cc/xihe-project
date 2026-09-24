@@ -76,6 +76,7 @@ export interface SendMessageOptions {
     attachments?: string[];
     model?: string;
     sessionId?: string;
+    agentPrincipalId?: string;
     provider?: string;
     toolMode?: "none" | "workspace";
     idempotencyKey?: string;
@@ -552,6 +553,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         toolMode,
         idempotencyKey,
         sessionId: overrideSid,
+        agentPrincipalId,
     }: SendMessageOptions): Promise<ChatRunResponse | null> {
         const generation = connectionGeneration;
         error.value = null;
@@ -565,6 +567,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 sessionId: sid,
                 stream: true,
             };
+            if (agentPrincipalId) body.agentPrincipalId = agentPrincipalId;
             if (model) {
                 body.model = model;
             }

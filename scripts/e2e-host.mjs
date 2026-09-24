@@ -888,6 +888,12 @@ async function runPlaywright() {
       XIHE_FAKE_OAUTH_PORT: fakeOAuthPort,
       XIHE_FAKE_MCP_PORT: fakeMcpPort,
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
+      // Test-only fixture metadata. The password remains inside the isolated
+      // Postgres container; host specs seed narrowly scoped grants via docker exec.
+      XIHE_E2E_PG_CONTAINER: `${pgProjectName}-postgres-1`,
+      XIHE_E2E_PG_DATABASE: pgDatabase,
+      XIHE_E2E_PG_USER: pgUser,
+      XIHE_E2E_PG_PORT: pgPort,
       XIHE_E2E_LLM_MODE: llmMode,
       XIHE_E2E_ADMIN_PASSWORD: e2eAdminPassword,
       XIHE_E2E_AGENT_RESTART_ENV: JSON.stringify(agentRestartEnv),

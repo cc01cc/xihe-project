@@ -10,7 +10,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 
@@ -26,18 +25,15 @@ public class ImportService {
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final ObjectMapper objectMapper;
-    private final GrantDefaultService grantDefaultService;
     private final TransactionTemplate transactionTemplate;
 
     public ImportService(SessionRepository sessionRepository,
                          MessageRepository messageRepository,
                          ObjectMapper objectMapper,
-                         GrantDefaultService grantDefaultService,
                          PlatformTransactionManager transactionManager) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.objectMapper = objectMapper;
-        this.grantDefaultService = grantDefaultService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -95,8 +91,7 @@ public class ImportService {
         session.setTitle(chat.path("title").asText("Imported"));
         session.setCreatedAt(Instant.parse(chat.path("createdAt").asText()));
         session.setArchived(false);
-        Session saved = sessionRepository.save(session);
-        grantDefaultService.ensureAgentSessionDefault(saved);
+        sessionRepository.save(session);
 
         JsonNode messages = chat.get("messages");
         if (messages != null) {

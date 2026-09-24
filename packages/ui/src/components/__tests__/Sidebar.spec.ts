@@ -89,17 +89,11 @@ describe('Sidebar', () => {
     expect(wrapper.text()).toContain('新建对话')
   })
 
-  it('clicking new chat calls server createSession and stores the result', async () => {
+  it('clicking new chat routes through the explicit Workspace Agent selector', async () => {
     mockAuth()
     const store = useSessionStore()
     expect(store.sessions.length).toBe(0)
-    const spy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: () => Promise.resolve(stubSessionResponse({ id: 'srv-1' })),
-      } as Response)
+    const spy = vi.spyOn(globalThis, 'fetch')
 
     const wrapper = await mountSidebar()
     const buttons = wrapper.findAll('button')
@@ -108,14 +102,9 @@ describe('Sidebar', () => {
     await newChatBtn!.trigger('click')
     await flushPromises()
 
-    expect(spy).toHaveBeenCalledWith(
-      '/api/v1/sessions',
-      expect.objectContaining({ method: 'POST' }),
-    )
-    expect(store.sessions.length).toBe(1)
-    expect(store.sessions[0].id).toBe('srv-1')
-    expect(store.sessions[0].title).toBe('New Chat')
-    expect(pushSpy).toHaveBeenCalledWith('/workspace/ws-test/chat/srv-1')
+    expect(spy).not.toHaveBeenCalledWith('/api/v1/sessions', expect.objectContaining({ method: 'POST' }))
+    expect(store.sessions).toHaveLength(0)
+    expect(pushSpy).toHaveBeenCalledWith({ path: '/workspace/ws-test', query: { newChat: '1' } })
   })
 
   it('clicking new chat shows toast when no current workspace is set', async () => {
@@ -139,7 +128,7 @@ describe('Sidebar', () => {
     expect(pushSpy).not.toHaveBeenCalled()
   })
 
-  it('clicking new chat hydrates the workspace before creating a session', async () => {
+  it('clicking new chat hydrates the workspace before opening the Agent selector', async () => {
     const auth = useAuthStore()
     auth.$patch({ token: 'mock', user: { id: 'u-1', email: 'x@xihe.local' } })
     const spy = vi.spyOn(globalThis, 'fetch')
@@ -148,11 +137,6 @@ describe('Sidebar', () => {
       status: 200,
       json: () => Promise.resolve({ id: 'ws-late', name: 'Late Workspace', ownerId: 'u-1' }),
     } as Response)
-      .mockResolvedValueOnce({
-      ok: true,
-      status: 201,
-      json: () => Promise.resolve(stubSessionResponse({ id: 'late-1' })),
-    } as Response)
     const store = useSessionStore()
     const wrapper = await mountSidebar()
     const buttons = wrapper.findAll('button')
@@ -160,9 +144,8 @@ describe('Sidebar', () => {
     await newChatBtn!.trigger('click')
     await flushPromises()
 
-    expect(store.sessions.length).toBe(1)
-    expect(store.sessions[0].id).toBe('late-1')
-    expect(pushSpy).toHaveBeenCalledWith(expect.stringContaining('/chat/late-1'))
+    expect(store.sessions.length).toBe(0)
+    expect(pushSpy).toHaveBeenCalledWith({ path: '/workspace/ws-late', query: { newChat: '1' } })
   })
 
   it('renders empty state when no sessions exist', async () => {
@@ -180,13 +163,13 @@ describe('Sidebar', () => {
       status: 201,
       json: () => Promise.resolve(stubSessionResponse({ id: 'hdr-1' })),
     } as Response)
-    await store.createSession()
+    await store.createSession('principal-test')
     spy.mockResolvedValueOnce({
       ok: true,
       status: 201,
       json: () => Promise.resolve(stubSessionResponse({ id: 'hdr-2' })),
     } as Response)
-    await store.createSession()
+    await store.createSession('principal-test')
     const wrapper = await mountSidebar()
     expect(wrapper.text()).toContain('今天')
   })

@@ -47,7 +47,7 @@ describe('useSessionStore (server canonical)', () => {
         json: () => Promise.resolve(mockSessionResponse({ id: 'remote-1', title: 'Plan' })),
       } as Response)
 
-    const session = await store.createSession('Plan')
+    const session = await store.createSession('principal-test', 'Plan')
 
     expect(session.id).toBe('remote-1')
     expect(session.title).toBe('Plan')
@@ -72,13 +72,13 @@ describe('useSessionStore (server canonical)', () => {
         status: 201,
         json: () => Promise.resolve(mockSessionResponse({ id: 's2' })),
       } as Response)
-    const s1 = await store.createSession('First')
+    const s1 = await store.createSession('principal-test', 'First')
     spy.mockResolvedValueOnce({
       ok: true,
       status: 201,
       json: () => Promise.resolve(mockSessionResponse({ id: 's3' })),
     } as Response)
-    await store.createSession('Second')
+    await store.createSession('principal-test', 'Second')
 
     expect(store.sessions[0].id).toBe('s3')
     expect(store.sessions[1].id).toBe(s1.id)
@@ -91,9 +91,9 @@ describe('useSessionStore (server canonical)', () => {
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce({ ok: true, status: 201, json: () => Promise.resolve(mockSessionResponse({ id: 's1' })) } as Response)
-    const s1 = await store.createSession('S1')
+    const s1 = await store.createSession('principal-test', 'S1')
     spy.mockResolvedValueOnce({ ok: true, status: 201, json: () => Promise.resolve(mockSessionResponse({ id: 's2' })) } as Response)
-    const s2 = await store.createSession('S2')
+    const s2 = await store.createSession('principal-test', 'S2')
     spy.mockReset()
     spy.mockResolvedValueOnce({ ok: true, status: 204 } as Response)
 
@@ -188,7 +188,7 @@ describe('useSessionStore (server canonical)', () => {
         status: 201,
         json: () => Promise.resolve(mockSessionResponse({ id: 's1' })),
       } as Response)
-    await store.createSession('Group me')
+    await store.createSession('principal-test', 'Group me')
     fetchSpy.mockRestore()
 
     expect(store.groupedSessions.today.length).toBeGreaterThanOrEqual(1)
@@ -205,13 +205,13 @@ describe('useSessionStore (server canonical)', () => {
         status: 201,
         json: () => Promise.resolve(mockSessionResponse({ id: 'a1', title: 'Alpha' })),
       } as Response)
-    await store.createSession('Alpha')
+    await store.createSession('principal-test', 'Alpha')
     fetchSpy.mockResolvedValueOnce({
       ok: true,
       status: 201,
       json: () => Promise.resolve(mockSessionResponse({ id: 'b1', title: 'Beta' })),
     } as Response)
-    await store.createSession('Beta')
+    await store.createSession('principal-test', 'Beta')
     fetchSpy.mockRestore()
 
     store.searchQuery = 'alpha'
@@ -251,7 +251,7 @@ describe('useSessionStore (server canonical)', () => {
         status: 201,
         json: () => Promise.resolve(mockSessionResponse({ id: 'temp' })),
       } as Response)
-    await store.createSession('Temp')
+    await store.createSession('principal-test', 'Temp')
     fetchSpy.mockRestore()
 
     store.resetForUserSwitch()
@@ -270,7 +270,7 @@ describe('useSessionStore (server canonical)', () => {
         status: 201,
         json: () => Promise.resolve(mockSessionResponse({ id: 'no-persist' })),
       } as Response)
-    await store.createSession('No persist')
+    await store.createSession('principal-test', 'No persist')
     fetchSpy.mockRestore()
 
     expect(localStorage.getItem('xihe-sessions')).toBeNull()

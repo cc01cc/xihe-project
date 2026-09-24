@@ -8,13 +8,18 @@ import static org.mockito.Mockito.when;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +53,9 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     private WorkspaceUserRepository workspaceUserRepository;
 
     @Autowired
+    private WorkspaceAgentRepository workspaceAgentRepository;
+
+    @Autowired
     private SessionRepository sessionRepository;
 
     @Autowired
@@ -59,9 +67,17 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     @Autowired
     private ConfigService configService;
 
+    @Autowired
+    private AgentPrincipalService agentPrincipalService;
+
+    @Autowired
+    private AgentTemplateService agentTemplateService;
+
     private String token;
     private String userId;
     private String workspaceId;
+    private String principalId;
+    private com.fasterxml.jackson.databind.JsonNode principalPermissions;
 
     @BeforeEach
     void setUp() {
@@ -82,6 +98,14 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         token = jwtTokenProvider.createAccessToken(userId, jwtTokenProvider.getEmailFromToken(token), "USER", workspaceId);
 
+        var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
+        AgentPrincipal principal = agentPrincipalService.createPrincipal(
+                userId, "Agent chat test principal", null, defaultTemplate.snapshot());
+        principalId = principal.getId().toString();
+        principalPermissions = principal.getTemplateSnapshot().get("permissions");
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
+                principalId, workspaceId, principalPermissions.deepCopy()));
+
         assertTrue(workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(UUID.fromString(workspaceId), UUID.fromString(userId)).isPresent(),
                 "Workspace user should be created");
 
@@ -91,6 +115,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     @Test
     void chatForwardsToAgentWithCorrectHeadersAndBody() {
         String sessionId = UUID.randomUUID().toString();
+        createAgentSession(sessionId, "Agent body test");
 
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse()
@@ -101,7 +126,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         Map<String, Object> body = Map.of(
                 "sessionId", sessionId,
                 "content", "Hello",
-                "userId", "test-user",
+                "userId", userId,
                 "workspaceId", workspaceId
         );
 
@@ -126,9 +151,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     @Test
     void chatForwardsStreamingRequestToAgent() {
         String sessionId = UUID.randomUUID().toString();
-        Session session = new Session(workspaceId, userId, "Chat Stream Test");
-        session.setId(UUID.fromString(sessionId));
-        sessionRepository.save(session);
+        createAgentSession(sessionId, "Chat Stream Test");
 
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse()
@@ -162,6 +185,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     @Test
     void chatForwardsRunOverridesResolvedFromUserAndWorkspaceLayers() {
         String sessionId = UUID.randomUUID().toString();
+        createAgentSession(sessionId, "Agent override test");
         UUID uid = UUID.fromString(userId);
         UUID wid = UUID.fromString(workspaceId);
         configService.putLayer("user", "llm-provider",
@@ -224,6 +248,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     @Test
     void chatReturns202EvenWhenAgentFails() {
         String sessionId = UUID.randomUUID().toString();
+        createAgentSession(sessionId, "Agent failure test");
 
         wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
                 .willReturn(aResponse().withStatus(500)));
@@ -231,7 +256,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
         Map<String, Object> body = Map.of(
                 "sessionId", sessionId,
                 "content", "Hi",
-                "userId", "test-user",
+                "userId", userId,
                 "workspaceId", workspaceId
         );
 
@@ -254,6 +279,14 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 url("/api/v1/chat"), body, Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    private void createAgentSession(String sessionId, String title) {
+        Session session = new Session(workspaceId, userId, title);
+        session.setId(UUID.fromString(sessionId));
+        session.setAgentPrincipalId(principalId);
+        session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
+        sessionRepository.saveAndFlush(session);
     }
 
     @TestConfiguration

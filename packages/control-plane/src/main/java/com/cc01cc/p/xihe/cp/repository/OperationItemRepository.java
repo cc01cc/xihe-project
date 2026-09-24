@@ -22,6 +22,10 @@ public interface OperationItemRepository extends JpaRepository<OperationItem, UU
     /** PLAN-0326 决策 #9：行身份 = (operation_id, source, tool_call_id)，幂等收敛限定同源。 */
     Optional<OperationItem> findByOperationIdAndSourceAndToolCallId(String operationId, String source, String toolCallId);
 
+    boolean existsByOperationIdAndToolCallId(String operationId, String toolCallId);
+
+    boolean existsBySourceAndToolCallId(String source, String toolCallId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from OperationItem i where i.id = :id")
     Optional<OperationItem> findByIdForUpdate(@Param("id") UUID id);

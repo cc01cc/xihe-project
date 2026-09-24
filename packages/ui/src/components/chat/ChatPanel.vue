@@ -6,7 +6,8 @@ import { useChatStore } from "../../stores/chat";
 import { useAgentStore } from "../../stores/agent";
 import { useAuthStore } from "../../stores/auth";
 import { useCheckpointStore } from "../../stores/checkpoint";
-import { ApiError, api } from "../../composables/api";
+import { useSessionStore } from "../../stores/session";
+import { ApiError, api, type WorkspaceAgentBinding } from "../../composables/api";
 import { parseRawToParts } from "../../composables/useStreamParser";
 import { logger } from "../../lib/logger";
 import type {
@@ -23,6 +24,7 @@ import SessionPolicyControls from "./SessionPolicyControls.vue";
 import ContextSourcesU1 from "./ContextSourcesU1.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
+import BaseModal from "../shared/BaseModal.vue";
 
 const props = withDefaults(
     defineProps<{
@@ -39,6 +41,7 @@ const chatStore = useChatStore();
 const agentStore = useAgentStore();
 const authStore = useAuthStore();
 const checkpointStore = useCheckpointStore();
+const sessionStore = useSessionStore();
 
 const suggestions = computed(() =>
     props.toolMode === "workspace"
@@ -48,6 +51,12 @@ const suggestions = computed(() =>
 
 const messages = computed(() => chatStore.getMessages(props.sessionId));
 const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
+const currentSession = computed(() => sessionStore.sessions.find((session) => session.id === props.sessionId));
+const showPrincipalBinding = ref(false);
+const principalChoices = ref<WorkspaceAgentBinding[]>([]);
+const selectedPrincipalId = ref("");
+const pendingSend = ref<{ content: string; attachments?: AttachmentFile[] } | null>(null);
+const loadingPrincipalChoices = ref(false);
 
 const pendingApproval = computed(
     () =>
@@ -147,14 +156,48 @@ async function handleSend(content: string, attachments?: AttachmentFile[]) {
     const id = props.sessionId;
     if (!id) return;
 
+    const selectedPrincipal = currentSession.value?.agentPrincipalId;
+    if (selectedPrincipal) {
+        await submitMessage(content, attachments, selectedPrincipal);
+        return;
+    }
+
+    const workspaceId = currentSession.value?.workspaceId ?? authStore.currentWorkspaceId;
+    if (!workspaceId || loadingPrincipalChoices.value) return;
+    loadingPrincipalChoices.value = true;
+    try {
+        principalChoices.value = await api.getWorkspaceAgents(workspaceId);
+        if (principalChoices.value.length === 0) {
+            toast.error(t("workspace.noBoundAgent"));
+            return;
+        }
+        pendingSend.value = { content, attachments };
+        selectedPrincipalId.value = "";
+        showPrincipalBinding.value = true;
+    } catch (cause) {
+        const message = cause instanceof ApiError ? cause.message : t("workspace.agentLoadFailed");
+        logger.error("Failed to load Workspace Agents for Session binding", cause);
+        toast.error(message);
+    } finally {
+        loadingPrincipalChoices.value = false;
+    }
+}
+
+async function submitMessage(content: string, attachments: AttachmentFile[] | undefined,
+                             agentPrincipalId: string) {
+    const id = props.sessionId;
+
     const fileIds = attachments
         ?.map((a) => a.fileId)
         .filter((fileId): fileId is string => fileId !== undefined);
     const result = await streamComponent.value?.sendMessage(content, {
         attachments: fileIds,
         toolMode: props.toolMode,
+        agentPrincipalId,
     });
     if (!result) return;
+
+    sessionStore.setSessionAgentPrincipal(id, agentPrincipalId);
 
     chatStore.addMessage(id, {
         id: result.messageId ?? crypto.randomUUID(),
@@ -167,6 +210,15 @@ async function handleSend(content: string, attachments?: AttachmentFile[]) {
         runStatus: result.status,
     });
     inputComponent.value?.clearDraft();
+}
+
+async function confirmPrincipalBinding() {
+    if (!pendingSend.value || !selectedPrincipalId.value) return;
+    const pending = pendingSend.value;
+    const principalId = selectedPrincipalId.value;
+    pendingSend.value = null;
+    showPrincipalBinding.value = false;
+    await submitMessage(pending.content, pending.attachments, principalId);
 }
 
 async function handleRetry(messageId: string) {
@@ -452,6 +504,40 @@ watch(
             @retry="retryRevert"
             @close="closeRevertResult"
         />
+
+        <BaseModal
+            :show="showPrincipalBinding"
+            :title="t('workspace.chooseAgentTitle')"
+            @close="showPrincipalBinding = false; pendingSend = null"
+        >
+            <div class="space-y-4">
+                <label for="chat-agent-principal" class="block text-sm text-foreground">
+                    {{ t('workspace.chooseAgentLabel') }}
+                </label>
+                <select
+                    id="chat-agent-principal"
+                    v-model="selectedPrincipalId"
+                    data-testid="chat-agent-principal-select"
+                    class="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                >
+                    <option value="" disabled>{{ t('workspace.chooseAgentPlaceholder') }}</option>
+                    <option v-for="agent in principalChoices" :key="agent.principalId" :value="agent.principalId">
+                        {{ agent.name }}<template v-if="agent.templateName"> · {{ agent.templateName }}</template>
+                    </option>
+                </select>
+                <div class="flex justify-end gap-2">
+                    <button type="button" class="rounded-md border px-3 py-2 text-sm"
+                            @click="showPrincipalBinding = false; pendingSend = null">
+                        {{ t('workspace.cancel') }}
+                    </button>
+                    <button type="button" data-testid="chat-bind-agent-and-send"
+                            class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                            :disabled="!selectedPrincipalId" @click="confirmPrincipalBinding">
+                        {{ t('workspace.bindAgentAndSend') }}
+                    </button>
+                </div>
+            </div>
+        </BaseModal>
 
         <SSEStream
             :session-id="sessionId"

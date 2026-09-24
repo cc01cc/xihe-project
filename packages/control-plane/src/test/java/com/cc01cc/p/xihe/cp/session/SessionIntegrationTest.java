@@ -7,6 +7,8 @@ import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
@@ -16,11 +18,14 @@ import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository;
@@ -31,6 +36,7 @@ import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -73,6 +79,15 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceUserRepository workspaceUserRepository;
+
+    @Autowired
+    private AgentPrincipalRepository agentPrincipalRepository;
+
+    @Autowired
+    private WorkspaceAgentRepository workspaceAgentRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private SessionService sessionService;
@@ -187,7 +202,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         Session session = sessionService.create(userId, workspaceId, "To Be Deleted", null, null);
         String sessionId = session.getId().toString();
         messageRepository.save(new Message(sessionId, MessageRole.USER, "hello"));
-        assertEquals(1L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
+        assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), "default"));
         sessionService.delete(sessionId, userId, workspaceId);
 
@@ -229,6 +244,53 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         }
 
         assertFalse(sessionRepository.findById(session.getId()).isPresent());
+        assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "agent", session.getId(), "default"));
+    }
+
+    @Test
+    void createSessionRequiresExplicitWorkspaceBoundPrincipalAndStoresEffectiveCap() throws Exception {
+        AgentPrincipal principal = new AgentPrincipal();
+        principal.setName("Session API principal");
+        principal.setCreatedByUserId(userId);
+        var snapshot = objectMapper.createObjectNode();
+        snapshot.put("templateId", "template-session");
+        snapshot.set("permissions", objectMapper.createArrayNode());
+        principal.setTemplateSnapshot(snapshot);
+        principal = agentPrincipalRepository.saveAndFlush(principal);
+        AuthorizationGrant principalGrant = new AuthorizationGrant();
+        principalGrant.setGranterType("user");
+        principalGrant.setGranterId(UUID.fromString(userId));
+        principalGrant.setSubjectType("agent_principal");
+        principalGrant.setSubjectId(principal.getId());
+        principalGrant.setSource("template");
+        principalGrant.setReadState("read");
+        principalGrant.setPermissions(objectMapper.readTree(
+                "[{\"actionClass\":\"read\",\"resource\":\"*\"}]"));
+        authorizationGrantRepository.saveAndFlush(principalGrant);
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(), workspaceId,
+                objectMapper.readTree("[{\"actionClass\":\"read\"},{\"actionClass\":\"write\"}]")));
+
+        long before = sessionRepository.count();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> missingPrincipal = restTemplate.exchange(baseUrl + "/api/v1/sessions", HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Missing principal"), headers), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, missingPrincipal.getStatusCode());
+        assertEquals(before, sessionRepository.count());
+
+        ResponseEntity<Map> created = restTemplate.exchange(baseUrl + "/api/v1/sessions", HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Bound principal", "agentPrincipalId", principal.getId().toString()), headers),
+                Map.class);
+        assertEquals(HttpStatus.CREATED, created.getStatusCode());
+        assertEquals(principal.getId().toString(), created.getBody().get("agentPrincipalId"));
+        UUID sessionId = UUID.fromString((String) created.getBody().get("id"));
+        Session session = sessionRepository.findById(sessionId).orElseThrow();
+        assertEquals(principal.getId().toString(), session.getAgentPrincipalId());
+        assertEquals(1, session.getAgentPermissionsSnapshot().size());
+        assertEquals("read", session.getAgentPermissionsSnapshot().get(0).path("actionClass").asText());
         assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), "default"));
     }

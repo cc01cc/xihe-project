@@ -158,7 +158,11 @@ function connectSession(id: string) {
   })
 }
 
-async function handleSend(content: string, options?: { attachments?: string[]; toolMode?: 'none' | 'workspace' }): Promise<ChatRunResponse | null> {
+async function handleSend(content: string, options?: {
+  attachments?: string[]
+  toolMode?: 'none' | 'workspace'
+  agentPrincipalId?: string
+}): Promise<ChatRunResponse | null> {
   const sessionId = props.sessionId
   if (!sessionId) return null
 
@@ -185,6 +189,7 @@ async function handleSend(content: string, options?: { attachments?: string[]; t
     idempotencyKey: crypto.randomUUID(),
     sessionId,
     attachments: options?.attachments,
+    agentPrincipalId: options?.agentPrincipalId,
   })
   if (props.sessionId !== sessionId) return null
   if (result) {

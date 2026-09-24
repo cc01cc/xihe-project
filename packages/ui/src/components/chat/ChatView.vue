@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAuthStore } from '../../stores/auth'
@@ -9,8 +9,10 @@ import { parseRawToParts } from '../../composables/useStreamParser'
 import { logger } from '../../lib/logger'
 import type { Message, ToolCall } from '../../types'
 import ChatPanel from './ChatPanel.vue'
+import { workspacePath } from '../../lib/routes'
 
 const route = useRoute()
+const router = useRouter()
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const auth = useAuthStore()
@@ -72,8 +74,8 @@ async function ensureSession(): Promise<string | null> {
       sessionStore.selectSession(first.id)
       return first.id
     }
-    const created = await sessionStore.createSession()
-    return created.id
+    await router.replace({ path: workspacePath(auth.currentWorkspaceId), query: { newChat: '1' } })
+    return null
   } catch (cause) {
     logger.warn('Create session failed', cause)
     return null

@@ -83,6 +83,7 @@ export interface ApiSession {
     id: string;
     title: string;
     workspaceId?: string;
+    agentPrincipalId?: string | null;
     createdAt?: string;
     updatedAt?: string;
     modelProvider?: string;
@@ -98,6 +99,33 @@ export interface SessionResponse extends ApiSession {
 export interface SessionListResponse {
     sessions: SessionResponse[];
     workspace?: ApiWorkspace;
+}
+
+export interface WorkspaceAgentBinding {
+    principalId: string;
+    name: string;
+    templateId: string | null;
+    templateName: string | null;
+    createdAt: string;
+    permissions: Array<{ actionClass: string; resource?: string }>;
+}
+
+export interface AgentPrincipalCreateResponse {
+    principalId: string;
+    templateId: string | null;
+    templateName: string | null;
+    createdAt: string;
+}
+
+export interface WorkspaceAgentPermission {
+    actionClass: string;
+    resource?: string;
+}
+
+export interface WorkspaceAgentCapResponse {
+    principalId: string;
+    workspaceId: string;
+    permissions: WorkspaceAgentPermission[];
 }
 
 export interface ChatApprovalDecisionResponse {
@@ -930,6 +958,7 @@ function normalizeSession(value: unknown): SessionResponse {
         title:
             typeof record.title === "string" && record.title.length > 0 ? record.title : "Untitled",
         workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : workspace?.id,
+        agentPrincipalId: typeof record.agentPrincipalId === "string" ? record.agentPrincipalId : null,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
         modelProvider: typeof record.modelProvider === "string" ? record.modelProvider : undefined,
@@ -1229,13 +1258,38 @@ export const api = {
             envHead?: string;
         }>(`/context/${encodeURIComponent(sessionId)}/sources`);
     },
-    async createSession(title?: string): Promise<SessionResponse> {
-        const body = title === undefined ? {} : { title };
+    async createSession(agentPrincipalId: string, title?: string): Promise<SessionResponse> {
+        const body = title === undefined ? { agentPrincipalId } : { title, agentPrincipalId };
         return normalizeSession(
             await request<unknown>("/sessions", {
                 method: "POST",
                 body: JSON.stringify(body),
             }),
+        );
+    },
+    getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
+        return request<WorkspaceAgentBinding[]>(`/workspaces/${encodeURIComponent(workspaceId)}/agents`);
+    },
+    createAgentPrincipal(name: string, templateId?: string): Promise<AgentPrincipalCreateResponse> {
+        return request<AgentPrincipalCreateResponse>("/agent-principals", {
+            method: "POST",
+            body: JSON.stringify({ name, ...(templateId ? { templateId } : {}) }),
+        });
+    },
+    updateWorkspaceAgentCap(
+        workspaceId: string,
+        principalId: string,
+        permissions: WorkspaceAgentPermission[],
+    ): Promise<WorkspaceAgentCapResponse> {
+        return request<WorkspaceAgentCapResponse>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}`,
+            { method: "PUT", body: JSON.stringify({ permissions }) },
+        );
+    },
+    deleteWorkspaceAgent(workspaceId: string, principalId: string): Promise<void> {
+        return request<void>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}`,
+            { method: "DELETE" },
         );
     },
     async updateSession(

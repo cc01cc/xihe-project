@@ -7,7 +7,6 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
-import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
@@ -33,9 +32,9 @@ public class SessionService {
     private final ChatAttachmentService chatAttachmentService;
     private final ProviderConnectionService providerConnectionService;
     private final SessionPolicyState sessionPolicyState;
-    private final GrantDefaultService grantDefaultService;
     private final AuthorizationGrantRepository authorizationGrantRepository;
     private final DbLockTimeout dbLockTimeout;
+    private final AgentPrincipalService agentPrincipalService;
 
     public SessionService(SessionRepository sessionRepository,
                           MessageRepository messageRepository,
@@ -46,9 +45,9 @@ public class SessionService {
                           ChatAttachmentService chatAttachmentService,
                           ProviderConnectionService providerConnectionService,
                           SessionPolicyState sessionPolicyState,
-                          GrantDefaultService grantDefaultService,
                           AuthorizationGrantRepository authorizationGrantRepository,
-                          DbLockTimeout dbLockTimeout) {
+                          DbLockTimeout dbLockTimeout,
+                          AgentPrincipalService agentPrincipalService) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -58,9 +57,9 @@ public class SessionService {
         this.chatAttachmentService = chatAttachmentService;
         this.providerConnectionService = providerConnectionService;
         this.sessionPolicyState = sessionPolicyState;
-        this.grantDefaultService = grantDefaultService;
         this.authorizationGrantRepository = authorizationGrantRepository;
         this.dbLockTimeout = dbLockTimeout;
+        this.agentPrincipalService = agentPrincipalService;
     }
 
     @Transactional(readOnly = true)
@@ -86,6 +85,26 @@ public class SessionService {
     }
 
     @Transactional
+    public Session createAgentSession(String userId, String workspaceId, String title,
+                                      String modelProvider, String modelName,
+                                      String providerConnectionId, String agentPrincipalId) {
+        requireWorkspace(userId, workspaceId);
+        if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "agentPrincipalId is required");
+        }
+        com.fasterxml.jackson.databind.JsonNode cap = agentPrincipalService.resolveSessionCap(
+                agentPrincipalId, workspaceId);
+        Session session = new Session(workspaceId, userId, normalizeTitle(title));
+        session.setId(UUID.randomUUID());
+        session.setAgentPrincipalId(agentPrincipalId);
+        session.setAgentPermissionsSnapshot(cap);
+        session.setModelProvider(modelProvider);
+        session.setModelName(modelName);
+        bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
+        return sessionRepository.save(session);
+    }
+
+    @Transactional
     public Session createWithId(String sessionId, String userId, String workspaceId, String title,
                                 String modelProvider, String modelName) {
         return createWithId(sessionId, userId, workspaceId, title, modelProvider, modelName, null);
@@ -107,9 +126,7 @@ public class SessionService {
         session.setModelProvider(modelProvider);
         session.setModelName(modelName);
         bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
-        Session saved = sessionRepository.save(session);
-        grantDefaultService.ensureAgentSessionDefault(saved);
-        return saved;
+        return sessionRepository.save(session);
     }
 
     @Transactional(readOnly = true)

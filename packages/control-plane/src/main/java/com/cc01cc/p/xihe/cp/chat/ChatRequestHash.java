@@ -16,6 +16,12 @@ final class ChatRequestHash {
     static String calculate(ObjectMapper objectMapper, String content, String provider, String model,
                             String toolMode, List<String> attachmentIds,
                             Map<String, Integer> toolTimeouts) {
+        return calculate(objectMapper, content, provider, model, toolMode, attachmentIds, toolTimeouts, null);
+    }
+
+    static String calculate(ObjectMapper objectMapper, String content, String provider, String model,
+                            String toolMode, List<String> attachmentIds,
+                            Map<String, Integer> toolTimeouts, String agentPrincipalId) {
         try {
             Map<String, Object> canonical = new LinkedHashMap<>();
             canonical.put("content", content == null ? "" : content);
@@ -25,6 +31,9 @@ final class ChatRequestHash {
             canonical.put("attachments", attachmentIds == null ? List.of() : attachmentIds);
             if (toolTimeouts != null && !toolTimeouts.isEmpty()) {
                 canonical.put("toolTimeouts", new TreeMap<>(toolTimeouts));
+            }
+            if (agentPrincipalId != null) {
+                canonical.put("agentPrincipalId", agentPrincipalId);
             }
             byte[] bytes = objectMapper.writeValueAsBytes(canonical);
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));

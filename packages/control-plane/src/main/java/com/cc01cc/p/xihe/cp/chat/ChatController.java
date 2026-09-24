@@ -222,6 +222,12 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
         }
         String content = (String) request.getOrDefault("content", "");
+        Object rawPrincipalId = request.get("agentPrincipalId");
+        if (rawPrincipalId != null && !(rawPrincipalId instanceof String)) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST", "agentPrincipalId must be a UUID string");
+        }
+        String agentPrincipalId = (String) rawPrincipalId;
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
         String toolMode = (String) request.getOrDefault("toolMode", "none");
@@ -287,9 +293,7 @@ public class ChatController {
         try {
             session = sessionService.requireCurrent(sessionId, userId, workspaceId);
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
-            // Session missing for this user/workspace: create a fresh one tied to this conversation.
-            String title = content.length() > 50 ? content.substring(0, 50) + "..." : content;
-            session = sessionService.createWithId(sessionId, userId, workspaceId, title, null, null);
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
         if (session.getProviderConnectionId() != null) {
             // A bound Session is authoritative. Do not allow the browser's display
@@ -338,7 +342,7 @@ public class ChatController {
         }
 
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
-                perCallTimeouts.values());
+                perCallTimeouts.values(), agentPrincipalId);
         ChatRun existingRun = chatRunRepository
                 .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
                 .orElse(null);
@@ -367,7 +371,7 @@ public class ChatController {
         boolean handedOff = false;
         try {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
-                    runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,
+                    runId, sessionId, userId, workspaceId, agentPrincipalId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
                     instanceId(), requestId, content, attachmentsJson, attachmentIds);
             ChatRun chatRun = submission.run();
@@ -1107,9 +1111,9 @@ public class ChatController {
 
     private String requestHash(String content, String provider, String model,
                                String toolMode, List<String> attachmentIds,
-                               Map<String, Integer> toolTimeouts) {
+                               Map<String, Integer> toolTimeouts, String agentPrincipalId) {
         return ChatRequestHash.calculate(objectMapper, content, provider, model,
-                toolMode, attachmentIds, toolTimeouts);
+                toolMode, attachmentIds, toolTimeouts, agentPrincipalId);
     }
 
     private Map<String, Object> runResponse(ChatRun run) {

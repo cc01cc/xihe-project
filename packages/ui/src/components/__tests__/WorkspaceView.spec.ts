@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import WorkspaceView from '../workspace/WorkspaceView.vue'
+import WorkspaceAgentManagementDialog from '../workspace/WorkspaceAgentManagementDialog.vue'
 import { useSessionStore } from '../../stores/session'
 import { api } from '../../composables/api'
 
@@ -20,6 +21,7 @@ vi.mock('../../composables/api', async (importOriginal) => {
       ...actual.api,
       getSessions: vi.fn(),
       createSession: vi.fn(),
+      getWorkspaceAgents: vi.fn(),
     },
   }
 })
@@ -40,6 +42,42 @@ const i18n = createI18n({
         chatHeader: 'Workspace chat',
         noSession: 'No active session',
         createSession: 'New chat',
+        chooseAgentTitle: 'Choose an Agent',
+        chooseAgentLabel: 'Choose Agent',
+        chooseAgentPlaceholder: 'Select Agent',
+        noBoundAgent: 'No bound Agent',
+        agentLoadFailed: 'Failed to load Agents',
+        bindAgentAndSend: 'Bind and send',
+        agentManagement: 'Agent management',
+        activeAgent: 'Active Agent',
+        agentManagementDescription: 'Manage Workspace Agents',
+        boundAgents: 'Bound Agents',
+        refreshAgents: 'Refresh',
+        loadingAgents: 'Loading Agents',
+        noAgentCapabilities: 'No tool permissions',
+        defaultAgentTemplate: 'Default template',
+        unbindAgent: 'Unbind',
+        editAgentCap: 'Edit cap',
+        createAgentPrincipal: 'Create Agent',
+        agentName: 'Agent name',
+        agentCreatePermissionNote: 'CREATE_ACCOUNT required',
+        agentCapNote: 'Choose cap',
+        bindAgent: 'Bind Agent',
+        saveAgentCap: 'Save cap',
+        agentActionRead: 'Read',
+        agentActionWrite: 'Write',
+        agentActionDelete: 'Delete',
+        agentActionExec: 'Execute',
+        agentActionNetwork: 'Network',
+        agentActionCredential: 'Credential',
+        agentResourceFor: 'Resource for {action}',
+        agentCreatedUnbound: 'Created but unbound',
+        agentBindFailed: 'Bind failed',
+        agentCreateFailed: 'Create failed',
+        agentSaveFailed: 'Save failed',
+        agentUnbindFailed: 'Unbind failed',
+        confirmAgentUnbind: 'Confirm unbind',
+        cancel: 'Cancel',
         closePanel: 'Close',
         expandFiles: 'Expand the file tree',
         collapseFiles: 'Collapse the file tree',
@@ -78,6 +116,7 @@ beforeEach(() => {
       { id: SESSION_B, title: 'B', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), workspaceId: 'workspace-1', archived: false },
     ],
   })
+  mockedApi.getWorkspaceAgents.mockResolvedValue([])
 })
 
 describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
@@ -163,12 +202,17 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
 
   it('keeps the workspace usable without auto-creating a session', async () => {
     mockedApi.getSessions.mockResolvedValue({ sessions: [] })
+    mockedApi.getWorkspaceAgents.mockResolvedValue([{
+      principalId: 'agent-1', name: 'Research Agent', templateId: null,
+      templateName: null, createdAt: new Date().toISOString(), permissions: [],
+    }])
     mockedApi.createSession.mockResolvedValue({
       id: SESSION_A,
       title: 'New Chat',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       workspaceId: 'workspace-1',
+      agentPrincipalId: 'agent-1',
       archived: false,
     })
     const wrapper = mountView()
@@ -180,6 +224,27 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
 
     await wrapper.find('[data-testid="workspace-create-session"]').trigger('click')
     await flushPromises()
+    expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="workspace-agent-principal-select"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="workspace-agent-principal-select"]').setValue('agent-1')
+    await wrapper.find('[data-testid="workspace-create-agent-session"]').trigger('click')
+    await flushPromises()
     expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="workspace-active-agent"]').text()).toContain('agent-1')
+    expect(mockedApi.createSession).toHaveBeenCalledWith('agent-1', 'New Chat')
+  })
+
+  it('opens the Workspace Agent management panel from the toolbar', async () => {
+    mockedApi.getWorkspaceAgents.mockResolvedValue([{
+      principalId: 'agent-1', name: 'Research Agent', templateId: null,
+      templateName: null, createdAt: new Date().toISOString(), permissions: [],
+    }])
+    const wrapper = mountView()
+
+    await wrapper.find('[data-testid="workspace-toolbar-agents"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findComponent(WorkspaceAgentManagementDialog).props('open')).toBe(true)
+    expect(mockedApi.getWorkspaceAgents).toHaveBeenCalledWith('workspace-1')
   })
 })

@@ -8,6 +8,7 @@ import com.cc01cc.p.xihe.cp.entity.Message;
 import java.util.List;
 
 public interface MessageRepository extends JpaRepository<Message, UUID> {
+    boolean existsBySessionId(String sessionId);
     List<Message> findBySessionIdOrderByCreatedAtAsc(String sessionId);
     long deleteBySessionId(String sessionId);
 }

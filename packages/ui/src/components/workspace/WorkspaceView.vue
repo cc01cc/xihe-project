@@ -6,7 +6,7 @@ import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
 import { useChatStore } from '../../stores/chat'
-import { ApiError } from '../../composables/api'
+import { ApiError, api, type WorkspaceAgentBinding } from '../../composables/api'
 import { useWorkspaceSSE } from '../../composables/useWorkspaceSSE'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
@@ -15,6 +15,7 @@ import { useMediaQuery } from '@vueuse/core'
 import WorkspaceToolbar from './WorkspaceToolbar.vue'
 import WorkspaceCreateDialog from './WorkspaceCreateDialog.vue'
 import WorkspaceSettingsDialog from './WorkspaceSettingsDialog.vue'
+import WorkspaceAgentManagementDialog from './WorkspaceAgentManagementDialog.vue'
 import MobileWorkspaceSheet from './MobileWorkspaceSheet.vue'
 import MobileChatSheet from './MobileChatSheet.vue'
 import MobileChangesSheet from './MobileChangesSheet.vue'
@@ -25,6 +26,7 @@ import WorkspaceSourceImportDialog from './WorkspaceSourceImportDialog.vue'
 import WorkspaceChangesPanel from './WorkspaceChangesPanel.vue'
 import ChatPanel from '../chat/ChatPanel.vue'
 import { workspaceChatPath } from '../../lib/routes'
+import BaseModal from '../shared/BaseModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -61,9 +63,14 @@ const routeWorkspaceId = computed(() => {
 
 const showCreateDialog = ref(false)
 const showSettingsDialog = ref(false)
+const showAgentManagementDialog = ref(false)
 const showSourceImportDialog = ref(false)
 const showMobileFiles = ref(false)
 const showMobileChanges = ref(false)
+const showAgentSelection = ref(false)
+const workspaceAgents = ref<WorkspaceAgentBinding[]>([])
+const selectedAgentPrincipalId = ref('')
+const creatingAgentSession = ref(false)
 
 // ── PLAN-0328 M3 T3.7 (spec/ui-ux §1.3): conversation-first workspace layout ──────────────
 // The chat timeline is the main column; the file tree collapses into a narrow rail and the
@@ -116,6 +123,9 @@ const sessionId = computed(() => {
   return null
 })
 
+const activeAgentPrincipalId = computed(() => sessionStore.sessions
+  .find((session) => session.id === sessionId.value)?.agentPrincipalId ?? null)
+
 const workspaceId = computed(() => routeWorkspaceId.value || auth.currentWorkspaceId || '')
 
 const workspaceEvents = useWorkspaceSSE(workspaceId, {
@@ -154,7 +164,28 @@ async function createSessionForWorkspace() {
   if (!workspaceId.value) return null
   try {
     await auth.selectWorkspace(workspaceId.value)
-    const session = await sessionStore.createSession()
+    workspaceAgents.value = await api.getWorkspaceAgents(workspaceId.value)
+    if (workspaceAgents.value.length === 0) {
+      toast.error(t('workspace.noBoundAgent'))
+      return null
+    }
+    selectedAgentPrincipalId.value = ''
+    showAgentSelection.value = true
+    return null
+  } catch (cause) {
+    const message = cause instanceof ApiError ? cause.message : 'Failed to load Workspace Agents'
+    logger.error('Load Workspace Agents failed', cause)
+    toast.error(message)
+    return null
+  }
+}
+
+async function confirmCreateAgentSession() {
+  if (!workspaceId.value || !selectedAgentPrincipalId.value || creatingAgentSession.value) return
+  creatingAgentSession.value = true
+  try {
+    const session = await sessionStore.createSession(selectedAgentPrincipalId.value)
+    showAgentSelection.value = false
     await router.push(workspaceChatPath(workspaceId.value, session.id))
     return session.id
   } catch (cause) {
@@ -162,8 +193,17 @@ async function createSessionForWorkspace() {
     logger.error('Create session failed', cause)
     toast.error(message)
     return null
+  } finally {
+    creatingAgentSession.value = false
   }
 }
+
+watch(() => route.query.newChat, (request) => {
+  if (request !== '1') return
+  void createSessionForWorkspace().finally(() => {
+    void router.replace({ query: { ...route.query, newChat: undefined } })
+  })
+}, { immediate: true })
 
 watch(
   () => sessionId.value,
@@ -262,12 +302,14 @@ watch([workspaceId, routeSessionId], () => {
     <div class="flex min-w-0 flex-1 flex-col">
       <WorkspaceToolbar
         :workspace-id="workspaceId"
+        :agent-principal-id="activeAgentPrincipalId"
         :tree-collapsed="treeCollapsed"
         :code-open="!isMobileViewport && auxPanel === 'code'"
         :changes-open="isMobileViewport ? showMobileChanges : auxPanel === 'changes'"
         @upload="handleUpload"
         @import-source="showSourceImportDialog = true"
         @settings="showSettingsDialog = true"
+        @agents="showAgentManagementDialog = true"
         @add-workspace="showCreateDialog = true"
         @files="showMobileFiles = true"
         @toggle-tree="toggleTree"
@@ -378,6 +420,11 @@ watch([workspaceId, routeSessionId], () => {
       @close="showSettingsDialog = false"
       @deleted="handleWorkspaceDeleted"
     />
+    <WorkspaceAgentManagementDialog
+      :open="showAgentManagementDialog"
+      :workspace-id="workspaceId"
+      @close="showAgentManagementDialog = false"
+    />
 
     <MobileWorkspaceSheet
       :open="showMobileFiles"
@@ -393,6 +440,43 @@ watch([workspaceId, routeSessionId], () => {
     />
 
     <MobileChatSheet v-if="sessionId" :session-id="sessionId" />
+
+    <BaseModal
+      :show="showAgentSelection"
+      :title="t('workspace.chooseAgentTitle')"
+      @close="showAgentSelection = false"
+    >
+      <div class="space-y-4">
+        <label for="workspace-agent-principal" class="block text-sm text-foreground">
+          {{ t('workspace.chooseAgentLabel') }}
+        </label>
+        <select
+          id="workspace-agent-principal"
+          v-model="selectedAgentPrincipalId"
+          data-testid="workspace-agent-principal-select"
+          class="w-full rounded-md border bg-background px-3 py-2 text-sm"
+        >
+          <option value="" disabled>{{ t('workspace.chooseAgentPlaceholder') }}</option>
+          <option v-for="agent in workspaceAgents" :key="agent.principalId" :value="agent.principalId">
+            {{ agent.name }}<template v-if="agent.templateName"> · {{ agent.templateName }}</template>
+          </option>
+        </select>
+        <div class="flex justify-end gap-2">
+          <button type="button" class="rounded-md border px-3 py-2 text-sm" @click="showAgentSelection = false">
+            {{ t('workspace.cancel') }}
+          </button>
+          <button
+            type="button"
+            data-testid="workspace-create-agent-session"
+            class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+            :disabled="!selectedAgentPrincipalId || creatingAgentSession"
+            @click="confirmCreateAgentSession"
+          >
+            {{ t('workspace.createSession') }}
+          </button>
+        </div>
+      </div>
+    </BaseModal>
   </div>
 
   <!-- PLAN-0384 T1.1: one creation entry for both the empty state and existing workspaces. -->

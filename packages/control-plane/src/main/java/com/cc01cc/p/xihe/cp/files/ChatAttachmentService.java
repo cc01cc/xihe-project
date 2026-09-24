@@ -9,7 +9,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
 import com.cc01cc.p.xihe.cp.files.dto.UploadFailure;
@@ -74,7 +73,6 @@ public class ChatAttachmentService {
     private final Set<String> allowedExtensions;
     private final FileRepository fileRepository;
     private final SessionRepository sessionRepository;
-    private final GrantDefaultService grantDefaultService;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
     private final ObjectMapper objectMapper;
@@ -84,7 +82,6 @@ public class ChatAttachmentService {
             @Value("${cp.attachments.allowed-extensions:png,jpg,jpeg,gif,webp,svg,bmp,pdf,doc,docx,txt,md,json,csv,xls,xlsx,ppt,pptx,mp3,wav,m4a,ogg,flac,aac,mp4,webm,mov,avi,mkv}") String allowedExtensionsConfig,
             FileRepository fileRepository,
             SessionRepository sessionRepository,
-            GrantDefaultService grantDefaultService,
             WorkspaceRepository workspaceRepository,
             WorkspaceUserRepository workspaceUserRepository,
             ObjectMapper objectMapper) {
@@ -92,7 +89,6 @@ public class ChatAttachmentService {
         this.allowedExtensions = parseAllowedExtensions(allowedExtensionsConfig);
         this.fileRepository = fileRepository;
         this.sessionRepository = sessionRepository;
-        this.grantDefaultService = grantDefaultService;
         this.workspaceRepository = workspaceRepository;
         this.workspaceUserRepository = workspaceUserRepository;
         this.objectMapper = objectMapper;
@@ -213,8 +209,7 @@ public class ChatAttachmentService {
         }
         Session session = new Session(workspaceId, userId, "Attachment Upload");
         session.setId(UUID.fromString(sessionId));
-        Session saved = sessionRepository.save(session);
-        grantDefaultService.ensureAgentSessionDefault(saved);
+        sessionRepository.save(session);
         logger.info("Session created for attachments session={} workspace={}", sessionId, workspaceId);
     }
 

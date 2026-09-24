@@ -7,21 +7,29 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
+import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -71,6 +79,15 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private MessageRepository messageRepository;
 
     @Autowired
+    private ChatRunRepository chatRunRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private LedgerOperationRepository ledgerOperationRepository;
+
+    @Autowired
     private SessionRepository sessionRepository;
 
     @Autowired
@@ -81,6 +98,15 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceUserRepository workspaceUserRepository;
+
+    @Autowired
+    private WorkspaceAgentRepository workspaceAgentRepository;
+
+    @Autowired
+    private AgentPrincipalService agentPrincipalService;
+
+    @Autowired
+    private AgentTemplateService agentTemplateService;
 
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
@@ -94,6 +120,8 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private String authToken;
     private String userId;
     private String workspaceId;
+    private String principalId;
+    private com.fasterxml.jackson.databind.JsonNode principalPermissions;
     private HttpResponse<InputStream> sseResponse;
     private Future<?> sseReader;
     private final AtomicInteger doneEvents = new AtomicInteger();
@@ -184,6 +212,13 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         workspaceId = ws.getId().toString();
         workspaceUserRepository.save(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId);
+        var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
+        AgentPrincipal principal = agentPrincipalService.createPrincipal(
+                userId, "Chat integration principal", null, defaultTemplate.snapshot());
+        principalId = principal.getId().toString();
+        principalPermissions = principal.getTemplateSnapshot().get("permissions");
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
+                principalId, workspaceId, principalPermissions.deepCopy()));
     }
 
     @AfterEach
@@ -219,6 +254,68 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
                 baseUrl + "/api/v1/chat", request, Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED.value(), response.getStatusCode().value());
+    }
+
+    @Test
+    void postChatWithoutSessionPrincipalIsForbiddenWithoutCreatingRun() {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        session.setAgentPrincipalId(null);
+        session.setAgentPermissionsSnapshot(null);
+        sessionRepository.saveAndFlush(session);
+        openSse(sessionId);
+
+        ResponseEntity<Map> response = postChat(sessionId, "must be rejected");
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertEquals("FORBIDDEN", response.getBody().get("code"));
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
+        assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
+        assertTrue(ledgerOperationRepository.findBySessionIdOrderByCreatedAtDesc(sessionId).isEmpty());
+    }
+
+    @Test
+    void postChatWithExplicitPrincipalBindsEmptySessionInAdmissionTransaction() {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        session.setAgentPrincipalId(null);
+        session.setAgentPermissionsSnapshot(null);
+        sessionRepository.saveAndFlush(session);
+        openSse(sessionId);
+
+        ResponseEntity<Map> response = postChat(sessionId, "bind on first message", principalId, "first-bind-idem");
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Session bound = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        assertEquals(principalId, bound.getAgentPrincipalId());
+        assertEquals(principalPermissions, bound.getAgentPermissionsSnapshot());
+        assertTrue(chatRunRepository.existsBySessionId(sessionId));
+        assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                .filter(message -> message.getRole() == MessageRole.USER).count());
+
+        ResponseEntity<Map> replay = postChat(sessionId, "bind on first message", principalId, "first-bind-idem");
+        assertEquals(HttpStatus.ACCEPTED, replay.getStatusCode());
+        assertEquals(response.getBody().get("runId"), replay.getBody().get("runId"));
+        ResponseEntity<Map> differentPrincipal = postChat(
+                sessionId, "bind on first message", UUID.randomUUID().toString(), "first-bind-idem");
+        assertEquals(HttpStatus.CONFLICT, differentPrincipal.getStatusCode());
+    }
+
+    @Test
+    void postChatForMissingSessionDoesNotLazyCreateSessionOrRun() {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        openSse(sessionId);
+        sessionRepository.deleteById(UUID.fromString(sessionId));
+
+        ResponseEntity<Map> response = postChat(sessionId, "must not recreate");
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        assertFalse(sessionRepository.existsById(UUID.fromString(sessionId)));
+        assertFalse(chatRunRepository.existsBySessionId(sessionId));
     }
 
     @Test
@@ -426,19 +523,31 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private void createSession(String sessionId) {
         Session session = new Session(workspaceId, userId, "Integration Chat");
         session.setId(UUID.fromString(sessionId));
+        session.setAgentPrincipalId(principalId);
+        session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
         sessionRepository.save(session);
     }
 
     private ResponseEntity<Map> postChat(String sessionId, String content) {
-        Map<String, Object> request = Map.of(
-                "sessionId", sessionId,
-                "content", content,
-                "workspaceId", workspaceId,
-                "userId", userId
-        );
+        return postChat(sessionId, content, null, null);
+    }
+
+    private ResponseEntity<Map> postChat(String sessionId, String content, String requestedPrincipalId) {
+        return postChat(sessionId, content, requestedPrincipalId, null);
+    }
+
+    private ResponseEntity<Map> postChat(String sessionId, String content, String requestedPrincipalId,
+                                         String idempotencyKey) {
+        Map<String, Object> request = new java.util.HashMap<>();
+        request.put("sessionId", sessionId);
+        request.put("content", content);
+        request.put("workspaceId", workspaceId);
+        request.put("userId", userId);
+        if (requestedPrincipalId != null) request.put("agentPrincipalId", requestedPrincipalId);
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
+        if (idempotencyKey != null) headers.set("Idempotency-Key", idempotencyKey);
         return restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
                 new HttpEntity<>(request, headers), Map.class);

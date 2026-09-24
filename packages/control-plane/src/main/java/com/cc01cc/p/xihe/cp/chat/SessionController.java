@@ -112,8 +112,9 @@ public class SessionController {
             String modelProvider = request == null ? null : request.modelProvider();
             String modelName = request == null ? null : request.modelName();
             String providerConnectionId = request == null ? null : request.providerConnectionId();
-            Session session = sessionService.create(userId, workspaceId, title,
-                    modelProvider, modelName, providerConnectionId);
+            String agentPrincipalId = request == null ? null : request.agentPrincipalId();
+            Session session = sessionService.createAgentSession(userId, workspaceId, title,
+                    modelProvider, modelName, providerConnectionId, agentPrincipalId);
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -180,6 +181,7 @@ public class SessionController {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", session.getId());
         view.put("workspaceId", session.getWorkspaceId());
+        view.put("agentPrincipalId", session.getAgentPrincipalId());
         view.put("title", session.getTitle());
         view.put("modelProvider", session.getModelProvider());
         view.put("modelName", session.getModelName());
@@ -199,11 +201,12 @@ public class SessionController {
         // when entering a workspace. Omitting this field makes direct workspace
         // navigation create a duplicate session.
         view.put("workspaceId", session.getWorkspaceId());
+        view.put("agentPrincipalId", session.getAgentPrincipalId());
         return view;
     }
 
     public record CreateSessionRequest(String title, String modelProvider, String modelName,
-                                       String providerConnectionId) {}
+                                       String providerConnectionId, String agentPrincipalId) {}
     public record UpdateSessionRequest(String title, String modelProvider, String modelName,
                                        String providerConnectionId) {}
 }

@@ -171,10 +171,45 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41", "42")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
+    }
+
+    @Test
+    void v42AgentPrincipalSchemaAndNullableLegacySnapshotsApplied() throws SQLException {
+        assertEquals("jsonb", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'agent_principals' AND column_name = 'template_snapshot'"));
+        assertEquals("YES", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'agent_principals' AND column_name = 'template_snapshot'"),
+                "legacy principals without a verifiable template source must allow a null snapshot");
+        assertEquals("YES", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'sessions' AND column_name = 'agent_principal_id'"));
+        assertEquals("jsonb", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'sessions' AND column_name = 'agent_permissions_snapshot'"));
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'fk_sessions_agent_principal' "
+                        + "AND contype = 'f' AND confdeltype = 'r'"),
+                "Session principal deletion must be restricted");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'pk_workspace_agents' AND contype = 'p'"),
+                "workspace agent binding must use its composite primary key");
+        assertEquals(2, scalarInt(
+                "SELECT count(*) FROM pg_constraint WHERE conname IN "
+                        + "('fk_workspace_agents_principal', 'fk_workspace_agents_workspace') AND contype = 'f'"),
+                "workspace agent binding must retain both foreign keys");
+        assertEquals("jsonb", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'workspace_agents' AND column_name = 'permissions_snapshot'"));
+        assertEquals("NO", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'workspace_agents' AND column_name = 'permissions_snapshot'"),
+                "every Workspace binding must have its own permission ceiling");
     }
 
     @Test
@@ -793,6 +828,8 @@ class OperationLedgerFreshMigrationTest {
                     + "'::uuid, 'upgrade-admin-" + adminId + "@test.local', 'hash', 'ADMIN')");
             executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'upgrade-workspace', '" + userId + "'::uuid)");
+            executeUpdate(c, "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ('" + workspaceId
+                    + "'::uuid, '" + userId + "'::uuid, 'OWNER')");
             executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
                     + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'upgrade-session')");
             executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
@@ -822,11 +859,25 @@ class OperationLedgerFreshMigrationTest {
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
                     + "WHERE version = '41' AND success = true"), "V41 must be applied on upgrade");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                    + "WHERE version = '42' AND success = true"), "V42 must backfill on upgrade");
             assertEquals("user_submission", scalarString(c,
                     "SELECT origin FROM chat_runs WHERE id = '" + chatRunId + "'::uuid"),
                     "legacy ChatRuns must be backfilled as user submissions");
             assertNull(scalarString(c, "SELECT kind FROM sessions WHERE id = '" + sessionId + "'::uuid"),
                     "legacy root sessions remain un-derived");
+            String principalId = scalarString(c,
+                    "SELECT agent_principal_id::text FROM sessions WHERE id = '" + sessionId + "'::uuid");
+            assertTrue(principalId != null && !principalId.isBlank(),
+                    "a ChatRun root Session must be backfilled to a stable principal");
+            assertEquals("upgrade-session", scalarString(c,
+                    "SELECT name FROM agent_principals WHERE id = '" + principalId + "'::uuid"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM workspace_agents WHERE principal_id = '"
+                    + principalId + "'::uuid AND workspace_id = '" + workspaceId + "'::uuid"));
+            assertEquals(scalarString(c, "SELECT permissions::text FROM grants WHERE subject_type = 'agent_principal' "
+                    + "AND subject_id = '" + principalId + "'::uuid AND source = 'default'"),
+                    scalarString(c, "SELECT agent_permissions_snapshot::text FROM sessions WHERE id = '"
+                            + sessionId + "'::uuid"));
             UUID forkSessionId = UUID.randomUUID();
             executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title, spawned_from_session_id, "
                     + "spawned_from_run_id, spawned_at, kind) VALUES ('" + forkSessionId + "'::uuid, '"
@@ -838,19 +889,26 @@ class OperationLedgerFreshMigrationTest {
                     + "AND subject_type = 'user' AND subject_id = '" + userId + "'::uuid"),
                     "V41 must bootstrap one default user grant");
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
-                    + "AND subject_type = 'agent' AND subject_id = '" + sessionId + "'::uuid"),
-                    "V41 must bootstrap one default grant for each active root agent Session");
+                    + "AND subject_type = 'agent_principal' AND subject_id = '" + principalId + "'::uuid"),
+                    "V42 must move the root Agent default grant to its stable principal");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM grants WHERE subject_type = 'agent'"),
+                    "V42 must leave no Session UUID Agent grant subjects");
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
                     + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
                     + "AND permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
                     "the ADMIN default matrix includes credential permission");
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
-                    + "AND subject_id IN ('" + userId + "'::uuid, '" + sessionId + "'::uuid) "
+                    + "AND subject_type IN ('user', 'agent_principal') "
+                    + "AND subject_id IN ('" + userId + "'::uuid, '" + principalId + "'::uuid) "
                     + "AND permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
                     "USER and Agent defaults must omit credential permission");
             assertEquals(3, scalarInt(c, "SELECT count(*) FROM audit_logs "
                     + "WHERE action = 'authorization_default_grant_backfilled'"),
                     "V41 backfilled default grants must be audited");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM audit_logs "
+                    + "WHERE action = 'agent_principal_backfilled' AND user_id IS NULL "
+                    + "AND workspace_id = '" + workspaceId + "'::uuid"),
+                    "V42 principal backfill must be durably audited as a system migration");
             assertThrows(SQLException.class, () -> executeUpdate(c,
                     "INSERT INTO sessions (id, workspace_id, user_id, title, spawned_from_session_id) "
                             + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, '"

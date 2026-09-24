@@ -1,7 +1,13 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
+import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import org.slf4j.Logger;
@@ -12,9 +18,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -25,17 +29,23 @@ public class GrantAuthorizationService {
     private static final Logger logger = LoggerFactory.getLogger(GrantAuthorizationService.class);
 
     private final AuthorizationGrantRepository grantRepository;
+    private final AgentPrincipalRepository agentPrincipalRepository;
+    private final WorkspaceAgentRepository workspaceAgentRepository;
     private final GrantPrincipalPathResolver principalPathResolver;
     private final GrantIntersectionEvaluator evaluator;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceUserRepository workspaceUserRepository;
 
     public GrantAuthorizationService(AuthorizationGrantRepository grantRepository,
+                                     AgentPrincipalRepository agentPrincipalRepository,
+                                     WorkspaceAgentRepository workspaceAgentRepository,
                                      GrantPrincipalPathResolver principalPathResolver,
                                      GrantIntersectionEvaluator evaluator,
                                      WorkspaceRepository workspaceRepository,
                                      WorkspaceUserRepository workspaceUserRepository) {
         this.grantRepository = grantRepository;
+        this.agentPrincipalRepository = agentPrincipalRepository;
+        this.workspaceAgentRepository = workspaceAgentRepository;
         this.principalPathResolver = principalPathResolver;
         this.evaluator = evaluator;
         this.workspaceRepository = workspaceRepository;
@@ -48,12 +58,28 @@ public class GrantAuthorizationService {
             return false;
         }
         try {
-            if (!isWorkspaceMember(request)) {
+            UUID workspaceId = UUID.fromString(request.workspaceId());
+            if (workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isEmpty()) {
                 return false;
             }
-            List<GrantPrincipalPathResolver.PrincipalRef> path = principalPathResolver.resolve(
+            GrantPrincipalPathResolver.AgentPath path = principalPathResolver.resolveAgent(
                     request.userId(), request.workspaceId(), request.sessionId());
-            return evaluatePath(request, path);
+            AgentPrincipal principal = agentPrincipalRepository.findById(path.principalId())
+                    .filter(candidate -> candidate.getDisabledAt() == null)
+                    .orElseThrow(() -> new IllegalArgumentException("Agent principal is unavailable"));
+            WorkspaceAgent binding = workspaceAgentRepository.findById(
+                    new WorkspaceAgentId(principal.getId(), workspaceId)).orElse(null);
+            if (binding == null) return false;
+
+            List<AuthorizationGrant> principalGrants = grantRepository.findBySubjectTypeAndSubjectId(
+                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId());
+            List<Set<GrantIntersectionEvaluator.PermissionAtom>> permissionPath = new ArrayList<>();
+            permissionPath.add(evaluator.union(principalGrants));
+            permissionPath.add(evaluator.parse(binding.getPermissionsSnapshot()));
+            for (Session session : path.sessionPath()) {
+                permissionPath.add(evaluator.parse(session.getAgentPermissionsSnapshot()));
+            }
+            return evaluator.allows(request, permissionPath);
         } catch (IllegalArgumentException e) {
             logger.warn("[POLICY] event=grant_evaluation_fail_closed exceptionType={}",
                     e.getClass().getSimpleName());
@@ -71,7 +97,7 @@ public class GrantAuthorizationService {
             if (!isWorkspaceMember(request)) {
                 return false;
             }
-            return evaluatePath(request, principalPathResolver.resolveUser(request.userId()));
+            return evaluateUserPath(request);
         } catch (IllegalArgumentException e) {
             logger.warn("[POLICY] event=grant_user_evaluation_fail_closed exceptionType={}",
                     e.getClass().getSimpleName());
@@ -86,29 +112,10 @@ public class GrantAuthorizationService {
                 && workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceId, userId).isPresent();
     }
 
-    private boolean evaluatePath(PolicyRequest request, List<GrantPrincipalPathResolver.PrincipalRef> path) {
-        GrantPrincipalPathResolver.PrincipalRef user = path.stream()
-                .filter(principal -> GrantPrincipalPathResolver.USER.equals(principal.type()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("User principal missing from grant path"));
-        List<AuthorizationGrant> grants = new ArrayList<>(grantRepository.findBySubjectTypeAndSubjectId(
-                GrantPrincipalPathResolver.USER, user.id()));
-        List<UUID> agentSessionIds = path.stream()
-                .filter(principal -> GrantPrincipalPathResolver.AGENT.equals(principal.type()))
-                .map(GrantPrincipalPathResolver.PrincipalRef::id)
-                .toList();
-        if (!agentSessionIds.isEmpty()) {
-            grants.addAll(grantRepository.findBySubjectTypeAndSubjectIdIn(
-                    GrantPrincipalPathResolver.AGENT, agentSessionIds));
-        }
-        Map<GrantPrincipalPathResolver.PrincipalRef, List<AuthorizationGrant>> grantsByPrincipal = new HashMap<>();
-        for (AuthorizationGrant grant : grants) {
-            var ref = new GrantPrincipalPathResolver.PrincipalRef(grant.getSubjectType(), grant.getSubjectId());
-            grantsByPrincipal.computeIfAbsent(ref, ignored -> new ArrayList<>()).add(grant);
-        }
-        List<Set<GrantIntersectionEvaluator.PermissionAtom>> permissionPath = path.stream()
-                .map(principal -> evaluator.union(grantsByPrincipal.getOrDefault(principal, List.of())))
-                .toList();
-        return evaluator.allows(request, permissionPath);
+    private boolean evaluateUserPath(PolicyRequest request) {
+        UUID userId = UUID.fromString(request.userId());
+        Set<GrantIntersectionEvaluator.PermissionAtom> userGrants = evaluator.union(
+                grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, userId));
+        return evaluator.allows(request, List.of(userGrants));
     }
 }

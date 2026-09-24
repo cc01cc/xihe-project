@@ -18,7 +18,7 @@ import java.util.UUID;
 public class GrantPrincipalPathResolver {
 
     public static final String USER = "user";
-    public static final String AGENT = "agent";
+    public static final String AGENT_PRINCIPAL = "agent_principal";
 
     private final SessionRepository sessionRepository;
     private final ChatRunRepository chatRunRepository;
@@ -29,26 +29,24 @@ public class GrantPrincipalPathResolver {
         this.chatRunRepository = chatRunRepository;
     }
 
-    public List<PrincipalRef> resolveUser(String userId) {
-        return List.of(new PrincipalRef(USER, parseUuid(userId)));
-    }
-
-    public List<PrincipalRef> resolve(String userId, String workspaceId, String sessionId) {
+    public AgentPath resolveAgent(String userId, String workspaceId, String sessionId) {
         UUID userUuid = parseUuid(userId);
         UUID workspaceUuid = parseUuid(workspaceId);
         Session current = sessionRepository.findById(parseUuid(sessionId))
                 .orElseThrow(GrantPrincipalPathResolver::invalidPath);
-        List<UUID> reverseAgentPath = new ArrayList<>();
+        UUID agentPrincipalId = parseUuid(current.getAgentPrincipalId());
+        List<Session> reverseSessionPath = new ArrayList<>();
         Set<UUID> visited = new HashSet<>();
 
         while (true) {
             UUID currentId = current.getId();
             if (!userUuid.equals(parseUuid(current.getUserId()))
                     || !workspaceUuid.equals(parseUuid(current.getWorkspaceId()))
+                    || !agentPrincipalId.equals(parseUuid(current.getAgentPrincipalId()))
                     || !visited.add(currentId)) {
                 throw invalidPath();
             }
-            reverseAgentPath.add(currentId);
+            reverseSessionPath.add(current);
 
             UUID parentSessionId = current.getSpawnedFromSessionId();
             UUID parentRunId = current.getSpawnedFromRunId();
@@ -64,29 +62,30 @@ public class GrantPrincipalPathResolver {
             if (!hasParent || parentSessionId == null || parentRunId == null || current.getSpawnedAt() == null) {
                 throw invalidPath();
             }
-            if (Session.KIND_FORK.equals(kind)) {
-                break;
-            }
-            if (!Session.KIND_SPAWN.equals(kind)) {
+            if (!Session.KIND_FORK.equals(kind) && !Session.KIND_SPAWN.equals(kind)) {
                 throw invalidPath();
             }
 
+            Session parent = sessionRepository.findById(parentSessionId)
+                    .orElseThrow(GrantPrincipalPathResolver::invalidPath);
             ChatRun parentRun = chatRunRepository.findById(parentRunId)
                     .orElseThrow(GrantPrincipalPathResolver::invalidPath);
             if (!parentSessionId.toString().equals(parentRun.getSessionId())
                     || !userId.equals(parentRun.getUserId())
-                    || !workspaceId.equals(parentRun.getWorkspaceId())) {
+                    || !workspaceId.equals(parentRun.getWorkspaceId())
+                    || !userUuid.equals(parseUuid(parent.getUserId()))
+                    || !workspaceUuid.equals(parseUuid(parent.getWorkspaceId()))
+                    || !agentPrincipalId.equals(parseUuid(parent.getAgentPrincipalId()))) {
                 throw invalidPath();
             }
-            current = sessionRepository.findById(parentSessionId)
-                    .orElseThrow(GrantPrincipalPathResolver::invalidPath);
+            if (Session.KIND_FORK.equals(kind)) {
+                break;
+            }
+            current = parent;
         }
 
-        Collections.reverse(reverseAgentPath);
-        List<PrincipalRef> result = new ArrayList<>(reverseAgentPath.size() + 1);
-        result.add(new PrincipalRef(USER, userUuid));
-        reverseAgentPath.forEach(id -> result.add(new PrincipalRef(AGENT, id)));
-        return List.copyOf(result);
+        Collections.reverse(reverseSessionPath);
+        return new AgentPath(agentPrincipalId, List.copyOf(reverseSessionPath));
     }
 
     private static UUID parseUuid(String value) {
@@ -101,5 +100,5 @@ public class GrantPrincipalPathResolver {
         return new IllegalArgumentException("Session principal path is invalid");
     }
 
-    public record PrincipalRef(String type, UUID id) {}
+    public record AgentPath(UUID principalId, List<Session> sessionPath) {}
 }

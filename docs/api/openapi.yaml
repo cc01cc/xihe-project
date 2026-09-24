@@ -39,6 +39,59 @@ paths:
     get: { operationId: getWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     delete: { operationId: deleteWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '204': { description: Logically deleted }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/workspaces/{workspaceId}/agents:
+    get:
+      operationId: listWorkspaceAgents
+      summary: List Agent principals bound to a Workspace
+      description: Workspace members may read binding metadata and this Workspace's permission caps; prompts and provider secrets are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Workspace Agent bindings, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentView' } } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      operationId: setWorkspaceAgentCap
+      summary: Add or update one Workspace Agent binding cap
+      description: Requires the independent MANAGE_WORKSPACE_AGENTS grant scoped to this Workspace. Permissions must be within both the actor's current grants and the Agent principal's grants; only this Workspace binding is changed.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [permissions]
+              properties:
+                permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } }
+      responses:
+        '200': { description: Current Workspace binding cap, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceAgentCapView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/agents/{principalId}:
+    delete:
+      operationId: unbindWorkspaceAgent
+      summary: Remove one Workspace Agent binding
+      description: Requires MANAGE_WORKSPACE_AGENTS; removes only this Workspace binding and preserves the principal and its other Workspace bindings.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Binding removed }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/workspaces/{workspaceId}/imports:
     get: { operationId: listWorkspaceImports, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace import jobs }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
     post: { operationId: createWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [sourcePath, idempotencyKey], properties: { sourcePath: { type: string }, excludeRules: { type: array, items: { type: string } }, idempotencyKey: { type: string } } } } } }, responses: { '202': { description: Import accepted }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
@@ -48,9 +101,33 @@ paths:
     get: { operationId: getWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import status }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspace-imports/{importId}/cancel:
     post: { operationId: cancelWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import cancellation state }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/agent-principals:
+    post:
+      operationId: createAgentPrincipal
+      summary: Create an Agent principal from a readable template snapshot
+      description: Requires the independent human CREATE_ACCOUNT grant. Resolves an optional template only from caller-readable config layers, freezes the snapshot and grants in one transaction, and does not create a Workspace binding.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1 }
+                templateId: { type: [string, 'null'], format: uuid }
+      responses:
+        '201': { description: Created Agent principal, content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalCreateView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions:
     get: { operationId: listSessions, security: [{ bearerAuth: [] }], responses: { '200': { description: Sessions } } }
-    post: { operationId: createSession, security: [{ bearerAuth: [] }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '401': { $ref: '#/components/responses/Problem' } } }
+    post: { operationId: createSession, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/sessions/{sessionId}:
     get: { operationId: getSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
@@ -139,6 +216,11 @@ paths:
         Only one in-flight run per session is allowed (`409 CHAT_IN_PROGRESS`).
         The accepted run streams `token` events followed by a terminal `done` over the persistent session SSE —
         `done` ends the run, not the SSE connection. The SSE remains reusable for the next chat.
+        A new run is rejected with `403 FORBIDDEN` unless the persisted Session resolves to an active Agent principal
+        bound to the current Workspace; identity is never inferred from the Session owner or request fields.
+        An empty principal-null placeholder may be bound only when the request explicitly supplies `agentPrincipalId`;
+        the Session row is compare-and-set in the same transaction as the ChatRun, user Message and operation root.
+        Historical/user-operation/tool-event Sessions cannot be bound by this path.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: header
@@ -159,7 +241,11 @@ paths:
               schema: { $ref: '#/components/schemas/ChatRunResponse' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403':
+          description: Workspace access denied or Session lacks an active Workspace-bound Agent principal
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
         '409':
           description: SSE subscription missing or run already active
           content:
@@ -1369,6 +1455,13 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: operationId, required: true, schema: { type: string, format: uuid } }]
       responses: { '200': { description: Full operation trace (references only; artifact contents are never returned), content: { application/json: { schema: { $ref: '#/components/schemas/InternalOperationTrace' } } } }, '404': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' } }
+  /internal/v1/agents/spawn:
+    post:
+      operationId: spawnAgentSession
+      summary: Create an Agent spawn child Session from a durable parent run
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentSpawnRequest' } } } }
+      responses: { '200': { description: 'Child Session and spawn ChatRun created, or the same child idempotently replayed', content: { application/json: { schema: { $ref: '#/components/schemas/AgentSpawnResponse' } } } }, '400': { description: 'INVALID_REQUEST — body must contain exactly parentRunId and toolCallId as UUID strings; injected principalId/userId/workspaceId/sessionId/grants are rejected before any write', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { description: 'FORBIDDEN — durable item is not an agent spawn_agent tool call of this parent run, or the parent Session has no active Workspace-bound Agent principal', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: 'SPAWN_PARENT_RUN_NOT_FOUND or SPAWN_EVENT_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'IDEMPOTENCY_KEY_CONFLICT — the durable spawn item was already used with a different request hash', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { $ref: '#/components/responses/Problem' } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -1377,12 +1470,18 @@ components:
       description: RFC 9457 Problem Details
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
+    AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Agent tool-call correlation id of the durable spawn_agent OperationItem; never the OperationItem primary key' } } }
+    AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
     RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: string } } }
     Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     WorkspaceCreateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile.' }, image: { type: string, description: 'Docker-only allowlisted image.' }, storageMode: { type: string, enum: [managed_import, direct_attach], default: managed_import }, hostPath: { type: string, description: 'Required for direct_attach; Runtime validates the absolute directory. This request field is never echoed to ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
     WorkspaceUpdateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
+    WorkspaceAgentPermission: { type: object, additionalProperties: false, required: [actionClass], properties: { actionClass: { type: string }, resource: { type: string, default: '*' } } }
+    WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, permissions], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
+    WorkspaceAgentCapView: { type: object, required: [principalId, workspaceId, permissions], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
+    AgentPrincipalCreateView: { type: object, required: [principalId, createdAt], properties: { principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time } } }
     CheckpointChangedFile:
        type: object
        additionalProperties: false
@@ -1506,10 +1605,10 @@ components:
        required: [counts]
        properties:
          counts: { type: object, required: [deleted, kept], properties: { deleted: { type: integer }, kept: { type: integer } } }
-    Session: { type: object, required: [id, workspaceId, title, archived], properties: { id: { type: string }, workspaceId: { type: string }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
-    SessionCreateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
+    Session: { type: object, required: [id, workspaceId, title, archived, agentPrincipalId], properties: { id: { type: string }, workspaceId: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    SessionCreateRequest: { type: object, required: [agentPrincipalId], properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] }, agentPrincipalId: { type: string, format: uuid } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
-    ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
+    ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
     ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, operationId: { type: string, format: uuid, readOnly: true, description: Durable Operation Ledger root for this ChatRun }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     ChatApprovalDecisionRequest:
       type: object

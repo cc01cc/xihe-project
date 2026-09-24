@@ -5,11 +5,12 @@ import { useI18n } from 'vue-i18n'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useSessionStore } from '../../stores/session'
 import { useAuthStore } from '../../stores/auth'
-import { Code, FileDiff, FolderOpen, FolderTree, PanelLeft, Plus, RefreshCw, Settings2, Upload } from '@lucide/vue'
+import { Bot, Code, FileDiff, FolderOpen, FolderTree, PanelLeft, Plus, RefreshCw, Settings2, Upload } from '@lucide/vue'
 import { workspaceChatPath } from '../../lib/routes'
 
 const props = defineProps<{
   workspaceId: string
+  agentPrincipalId?: string | null
   treeCollapsed?: boolean
   codeOpen?: boolean
   changesOpen?: boolean
@@ -19,6 +20,7 @@ const emit = defineEmits<{
   upload: []
   importSource: []
   settings: []
+  agents: []
   addWorkspace: []
   files: []
   toggleTree: []
@@ -80,6 +82,16 @@ function switchSession(id: string) {
       <PanelLeft class="size-3.5" />
     </button>
     <button
+      type="button"
+      data-testid="workspace-toolbar-agents-mobile"
+      class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
+      :title="t('workspace.agentManagement')"
+      :aria-label="t('workspace.agentManagement')"
+      @click="emit('agents')"
+    >
+      <Bot class="size-3.5" aria-hidden="true" />
+    </button>
+    <button
       data-testid="workspace-toolbar-changes-mobile"
       class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
       :title="t('workspace.panelChanges')"
@@ -106,6 +118,15 @@ function switchSession(id: string) {
         </span>
       </template>
        <span v-else class="truncate text-foreground/80 font-medium">{{ workspaceLabel }}</span>
+      <span
+        v-if="agentPrincipalId"
+        data-testid="workspace-active-agent"
+        class="max-w-24 shrink-0 truncate rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
+        :title="`${t('workspace.activeAgent')}: ${agentPrincipalId}`"
+        :aria-label="`${t('workspace.activeAgent')}: ${agentPrincipalId}`"
+      >
+        {{ t('workspace.activeAgent') }} · {{ agentPrincipalId.slice(0, 8) }}
+      </span>
     </div>
 
      <div class="flex items-center gap-1 max-md:hidden">
@@ -179,6 +200,16 @@ function switchSession(id: string) {
         @click="emit('settings')"
       >
         <Settings2 class="size-3.5" />
+      </button>
+      <button
+        type="button"
+        data-testid="workspace-toolbar-agents"
+        class="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent"
+        :title="t('workspace.agentManagement')"
+        @click="emit('agents')"
+      >
+        <Bot class="size-3.5" aria-hidden="true" />
+        {{ t('workspace.agentManagement') }}
       </button>
       <button
         data-testid="workspace-toolbar-add"

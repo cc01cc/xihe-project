@@ -28,6 +28,7 @@ export interface Session {
     createdAt: string;
     updatedAt: string;
     workspaceId?: string;
+    agentPrincipalId?: string | null;
     modelProvider?: string;
     modelName?: string;
     providerConnectionId?: string;

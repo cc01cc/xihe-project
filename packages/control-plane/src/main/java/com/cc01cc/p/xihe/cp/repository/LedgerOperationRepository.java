@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface LedgerOperationRepository extends JpaRepository<LedgerOperation, UUID> {
+    boolean existsBySessionIdAndActorType(String sessionId, String actorType);
 
     Optional<LedgerOperation> findByRunId(String runId);
 

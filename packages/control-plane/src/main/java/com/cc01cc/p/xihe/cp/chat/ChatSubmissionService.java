@@ -8,13 +8,24 @@ import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
+import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
+import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
+import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +49,7 @@ public class ChatSubmissionService {
 
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
+    private static final Logger logger = LoggerFactory.getLogger(ChatSubmissionService.class);
 
     private final ChatRunRepository chatRunRepository;
     private final MessageRepository messageRepository;
@@ -45,8 +57,14 @@ public class ChatSubmissionService {
     private final OperationService operationService;
     private final OperationItemRepository operationItemRepository;
     private final SessionRepository sessionRepository;
+    private final AgentPrincipalRepository agentPrincipalRepository;
+    private final WorkspaceAgentRepository workspaceAgentRepository;
+    private final GrantPrincipalPathResolver principalPathResolver;
     private final DbLockTimeout dbLockTimeout;
     private final ObjectMapper objectMapper;
+    private final LedgerOperationRepository ledgerOperationRepository;
+    private final EventStoreRepository eventStoreRepository;
+    private final AgentPrincipalService agentPrincipalService;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  MessageRepository messageRepository,
@@ -54,16 +72,28 @@ public class ChatSubmissionService {
                                  OperationService operationService,
                                  OperationItemRepository operationItemRepository,
                                  SessionRepository sessionRepository,
+                                 AgentPrincipalRepository agentPrincipalRepository,
+                                 WorkspaceAgentRepository workspaceAgentRepository,
+                                 GrantPrincipalPathResolver principalPathResolver,
                                  DbLockTimeout dbLockTimeout,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 LedgerOperationRepository ledgerOperationRepository,
+                                 EventStoreRepository eventStoreRepository,
+                                 AgentPrincipalService agentPrincipalService) {
         this.chatRunRepository = chatRunRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
         this.operationService = operationService;
         this.operationItemRepository = operationItemRepository;
         this.sessionRepository = sessionRepository;
+        this.agentPrincipalRepository = agentPrincipalRepository;
+        this.workspaceAgentRepository = workspaceAgentRepository;
+        this.principalPathResolver = principalPathResolver;
         this.dbLockTimeout = dbLockTimeout;
         this.objectMapper = objectMapper;
+        this.ledgerOperationRepository = ledgerOperationRepository;
+        this.eventStoreRepository = eventStoreRepository;
+        this.agentPrincipalService = agentPrincipalService;
     }
 
     @Transactional
@@ -72,9 +102,21 @@ public class ChatSubmissionService {
                              String model, String toolMode, String providerConnectionId,
                              Long connectionRevision, String leaseOwner, String requestId,
                              String content, String attachmentsJson, List<String> attachmentIds) {
+        return create(runId, sessionId, userId, workspaceId, null, idempotencyKey, requestHash,
+                provider, model, toolMode, providerConnectionId, connectionRevision,
+                leaseOwner, requestId, content, attachmentsJson, attachmentIds);
+    }
+
+    @Transactional
+    public Submission create(String runId, String sessionId, String userId, String workspaceId,
+                             String agentPrincipalId, String idempotencyKey, String requestHash,
+                             String provider, String model, String toolMode, String providerConnectionId,
+                             Long connectionRevision, String leaseOwner, String requestId,
+                             String content, String attachmentsJson, List<String> attachmentIds) {
         return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
-                connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds);
+                connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
+                agentPrincipalId);
     }
 
     /**
@@ -146,7 +188,123 @@ public class ChatSubmissionService {
         return persist(ChatRun.ORIGIN_SPAWN, spawn.runId(), spawn.childSessionId(), spawn.userId(),
                 spawn.workspaceId(), idempotencyKey, requestHash, spawn.provider(), spawn.model(),
                 spawn.toolMode(), spawn.providerConnectionId(), spawn.connectionRevision(), spawn.leaseOwner(),
-                spawn.requestId(), spawn.content(), attachments.json(), attachments.fileIds());
+                spawn.requestId(), spawn.content(), attachments.json(), attachments.fileIds(), null);
+    }
+
+    @Transactional
+    public SpawnResult createSpawnFromParent(String parentRunId, String toolCallId) {
+        requireUuid(parentRunId, "parentRunId");
+        requireUuid(toolCallId, "toolCallId");
+
+        ChatRun parentRun = chatRunRepository.findById(UUID.fromString(parentRunId))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
+                        "Parent run not found"));
+        UUID parentOperationId = operationService.findOperationIdByRunId(parentRunId);
+        if (parentOperationId == null) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND",
+                    "Parent run has no durable operation");
+        }
+        String operationId = parentOperationId.toString();
+        OperationItem item = operationItemRepository
+                .findByOperationIdAndSourceAndToolCallId(operationId, "agent", toolCallId)
+                .orElseGet(() -> rejectUnmatchedSpawnItem(operationId, toolCallId));
+        if (!"tool_call".equals(item.getKind())
+                || !"agent".equals(item.getSource())
+                || !SPAWN_TOOL_NAME.equals(item.getToolName())) {
+            throw agentSpawnForbidden("Durable item is not an agent spawn_agent tool call");
+        }
+
+        dbLockTimeout.apply();
+        item = operationItemRepository.findByIdForUpdate(item.getId())
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND",
+                        "Spawn item not found"));
+
+        Session parentSession = sessionRepository.findById(UUID.fromString(parentRun.getSessionId()))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
+                        "Parent run session not found"));
+
+        String content = deriveSpawnContent(item.getArgumentsPreview());
+        String requestHash = ChatRequestHash.calculate(objectMapper, content, parentRun.getProvider(),
+                parentRun.getModel(), parentRun.getToolMode(), List.of(), Map.of());
+
+        ChatRun existingSpawn = chatRunRepository
+                .findByUserIdAndIdempotencyKeyAndOrigin(parentRun.getUserId(), item.getId().toString(),
+                        ChatRun.ORIGIN_SPAWN)
+                .orElse(null);
+        if (existingSpawn != null) {
+            if (!requestHash.equals(existingSpawn.getRequestHash())) {
+                throw idempotencyConflict();
+            }
+            Session existingSession = sessionRepository
+                    .findById(UUID.fromString(existingSpawn.getSessionId()))
+                    .orElseThrow(() -> new IllegalStateException("Spawn session is missing"));
+            return new SpawnResult(existingSession.getId().toString(), existingSpawn.getId().toString(),
+                    existingSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
+        }
+
+        if (parentSession.getAgentPrincipalId() == null || parentSession.getAgentPermissionsSnapshot() == null) {
+            throw agentSessionForbidden();
+        }
+
+        Session childSession = new Session(parentRun.getWorkspaceId(), parentRun.getUserId(),
+                parentSession.getTitle());
+        childSession.setId(UUID.randomUUID());
+        childSession.setKind(Session.KIND_SPAWN);
+        childSession.setSpawnedFromSessionId(parentSession.getId());
+        childSession.setSpawnedFromRunId(parentRun.getId());
+        childSession.setSpawnedAt(Instant.now());
+        childSession.setAgentPrincipalId(parentSession.getAgentPrincipalId());
+        childSession.setAgentPermissionsSnapshot(parentSession.getAgentPermissionsSnapshot().deepCopy());
+        childSession.setModelProvider(parentSession.getModelProvider());
+        childSession.setModelName(parentSession.getModelName());
+        childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
+        childSession.setConnectionRevision(parentSession.getConnectionRevision());
+        childSession.setApprovalMode(parentSession.getApprovalMode());
+        sessionRepository.save(childSession);
+
+        SpawnSubmission submission = new SpawnSubmission(
+                UUID.randomUUID().toString(), childSession.getId().toString(), parentRun.getUserId(),
+                parentRun.getWorkspaceId(), parentSession.getId().toString(), parentRunId, item.getId(),
+                parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
+                parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null,
+                UUID.randomUUID().toString(), content, List.of());
+        Submission created = createSpawn(submission);
+        return new SpawnResult(childSession.getId().toString(), created.run().getId().toString(),
+                childSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
+    }
+
+    private OperationItem rejectUnmatchedSpawnItem(String operationId, String toolCallId) {
+        if (operationItemRepository.existsByOperationIdAndToolCallId(operationId, toolCallId)) {
+            throw agentSpawnForbidden("Durable item is not an agent spawn tool call of this parent run");
+        }
+        if (operationItemRepository.existsBySourceAndToolCallId("agent", toolCallId)) {
+            throw agentSpawnForbidden("Durable item belongs to a different parent run");
+        }
+        throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND", "Spawn item not found");
+    }
+
+    private String deriveSpawnContent(String argumentsPreview) {
+        if (argumentsPreview == null || argumentsPreview.isBlank()) {
+            return "";
+        }
+        try {
+            JsonNode args = objectMapper.readTree(argumentsPreview);
+            if (args != null && args.isObject()) {
+                for (String field : List.of("prompt", "content", "message", "task")) {
+                    JsonNode value = args.get(field);
+                    if (value != null && value.isTextual() && !value.textValue().isBlank()) {
+                        return value.textValue();
+                    }
+                }
+            }
+        } catch (JsonProcessingException e) {
+            logger.debug("Spawn arguments preview is not parseable: {}", e.getMessage());
+        }
+        return "";
+    }
+
+    private static CpApiException agentSpawnForbidden(String detail) {
+        return new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", detail);
     }
 
     private SpawnAttachments normalizeSpawnAttachments(SpawnSubmission spawn) {
@@ -192,10 +350,12 @@ public class ChatSubmissionService {
     }
 
     private Submission persist(String origin, String runId, String sessionId, String userId, String workspaceId,
-                              String idempotencyKey, String requestHash, String provider, String model,
-                              String toolMode, String providerConnectionId, Long connectionRevision,
-                              String leaseOwner, String requestId, String content, String attachmentsJson,
-                              List<String> attachmentIds) {
+                               String idempotencyKey, String requestHash, String provider, String model,
+                               String toolMode, String providerConnectionId, Long connectionRevision,
+                               String leaseOwner, String requestId, String content, String attachmentsJson,
+                               List<String> attachmentIds, String requestedPrincipalId) {
+        bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
+
         ChatRun chatRun = new ChatRun(
                 runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,
                 provider, model, toolMode, "accepted");
@@ -224,6 +384,74 @@ public class ChatSubmissionService {
                 userId, sessionId, workspaceId, runId, requestId,
                 "chat", "ui", "user", userId, idempotencyKey, "Chat operation");
         return new Submission(chatRun, userMessage, operation);
+    }
+
+    private void bindOrValidateAgentSession(String sessionId, String userId, String workspaceId,
+                                            String requestedPrincipalId) {
+        UUID sessionUuid = UUID.fromString(sessionId);
+        dbLockTimeout.apply();
+        Session session = sessionRepository.findByIdForUpdate(sessionUuid)
+                .filter(candidate -> userId.equals(candidate.getUserId())
+                        && workspaceId.equals(candidate.getWorkspaceId())
+                        && !candidate.isArchived())
+                .orElseThrow(ChatSubmissionService::agentSessionForbidden);
+
+        if (session.getAgentPrincipalId() == null) {
+            if (requestedPrincipalId == null || requestedPrincipalId.isBlank()) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                        "A principal-null Session cannot start an Agent Chat without an explicit principal");
+            }
+            if (session.getAgentPermissionsSnapshot() != null
+                    || chatRunRepository.existsBySessionId(sessionId)
+                    || messageRepository.existsBySessionId(sessionId)
+                    || ledgerOperationRepository.existsBySessionIdAndActorType(sessionId, "user")
+                    || eventStoreRepository.existsBySessionId(sessionId)) {
+                throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_BINDING_CONFLICT",
+                        "Only an empty, unbound Session can be assigned an Agent principal");
+            }
+            com.fasterxml.jackson.databind.JsonNode cap = agentPrincipalService.resolveSessionCap(
+                    requestedPrincipalId, workspaceId);
+            try {
+                int updated = sessionRepository.bindAgentPrincipalIfNull(sessionUuid, requestedPrincipalId,
+                        objectMapper.writeValueAsString(cap));
+                if (updated != 1) {
+                    throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_BINDING_CONFLICT",
+                            "Session was concurrently bound to an Agent principal");
+                }
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Unable to serialize Agent Session permission cap", e);
+            }
+            session.setAgentPrincipalId(requestedPrincipalId);
+            session.setAgentPermissionsSnapshot(cap);
+        } else if (requestedPrincipalId != null
+                && !session.getAgentPrincipalId().equals(requestedPrincipalId)) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_MISMATCH",
+                    "agentPrincipalId does not match the Session principal");
+        }
+        if (session.getAgentPermissionsSnapshot() == null) {
+            throw agentSessionForbidden();
+        }
+
+        GrantPrincipalPathResolver.AgentPath path;
+        try {
+            path = principalPathResolver.resolveAgent(userId, workspaceId, sessionId);
+        } catch (IllegalArgumentException e) {
+            throw agentSessionForbidden();
+        }
+
+        boolean activePrincipal = agentPrincipalRepository.findById(path.principalId())
+                .filter(principal -> principal.getDisabledAt() == null)
+                .isPresent();
+        boolean workspaceBound = workspaceAgentRepository.findById(
+                new WorkspaceAgentId(path.principalId(), UUID.fromString(workspaceId))).isPresent();
+        if (!activePrincipal || !workspaceBound) {
+            throw agentSessionForbidden();
+        }
+    }
+
+    private static CpApiException agentSessionForbidden() {
+        return new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                "An active Agent principal bound to this Workspace is required");
     }
 
     private Submission replay(ChatRun run) {
@@ -259,6 +487,8 @@ public class ChatSubmissionService {
 
     public record Submission(ChatRun run, Message userMessage,
                              OperationService.OperationStartResult operation) {}
+
+    public record SpawnResult(String sessionId, String runId, String principalId, String workspaceId) {}
 
     public record SpawnSubmission(String runId, String childSessionId, String userId, String workspaceId,
                                   String parentSessionId, String parentRunId, UUID spawnEventId,
