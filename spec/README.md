@@ -53,6 +53,7 @@ spec/
 | ui interaction | proposed | partial | UI + 跨边界 owner | PLAN-0388；PLAN-0384 仅负责 feature flow |
 | agent execution / Context | proposed | partial | Agent owner | PLAN-0387；0381/0382 仍为局部规范 |
 | session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开 |
+| session branch context isolation | proposed | unimplemented | CP Context + Agent Context owners | PLAN-0410；公开 fork/branch action 由 PLAN-0409 消费，不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
 | authentication / authorization | proposed | partial | Security owner | PLAN-0386；principal/role/scope 归 Security |
 | agent role/scope binding | proposed | partial | Agent owner | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
 | agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | PLAN-0374；V42 绑定/Session/API/UI 波次已实现；fork 创建归 PLAN-0409、模板 CRUD 归 0374 T3.1 |
@@ -106,6 +107,10 @@ PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑�
 PLAN-0374 冻结 Agent principal 与 Workspace 绑定契约（V42 schema、Session admission、管理 API/UI 波次已实现；fork 创建归 PLAN-0409、模板 CRUD 归 0374 T3.1；Security principal/grant canonical 归 PLAN-0407）：
 
 - [Agent principal 与 Workspace 绑定](agent/principal-workspace-binding.md)
+
+PLAN-0410 建立 Session branch-aware Context proposed 契约，单独拥有分支祖先路径、Run cursor、EventStore 投影与 compaction/prune 隔离；实现仍未开始，用户可见 fork/branch API 与浏览器验收由 PLAN-0409 承接：
+
+- [Session 分支上下文隔离](session/branch-context-isolation.md)
 
 PLAN-0388 已建立 UI interaction/design/accessibility proposed 草案；它们只定义全局交互状态、设计系统和无障碍规则，不复制 OpenAPI/SSE schema 或 feature flow：
 
