@@ -143,22 +143,26 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                         && "default".equals(grant.getSource()))
                 .toList();
         assertEquals(1, userDefaults.size());
-        assertEquals(1, sessionDefaults.size());
+        assertEquals(0, sessionDefaults.size(),
+                "Session creation no longer materializes a Session-subject Agent default (PLAN-0374 T2.7)");
         assertEquals("read", userDefaults.get(0).getReadState());
-        assertEquals("read", sessionDefaults.get(0).getReadState());
         assertEquals(5, userDefaults.get(0).getPermissions().size(), "USER default excludes credential");
-        assertEquals(5, sessionDefaults.get(0).getPermissions().size());
 
         grantIds.add(userDefaults.get(0).getId());
-        grantIds.add(sessionDefaults.get(0).getId());
         List<AuditLog> auditRows = auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
                 .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
                 .toList();
-        assertEquals(2, auditRows.size(), "account and Agent-instance defaults must be audited");
+        assertEquals(1, auditRows.size(),
+                "account default is audited; Agent default only appears via explicit ensure (PLAN-0374 T2.7)");
         auditRows.forEach(row -> auditIds.add(row.getId()));
 
         grantDefaultService.ensureUserDefault(user);
         grantDefaultService.ensureAgentSessionDefault(session);
+        AuthorizationGrant agentDefault = grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId())
+                .stream().filter(grant -> "default".equals(grant.getSource())).findFirst().orElseThrow();
+        grantIds.add(agentDefault.getId());
+        assertEquals("read", agentDefault.getReadState());
+        assertEquals(5, agentDefault.getPermissions().size());
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "user", user.getId(), "default"));
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
@@ -168,7 +172,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void attachmentUploadCreatesRootSessionAndDefaultAgentGrant() throws IOException {
+    void attachmentUploadCreatesRootSessionWithoutAgentDefaultGrant() throws IOException {
         String email = "grant-attachment-" + UUID.randomUUID() + "@test.com";
         AuthResponse registered = authService.register(new RegisterRequest(email, "grant-test-password", "Attachment grant test"));
         userId = registered.getUser().getId();
@@ -183,8 +187,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, upload.getSuccess().size());
         Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
         assertNull(session.getKind(), "attachment upload creates a root Session");
-        assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "agent", session.getId(), "default"));
+        assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "agent", session.getId(), "default"),
+                "attachment placeholder stays principal-null with no Agent default grant (PLAN-0374 T2.7)");
         grantRepository.findAll().stream()
                 .filter(grant -> ("user".equals(grant.getSubjectType())
                         && UUID.fromString(userId).equals(grant.getSubjectId())
@@ -232,11 +237,12 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 "messages saved before a later message failure must roll back");
         assertTrue(sessionRepository.findById(laterSessionId).isPresent(),
                 "a failed chat must not prevent later chats from importing");
-        assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
-                "agent", goodSessionId, "default"));
+        assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "agent", goodSessionId, "default"),
+                "imported Sessions stay principal-null with no Agent default grant (PLAN-0374 T2.7)");
         assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", badSessionId, "default"));
-        assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
+        assertEquals(0L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", laterSessionId, "default"));
     }
 
