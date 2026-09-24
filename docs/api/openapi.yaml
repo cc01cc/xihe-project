@@ -125,6 +125,21 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/agent-templates:
+    get:
+      operationId: listAgentTemplates
+      summary: Read one caller-readable Agent template config layer
+      description: layer selects a single raw config layer (instance=ADMIN only, user=caller only, workspace=Workspace member only) with the fail-closed rules of AgentTemplateService; workspaceId is optional for the workspace layer and falls back to the tenant workspace context. Never returns a merged-effective or cross-layer view, roles[], or secret fields; denied responses carry no template content.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid, description: Required for the workspace layer when the token carries no workspace context; ignored for other layers. } }
+      responses:
+        '200': { description: Raw templates[] entries of the requested layer, content: { application/json: { schema: { $ref: '#/components/schemas/AgentTemplateListView' } } } }
+        '400': { description: 'INVALID_REQUEST — layer missing/unknown, workspaceId malformed, or workspace layer without any workspace context', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — non-ADMIN instance read or non-member workspace read (no template content in the body)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'WORKSPACE_NOT_FOUND — the requested workspace does not exist', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions:
     get: { operationId: listSessions, security: [{ bearerAuth: [] }], responses: { '200': { description: Sessions } } }
     post: { operationId: createSession, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
@@ -1482,6 +1497,7 @@ components:
     WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, permissions], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
     WorkspaceAgentCapView: { type: object, required: [principalId, workspaceId, permissions], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
     AgentPrincipalCreateView: { type: object, required: [principalId, createdAt], properties: { principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time } } }
+    AgentTemplateListView: { type: object, required: [layer, workspaceId, templates], properties: { layer: { type: string, enum: [instance, user, workspace] }, workspaceId: { type: [string, 'null'], format: uuid, description: Present only for the workspace layer; null for instance/user layers. }, templates: { type: array, description: Raw agent-templates.templates[] entries of exactly one layer, returned as stored. Roles and secret-like fields are never part of this response., items: { type: object, additionalProperties: false, required: [id, name, description, systemPrompt, toolMode, roleId], properties: { id: { type: string, format: uuid }, name: { type: string }, description: { type: string }, systemPrompt: { type: string }, toolMode: { type: string, enum: [none, workspace] }, provider: { type: string }, model: { type: string }, roleId: { type: string, format: uuid } } } } } }
     CheckpointChangedFile:
        type: object
        additionalProperties: false

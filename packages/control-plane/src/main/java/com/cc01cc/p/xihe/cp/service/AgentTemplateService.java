@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -68,14 +69,7 @@ public class AgentTemplateService {
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
         UUID workspaceUuid = workspaceId == null || workspaceId.isBlank()
                 ? null : parseUuid(workspaceId, "INVALID_WORKSPACE");
-        if (workspaceUuid != null) {
-            workspaceRepository.findByIdAndDeletedAtIsNull(workspaceUuid)
-                    .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
-                            "WORKSPACE_NOT_FOUND", "Workspace not found"));
-            workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceUuid, actorId)
-                    .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN,
-                            "WORKSPACE_ACCESS_DENIED", "Workspace membership is required"));
-        }
+        requireReadableWorkspace(actorId, workspaceUuid);
         if (templateId == null || templateId.isBlank()) {
             return new ResolvedTemplate("default", defaultSnapshot(actorId));
         }
@@ -92,12 +86,10 @@ public class AgentTemplateService {
 
         List<ResolvedTemplate> matches = new ArrayList<>();
         for (ConfigScope scope : readableScopes) {
-            Map<String, String> entries = configService.layerEntries(
-                    scope.layer(), DOMAIN, scope.userId(), scope.workspaceId());
-            if (entries.isEmpty()) {
+            ObjectNode config = loadLayerConfig(scope);
+            if (config == null) {
                 continue;
             }
-            ObjectNode config = parseLayer(scope, entries);
             String storedTemplateId = findTemplate(config, templateId, scope.layer());
             if (storedTemplateId != null) {
                 matches.add(new ResolvedTemplate(scope.layer(), snapshotFromTemplate(config, storedTemplateId)));
@@ -112,6 +104,106 @@ public class AgentTemplateService {
                     "The selected Agent template ID appears in multiple readable config layers");
         }
         return matches.get(0);
+    }
+
+    /**
+     * PLAN-0374 T3.1a read route: returns the raw templates[] entries of exactly one
+     * caller-readable config layer. Layer visibility reuses the resolveForCreation
+     * layer loading and permission semantics (instance=ADMIN, user=self,
+     * workspace=member); no merged-effective or cross-layer view is produced.
+     */
+    @Transactional(readOnly = true)
+    public TemplateListView listForCaller(String actorUserId, String layer, UUID workspaceId) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        User actor = userRepository.findById(actorId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
+        ConfigScope scope;
+        if (layer == null) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "layer must be one of instance, user, workspace");
+        }
+        switch (layer) {
+            case "instance" -> {
+                if (actor.getRole() != UserRole.ADMIN) {
+                    logger.warn("Denied non-ADMIN Agent template instance layer read: actor={}", actorId);
+                    throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                            "Instance Agent templates are readable by ADMIN only");
+                }
+                scope = new ConfigScope("instance", null, null);
+            }
+            case "user" -> scope = new ConfigScope("user", actorId, null);
+            case "workspace" -> {
+                if (workspaceId == null) {
+                    throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                            "workspaceId is required for the workspace layer");
+                }
+                requireReadableWorkspace(actorId, workspaceId);
+                scope = new ConfigScope("workspace", null, workspaceId);
+            }
+            default -> throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "layer must be one of instance, user, workspace");
+        }
+        ObjectNode config = loadLayerConfig(scope);
+        ArrayNode templates = config == null
+                ? objectMapper.createArrayNode() : listTemplates(config, scope.layer());
+        return new TemplateListView(scope.layer(), scope.workspaceId(), templates);
+    }
+
+    private void requireReadableWorkspace(UUID actorId, UUID workspaceUuid) {
+        if (workspaceUuid == null) {
+            return;
+        }
+        workspaceRepository.findByIdAndDeletedAtIsNull(workspaceUuid)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
+                        "WORKSPACE_NOT_FOUND", "Workspace not found"));
+        workspaceUserRepository.findByIdWorkspaceIdAndIdUserId(workspaceUuid, actorId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN,
+                        "WORKSPACE_ACCESS_DENIED", "Workspace membership is required"));
+    }
+
+    /** Raw single-layer load with the same fail-closed schema validation as resolveForCreation. */
+    private ObjectNode loadLayerConfig(ConfigScope scope) {
+        Map<String, String> entries = configService.layerEntries(
+                scope.layer(), DOMAIN, scope.userId(), scope.workspaceId());
+        if (entries.isEmpty()) {
+            return null;
+        }
+        return parseLayer(scope, entries);
+    }
+
+    /** Validates the layer's templates[] entries without merging or picking another layer. */
+    private ArrayNode listTemplates(ObjectNode config, String layer) {
+        ArrayNode templates = (ArrayNode) config.get("templates");
+        ArrayNode roles = (ArrayNode) config.get("roles");
+        Set<String> seenTemplateIds = new HashSet<>();
+        for (JsonNode template : templates) {
+            String templateId = text(template, "id");
+            if (!seenTemplateIds.add(templateId)) {
+                logger.error("Duplicate Agent template ID in config scope: layer={}", layer);
+                throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
+                        "Stored Agent template IDs are not unique");
+            }
+            String roleId = text(template, "roleId");
+            parseUuid(roleId, "INVALID_TEMPLATE_ROLE_ID");
+            int roleMatches = 0;
+            for (JsonNode role : roles) {
+                if (roleId.equals(text(role, "id"))) {
+                    roleMatches++;
+                }
+            }
+            if (roleMatches == 0) {
+                logger.error("Missing Agent template role reference: layer={}, roleId={}", layer, roleId);
+                throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
+                        "Template role reference is missing from its config layer");
+            }
+            if (roleMatches > 1) {
+                logger.error("Duplicate Agent template role ID in config scope: layer={}, roleId={}",
+                        layer, roleId);
+                throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
+                        "Template role ID is not unique in its config layer");
+            }
+        }
+        return templates.deepCopy();
     }
 
     private JsonNode defaultSnapshot(UUID creatorId) {
@@ -257,5 +349,6 @@ public class AgentTemplateService {
     }
 
     public record ResolvedTemplate(String sourceLayer, JsonNode snapshot) {}
+    public record TemplateListView(String layer, UUID workspaceId, ArrayNode templates) {}
     private record ConfigScope(String layer, UUID userId, UUID workspaceId) {}
 }

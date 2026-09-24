@@ -180,7 +180,7 @@ curl -X POST "http://localhost:12631/api/v1/config/import?layer=instance" \
 
 - schema：`packages/control-plane/src/main/resources/config-schemas/agent-templates.json`；`templates[].roleId` 只引用同层 `roles[]`，模板不存 provider secret。
 - 层读取边界（`AgentTemplateService.resolveForCreation` fail-closed）：instance 模板仅 ADMIN、user 模板仅本人、workspace 模板仅该成员；禁止跨层列举与 merged-effective 静默覆盖；重复 template/role UUID 或坏引用直接拒绝。
-- 写路径必须独立 `CREATE_TEMPLATE` 并审计 actor/scope/key diff，与 `CREATE_ACCOUNT`（principal 创建）分离；创建/修改模板不创建 principal。模板 CRUD 路由与 `approval-policy.askActionClasses[]` UI 由 PLAN-0374 T3.1 在 PLAN-0407 V44 canonical action 就绪后开放，当前缺 action 一律 fail-closed。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)。
+- 写路径必须独立 `CREATE_TEMPLATE` 并审计 actor/scope/key diff，与 `CREATE_ACCOUNT`（principal 创建）分离；创建/修改模板不创建 principal。读路由 `GET /api/v1/agent-templates` 已开放（层可见性 fail-closed）；写 CRUD 与 `approval-policy.askActionClasses[]` UI 仍由 T3.1b 等 PLAN-0407 V44 canonical action，当前缺 action 一律 fail-closed。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)。
 
 ## 4. Agent readiness 与模型目录
 
