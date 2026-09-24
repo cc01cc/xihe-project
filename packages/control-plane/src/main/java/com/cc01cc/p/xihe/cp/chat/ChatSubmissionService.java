@@ -65,6 +65,7 @@ public class ChatSubmissionService {
     private final LedgerOperationRepository ledgerOperationRepository;
     private final EventStoreRepository eventStoreRepository;
     private final AgentPrincipalService agentPrincipalService;
+    private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  MessageRepository messageRepository,
@@ -79,7 +80,8 @@ public class ChatSubmissionService {
                                  ObjectMapper objectMapper,
                                  LedgerOperationRepository ledgerOperationRepository,
                                  EventStoreRepository eventStoreRepository,
-                                 AgentPrincipalService agentPrincipalService) {
+                                 AgentPrincipalService agentPrincipalService,
+                                 com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService) {
         this.chatRunRepository = chatRunRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -94,6 +96,7 @@ public class ChatSubmissionService {
         this.ledgerOperationRepository = ledgerOperationRepository;
         this.eventStoreRepository = eventStoreRepository;
         this.agentPrincipalService = agentPrincipalService;
+        this.branchPathService = branchPathService;
     }
 
     @Transactional
@@ -356,11 +359,17 @@ public class ChatSubmissionService {
                                List<String> attachmentIds, String requestedPrincipalId) {
         bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
         rejectConcurrentSubmission(sessionId, userId, idempotencyKey);
+        // PLAN-0410 T1.3: resolve the durable branch binding BEFORE any row is
+        // written — a missing/failed branch resolution aborts the whole
+        // submission instead of leaving a half-created Run/Message pair. M1 has
+        // no branch selector, so Run and Message share the Session root.
+        String branchId = branchPathService.ensureRootBranchId(sessionId);
 
         ChatRun chatRun = new ChatRun(
                 runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,
                 provider, model, toolMode, "accepted");
         chatRun.setOrigin(origin);
+        chatRun.setBranchId(branchId);
         chatRun.setLeaseOwner(leaseOwner);
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
@@ -369,6 +378,7 @@ public class ChatSubmissionService {
 
         Message userMessage = new Message(sessionId, MessageRole.USER, content);
         userMessage.setRunId(runId);
+        userMessage.setBranchId(branchId);
         userMessage.setAttachments(attachmentsJson);
         messageRepository.save(userMessage);
         chatRun.setUserMessageId(userMessage.getId().toString());

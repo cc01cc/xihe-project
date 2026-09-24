@@ -21,6 +21,12 @@ public class Message {
     @Convert(converter = UuidStringConverter.class)
     private String runId;
 
+    /** PLAN-0410 T1.3: durable branch binding (V43 NOT NULL). */
+    @Column(name = "branch_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
+    private String branchId;
+
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private MessageRole role;
@@ -45,6 +51,9 @@ public class Message {
     @PrePersist
     protected void onCreate() {
         createdAt = Instant.now();
+        if (branchId == null || branchId.isBlank()) {
+            branchId = RootBranchBinder.ensureRootBranchId(sessionId);
+        }
     }
 
     public UUID getId() { return id; }
@@ -55,6 +64,10 @@ public class Message {
 
     public String getRunId() { return runId; }
     public void setRunId(String runId) { this.runId = runId; }
+
+    public String getBranchId() { return branchId; }
+    public void setBranchId(String branchId) { this.branchId = branchId; }
+
 
     public MessageRole getRole() { return role; }
     public void setRole(MessageRole role) { this.role = role; }

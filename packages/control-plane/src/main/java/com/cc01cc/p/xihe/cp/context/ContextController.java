@@ -53,10 +53,12 @@ public class ContextController {
         if (!verifyAccess(sessionId)) {
             return forbidden();
         }
+        rejectBranchOverride(body);
         String eventType = (String) body.get("type");
         Object payload = body.getOrDefault("payload", Map.of());
         var event = contextService.appendEvent(
-                sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), eventType, payload);
+                sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), eventType, payload,
+                correlationIdOf(body));
         return ResponseEntity.ok(Map.of(
                 "sequence", event.getSequence(),
                 "eventType", event.getEventType(),
@@ -73,14 +75,40 @@ public class ContextController {
             return forbidden();
         }
         List<EventStoreService.EventPayload> payloads = events.stream()
-                .map(e -> new EventStoreService.EventPayload(
-                        (String) e.get("type"), e.getOrDefault("payload", Map.of())))
+                .map(e -> {
+                    rejectBranchOverride(e);
+                    return new EventStoreService.EventPayload(
+                            (String) e.get("type"), e.getOrDefault("payload", Map.of()),
+                            correlationIdOf(e));
+                })
                 .toList();
         var saved = contextService.appendBatch(
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), payloads);
         List<Long> sequences = saved.stream().map(e -> e.getSequence()).toList();
         return ResponseEntity.ok(Map.of("sequences", sequences));
     }
+
+    /**
+     * PLAN-0410 field-matrix §6: the request body never chooses the branch —
+     * CP derives it from a durable {@code correlation_id} run binding.
+     */
+    private void rejectBranchOverride(Map<String, Object> body) {
+        if (body.containsKey("branch_id")) {
+            throw new com.cc01cc.p.xihe.cp.config.CpApiException(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "branch_id is derived by CP and cannot be supplied by the caller");
+        }
+    }
+
+    private String correlationIdOf(Map<String, Object> body) {
+        Object correlationId = body.get("correlation_id");
+        if (correlationId == null) {
+            return null;
+        }
+        String value = String.valueOf(correlationId).trim();
+        return value.isEmpty() || "null".equals(value) ? null : value;
+    }
+
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
     @GetMapping("/{sessionId}/snapshot")

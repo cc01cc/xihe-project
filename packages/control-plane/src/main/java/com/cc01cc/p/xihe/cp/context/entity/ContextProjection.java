@@ -16,9 +16,17 @@ public class ContextProjection {
     @Column(name = "id", length = 36)
     private UUID id;
 
-    @Column(name = "session_id", nullable = false, unique = true, length = 36)
+    // PLAN-0410 field-matrix §2 #2: the V1 unique(session_id) is dropped by
+    // V43; the durable key is (session_id, projection_type, branch_id).
+    @Column(name = "session_id", nullable = false, length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String sessionId;
+
+    /** PLAN-0410 T1.1: branch dimension of the projection key (V43 NOT NULL). */
+    @Column(name = "branch_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
+    private String branchId;
+
 
     @Column(name = "workspace_id", nullable = false, length = 36)
     @Convert(converter = UuidStringConverter.class)
@@ -58,6 +66,9 @@ public class ContextProjection {
     protected void onCreate() {
         createdAt = Instant.now();
         updatedAt = Instant.now();
+        if (branchId == null || branchId.isBlank()) {
+            branchId = com.cc01cc.p.xihe.cp.entity.RootBranchBinder.ensureRootBranchId(sessionId);
+        }
     }
 
     @PreUpdate
@@ -70,6 +81,10 @@ public class ContextProjection {
 
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
+
+    public String getBranchId() { return branchId; }
+    public void setBranchId(String branchId) { this.branchId = branchId; }
+
 
     public String getWorkspaceId() { return workspaceId; }
     public void setWorkspaceId(String workspaceId) { this.workspaceId = workspaceId; }

@@ -92,6 +92,19 @@ public class Session {
         updatedAt = Instant.now();
     }
 
+    /**
+     * PLAN-0410 spec §7: the Session root Branch must exist in the same CP
+     * transaction as the Session row — one hook covers every Session creation
+     * entry (create/import/upload/ledger/spawn).
+     */
+    @PostPersist
+    protected void onCreated() {
+        if (id != null) {
+            RootBranchBinder.ensureRootBranchId(id.toString());
+        }
+    }
+
+
     @PreUpdate
     protected void onUpdate() {
         updatedAt = Instant.now();

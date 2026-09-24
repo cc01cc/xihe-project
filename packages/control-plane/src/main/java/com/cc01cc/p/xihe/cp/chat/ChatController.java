@@ -732,8 +732,12 @@ public class ChatController {
                 if (assistantContent != null && !assistantContent.isBlank()) {
                     Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, assistantContent);
                     assistantMessage.setRunId(runId);
+                    // PLAN-0410 T1.3: bind the assistant message to the durable
+                    // branch of its Run before insert (root while M1 has no selector).
+                    var ownerRun = chatRunRepository.findById(UUID.fromString(runId));
+                    ownerRun.ifPresent(run -> assistantMessage.setBranchId(run.getBranchId()));
                     messageRepository.save(assistantMessage);
-                    chatRunRepository.findById(UUID.fromString(runId)).ifPresent(run -> {
+                    ownerRun.ifPresent(run -> {
                         run.setAssistantMessageId(assistantMessage.getId().toString());
                         chatRunRepository.save(run);
                     });

@@ -930,15 +930,25 @@ class OperationLedgerFreshMigrationTest {
                     + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'spawn-a')");
             executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + childSessionB
                     + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'spawn-b')");
+            // PLAN-0410 V43: chat_runs.branch_id is NOT NULL. Raw SQL bypasses
+            // the JPA root-branch bootstrap (production Session writes run
+            // through Session @PostPersist), so the fixture adds the root rows.
+            UUID branchA = UUID.randomUUID();
+            UUID branchB = UUID.randomUUID();
+            executeUpdate(c, "INSERT INTO session_branches (id, session_id, created_at) VALUES ('"
+                    + branchA + "'::uuid, '" + childSessionA + "'::uuid, NOW())");
+            executeUpdate(c, "INSERT INTO session_branches (id, session_id, created_at) VALUES ('"
+                    + branchB + "'::uuid, '" + childSessionB + "'::uuid, NOW())");
             executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
-                    + "request_hash, status, origin) VALUES ('" + UUID.randomUUID() + "'::uuid, '" + childSessionA
+                    + "request_hash, status, origin, branch_id) VALUES ('" + UUID.randomUUID() + "'::uuid, '" + childSessionA
                     + "'::uuid, '" + userId + "'::uuid, '" + workspaceId + "'::uuid, '" + spawnEventId
-                    + "', 'spawn-hash', 'accepted', 'spawn')");
+                    + "', 'spawn-hash', 'accepted', 'spawn', '" + branchA + "'::uuid)");
             assertThrows(SQLException.class, () -> executeUpdate(c,
                     "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
-                            + "request_hash, status, origin) VALUES ('" + UUID.randomUUID() + "'::uuid, '"
+                            + "request_hash, status, origin, branch_id) VALUES ('" + UUID.randomUUID() + "'::uuid, '"
                             + childSessionB + "'::uuid, '" + userId + "'::uuid, '" + workspaceId
-                            + "'::uuid, '" + spawnEventId + "', 'spawn-hash', 'accepted', 'spawn')"),
+                            + "'::uuid, '" + spawnEventId
+                            + "', 'spawn-hash', 'accepted', 'spawn', '" + branchB + "'::uuid)"),
                     "the partial unique index must deduplicate one parent event across child sessions");
         }
     }

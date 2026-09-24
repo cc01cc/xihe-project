@@ -42,6 +42,16 @@ public class ContextEvent {
     @Column(name = "causation_id", length = 36)
     private String causationId;
 
+    /**
+     * PLAN-0410 T1.4: NULL only for Session/global facts; run-scoped events
+     * derive it from {@code correlation_id} resolving to a ChatRun of the same
+     * Session (never from the request body).
+     */
+    @Column(name = "branch_id", length = 36)
+    @Convert(converter = UuidStringConverter.class)
+    private String branchId;
+
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -88,6 +98,10 @@ public class ContextEvent {
 
     public String getCausationId() { return causationId; }
     public void setCausationId(String causationId) { this.causationId = causationId; }
+
+    public String getBranchId() { return branchId; }
+    public void setBranchId(String branchId) { this.branchId = branchId; }
+
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

@@ -29,6 +29,12 @@ public class ChatRun {
     @Convert(converter = UuidStringConverter.class)
     private String sessionId;
 
+    /** PLAN-0410 T1.3: durable branch binding (V43 NOT NULL, immutable). */
+    @Column(name = "branch_id", nullable = false, length = 36)
+    @Convert(converter = UuidStringConverter.class)
+    private String branchId;
+
+
     @Column(name = "user_id", nullable = false, length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String userId;
@@ -122,6 +128,9 @@ public class ChatRun {
         Instant now = Instant.now();
         createdAt = now;
         updatedAt = now;
+        if (branchId == null || branchId.isBlank()) {
+            branchId = RootBranchBinder.ensureRootBranchId(sessionId);
+        }
     }
 
     @PreUpdate
@@ -133,6 +142,8 @@ public class ChatRun {
     public void setId(UUID id) { this.id = id; }
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
+    public String getBranchId() { return branchId; }
+    public void setBranchId(String branchId) { this.branchId = branchId; }
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
     public String getWorkspaceId() { return workspaceId; }

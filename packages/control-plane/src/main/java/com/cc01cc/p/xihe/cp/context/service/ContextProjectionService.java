@@ -21,15 +21,21 @@ public class ContextProjectionService {
 
     private static final Logger logger = LoggerFactory.getLogger(ContextProjectionService.class);
 
+    /** Durable projection type of {@link ContextProjection}'s default. */
+    private static final String AGENT_CONTEXT_TYPE = "agent_context";
+
     private final EventStoreService eventStoreService;
     private final ContextProjectionRepository projectionRepository;
+    private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
     private final ObjectMapper objectMapper;
 
     public ContextProjectionService(EventStoreService eventStoreService,
                                     ContextProjectionRepository projectionRepository,
+                                    com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
                                     ObjectMapper objectMapper) {
         this.eventStoreService = eventStoreService;
         this.projectionRepository = projectionRepository;
+        this.branchPathService = branchPathService;
         this.objectMapper = objectMapper;
     }
 
@@ -61,8 +67,19 @@ public class ContextProjectionService {
         ObjectNode context = project(sessionId, afterSequence);
         long latestSequence = context.get("latest_sequence").asLong();
 
-        Optional<ContextProjection> existing = projectionRepository.findBySessionId(sessionId);
-        ContextProjection projection = existing.orElseGet(() -> new ContextProjection(sessionId, workspaceId, userId, context.toString()));
+        // PLAN-0410 field-matrix §2 #6: explicit three-key lookup + insert.
+        // M1 has no branch selector yet, so the Session root projection is the
+        // one upserted (per-branch replay arrives with T2.1).
+        String branchId = branchPathService.ensureRootBranchId(sessionId);
+        Optional<ContextProjection> existing =
+                projectionRepository.findBySessionIdAndProjectionTypeAndBranchId(
+                        sessionId, AGENT_CONTEXT_TYPE, branchId);
+        ContextProjection projection = existing.orElseGet(() -> {
+            ContextProjection created =
+                    new ContextProjection(sessionId, workspaceId, userId, context.toString());
+            created.setBranchId(branchId);
+            return created;
+        });
         projection.setWorkspaceId(workspaceId);
         projection.setUserId(userId);
         projection.setLatestSequence(latestSequence);

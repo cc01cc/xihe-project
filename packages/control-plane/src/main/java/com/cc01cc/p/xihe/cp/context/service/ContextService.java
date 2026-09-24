@@ -51,7 +51,14 @@ public class ContextService {
     @Transactional
     public ContextEvent appendEvent(String sessionId, String workspaceId, String userId,
                                     String eventType, Object payload) {
-        return eventStoreService.append(sessionId, workspaceId, userId, eventType, payload);
+        return appendEvent(sessionId, workspaceId, userId, eventType, payload, null);
+    }
+
+    /** PLAN-0410 T1.4: pass-through for the internal {@code correlation_id}. */
+    @Transactional
+    public ContextEvent appendEvent(String sessionId, String workspaceId, String userId,
+                                    String eventType, Object payload, String correlationId) {
+        return eventStoreService.append(sessionId, workspaceId, userId, eventType, payload, correlationId);
     }
 
     @Transactional
