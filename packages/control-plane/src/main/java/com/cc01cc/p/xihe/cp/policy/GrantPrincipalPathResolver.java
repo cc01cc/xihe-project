@@ -29,6 +29,10 @@ public class GrantPrincipalPathResolver {
         this.chatRunRepository = chatRunRepository;
     }
 
+    public List<PrincipalRef> resolveUser(String userId) {
+        return List.of(new PrincipalRef(USER, parseUuid(userId)));
+    }
+
     public List<PrincipalRef> resolve(String userId, String workspaceId, String sessionId) {
         UUID userUuid = parseUuid(userId);
         UUID workspaceUuid = parseUuid(workspaceId);

@@ -17,8 +17,10 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationAttemptRepository;
@@ -45,6 +47,11 @@ import org.springframework.http.ResponseEntity;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -71,6 +78,9 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     private SessionService sessionService;
 
     @Autowired
+    private GrantDefaultService grantDefaultService;
+
+    @Autowired
     private EventStoreRepository eventStoreRepository;
 
     @Autowired
@@ -81,6 +91,9 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatRunRepository chatRunRepository;
+
+    @Autowired
+    private AuthorizationGrantRepository authorizationGrantRepository;
 
     @Autowired
     private LedgerOperationRepository ledgerOperationRepository;
@@ -174,10 +187,50 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         Session session = sessionService.create(userId, workspaceId, "To Be Deleted", null, null);
         String sessionId = session.getId().toString();
         messageRepository.save(new Message(sessionId, MessageRole.USER, "hello"));
+        assertEquals(1L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "agent", session.getId(), "default"));
         sessionService.delete(sessionId, userId, workspaceId);
 
         assertFalse(sessionRepository.findById(UUID.fromString(sessionId)).isPresent());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
+        assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "agent", session.getId(), "default"));
+    }
+
+    @Test
+    void deletingSessionConcurrentWithDefaultGrantEnsureLeavesNoOrphanGrant() throws Exception {
+        Session session = new Session(workspaceId, userId, "Concurrent delete and grant");
+        session.setId(UUID.randomUUID());
+        session = sessionRepository.saveAndFlush(session);
+        String sessionId = session.getId().toString();
+        Session grantTarget = session;
+        CountDownLatch start = new CountDownLatch(1);
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            var ensure = executor.submit(() -> {
+                start.await();
+                grantDefaultService.ensureAgentSessionDefault(grantTarget);
+                return null;
+            });
+            var delete = executor.submit(() -> {
+                start.await();
+                sessionService.delete(sessionId, userId, workspaceId);
+                return null;
+            });
+            start.countDown();
+            delete.get(10, TimeUnit.SECONDS);
+            try {
+                ensure.get(10, TimeUnit.SECONDS);
+            } catch (ExecutionException e) {
+                assertTrue(e.getCause() instanceof IllegalArgumentException
+                                && "Session not found".equals(e.getCause().getMessage()),
+                        "ensure may only lose because deletion committed first");
+            }
+        }
+
+        assertFalse(sessionRepository.findById(session.getId()).isPresent());
+        assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
+                "agent", session.getId(), "default"));
     }
 
     /**

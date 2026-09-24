@@ -171,7 +171,7 @@ class OperationLedgerFreshMigrationTest {
                 versions.add(rs.getString(1));
             }
         }
-        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40")),
+        assertTrue(versions.containsAll(Set.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "27", "28", "33", "36", "37", "38", "39", "40", "41")),
                 "fresh database must apply the current migration chain: " + versions);
         assertEquals(versions.size(),
                 scalarInt("SELECT count(*) FROM flyway_schema_history WHERE success = true"));
@@ -352,6 +352,7 @@ class OperationLedgerFreshMigrationTest {
     @Test
     void v27WorkspaceSliceConstraintsAndCheckpointKindInsert() throws SQLException {
         UUID userId = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
         UUID workspaceId = UUID.randomUUID();
         executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                 + "'::uuid, 'cp-" + userId + "@test.local', 'hash')");
@@ -757,10 +758,10 @@ class OperationLedgerFreshMigrationTest {
     }
 
     @Test
-    void v40UpgradeFromV33BackfillsOriginAndAddsSessionKind() throws SQLException {
-        // Seed pre-origin ChatRun data at V33; V39 backfills it and V40 adds kind
-        // while preserving operation extensions.
-        String upgradeDb = "xihe_cp_upgrade_v40";
+    void v41UpgradeFromV33BackfillsOriginsDefaultsAndSessionKind() throws SQLException {
+        // Seed pre-origin ChatRun data at V33; V39/V40/V41 backfill current run,
+        // Session-kind, and default-grant state while preserving operation extensions.
+        String upgradeDb = "xihe_cp_upgrade_v41";
         String adminUrl = postgres.getJdbcUrl();
         try (Connection admin = DriverManager.getConnection(
                 adminUrl, postgres.getUsername(), postgres.getPassword());
@@ -778,6 +779,7 @@ class OperationLedgerFreshMigrationTest {
                 .migrate();
 
         UUID userId = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
         UUID workspaceId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         UUID chatRunId = UUID.randomUUID();
@@ -787,6 +789,8 @@ class OperationLedgerFreshMigrationTest {
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'upgrade-" + userId + "@test.local', 'hash')");
+            executeUpdate(c, "INSERT INTO users (id, email, password_hash, role) VALUES ('" + adminId
+                    + "'::uuid, 'upgrade-admin-" + adminId + "@test.local', 'hash', 'ADMIN')");
             executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
                     + "'::uuid, 'upgrade-workspace', '" + userId + "'::uuid)");
             executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
@@ -817,7 +821,7 @@ class OperationLedgerFreshMigrationTest {
         try (Connection c = DriverManager.getConnection(
                 upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
-                    + "WHERE version = '40' AND success = true"), "V40 must be applied on upgrade");
+                    + "WHERE version = '41' AND success = true"), "V41 must be applied on upgrade");
             assertEquals("user_submission", scalarString(c,
                     "SELECT origin FROM chat_runs WHERE id = '" + chatRunId + "'::uuid"),
                     "legacy ChatRuns must be backfilled as user submissions");
@@ -830,6 +834,23 @@ class OperationLedgerFreshMigrationTest {
                     + "'::uuid, '" + chatRunId + "'::uuid, NOW(), 'fork')");
             assertEquals("fork", scalarString(c,
                     "SELECT kind FROM sessions WHERE id = '" + forkSessionId + "'::uuid"));
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
+                    + "AND subject_type = 'user' AND subject_id = '" + userId + "'::uuid"),
+                    "V41 must bootstrap one default user grant");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
+                    + "AND subject_type = 'agent' AND subject_id = '" + sessionId + "'::uuid"),
+                    "V41 must bootstrap one default grant for each active root agent Session");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
+                    + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
+                    + "AND permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
+                    "the ADMIN default matrix includes credential permission");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
+                    + "AND subject_id IN ('" + userId + "'::uuid, '" + sessionId + "'::uuid) "
+                    + "AND permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
+                    "USER and Agent defaults must omit credential permission");
+            assertEquals(3, scalarInt(c, "SELECT count(*) FROM audit_logs "
+                    + "WHERE action = 'authorization_default_grant_backfilled'"),
+                    "V41 backfilled default grants must be audited");
             assertThrows(SQLException.class, () -> executeUpdate(c,
                     "INSERT INTO sessions (id, workspace_id, user_id, title, spawned_from_session_id) "
                             + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, '"

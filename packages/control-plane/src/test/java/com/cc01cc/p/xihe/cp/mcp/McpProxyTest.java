@@ -100,6 +100,8 @@ class McpProxyTest {
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
         when(policyEngine.loadContext(any(), any(), any())).thenReturn(PolicyContext.EMPTY);
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyBoolean())).thenReturn(true);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), anyString(), anyString(),
                 anyString(), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "manual", "auto_allow"));
@@ -233,18 +235,27 @@ class McpProxyTest {
         Class<?> accessClass = Class.forName(
                 "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
         var constructor = accessClass.getDeclaredConstructor(
-                String.class, String.class, String.class, String.class);
+                String.class, String.class, String.class, String.class, boolean.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(wsId, userId, null, null);
+        return constructor.newInstance(wsId, userId, null, null, false);
     }
 
     private static Object accessContextWithSession(String wsId, String userId, String sessionId) throws Exception {
         Class<?> accessClass = Class.forName(
                 "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
         var constructor = accessClass.getDeclaredConstructor(
-                String.class, String.class, String.class, String.class);
+                String.class, String.class, String.class, String.class, boolean.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(wsId, userId, sessionId, null);
+        return constructor.newInstance(wsId, userId, sessionId, null, false);
+    }
+
+    private static Object internalAccessContext(String wsId, String userId, String sessionId) throws Exception {
+        Class<?> accessClass = Class.forName(
+                "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
+        var constructor = accessClass.getDeclaredConstructor(
+                String.class, String.class, String.class, String.class, boolean.class);
+        constructor.setAccessible(true);
+        return constructor.newInstance(wsId, userId, sessionId, null, true);
     }
 
     // PLAN-242 M2.5 (CP 侧 Fake 门): tools/list 合并 remote 工具并落别名，
@@ -547,6 +558,53 @@ class McpProxyTest {
         assertNotEquals(HttpStatus.CONFLICT, response.getStatusCode(),
                 "user-direct workspace mutation must not be blocked by the approval gate");
         verify(auditLogger).record(eq("sess-1"), eq("write_file"), eq("user_direct_allow"), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_grantDenied_doesNotEvaluateApproval() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":10}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), eq("write_file"), eq(body),
+                eq("sess-1"), eq("u-1"), eq(TEST_WS_UUID), anyBoolean())).thenReturn(false);
+        seedToolCache("write_file", "__system__");
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                new HttpHeaders(), "sess-1", accessContext(TEST_WS_UUID, "u-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verify(policyEngine, never()).evaluateVerdict(any(PolicyContext.class), anyString(), anyString(),
+                anyString(), any(), any(), any());
+        verify(approvalService, never()).recordGatePending(any(), any(), any(), any(), any(), any(), any());
+        verify(sseEmitterManager, never()).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
+        verify(auditLogger).record(eq("sess-1"), eq("write_file"),
+                eq("authorization_grant_denied"), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCall_internalAgentWithoutOptionalHeadersDoesNotUseUserOnlyGrant() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":11}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("write_file"), eq(body),
+                eq("sess-1"), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, "ask", PolicyLayer.BUILTIN,
+                        "manual", "mutation requires approval"));
+        seedToolCache("write_file", "__system__");
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                new HttpHeaders(), "sess-1", internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        org.mockito.ArgumentCaptor<Boolean> userOnly = org.mockito.ArgumentCaptor.forClass(Boolean.class);
+        verify(policyEngine).allowsByGrant(any(PolicyContext.class), eq("write_file"), eq(body),
+                eq("sess-1"), eq("u-1"), eq(TEST_WS_UUID), userOnly.capture());
+        assertFalse(userOnly.getValue(), "internal service identity, not missing headers, selects Agent path");
+        verify(approvalService, never()).recordGatePending(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

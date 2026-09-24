@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 import java.util.UUID;
@@ -22,13 +23,16 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final WorkspaceService workspaceService;
+    private final GrantDefaultService grantDefaultService;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
-                       JwtTokenProvider jwtTokenProvider, WorkspaceService workspaceService) {
+                       JwtTokenProvider jwtTokenProvider, WorkspaceService workspaceService,
+                       GrantDefaultService grantDefaultService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.workspaceService = workspaceService;
+        this.grantDefaultService = grantDefaultService;
     }
 
     @Transactional
@@ -44,6 +48,7 @@ public class AuthService {
                 request.getName() != null ? request.getName() : request.getEmail().split("@")[0]
         );
         user = userRepository.save(user);
+        grantDefaultService.ensureUserDefault(user);
 
         logger.info("User registered: id={} email={}", user.getId(), user.getEmail());
 

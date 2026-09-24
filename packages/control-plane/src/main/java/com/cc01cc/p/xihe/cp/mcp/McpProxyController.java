@@ -472,6 +472,14 @@ public class McpProxyController {
         // mode 传 null 表示由会话态决定）。硬保护/模式/命中层已在引擎内记录审计。
         // T1.15：同一次加载的 context 同时供 Verdict 与工具面解析使用（不二次加载）。
         PolicyContext policyContext = policy.loadContext(access.userId(), wsId, sessionId);
+        boolean userPrincipalOnly = isUserDirectMutation(headers, access)
+                && isWorkspaceUserMutationTool(toolName);
+        if (!policy.allowsByGrant(policyContext, toolName, rewritten, sessionId,
+                access.userId(), wsId, userPrincipalOnly)) {
+            sse.send(sessionId, "tool_exec_denied", Map.of("tool", toolName, "reason", "authorization grant denied"));
+            audit.record(sessionId, toolName, "authorization_grant_denied", "no matching grant or workspace membership");
+            return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+        }
         PolicyVerdict verdict = policy.evaluateVerdict(policyContext, toolName, rewritten, sessionId, null,
                 access.userId(), wsId);
         audit.record(sessionId, toolName, "request", rewritten);
@@ -493,7 +501,7 @@ public class McpProxyController {
                 // T1.7: an exact session fingerprint authorizes this dispatch without a new
                 // pending approval (audited as grant_reused scope=session by the service).
                 reusedSessionGrant = true;
-            } else if (isUserDirectMutation(headers) && isWorkspaceUserMutationTool(toolName)) {
+            } else if (isUserDirectMutation(headers, access) && isWorkspaceUserMutationTool(toolName)) {
                 // PLAN-290 B2: user file-panel mutations are UI-confirmed, not Agent-gated.
                 audit.record(sessionId, toolName, "user_direct_allow", "no agent grant required");
             } else {
@@ -999,7 +1007,7 @@ public class McpProxyController {
                             wsId, remote.get(), body, headers, sessionId, access, forwardWait, policySummary);
                 }
             }
-            ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
+            ledgerAttempt = startLedgerAttempt(body, headers, sessionId, access);
             attachPolicySummary(ledgerAttempt, policySummary, forwardWait);
             String path;
             if (serverId == null) {
@@ -1123,7 +1131,10 @@ public class McpProxyController {
         jobStateService.applyToolResult(ledgerAttempt.itemId(), wsId, toolName, responseBody);
     }
 
-    private static boolean isUserDirectMutation(HttpHeaders headers) {
+    private static boolean isUserDirectMutation(HttpHeaders headers, AccessContext access) {
+        if (access == null || access.internalService()) {
+            return false;
+        }
         String runId = headers.getFirst("X-Chat-Run-Id");
         String operationId = headers.getFirst("X-Operation-Id");
         return (runId == null || runId.isBlank())
@@ -1287,14 +1298,15 @@ public class McpProxyController {
         }
     }
 
-    private LedgerAttempt startLedgerAttempt(String body, HttpHeaders headers, String sessionId) {
+    private LedgerAttempt startLedgerAttempt(String body, HttpHeaders headers, String sessionId, AccessContext access) {
         String operationHeader = headers.getFirst("X-Operation-Id");
         if (operationHeader == null || operationHeader.isBlank()) {
             if (!"tools/call".equals(extractMethod(body))) {
                 return null;
             }
             String toolName = extractToolName(body);
-            if (toolName != null && isUserDirectMutation(headers) && isWorkspaceUserMutationTool(toolName)) {
+            if (toolName != null && isUserDirectMutation(headers, access)
+                    && isWorkspaceUserMutationTool(toolName)) {
                 return startUserMutationLedger(toolName, body, headers, sessionId);
             }
             return null;
@@ -1577,7 +1589,7 @@ public class McpProxyController {
                 : (forwardWait.seconds() > 0 ? forwardWait.seconds() : forwardTimeoutS);
         long startedMs = System.currentTimeMillis();
         String method = extractMethod(body);
-        LedgerAttempt ledgerAttempt = startLedgerAttempt(body, headers, sessionId);
+        LedgerAttempt ledgerAttempt = startLedgerAttempt(body, headers, sessionId, access);
         attachPolicySummary(ledgerAttempt, policySummary, forwardWait);
         try {
             ObjectNode request = objectMapper.createObjectNode();
@@ -1873,7 +1885,7 @@ public class McpProxyController {
         }
 
         return AuthorizationResult.success(new AccessContext(
-                workspaceId, userId, applicationSessionId, gatewaySessionId));
+                workspaceId, userId, applicationSessionId, gatewaySessionId, internalService));
     }
 
     private boolean isInternalService(Authentication authentication) {
@@ -2053,7 +2065,8 @@ public class McpProxyController {
     }
 
     private record AccessContext(
-            String workspaceId, String userId, String applicationSessionId, String mcpSessionId) {
+            String workspaceId, String userId, String applicationSessionId, String mcpSessionId,
+            boolean internalService) {
         String auditSessionId() {
             if (applicationSessionId != null) {
                 return applicationSessionId;

@@ -23,12 +23,13 @@ public final class PolicyResourceExtractor {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static final List<String> SCALAR_KEYS = List.of(
-            "path", "file_path", "filepath", "source", "destination", "target",
+            "path", "file_path", "filePath", "filepath", "source", "destination", "target",
             "cwd", "command", "cmd", "script", "url", "uri");
     private static final List<String> ARRAY_KEYS = List.of("paths", "files", "targets", "urls");
 
     private static final int MAX_ITEMS = 20;
     private static final int MAX_LENGTH = 2048;
+    private static final String INVALID_RESOURCE = "!invalid-resource-scope!";
 
     private static final List<String> FALLBACK = List.of("*");
 
@@ -50,7 +51,15 @@ public final class PolicyResourceExtractor {
                 node.forEach(item -> add(resources, item));
             }
         }
+        JsonNode patches = arguments.get("patches");
+        if (patches != null && patches.isArray()) {
+            patches.forEach(patch -> add(resources, patch.get("path")));
+        }
         return resources.isEmpty() ? FALLBACK : List.copyOf(resources);
+    }
+
+    public static boolean hasInvalidResource(List<String> resources) {
+        return resources != null && resources.contains(INVALID_RESOURCE);
     }
 
     private static JsonNode argumentsOf(String mcpBody) {
@@ -68,13 +77,17 @@ public final class PolicyResourceExtractor {
     }
 
     private static void add(LinkedHashSet<String> resources, JsonNode node) {
-        if (node == null || !node.isTextual() || resources.size() >= MAX_ITEMS) {
+        if (node == null || !node.isTextual() || resources.contains(INVALID_RESOURCE)) {
             return;
         }
         String value = node.asText().trim();
         if (value.isEmpty()) {
             return;
         }
-        resources.add(value.length() > MAX_LENGTH ? value.substring(0, MAX_LENGTH) : value);
+        if (resources.size() >= MAX_ITEMS || value.length() > MAX_LENGTH) {
+            resources.add(INVALID_RESOURCE);
+            return;
+        }
+        resources.add(value);
     }
 }

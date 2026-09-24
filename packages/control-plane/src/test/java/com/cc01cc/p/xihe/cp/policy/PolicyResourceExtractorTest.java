@@ -34,6 +34,15 @@ class PolicyResourceExtractorTest {
     }
 
     @Test
+    void extractsPatchPathsFromStructuredPatches() {
+        String body = "{\"params\":{\"arguments\":{\"patches\":["
+                + "{\"path\":\"src/a.ts\",\"hunks\":[]},"
+                + "{\"path\":\"docs/readme.md\",\"hunks\":[]}]}}}";
+
+        assertEquals(List.of("src/a.ts", "docs/readme.md"), PolicyResourceExtractor.extract(body));
+    }
+
+    @Test
     void trimsDropsBlanksAndDeduplicatesPreservingOrder() {
         String body = "{\"params\":{\"arguments\":{\"path\":\"  src/a.ts  \","
                 + "\"target\":\"src/a.ts\",\"destination\":\"   \",\"paths\":[\"\",\"src/b.ts\"]}}}";
@@ -57,7 +66,7 @@ class PolicyResourceExtractorTest {
     }
 
     @Test
-    void capsItemCountAtTwenty() {
+    void resourceCountOverflowProducesFailClosedMarker() {
         StringBuilder paths = new StringBuilder();
         for (int i = 0; i < 25; i++) {
             if (i > 0) {
@@ -69,20 +78,20 @@ class PolicyResourceExtractorTest {
 
         List<String> resources = PolicyResourceExtractor.extract(body);
 
-        assertEquals(20, resources.size());
+        assertEquals(21, resources.size());
         assertEquals("src/f0.ts", resources.get(0));
         assertEquals("src/f19.ts", resources.get(19));
+        assertTrue(PolicyResourceExtractor.hasInvalidResource(resources));
     }
 
     @Test
-    void capsItemLengthAtTwoThousandAndFortyEightChars() {
+    void resourceLengthOverflowProducesFailClosedMarker() {
         String longPath = "a".repeat(3000);
         String body = "{\"params\":{\"arguments\":{\"path\":\"" + longPath + "\"}}}";
 
         List<String> resources = PolicyResourceExtractor.extract(body);
 
         assertEquals(1, resources.size());
-        assertEquals(2048, resources.get(0).length());
-        assertTrue(longPath.startsWith(resources.get(0)));
+        assertTrue(PolicyResourceExtractor.hasInvalidResource(resources));
     }
 }

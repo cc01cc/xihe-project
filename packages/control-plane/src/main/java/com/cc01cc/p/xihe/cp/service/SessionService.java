@@ -1,12 +1,15 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
+import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
+import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
@@ -30,6 +33,9 @@ public class SessionService {
     private final ChatAttachmentService chatAttachmentService;
     private final ProviderConnectionService providerConnectionService;
     private final SessionPolicyState sessionPolicyState;
+    private final GrantDefaultService grantDefaultService;
+    private final AuthorizationGrantRepository authorizationGrantRepository;
+    private final DbLockTimeout dbLockTimeout;
 
     public SessionService(SessionRepository sessionRepository,
                           MessageRepository messageRepository,
@@ -39,7 +45,10 @@ public class SessionService {
                           WorkspaceService workspaceService,
                           ChatAttachmentService chatAttachmentService,
                           ProviderConnectionService providerConnectionService,
-                          SessionPolicyState sessionPolicyState) {
+                          SessionPolicyState sessionPolicyState,
+                          GrantDefaultService grantDefaultService,
+                          AuthorizationGrantRepository authorizationGrantRepository,
+                          DbLockTimeout dbLockTimeout) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -49,6 +58,9 @@ public class SessionService {
         this.chatAttachmentService = chatAttachmentService;
         this.providerConnectionService = providerConnectionService;
         this.sessionPolicyState = sessionPolicyState;
+        this.grantDefaultService = grantDefaultService;
+        this.authorizationGrantRepository = authorizationGrantRepository;
+        this.dbLockTimeout = dbLockTimeout;
     }
 
     @Transactional(readOnly = true)
@@ -95,7 +107,9 @@ public class SessionService {
         session.setModelProvider(modelProvider);
         session.setModelName(modelName);
         bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
-        return sessionRepository.save(session);
+        Session saved = sessionRepository.save(session);
+        grantDefaultService.ensureAgentSessionDefault(saved);
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -172,7 +186,15 @@ public class SessionService {
         messageRepository.deleteBySessionId(sessionId);
         contextProjectionRepository.deleteBySessionId(sessionId);
         eventStoreRepository.deleteBySessionId(sessionId);
-        sessionRepository.delete(session);
+        dbLockTimeout.apply();
+        Session lockedSession = sessionRepository.findByIdForUpdate(session.getId())
+                .filter(candidate -> !candidate.isArchived()
+                        && userId.equals(candidate.getUserId())
+                        && workspaceId.equals(candidate.getWorkspaceId()))
+                .orElseThrow(() -> new CpApiException(
+                        HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
+        authorizationGrantRepository.deleteBySubjectTypeAndSubjectId("agent", lockedSession.getId());
+        sessionRepository.delete(lockedSession);
         // T1.7: session mode, L4 rules and reuse fingerprints must not outlive the session.
         sessionPolicyState.clear(sessionId);
     }

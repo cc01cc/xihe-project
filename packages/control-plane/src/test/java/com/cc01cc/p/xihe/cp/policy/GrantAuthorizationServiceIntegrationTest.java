@@ -7,11 +7,14 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -33,6 +36,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     private GrantAuthorizationService grantAuthorizationService;
 
     @Autowired
+    private PolicyEngine policyEngine;
+
+    @Autowired
     private AuthorizationGrantRepository grantRepository;
 
     @Autowired
@@ -45,6 +51,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaceRepository;
 
     @Autowired
+    private WorkspaceUserRepository workspaceUserRepository;
+
+    @Autowired
     private UserRepository userRepository;
 
     @Autowired
@@ -52,6 +61,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
 
     private String userId;
     private UUID workspaceId;
+    private UUID unjoinedWorkspaceId;
     private UUID parentRunId;
     private final List<UUID> sessionIds = new ArrayList<>();
     private final List<UUID> grantIds = new ArrayList<>();
@@ -63,7 +73,11 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
             chatRunRepository.deleteById(parentRunId);
         }
         sessionIds.forEach(sessionRepository::deleteById);
+        if (unjoinedWorkspaceId != null) {
+            workspaceRepository.deleteById(unjoinedWorkspaceId);
+        }
         if (workspaceId != null) {
+            workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(workspaceId));
             workspaceRepository.deleteById(workspaceId);
         }
         if (userId != null) {
@@ -78,8 +92,13 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Grant path test", userId));
         workspaceId = workspace.getId();
+        workspaceUserRepository.save(new WorkspaceUser(workspaceId.toString(), userId, WorkspaceRole.OWNER));
 
         Session rootSession = saveSession(workspaceId, userId, "Root agent");
+        String writeBody = "{\"params\":{\"arguments\":{\"path\":\"src/main.java\"}}}";
+        assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
+                rootSession.getId().toString(), userId, workspaceId.toString(), true),
+                "an empty grant set denies before any approval policy is considered");
         parentRunId = UUID.randomUUID();
         ChatRun parentRun = chatRunRepository.saveAndFlush(new ChatRun(
                 parentRunId.toString(), rootSession.getId().toString(), userId, workspaceId.toString(),
@@ -87,6 +106,37 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
 
         addGrant("user", UUID.fromString(userId), "default", null, null, atoms("read", "write"));
         addGrant("agent", rootSession.getId(), "default", null, null, atoms("read"));
+        assertTrue(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
+                rootSession.getId().toString(), userId, workspaceId.toString(), true),
+                "a member's own user grant permits a user-direct mutation");
+        assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file",
+                "{\"params\":{\"arguments\":{\"path\":\"C:\\\\outside\\\\secret\"}}}",
+                rootSession.getId().toString(), userId, workspaceId.toString(), true),
+                "a wildcard grant cannot authorize an absolute host path");
+        assertTrue(policyEngine.allowsByGrant(PolicyContext.EMPTY, "apply_patch",
+                "{\"params\":{\"arguments\":{\"patches\":[{\"path\":\"src/main.java\"}]}}}",
+                rootSession.getId().toString(), userId, workspaceId.toString(), true),
+                "structured patch paths are extracted and scoped to the workspace");
+        assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "apply_patch",
+                "{\"params\":{\"arguments\":{\"patches\":[{\"path\":\"../outside.java\"}]}}}",
+                rootSession.getId().toString(), userId, workspaceId.toString(), true),
+                "structured patch paths cannot escape the workspace");
+        assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
+                rootSession.getId().toString(), userId, workspaceId.toString(), false),
+                "the Agent path is constrained by each Session principal's grants");
+        Workspace unjoinedWorkspace = workspaceRepository.save(
+                new Workspace("Unjoined grant path test", userId));
+        unjoinedWorkspaceId = unjoinedWorkspace.getId();
+        assertFalse(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
+                "write_file", List.of("write"), List.of("src/main.java"), ToolShape.STRUCTURED,
+                userId, unjoinedWorkspaceId.toString(), null)),
+                "wildcard grants cannot cross into a workspace where the user has no membership");
+        UUID malformedGrantId = addGrant("user", UUID.fromString(userId), "direct",
+                "admin", UUID.randomUUID(), atoms("unknown-action"));
+        assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
+                rootSession.getId().toString(), userId, workspaceId.toString(), true),
+                "a malformed or out-of-vocabulary grant fails closed");
+        grantRepository.deleteById(malformedGrantId);
 
         Session spawnSession = saveDerivedSession(workspaceId, userId, rootSession, parentRun, Session.KIND_SPAWN);
         addGrant("agent", spawnSession.getId(), "spawn", "agent", rootSession.getId(), atoms("write"));
@@ -136,7 +186,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         return saved;
     }
 
-    private void addGrant(String subjectType, UUID subjectId, String source,
+    private UUID addGrant(String subjectType, UUID subjectId, String source,
                           String granterType, UUID granterId, ArrayNode permissions) {
         AuthorizationGrant grant = new AuthorizationGrant();
         grant.setId(UUID.randomUUID());
@@ -146,7 +196,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         grant.setGranterId(granterId);
         grant.setSource(source);
         grant.setPermissions(permissions);
-        grantIds.add(grantRepository.save(grant).getId());
+        UUID savedId = grantRepository.save(grant).getId();
+        grantIds.add(savedId);
+        return savedId;
     }
 
     private ArrayNode atoms(String... actionClasses) {

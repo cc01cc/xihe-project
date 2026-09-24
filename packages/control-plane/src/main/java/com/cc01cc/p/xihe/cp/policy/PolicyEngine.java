@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 
@@ -26,19 +27,51 @@ public class PolicyEngine {
 
     private final AuditLogger audit;
     private final PolicyContextProvider contextProvider;
+    private final GrantAuthorizationService grantAuthorizationService;
     private final ToolFaceRegistry builtinRegistry;
     private final HardGuard hardGuard;
     private final LayeredPolicyResolver resolver;
     private final List<LayeredPolicyResolver.LayerInput> builtinLayers;
 
     public PolicyEngine(AuditLogger audit, PolicyContextProvider contextProvider) {
+        this(audit, contextProvider, null);
+    }
+
+    @Autowired
+    public PolicyEngine(AuditLogger audit, PolicyContextProvider contextProvider,
+                        GrantAuthorizationService grantAuthorizationService) {
         this.audit = audit;
         this.contextProvider = contextProvider;
+        this.grantAuthorizationService = grantAuthorizationService;
         this.builtinRegistry = new ToolFaceRegistry();
         this.hardGuard = new HardGuard();
         this.resolver = new LayeredPolicyResolver();
         this.builtinLayers = List.of(new LayeredPolicyResolver.LayerInput(
                 PolicyLayer.BUILTIN, builtinRules()));
+    }
+
+    /** Checks hard guard and current grants before the approval resolver is allowed to run. */
+    public boolean allowsByGrant(PolicyContext context, String toolName, String body, String sessionId,
+                                 String userId, String workspaceId, boolean userPrincipalOnly) {
+        if (grantAuthorizationService == null || context == null || toolName == null || toolName.isBlank()) {
+            return false;
+        }
+        ToolFaceRegistry registry = context.extraFaces().isEmpty()
+                ? builtinRegistry
+                : new ToolFaceRegistry(context.extraFaces());
+        ToolFaceRegistry.Face face = registry.faceOf(toolName);
+        PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
+                PolicyResourceExtractor.extract(body), face.shape(), userId, workspaceId, sessionId);
+        var hardDeny = hardGuard.checkWorkspaceResources(toolName, request.resources())
+                .or(() -> hardGuard.check(request));
+        if (hardDeny.isPresent()) {
+            audit.record(sessionId, toolName, "policy_hard_deny",
+                    hardDeny.get().kind() + ":" + hardDeny.get().reason());
+            return false;
+        }
+        return userPrincipalOnly
+                ? grantAuthorizationService.allowsUserOnly(request)
+                : grantAuthorizationService.allows(request);
     }
 
     public static class PolicyDecision {

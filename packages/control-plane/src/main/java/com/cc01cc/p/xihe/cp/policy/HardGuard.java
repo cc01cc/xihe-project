@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -56,6 +57,39 @@ public class HardGuard {
             Pattern.compile("AKIA[0-9A-Z]{16}"),
             Pattern.compile("ghp_[A-Za-z0-9]{36}"),
             Pattern.compile("sk-[A-Za-z0-9_-]{20,}"));
+
+    private static final Set<String> WORKSPACE_FILE_TOOLS = Set.of(
+            "read_file", "read_file_range", "list_directory", "glob", "grep", "get_file_info",
+            "watch_directory", "extract_pdf_text", "write_file", "edit_file", "delete_file",
+            "delete_directory", "move_file", "copy_file", "mkdir", "apply_patch");
+
+    /** Rejects explicit file resources that are not relative to the selected workspace root. */
+    public Optional<HardDeny> checkWorkspaceResources(String toolName, List<String> resources) {
+        if (PolicyResourceExtractor.hasInvalidResource(resources)) {
+            return Optional.of(new HardDeny(Kind.PATH_ESCAPE, "resource scope could not be safely extracted"));
+        }
+        if (!WORKSPACE_FILE_TOOLS.contains(toolName) || resources == null) {
+            return Optional.empty();
+        }
+        for (String resource : resources) {
+            if (resource == null || resource.isBlank() || "*".equals(resource)) {
+                if ("apply_patch".equals(toolName)) {
+                    return Optional.of(new HardDeny(Kind.PATH_ESCAPE, "patch paths are required for workspace scope"));
+                }
+                continue;
+            }
+            String normalized = resource.replace('\\', '/');
+            if (normalized.startsWith("/") || normalized.matches("^[A-Za-z]:.*")) {
+                return Optional.of(new HardDeny(Kind.PATH_ESCAPE, "file resource must be workspace-relative"));
+            }
+            for (String segment : normalized.split("/", -1)) {
+                if ("..".equals(segment)) {
+                    return Optional.of(new HardDeny(Kind.PATH_ESCAPE, "file resource escapes workspace"));
+                }
+            }
+        }
+        return Optional.empty();
+    }
 
     public Optional<HardDeny> check(PolicyRequest request) {
         if (request == null) {
