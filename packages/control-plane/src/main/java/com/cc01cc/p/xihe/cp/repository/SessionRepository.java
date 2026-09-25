@@ -38,4 +38,12 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     int bindAgentPrincipalIfNull(@Param("id") UUID id,
                                  @Param("principalId") String principalId,
                                  @Param("permissionsSnapshot") String permissionsSnapshot);
+
+    /**
+     * PLAN-0407 T2.5：停止传播的派生边查询。调用方必须固定 kind=spawn——
+     * fork Session 不入传播链（design #5/#14），由谓词而不是调用点约定保证。
+     */
+    List<Session> findBySpawnedFromRunIdAndKind(UUID spawnedFromRunId, String kind);
+
+    List<Session> findBySpawnedFromSessionIdAndKind(UUID spawnedFromSessionId, String kind);
 }

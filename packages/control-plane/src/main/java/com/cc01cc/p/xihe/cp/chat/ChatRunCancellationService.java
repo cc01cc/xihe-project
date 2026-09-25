@@ -1,10 +1,13 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,15 +15,21 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -44,14 +53,28 @@ public class ChatRunCancellationService {
 
     private static final Duration CANCEL_TIMEOUT = Duration.ofSeconds(5);
 
+    /**
+     * PLAN-0407 T2.5：cancel 对 spawn 后代的有界等待上界。对齐会话删除路径的
+     * 2s 终态投递口径；超时只记日志（{@link #awaitTerminalDelivery}），不阻断端点返回。
+     */
+    private static final Duration SPAWN_DESCENDANT_WAIT = Duration.ofSeconds(2);
+
     private final HttpClient agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
     private final ObjectMapper objectMapper;
     private final ChatRunRepository chatRunRepository;
+    private final SessionRepository sessionRepository;
     private final OperationService operationService;
     private final RuntimeExecutionClient runtimeExecutionClient;
     private final RunCheckpointService runCheckpointService;
+    private final DbLockTimeout dbLockTimeout;
+    /**
+     * 认领用编程式事务：{@link #claimCancellation} 由本类其他方法自调用（自调用不经过
+     * 代理，{@code @Transactional} 不生效），TransactionTemplate 在任意调用点都保证
+     * SET LOCAL lock_timeout 与条件更新处于同一事务。
+     */
+    private final TransactionTemplate transactionTemplate;
     /** runId → 等待 releaseRun 信号的 latch（删除路径注册，release 时唤醒；有界等待后清除）。 */
     private final Map<String, CountDownLatch> releaseWaiters = new ConcurrentHashMap<>();
 
@@ -64,14 +87,20 @@ public class ChatRunCancellationService {
     public ChatRunCancellationService(
             ObjectMapper objectMapper,
             ChatRunRepository chatRunRepository,
+            SessionRepository sessionRepository,
             OperationService operationService,
             RuntimeExecutionClient runtimeExecutionClient,
-            RunCheckpointService runCheckpointService) {
+            RunCheckpointService runCheckpointService,
+            DbLockTimeout dbLockTimeout,
+            PlatformTransactionManager transactionManager) {
         this.objectMapper = objectMapper;
         this.chatRunRepository = chatRunRepository;
+        this.sessionRepository = sessionRepository;
         this.operationService = operationService;
         this.runtimeExecutionClient = runtimeExecutionClient;
         this.runCheckpointService = runCheckpointService;
+        this.dbLockTimeout = dbLockTimeout;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     /**
@@ -85,8 +114,9 @@ public class ChatRunCancellationService {
     }
 
     /**
-     * 取消端点编排（状态置 cancelling 由调用方完成）：Agent 转发 + CP 自主收敛。
-     * 与 {@code ChatController.cancelRun} 同一语义（PLAN-0317 T2.4/T2.5/T2.6）。
+     * 取消端点编排（状态置 cancelling 由 {@link #cancelSerialized} 经条件更新认领）：
+     * Agent 转发 + CP 自主收敛。与 {@code ChatController.cancelRun} 同一语义
+     * （PLAN-0317 T2.4/T2.5/T2.6）。
      */
     public void cancel(String runId, String workspaceId, String reason) {
         forwardCancelToAgent(runId, workspaceId, reason);
@@ -99,11 +129,115 @@ public class ChatRunCancellationService {
         }
     }
 
+    /** PLAN-0407 T2.5：cancel 认领结果。durable 行状态是唯一事实源，live 事件只做通知。 */
+    public enum CancelOutcome {
+        /** 条件更新获胜：本次调用负责根 run 收口与停止传播。 */
+        CLAIMED,
+        /** 已有 cancel 认领在途：不重复转发/结算（0352 端点语义），只补停止传播。 */
+        ALREADY_CANCELLING,
+        /** run 已落定终态：不认领、不传播（409 RUN_NOT_CANCELLABLE）。 */
+        NOT_CANCELLABLE,
+        /** 认领与复查之间 run 被删除（并发会话删除）。 */
+        NOT_FOUND
+    }
+
+    public record CancelClaim(CancelOutcome outcome, String status) {}
+
+    /**
+     * PLAN-0407 T2.5：cancel 在 parent Run 行上的认领——与 spawn 侧的
+     * {@code ChatRunRepository.findByIdForUpdate} 争用同一行锁（"共同 DB 锁/条件更新"）。
+     * 条件更新只从在途且未被认领的状态（{@link ChatRunRepository#ACTIVE_LEASE_STATUSES}）
+     * 转 cancelling；输家按当前 durable 状态分类，绝不覆盖已 cancelling/已终态的行。
+     */
+    public CancelClaim claimCancellation(String runId) {
+        UUID id = UUID.fromString(runId);
+        return transactionTemplate.execute(status -> {
+            dbLockTimeout.apply();
+            int updated = chatRunRepository.markCancelling(id, ChatRunRepository.ACTIVE_LEASE_STATUSES);
+            if (updated == 1) {
+                return new CancelClaim(CancelOutcome.CLAIMED, "cancelling");
+            }
+            ChatRun current = chatRunRepository.findById(id).orElse(null);
+            if (current == null) {
+                return new CancelClaim(CancelOutcome.NOT_FOUND, null);
+            }
+            if ("cancelling".equals(current.getStatus())) {
+                return new CancelClaim(CancelOutcome.ALREADY_CANCELLING, "cancelling");
+            }
+            return new CancelClaim(CancelOutcome.NOT_CANCELLABLE, current.getStatus());
+        });
+    }
+
+    /**
+     * PLAN-0407 T2.5：取消端点的序列化编排（design #38、spec §2/§4）。
+     *
+     * <p>认领获胜 → 根 run 走既有 forward+settle 收口；随后沿 {@code kind=spawn}
+     * 做停止传播并有界等待（认领已提交，之后的新 spawn 都被准入门拒绝；认领前
+     * 已提交的 child 由传播看到——两个胜序都由 durable 行决定）。认领失败但状态为
+     * cancelling 时属重复请求：跳过重复收口，只补幂等的停止传播。
+     */
+    public CancelClaim cancelSerialized(String runId, String workspaceId, String reason) {
+        CancelClaim claim = claimCancellation(runId);
+        if (claim.outcome() == CancelOutcome.NOT_CANCELLABLE
+                || claim.outcome() == CancelOutcome.NOT_FOUND) {
+            return claim;
+        }
+        if (claim.outcome() == CancelOutcome.CLAIMED) {
+            cancel(runId, workspaceId, reason);
+        }
+        try {
+            List<String> descendantRunIds = cancelSpawnDescendants(runId, workspaceId, reason);
+            if (!descendantRunIds.isEmpty()) {
+                String rootSessionId = chatRunRepository.findById(UUID.fromString(runId))
+                        .map(ChatRun::getSessionId)
+                        .orElse(null);
+                awaitTerminalDelivery(rootSessionId, descendantRunIds, SPAWN_DESCENDANT_WAIT);
+            }
+        } catch (RuntimeException e) {
+            // 根 run 已认领并收口；传播失败不回滚 durable 状态，记录后由重试/对账补齐。
+            logger.warn("[LIFECYCLE] service=cp event=spawn_cancel_propagation_failed rootRunId={} reason={} error={}",
+                    runId, reason, e.getMessage(), e);
+        }
+        return claim;
+    }
+
+    /**
+     * PLAN-0407 T2.5：停止传播只沿 {@code kind=spawn}（design #5/#14，spec §4）。
+     *
+     * <p>入口 = root run 直接派生的 child Session；展开用 session 派生边。每层先
+     * 认领（条件更新）该 Session 的在飞 run，再列下一层——认领把行锁入账后，在飞
+     * spawn 的准入门即拒绝新 child，因此单遍展开不会漏掉与 cancel 竞争的 spawn。
+     * fork Session 不在查询面内，不被祖先 cancel 带走。
+     *
+     * @return 纳入取消的后代 runId（可能为空 = 无 spawn 后代）
+     */
+    public List<String> cancelSpawnDescendants(String rootRunId, String workspaceId, String reason) {
+        List<String> cancelledRunIds = new ArrayList<>();
+        Deque<Session> pending = new ArrayDeque<>(sessionRepository
+                .findBySpawnedFromRunIdAndKind(UUID.fromString(rootRunId), Session.KIND_SPAWN));
+        Set<UUID> visited = new HashSet<>();
+        while (!pending.isEmpty()) {
+            Session child = pending.poll();
+            if (!visited.add(child.getId())) {
+                continue;
+            }
+            cancelledRunIds.addAll(cancelInFlightForSession(child.getId().toString(), workspaceId, reason));
+            pending.addAll(sessionRepository.findBySpawnedFromSessionIdAndKind(child.getId(), Session.KIND_SPAWN));
+        }
+        if (!cancelledRunIds.isEmpty()) {
+            logger.info("[LIFECYCLE] service=cp event=spawn_cancel_propagation rootRunId={} sessions={} runs={} reason={}",
+                    rootRunId, visited.size(), cancelledRunIds.size(), reason);
+        }
+        return cancelledRunIds;
+    }
+
     /**
      * 会话删除路径：取消该会话全部非终态 run。
      *
      * <p>先为每个 run 注册 release 等待位（避免取消期间 release 早于等待注册），
-     * 再逐个走 {@link #cancel}；`cancelling` 状态的 run 不重复转发，仅纳入等待。
+     * 再逐个经 {@link #claimCancellation} 条件认领——认领获胜才走 {@link #cancel}，
+     * 已 cancelling 不重复转发，与终态并发落地的 run 不被改写；`cancelling` 状态的
+     * run 不重复转发，仅纳入等待。
      *
      * @return 纳入等待的 runId（可能为空 = 无在飞 run）
      */
@@ -119,15 +253,17 @@ public class ChatRunCancellationService {
             releaseWaiters.computeIfAbsent(runId, ignored -> new CountDownLatch(1));
         }
         for (ChatRun run : runs) {
-            if ("cancelling".equals(run.getStatus())) {
-                logger.info("[LIFECYCLE] service=cp event=session_delete_run_already_cancelling sessionId={} runId={}",
-                        sessionId, run.getId());
-                continue;
-            }
             String runId = run.getId().toString();
-            run.setStatus("cancelling");
-            chatRunRepository.save(run);
-            cancel(runId, workspaceId, reason);
+            CancelClaim claim = claimCancellation(runId);
+            if (claim.outcome() == CancelOutcome.CLAIMED) {
+                cancel(runId, workspaceId, reason);
+            } else if (claim.outcome() == CancelOutcome.ALREADY_CANCELLING) {
+                logger.info("[LIFECYCLE] service=cp event=session_delete_run_already_cancelling sessionId={} runId={}",
+                        sessionId, runId);
+            } else {
+                logger.info("[LIFECYCLE] service=cp event=session_delete_run_claim_skipped sessionId={} runId={} outcome={} status={}",
+                        sessionId, runId, claim.outcome(), claim.status());
+            }
         }
         return runIds;
     }

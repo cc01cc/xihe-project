@@ -141,10 +141,12 @@ public class ChatSubmissionService {
         }
 
         dbLockTimeout.apply();
+        // PLAN-0407 T2.5：先锁 parent Run（与 cancel 认领的条件更新争用同一行锁），
+        // 锁序固定为 parent Run → spawn item → child Session，避免与取消路径交叉死锁。
+        ChatRun parentRun = chatRunRepository.findByIdForUpdate(UUID.fromString(spawn.parentRunId()))
+                .orElseThrow(() -> spawnProvenanceConflict("Parent run not found"));
         OperationItem event = operationItemRepository.findByIdForUpdate(spawn.spawnEventId())
                 .orElseThrow(() -> spawnProvenanceConflict("Spawn event not found"));
-        ChatRun parentRun = chatRunRepository.findById(UUID.fromString(spawn.parentRunId()))
-                .orElseThrow(() -> spawnProvenanceConflict("Parent run not found"));
         UUID parentOperationId = operationService.findOperationIdByRunId(spawn.parentRunId());
         if (parentOperationId == null
                 || !parentOperationId.toString().equals(event.getOperationId())
@@ -188,6 +190,10 @@ public class ChatSubmissionService {
             throw idempotencyConflict();
         }
 
+        // PLAN-0407 T2.5：cancel 认领获胜（cancelling）或已终态的 parent run 不接受新 spawn；
+        // 幂等 replay 已在上方返回，spawn 获胜后的重试仍拿回同一 child。
+        requireActiveParentRunForSpawn(parentRun);
+
         return persist(ChatRun.ORIGIN_SPAWN, spawn.runId(), spawn.childSessionId(), spawn.userId(),
                 spawn.workspaceId(), idempotencyKey, requestHash, spawn.provider(), spawn.model(),
                 spawn.toolMode(), spawn.providerConnectionId(), spawn.connectionRevision(), spawn.leaseOwner(),
@@ -199,7 +205,9 @@ public class ChatSubmissionService {
         requireUuid(parentRunId, "parentRunId");
         requireUuid(toolCallId, "toolCallId");
 
-        ChatRun parentRun = chatRunRepository.findById(UUID.fromString(parentRunId))
+        dbLockTimeout.apply();
+        // PLAN-0407 T2.5：spawn 与 cancel 在 parent Run 上的共同序列化点（spawn 侧）。
+        ChatRun parentRun = chatRunRepository.findByIdForUpdate(UUID.fromString(parentRunId))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
                         "Parent run not found"));
         UUID parentOperationId = operationService.findOperationIdByRunId(parentRunId);
@@ -244,6 +252,10 @@ public class ChatSubmissionService {
             return new SpawnResult(existingSession.getId().toString(), existingSpawn.getId().toString(),
                     existingSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
         }
+
+        // PLAN-0407 T2.5：cancel 获胜拒绝新 spawn——门在 child Session 创建之前，
+        // 拒绝路径零写入（行锁内状态不可能并发变化）。
+        requireActiveParentRunForSpawn(parentRun);
 
         if (parentSession.getAgentPrincipalId() == null || parentSession.getAgentPermissionsSnapshot() == null) {
             throw agentSessionForbidden();
@@ -308,6 +320,19 @@ public class ChatSubmissionService {
 
     private static CpApiException agentSpawnForbidden(String detail) {
         return new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", detail);
+    }
+
+    /**
+     * PLAN-0407 T2.5：spawn 准入门。调用方必须已持 parent Run 行锁
+     * （{@link ChatRunRepository#findByIdForUpdate}）——与 cancel 的条件更新在同一行
+     * 序列化：cancel 先认领则此处拒绝，spawn 先提交则 cancel 的传播看到已提交 child。
+     * 只放行在途且未被认领的状态；幂等 replay 在本门之前返回。
+     */
+    private static void requireActiveParentRunForSpawn(ChatRun parentRun) {
+        if (!ChatRunRepository.ACTIVE_LEASE_STATUSES.contains(parentRun.getStatus())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SPAWN_PARENT_RUN_NOT_ACTIVE",
+                    "Parent run no longer accepts spawn: " + parentRun.getStatus());
+        }
     }
 
     private SpawnAttachments normalizeSpawnAttachments(SpawnSubmission spawn) {

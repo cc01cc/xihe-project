@@ -491,27 +491,20 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN", "Chat run does not belong to current user/workspace");
         }
 
-        String status = run.getStatus();
-        if ("succeeded".equals(status) || "failed".equals(status)
-                || "cancelled".equals(status) || "ambiguous".equals(status)) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "RUN_NOT_CANCELLABLE",
-                    "Run is in terminal state: " + status);
-        }
-        if ("cancelling".equals(status)) {
-            return ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
-        }
-
-        // Transition to cancelling
-        run.setStatus("cancelling");
-        chatRunRepository.save(run);
-
-        // Agent 转发 + CP 自主收敛（共享编排，PLAN-0352 T1.2）；
-        // PLAN-0317 T2.4/T2.5/T2.6：CP 自主收敛——终止 Runtime 在途执行、落账本
-        // 终态并把 run/operation 推到 cancelled，不再等待 Agent 回音。
         String reason = request != null ? (String) request.getOrDefault("reason", "user_requested") : "user_requested";
-        chatRunCancellationService.cancel(runId, workspaceId, reason);
-
-        return ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
+        // PLAN-0407 T2.5：序列化认领（条件更新，与 spawn 的 parent Run 行锁同一行）
+        // → 认领获胜者收口根 run → 沿 kind=spawn 停止传播 + 有界等待。
+        ChatRunCancellationService.CancelClaim claim =
+                chatRunCancellationService.cancelSerialized(runId, workspaceId, reason);
+        return switch (claim.outcome()) {
+            case CLAIMED, ALREADY_CANCELLING ->
+                    ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
+            case NOT_CANCELLABLE ->
+                    ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "RUN_NOT_CANCELLABLE",
+                            "Run is in terminal state: " + claim.status());
+            case NOT_FOUND ->
+                    ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
+        };
     }
 
     @GetMapping("/api/v1/health")

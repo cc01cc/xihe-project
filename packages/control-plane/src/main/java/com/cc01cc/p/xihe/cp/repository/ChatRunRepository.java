@@ -1,8 +1,10 @@
 package com.cc01cc.p.xihe.cp.repository;
 
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 
 import java.time.Instant;
 import java.util.Collection;
@@ -46,6 +48,28 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
             @Param("errorDetail") String errorDetail,
             @Param("tokenCount") int tokenCount,
             @Param("assistantChars") int assistantChars);
+
+    /**
+     * PLAN-0407 T2.5：spawn 与 cancel 在 parent Run 行上的共同序列化点（spawn 侧）。
+     * 悲观行锁持有到 spawn 事务提交/回滚，与 {@link #markCancelling} 的条件更新
+     * 争用同一行锁，两个胜序都由 durable 行状态决定。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from ChatRun r where r.id = :id")
+    Optional<ChatRun> findByIdForUpdate(@Param("id") UUID id);
+
+    /**
+     * PLAN-0407 T2.5：cancel 侧的认领（条件更新）。只从 {@link #ACTIVE_LEASE_STATUSES}
+     * （在途且未被认领）转为 cancelling，已 cancelling/已终态返回 0 且不覆盖任何状态；
+     * updated_at 显式刷新（JPQL 绕过 @PreUpdate）。
+     */
+    @Modifying
+    @Transactional
+    @Query("update ChatRun r set r.status = 'cancelling', r.updatedAt = CURRENT_INSTANT "
+            + "where r.id = :id and r.status in :expectedStatuses")
+    int markCancelling(
+            @Param("id") UUID id,
+            @Param("expectedStatuses") Collection<String> expectedStatuses);
 
     @Modifying
     @Transactional
