@@ -952,4 +952,195 @@ class OperationLedgerFreshMigrationTest {
                     "the partial unique index must deduplicate one parent event across child sessions");
         }
     }
+
+    /**
+     * PLAN-0407 V44 delta-only self-check: the three V42 structures delivered
+     * by PLAN-0374 must remain byte-for-byte intact after V44 (stable UUID
+     * principal key, restricted Session principal FK, dedicated Workspace
+     * binding table with its composite key and both foreign keys).
+     */
+    private static void assertV42PrincipalStructuresIntact(Connection c) throws SQLException {
+        assertEquals("uuid", scalarString(c,
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'agent_principals' AND column_name = 'id'"),
+                "V44 must not rebuild agent_principals.id");
+        assertEquals(1, scalarInt(c,
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'agent_principals_pkey' AND contype = 'p'"),
+                "V44 must not rebuild the agent_principals primary key");
+        assertEquals("YES", scalarString(c,
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'sessions' AND column_name = 'agent_principal_id'"),
+                "V44 must not touch sessions.agent_principal_id");
+        assertEquals(1, scalarInt(c,
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'fk_sessions_agent_principal' "
+                        + "AND contype = 'f' AND confdeltype = 'r'"),
+                "V44 must keep the restricted sessions->agent_principals FK");
+        assertEquals(1, scalarInt(c,
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'pk_workspace_agents' AND contype = 'p'"),
+                "V44 must not rebuild the workspace_agents composite key");
+        assertEquals(2, scalarInt(c,
+                "SELECT count(*) FROM pg_constraint WHERE conname IN "
+                        + "('fk_workspace_agents_principal', 'fk_workspace_agents_workspace') AND contype = 'f'"),
+                "V44 must keep both workspace_agents foreign keys");
+    }
+
+    private static void assertV44DeltaColumns(Connection c) throws SQLException {
+        assertEquals("uuid", scalarString(c,
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'operation_items' AND column_name = 'waiting_on_run_id'"),
+                "operation_items.waiting_on_run_id must be a UUID column");
+        assertEquals("YES", scalarString(c,
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'operation_items' AND column_name = 'waiting_on_run_id'"),
+                "the waiting link must be the single nullable durable field");
+        assertEquals("timestamp with time zone", scalarString(c,
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'chat_runs' AND column_name = 'terminal_at'"),
+                "chat_runs.terminal_at must be a TIMESTAMPTZ column");
+        assertEquals("YES", scalarString(c,
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'chat_runs' AND column_name = 'terminal_at'"),
+                "pre-V44 runs must keep terminal_at NULL until a terminal transaction writes it");
+    }
+
+    private static UUID insertV44Fixture(Connection c, UUID userId, String label) throws SQLException {
+        UUID workspaceId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        UUID branchId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        executeUpdate(c, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
+                + "'::uuid, '" + label + "-ws', '" + userId + "'::uuid)");
+        executeUpdate(c, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
+                + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, '" + label + "-session')");
+        executeUpdate(c, "INSERT INTO session_branches (id, session_id, created_at) VALUES ('" + branchId
+                + "'::uuid, '" + sessionId + "'::uuid, NOW())");
+        executeUpdate(c, "INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, "
+                + "request_hash, status, origin, branch_id) VALUES ('" + runId + "'::uuid, '" + sessionId
+                + "'::uuid, '" + userId + "'::uuid, '" + workspaceId + "'::uuid, '" + label + "-run', '"
+                + label + "-hash', 'accepted', 'user_submission', '" + branchId + "'::uuid)");
+        return runId;
+    }
+
+    @Test
+    void v44DeltaWaitingLinkAndTerminalTimestampOnFreshChain() throws SQLException {
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '44' AND success = true"),
+                "V44 must be recorded as applied on the fresh chain");
+        assertV44DeltaColumns(connection);
+        String indexDef = scalarString(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname = 'idx_operation_items_waiting_on_run'");
+        assertTrue(indexDef.contains("waiting_on_run_id IS NOT NULL"),
+                "the waiting link lookup index must be partial: " + indexDef);
+        assertV42PrincipalStructuresIntact(connection);
+
+        UUID userId = UUID.randomUUID();
+        executeUpdate("INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                + "'::uuid, 'v44-fresh-" + userId + "@test.local', 'hash')");
+        UUID runId = insertV44Fixture(connection, userId, "v44-fresh");
+        assertEquals(0, scalarInt("SELECT count(*) FROM chat_runs WHERE id = '" + runId
+                        + "'::uuid AND terminal_at IS NOT NULL"),
+                "terminal_at must default to NULL on the fresh chain");
+
+        UUID operationId = UUID.randomUUID();
+        insertOperation(operationId, userId, null, null);
+        UUID itemId = insertItem(operationId, 1);
+        assertEquals(0, scalarInt("SELECT count(*) FROM operation_items WHERE id = '" + itemId
+                        + "'::uuid AND waiting_on_run_id IS NOT NULL"),
+                "waiting_on_run_id must default to NULL on the fresh chain");
+
+        executeUpdate("UPDATE chat_runs SET terminal_at = '2026-09-25T10:20:30+00:00'::timestamptz "
+                + "WHERE id = '" + runId + "'::uuid");
+        assertEquals(1, scalarInt("SELECT count(*) FROM chat_runs WHERE id = '" + runId
+                        + "'::uuid AND terminal_at = '2026-09-25T10:20:30+00:00'::timestamptz"),
+                "terminal_at must round-trip a TIMESTAMPTZ value");
+        executeUpdate("UPDATE operation_items SET waiting_on_run_id = '" + runId
+                + "'::uuid WHERE id = '" + itemId + "'::uuid");
+        assertEquals(1, scalarInt("SELECT count(*) FROM operation_items WHERE id = '" + itemId
+                        + "'::uuid AND waiting_on_run_id = '" + runId + "'::uuid"),
+                "waiting_on_run_id must round-trip a child ChatRun id");
+    }
+
+    @Test
+    void v43ToV44UpgradeAddsDeltaColumnsWithoutRebuildingV42() throws SQLException {
+        String upgradeDb = "xihe_cp_upgrade_v44";
+        String adminUrl = postgres.getJdbcUrl();
+        try (Connection admin = DriverManager.getConnection(
+                adminUrl, postgres.getUsername(), postgres.getPassword());
+             Statement statement = admin.createStatement()) {
+            statement.executeUpdate("DROP DATABASE IF EXISTS " + upgradeDb);
+            statement.executeUpdate("CREATE DATABASE " + upgradeDb);
+        }
+        String upgradeUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + upgradeDb);
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("43"))
+                .load()
+                .migrate();
+
+        UUID userId = UUID.randomUUID();
+        UUID runId;
+        UUID operationId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM information_schema.columns "
+                            + "WHERE table_schema = 'public' AND table_name = 'operation_items' "
+                            + "AND column_name = 'waiting_on_run_id'"),
+                    "V43 must not contain the waiting link column yet");
+            assertEquals(0, scalarInt(c, "SELECT count(*) FROM information_schema.columns "
+                            + "WHERE table_schema = 'public' AND table_name = 'chat_runs' "
+                            + "AND column_name = 'terminal_at'"),
+                    "V43 must not contain the terminal timestamp column yet");
+            assertV42PrincipalStructuresIntact(c);
+
+            executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
+                    + "'::uuid, 'v44-upgrade-" + userId + "@test.local', 'hash')");
+            runId = insertV44Fixture(c, userId, "v44-upgrade");
+            executeUpdate(c, "INSERT INTO ledger_operations (id, user_id, kind, source, actor_type, status) "
+                    + "VALUES ('" + operationId + "'::uuid, '" + userId
+                    + "'::uuid, 'system', 'system', 'system', 'accepted')");
+            executeUpdate(c, "INSERT INTO operation_items (id, operation_id, sequence, kind, source, status) "
+                    + "VALUES ('" + itemId + "'::uuid, '" + operationId
+                    + "'::uuid, 1, 'llm_usage', 'agent', 'completed')");
+        }
+
+        Flyway.configure()
+                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+
+        try (Connection c = DriverManager.getConnection(
+                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
+                            + "WHERE version = '44' AND success = true"),
+                    "V44 must be recorded as applied on the upgrade chain");
+            assertV44DeltaColumns(c);
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                            + "AND indexname = 'idx_operation_items_waiting_on_run'"),
+                    "the partial waiting link index must exist after the upgrade");
+            assertV42PrincipalStructuresIntact(c);
+
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM chat_runs WHERE id = '" + runId
+                            + "'::uuid AND terminal_at IS NULL"),
+                    "pre-V44 runs must keep terminal_at NULL after the upgrade");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM operation_items WHERE id = '" + itemId
+                            + "'::uuid AND waiting_on_run_id IS NULL"),
+                    "pre-V44 items must keep waiting_on_run_id NULL after the upgrade");
+
+            executeUpdate(c, "UPDATE chat_runs SET terminal_at = '2026-09-25T11:22:33+00:00'::timestamptz "
+                    + "WHERE id = '" + runId + "'::uuid");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM chat_runs WHERE id = '" + runId
+                            + "'::uuid AND terminal_at = '2026-09-25T11:22:33+00:00'::timestamptz"),
+                    "terminal_at must round-trip on the upgraded database");
+            executeUpdate(c, "UPDATE operation_items SET waiting_on_run_id = '" + runId
+                    + "'::uuid WHERE id = '" + itemId + "'::uuid");
+            assertEquals(1, scalarInt(c, "SELECT count(*) FROM operation_items WHERE id = '" + itemId
+                            + "'::uuid AND waiting_on_run_id = '" + runId + "'::uuid"),
+                    "waiting_on_run_id must round-trip on the upgraded database");
+        }
+    }
 }
