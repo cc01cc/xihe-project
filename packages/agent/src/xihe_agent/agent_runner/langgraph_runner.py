@@ -703,22 +703,6 @@ class LangGraphRunner(AgentRunner):
     ) -> str:
         return str(uuid4())
 
-    async def reset(self, agent_id: str) -> None:
-        if self._event_store is None:
-            return
-        try:
-            await self._event_store.append(
-                Event(
-                    aggregate_id=agent_id,
-                    sequence=0,
-                    type="runtime.state_cleared",
-                    payload={"agent_id": agent_id, "reason": "reset"},
-                    created_at=datetime.now(UTC),
-                )
-            )
-        except Exception as e:
-            logger.warning("Failed to append runtime.state_cleared event: {}", e)
-
     async def _append_prompt_admitted(self, messages: list[Message], context: AgentContext) -> None:
         if self._event_store is None:
             return

@@ -155,7 +155,7 @@ public class ContextProjectionService {
             case "epoch.started", "epoch.replaced" -> setEpoch(context, payload);
             case "runtime.state_cleared" -> clearRuntimeState(context);
             case "session.forked" -> recordFork(context, payload);
-            case "compaction.applied" -> applyCompaction(context, payload);
+            case "compaction.applied", "compaction.manual_applied" -> applyCompaction(context, payload);
             // PLAN-0341 T1.2: prune tombstones are durable anti-resurrection facts.
             case "context.prune" -> applyPrune(context, payload);
             default -> logger.debug("Unhandled event type in projection: {}", type);

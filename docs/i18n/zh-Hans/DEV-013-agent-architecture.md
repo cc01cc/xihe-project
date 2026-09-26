@@ -103,7 +103,7 @@ flowchart TD
 
 - **装配**：`langgraph_runner.stream` 消费 CP 投影 keep-recent → `prune_history_tool_results`（固定窗 `pruneWindowChars` 默认 80K chars，可配）→ 写 `context.prune` 墓碑；`HISTORY_TRUNCATION_LIMIT=20` 仅装配熔断，窗口起点落在 tool 结果时回退对齐（`_align_truncation_start`）。
 - **配置**：`context_policy.resolve` 读 effective `context-policy`（`defaults`/`models` JSON）：`maxInputTokens` 覆盖 litellm 窗、`pruneWindowChars`、`recoveryBand`、`tokenizerRef`（受信命名空间 allowlist）；日志 `context_policy_resolved source=config|default`。
-- **SUM**：压缩摘要只在 `epoch.system_messages`；`AgentContext.apply_event("compaction.applied")` 截断 keep-recent 且不把摘要塞进 `messages`。
+- **SUM**：压缩摘要只在 `epoch.system_messages`；`AgentContext.apply_event("compaction.applied" | "compaction.manual_applied")` 截断 keep-recent 且不把摘要塞进 `messages`（两类同构，见 §事件表）。
 
 ### 3.2 事件类型
 
@@ -118,7 +118,8 @@ flowchart TD
 | `epoch.started` / `epoch.replaced` | epoch 开始/替换 |
 | `runtime.state_cleared` | `AgentRunner.reset()` |
 | `session.forked` | 会话 fork |
-| `compaction.applied` | 上下文压缩（PLAN-0341：`messages` 不再写入摘要，摘要仅 `epoch.system_messages`/`summary_hash`） |
+| `compaction.applied` | 上下文压缩——自动/overflow 触发，ChatRun-scoped（correlation=Run，PLAN-0410 §4）；PLAN-0341：`messages` 不再写入摘要，摘要仅 `epoch.system_messages`/`summary_hash` |
+| `compaction.manual_applied` | 上下文压缩——**手动触发（无 Run）**，branch-targeted：correlation 恒 NULL、branch 为 CP 校验的显式值（PLAN-0410 D7-B1=C）；payload 与应用语义同 `compaction.applied` |
 | `context.prune` | prune 墓碑（PLAN-0341 T1.2：`tool_call_id`/hash/size/首尾 + `pruned`；投影按 hash 原地替换，防复活） |
 | `context.compaction_circuit` | 恢复带熔断开/关（PLAN-0341 T1.3：`state=open|closed`；overflow 强制压缩绕过熔断） |
 | `context.overflow_retry` | 溢出重跑审计（PLAN-0341 T1.1：runId + 预检 maxInputTokens） |

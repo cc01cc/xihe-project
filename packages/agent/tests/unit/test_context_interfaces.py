@@ -173,6 +173,28 @@ def test_agent_context_apply_compaction():
     assert any("summary of conversation" in s for s in ctx.epoch.system_messages)
 
 
+def test_agent_context_apply_manual_compaction():
+    """PLAN-0410 D7-B1=C: the branch-targeted manual type applies identically."""
+    ctx = AgentContext.empty("session-1")
+    for i in range(12):
+        ctx.messages.append(TextMessage(role="human", content=f"turn-{i}"))
+    event = Event(
+        aggregate_id="session-1",
+        sequence=11,
+        type="compaction.manual_applied",
+        payload={"summary": "manual summary", "summaryHash": "h2"},
+        created_at=datetime.now(UTC),
+    )
+    ctx.apply_event(event)
+    # Both compaction types truncate to the keep-recent tail (no double-write).
+    assert len(ctx.messages) == 10
+    assert ctx.messages[-1].content == "turn-11"
+    assert not any(m.content == "turn-0" for m in ctx.messages)
+    assert ctx.epoch is not None
+    assert ctx.epoch.summary_hash == "h2"
+    assert any("manual summary" in s for s in ctx.epoch.system_messages)
+
+
 def test_agent_context_source_changed_replaces_l1_not_messages():
     ctx = AgentContext.empty("session-1")
     event = Event(

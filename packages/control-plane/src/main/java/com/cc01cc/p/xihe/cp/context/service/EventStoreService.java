@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.context.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
+import com.cc01cc.p.xihe.cp.context.EventTypeTaxonomy;
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -84,10 +85,25 @@ public class EventStoreService {
      * row is written (manual compaction on a CP-validated branch — field-matrix
      * §6), so the caller never chooses a foreign Session's branch.
      */
+    /**
+     * PLAN-0410 T0.3 / design #7 step 2: the frozen taxonomy (field-matrix §4)
+     * is enforced at this single choke point — an unregistered type is rejected
+     * before any lock or row exists, on both the single and the batch path.
+     * Inventory evidence: production writers are all registered, so this gate
+     * only rejects previously-ungoverned callers and test fixtures.
+     */
+    private void requireRegistered(String eventType) {
+        if (!EventTypeTaxonomy.isRegistered(eventType)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_EVENT_TYPE",
+                    "event type is not registered in the frozen taxonomy: " + eventType);
+        }
+    }
+
     @Transactional
     public ContextEvent append(String sessionId, String workspaceId, String userId,
                                String eventType, Object payload, String correlationId,
                                String branchId) {
+        requireRegistered(eventType);
         dbLockTimeout.apply();
         String effectiveBranch = resolveEffectiveBranch(sessionId, correlationId, branchId);
         lockSessionForSequence(UUID.fromString(sessionId));
@@ -102,6 +118,9 @@ public class EventStoreService {
     @Transactional
     public List<ContextEvent> appendBatch(String sessionId, String workspaceId, String userId,
                                           List<EventPayload> payloads) {
+        for (EventPayload ep : payloads) {
+            requireRegistered(ep.eventType());
+        }
         dbLockTimeout.apply();
         Map<String, String> branchByRun = new HashMap<>();
         for (EventPayload ep : payloads) {

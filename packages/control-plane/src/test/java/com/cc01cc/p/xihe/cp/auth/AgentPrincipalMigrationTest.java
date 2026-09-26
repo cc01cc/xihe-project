@@ -287,7 +287,7 @@ class AgentPrincipalMigrationTest {
         execute(root.fixture().jdbcUrl(), "INSERT INTO context_events (id, session_id, workspace_id, user_id, "
                 + "event_type, sequence, correlation_id) VALUES ('" + eventId + "'::uuid, '"
                 + root.sessionId() + "'::uuid, '" + root.fixture().workspaceId() + "'::uuid, '"
-                + root.fixture().userId() + "'::uuid, 'legacy.test', 1, '" + UUID.randomUUID() + "')");
+                + root.fixture().userId() + "'::uuid, 'prompt.admitted', 1, '" + UUID.randomUUID() + "')");
 
         assertV42FailsAndRollsBack(root.fixture());
         try (Connection connection = connect(root.fixture().jdbcUrl())) {

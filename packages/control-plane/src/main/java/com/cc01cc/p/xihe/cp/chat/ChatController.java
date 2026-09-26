@@ -794,7 +794,20 @@ public class ChatController {
                         null,
                         relayResult.tokenCount(),
                         assistantContent == null ? 0 : assistantContent.length());
-                if (terminalCommitted && terminalSent.compareAndSet(false, true)) {
+                // PLAN-0352 V1: the session SSE must observe the terminal error/done
+                // BEFORE the connection closes. Two real orders exist around session
+                // delete (claim `cancelling` → settleCancellation durable `cancelled`):
+                // ① settle already committed → our transition is a no-op but the events
+                //    must still be delivered; ② relay ends first while the run sits in
+                //    `cancelling` → the durable terminal is owned by the settle path,
+                //    and our job is only client delivery. The terminalSent CAS keeps
+                //    delivery emit-once in both orders.
+                String currentRunStatus = runStatus(runId);
+                boolean durableTerminal = terminalCommitted
+                        || (currentRunStatus != null && TERMINAL_RUN_STATUSES.contains(currentRunStatus));
+                boolean cancelOwnsTerminal = "cancelling".equals(currentRunStatus);
+                if ((durableTerminal || cancelOwnsTerminal)
+                        && terminalSent.compareAndSet(false, true)) {
                     for (RelayedTerminalEvent terminalEvent : relayResult.terminalEvents()) {
                         dispatchRelayedEvent(sessionId, terminalEvent.name(), terminalEvent.data(),
                                 runId, requestId, userId, workspaceId, relayResult.runLedger());
@@ -802,6 +815,9 @@ public class ChatController {
                 } else if (terminalCommitted) {
                     logger.warn("[LIFECYCLE] service=cp event=chat_terminal_sse_suppressed requestId={} runId={} reason=terminal_already_sent",
                             requestId, runId);
+                } else {
+                    logger.warn("[LIFECYCLE] service=cp event=chat_terminal_sse_suppressed requestId={} runId={} status={} reason=terminal_owner_unknown",
+                            requestId, runId, currentRunStatus);
                 }
 
             } catch (java.net.http.HttpTimeoutException e) {
@@ -944,6 +960,20 @@ public class ChatController {
                 "errorCode", errorCode,
                 "outcome", outcome,
                 "synthetic", true));
+    }
+
+    /**
+     * Current durable status of the run, or {@code null} when unknown. Used by
+     * the terminal-SSE gate to decide whether the durable terminal write is
+     * owned by this relay or by another path (cancellation settle / recovery).
+     */
+    private String runStatus(String runId) {
+        if (runId == null || runId.isBlank()) {
+            return null;
+        }
+        return chatRunRepository.findById(UUID.fromString(runId))
+                .map(ChatRun::getStatus)
+                .orElse(null);
     }
 
     /**

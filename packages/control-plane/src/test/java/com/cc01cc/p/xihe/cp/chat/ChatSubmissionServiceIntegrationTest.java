@@ -259,7 +259,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                 workspace.getId().toString(), objectMapper.createArrayNode()));
         eventStoreService.append(session.getId().toString(), workspace.getId().toString(),
-                user.getId().toString(), "tool.started", Map.of("tool", "read_file"));
+                user.getId().toString(), "tool.called", Map.of("tool", "read_file"));
 
         String runId = UUID.randomUUID().toString();
         CpApiException rejected = assertThrows(CpApiException.class, () -> submit(runId, session,

@@ -5,9 +5,9 @@
 > Owner：CP Context + Agent Context owners（PLAN-0410）  
 > 消费者：CP Chat/EventStore/Context、Agent Context、PLAN-0407、PLAN-0409  
 > 来源：PLAN-0410  
-> 更新日期：2026-09-25
+> 更新日期：2026-09-26
 >
-> 实现状态：`partial`（PLAN-0410 M0–M3 数据面已实现：V43 schema、branch path/cursor、per-branch 投影与 Agent 输入、并发与 fail-closed 验证；公开 branch selector、fork 动作与浏览器验收归 PLAN-0409）
+> 实现状态：`partial`（**PLAN-0410 已完成 2026-09-26**：M0–M3 数据面 + T0.3 taxonomy 冻结——V43 schema、branch path/cursor、per-branch 投影与 Agent 输入、并发与 fail-closed 验证、三类 event taxonomy 与未登记类型 fail-closed 门、`compaction.manual_applied` branch-targeted 拆分；公开 branch selector、fork 动作与浏览器验收仍归 PLAN-0409，故保持 partial）
 
 ## 范围
 

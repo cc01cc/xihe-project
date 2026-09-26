@@ -224,6 +224,50 @@ class BranchFailClosedMatrixIntegrationTest extends AbstractIntegrationTest {
                 "only the single valid non-batch append may exist; the rejected batch writes zero rows");
     }
 
+    /**
+     * PLAN-0410 T0.3 / design #7 step 2: an unregistered EventType is rejected
+     * at the append choke point with 400 INVALID_EVENT_TYPE and zero rows, on
+     * both the single and the batch path — unregistered types never default to
+     * Session/global (field-matrix §4 row 3). Registered prefix families
+     * ({@code taskplan.*}) keep writing normally.
+     */
+    @Test
+    void unregisteredEventTypeFailsClosedOnSingleAndBatch() throws Exception {
+        Fixture fx = newFixture("fc-taxonomy");
+        long eventsBefore = eventCount(fx.sessionId);
+
+        Map<String, Object> unknown = new HashMap<>();
+        unknown.put("type", "legacy.test");
+        unknown.put("payload", Map.of("message", Map.of("role", "human", "content", "x")));
+        assertProblem(postEvent(fx.sessionId, unknown), HttpStatus.BAD_REQUEST,
+                "INVALID_EVENT_TYPE");
+        assertEquals(eventsBefore, eventCount(fx.sessionId),
+                "the rejected unregistered append must write zero rows");
+
+        Map<String, Object> prefixed = new HashMap<>();
+        prefixed.put("type", "taskplan.created");
+        prefixed.put("payload", Map.of("steps", java.util.List.of("s1")));
+        ResponseEntity<String> accepted = postEvent(fx.sessionId, prefixed);
+        assertEquals(HttpStatus.OK, accepted.getStatusCode(),
+                "a registered prefix family must still be accepted");
+        assertEquals(eventsBefore + 1, eventCount(fx.sessionId),
+                "the registered append writes exactly one row");
+
+        Map<String, Object> good = new HashMap<>();
+        good.put("type", "prompt.admitted");
+        good.put("payload", Map.of("message", Map.of("role", "human", "content", "batch-ok")));
+        Map<String, Object> bad = new HashMap<>();
+        bad.put("type", "legacy.test");
+        bad.put("payload", Map.of("message", Map.of("role", "human", "content", "batch-bad")));
+        HttpHeaders headers = internalHeaders();
+        ResponseEntity<String> batch = restTemplate.exchange(
+                url("/internal/v1/context/" + fx.sessionId + "/events/batch"),
+                HttpMethod.POST, new HttpEntity<>(List.of(good, bad), headers), String.class);
+        assertProblem(batch, HttpStatus.BAD_REQUEST, "INVALID_EVENT_TYPE");
+        assertEquals(eventsBefore + 1, eventCount(fx.sessionId),
+                "one unregistered type aborts the whole batch with zero rows");
+    }
+
     // ------------------------------------------------------------------
     // (3) correlation vs explicit branch conflicts (service level)
     // ------------------------------------------------------------------
@@ -272,7 +316,8 @@ class BranchFailClosedMatrixIntegrationTest extends AbstractIntegrationTest {
                 "every conflicting selector must leave the EventStore untouched");
         assertEquals(0L, jdbcTemplate.queryForObject(
                 "select count(*) from context_events where session_id = ?::uuid "
-                        + "and event_type in ('compaction.applied','context.compaction_ineffective')",
+                        + "and event_type in ('compaction.applied','compaction.manual_applied',"
+                        + "'context.compaction_ineffective')",
                 Long.class, fx.sessionId),
                 "a rejected compaction must not write summary or diagnostic rows");
     }

@@ -71,12 +71,3 @@ class AgentRunner(ABC):
     ) -> str:
         """Create an agent instance and return its agent_id."""
         ...
-
-    @abstractmethod
-    async def reset(self, agent_id: str) -> None:
-        """Reset the agent instance and emit a `runtime.state_cleared` event.
-
-        Implementations must clear any framework-specific checkpoint / thread
-        state and notify the context system via the event store.
-        """
-        ...

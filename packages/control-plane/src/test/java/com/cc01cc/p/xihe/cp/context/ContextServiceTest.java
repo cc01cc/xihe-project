@@ -118,6 +118,36 @@ class ContextServiceTest extends AbstractH2Test {
         assertThat(epoch.get("summary_hash").asText()).isNotBlank();
     }
 
+    /**
+     * PLAN-0410 D7-B1=C (2026-09-26 用户裁定): manual compaction (no Run) writes
+     * the branch-targeted type — correlation NULL, explicit branch — while the
+     * summary-chain reader resolves BOTH compaction types so the next auto
+     * compaction still resumes from the manual cursor (chain must not break).
+     */
+    @Test
+    void manualCompactionWritesBranchTargetedTypeAndKeepsSummaryChain() {
+        String sessionId = "aaaaaaae-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS, "user_id", TEST_USER,
+                "epoch_id", "e1", "baseline_hash", "h1",
+                "system_messages", List.of("sys")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "manual-trigger")));
+
+        var manual = contextService.compact(sessionId, TEST_WS, TEST_USER, null, "manual", null, null);
+
+        assertThat(manual.getEventType()).isEqualTo("compaction.manual_applied");
+        assertThat(manual.getCorrelationId()).isNull();
+        assertThat(manual.getBranchId()).isNotNull();
+
+        var chained = contextService.latestCompaction(sessionId, null);
+        assertThat(chained).as("the summary chain must see the manual event").isNotNull();
+        assertThat(chained.get("summary").asText()).isNotBlank();
+
+        var auto = contextService.compact(sessionId, TEST_WS, TEST_USER, null);
+        assertThat(auto.getEventType()).isEqualTo("compaction.applied");
+    }
+
     @Test
     void autoCompactGate_respectsCooldownWindow() {
         // PLAN-294 decision #18: a compaction must be followed by at least

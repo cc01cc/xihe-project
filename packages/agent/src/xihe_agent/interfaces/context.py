@@ -135,10 +135,12 @@ class AgentContext:
                 "source_session_id": payload.get("source_session_id"),
                 "at_sequence": payload.get("at_sequence"),
             }
-        elif event_type == "compaction.applied":
+        elif event_type in ("compaction.applied", "compaction.manual_applied"):
             # PLAN-0341 T1.4 (V4): summary lives only in epoch.system_messages
             # (SUM). messages is truncated to the keep-recent tail — never
             # receives the summary (no double-write).
+            # PLAN-0410 D7-B1=C: manual compaction writes the branch-targeted
+            # type but applies identically — both types carry the same payload.
             keep_from = max(0, len(self.messages) - 10)
             self.messages = list(self.messages[keep_from:])
             prev = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])

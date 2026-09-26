@@ -304,10 +304,18 @@ public class ContextService {
             String usageModel = usage.get("model") instanceof String s && !s.isBlank() ? s : model;
             payload.put("usage", usageCostMapper.withCost(usageModel, usage, sessionId));
         }
-        // PLAN-0410 T2.3: compaction.applied is run/branch-scoped (spec §3 —
-        // never a global event); correlation + derived branch ride together.
+        // PLAN-0410 D7-B1=C (2026-09-26 用户裁定): the TRIGGER decides the type —
+        // manual compaction has no Run, so it writes the branch-targeted type
+        // (correlation NULL + CP-validated explicit branch, field-matrix §4 row 3);
+        // auto/overflow keep `compaction.applied` as a pure ChatRun-scoped type
+        // that always carries correlation. Classifying by trigger (not by "is a
+        // Run active") keeps one type = one rule even when a user compacts
+        // while a run is streaming.
+        String appliedType = "manual".equals(effectiveTrigger)
+                ? "compaction.manual_applied"
+                : "compaction.applied";
         ContextEvent applied = eventStoreService.append(
-                sessionId, workspaceId, userId, "compaction.applied", payload,
+                sessionId, workspaceId, userId, appliedType, payload,
                 scope.runId(), scope.branchId());
 
         // PLAN-0341 T1.3 recovery band (I3): residual must fall below
@@ -522,7 +530,8 @@ public class ContextService {
                 eventStoreService.read(sessionId, 0L, visibility);
         for (int i = events.size() - 1; i >= 0; i--) {
             com.cc01cc.p.xihe.cp.context.entity.ContextEvent e = events.get(i);
-            if ("compaction.applied".equals(e.getEventType())) {
+            if ("compaction.applied".equals(e.getEventType())
+                    || "compaction.manual_applied".equals(e.getEventType())) {
                 try {
                     return objectMapper.readTree(e.getPayload());
                 } catch (Exception ex) {
