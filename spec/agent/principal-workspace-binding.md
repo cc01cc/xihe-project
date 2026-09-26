@@ -5,8 +5,8 @@
 > Profile：`security`  
 > Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）
 > 消费者：CP 授权/Session/Chat admission、Workspace Agent 管理 API、UI Agent 管理与 Session 选择、PLAN-0407/0409/0410  
-> 来源：PLAN-0374（承接 BL-18/BL-29；本地稿 `plans/PLAN-0374-XH-agent-workspace-scope/spec/agent/principal-workspace-binding.md`）  
-> 更新日期：2026-09-25
+> 来源：PLAN-0374（原承接 BL-18/BL-29；2026-09-23 G2 已冻结入 PLAN-0407 承接，执行中；本地稿 `plans/PLAN-0374-XH-agent-workspace-scope/spec/agent/principal-workspace-binding.md`）  
+> 更新日期：2026-09-27
 
 ## 范围
 
@@ -72,4 +72,4 @@ UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}
 
 ## 来源与变更关系
 
-由 PLAN-0374 本地 spec 在实施波次晋升为 canonical；spawn caller 边界由 PLAN-0407 design #53 修订（Agent 经 CP-owned MCP tool；internal route 不变但不再作为 caller）。契约状态 `active`、实现状态 `partial` 的差距项：fork 创建（PLAN-0409）、branch context（PLAN-0410）、`agent-templates` CRUD 路由与 `askActionClasses` UI（0374 T3.1，待 0407 V44/T2.8）、0407 T2.10 CP-owned MCP spawn tool。
+由 PLAN-0374 本地 spec 在实施波次晋升为 canonical；spawn caller 边界由 PLAN-0407 design #53 修订（Agent 经 CP-owned MCP tool；internal route 不变但不再作为 caller），caller 通道已随 0407 T2.10 交付（CP logical MCP `spawn_agent` + 既有 grant/approval gate）。契约状态 `active`、实现状态 `partial` 的差距项：fork 创建（PLAN-0409）、branch context（PLAN-0410）、`agent-templates` CRUD 路由与 `askActionClasses` UI（0374 T3.1，待 0407 V44/T2.8）。

@@ -47,7 +47,7 @@ mvn -o -q checkstyle:check
 
 ## 实现边界
 
-- Policy、audit 记录不得写入原始 arguments/secret；仅保存必要的 canonical hash、摘要与脱敏元数据。
+- Policy、audit 记录不得写入原始 arguments/secret；仅保存必要的 canonical hash、摘要与脱敏元数据。Operation/审批 preview 只作**有界原文投影**（≤4096 裸前缀截断），不做正则脱敏/改写，也不参与授权或批准后执行；结构化审计仍用 hash/白名单字段，日志出口由序列化层统一脱敏（PLAN-0407 T1.3 措辞，收敛后落位于本节）。
 - 不绕过状态机直接写入状态表或 durable projection；状态变更必须经既有 service/transition 路径。
 - CP→Runtime/Agent 调用保持显式超时与错误结果，禁止 host fallback 或静默降级。
 - 禁止新增固定 `sleep`、`Thread.sleep` 或无诊断的等待循环；超时、就绪与清理规则见 [`command-execution-strategies`](../../../.agents/skills/command-execution-strategies/SKILL.md)。

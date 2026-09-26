@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-09-16
-updated: 2026-09-21
+updated: 2026-09-27
 ---
 
 # DEV-032: 术语规范（一词多义与多词一义）
@@ -63,7 +63,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 
 历史形态（不阻碍目标，但新代码不得加深）：`sessions.user_id`、`workspace_users.user_id`、`provider_connections.owner_id` 均为 user-only 形态；`ledger_operations.actor_type`（表名历史形态 `session_operations`，V33 改名）已含 `agent`（`V2`），方向一致。
 
-不偏离约束与落地入口：workspace internal `xh-backlog-and-debt.md` 的 BL-18「身份与权限模型」（不入库分发）。
+不偏离约束与落地入口：workspace internal `xh-backlog-and-debt.md` 的 BL-18「身份与权限模型」（不入库分发）；2026-09-23 G2 已将 BL-18 冻结入 PLAN-0407 承接（执行中，未完成）。
 
 ## 2. 多词一义 → 正名与别名
 
@@ -115,7 +115,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | 阶段 | 动作 |
 |---|---|
 | 本文档发布（2026-09-16） | 未实施 XH PLAN README/spec 按 §1–§3 对齐；完成包不强制回写 |
-| 2026-09-17 增补 | 新增 §1.1（principal / membership / 协作≠委托）、`owner` 第三义（资源归属）、`role` 分域；未实施 PLAN 与 docs 按新正名；实现归 backlog BL-18（不实施） |
+| 2026-09-17 增补 | 新增 §1.1（principal / membership / 协作≠委托）、`owner` 第三义（资源归属）、`role` 分域；未实施 PLAN 与 docs 按新正名；实现归 backlog BL-18（原标注不实施；2026-09-23 G2 冻结入 PLAN-0407 承接，执行中） |
 | 2026-09-21 增补 | 新增 `scope` / `interrupted` / `runtimeBootId` 分义；§2.3 明确 **durable job 续看 ≠ Workspace `unpause` / `run resume`**（0390） |
 | 已完成 PLAN / archive / review | **不改**历史证据用词；再次编辑该文件时顺带对齐 |
 | 代码标识符 | 不在本文档批量改名；需改名另开 PLAN（参考 0356） |
@@ -125,7 +125,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 - 契约层正名 `ensure`：DEV-031、PLAN-0329
 - 生命周期 lease / unpause：PLAN-0345 `spec/workspace-lifecycle.md`
 - Job scope / interrupted / runtimeBootId：`spec/workspace/execution-job.md`、PLAN-0390
-- 主体/成员/归属与 Agent 主体化：workspace internal `xh-backlog-and-debt.md` BL-18（不入库分发）
+- 主体/成员/归属与 Agent 主体化：workspace internal `xh-backlog-and-debt.md` BL-18（不入库分发；承接 PLAN-0407，执行中）
 - prune / compaction：PLAN-0341
 - checkpoint 命名：PLAN-0356
 - 文档布局：DEV-030

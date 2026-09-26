@@ -6,13 +6,13 @@
 > Owner：Security（通用授权）+ Agent（绑定传播）  
 > 消费者：CP、Agent、Runtime、UI 审计  
 > 来源：PLAN-0386、PLAN-0387、DEV-032  
-> 更新日期：2026-09-20
+> 更新日期：2026-09-27
 
 ## 范围与非目标
 
 本文只定义 Agent 如何接收、传播和消费 Security 计算结果。principal、role、scope、resource、action、authorization decision 的 canonical 正文归 `spec/security/`；Agent 不复制这些模型。
 
-独立 Agent principal、账户形态、成员表泛化、角色集合和凭据模型仍由 BL-18/BL-29 与 PLAN-0374 冻结；本文不能把当前 User-only 实现描述成已完成的 Agent principal。
+独立 Agent principal、账户形态、成员表泛化、角色集合和凭据模型仍由 BL-18/BL-29 与 PLAN-0374 冻结（2026-09-23 G2 已将 BL-18/BL-29 冻结入 PLAN-0407 承接，执行中）；本文不能把当前 User-only 实现描述成已完成的 Agent principal。
 
 ## 目标输入
 

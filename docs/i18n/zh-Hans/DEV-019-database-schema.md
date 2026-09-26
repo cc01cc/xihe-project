@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 19
 status: active
 created: 2026-09-07
-updated: 2026-09-24
+updated: 2026-09-27
 description: XH PostgreSQL 全量表结构速查：业务表按域分组、ER 关系、字段约束与索引、当前 V1~V41 迁移对照（PLAN-280 rebaseline 后）与本地查看方法
 tags:
   - postgres
@@ -475,7 +475,7 @@ erDiagram
 > - `idx_oauth_credentials_server (server_id)`
 > - 唯一约束 `(user_id, workspace_id, server_id)` — 单用户单空间单服单凭证
 
-**provider_connections**（`V18`，Entity `entity/ProviderConnection.java`）：LLM Provider 连接（PLAN-261）。归属现为**两级** `USER / WORKSPACE`；`SYSTEM` 归属已退役（PLAN-0364 M2：不再创建/可见/可选），但 **CHECK 保留 `SYSTEM` 值不收紧**——为将来 `AGENT` 等主体类型留扩展位（BL-18，DEV-032 §1.1）。
+**provider_connections**（`V18`，Entity `entity/ProviderConnection.java`）：LLM Provider 连接（PLAN-261）。归属现为**两级** `USER / WORKSPACE`；`SYSTEM` 归属已退役（PLAN-0364 M2：不再创建/可见/可选），但 **CHECK 保留 `SYSTEM` 值不收紧**——为将来 `AGENT` 等主体类型留扩展位（BL-18，DEV-032 §1.1；BL-18 已于 2026-09-23 G2 冻结入 PLAN-0407 承接，执行中）。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -753,7 +753,7 @@ erDiagram
 | policy_decision | VARCHAR(24) | nullable | 策略判定（开放域） |
 | approval_request_id | UUID | nullable FK `approval_requests(request_id) ON DELETE SET NULL` | 关联审批 |
 | request_hash | VARCHAR(64) | nullable | 请求哈希 |
-| arguments_preview | JSONB | nullable | 截断脱敏参数（见下） |
+| arguments_preview | JSONB | nullable | 有界原文投影参数（≤4096 前缀截断，见下） |
 | normalized_argv | JSONB | nullable | 规范化参数 |
 | cwd | VARCHAR(1024) | nullable | 工作目录 |
 | env_policy_hash | VARCHAR(64) | nullable | 环境策略哈希 |
@@ -867,7 +867,7 @@ erDiagram
 | `mcp_call` | 网关 | `httpStatus` int、`durationMs` bigint、`resultHash` string?、`resultSize` int?、`errorCode` string? |
 | `llm_usage` | 中继 | `inputTokens` int、`outputTokens` int、`totalTokens` int、`source` string（`real`/`estimated`） |
 
-`arguments_preview`（operation_items JSONB）：截断脱敏后的参数 JSON，外层含 `truncated` bool 标记。
+`arguments_preview`（operation_items JSONB）：**原文投影**的参数 JSON（PLAN-0407 T1.3 / design #8）——保留原始参数文本，有界 ≤4096、超长按前缀裸截断，不做正则脱敏/改写、不携带 `truncated` 标记、不参与授权或批准后执行；日志出口脱敏由序列化层 `LogRedactor` 承担。
 
 **V14/V30/V31/V33 变更**：V14 drop 空表 `runtime_jobs`（悬空 registry，PLAN-274 债务 #11）并把工具调用唯一键替换为上式（历史不迁移，开发态按 fresh baseline 清库）；V30 增 `ck_ledger_operations_chat_session`（`kind='chat' ⇒ session_id IS NOT NULL`；随 V33 改名）；V31 补 `operation_events` 两条 FK 子列索引；V33 表改名 + 14 项跟随改名（PK ×1、FK ×4、CHECK ×5、唯一索引 ×2、普通索引 ×2）。
 
