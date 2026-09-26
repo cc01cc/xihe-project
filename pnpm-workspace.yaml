@@ -1,12 +1,22 @@
 packages:
   - 'packages/*'
 
+# 供应链冷却期：2026-09-26 起统一 7 天（PLAN-0417 D6b 裁定，对齐 one/AGENTS.md 对 A03=10080 的表述
+# 与 verify V4「所有包至少发布 7 天」；此前 2880「两天冷却期」为三处口径冲突源）。
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude: []
+
 onlyBuiltDependencies:
   - esbuild
   - vue-demi
   - msw
 
-# 两天冷却期（2026-08-27 起；高频依赖不再永久豁免）
-minimumReleaseAgeExclude:
-  []
-minimumReleaseAge: 2880
+# PLAN-0417 M1：仅本 workspace 的 exact-version overrides（不改 one 根/共享 lock）
+overrides:
+  'decode-uri-component@0.2.2': 0.5.0
+  'dompurify@3.4.8': 3.4.14
+  'esbuild@0.27.7': 0.28.2
+  'hono@4.13.4': 4.13.8
+  'qs@6.15.3': 6.16.0
+patchedDependencies:
+  source-map-resolve@0.6.0: patches/source-map-resolve@0.6.0.patch
