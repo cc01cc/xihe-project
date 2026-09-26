@@ -11,6 +11,15 @@ const agentState = reactive({
 vi.mock("../../../stores/agent", () => ({
     useAgentStore: () => ({ agentState }),
 }));
+// MobileChatSheet reads sessionStore.sessions for agentPrincipalId (cad8e727);
+// keep it mocked like the agent store so the component does not need an active Pinia.
+vi.mock("../../../stores/session", () => ({
+    useSessionStore: () => ({ sessions: [] }),
+}));
+// cad8e727 added useI18n() to the component setup; other specs mock vue-i18n the same way.
+vi.mock("vue-i18n", () => ({
+    useI18n: () => ({ t: (key: string) => key }),
+}));
 vi.mock("../../ui/sheet/Sheet.vue", () => ({
     default: { template: "<div><slot /></div>" },
 }));
