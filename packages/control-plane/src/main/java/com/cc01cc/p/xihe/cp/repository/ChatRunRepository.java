@@ -33,6 +33,9 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     /** PLAN-0352 T1.2：会话删除路径枚举非终态 run（含 cancelling）。 */
     List<ChatRun> findBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
 
+    /** PLAN-0407 T3.1 Tier-1 status query：会话最新 run（createdAt 降序，id 兜底定序）。 */
+    Optional<ChatRun> findFirstBySessionIdOrderByCreatedAtDescIdDesc(String sessionId);
+
     @Modifying
     @Transactional
     @Query("update ChatRun r set r.status = :status, r.terminalOutcome = :outcome, "
