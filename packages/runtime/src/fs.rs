@@ -1060,6 +1060,62 @@ mod tests {
         );
     }
 
+    fn minimal_pdf_with_text(text: &str) -> Vec<u8> {
+        use std::io::Write as _;
+
+        let stream = format!("BT /F1 12 Tf 72 720 Td ({text}) Tj ET\n");
+        let mut stream_object = format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes();
+        stream_object.extend_from_slice(stream.as_bytes());
+        stream_object.extend_from_slice(b"endstream");
+
+        let objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_vec(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
+            stream_object,
+        ];
+
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = vec![0usize];
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            writeln!(&mut pdf, "{} 0 obj", index + 1).unwrap();
+            pdf.extend_from_slice(object);
+            pdf.extend_from_slice(b"\nendobj\n");
+        }
+
+        let xref_offset = pdf.len();
+        write!(&mut pdf, "xref\n0 {}\n0000000000 65535 f \n", offsets.len()).unwrap();
+        for offset in offsets.iter().skip(1) {
+            writeln!(&mut pdf, "{offset:010} 00000 n ").unwrap();
+        }
+        write!(
+            &mut pdf,
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+            offsets.len()
+        )
+        .unwrap();
+        pdf
+    }
+
+    #[tokio::test]
+    async fn extract_pdf_text_reads_minimal_pdf_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().to_str().unwrap();
+        fs::write(
+            dir.path().join("minimal.pdf"),
+            minimal_pdf_with_text("XH_PDF_EXTRACT_OK"),
+        )
+        .unwrap();
+
+        let text = extract_pdf_text("minimal.pdf", workspace).await.unwrap();
+        assert!(
+            text.contains("XH_PDF_EXTRACT_OK"),
+            "unexpected PDF extraction output: {text:?}"
+        );
+    }
+
     // PLAN-292 T6: binary-safe read wired to the sandbox op and Gateway tool.
     #[tokio::test]
     async fn read_file_range_detects_binary_and_returns_base64() {

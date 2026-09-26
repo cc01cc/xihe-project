@@ -63,7 +63,7 @@ fs2 = "0.4"
 # nix = "0.29.0"
 
 # === NEW: PDF text extraction ===
-pdf-extract = "0.10.0"
+pdf-extract = "0.12.1"
 
 # === NEW: Base64 encoding ===
 base64 = "0.22.1"

@@ -95,6 +95,8 @@ flowchart LR
 | Database | PostgreSQL 17 + pgvector | — |
 | Toolchain | Node 24 / pnpm 10 / Maven 3.9 / uv / Docker | — |
 
+Runtime dependency resolution is pinned by the tracked `packages/runtime/Cargo.lock`; both Runtime Docker build paths use `cargo build --locked` and the Rust 1.97.1 toolchain.
+
 ## Quick Start
 
 ```bash

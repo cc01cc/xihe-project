@@ -16,7 +16,7 @@ WORKDIR /build
 COPY packages/runtime/ .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target,id=workspace-target-bookworm \
-    cargo build --release --bin xihe-container-runtime \
+    cargo build --release --locked --bin xihe-container-runtime \
 
  && mkdir -p /build/out \
  && cp target/release/xihe-container-runtime /build/out/

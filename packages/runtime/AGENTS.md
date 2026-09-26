@@ -16,13 +16,13 @@
 ## Commands
 
 ### File-Scoped
-- Unit test: `cargo test --lib test_name`
-- Lint single file: `cargo clippy -- -W clippy::pedantic`
+- Unit test: `cargo test --locked --lib test_name`
+- Lint single file: `cargo clippy --locked -- -W clippy::pedantic`
 
 ### Full Suite
-- `cargo build` — 编译
-- `cargo test` — 全部测试（lib + integration）
-- `cargo clippy --all-targets -- -D warnings` — lint（门禁口径；`mise run lint:runtime` = fmt check + 本条）
+- `cargo build --locked` — 编译
+- `cargo test --locked` — 全部测试（lib + integration）
+- `cargo clippy --locked --all-targets -- -D warnings` — lint（门禁口径；`mise run lint:runtime` = fmt check + 本条）
 - `cargo fmt` — 格式化；校验用 `cargo fmt --check`
 - 工具链由 `rust-toolchain.toml` 固定 1.97.1（与 `mise.toml` `[tools].rust` 一致）
 
@@ -55,6 +55,7 @@ Runtime MCP session 的项目级 proposed 生命周期边界见 `../../spec/sess
 ## Key Conventions
 
 - `snake_case` 命名（Rust 标准）
+- `packages/runtime/Cargo.lock` is tracked as the deployable binary lock; Docker builds use `cargo build --locked` and Rust 1.97.1.
 - MCP endpoint 通过 rmcp 自动注册
 - 配置文件通过 ConfigClient（HTTP）从 CP 获取
 - Sandbox backend、Workspace execution、Job、MCP transport 与 checkpoint 的当前实现细节见 [DEV-015](../../docs/i18n/zh-Hans/DEV-015-runtime-architecture.md)；backend 语义边界见 [DEV-031](../../docs/i18n/zh-Hans/DEV-031-sandbox-backend-contract.md)。
