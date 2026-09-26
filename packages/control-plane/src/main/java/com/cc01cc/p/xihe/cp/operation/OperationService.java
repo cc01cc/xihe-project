@@ -174,6 +174,23 @@ public class OperationService {
         }
     }
 
+    @Transactional
+    public void transitionOperationForTerminal(String runId, String targetStatus,
+                                                String errorCode, String errorRef) {
+        UUID operationId = findOperationIdByRunId(runId);
+        if (operationId == null) {
+            logger.warn("[LIFECYCLE] service=cp event=terminal_operation_missing runId={} targetStatus={}",
+                    runId, targetStatus);
+            return;
+        }
+        // Unlike the best-effort nonterminal bridge, a terminal Run and its
+        // durable Operation must commit together or roll back together.
+        transitionOperation(operationId, targetStatus, errorCode, errorRef);
+        if (isTerminal(targetStatus)) {
+            scheduleRunScopeClosure(runId);
+        }
+    }
+
     private void scheduleRunScopeClosure(String runId) {
         Runnable closure = () -> {
             try {
@@ -434,6 +451,9 @@ public class OperationService {
         if (operationId == null) {
             return;
         }
+        operations.findByIdForUpdate(operationId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
         List<OperationItem> open = items.findByOperationIdAndStatusIn(operationId.toString(),
                 List.of("pending", "running", "waiting_for_approval", "resolving"));
         for (OperationItem item : open) {
@@ -463,6 +483,12 @@ public class OperationService {
     @Transactional
     public void settleCancellation(UUID itemId, UUID attemptId, String itemStatus, String errorCode) {
         dbLockTimeout.apply();
+        String operationId = items.findOperationIdById(itemId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
+                        "Operation item not found"));
+        operations.findByIdForUpdate(UUID.fromString(operationId))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
         if (attemptId != null) {
             int affected = attempts.finishStarted(attemptId, "cancelled", 499, errorCode, null, null,
                     Instant.now());
@@ -720,6 +746,10 @@ public class OperationService {
                 return existing;
             }
         }
+        if (isTerminal(operation.getStatus()) && !isPostTerminalCheckpointMarker(kind, toolName, source)) {
+            throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
+                    "Cannot append an item to terminal operation " + operationId);
+        }
         OperationItem item = new OperationItem();
         item.setId(UUID.randomUUID());
         item.setOperationId(operationId.toString());
@@ -759,9 +789,21 @@ public class OperationService {
     public void transitionItem(UUID itemId, String targetStatus, String policyDecision,
                                String approvalRequestId, String resultRef, String errorCode) {
         dbLockTimeout.apply();
-        OperationItem item = items.findById(itemId)
+        String operationId = items.findOperationIdById(itemId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
                         "Operation item not found"));
+        UUID operationUuid = UUID.fromString(operationId);
+        LedgerOperation operation = operations.findByIdForUpdate(operationUuid)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
+        OperationItem item = items.findByIdForUpdate(itemId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
+                        "Operation item not found"));
+        if (isTerminal(operation.getStatus())
+                && !isPostTerminalCheckpointMarker(item.getKind(), item.getToolName(), item.getSource())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
+                    "Cannot transition an item in terminal operation " + operationUuid);
+        }
         if (isItemTerminal(item.getStatus())) {
             throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
                     "Operation item is already terminal (" + item.getStatus() + ")");
@@ -790,10 +832,69 @@ public class OperationService {
         if (isItemTerminal(targetStatus)) {
             item.setFinishedAt(Instant.now());
         }
-        appendEvent(UUID.fromString(item.getOperationId()), itemId.toString(), null,
+        appendEvent(operationUuid, itemId.toString(), null,
                 "item." + targetStatus, targetStatus, "system", null);
         logger.info("[LIFECYCLE] service=cp event=operation_item_transitioned itemId={} status={}",
                 itemId, targetStatus);
+    }
+
+    @Transactional
+    public void settleWaitingChild(UUID operationId, UUID itemId, UUID childRunId,
+                                   String childRunStatus, String resultRef, String errorCode) {
+        dbLockTimeout.apply();
+        LedgerOperation operation = operations.findByIdForUpdate(operationId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
+        OperationItem item = items.findByIdForUpdate(itemId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
+                        "Operation item not found"));
+        if (!operationId.toString().equals(item.getOperationId())
+                || !childRunId.equals(item.getWaitingOnRunId())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_CHILD_LINK_MISMATCH",
+                    "Waiting OperationItem link does not match the child Run");
+        }
+
+        String targetStatus = switch (childRunStatus) {
+            case "succeeded" -> "completed";
+            case "failed", "partial" -> "failed";
+            case "cancelled" -> "cancelled";
+            case "ambiguous" -> "ambiguous";
+            default -> throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "Child Run is not terminal");
+        };
+        boolean operationTerminal = isTerminal(operation.getStatus());
+        String currentStatus = item.getStatus();
+        boolean preserveItemOutcome = operationTerminal || isItemTerminal(currentStatus);
+        if (preserveItemOutcome) {
+            targetStatus = currentStatus;
+        } else {
+            List<String> targets = ITEM_TRANSITIONS.get(currentStatus);
+            if (targets == null || !targets.contains(targetStatus)) {
+                throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
+                        "Operation item cannot transition from " + currentStatus + " to " + targetStatus);
+            }
+        }
+
+        String finalResultRef = resultRef == null ? item.getResultRef() : resultRef;
+        String finalErrorCode = preserveItemOutcome || errorCode == null ? item.getErrorCode() : errorCode;
+        Instant finishedAt = preserveItemOutcome
+                ? item.getFinishedAt()
+                : (isItemTerminal(targetStatus) ? Instant.now() : null);
+        int affected = items.settleWaitingOnRun(itemId, currentStatus, childRunId, targetStatus,
+                finalResultRef, finalErrorCode, finishedAt);
+        if (affected != 1) {
+            throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
+                    "Waiting OperationItem changed while settling child Run");
+        }
+        item.setStatus(targetStatus);
+        item.setResultRef(finalResultRef);
+        item.setErrorCode(finalErrorCode);
+        item.setFinishedAt(finishedAt);
+        item.setWaitingOnRunId(null);
+        if (!preserveItemOutcome) {
+            appendEvent(operationId, itemId.toString(), null, "item." + targetStatus, targetStatus,
+                    "system", "{\"childRunId\":\"" + childRunId + "\"}");
+        }
     }
 
     @Transactional
@@ -806,7 +907,7 @@ public class OperationService {
         // PLAN-0346 (gap C): take the same operation-row lock as appendItem so
         // retryNo allocation is serialized per operation (previously unlocked;
         // concurrent retries hit a 409 instead of an ordered allocation).
-        operations.findByIdForUpdate(UUID.fromString(item.getOperationId()))
+        LedgerOperation operation = operations.findByIdForUpdate(UUID.fromString(item.getOperationId()))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
                         "Operation not found"));
         if (requestId != null && !requestId.isBlank()) {
@@ -817,6 +918,10 @@ public class OperationService {
                         itemId, stage, requestId, existing.getId());
                 return existing;
             }
+        }
+        if (isTerminal(operation.getStatus())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "OPERATION_STATE_CONFLICT",
+                    "Cannot start an attempt in terminal operation " + operation.getId());
         }
         OperationAttempt attempt = new OperationAttempt();
         attempt.setId(UUID.randomUUID());
@@ -855,6 +960,17 @@ public class OperationService {
         OperationAttempt attempt = attempts.findById(attemptId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ATTEMPT_NOT_FOUND",
                         "Operation attempt not found"));
+        String operationId = items.findOperationIdById(UUID.fromString(attempt.getItemId()))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_ITEM_NOT_FOUND",
+                        "Operation item not found"));
+        UUID operationUuid = UUID.fromString(operationId);
+        LedgerOperation operation = operations.findByIdForUpdate(operationUuid)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
+        if (isTerminal(operation.getStatus())) {
+            recordLateTermination(attempt.getItemId(), "succeeded".equals(targetStatus));
+            return;
+        }
         long computed = durationMs != null ? durationMs
                 : java.time.Duration.between(attempt.getStartedAt(), Instant.now()).toMillis();
         int affected;
@@ -892,8 +1008,7 @@ public class OperationService {
         attempt.setResultRef(resultRef);
         attempt.setDurationMs(computed);
         attempt.setFinishedAt(Instant.now());
-        OperationItem item = items.findById(UUID.fromString(attempt.getItemId())).orElse(null);
-        appendEvent(item == null ? null : UUID.fromString(item.getOperationId()),
+        appendEvent(operationUuid,
                 attempt.getItemId(), attemptId.toString(), "attempt." + targetStatus, targetStatus,
                 "system", null);
         logger.info("[LIFECYCLE] service=cp event=operation_attempt_finished attemptId={} status={} durationMs={}",
@@ -1240,6 +1355,9 @@ public class OperationService {
         if (operationId == null) {
             return;
         }
+        operations.findByIdForUpdate(operationId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND",
+                        "Operation not found"));
         for (OperationItem item : items.findByOperationIdOrderBySequenceAsc(operationId.toString())) {
             if (isItemTerminal(item.getStatus())) {
                 continue;
@@ -1258,13 +1376,7 @@ public class OperationService {
                 }
             }
         }
-        try {
-            transitionOperation(operationId, targetStatus, "RUN_RECONCILED", null);
-        } catch (CpApiException e) {
-            if (!"OPERATION_STATE_CONFLICT".equals(e.getCode())) {
-                throw e;
-            }
-        }
+        transitionOperationForTerminal(runId, targetStatus, "RUN_RECONCILED", null);
         logger.info("[LIFECYCLE] service=cp event=operation_reconciled runId={} operationId={} targetStatus={}",
                 runId, operationId, targetStatus);
     }
@@ -1272,6 +1384,12 @@ public class OperationService {
     private static boolean isTerminal(String status) {
         return "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status)
                 || "interrupted".equals(status) || "ambiguous".equals(status);
+    }
+
+    private static boolean isPostTerminalCheckpointMarker(String kind, String toolName, String source) {
+        return "checkpoint".equals(kind)
+                && (("run_checkpoint".equals(toolName) && "runtime".equals(source))
+                || ("revert_checkpoint".equals(toolName) && "ui".equals(source)));
     }
 
     private static boolean isItemTerminal(String status) {

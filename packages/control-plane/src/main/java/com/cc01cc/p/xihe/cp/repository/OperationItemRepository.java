@@ -22,6 +22,14 @@ public interface OperationItemRepository extends JpaRepository<OperationItem, UU
     /** PLAN-0326 决策 #9：行身份 = (operation_id, source, tool_call_id)，幂等收敛限定同源。 */
     Optional<OperationItem> findByOperationIdAndSourceAndToolCallId(String operationId, String source, String toolCallId);
 
+    @Query("select i.operationId from OperationItem i where i.id = :id")
+    Optional<String> findOperationIdById(@Param("id") UUID id);
+
+    @Query("select i.id from OperationItem i where i.waitingOnRunId = :runId order by i.sequence asc")
+    List<UUID> findIdsByWaitingOnRunId(@Param("runId") UUID runId);
+
+    List<OperationItem> findByWaitingOnRunId(UUID waitingOnRunId);
+
     boolean existsByOperationIdAndToolCallId(String operationId, String toolCallId);
 
     boolean existsBySourceAndToolCallId(String source, String toolCallId);
@@ -52,6 +60,20 @@ public interface OperationItemRepository extends JpaRepository<OperationItem, UU
             @Param("status") String status,
             @Param("policyDecision") String policyDecision,
             @Param("approvalRequestId") String approvalRequestId,
+            @Param("resultRef") String resultRef,
+            @Param("errorCode") String errorCode,
+            @Param("finishedAt") Instant finishedAt);
+
+    @Modifying
+    @Transactional
+    @Query("update OperationItem i set i.status = :status, i.resultRef = :resultRef, "
+            + "i.errorCode = :errorCode, i.finishedAt = :finishedAt, i.waitingOnRunId = null, "
+            + "i.updatedAt = CURRENT_INSTANT "
+            + "where i.id = :id and i.status = :expectedStatus and i.waitingOnRunId = :childRunId")
+    int settleWaitingOnRun(@Param("id") UUID id,
+            @Param("expectedStatus") String expectedStatus,
+            @Param("childRunId") UUID childRunId,
+            @Param("status") String status,
             @Param("resultRef") String resultRef,
             @Param("errorCode") String errorCode,
             @Param("finishedAt") Instant finishedAt);

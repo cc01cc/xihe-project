@@ -13,7 +13,6 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
-import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
@@ -75,8 +74,8 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder;
     private final com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController;
     private final com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy;
-    private final RunCheckpointService runCheckpointService;
     private final ChatRunCancellationService chatRunCancellationService;
+    private final ChatRunTerminalService chatRunTerminalService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
@@ -86,8 +85,7 @@ public class ChatController {
 
     /**
      * PLAN-0328 M2 W3: statuses whose transition ends the Run and therefore must
-     * request a checkpoint seal (cancelled does not pass through {@code transitionRun}
-     * and is sealed by {@code settleRunCancellation}).
+     * pass through the single ChatRunTerminalService owner.
      */
     private static final List<String> TERMINAL_RUN_STATUSES = List.of(
             "succeeded", "failed", "partial", "ambiguous", "cancelled");
@@ -126,8 +124,8 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder ledgerToolRecorder,
             com.cc01cc.p.xihe.cp.mcp.McpProxyController mcpProxyController,
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
-            RunCheckpointService runCheckpointService,
             ChatRunCancellationService chatRunCancellationService,
+            ChatRunTerminalService chatRunTerminalService,
             com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
             com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper) {
         this.agentHttpClient = HttpClient.newBuilder()
@@ -151,8 +149,8 @@ public class ChatController {
         this.ledgerToolRecorder = ledgerToolRecorder;
         this.mcpProxyController = mcpProxyController;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
-        this.runCheckpointService = runCheckpointService;
         this.chatRunCancellationService = chatRunCancellationService;
+        this.chatRunTerminalService = chatRunTerminalService;
         this.contextSourceRefreshService = contextSourceRefreshService;
         this.usageCostMapper = usageCostMapper;
 
@@ -495,7 +493,8 @@ public class ChatController {
         // PLAN-0407 T2.5：序列化认领（条件更新，与 spawn 的 parent Run 行锁同一行）
         // → 认领获胜者收口根 run → 沿 kind=spawn 停止传播 + 有界等待。
         ChatRunCancellationService.CancelClaim claim =
-                chatRunCancellationService.cancelSerialized(runId, workspaceId, reason);
+                chatRunCancellationService.cancelSerialized(
+                        runId, run.getSessionId(), userId, workspaceId, reason);
         return switch (claim.outcome()) {
             case CLAIMED, ALREADY_CANCELLING ->
                     ResponseEntity.ok(Map.of("status", "cancel_accepted", "runId", runId));
@@ -514,6 +513,48 @@ public class ChatController {
             "service", "xihe-control-plane",
             "timestamp", System.currentTimeMillis()
         );
+    }
+
+    /** Dispatches a committed spawn Run through the same local worker and lease path as user Runs. */
+    public boolean dispatchSpawnRun(String runId) {
+        UUID runUuid = UUID.fromString(runId);
+        ChatRun run = chatRunRepository.findById(runUuid).orElse(null);
+        if (run == null || !ChatRun.ORIGIN_SPAWN.equals(run.getOrigin()) || !"accepted".equals(run.getStatus())) {
+            return false;
+        }
+        Session session;
+        try {
+            session = sessionService.requireCurrent(run.getSessionId(), run.getUserId(), run.getWorkspaceId());
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            throw new IllegalStateException("Committed spawn Session is no longer dispatchable", e);
+        }
+        Message userMessage = run.getUserMessageId() == null
+                ? null : messageRepository.findById(UUID.fromString(run.getUserMessageId())).orElse(null);
+        if (session == null || userMessage == null
+                || !Session.KIND_SPAWN.equals(session.getKind())
+                || !run.getId().toString().equals(userMessage.getRunId())
+                || !run.getSessionId().equals(userMessage.getSessionId())
+                || !run.getUserId().equals(session.getUserId())
+                || !run.getWorkspaceId().equals(session.getWorkspaceId())) {
+            throw new IllegalStateException("Committed spawn Run is missing its child Session or user Message");
+        }
+
+        String sessionId = run.getSessionId();
+        if (activeRuns.putIfAbsent(sessionId, runId) != null) {
+            return false;
+        }
+        if (!acquireLeaseForExistingRun(runId)) {
+            activeRuns.remove(sessionId, runId);
+            return false;
+        }
+        try {
+            execAsync(sessionId, userMessage.getContent(), run.getProvider(), run.getModel(), run.getToolMode(),
+                    Map.of(), List.of(), run.getUserId(), run.getWorkspaceId(), runId, runId);
+            return true;
+        } catch (RuntimeException e) {
+            releaseRun(sessionId, runId, "spawn_dispatch_handoff_failed");
+            throw e;
+        }
     }
 
     private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
@@ -700,7 +741,7 @@ public class ChatController {
                             requestId, sessionId, runId, response.statusCode(), elapsedMs);
                     try (InputStream agentStream = response.body()) {
                         relayResult = relayAgentStream(
-                                sessionId, agentStream, requestId, runId, userId, workspaceId, terminalSent,
+                                sessionId, agentStream, requestId, runId, userId, workspaceId,
                                 approvalInFlight, !overflowRetried);
                     }
 
@@ -744,7 +785,7 @@ public class ChatController {
                 String status = "success".equals(outcome)
                         ? "succeeded"
                         : "partial".equals(outcome) ? "partial" : "ambiguous".equals(outcome) ? "ambiguous" : "failed";
-                transitionRun(
+                boolean terminalCommitted = transitionRun(
                         runId,
                         List.of("running", "streaming", "awaiting_approval"),
                         status,
@@ -753,6 +794,15 @@ public class ChatController {
                         null,
                         relayResult.tokenCount(),
                         assistantContent == null ? 0 : assistantContent.length());
+                if (terminalCommitted && terminalSent.compareAndSet(false, true)) {
+                    for (RelayedTerminalEvent terminalEvent : relayResult.terminalEvents()) {
+                        dispatchRelayedEvent(sessionId, terminalEvent.name(), terminalEvent.data(),
+                                runId, requestId, userId, workspaceId, relayResult.runLedger());
+                    }
+                } else if (terminalCommitted) {
+                    logger.warn("[LIFECYCLE] service=cp event=chat_terminal_sse_suppressed requestId={} runId={} reason=terminal_already_sent",
+                            requestId, runId);
+                }
 
             } catch (java.net.http.HttpTimeoutException e) {
                 logger.warn("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=AGENT_TIMEOUT timeoutMs=30000",
@@ -875,9 +925,9 @@ public class ChatController {
                 List.of("accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching"),
                 terminalStatus, outcome, errorCode, detail, 0, 0);
         if (!transitioned) {
-            // The run was already terminal through another path: the capture request
-            // must still happen (transitionRun could not issue it).
-            runCheckpointService.requestCapture(runId);
+            logger.warn("[LIFECYCLE] service=cp event=chat_run_terminal_emit_suppressed runId={} errorCode={} reason=terminal_not_committed",
+                    runId, errorCode);
+            return;
         }
         sseManager.send(sessionId, "error", Map.of(
                 "code", errorCode,
@@ -906,6 +956,17 @@ public class ChatController {
         if (runId == null || runId.isBlank()) {
             return false;
         }
+        if (TERMINAL_RUN_STATUSES.contains(status)) {
+            ChatRunTerminalService.TerminalResult result = chatRunTerminalService.terminalize(
+                    new ChatRunTerminalService.TerminalRequest(runId, expectedStatuses, status,
+                            outcome, errorCode, errorDetail, tokenCount, assistantChars,
+                            ChatRunTerminalService.LedgerMode.STREAM, List.of()));
+            if (!result.committed()) {
+                logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={} outcome={}",
+                        runId, status, result.outcome());
+            }
+            return result.committed();
+        }
         int updated = chatRunRepository.transition(
                 UUID.fromString(runId), expectedStatuses, status, outcome, errorCode, errorDetail,
                 tokenCount, assistantChars);
@@ -927,12 +988,6 @@ public class ChatController {
             operationService.transitionOperationForRun(runId, operationStatus,
                     errorCode == null && "partial".equals(status) ? "PARTIAL_RESULT" : errorCode,
                     errorDetail);
-        }
-        // PLAN-0338: terminal transition → capture the run slice. The request is
-        // asynchronous and never fails the transition; a failed capture records a
-        // degraded row for the startup reconcile.
-        if (TERMINAL_RUN_STATUSES.contains(status)) {
-            runCheckpointService.requestCapture(runId);
         }
         return true;
     }
@@ -1144,10 +1199,10 @@ public class ChatController {
     private StreamRelayResult relayAgentStream(String sessionId, InputStream agentStream,
                                                String requestId, String runId,
                                                String userId, String workspaceId,
-                                               AtomicBoolean terminalSent,
                                                AtomicBoolean approvalInFlight,
                                                boolean suppressOverflowError) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
+        List<RelayedTerminalEvent> terminalEvents = new ArrayList<>();
         Map<String, Integer> eventCounts = new LinkedHashMap<>();
         // PLAN-294 decision #13: real/estimated token totals from the agent's
         // usage event; replaces the SSE chunk counter in chat_runs.token_count.
@@ -1235,9 +1290,13 @@ public class ChatController {
                     boolean suppressThisEvent = suppressOverflowError
                             && "CONTEXT_OVERFLOW".equals(errorCode)
                             && ("error".equals(eventName) || isDone);
-                    if (!suppressThisEvent && (!isDone || terminalSent.compareAndSet(false, true))) {
-                        dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
-                                userId, workspaceId, runLedger);
+                    if (!suppressThisEvent) {
+                        if (isDone || "error".equals(eventName)) {
+                            terminalEvents.add(new RelayedTerminalEvent(eventName, data.toString()));
+                        } else {
+                            dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
+                                    userId, workspaceId, runLedger);
+                        }
                     }
                     eventName = "message";
                     data.setLength(0);
@@ -1288,17 +1347,22 @@ public class ChatController {
                 }
             }
             boolean suppressTail = suppressOverflowError && "CONTEXT_OVERFLOW".equals(errorCode);
-            if (!suppressTail && (!isDone || terminalSent.compareAndSet(false, true))) {
-                dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
-                        userId, workspaceId, runLedger);
+            if (!suppressTail) {
+                if (isDone || "error".equals(eventName)) {
+                    terminalEvents.add(new RelayedTerminalEvent(eventName, data.toString()));
+                } else {
+                    dispatchRelayedEvent(sessionId, eventName, data.toString(), runId, requestId,
+                            userId, workspaceId, runLedger);
+                }
             }
         }
         if (!doneSeen) {
             logger.warn("[LIFECYCLE] service=cp event=chat_run_missing_done requestId={} sessionId={} runId={} errorCode=AGENT_DONE_MISSING",
                     requestId, sessionId, runId);
             boolean suppressSyntheticDone = suppressOverflowError && "CONTEXT_OVERFLOW".equals(errorCode);
-            if (!suppressSyntheticDone && terminalSent.compareAndSet(false, true)) {
-                dispatchEvent(sessionId, "done", "{\"type\":\"done\",\"outcome\":\"ambiguous\",\"synthetic\":true}");
+            if (!suppressSyntheticDone) {
+                terminalEvents.add(new RelayedTerminalEvent("done",
+                        "{\"type\":\"done\",\"outcome\":\"ambiguous\",\"synthetic\":true}"));
             }
             if (!suppressSyntheticDone) {
                 outcome = "ambiguous";
@@ -1315,7 +1379,7 @@ public class ChatController {
                 : eventCounts.getOrDefault("token", 0);
         return new StreamRelayResult(
                 assistantContent.toString(), outcome, errorCode,
-                usageTotal);
+                usageTotal, List.copyOf(terminalEvents), runLedger);
     }
 
     private static int intValue(Object value, int fallback) {
@@ -1421,8 +1485,12 @@ public class ChatController {
             String assistantContent,
             String outcome,
             String errorCode,
-            int tokenCount
+            int tokenCount,
+            List<RelayedTerminalEvent> terminalEvents,
+            com.cc01cc.p.xihe.cp.operation.LedgerToolRecorder.RunLedger runLedger
     ) {}
+
+    private record RelayedTerminalEvent(String name, String data) {}
 
     private void recordStreamEvent(Map<String, Integer> eventCounts, String eventName, int payloadLength,
                                    String requestId, String sessionId, String runId, int eventIndex) {

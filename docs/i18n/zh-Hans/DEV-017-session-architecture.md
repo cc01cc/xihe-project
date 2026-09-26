@@ -33,7 +33,7 @@ Session 是用户一次连贯工作上下文，独立于视图：
 | 归属 | 约定 |
 |------|------|
 | Session/Message | 以 CP 服务端 API 为 canonical source；不落 localStorage，历史值不恢复 |
-| 派生来源（PLAN-0407 M2） | V37 保存 `spawned_from_session_id/run_id/spawned_at`；V40 用 `kind=spawn/fork` 区分权限 lineage。root 为全空 provenance；spawn 沿父 Agent Session 收敛权限/停止，fork 保留来源链接但作为独立权限根；删除父后子转独立 root（T2.5）。生产 `spawn_agent` caller 及 grant 写入仍由 PLAN-0407 T2.10 落地，当前尚未启用 |
+| 派生来源（PLAN-0407 M2） | V37 保存 `spawned_from_session_id/run_id/spawned_at`；V40 用 `kind=spawn/fork` 区分权限 lineage。root 为全空 provenance；spawn 沿父 Agent Session 收敛权限/停止，fork 保留来源链接但作为独立权限根；删除父后子转独立 root（T2.5）。PLAN-0407 T2.10 通过 CP-owned logical MCP `spawn_agent` caller 接入独立 grant/approval、waiting link 与 child dispatch；Agent 不直调 `/internal/v1/agents/spawn` |
 | Message | 属于 Session，由 `useChatStore` 按 `sessionId` 索引；生命周期（创建/流式/完成）走 chat store |
 | Attachment | Session-scoped；后端 Session 专属空间持久化（`{base}/{sessionId}/` 下按 fileId 存取），`Message.attachments` 存元数据；workspace 对附件只读（文件本身经 workspace store 可写，见 DEV-010 §5） |
 | File | 物理文件归 Runtime；Session 经 `fileContext` 存引用（workspaceFiles/activeFilePath） |

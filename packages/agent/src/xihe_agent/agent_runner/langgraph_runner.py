@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import litellm
 from langchain.agents import create_agent as create_react_agent
+from langchain_core.callbacks import AsyncCallbackManagerForToolRun
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -352,7 +353,11 @@ class LCToolAdapter(BaseTool):
         self._context = context
         self._event_store = event_store
 
-    async def _arun(self, **kwargs: Any) -> tuple[str, dict[str, Any] | None]:
+    async def _arun(
+        self,
+        run_manager: AsyncCallbackManagerForToolRun | None = None,
+        **kwargs: Any,
+    ) -> tuple[str, dict[str, Any] | None]:
         """Execute the tool; return ``(content, artifact)``.
 
         PLAN-0342 T1.2: a failed, parseable command result yields a diagnostics
@@ -360,7 +365,8 @@ class LCToolAdapter(BaseTool):
         ToolMessage artifact; the formatted block (when there are items) and the
         middle-truncated raw output stay inside the untrusted envelope.
         """
-        call_id = str(uuid4())
+        # Share LangChain's tool-run identity with SSE start/end and the CP MCP header.
+        call_id = str(run_manager.run_id) if run_manager is not None else str(uuid4())
         await self._append_tool_called(call_id, kwargs)
         previous_item_id = self._context.metadata.get("operationItemId")
         self._context.metadata["operationItemId"] = call_id

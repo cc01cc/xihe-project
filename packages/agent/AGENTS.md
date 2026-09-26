@@ -49,7 +49,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - Context 通过 `ContextProvider.load()` 获取 CP 投影后的 `AgentContext` 快照；事件持久化由 `EventStore` 写入 CP
 - 分支上下文（PLAN-0410）：`CPContextServiceClient` 的 snapshot 请求携 `runId`/`branchId`，`AgentContext.branch_id` 只能来自 CP（Agent 从不自填）；选择器解析失败 fail-closed（404/409），禁止回退整 Session history；run-scoped 写点带 `correlation_id=runId`，必需 append 失败使 Run 收敛失败
 - Agent 执行、role/scope 绑定传播和 Context/Tool 边界的项目级 proposed SPEC 见 `../../spec/agent/`；通用授权正文仍归 `../../spec/security/`
-- **Agent principal / spawn caller**：Agent 不本地推导 principal；spawn 仅经 CP `POST /internal/v1/agents/spawn`（service Bearer）传 `{parentRunId, toolCallId}`，主体/Workspace 由 CP durable 数据派生；真实 caller 由 PLAN-0407 T2.10 落地。契约见 `../../spec/agent/principal-workspace-binding.md`。
+- **Agent principal / spawn caller**：Agent 不本地推导 principal；`spawn_agent` 是 CP-owned tool，只能经 CP logical MCP endpoint 发现/调用；`LCToolAdapter` 使用 LangChain callback `run_manager.run_id` 作为 EventStore/AgentEvent/MCP context 的唯一 tool-call correlation id。LLM provider ToolMessage ID 仅用于 LangGraph 内部。`POST /internal/v1/agents/spawn` 是非-Agent service surface，不得由 Agent 直调。主体/Workspace 与 `SPAWN_AGENT` grant 由 CP durable 数据派生；契约见 `../../spec/agent/principal-workspace-binding.md` 与 PLAN-0407 T2.10。
 - **Diagnostics security**：诊断内容是不可信输入；模型可见诊断必须在不可信信封内，结构化 artifact 不得进入 model wire。当前通道与边界见 [`DEV-013 §3.5`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。
 - **Streaming and logs**：流式 token 不得因 end-event fallback 重复；日志必须脱敏 `Authorization`，不得记录 token 内容。实现导航见 [`DEV-013`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。
 - **Approval/grant**：CP gate 后仅可对同一 request id 等待并重试一次；grant 必须绑定同一工具及 canonical arguments SHA-256，错配、过期、复用、重复 gate 或传输失败均 fail-closed。不可用截断 preview 授权。

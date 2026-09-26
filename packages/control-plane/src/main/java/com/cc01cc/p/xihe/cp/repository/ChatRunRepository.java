@@ -49,19 +49,39 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
             @Param("tokenCount") int tokenCount,
             @Param("assistantChars") int assistantChars);
 
+    @Modifying
+    @Transactional
+    @Query("update ChatRun r set r.status = :status, r.terminalOutcome = :outcome, "
+            + "r.errorCode = :errorCode, r.errorDetail = :errorDetail, "
+            + "r.tokenCount = :tokenCount, r.assistantChars = :assistantChars, "
+            + "r.terminalAt = :terminalAt, r.updatedAt = CURRENT_INSTANT "
+            + "where r.id = :id and r.status in :expectedStatuses")
+    int terminalTransition(
+            @Param("id") UUID id,
+            @Param("expectedStatuses") Collection<String> expectedStatuses,
+            @Param("status") String status,
+            @Param("outcome") String outcome,
+            @Param("errorCode") String errorCode,
+            @Param("errorDetail") String errorDetail,
+            @Param("tokenCount") int tokenCount,
+            @Param("assistantChars") int assistantChars,
+            @Param("terminalAt") Instant terminalAt);
+
     /**
-     * PLAN-0407 T2.5：spawn 与 cancel 在 parent Run 行上的共同序列化点（spawn 侧）。
-     * 悲观行锁持有到 spawn 事务提交/回滚，与 {@link #markCancelling} 的条件更新
-     * 争用同一行锁，两个胜序都由 durable 行状态决定。
+     * PLAN-0407 T2.5b：Session-first 路径中的第二把锁。调用方须先锁 parent
+     * Session；Run 锁持有到事务提交/回滚，spawn 准入与 cancellation CAS 共用此行。
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from ChatRun r where r.id = :id")
     Optional<ChatRun> findByIdForUpdate(@Param("id") UUID id);
 
+    @Query("select r.status from ChatRun r where r.id = :id")
+    Optional<String> findStatusById(@Param("id") UUID id);
+
     /**
-     * PLAN-0407 T2.5：cancel 侧的认领（条件更新）。只从 {@link #ACTIVE_LEASE_STATUSES}
-     * （在途且未被认领）转为 cancelling，已 cancelling/已终态返回 0 且不覆盖任何状态；
-     * updated_at 显式刷新（JPQL 绕过 @PreUpdate）。
+     * PLAN-0407 T2.5b：Session→Run 锁持有后执行 cancel 侧 CAS。只从
+     * {@link #ACTIVE_LEASE_STATUSES}（在途且未被认领）转为 cancelling，已 cancelling/已终态返回 0
+     * 且不覆盖任何状态；updated_at 显式刷新（JPQL 绕过 @PreUpdate）。
      */
     @Modifying
     @Transactional

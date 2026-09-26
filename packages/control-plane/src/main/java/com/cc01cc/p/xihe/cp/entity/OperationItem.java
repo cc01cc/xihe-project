@@ -34,6 +34,9 @@ public class OperationItem {
     @Convert(converter = UuidStringConverter.class)
     private String parentItemId;
 
+    @Column(name = "waiting_on_run_id", columnDefinition = "uuid")
+    private UUID waitingOnRunId;
+
     @Column(nullable = false)
     private Integer sequence;
 
@@ -120,6 +123,8 @@ public class OperationItem {
     public void setToolCallId(String toolCallId) { this.toolCallId = toolCallId; }
     public String getParentItemId() { return parentItemId; }
     public void setParentItemId(String parentItemId) { this.parentItemId = parentItemId; }
+    public UUID getWaitingOnRunId() { return waitingOnRunId; }
+    public void setWaitingOnRunId(UUID waitingOnRunId) { this.waitingOnRunId = waitingOnRunId; }
     public Integer getSequence() { return sequence; }
     public void setSequence(Integer sequence) { this.sequence = sequence; }
     public String getKind() { return kind; }

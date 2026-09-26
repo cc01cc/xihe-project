@@ -302,7 +302,7 @@ function printRunnerHelp() {
 usage: node scripts/e2e-host.mjs [runner flags] [playwright args...]
 
 runner flags:
-  --llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / history-marker / job / job-cancel / exec_command / overflow / success)
+  --llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / spawn_agent / history-marker / job / job-cancel / exec_command / overflow / success)
   --batch=<name>        expand a batch from scripts/e2e-batches.jsonc; the batch llm-mode applies unless --llm-mode is explicit
   --list-batches        list batch names, modes and spec counts, then exit
   --report-name=<file>  write the Playwright JSON report to .local/dev/<file> (adds the list,json reporter unless one is given)
@@ -886,6 +886,7 @@ async function runPlaywright() {
       XIHE_AGENT_PORT: agentPort,
       XIHE_RUNTIME_PORT: runtimePort,
       XIHE_FAKE_OAUTH_PORT: fakeOAuthPort,
+      XIHE_FAKE_LLM_PORT: fakeLlmPort,
       XIHE_FAKE_MCP_PORT: fakeMcpPort,
       XIHE_FAKE_MCP_ACCESS_TOKEN: fakeMcpAccessToken,
       // Test-only fixture metadata. The password remains inside the isolated

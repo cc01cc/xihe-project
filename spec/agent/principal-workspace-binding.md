@@ -3,7 +3,7 @@
 > 契约状态：`active`  
 > 实现状态：`partial`  
 > Profile：`security`  
-> Owner：PLAN-0374（唯一；Security principal/grant canonical 归 PLAN-0407）  
+> Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）
 > 消费者：CP 授权/Session/Chat admission、Workspace Agent 管理 API、UI Agent 管理与 Session 选择、PLAN-0407/0409/0410  
 > 来源：PLAN-0374（承接 BL-18/BL-29；本地稿 `plans/PLAN-0374-XH-agent-workspace-scope/spec/agent/principal-workspace-binding.md`）  
 > 更新日期：2026-09-25
@@ -35,10 +35,11 @@ principal grants、Workspace binding cap、Session instance cap 是三个独立�
 2. `user_id` 不参与 Agent grants；user-only 路径与 Agent 路径互不替代，WorkspaceUser 成员关系与 WorkspaceAgent binding 独立生效。
 3. cap 写入 subset 判据：actionClass 一致；ceiling resource `*` 可覆盖具体 resource，其余 resource pattern 必须全等；不推断一般 glob 包含。写入同时受操作者当前 grants 与 principal grants 限定。
 4. `CREATE_ACCOUNT`、`CREATE_TEMPLATE`、`MANAGE_WORKSPACE_AGENTS` 是三个独立授权 action，默认 deny，不得别名合并或由模板 config 写权限替代。
-5. CP-Agent internal spawn（`POST /internal/v1/agents/spawn`）仅认 service Bearer；请求严格 `{parentRunId, toolCallId}`，principal/owner/workspace/tool 由 durable parent run + `(operation_id, source='agent', tool_call_id)` item 派生；忽略/拒绝任何注入字段（400/401/403/404/409）。
-6. `POST /api/v1/sessions` 必须显式 `agentPrincipalId` 并校验 binding；Chat admission 只接受已绑定 Session，无 lazy-create。principal-null 空 Session 首绑条件：显式 `agentPrincipalId` + 无 ChatRun/message/user-direct Operation/ContextEvent，row CAS 与 ChatRun/Message/Operation 同事务；已绑定 Session 换 principal → 409。
-7. 每项变更写 `audit_logs`（`agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound`），含 actor、authorizationAction、object 与 permission diff；snapshot/API/audit 不含 systemPrompt 原文、provider secret 或 token。
-8. 人类创建账户与创建模板是分离授权/审计的两种操作；可创建权限不得超出操作者当前权限子集。V1 仅 human 执行；Agent 自助与多层审批按 BL-71/BL-70 后置，不得由模板 CRUD、spawn 或 config 写权限旁路。
+5. CP internal spawn service route（`POST /internal/v1/agents/spawn`）仅认 service Bearer；请求严格 `{parentRunId, toolCallId}`，principal/owner/workspace/tool 由 durable parent run + `(operation_id, source='agent', tool_call_id)` item 派生；忽略/拒绝任何注入字段（400/401/403/404/409）。该 route 不是 Agent 的 tool caller。
+6. Agent 生产 spawn caller 必须是 CP logical MCP endpoint 发布的 CP-owned `spawn_agent` tool；`LCToolAdapter` 以 LangChain callback `run_manager.run_id` 贯通 EventStore、Agent SSE 和 MCP `X-Operation-Item-Id` header。provider ToolMessage ID 仅是 LangGraph 内部关联，不作为 CP durable item key。CP 在 grant/approval gate 后本地派发，禁止 Agent 直调 internal spawn route。
+7. `POST /api/v1/sessions` 必须显式 `agentPrincipalId` 并校验 binding；Chat admission 只接受已绑定 Session，无 lazy-create。principal-null 空 Session 首绑条件：显式 `agentPrincipalId` + 无 ChatRun/message/user-direct Operation/ContextEvent，row CAS 与 ChatRun/Message/Operation 同事务；已绑定 Session 换 principal → 409。
+8. 每项变更写 `audit_logs`（`agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound`），含 actor、authorizationAction、object 与 permission diff；snapshot/API/audit 不含 systemPrompt 原文、provider secret 或 token。
+9. 人类创建账户与创建模板是分离授权/审计的两种操作；可创建权限不得超出操作者当前权限子集。V1 仅 human 执行；Agent 自助与多层审批按 BL-71/BL-70 后置，不得由模板 CRUD、spawn 或 config 写权限旁路。
 
 ## 状态、失败与恢复
 
@@ -55,7 +56,7 @@ principal grants、Workspace binding cap、Session instance cap 是三个独立�
 
 ## 跨模块数据流
 
-UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}/agents`；Agent → `POST /internal/v1/agents/spawn`（service Bearer）。wire 字段、错误码与 schema 以 `docs/api/openapi.yaml` 与 `docs/api/inventory.md` 为准；本文件不复制字段表。
+UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}/agents`；Agent → CP logical MCP tool `spawn_agent`（MCPProxy gate 后 CP 本地执行）；`POST /internal/v1/agents/spawn` 保留为 CP internal service surface，不是 Agent caller。wire 字段、错误码与 schema 以 `docs/api/openapi.yaml` 与 `docs/api/inventory.md` 为准；本文件不复制字段表。
 
 ## 兼容与迁移
 
@@ -71,4 +72,4 @@ UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}
 
 ## 来源与变更关系
 
-由 PLAN-0374 本地 spec 在实施波次晋升为 canonical；无 supersede。契约状态 `active`、实现状态 `partial` 的差距项：fork 创建（PLAN-0409）、branch context（PLAN-0410）、`agent-templates` CRUD 路由与 `askActionClasses` UI（0374 T3.1，待 0407 V44/T2.8）、0407 T2.10 真实 Agent spawn caller。
+由 PLAN-0374 本地 spec 在实施波次晋升为 canonical；spawn caller 边界由 PLAN-0407 design #53 修订（Agent 经 CP-owned MCP tool；internal route 不变但不再作为 caller）。契约状态 `active`、实现状态 `partial` 的差距项：fork 创建（PLAN-0409）、branch context（PLAN-0410）、`agent-templates` CRUD 路由与 `askActionClasses` UI（0374 T3.1，待 0407 V44/T2.8）、0407 T2.10 CP-owned MCP spawn tool。

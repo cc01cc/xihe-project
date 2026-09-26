@@ -283,13 +283,13 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     private ChatRunRecoveryService reconciliationService() {
         return new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
-                operationService, runCheckpointService);
+                chatRunTerminalService, runCheckpointService);
     }
 
     // ── PLAN-0317 T2.7：周期对账（grace=-1 让所有测试 run 立即进入候选） ──────
 
     private ChatRunReconciliationService staleRunReconciler() {
-        return new ChatRunReconciliationService(chatRunRepository, operationService, chatController, -1);
+        return new ChatRunReconciliationService(chatRunRepository, chatController, chatRunTerminalService, -1);
     }
 
     @Test
@@ -422,7 +422,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         ChatRun finished = runWithLease("succeeded", null, null);
 
         List<String> ids = chatRunCancellationService.cancelInFlightForSession(
-                sessionId, workspaceId, "session_deleted");
+                sessionId, userId, workspaceId, "session_deleted");
 
         assertEquals(2, ids.size());
         assertTrue(ids.contains(running.getId().toString()));
@@ -441,7 +441,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     void awaitTerminalDeliveryReturnsTrueAfterReleaseSignal() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
         List<String> ids = chatRunCancellationService.cancelInFlightForSession(
-                sessionId, workspaceId, "session_deleted");
+                sessionId, userId, workspaceId, "session_deleted");
 
         chatRunCancellationService.onRunReleased(run.getId().toString());
 
@@ -457,7 +457,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     void awaitTerminalDeliveryTimesOutWithExplicitLog() {
         ChatRun run = runWithLease("running", OWNER_A, Instant.now().plusSeconds(600));
         List<String> ids = chatRunCancellationService.cancelInFlightForSession(
-                sessionId, workspaceId, "session_deleted");
+                sessionId, userId, workspaceId, "session_deleted");
 
         ch.qos.logback.classic.Logger logger =
                 (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
@@ -646,6 +646,9 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatRunCancellationService chatRunCancellationService;
+
+    @Autowired
+    private ChatRunTerminalService chatRunTerminalService;
 
     @MockitoBean
     private ApprovalAgentClient approvalAgentClient;

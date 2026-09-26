@@ -25,6 +25,7 @@ public class ToolFaceRegistry {
     public static final String ACTION_CREATE_ACCOUNT = "CREATE_ACCOUNT";
     public static final String ACTION_CREATE_TEMPLATE = "CREATE_TEMPLATE";
     public static final String ACTION_MANAGE_WORKSPACE_AGENTS = "MANAGE_WORKSPACE_AGENTS";
+    public static final String ACTION_SPAWN_AGENT = "SPAWN_AGENT";
 
     private static final Set<String> READ_TOOLS = Set.of(
             "read_file", "read_file_range", "list_directory", "glob", "grep",
@@ -53,6 +54,7 @@ public class ToolFaceRegistry {
         WRITE_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_WRITE, ToolShape.STRUCTURED)));
         NETWORK_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_NETWORK, ToolShape.STRUCTURED)));
         EXEC_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_EXEC, ToolShape.INTERPRETER)));
+        builder.put("spawn_agent", new Face(ACTION_SPAWN_AGENT, ToolShape.STRUCTURED));
         builder.putAll(extraFaces);
         this.faces = Map.copyOf(builder);
     }
@@ -78,6 +80,6 @@ public class ToolFaceRegistry {
     /** Built-in action classes; callers may add their own (e.g. {@code db-migration}). */
     public static Set<String> builtinActionClasses() {
         return Set.of(ACTION_READ, ACTION_WRITE, ACTION_DELETE, ACTION_EXEC, ACTION_NETWORK, ACTION_CREDENTIAL,
-                ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS);
+                ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT);
     }
 }

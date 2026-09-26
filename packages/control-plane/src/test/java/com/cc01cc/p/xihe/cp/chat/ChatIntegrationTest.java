@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -49,6 +50,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -127,6 +129,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private HttpResponse<InputStream> sseResponse;
     private Future<?> sseReader;
     private final AtomicInteger doneEvents = new AtomicInteger();
+    private final AtomicInteger terminalDoneBeforeCommit = new AtomicInteger();
     private final StringBuilder sseTranscript = new StringBuilder();
     private final java.util.concurrent.atomic.AtomicBoolean sseClosed =
             new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -346,6 +349,25 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         assertEquals(sessionId, body.get("sessionId"));
         assertNotNull(body.get("messageId"));
         assertNotNull(body.get("runId"));
+    }
+
+    @Test
+    void terminalDoneSseIsEmittedOnlyAfterDurableTerminalCommit() {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        openSse(sessionId);
+
+        ResponseEntity<Map> response = postChat(sessionId, "verify terminal SSE ordering");
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(
+                () -> assertTrue(doneEvents.get() >= 1, "the Agent terminal event reaches the live SSE client"));
+        assertEquals(0, terminalDoneBeforeCommit.get(),
+                "the live SSE client must never observe done before terminal_at is durable");
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertEquals("succeeded", run.getStatus());
+        assertNotNull(run.getTerminalAt());
     }
 
     @Test
@@ -674,6 +696,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private void openSse(String sessionId) {
         try {
             doneEvents.set(0);
+            terminalDoneBeforeCommit.set(0);
             sseClosed.set(false);
             synchronized (sseTranscript) {
                 sseTranscript.setLength(0);
@@ -698,6 +721,12 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
                         }
                         if (line.startsWith("event:")
                                 && "done".equals(line.substring("event:".length()).trim())) {
+                            int terminalRows = jdbcTemplate.queryForObject(
+                                    "SELECT count(*) FROM chat_runs WHERE session_id = ? AND terminal_at IS NOT NULL",
+                                    Integer.class, UUID.fromString(sessionId));
+                            if (terminalRows == 0) {
+                                terminalDoneBeforeCommit.incrementAndGet();
+                            }
                             doneEvents.incrementAndGet();
                         }
                     }

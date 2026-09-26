@@ -69,7 +69,7 @@ flowchart LR
 ## 6. ChatRun 与错误终态（PLAN-247）
 
 - 公开 `POST /api/v1/chat` 的 readiness gate、SSE subscription 和 single-flight 通过后，CP 才创建 `origin=user_submission` 的 `ChatRun` 与 user `Message`；gate 前失败不产生历史消息。`origin` 不接受请求方设置。
-- `ChatRun.origin ∈ {user_submission, spawn}`；公开提交固定为前者。CP 内部 `ChatSubmissionService.createSpawn` 只接受父 Agent `spawn_agent` tool_call 的 durable `operation_items.id` UUID 作为 idempotency key，校验父 run/item 与 child Session provenance，并绕过浏览器 SSE gate。Spawn 只接受 fileId；CP 校验 child Session 所有权并从 File 行重建摘要/幂等 hash，不接受调用方附件 JSON，也不隐式共享 parent Session 文件。T1.4 已提供 CP persistence service contract；生产 Agent caller 与 authenticated internal entrypoint 在 PLAN-0407 T2.10（grant gate 启用后）接线。
+- `ChatRun.origin ∈ {user_submission, spawn}`；公开提交固定为前者。CP 内部 `ChatSubmissionService.createSpawn` 只接受父 Agent `spawn_agent` tool_call 的 durable OperationItem，校验父 run/item 与 child Session provenance，并绕过浏览器 SSE gate。T1.4 已提供 CP persistence service contract。PLAN-0407 T2.10 将 `spawn_agent` 暴露为 CP-owned logical MCP tool；Agent 经 MCPProxy 现有 grant/approval gate，CP local dispatch 执行 child transaction 并在 commit 后 handoff worker。`POST /internal/v1/agents/spawn` 保留为 CP internal service surface，不由 Agent 调用。
 - user submission 以 `(userId, sessionId, Idempotency-Key)` 唯一约束；spawn 另以 `(userId, idempotencyKey) WHERE origin='spawn'` 部分唯一索引防跨 child-session 并发重复。同事件同 request hash 返回既有 run，不同 hash 返回 `IDEMPOTENCY_KEY_CONFLICT`。
 - Agent provider failure 进入 `failed`/`partial`，流断开或缺少终态进入 `ambiguous`；`ambiguous` 不自动 retry，人工确认后使用新的幂等键。
 - `/api/v1/exec` 已删除，所有聊天 caller 统一迁移至 `/api/v1/chat`。
@@ -123,7 +123,7 @@ flowchart LR
 ## 8c. Agent principal / Workspace Agent API（PLAN-0374）
 
 - `POST /api/v1/agent-principals`（human `CREATE_ACCOUNT`，body `{name, templateId?}`）只建 principal+snapshot、不建 binding；`GET/PUT/DELETE /api/v1/workspaces/{workspaceId}/agents[/{principalId}]`：读=Workspace member，写=独立 `MANAGE_WORKSPACE_AGENTS`，PUT 仅改本 Workspace cap 且不超操作者/principal grants。创建/绑定/改 cap/解绑分别写 `agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound` audit。
-- `POST /internal/v1/agents/spawn` 仅 service Bearer，body 严格 `{parentRunId, toolCallId}`；主体/Workspace/chain 全部由 durable 数据派生（400/401/403/404/409）。`POST /api/v1/sessions` 要求显式 `agentPrincipalId`；principal-null 空 Session 首绑走 Chat admission CAS（403/409），无 lazy-create。
+- `POST /internal/v1/agents/spawn` 仅 service Bearer，body 严格 `{parentRunId, toolCallId}`；仅 CP internal service surface，主体/Workspace/chain 全部由 durable 数据派生（400/401/403/404/409）。Agent 生产 caller 通过 CP logical MCP tool `spawn_agent`，不直调该 route。`POST /api/v1/sessions` 要求显式 `agentPrincipalId`；principal-null 空 Session 首绑走 Chat admission CAS（403/409），无 lazy-create。
 - 三个授权 action（`CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_WORKSPACE_AGENTS`）默认 deny、彼此独立；wire 字段与错误码以 `docs/api/openapi.yaml`/`inventory.md` 为准，契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)。
 
 ## 8d. Branch-aware 上下文（PLAN-0410 / V43）

@@ -22,6 +22,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -45,6 +46,7 @@ class ChatRunRecoveryServiceTest {
     private ChatApprovalRepository approvalRepository;
     private ChatController chatController;
     private OperationService operationService;
+    private ChatRunTerminalService terminalService;
     private RunCheckpointService runCheckpointService;
     private ChatRunRecoveryService service;
 
@@ -54,12 +56,18 @@ class ChatRunRecoveryServiceTest {
         approvalRepository = mock(ChatApprovalRepository.class);
         chatController = mock(ChatController.class);
         operationService = mock(OperationService.class);
+        terminalService = mock(ChatRunTerminalService.class);
         runCheckpointService = mock(RunCheckpointService.class);
+        when(terminalService.terminalize(any())).thenAnswer(invocation -> {
+            ChatRunTerminalService.TerminalRequest request = invocation.getArgument(0);
+            return new ChatRunTerminalService.TerminalResult(
+                    ChatRunTerminalService.Outcome.COMMITTED, request.status());
+        });
         when(chatRunRepository.findByStatus("cancelling")).thenReturn(List.of());
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of());
         when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any())).thenReturn(List.of());
         service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, chatController,
-                operationService, runCheckpointService);
+                terminalService, runCheckpointService);
     }
 
     private ChatRun runWithStatus(String status) {
@@ -74,9 +82,11 @@ class ChatRunRecoveryServiceTest {
         when(approvalRepository.findByRunIdAndStateIn(anyString(), any())).thenReturn(List.of());
 
         service.reconcileOnStartup();
-        assertEquals("ambiguous", active.getStatus());
-        assertEquals("CP_RESTARTED", active.getErrorCode());
-        verify(chatRunRepository).save(active);
+        verify(terminalService).terminalize(argThat(request -> RUN_ID.equals(request.runId())
+                && request.expectedStatuses().contains("running")
+                && "ambiguous".equals(request.status())
+                && "CP_RESTARTED".equals(request.errorCode())
+                && request.ledgerMode() == ChatRunTerminalService.LedgerMode.RECONCILIATION));
 
         service.captureRecoveredRuns();
         verify(runCheckpointService).captureTerminalRuns();
@@ -145,7 +155,7 @@ class ChatRunRecoveryServiceTest {
                 operationService, chatRunRepository, new ObjectMapper(),
                 mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
-                approvalRepository, chatController, operationService, realService);
+                approvalRepository, chatController, terminalService, realService);
         try {
             recovery.captureRecoveredRuns();
             recovery.captureRecoveredRuns();

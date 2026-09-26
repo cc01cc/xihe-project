@@ -22,6 +22,9 @@ public interface LedgerOperationRepository extends JpaRepository<LedgerOperation
 
     Optional<LedgerOperation> findByRunId(String runId);
 
+    @Query("select o.id from LedgerOperation o where o.runId = :runId")
+    Optional<UUID> findIdByRunId(@Param("runId") String runId);
+
     boolean existsByUserIdAndSessionIdAndIdempotencyKey(
             String userId, String sessionId, String idempotencyKey);
 

@@ -25,6 +25,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -33,17 +34,24 @@ import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -51,9 +59,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0407 T2.5：spawn/cancel 序列化与父删除（真实 PostgreSQL）。
+ * PLAN-0407 T2.5/T2.5b：spawn/cancel 序列化与 Session-first 删除（真实 PostgreSQL）。
  *
- * <p>覆盖：① spawn 与 cancel 在 parent Run 行上的共同 DB 锁/条件更新（两种确定胜序 +
+ * <p>覆盖：① spawn 与 cancel 按 Session→Run 共用同一事务锁序（两种确定胜序 +
  * CyclicBarrier 真实竞态）；② 序列化后终态一致（parent/child 状态与零半行）；
  * ③ 仅沿 kind=spawn 取消活跃后代并有界等待、fork 不跟随；④ 删除父 Session 零级联；
  * ⑤ cancel 端点对认领结果的 HTTP 契约。
@@ -105,6 +113,9 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     private String userId;
     private String workspaceId;
     private UUID principalId;
@@ -141,12 +152,13 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         int runsBefore = runCount();
 
         ChatRunCancellationService.CancelClaim claim =
-                cancellationService.cancelSerialized(parent.parentRunId, workspaceId, "t25_cancel_first");
+                cancellationService.cancelSerialized(
+                        parent.parentRunId, parent.parentSessionId, userId, workspaceId, "t25_cancel_first");
         assertEquals(ChatRunCancellationService.CancelOutcome.CLAIMED, claim.outcome());
         assertEquals("cancelled", runStatus(parent.parentRunId), "claim winner settles the parent run");
 
         CpApiException rejected = assertThrows(CpApiException.class,
-                () -> submissionService.createSpawnFromParent(parent.parentRunId, parent.toolCallId));
+                () -> spawnDirect(parent.parentRunId, parent.toolCallId));
         assertEquals(HttpStatus.CONFLICT, rejected.getStatus());
         assertEquals("SPAWN_PARENT_RUN_NOT_ACTIVE", rejected.getCode());
         assertEquals(sessionsBefore, sessionCount(), "rejected spawn must leave zero half rows");
@@ -158,23 +170,24 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     void spawnWinsCancelSeesCommittedChildStopsSpawnChainAndSkipsFork() {
         ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"chain\"}");
         ChatSubmissionService.SpawnResult child =
-                submissionService.createSpawnFromParent(parent.parentRunId, parent.toolCallId);
+                spawnDirect(parent.parentRunId, parent.toolCallId);
         assertNotNull(child.runId());
 
         UUID childOperationId = operationService.findOperationIdByRunId(child.runId());
         assertNotNull(childOperationId, "spawn run must have a durable operation");
         String grandChildToolCallId = UUID.randomUUID().toString();
         operationService.appendItem(childOperationId, grandChildToolCallId, null,
-                "tool_call", "spawn_agent", "agent", "{}", null, null);
+                "tool_call", "spawn_agent", "agent", "{\"prompt\":\"grandchild\"}", null, null);
         ChatSubmissionService.SpawnResult grandChild =
-                submissionService.createSpawnFromParent(child.runId(), grandChildToolCallId);
+                spawnDirect(child.runId(), grandChildToolCallId);
         assertNotNull(grandChild.runId());
 
         Session forkSession = forkSession(parent.parentSessionId, parent.parentRunId);
         String forkRunId = saveRun(forkSession, "running");
 
         ChatRunCancellationService.CancelClaim claim =
-                cancellationService.cancelSerialized(parent.parentRunId, workspaceId, "t25_spawn_first");
+                cancellationService.cancelSerialized(
+                        parent.parentRunId, parent.parentSessionId, userId, workspaceId, "t25_spawn_first");
         assertEquals(ChatRunCancellationService.CancelOutcome.CLAIMED, claim.outcome());
 
         assertEquals("cancelled", runStatus(parent.parentRunId));
@@ -202,7 +215,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
             barrier.await(10, TimeUnit.SECONDS);
             try {
                 ChatSubmissionService.SpawnResult result =
-                        submissionService.createSpawnFromParent(parent.parentRunId, parent.toolCallId);
+                        spawnDirect(parent.parentRunId, parent.toolCallId);
                 return new SpawnAttempt(true, result.runId(), null);
             } catch (CpApiException e) {
                 return new SpawnAttempt(false, null, e.getCode());
@@ -210,7 +223,8 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         });
         Future<ChatRunCancellationService.CancelClaim> cancelFuture = executor.submit(() -> {
             barrier.await(10, TimeUnit.SECONDS);
-            return cancellationService.cancelSerialized(parent.parentRunId, workspaceId, "t25_race");
+            return cancellationService.cancelSerialized(
+                    parent.parentRunId, parent.parentSessionId, userId, workspaceId, "t25_race");
         });
         SpawnAttempt spawn;
         ChatRunCancellationService.CancelClaim claim;
@@ -244,7 +258,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
     void deletingParentSessionKeepsSpawnChildSessionAndRun() {
         ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"delete parent\"}");
         ChatSubmissionService.SpawnResult child =
-                submissionService.createSpawnFromParent(parent.parentRunId, parent.toolCallId);
+                spawnDirect(parent.parentRunId, parent.toolCallId);
         assertNotNull(child.runId());
 
         sessionService.delete(parent.parentSessionId, userId, workspaceId);
@@ -259,6 +273,207 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         ChatRun childRun = chatRunRepository.findById(UUID.fromString(child.runId())).orElseThrow();
         assertEquals("accepted", childRun.getStatus(),
                 "child run keeps running independently of the deleted parent");
+    }
+
+    @Test
+    void deleteWinsSessionFirstAgainstSpawnAndCancelClaims() throws Exception {
+        ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"delete wins\"}");
+        int sessionsBefore = sessionCount();
+        int runsBefore = runCount();
+        CountDownLatch sessionLocked = new CountDownLatch(1);
+        CountDownLatch releaseDelete = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+        TransactionTemplate transactions = new TransactionTemplate(transactionManager);
+
+        Future<?> deleteFuture = executor.submit(() -> transactions.execute(status -> {
+            sessionRepository.findByIdForUpdate(UUID.fromString(parent.parentSessionId)).orElseThrow();
+            sessionLocked.countDown();
+            awaitLatch(releaseDelete, "delete winner release");
+            sessionService.delete(parent.parentSessionId, userId, workspaceId);
+            return null;
+        }));
+
+        SpawnAttempt spawn;
+        ChatRunCancellationService.CancelClaim claim;
+        try {
+            assertTrue(sessionLocked.await(5, TimeUnit.SECONDS), "delete must own the Session row first");
+            Future<SpawnAttempt> spawnFuture = executor.submit(() -> {
+                try {
+                        ChatSubmissionService.SpawnResult result = transactions.execute(status -> {
+                            jdbcTemplate.execute("SET LOCAL application_name = 't25-spawn-delete-loser'");
+                            return spawnDirect(parent.parentRunId, parent.toolCallId);
+                    });
+                    return new SpawnAttempt(true, result.runId(), null);
+                } catch (CpApiException error) {
+                    return new SpawnAttempt(false, null, error.getCode());
+                }
+            });
+            Future<ChatRunCancellationService.CancelClaim> cancelFuture = executor.submit(() -> {
+                return transactions.execute(status -> {
+                    jdbcTemplate.execute("SET LOCAL application_name = 't25-cancel-delete-loser'");
+                    return cancellationService.cancelSerialized(
+                            parent.parentRunId, parent.parentSessionId, userId, workspaceId, "session_deleted");
+                });
+            });
+            awaitPostgresLockWait("t25-spawn-delete-loser");
+            awaitPostgresLockWait("t25-cancel-delete-loser");
+            releaseDelete.countDown();
+            deleteFuture.get(15, TimeUnit.SECONDS);
+            spawn = spawnFuture.get(15, TimeUnit.SECONDS);
+            claim = cancelFuture.get(15, TimeUnit.SECONDS);
+        } finally {
+            releaseDelete.countDown();
+            executor.shutdownNow();
+        }
+
+        assertTrue(!spawn.created(), "a deleted parent cannot admit a child spawn");
+        assertEquals("SPAWN_PARENT_RUN_NOT_FOUND", spawn.code());
+        assertEquals(ChatRunCancellationService.CancelOutcome.NOT_FOUND, claim.outcome());
+        assertTrue(sessionRepository.findById(UUID.fromString(parent.parentSessionId)).isEmpty());
+        assertTrue(chatRunRepository.findById(UUID.fromString(parent.parentRunId)).isEmpty());
+        assertEquals(sessionsBefore - 1, sessionCount(), "delete winner leaves no child Session");
+        assertEquals(runsBefore - 1, runCount(), "delete winner leaves no child Run");
+        assertEquals(0, operationItemCount(parent.operationId), "delete winner leaves no parent spawn item");
+    }
+
+    @Test
+    void spawnAndCancelClaimsThatWinBeforeDeleteRemainSerialized() throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        TransactionTemplate transactions = new TransactionTemplate(transactionManager);
+        try {
+            ParentFixture spawnParent = fixture("spawn_agent", "{\"prompt\":\"spawn wins delete\"}");
+            SpawnDeleteOutcome spawnOutcome = transactions.execute(status -> {
+                sessionRepository.findByIdForUpdate(UUID.fromString(spawnParent.parentSessionId)).orElseThrow();
+                ChatSubmissionService.SpawnResult child = spawnDirect(
+                        spawnParent.parentRunId, spawnParent.toolCallId);
+                assertEquals(1, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM operation_items "
+                                + "WHERE operation_id = ? AND tool_call_id = ?",
+                        Integer.class, UUID.fromString(spawnParent.operationId),
+                        UUID.fromString(spawnParent.toolCallId)),
+                        "spawn winner must retain exactly one parent item until deletion; T2.10 owns the waiting link");
+                Future<?> deletion = executor.submit(() -> {
+                    return transactions.execute(deleteStatus -> {
+                        jdbcTemplate.execute("SET LOCAL application_name = 't25-delete-after-spawn'");
+                        sessionService.delete(spawnParent.parentSessionId, userId, workspaceId);
+                        return null;
+                    });
+                });
+                awaitPostgresLockWait("t25-delete-after-spawn");
+                return new SpawnDeleteOutcome(child, deletion);
+            });
+            spawnOutcome.deletion().get(15, TimeUnit.SECONDS);
+            assertTrue(sessionRepository.findById(UUID.fromString(spawnOutcome.child().sessionId())).isPresent(),
+                    "spawn winner commits its child before parent deletion");
+            assertEquals("accepted", runStatus(spawnOutcome.child().runId()));
+            assertEquals(0, operationItemCount(spawnParent.operationId),
+                    "parent deletion removes its ledger item without deleting the child");
+
+            ParentFixture cancelParent = fixture("spawn_agent", "{\"prompt\":\"cancel wins delete\"}");
+            CancelDeleteOutcome cancelOutcome = transactions.execute(status -> {
+                sessionRepository.findByIdForUpdate(UUID.fromString(cancelParent.parentSessionId)).orElseThrow();
+                ChatRunCancellationService.CancelClaim claim = cancellationService.claimCancellation(
+                        cancelParent.parentRunId, cancelParent.parentSessionId, userId, workspaceId);
+                Future<?> deletion = executor.submit(() -> {
+                    return transactions.execute(deleteStatus -> {
+                        jdbcTemplate.execute("SET LOCAL application_name = 't25-delete-after-cancel'");
+                        sessionService.delete(cancelParent.parentSessionId, userId, workspaceId);
+                        return null;
+                    });
+                });
+                awaitPostgresLockWait("t25-delete-after-cancel");
+                return new CancelDeleteOutcome(claim, deletion);
+            });
+            cancelOutcome.deletion().get(15, TimeUnit.SECONDS);
+            assertEquals(ChatRunCancellationService.CancelOutcome.CLAIMED, cancelOutcome.claim().outcome());
+            assertTrue(sessionRepository.findById(UUID.fromString(cancelParent.parentSessionId)).isEmpty());
+            assertTrue(chatRunRepository.findById(UUID.fromString(cancelParent.parentRunId)).isEmpty());
+            assertEquals(0, operationItemCount(cancelParent.operationId),
+                    "cancel-winner then delete leaves no parent operation item");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void cancellationClaimRejectsMismatchedSessionAndTenantContext() {
+        ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"wrong cancellation context\"}");
+
+        ChatRunCancellationService.CancelClaim wrongSession = cancellationService.claimCancellation(
+                parent.parentRunId, UUID.randomUUID().toString(), userId, workspaceId);
+        ChatRunCancellationService.CancelClaim wrongUser = cancellationService.cancelSerialized(
+                parent.parentRunId, parent.parentSessionId, UUID.randomUUID().toString(), workspaceId, "wrong_user");
+        ChatRunCancellationService.CancelClaim wrongWorkspace = cancellationService.cancelSerialized(
+                parent.parentRunId, parent.parentSessionId, userId,
+                UUID.randomUUID().toString(), "wrong_workspace");
+
+        assertEquals(ChatRunCancellationService.CancelOutcome.NOT_FOUND, wrongSession.outcome());
+        assertEquals(ChatRunCancellationService.CancelOutcome.NOT_FOUND, wrongUser.outcome());
+        assertEquals(ChatRunCancellationService.CancelOutcome.NOT_FOUND, wrongWorkspace.outcome());
+        assertEquals("running", runStatus(parent.parentRunId()),
+                "a claim with mismatched durable or caller ownership must not settle or forward");
+    }
+
+    @Test
+    void sessionLockTimeoutFailsClosedBeforeCancelForwarding() throws Exception {
+        ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"lock timeout\"}");
+        HttpServer agentServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger cancelRequests = new AtomicInteger();
+        String previousAgentUrl = (String) ReflectionTestUtils.getField(cancellationService, "agentUrl");
+        CountDownLatch sessionLocked = new CountDownLatch(1);
+        CountDownLatch releaseLock = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        TransactionTemplate transactions = new TransactionTemplate(transactionManager);
+        Future<?> lockHolder = null;
+        boolean serverStarted = false;
+        boolean agentUrlChanged = false;
+
+        try {
+            agentServer.createContext("/internal/v1/agent/runs/", exchange -> {
+                cancelRequests.incrementAndGet();
+                exchange.getRequestBody().readAllBytes();
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+            });
+            agentServer.start();
+            serverStarted = true;
+            ReflectionTestUtils.setField(cancellationService, "agentUrl",
+                    "http://127.0.0.1:" + agentServer.getAddress().getPort() + "/chat");
+            agentUrlChanged = true;
+            lockHolder = executor.submit(() -> transactions.execute(status -> {
+                sessionRepository.findByIdForUpdate(UUID.fromString(parent.parentSessionId)).orElseThrow();
+                sessionLocked.countDown();
+                awaitLatch(releaseLock, "session lock release");
+                return null;
+            }));
+
+            assertTrue(sessionLocked.await(5, TimeUnit.SECONDS), "lock holder must own the Session row");
+            Future<ChatRunCancellationService.CancelClaim> cancellation = executor.submit(
+                    () -> cancellationService.cancelSerialized(
+                            parent.parentRunId, parent.parentSessionId, userId, workspaceId, "timeout"));
+            ExecutionException lockFailure = assertThrows(ExecutionException.class,
+                    () -> cancellation.get(8, TimeUnit.SECONDS));
+            assertTrue(lockFailure.getCause() instanceof PessimisticLockingFailureException,
+                    "the Session lock timeout must surface as a persistence lock failure");
+            assertEquals("running", runStatus(parent.parentRunId()),
+                    "failed claim must not transition the Run or forward cancellation");
+            assertEquals(0, cancelRequests.get(), "a failed claim must not call Agent or start settlement");
+        } finally {
+            releaseLock.countDown();
+            try {
+                if (lockHolder != null) {
+                    lockHolder.get(10, TimeUnit.SECONDS);
+                }
+            } finally {
+                executor.shutdownNow();
+                if (serverStarted) {
+                    agentServer.stop(0);
+                }
+                if (agentUrlChanged) {
+                    ReflectionTestUtils.setField(cancellationService, "agentUrl", previousAgentUrl);
+                }
+            }
+        }
     }
 
     /** T2.5 端点契约：认领获胜 → 200 收敛；已终态 → 409；已 cancelling → 200 幂等不改写。 */
@@ -318,6 +533,30 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
 
     private record SpawnAttempt(boolean created, String runId, String code) {}
 
+    private record SpawnDeleteOutcome(ChatSubmissionService.SpawnResult child, Future<?> deletion) {}
+
+    private record CancelDeleteOutcome(ChatRunCancellationService.CancelClaim claim, Future<?> deletion) {}
+
+    private static void awaitLatch(CountDownLatch latch, String description) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting for " + description);
+            }
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for " + description, error);
+        }
+    }
+
+    private void awaitPostgresLockWait(String applicationName) {
+        Awaitility.await().atMost(Duration.ofSeconds(5)).pollInterval(Duration.ofMillis(25))
+                .untilAsserted(() -> assertEquals(1, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM pg_stat_activity "
+                                + "WHERE application_name = ? AND state = 'active' "
+                                + "AND wait_event_type = 'Lock'",
+                        Integer.class, applicationName)));
+    }
+
     private ParentFixture fixture(String toolName, String argumentsPreview) {
         ensureWorkspace();
         Session parentSession = new Session(workspaceId, userId,
@@ -337,6 +576,14 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
                 "tool_call", toolName, "agent", argumentsPreview, null, null);
         return new ParentFixture(parentSession.getId().toString(), parentRunId,
                 operation.operationId().toString(), item.getToolCallId());
+    }
+
+    /** This suite isolates Session→Run→Operation→Item serialization; gate behavior is tested separately. */
+    private ChatSubmissionService.SpawnResult spawnDirect(String parentRunId, String toolCallId) {
+        ChatSubmissionService.SpawnInvocation invocation =
+                submissionService.prepareSpawnInvocation(parentRunId, toolCallId);
+        return submissionService.createSpawnFromParent(parentRunId, toolCallId,
+                new ChatSubmissionService.SpawnAuthorization(invocation.authorizationBody(), null, null));
     }
 
     private Session forkSession(String parentSessionId, String parentRunId) {
@@ -421,5 +668,11 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         return jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(workspace_id AS VARCHAR) = ?",
                 Integer.class, workspaceId);
+    }
+
+    private int operationItemCount(String operationId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM operation_items WHERE operation_id = ?",
+                Integer.class, UUID.fromString(operationId));
     }
 }

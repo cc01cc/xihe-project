@@ -40,6 +40,8 @@ import java.util.Map;
 
 @Service
 public class ApprovalService {
+    public static final long DEFAULT_GATE_TTL_SECONDS = 300;
+
 
     private static final Logger logger = LoggerFactory.getLogger(ApprovalService.class);
     private static final List<String> REPLAYABLE_STATES = List.of("pending", "dispatching", "dispatch_unknown");

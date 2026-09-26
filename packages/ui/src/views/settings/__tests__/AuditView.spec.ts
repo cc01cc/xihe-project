@@ -71,6 +71,7 @@ function policyItem(overrides: Partial<OperationItemView> = {}): OperationItemVi
     toolName: 'write_file',
     source: 'mcp',
     policyDecision: 'allow',
+    waitingOnRunId: null,
     status: 'completed',
     policy: POLICY,
     ...overrides,

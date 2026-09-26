@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
+import com.cc01cc.p.xihe.cp.chat.AgentSpawnExecutionService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
@@ -63,6 +64,7 @@ class JobTimeoutClampTest {
     private SessionRepository sessionRepository;
     private OperationService operationService;
     private ConfigService configService;
+    private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
 
     @BeforeEach
@@ -80,6 +82,7 @@ class JobTimeoutClampTest {
         sessionRepository = mock(SessionRepository.class);
         operationService = mock(OperationService.class);
         configService = mock(ConfigService.class);
+        agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
 
         controller = new McpProxyController(
                 requestRewriter, policyEngine,
@@ -89,11 +92,14 @@ class JobTimeoutClampTest {
                 mock(JobStateService.class),
                 configService,
                 new ToolTimeoutPolicy(),
-                new org.springframework.mock.env.MockEnvironment()
+                new org.springframework.mock.env.MockEnvironment(),
+                agentSpawnExecutionService
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
         when(policyEngine.loadContext(any(), any(), any())).thenReturn(PolicyContext.EMPTY);
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyBoolean())).thenReturn(true);
         when(policyEngine.evaluateVerdict(any(PolicyContext.class), anyString(), anyString(),
                 anyString(), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN,
@@ -472,9 +478,9 @@ class JobTimeoutClampTest {
             Class<?> accessClass = Class.forName(
                     "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
             var constructor = accessClass.getDeclaredConstructor(
-                    String.class, String.class, String.class, String.class);
+                    String.class, String.class, String.class, String.class, boolean.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(wsId, userId, null, null);
+            return constructor.newInstance(wsId, userId, null, null, true);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

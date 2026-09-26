@@ -252,6 +252,25 @@ public class AgentPrincipalService {
         return toJson(retainCovered(bindingPermissions, principalPermissions));
     }
 
+    @Transactional(readOnly = true)
+    public JsonNode deriveSpawnChildCap(JsonNode parentSessionSnapshot, String principalId, String workspaceId) {
+        Set<GrantIntersectionEvaluator.PermissionAtom> parentPermissions = parsePermissions(parentSessionSnapshot);
+        Set<GrantIntersectionEvaluator.PermissionAtom> currentCap = parsePermissions(
+                resolveSessionCap(principalId, workspaceId));
+        Set<GrantIntersectionEvaluator.PermissionAtom> intersection = new LinkedHashSet<>();
+        for (GrantIntersectionEvaluator.PermissionAtom atom : parentPermissions) {
+            if (isCoveredBy(atom, currentCap)) {
+                intersection.add(atom);
+            }
+        }
+        for (GrantIntersectionEvaluator.PermissionAtom atom : currentCap) {
+            if (isCoveredBy(atom, parentPermissions)) {
+                intersection.add(atom);
+            }
+        }
+        return toJson(intersection);
+    }
+
     /** Global account disable; the caller must authorize the account-lifecycle operation. */
     @Transactional
     public boolean disablePrincipal(String actorUserId, UUID principalId) {

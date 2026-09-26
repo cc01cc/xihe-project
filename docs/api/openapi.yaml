@@ -1528,9 +1528,10 @@ paths:
     post:
       operationId: spawnAgentSession
       summary: Create an Agent spawn child Session from a durable parent run
+      description: Internal CP service surface only; the Agent production caller uses the CP-owned spawn_agent tool through /api/v1/mcp.
       security: [{ bearerAuth: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentSpawnRequest' } } } }
-      responses: { '200': { description: 'Child Session and spawn ChatRun created, or the same child idempotently replayed', content: { application/json: { schema: { $ref: '#/components/schemas/AgentSpawnResponse' } } } }, '400': { description: 'INVALID_REQUEST — body must contain exactly parentRunId and toolCallId as UUID strings; injected principalId/userId/workspaceId/sessionId/grants are rejected before any write', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { description: 'FORBIDDEN — durable item is not an agent spawn_agent tool call of this parent run, or the parent Session has no active Workspace-bound Agent principal', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: 'SPAWN_PARENT_RUN_NOT_FOUND or SPAWN_EVENT_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'IDEMPOTENCY_KEY_CONFLICT — the durable spawn item was already used with a different request hash', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { $ref: '#/components/responses/Problem' } }
+      responses: { '200': { description: 'Child Session and spawn ChatRun created, or the same child idempotently replayed; authorization, waiting link, audit, and one-shot grant consumption commit atomically', content: { application/json: { schema: { $ref: '#/components/schemas/AgentSpawnResponse' } } } }, '400': { description: 'INVALID_REQUEST — body must contain exactly parentRunId and toolCallId as UUID strings; injected identity/grant fields or incomplete/truncated durable prompt arguments are rejected before any write', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { description: 'FORBIDDEN — no explicit SPAWN_AGENT grant, the durable item is not an agent spawn_agent tool call of this parent run, or the parent Session has no active Workspace-bound Agent principal', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: 'SPAWN_PARENT_RUN_NOT_FOUND or SPAWN_EVENT_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'APPROVAL_REQUIRED, SPAWN_PARENT_RUN_NOT_ACTIVE, SPAWN_ARGUMENTS_CHANGED, or IDEMPOTENCY_KEY_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { $ref: '#/components/responses/Problem' } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -2379,7 +2380,7 @@ components:
         reason: { type: [string, 'null'], description: Legacy probe key kept in sync with unavailableReason. }
     OperationItemView:
       type: object
-      required: [id, operationId, sequence, kind, source, status]
+      required: [id, operationId, sequence, kind, source, status, waitingOnRunId]
       properties:
         id: { type: string, format: uuid, readOnly: true }
         operationId: { type: string, format: uuid, readOnly: true }
@@ -2392,6 +2393,7 @@ components:
         policyDecision: { type: [string, 'null'], readOnly: true, description: 'Legacy coarse decision marker (allow/deny/pending/...); the typed safe verdict snapshot is `policy`.' }
         policy: { $ref: '#/components/schemas/OperationPolicySummary', description: 'Optional safe verdict snapshot for dispatched calls; omitted on legacy rows and non-dispatch items.' }
         approvalRequestId: { type: [string, 'null'], format: uuid, readOnly: true }
+        waitingOnRunId: { type: [string, 'null'], format: uuid, readOnly: true, description: 'Durable child Run currently linked to this tool item; null when no child is waiting.' }
         status: { type: string, enum: [pending, running, waiting_for_approval, resolving, completed, failed, aborted, cancelled, ambiguous], readOnly: true }
         errorCode: { type: [string, 'null'], readOnly: true }
         resultRef: { type: [string, 'null'], readOnly: true, description: 'Internal trace projection only; omitted from user views.' }

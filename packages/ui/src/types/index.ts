@@ -424,6 +424,7 @@ export interface OperationItemView {
     policyDecision?: string | null;
     policy?: OperationPolicyView;
     approvalRequestId?: string | null;
+    waitingOnRunId: string | null;
     status: string;
     errorCode?: string | null;
     startedAt?: string | null;

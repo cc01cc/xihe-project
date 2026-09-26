@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.File;
 import com.cc01cc.p.xihe.cp.entity.Message;
@@ -8,6 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
@@ -22,6 +24,7 @@ import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -38,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Atomic Chat submission boundary for ChatRun, user Message and Ledger root.
@@ -47,7 +51,7 @@ import java.util.UUID;
 public class ChatSubmissionService {
     public static final String SPAWN_TOOL_NAME = "spawn_agent";
 
-
+    private static final int MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH = 4096;
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
     private static final Logger logger = LoggerFactory.getLogger(ChatSubmissionService.class);
 
@@ -66,6 +70,9 @@ public class ChatSubmissionService {
     private final EventStoreRepository eventStoreRepository;
     private final AgentPrincipalService agentPrincipalService;
     private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
+    private final EntityManager entityManager;
+    private final ApprovalService approvalService;
+    private final AuditLogger auditLogger;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  MessageRepository messageRepository,
@@ -79,9 +86,12 @@ public class ChatSubmissionService {
                                  DbLockTimeout dbLockTimeout,
                                  ObjectMapper objectMapper,
                                  LedgerOperationRepository ledgerOperationRepository,
-                                 EventStoreRepository eventStoreRepository,
-                                 AgentPrincipalService agentPrincipalService,
-                                 com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService) {
+                                  EventStoreRepository eventStoreRepository,
+                                  AgentPrincipalService agentPrincipalService,
+                                  com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
+                                  EntityManager entityManager,
+                                  ApprovalService approvalService,
+                                  AuditLogger auditLogger) {
         this.chatRunRepository = chatRunRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -97,6 +107,9 @@ public class ChatSubmissionService {
         this.eventStoreRepository = eventStoreRepository;
         this.agentPrincipalService = agentPrincipalService;
         this.branchPathService = branchPathService;
+        this.entityManager = entityManager;
+        this.approvalService = approvalService;
+        this.auditLogger = auditLogger;
     }
 
     @Transactional
@@ -140,16 +153,21 @@ public class ChatSubmissionService {
                     "spawn user, workspace and request id are required");
         }
 
-        dbLockTimeout.apply();
-        // PLAN-0407 T2.5：先锁 parent Run（与 cancel 认领的条件更新争用同一行锁），
-        // 锁序固定为 parent Run → spawn item → child Session，避免与取消路径交叉死锁。
-        ChatRun parentRun = chatRunRepository.findByIdForUpdate(UUID.fromString(spawn.parentRunId()))
-                .orElseThrow(() -> spawnProvenanceConflict("Parent run not found"));
+        // PLAN-0407 T2.5b: all spawn/cancel/delete writers lock Session before Run.
+        LockedSpawnParent lockedParent = lockSpawnParent(spawn.parentRunId(), spawn.parentSessionId(),
+                spawn.userId(), spawn.workspaceId(),
+                () -> spawnProvenanceConflict("Parent run or session not found"));
+        ChatRun parentRun = lockedParent.run();
+        UUID parentOperationId = operationService.findOperationIdByRunId(spawn.parentRunId());
+        if (parentOperationId == null) {
+            throw spawnProvenanceConflict("Parent run has no durable operation");
+        }
+        ledgerOperationRepository.findByIdForUpdate(parentOperationId)
+                .orElseThrow(() -> spawnProvenanceConflict("Parent LedgerOperation not found"));
         OperationItem event = operationItemRepository.findByIdForUpdate(spawn.spawnEventId())
                 .orElseThrow(() -> spawnProvenanceConflict("Spawn event not found"));
-        UUID parentOperationId = operationService.findOperationIdByRunId(spawn.parentRunId());
-        if (parentOperationId == null
-                || !parentOperationId.toString().equals(event.getOperationId())
+        entityManager.refresh(event);
+        if (!parentOperationId.toString().equals(event.getOperationId())
                 || !"agent".equals(event.getSource())
                 || !"tool_call".equals(event.getKind())
                 || !SPAWN_TOOL_NAME.equals(event.getToolName())
@@ -159,8 +177,9 @@ public class ChatSubmissionService {
             throw spawnProvenanceConflict("Spawn event does not belong to the supplied parent run");
         }
 
-        Session childSession = sessionRepository.findById(UUID.fromString(spawn.childSessionId()))
+        Session childSession = sessionRepository.findByIdForUpdate(UUID.fromString(spawn.childSessionId()))
                 .orElseThrow(() -> spawnProvenanceConflict("Child session not found"));
+        entityManager.refresh(childSession);
         if (!spawn.userId().equals(childSession.getUserId())
                 || !spawn.workspaceId().equals(childSession.getWorkspaceId())
                 || !UUID.fromString(spawn.parentSessionId()).equals(childSession.getSpawnedFromSessionId())
@@ -190,8 +209,8 @@ public class ChatSubmissionService {
             throw idempotencyConflict();
         }
 
-        // PLAN-0407 T2.5：cancel 认领获胜（cancelling）或已终态的 parent run 不接受新 spawn；
-        // 幂等 replay 已在上方返回，spawn 获胜后的重试仍拿回同一 child。
+        // PLAN-0407 T2.5b: Session→Run locks serialize this admission check with cancel.
+        // Idempotent replay has already returned; the winner's retry returns the same child.
         requireActiveParentRunForSpawn(parentRun);
 
         return persist(ChatRun.ORIGIN_SPAWN, spawn.runId(), spawn.childSessionId(), spawn.userId(),
@@ -200,16 +219,24 @@ public class ChatSubmissionService {
                 spawn.requestId(), spawn.content(), attachments.json(), attachments.fileIds(), null);
     }
 
-    @Transactional
-    public SpawnResult createSpawnFromParent(String parentRunId, String toolCallId) {
+    @Transactional(readOnly = true)
+    public SpawnInvocation prepareSpawnInvocation(String parentRunId, String toolCallId) {
         requireUuid(parentRunId, "parentRunId");
         requireUuid(toolCallId, "toolCallId");
 
-        dbLockTimeout.apply();
-        // PLAN-0407 T2.5：spawn 与 cancel 在 parent Run 上的共同序列化点（spawn 侧）。
-        ChatRun parentRun = chatRunRepository.findByIdForUpdate(UUID.fromString(parentRunId))
+        ChatRun parentRun = chatRunRepository.findById(UUID.fromString(parentRunId))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
-                        "Parent run not found"));
+                        "Parent run or session not found"));
+        Session parentSession = sessionRepository.findById(UUID.fromString(parentRun.getSessionId()))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
+                        "Parent run or session not found"));
+        if (parentSession.isArchived()
+                || !parentSession.getUserId().equals(parentRun.getUserId())
+                || !parentSession.getWorkspaceId().equals(parentRun.getWorkspaceId())) {
+            throw spawnProvenanceConflict("Spawn parent Session and Run do not match");
+        }
+        requireWorkspaceSpawn(parentRun, parentSession);
+
         UUID parentOperationId = operationService.findOperationIdByRunId(parentRunId);
         if (parentOperationId == null) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND",
@@ -219,22 +246,79 @@ public class ChatSubmissionService {
         OperationItem item = operationItemRepository
                 .findByOperationIdAndSourceAndToolCallId(operationId, "agent", toolCallId)
                 .orElseGet(() -> rejectUnmatchedSpawnItem(operationId, toolCallId));
-        if (!"tool_call".equals(item.getKind())
-                || !"agent".equals(item.getSource())
-                || !SPAWN_TOOL_NAME.equals(item.getToolName())) {
-            throw agentSpawnForbidden("Durable item is not an agent spawn_agent tool call");
+        validateSpawnItem(item, parentOperationId);
+        String content = deriveSpawnContent(item.getArgumentsPreview());
+        return new SpawnInvocation(parentRunId, toolCallId, parentSession.getId().toString(), operationId,
+                item.getId(), parentRun.getUserId(), parentRun.getWorkspaceId(),
+                parentSession.getAgentPrincipalId(), createSpawnAuthorizationBody(content));
+    }
+
+    public void validateSpawnMcpArguments(SpawnInvocation invocation, String mcpBody) {
+        if (mcpBody == null || mcpBody.isBlank()) {
+            throw invalidSpawnArguments();
+        }
+        try {
+            JsonNode request = objectMapper.reader()
+                    .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readTree(mcpBody);
+            JsonNode params = request == null ? null : request.get("params");
+            JsonNode requestArguments = params == null ? null : params.get("arguments");
+            JsonNode expectedBody = objectMapper.readTree(invocation.authorizationBody());
+            JsonNode expectedArguments = expectedBody.path("params").path("arguments");
+            if (request == null || !"tools/call".equals(request.path("method").asText())
+                    || params == null || !SPAWN_TOOL_NAME.equals(params.path("name").asText())
+                    || requestArguments == null || !requestArguments.isObject()
+                    || requestArguments.size() != 1 || !requestArguments.equals(expectedArguments)) {
+                throw new CpApiException(HttpStatus.CONFLICT, "SPAWN_ARGUMENTS_CHANGED",
+                        "MCP spawn arguments do not match the durable Agent tool call");
+            }
+        } catch (JsonProcessingException e) {
+            logger.warn("[LIFECYCLE] service=cp event=spawn_mcp_arguments_rejected failureType={}",
+                    e.getClass().getSimpleName());
+            throw invalidSpawnArguments();
+        }
+    }
+
+    @Transactional
+    public SpawnResult createSpawnFromParent(String parentRunId, String toolCallId,
+                                            SpawnAuthorization authorization) {
+        requireUuid(parentRunId, "parentRunId");
+        requireUuid(toolCallId, "toolCallId");
+        if (authorization == null || authorization.authorizationBody() == null) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Spawn authorization is required");
         }
 
-        dbLockTimeout.apply();
-        item = operationItemRepository.findByIdForUpdate(item.getId())
+        LockedSpawnParent lockedParent = lockSpawnParent(parentRunId, null, null, null,
+                () -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
+                        "Parent run or session not found"));
+        ChatRun parentRun = lockedParent.run();
+        Session parentSession = lockedParent.session();
+        requireWorkspaceSpawn(parentRun, parentSession);
+
+        UUID parentOperationId = operationService.findOperationIdByRunId(parentRunId);
+        if (parentOperationId == null) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND",
+                    "Parent run has no durable operation");
+        }
+        String operationId = parentOperationId.toString();
+        ledgerOperationRepository.findByIdForUpdate(parentOperationId)
+                .orElseThrow(() -> spawnProvenanceConflict("Parent LedgerOperation not found"));
+
+        OperationItem itemLocator = operationItemRepository
+                .findByOperationIdAndSourceAndToolCallId(operationId, "agent", toolCallId)
+                .orElseGet(() -> rejectUnmatchedSpawnItem(operationId, toolCallId));
+        OperationItem item = operationItemRepository.findByIdForUpdate(itemLocator.getId())
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_EVENT_NOT_FOUND",
                         "Spawn item not found"));
-
-        Session parentSession = sessionRepository.findById(UUID.fromString(parentRun.getSessionId()))
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
-                        "Parent run session not found"));
+        entityManager.refresh(item);
+        validateSpawnItem(item, parentOperationId);
 
         String content = deriveSpawnContent(item.getArgumentsPreview());
+        String authorizationBody = createSpawnAuthorizationBody(content);
+        if (!authorizationBody.equals(authorization.authorizationBody())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SPAWN_ARGUMENTS_CHANGED",
+                    "Durable spawn arguments changed after authorization");
+        }
         String requestHash = ChatRequestHash.calculate(objectMapper, content, parentRun.getProvider(),
                 parentRun.getModel(), parentRun.getToolMode(), List.of(), Map.of());
 
@@ -246,9 +330,13 @@ public class ChatSubmissionService {
             if (!requestHash.equals(existingSpawn.getRequestHash())) {
                 throw idempotencyConflict();
             }
+            if (!existingSpawn.getId().equals(item.getWaitingOnRunId())) {
+                throw spawnProvenanceConflict("Existing child run is not linked from its parent item");
+            }
             Session existingSession = sessionRepository
-                    .findById(UUID.fromString(existingSpawn.getSessionId()))
+                    .findByIdForUpdate(UUID.fromString(existingSpawn.getSessionId()))
                     .orElseThrow(() -> new IllegalStateException("Spawn session is missing"));
+            entityManager.refresh(existingSession);
             return new SpawnResult(existingSession.getId().toString(), existingSpawn.getId().toString(),
                     existingSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
         }
@@ -261,6 +349,17 @@ public class ChatSubmissionService {
             throw agentSessionForbidden();
         }
 
+        JsonNode childPermissions = agentPrincipalService.deriveSpawnChildCap(
+                parentSession.getAgentPermissionsSnapshot(), parentSession.getAgentPrincipalId(),
+                parentRun.getWorkspaceId());
+        if (authorization.approvalGrantId() != null
+                && !approvalService.consumeApprovedGrant(authorization.approvalGrantId(), parentRun.getUserId(),
+                        parentRun.getWorkspaceId(), parentSession.getId().toString(), SPAWN_TOOL_NAME,
+                        authorizationBody)) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "APPROVAL_GRANT_INVALID",
+                    "Spawn approval grant is invalid or no longer usable");
+        }
+
         Session childSession = new Session(parentRun.getWorkspaceId(), parentRun.getUserId(),
                 parentSession.getTitle());
         childSession.setId(UUID.randomUUID());
@@ -269,7 +368,7 @@ public class ChatSubmissionService {
         childSession.setSpawnedFromRunId(parentRun.getId());
         childSession.setSpawnedAt(Instant.now());
         childSession.setAgentPrincipalId(parentSession.getAgentPrincipalId());
-        childSession.setAgentPermissionsSnapshot(parentSession.getAgentPermissionsSnapshot().deepCopy());
+        childSession.setAgentPermissionsSnapshot(childPermissions);
         childSession.setModelProvider(parentSession.getModelProvider());
         childSession.setModelName(parentSession.getModelName());
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
@@ -277,15 +376,72 @@ public class ChatSubmissionService {
         childSession.setApprovalMode(parentSession.getApprovalMode());
         sessionRepository.save(childSession);
 
-        SpawnSubmission submission = new SpawnSubmission(
-                UUID.randomUUID().toString(), childSession.getId().toString(), parentRun.getUserId(),
-                parentRun.getWorkspaceId(), parentSession.getId().toString(), parentRunId, item.getId(),
+        String requestId = UUID.randomUUID().toString();
+        String childRunId = UUID.randomUUID().toString();
+        String idempotencyKey = item.getId().toString();
+        Submission created = persist(ChatRun.ORIGIN_SPAWN, childRunId, childSession.getId().toString(),
+                parentRun.getUserId(), parentRun.getWorkspaceId(), idempotencyKey,
+                requestHash,
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
-                parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null,
-                UUID.randomUUID().toString(), content, List.of());
-        Submission created = createSpawn(submission);
+                parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
+                content, "[]", List.of(), childSession.getAgentPrincipalId());
+        item.setWaitingOnRunId(created.run().getId());
+        item.setPolicySummary(authorization.policySummary());
+        if (authorization.approvalGrantId() != null) {
+            item.setApprovalRequestId(authorization.approvalGrantId());
+        }
+        operationItemRepository.save(item);
+
+        com.fasterxml.jackson.databind.node.ObjectNode detail = objectMapper.createObjectNode();
+        detail.put("authorizationAction", "SPAWN_AGENT");
+        detail.put("parentSessionId", parentSession.getId().toString());
+        detail.put("parentRunId", parentRun.getId().toString());
+        detail.put("parentOperationId", parentOperationId.toString());
+        detail.put("parentOperationItemId", item.getId().toString());
+        detail.put("childSessionId", childSession.getId().toString());
+        detail.put("childRunId", created.run().getId().toString());
+        detail.put("childOperationId", created.operation().operationId().toString());
+        detail.put("agentPrincipalId", childSession.getAgentPrincipalId());
+        if (authorization.approvalGrantId() != null) {
+            detail.put("approvalRequestId", authorization.approvalGrantId());
+        }
+        auditLogger.recordDurableChange(parentRun.getUserId(), parentRun.getWorkspaceId(),
+                "agent_spawn_created", "chat_session", childSession.getId().toString(), detail.toString());
+
         return new SpawnResult(childSession.getId().toString(), created.run().getId().toString(),
                 childSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
+    }
+
+    private LockedSpawnParent lockSpawnParent(String parentRunId,
+                                              String expectedParentSessionId,
+                                              String expectedUserId,
+                                              String expectedWorkspaceId,
+                                              Supplier<CpApiException> missingParent) {
+        dbLockTimeout.apply();
+        UUID parentRunUuid = UUID.fromString(parentRunId);
+        ChatRun locator = chatRunRepository.findById(parentRunUuid).orElseThrow(missingParent);
+        UUID parentSessionUuid = UUID.fromString(locator.getSessionId());
+
+        Session parentSession = sessionRepository.findByIdForUpdate(parentSessionUuid)
+                .orElseThrow(missingParent);
+        entityManager.refresh(parentSession);
+
+        ChatRun parentRun = chatRunRepository.findByIdForUpdate(parentRunUuid).orElseThrow(missingParent);
+        entityManager.refresh(parentRun);
+        if (!parentSessionUuid.equals(parentSession.getId())
+                || !parentSessionUuid.equals(UUID.fromString(parentRun.getSessionId()))) {
+            throw missingParent.get();
+        }
+        if (parentSession.isArchived()
+                || !parentSession.getUserId().equals(parentRun.getUserId())
+                || !parentSession.getWorkspaceId().equals(parentRun.getWorkspaceId())
+                || (expectedParentSessionId != null
+                        && !parentSessionUuid.toString().equals(expectedParentSessionId))
+                || (expectedUserId != null && !expectedUserId.equals(parentRun.getUserId()))
+                || (expectedWorkspaceId != null && !expectedWorkspaceId.equals(parentRun.getWorkspaceId()))) {
+            throw spawnProvenanceConflict("Spawn parent Session and Run do not match the request");
+        }
+        return new LockedSpawnParent(parentSession, parentRun);
     }
 
     private OperationItem rejectUnmatchedSpawnItem(String operationId, String toolCallId) {
@@ -299,23 +455,59 @@ public class ChatSubmissionService {
     }
 
     private String deriveSpawnContent(String argumentsPreview) {
-        if (argumentsPreview == null || argumentsPreview.isBlank()) {
-            return "";
+        if (argumentsPreview == null || argumentsPreview.isBlank()
+                || argumentsPreview.length() >= MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH) {
+            throw invalidSpawnArguments();
         }
         try {
-            JsonNode args = objectMapper.readTree(argumentsPreview);
-            if (args != null && args.isObject()) {
-                for (String field : List.of("prompt", "content", "message", "task")) {
-                    JsonNode value = args.get(field);
-                    if (value != null && value.isTextual() && !value.textValue().isBlank()) {
-                        return value.textValue();
-                    }
-                }
+            JsonNode args = objectMapper.reader()
+                    .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readTree(argumentsPreview);
+            JsonNode prompt = args == null ? null : args.get("prompt");
+            if (args == null || !args.isObject() || args.size() != 1
+                    || prompt == null || !prompt.isTextual() || prompt.textValue().isBlank()) {
+                throw invalidSpawnArguments();
             }
+            return prompt.textValue();
         } catch (JsonProcessingException e) {
-            logger.debug("Spawn arguments preview is not parseable: {}", e.getMessage());
+            logger.warn("[LIFECYCLE] service=cp event=spawn_arguments_rejected failureType={}",
+                    e.getClass().getSimpleName());
+            throw invalidSpawnArguments();
         }
-        return "";
+    }
+
+    private String createSpawnAuthorizationBody(String content) {
+        com.fasterxml.jackson.databind.node.ObjectNode body = objectMapper.createObjectNode();
+        body.put("jsonrpc", "2.0");
+        body.put("method", "tools/call");
+        body.put("id", 1);
+        com.fasterxml.jackson.databind.node.ObjectNode params = body.putObject("params");
+        params.put("name", SPAWN_TOOL_NAME);
+        params.putObject("arguments").put("prompt", content);
+        return body.toString();
+    }
+
+    private void validateSpawnItem(OperationItem item, UUID parentOperationId) {
+        if (!parentOperationId.toString().equals(item.getOperationId())
+                || !"tool_call".equals(item.getKind())
+                || !"agent".equals(item.getSource())
+                || !SPAWN_TOOL_NAME.equals(item.getToolName())) {
+            throw agentSpawnForbidden("Durable item is not an agent spawn_agent tool call of this parent run");
+        }
+    }
+
+    private void requireWorkspaceSpawn(ChatRun parentRun, Session parentSession) {
+        if (!"workspace".equals(parentRun.getToolMode())) {
+            throw agentSpawnForbidden("spawn_agent is available only to workspace-mode runs");
+        }
+        if (parentSession.getAgentPrincipalId() == null || parentSession.getAgentPermissionsSnapshot() == null) {
+            throw agentSessionForbidden();
+        }
+    }
+
+    private static CpApiException invalidSpawnArguments() {
+        return new CpApiException(HttpStatus.BAD_REQUEST, "SPAWN_ARGUMENTS_INVALID",
+                "Durable spawn arguments must be a complete prompt-only object below the preview limit");
     }
 
     private static CpApiException agentSpawnForbidden(String detail) {
@@ -546,6 +738,23 @@ public class ChatSubmissionService {
 
     public record SpawnResult(String sessionId, String runId, String principalId, String workspaceId) {}
 
+    public record SpawnInvocation(String parentRunId, String toolCallId, String parentSessionId,
+                                  String parentOperationId, UUID operationItemId, String userId,
+                                  String workspaceId, String principalId, String authorizationBody) {
+        @Override
+        public String toString() {
+            return "SpawnInvocation[parentRunId=" + parentRunId + ", toolCallId=" + toolCallId
+                    + ", parentSessionId=" + parentSessionId + ", operationItemId=" + operationItemId + "]";
+        }
+    }
+
+    public record SpawnAuthorization(String authorizationBody, String approvalGrantId, String policySummary) {
+        @Override
+        public String toString() {
+            return "SpawnAuthorization[approvalGrantId=" + approvalGrantId + "]";
+        }
+    }
+
     public record SpawnSubmission(String runId, String childSessionId, String userId, String workspaceId,
                                   String parentSessionId, String parentRunId, UUID spawnEventId,
                                   String provider, String model, String toolMode,
@@ -557,4 +766,6 @@ public class ChatSubmissionService {
     }
 
     private record SpawnAttachments(String json, List<String> fileIds) {}
+
+    private record LockedSpawnParent(Session session, ChatRun run) {}
 }

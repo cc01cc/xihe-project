@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 
 const port = Number(process.env.XIHE_FAKE_LLM_PORT ?? '13642')
 const mode = process.env.XIHE_FAKE_LLM_MODE ?? 'success'
+const pendingSpawnResponses = new Set()
 
 const providers = {
   openai: {
@@ -50,6 +51,11 @@ async function sendCompletion(response, provider, requestBody) {
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
   })
+
+  if (mode === 'spawn_agent') {
+    sendSpawnAgentCompletion(response, requestBody)
+    return
+  }
 
   if (mode === 'approval') {
     sendApprovalCompletion(response, requestBody)
@@ -290,6 +296,22 @@ const server = createServer(async (request, response) => {
     return
   }
 
+  if (mode === 'spawn_agent' && url.pathname === '/__test/spawn-child-state' && request.method === 'GET') {
+    json(response, 200, { pending: pendingSpawnResponses.size })
+    return
+  }
+  if (mode === 'spawn_agent' && url.pathname === '/__test/release-spawn-child' && request.method === 'POST') {
+    const pending = [...pendingSpawnResponses]
+    for (const childResponse of pending) {
+      pendingSpawnResponses.delete(childResponse)
+      if (childResponse.destroyed || childResponse.writableEnded) continue
+      childResponse.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'SPAWN_CHILD_DONE' } }] })}\n\n`)
+      childResponse.end('data: [DONE]\n\n')
+    }
+    json(response, 200, { released: pending.length })
+    return
+  }
+
   const provider = providerFor(url.pathname)
   if (!provider) {
     json(response, 404, { error: 'not found' })
@@ -327,7 +349,57 @@ server.listen(port, '127.0.0.1', () => {
 })
 
 function shutdown() {
+  for (const childResponse of pendingSpawnResponses) childResponse.destroy()
+  pendingSpawnResponses.clear()
   server.close(() => process.exit(0))
+}
+
+function sendSpawnAgentCompletion(response, requestBody) {
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  const last = messages.at(-1) ?? {}
+  const lastUser = [...messages].reverse().find((message) => message.role === 'user')
+  const lastUserContent = typeof lastUser?.content === 'string' ? lastUser.content : ''
+  const childMatch = lastUserContent.match(/XIHE-E2E-SPAWN-CHILD\s+([A-Za-z0-9_-]+)/)
+  if (childMatch) {
+    pendingSpawnResponses.add(response)
+    response.once('close', () => pendingSpawnResponses.delete(response))
+    return
+  }
+
+  const spawnMarker = 'XIHE-E2E-SPAWN '
+  if (last.role !== 'tool' && lastUserContent.includes(spawnMarker)) {
+    const hasSpawnTool = (Array.isArray(requestBody.tools) ? requestBody.tools : []).some((tool) =>
+      tool.name === 'spawn_agent' || tool.function?.name === 'spawn_agent')
+    if (!hasSpawnTool) {
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'SPAWN_TOOL_MISSING' } }] })}\n\n`)
+      response.end('data: [DONE]\n\n')
+      return
+    }
+    const token = lastUserContent.slice(lastUserContent.indexOf(spawnMarker) + spawnMarker.length)
+      .trim().split(/\s/, 1)[0]
+    const toolCallDelta = {
+      choices: [{ delta: { tool_calls: [{
+        index: 0,
+        id: 'call-spawn-agent-e2e-1',
+        type: 'function',
+        function: { name: 'spawn_agent', arguments: JSON.stringify({ prompt: `XIHE-E2E-SPAWN-CHILD ${token}` }) },
+      }] }, finish_reason: null }],
+    }
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`)
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  if (last.role === 'tool') {
+    const toolResult = typeof last.content === 'string' ? last.content : JSON.stringify(last.content)
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `SPAWN_PARENT_DONE ${toolResult}` } }] })}\n\n`)
+    response.end('data: [DONE]\n\n')
+    return
+  }
+
+  response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'SPAWN_CHILD_READY' } }] })}\n\n`)
+  response.end('data: [DONE]\n\n')
 }
 
 // PLAN-0308 M1 收尾（mode: exec_command）：确定性的长命令 execute_command 工具调用，

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
@@ -9,7 +10,6 @@ import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeExecutionClient;
-import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,11 +63,12 @@ public class ChatRunCancellationService {
             .connectTimeout(Duration.ofSeconds(10))
             .build();
     private final ObjectMapper objectMapper;
+    private final EntityManager entityManager;
     private final ChatRunRepository chatRunRepository;
     private final SessionRepository sessionRepository;
     private final OperationService operationService;
     private final RuntimeExecutionClient runtimeExecutionClient;
-    private final RunCheckpointService runCheckpointService;
+    private final ChatRunTerminalService terminalService;
     private final DbLockTimeout dbLockTimeout;
     /**
      * 认领用编程式事务：{@link #claimCancellation} 由本类其他方法自调用（自调用不经过
@@ -86,19 +87,21 @@ public class ChatRunCancellationService {
 
     public ChatRunCancellationService(
             ObjectMapper objectMapper,
+            EntityManager entityManager,
             ChatRunRepository chatRunRepository,
             SessionRepository sessionRepository,
             OperationService operationService,
             RuntimeExecutionClient runtimeExecutionClient,
-            RunCheckpointService runCheckpointService,
+            ChatRunTerminalService terminalService,
             DbLockTimeout dbLockTimeout,
             PlatformTransactionManager transactionManager) {
         this.objectMapper = objectMapper;
+        this.entityManager = entityManager;
         this.chatRunRepository = chatRunRepository;
         this.sessionRepository = sessionRepository;
         this.operationService = operationService;
         this.runtimeExecutionClient = runtimeExecutionClient;
-        this.runCheckpointService = runCheckpointService;
+        this.terminalService = terminalService;
         this.dbLockTimeout = dbLockTimeout;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -144,22 +147,46 @@ public class ChatRunCancellationService {
     public record CancelClaim(CancelOutcome outcome, String status) {}
 
     /**
-     * PLAN-0407 T2.5：cancel 在 parent Run 行上的认领——与 spawn 侧的
-     * {@code ChatRunRepository.findByIdForUpdate} 争用同一行锁（"共同 DB 锁/条件更新"）。
-     * 条件更新只从在途且未被认领的状态（{@link ChatRunRepository#ACTIVE_LEASE_STATUSES}）
-     * 转 cancelling；输家按当前 durable 状态分类，绝不覆盖已 cancelling/已终态的行。
+     * PLAN-0407 T2.5b：所有 cancellation caller 先锁 Session，再锁并刷新 Run；
+     * 再以条件更新认领，输家按当前 durable 状态分类。缺失关联 fail-closed。
      */
-    public CancelClaim claimCancellation(String runId) {
+    public CancelClaim claimCancellation(String runId,
+                                         String expectedSessionId,
+                                         String expectedUserId,
+                                         String expectedWorkspaceId) {
         UUID id = UUID.fromString(runId);
         return transactionTemplate.execute(status -> {
             dbLockTimeout.apply();
+
+            ChatRun locator = chatRunRepository.findById(id).orElse(null);
+            if (locator == null) {
+                return new CancelClaim(CancelOutcome.NOT_FOUND, null);
+            }
+
+            UUID sessionId = UUID.fromString(locator.getSessionId());
+            Session session = sessionRepository.findByIdForUpdate(sessionId).orElse(null);
+            if (session == null) {
+                return new CancelClaim(CancelOutcome.NOT_FOUND, null);
+            }
+            entityManager.refresh(session);
+
+            ChatRun current = chatRunRepository.findByIdForUpdate(id).orElse(null);
+            if (current == null) {
+                return new CancelClaim(CancelOutcome.NOT_FOUND, null);
+            }
+            entityManager.refresh(current);
+            if (!sessionId.equals(UUID.fromString(current.getSessionId()))
+                    || (expectedSessionId != null && !expectedSessionId.equals(sessionId.toString()))
+                    || !session.getUserId().equals(current.getUserId())
+                    || !session.getWorkspaceId().equals(current.getWorkspaceId())
+                    || (expectedUserId != null && !expectedUserId.equals(session.getUserId()))
+                    || (expectedWorkspaceId != null && !expectedWorkspaceId.equals(session.getWorkspaceId()))) {
+                return new CancelClaim(CancelOutcome.NOT_FOUND, null);
+            }
+
             int updated = chatRunRepository.markCancelling(id, ChatRunRepository.ACTIVE_LEASE_STATUSES);
             if (updated == 1) {
                 return new CancelClaim(CancelOutcome.CLAIMED, "cancelling");
-            }
-            ChatRun current = chatRunRepository.findById(id).orElse(null);
-            if (current == null) {
-                return new CancelClaim(CancelOutcome.NOT_FOUND, null);
             }
             if ("cancelling".equals(current.getStatus())) {
                 return new CancelClaim(CancelOutcome.ALREADY_CANCELLING, "cancelling");
@@ -176,8 +203,12 @@ public class ChatRunCancellationService {
      * 已提交的 child 由传播看到——两个胜序都由 durable 行决定）。认领失败但状态为
      * cancelling 时属重复请求：跳过重复收口，只补幂等的停止传播。
      */
-    public CancelClaim cancelSerialized(String runId, String workspaceId, String reason) {
-        CancelClaim claim = claimCancellation(runId);
+    public CancelClaim cancelSerialized(String runId,
+                                        String expectedSessionId,
+                                        String expectedUserId,
+                                        String workspaceId,
+                                        String reason) {
+        CancelClaim claim = claimCancellation(runId, expectedSessionId, expectedUserId, workspaceId);
         if (claim.outcome() == CancelOutcome.NOT_CANCELLABLE
                 || claim.outcome() == CancelOutcome.NOT_FOUND) {
             return claim;
@@ -186,7 +217,8 @@ public class ChatRunCancellationService {
             cancel(runId, workspaceId, reason);
         }
         try {
-            List<String> descendantRunIds = cancelSpawnDescendants(runId, workspaceId, reason);
+            List<String> descendantRunIds = cancelSpawnDescendants(
+                    runId, expectedUserId, workspaceId, reason);
             if (!descendantRunIds.isEmpty()) {
                 String rootSessionId = chatRunRepository.findById(UUID.fromString(runId))
                         .map(ChatRun::getSessionId)
@@ -211,7 +243,10 @@ public class ChatRunCancellationService {
      *
      * @return 纳入取消的后代 runId（可能为空 = 无 spawn 后代）
      */
-    public List<String> cancelSpawnDescendants(String rootRunId, String workspaceId, String reason) {
+    public List<String> cancelSpawnDescendants(String rootRunId,
+                                               String expectedUserId,
+                                               String workspaceId,
+                                               String reason) {
         List<String> cancelledRunIds = new ArrayList<>();
         Deque<Session> pending = new ArrayDeque<>(sessionRepository
                 .findBySpawnedFromRunIdAndKind(UUID.fromString(rootRunId), Session.KIND_SPAWN));
@@ -221,7 +256,8 @@ public class ChatRunCancellationService {
             if (!visited.add(child.getId())) {
                 continue;
             }
-            cancelledRunIds.addAll(cancelInFlightForSession(child.getId().toString(), workspaceId, reason));
+            cancelledRunIds.addAll(cancelInFlightForSession(
+                    child.getId().toString(), expectedUserId, workspaceId, reason));
             pending.addAll(sessionRepository.findBySpawnedFromSessionIdAndKind(child.getId(), Session.KIND_SPAWN));
         }
         if (!cancelledRunIds.isEmpty()) {
@@ -241,7 +277,10 @@ public class ChatRunCancellationService {
      *
      * @return 纳入等待的 runId（可能为空 = 无在飞 run）
      */
-    public List<String> cancelInFlightForSession(String sessionId, String workspaceId, String reason) {
+    public List<String> cancelInFlightForSession(String sessionId,
+                                                 String expectedUserId,
+                                                 String workspaceId,
+                                                 String reason) {
         List<ChatRun> runs = chatRunRepository.findBySessionIdAndStatusIn(sessionId, NON_TERMINAL_STATUSES);
         if (runs.isEmpty()) {
             return List.of();
@@ -254,7 +293,7 @@ public class ChatRunCancellationService {
         }
         for (ChatRun run : runs) {
             String runId = run.getId().toString();
-            CancelClaim claim = claimCancellation(runId);
+            CancelClaim claim = claimCancellation(runId, sessionId, expectedUserId, workspaceId);
             if (claim.outcome() == CancelOutcome.CLAIMED) {
                 cancel(runId, workspaceId, reason);
             } else if (claim.outcome() == CancelOutcome.ALREADY_CANCELLING) {
@@ -354,7 +393,13 @@ public class ChatRunCancellationService {
      * 期望集不含 {@code cancelling}，因此不会被回音路径覆盖。
      */
     private void settleCancellation(String runId, String workspaceId) {
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElse(null);
+        if (run == null) {
+            logger.warn("[LIFECYCLE] service=cp event=run_cancel_settle_missing runId={}", runId);
+            return;
+        }
         UUID operationId = operationService.findOperationIdByRunId(runId);
+        List<ChatRunTerminalService.AttemptSettlement> settlements = new ArrayList<>();
         if (operationId != null) {
             for (OperationAttempt attempt : operationService.findStartedForwards(operationId)) {
                 OperationItem item = operationService.findItem(attempt.getItemId());
@@ -371,22 +416,21 @@ public class ChatRunCancellationService {
                 boolean cancelled = outcome.found() && "cancelled".equals(outcome.status());
                 String itemStatus = cancelled ? "cancelled" : "aborted";
                 String errorCode = cancelled ? null : "CANCEL_UNCONFIRMED";
-                operationService.settleCancellation(item.getId(), attempt.getId(), itemStatus, errorCode);
+                settlements.add(new ChatRunTerminalService.AttemptSettlement(
+                        item.getId(), attempt.getId(), itemStatus, errorCode));
                 logger.info("[LIFECYCLE] service=cp event=runtime_cancel_settled runId={} itemId={} status={} confirmed={} unreachable={}",
                         runId, item.getId(), itemStatus, outcome.confirmed(), outcome.unreachable());
             }
-            // 决策 #8 补充（2026-09-13 E2E）：在途 forward 结算后收口其余非终态
-            // item/attempt（中继重复建项、审批遗留），保证四层终态一次落定。
-            operationService.settleRemainingOpenItems(operationId);
         }
-        int runUpdated = chatRunRepository.transition(UUID.fromString(runId), List.of("cancelling"),
-                "cancelled", "cancelled", null, null, 0, 0);
-        if (runUpdated == 0) {
-            logger.warn("[LIFECYCLE] service=cp event=run_cancel_transition_ignored runId={}", runId);
+        ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
+                new ChatRunTerminalService.TerminalRequest(runId, List.of("cancelling"),
+                        "cancelled", "cancelled", null, null, run.getTokenCount(), run.getAssistantChars(),
+                        ChatRunTerminalService.LedgerMode.CANCELLATION, settlements));
+        if (!result.committed()) {
+            logger.warn("[LIFECYCLE] service=cp event=run_cancel_transition_ignored runId={} outcome={} status={}",
+                    runId, result.outcome(), result.currentStatus());
+            return;
         }
-        operationService.transitionOperationForRun(runId, "cancelled", null, null);
-        // PLAN-0338: cancellation bypasses transitionRun; capture the slice explicitly.
-        runCheckpointService.requestCapture(runId);
         logger.info("[LIFECYCLE] service=cp event=run_cancelled runId={}", runId);
     }
 }

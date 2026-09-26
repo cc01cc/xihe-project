@@ -13,6 +13,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -99,5 +100,23 @@ class OperationViewsPolicyProjectionTest {
                 trace(item("{\"effect\":\"ALLOW\",\"raw\":\"arguments\"}"))));
 
         assertFalse(ownerItem.containsKey("policy"));
+    }
+
+    @Test
+    void waitingChildReferenceIsProjectedToBothViewsAsNullableRunId() {
+        UUID childRunId = UUID.randomUUID();
+        OperationItem item = item(SAFE_SUMMARY);
+        item.setWaitingOnRunId(childRunId);
+
+        Map<String, Object> ownerItem = firstItem(OperationViews.toUserTrace(trace(item)));
+        Map<String, Object> internalItem = firstItem(OperationViews.toInternalTrace(trace(item)));
+
+        assertEquals(childRunId.toString(), ownerItem.get("waitingOnRunId"));
+        assertEquals(childRunId.toString(), internalItem.get("waitingOnRunId"));
+        assertFalse(ownerItem.containsKey("resultRef"));
+
+        OperationItem unlinked = item(SAFE_SUMMARY);
+        assertNull(firstItem(OperationViews.toUserTrace(trace(unlinked))).get("waitingOnRunId"));
+        assertNull(firstItem(OperationViews.toInternalTrace(trace(unlinked))).get("waitingOnRunId"));
     }
 }

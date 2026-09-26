@@ -79,6 +79,9 @@ public class ChatRun {
     @Column(nullable = false, length = 24)
     private String status;
 
+    @Column(name = "terminal_at")
+    private Instant terminalAt;
+
     @Column(name = "terminal_outcome", length = 24)
     private String terminalOutcome;
 
@@ -170,6 +173,8 @@ public class ChatRun {
     public void setAssistantMessageId(String assistantMessageId) { this.assistantMessageId = assistantMessageId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public Instant getTerminalAt() { return terminalAt; }
+    public void setTerminalAt(Instant terminalAt) { this.terminalAt = terminalAt; }
     public String getTerminalOutcome() { return terminalOutcome; }
     public void setTerminalOutcome(String terminalOutcome) { this.terminalOutcome = terminalOutcome; }
     public String getErrorCode() { return errorCode; }

@@ -95,9 +95,9 @@ class LangGraphEventAdapter(EventAdapter):
                 # blocks; do not emit a second legacy tool_call event here.
                 return None
             tool_input = data.get("input", "")
-            # PLAN-0317 T2.8④：显式携带 toolCallId（优先真实 tool_call_id，回退工具级
-            # run_id），让 CP 账本对 call/result 用同一个稳定键。
-            tool_call_id = data.get("tool_call_id") or run_id
+            # PLAN-0407 T2.10: LangChain's callback run_id is shared with
+            # LCToolAdapter.run_manager and is the CP ledger/MCP header key.
+            tool_call_id = run_id or data.get("tool_call_id")
             return AgentEvent(
                 type="tool_call",
                 data={
@@ -119,7 +119,9 @@ class LangGraphEventAdapter(EventAdapter):
             diagnostics: dict[str, Any] | None = None
             if isinstance(tool_output, ToolMessage):
                 formatted = tool_output.content
-                tool_call_id = tool_output.tool_call_id or run_id
+                # Provider ToolMessage IDs only pair LangGraph messages; CP
+                # ledger and MCP headers use the callback lifecycle run ID.
+                tool_call_id = run_id or tool_output.tool_call_id
                 # PLAN-0342 T1.2: structured diagnostics are copied from the
                 # ToolMessage artifact channel into the SSE payload.
                 artifact = tool_output.artifact

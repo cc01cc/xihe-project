@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
+import com.cc01cc.p.xihe.cp.chat.AgentSpawnExecutionService;
+import com.cc01cc.p.xihe.cp.chat.ChatSubmissionService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
@@ -58,6 +60,7 @@ class McpProxyTest {
     private WorkspaceService workspaceService;
     private SessionRepository sessionRepository;
     private OperationService operationService;
+    private AgentSpawnExecutionService agentSpawnExecutionService;
     private McpProxyController controller;
     private org.springframework.mock.env.MockEnvironment environment;
 
@@ -68,6 +71,80 @@ class McpProxyTest {
         String preview = ReflectionTestUtils.invokeMethod(controller, "safeLedgerPreview", body);
 
         assertEquals(body, preview);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void toolsListPublishesCpOwnedSpawnOnlyToInternalAgentClient() throws Exception {
+        Object internal = internalAccessContext(TEST_WS_UUID, "user-1", null);
+        var internalTools = (java.util.List<Map<String, Object>>) ReflectionTestUtils.invokeMethod(
+                controller, "populateSystemTools", TEST_WS_UUID, new HttpHeaders(), internal);
+        Map<String, Object> spawnTool = internalTools.stream()
+                .filter(tool -> "spawn_agent".equals(tool.get("name")))
+                .findFirst().orElseThrow();
+        Map<String, Map<String, String>> cache = (Map<String, Map<String, String>>)
+                ReflectionTestUtils.getField(controller, "toolServerCache");
+        assertEquals("__cp__", cache.get(TEST_WS_UUID).get("spawn_agent"));
+        Map<String, Object> schema = (Map<String, Object>) spawnTool.get("inputSchema");
+        assertEquals(java.util.List.of("prompt"), schema.get("required"));
+        assertEquals(Boolean.FALSE, schema.get("additionalProperties"));
+
+        Object user = accessContext(TEST_WS_UUID, "user-1");
+        var userTools = (java.util.List<Map<String, Object>>) ReflectionTestUtils.invokeMethod(
+                controller, "populateSystemTools", TEST_WS_UUID, new HttpHeaders(), user);
+        assertTrue(userTools.stream().noneMatch(tool -> "spawn_agent".equals(tool.get("name"))));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void cpSpawnDefersOneShotApprovalConsumptionToChildTransaction() throws Exception {
+        String runId = "11111111-1111-1111-1111-111111111111";
+        String operationId = "22222222-2222-2222-2222-222222222222";
+        String toolCallId = "33333333-3333-3333-3333-333333333333";
+        String approvalId = "44444444-4444-4444-4444-444444444444";
+        String sessionId = "55555555-5555-5555-5555-555555555555";
+        String prompt = "spawn prompt";
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":7,"
+                + "\"params\":{\"name\":\"spawn_agent\",\"arguments\":{\"prompt\":\""
+                + prompt + "\"}}}";
+        ChatSubmissionService.SpawnInvocation invocation = new ChatSubmissionService.SpawnInvocation(
+                runId, toolCallId, sessionId, operationId, java.util.UUID.randomUUID(), "user-1",
+                TEST_WS_UUID, "agent-1", "canonical-body");
+        ChatSubmissionService.SpawnResult child = new ChatSubmissionService.SpawnResult(
+                "66666666-6666-6666-6666-666666666666", "77777777-7777-7777-7777-777777777777",
+                "agent-1", TEST_WS_UUID);
+        when(requestRewriter.rewrite(eq("spawn_agent"), eq(body), eq(sessionId))).thenReturn(body);
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), eq("spawn_agent"), eq(body),
+                eq(sessionId), eq("user-1"), eq(TEST_WS_UUID), eq(false))).thenReturn(true);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("spawn_agent"), eq(body),
+                eq(sessionId), isNull(), eq("user-1"), eq(TEST_WS_UUID)))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN, "manual", "approval"));
+        when(policyEngine.faceOf(any(PolicyContext.class), eq("spawn_agent")))
+                .thenReturn(new ToolFaceRegistry.Face("SPAWN_AGENT", ToolShape.STRUCTURED));
+        when(agentSpawnExecutionService.prepareMcpInvocation(eq(body), any(HttpHeaders.class),
+                eq(sessionId), eq("user-1"), eq(TEST_WS_UUID))).thenReturn(invocation);
+        when(agentSpawnExecutionService.execute(any(), any())).thenReturn(child);
+        Map<String, Map<String, String>> cache = (Map<String, Map<String, String>>)
+                ReflectionTestUtils.getField(controller, "toolServerCache");
+        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("spawn_agent", "__cp__")));
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Xihe-Approval-Request-Id", approvalId);
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, headers, sessionId,
+                internalAccessContext(TEST_WS_UUID, "user-1", sessionId));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        JsonNode result = objectMapper.readTree(response.getBody()).path("result");
+        assertEquals("complete", result.path("resultType").asText());
+        JsonNode structured = result.path("structuredContent");
+        assertEquals(child.runId(), structured.path("runId").asText());
+        ArgumentCaptor<ChatSubmissionService.SpawnAuthorization> authorization =
+                ArgumentCaptor.forClass(ChatSubmissionService.SpawnAuthorization.class);
+        verify(agentSpawnExecutionService).execute(eq(invocation), authorization.capture());
+        assertEquals(approvalId, authorization.getValue().approvalGrantId());
+        verify(approvalService, never()).consumeApprovedGrant(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString());
+        verify(approvalService, never()).tryReuseSessionGrant(anyString(), anyString(), anyString(), anyString());
     }
 
     @BeforeEach
@@ -84,6 +161,7 @@ class McpProxyTest {
         workspaceService = mock(WorkspaceService.class);
         sessionRepository = mock(SessionRepository.class);
         operationService = mock(OperationService.class);
+        agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
         environment = new org.springframework.mock.env.MockEnvironment();
 
         controller = new McpProxyController(
@@ -94,7 +172,8 @@ class McpProxyTest {
                 mock(com.cc01cc.p.xihe.cp.operation.JobStateService.class),
                 mock(com.cc01cc.p.xihe.cp.config.ConfigService.class),
                 new com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy(),
-                environment
+                environment,
+                agentSpawnExecutionService
         );
         ReflectionTestUtils.setField(controller, "sessionIdHmacSecret", "test-only-key");
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");

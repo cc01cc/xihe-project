@@ -76,7 +76,7 @@ async def test_translate_tool_start():
     assert payload["arguments"] == {"path": "test.txt"}
     assert payload["type"] == "tool_call"
     assert payload["run_id"] == "run-2"
-    # PLAN-0317 T2.8④：显式携带 toolCallId（回退工具级 run_id）。
+    # The callback run_id is the shared CP/MCP operation identity.
     assert payload["toolCallId"] == "run-2"
 
 
@@ -100,8 +100,34 @@ async def test_translate_tool_end_with_tool_message():
     assert payload["result"] == "file content"
     assert payload["type"] == "tool_result"
     assert payload["run_id"] == "run-3"
-    # PLAN-0317 T2.8④：结果事件用 ToolMessage 的真实 tool_call_id。
-    assert payload["toolCallId"] == "call-1"
+    # Provider ToolMessage IDs remain internal to LangGraph correlation.
+    assert payload["toolCallId"] == "run-3"
+
+
+@pytest.mark.asyncio
+async def test_tool_call_and_result_share_callback_run_id_not_provider_id():
+    events = [
+        {
+            "event": "on_tool_start",
+            "name": "spawn_agent",
+            "data": {"input": {"prompt": "child"}, "tool_call_id": "provider-call-id"},
+            "run_id": "langchain-tool-run-id",
+        },
+        {
+            "event": "on_tool_end",
+            "name": "spawn_agent",
+            "data": {"output": ToolMessage(content="child ids", tool_call_id="provider-call-id")},
+            "run_id": "langchain-tool-run-id",
+        },
+    ]
+    payloads = []
+    async for sse in translate_events(async_iter(events)):
+        payloads.append(json.loads(sse.split("data: ", 1)[1].strip()))
+
+    assert [payload["toolCallId"] for payload in payloads] == [
+        "langchain-tool-run-id",
+        "langchain-tool-run-id",
+    ]
 
 
 @pytest.mark.asyncio
@@ -400,7 +426,7 @@ async def test_tool_end_copies_diagnostics_artifact_into_event_data():
     assert len(results) == 1
     payload = _parse(results[0])
     assert payload["result"] == "raw output"
-    assert payload["toolCallId"] == "call-diag"
+    assert payload["toolCallId"] == "run-20"
     assert payload["diagnostics"] == DIAGNOSTICS_BUNDLE
 
 

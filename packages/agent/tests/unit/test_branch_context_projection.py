@@ -9,9 +9,11 @@ the run to failure; and a branch-A context never contains branch-B facts
 
 import json
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 import httpx
 import pytest
+from langchain_core.messages import ToolMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
 from xihe_agent.agent_runner import LangGraphRunner
@@ -30,6 +32,7 @@ class FakeTool:
     """Minimal tool for driving the LCToolAdapter event writers."""
 
     def __init__(self) -> None:
+        self.operation_item_id: str | None = None
         self._spec = ToolSpec(
             name="fake_tool",
             description="A fake tool",
@@ -44,7 +47,8 @@ class FakeTool:
     def spec(self) -> ToolSpec:
         return self._spec
 
-    async def execute(self, input: dict, context: dict) -> dict:
+    async def execute(self, input: dict, context: AgentContext) -> dict:
+        self.operation_item_id = context.metadata.get("operationItemId")
         return {"content": f"result for {input.get('query', '')}"}
 
 
@@ -232,6 +236,28 @@ async def test_tool_writers_carry_run_correlation():
     written_types = [event.type for event in store.events]
     assert written_types == ["tool.called", "tool.result"]
     assert all(event.correlation_id == "run-123" for event in store.events)
+
+
+@pytest.mark.asyncio
+async def test_tool_event_store_and_mcp_context_share_langchain_callback_run_id():
+    store = RecordingEventStore()
+    context = _context_with_run(branch_id="branch-a")
+    tool = FakeTool()
+    adapter = LCToolAdapter(tool, context, store)
+    callback_run_id = uuid4()
+
+    result = await adapter.arun(
+        {"query": "child"},
+        run_id=callback_run_id,
+        tool_call_id="provider-tool-id",
+    )
+
+    expected_id = str(callback_run_id)
+    assert [event.payload["call_id"] for event in store.events] == [expected_id, expected_id]
+    assert [event.payload["operation_item_id"] for event in store.events] == [expected_id, expected_id]
+    assert tool.operation_item_id == expected_id
+    assert isinstance(result, ToolMessage)
+    assert result.tool_call_id == "provider-tool-id", "provider ID remains internal to LangGraph"
 
 
 @pytest.mark.asyncio

@@ -151,7 +151,7 @@ public class SessionController {
             // 有界等待终态投递 → 删除事务 → 成功后 complete（删除失败保留连接）。
             sessionService.requireCurrent(sessionId, userId, workspaceId);
             List<String> inFlightRuns = chatRunCancellationService.cancelInFlightForSession(
-                    sessionId, workspaceId, "session_deleted");
+                    sessionId, userId, workspaceId, "session_deleted");
             chatRunCancellationService.awaitTerminalDelivery(
                     sessionId, inFlightRuns, SESSION_DELETE_SSE_WAIT);
             // PLAN-0390 T1.3：session 硬删前关闭 scope=session 的 active Job。

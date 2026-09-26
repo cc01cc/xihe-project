@@ -13,6 +13,8 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
+import com.cc01cc.p.xihe.cp.chat.AgentSpawnExecutionService;
+import com.cc01cc.p.xihe.cp.chat.ChatSubmissionService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.McpServer;
@@ -61,12 +63,14 @@ public class McpProxyController {
     private static final Logger logger = LoggerFactory.getLogger(McpProxyController.class);
     private static final Duration CACHE_TTL = Duration.ofMinutes(5);
     private static final String HMAC_ALGORITHM = "HmacSHA256";
+    private static final String CP_MCP_SERVER_ID = "__cp__";
+    private static final String SPAWN_AGENT_TOOL = ChatSubmissionService.SPAWN_TOOL_NAME;
 
     @Value("${cp.mcp.session-id.hmac-secret}")
     private String sessionIdHmacSecret;
     private static final String REMOTE_SCOPE = "mcp:tools";
     /** T1.7/T1.9 post-gate approval lifetime: the durable row expires after five minutes. */
-    private static final long APPROVAL_REQUEST_TTL_SECONDS = 300;
+    private static final long APPROVAL_REQUEST_TTL_SECONDS = ApprovalService.DEFAULT_GATE_TTL_SECONDS;
     /**
      * T1.9 answerer rejection: implementation-defined JSON-RPC error code (never {@code -32003}).
      * The Agent's gate classifier keys on {@code APPROVAL_REQUIRED}, so this denial follows the
@@ -150,6 +154,7 @@ public class McpProxyController {
     private final SessionRepository sessionRepository;
     private final OperationService operationService;
     private final JobStateService jobStateService;
+    private final AgentSpawnExecutionService agentSpawnExecutionService;
 
     public McpProxyController(
             RequestRewriter rewriter,
@@ -167,7 +172,8 @@ public class McpProxyController {
             JobStateService jobStateService,
             ConfigService configService,
             ToolTimeoutPolicy toolTimeoutPolicy,
-            org.springframework.core.env.Environment environment) {
+            org.springframework.core.env.Environment environment,
+            AgentSpawnExecutionService agentSpawnExecutionService) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -187,6 +193,7 @@ public class McpProxyController {
         this.configService = configService;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
         this.environment = environment;
+        this.agentSpawnExecutionService = agentSpawnExecutionService;
     }
 
     @PostMapping("/api/v1/mcp")
@@ -265,11 +272,12 @@ public class McpProxyController {
 
         try {
             List<Map<String, Object>> allTools = new ArrayList<>(populateSystemTools(wsId, headers, access));
+            mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
 
             // 2. Call each STDIO server's tools/list
             Set<String> seenNames = new HashSet<>();
             for (Map.Entry<String, String> entry : mapping.entrySet()) {
-                if ("__system__".equals(entry.getValue())) {
+                if ("__system__".equals(entry.getValue()) || CP_MCP_SERVER_ID.equals(entry.getValue())) {
                     seenNames.add(entry.getKey());
                 }
             }
@@ -417,12 +425,17 @@ public class McpProxyController {
     private List<Map<String, Object>> populateSystemTools(
             String wsId, HttpHeaders headers, AccessContext access) {
         Map<String, String> mapping = toolServerCache.computeIfAbsent(wsId, k -> new ConcurrentHashMap<>());
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (access != null && access.internalService()) {
+            mapping.put(SPAWN_AGENT_TOOL, CP_MCP_SERVER_ID);
+            result.add(spawnAgentToolDefinition());
+        }
         String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1,\"params\":{}}";
         ResponseEntity<String> sysResp = forwardToRuntime(
                 wsId, null, listBody, headers, access.auditSessionId(), access);
         if (!sysResp.getStatusCode().is2xxSuccessful()) {
             logger.warn("System tools/list failed: wsId={} status={}", wsId, sysResp.getStatusCode());
-            return Collections.emptyList();
+            return result;
         }
         List<Map<String, Object>> sysTools = extractToolsFromResponse(sysResp.getBody());
         if (sysTools == null || sysTools.isEmpty()) {
@@ -430,17 +443,32 @@ public class McpProxyController {
                     : sysResp.getBody().substring(0, Math.min(500, sysResp.getBody().length()));
             logger.warn("System tools/list returned no tools: wsId={} status={} body={}",
                     wsId, sysResp.getStatusCode(), bodyPreview);
-            return Collections.emptyList();
+            return result;
         }
-        List<Map<String, Object>> result = new ArrayList<>();
         for (Map<String, Object> tool : sysTools) {
             String name = (String) tool.get("name");
-            if (name != null) {
+            if (SPAWN_AGENT_TOOL.equals(name)) {
+                logger.warn("Runtime tool name '{}' is reserved by the CP-owned tool surface", name);
+            } else if (name != null) {
                 mapping.put(name, "__system__");
                 result.add(tool);
             }
         }
         return result;
+    }
+
+    private static Map<String, Object> spawnAgentToolDefinition() {
+        return Map.of(
+                "name", SPAWN_AGENT_TOOL,
+                "description", "Create a child Agent Session in the current Workspace. The child inherits a narrowed permission snapshot.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of("prompt", Map.of(
+                                "type", "string",
+                                "minLength", 1,
+                                "description", "The task for the child Agent")),
+                        "required", List.of("prompt"),
+                        "additionalProperties", false));
     }
 
     private ResponseEntity<String> handleToolsCall(
@@ -460,8 +488,26 @@ public class McpProxyController {
             serverId = mapping.get(toolName);
         }
 
+        if (SPAWN_AGENT_TOOL.equals(toolName)) {
+            if (!access.internalService()) {
+                return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "This MCP tool is available only to Agent services");
+            }
+            serverId = CP_MCP_SERVER_ID;
+        }
+
         if (serverId == null) {
             return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL", "Requested tool is unavailable");
+        }
+        boolean cpOwnedSpawn = CP_MCP_SERVER_ID.equals(serverId) && SPAWN_AGENT_TOOL.equals(toolName);
+        ChatSubmissionService.SpawnInvocation spawnInvocation = null;
+        if (cpOwnedSpawn) {
+            try {
+                spawnInvocation = agentSpawnExecutionService.prepareMcpInvocation(
+                        body, headers, access.applicationSessionId(), access.userId(), wsId);
+            } catch (CpApiException e) {
+                audit.record(sessionId, toolName, "spawn_context_rejected", e.getCode());
+                return cpToolErrorResponse(body, e.getCode());
+            }
         }
 
         // PLAN-275 M1: All tools, including __system__, go through policy evaluation.
@@ -492,9 +538,12 @@ public class McpProxyController {
         }
 
         boolean reusedSessionGrant = false;
+        String deferredApprovalGrantId = null;
         if (verdict.effect() == PolicyEffect.ASK) {
             String grantId = headers.getFirst("X-Xihe-Approval-Request-Id");
-            if (grantId != null && approvalService.consumeApprovedGrant(
+            if (grantId != null && cpOwnedSpawn) {
+                deferredApprovalGrantId = grantId;
+            } else if (grantId != null && approvalService.consumeApprovedGrant(
                     grantId, access.userId(), wsId, sessionId, toolName, body)) {
                 // T1.7 R7: approval_grant_consumed is audited inside the consume transaction.
             } else if (approvalService.tryReuseSessionGrant(sessionId, wsId, toolName, body)) {
@@ -521,6 +570,11 @@ public class McpProxyController {
                 verdict, face, policyContext,
                 reusedSessionGrant ? Boolean.TRUE : null).orElse(null);
 
+        if (cpOwnedSpawn) {
+            return dispatchCpOwnedSpawn(body, headers, sessionId, access, spawnInvocation,
+                    deferredApprovalGrantId, policySummary);
+        }
+
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
         // 且先剥离上游同名头（信任边界）。此块位于 __system__ 分支之前——系统工具同样受管。
         String perCallRaw = headers.getFirst("X-Xihe-Tool-Timeout-Per-Call");
@@ -546,8 +600,8 @@ public class McpProxyController {
             mutable.set("X-Xihe-Tool-Output-Limit", String.valueOf(outputLimit));
         }
         headers = mutable;
-        // PLAN-0308 M1（spec S2/S5.1）：一次工具调用的署名上下文——三跳日志共用同一 toolCallId
-        // （Agent 用 LangGraph 的 tool call id，经 X-Operation-Item-Id 透传）。
+        // PLAN-0308 M1 + PLAN-0407 T2.10（spec S2/S5.1）：三跳日志共用 LangChain tool
+        // callback run_id；Agent 经 X-Operation-Item-Id 透传，CP durable/SSE item 使用同值。
         ForwardWait forwardWait = forwardWaitFor(waits, perCallSeconds);
         forwardWait = forwardWait.withIdentity(
                 toolName, headers.getFirst("X-Operation-Item-Id"), headers.getFirst("X-Chat-Run-Id"));
@@ -597,6 +651,72 @@ public class McpProxyController {
 
         body = rewritten;
         return forwardToRuntime(wsId, serverId, body, headers, sessionId, access, forwardWait, policySummary);
+    }
+
+    private ResponseEntity<String> dispatchCpOwnedSpawn(
+            String body, HttpHeaders headers, String sessionId, AccessContext access,
+            ChatSubmissionService.SpawnInvocation invocation, String approvalGrantId, String policySummary) {
+        LedgerAttempt ledgerAttempt = null;
+        String responseBody;
+        try {
+            ledgerAttempt = startLedgerAttempt(body, headers, sessionId, access);
+            attachPolicySummary(ledgerAttempt, policySummary, null);
+            ChatSubmissionService.SpawnResult child = agentSpawnExecutionService.execute(invocation,
+                    new ChatSubmissionService.SpawnAuthorization(
+                            invocation.authorizationBody(), approvalGrantId, policySummary));
+            Map<String, Object> output = Map.of(
+                    "sessionId", child.sessionId(),
+                    "runId", child.runId(),
+                    "principalId", child.principalId(),
+                    "workspaceId", child.workspaceId());
+            responseBody = cpToolResult(body, output, null);
+            audit.record(sessionId, SPAWN_AGENT_TOOL, "allow",
+                    "childRunId=" + child.runId() + " childSessionId=" + child.sessionId());
+        } catch (CpApiException e) {
+            responseBody = cpToolResult(body, null, e.getCode());
+            audit.record(sessionId, SPAWN_AGENT_TOOL, "tool_error", e.getCode());
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=spawn_mcp_dispatch_failed sessionId={} runId={} itemId={} failureType={}",
+                    sessionId, invocation.parentRunId(), invocation.operationItemId(),
+                    e.getClass().getSimpleName(), e);
+            responseBody = cpToolResult(body, null, "SPAWN_EXECUTION_FAILED");
+            audit.record(sessionId, SPAWN_AGENT_TOOL, "tool_error", "SPAWN_EXECUTION_FAILED");
+        }
+
+        finishLedgerAttempt(ledgerAttempt, 200, null, responseBody);
+        appendMcpExtension(ledgerAttempt, CP_MCP_SERVER_ID, body, 200, responseBody, null,
+                STATELESS_PROTOCOL_VERSION);
+        return mcpJsonResponse(responseBody);
+    }
+
+    private ResponseEntity<String> cpToolErrorResponse(String body, String code) {
+        return mcpJsonResponse(cpToolResult(body, null, code));
+    }
+
+    private String cpToolResult(String requestBody, Map<String, Object> output, String errorCode) {
+        ObjectNode response = objectMapper.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        response.set("id", objectMapper.valueToTree(readJsonRpcId(requestBody)));
+        ObjectNode result = response.putObject("result");
+        result.put("resultType", "complete");
+        ObjectNode text = result.putArray("content").addObject();
+        text.put("type", "text");
+        if (errorCode != null) {
+            result.put("isError", true);
+            text.put("text", "Tool error: " + errorCode);
+            return response.toString();
+        }
+        ObjectNode structured = objectMapper.valueToTree(output);
+        result.set("structuredContent", structured);
+        text.put("text", structured.toString());
+        return response.toString();
+    }
+
+    private ResponseEntity<String> mcpJsonResponse(String body) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("MCP-Protocol-Version", STATELESS_PROTOCOL_VERSION)
+                .body(body);
     }
 
     /**

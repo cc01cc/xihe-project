@@ -1,15 +1,12 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -32,24 +29,23 @@ public class ChatRunReconciliationService {
             "dispatching");
 
     private final ChatRunRepository chatRunRepository;
-    private final OperationService operationService;
     private final ChatController chatController;
+    private final ChatRunTerminalService terminalService;
     private final Duration grace;
 
     public ChatRunReconciliationService(
             ChatRunRepository chatRunRepository,
-            OperationService operationService,
             ChatController chatController,
+            ChatRunTerminalService terminalService,
             @Value("${cp.chat.reconcile-grace-seconds:600}") long graceSeconds) {
         this.chatRunRepository = chatRunRepository;
-        this.operationService = operationService;
         this.chatController = chatController;
+        this.terminalService = terminalService;
         this.grace = Duration.ofSeconds(graceSeconds);
     }
 
     @Scheduled(fixedDelayString = "${cp.chat.reconcile-interval-ms:300000}",
             initialDelayString = "${cp.chat.reconcile-initial-delay-ms:120000}")
-    @Transactional
     public void reconcileStaleRuns() {
         Instant now = Instant.now();
         Instant cutoff = now.minus(grace);
@@ -69,21 +65,21 @@ public class ChatRunReconciliationService {
             try {
                 boolean userCancelled = "cancelling".equals(run.getStatus());
                 String target = userCancelled ? "cancelled" : "ambiguous";
-                run.setStatus(target);
-                run.setTerminalOutcome(target);
-                if (!userCancelled) {
-                    run.setErrorCode("CP_RECONCILED");
-                    run.setErrorDetail("Control plane reconciled a stale run without an active lease");
-                }
-                chatRunRepository.save(run);
-                operationService.reconcileStaleOperation(runId, target);
-                if (userCancelled) {
+                ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
+                        new ChatRunTerminalService.TerminalRequest(runId, List.of(run.getStatus()), target,
+                                target, userCancelled ? null : "CP_RECONCILED",
+                                userCancelled ? null : "Control plane reconciled a stale run without an active lease",
+                                run.getTokenCount(), run.getAssistantChars(),
+                                userCancelled ? ChatRunTerminalService.LedgerMode.CANCELLATION
+                                        : ChatRunTerminalService.LedgerMode.RECONCILIATION,
+                                List.of()));
+                if (result.committed() && userCancelled) {
                     cancelled++;
-                } else {
+                } else if (result.committed()) {
                     ambiguous++;
                 }
                 logger.info("[LIFECYCLE] service=cp event=chat_run_reconciled runId={} sessionId={} status={} staleSince={}",
-                        runId, run.getSessionId(), target, run.getCreatedAt());
+                        runId, run.getSessionId(), result.currentStatus(), run.getCreatedAt());
             } catch (Exception e) {
                 logger.error("[LIFECYCLE] service=cp event=chat_run_reconcile_failed runId={} sessionId={}",
                         runId, run.getSessionId(), e);

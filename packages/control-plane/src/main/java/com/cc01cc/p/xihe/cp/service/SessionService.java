@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -35,6 +36,7 @@ public class SessionService {
     private final AuthorizationGrantRepository authorizationGrantRepository;
     private final DbLockTimeout dbLockTimeout;
     private final AgentPrincipalService agentPrincipalService;
+    private final EntityManager entityManager;
 
     public SessionService(SessionRepository sessionRepository,
                           MessageRepository messageRepository,
@@ -47,7 +49,8 @@ public class SessionService {
                           SessionPolicyState sessionPolicyState,
                           AuthorizationGrantRepository authorizationGrantRepository,
                           DbLockTimeout dbLockTimeout,
-                          AgentPrincipalService agentPrincipalService) {
+                          AgentPrincipalService agentPrincipalService,
+                          EntityManager entityManager) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
@@ -60,6 +63,7 @@ public class SessionService {
         this.authorizationGrantRepository = authorizationGrantRepository;
         this.dbLockTimeout = dbLockTimeout;
         this.agentPrincipalService = agentPrincipalService;
+        this.entityManager = entityManager;
     }
 
     @Transactional(readOnly = true)
@@ -197,19 +201,23 @@ public class SessionService {
     public void delete(String sessionId, String userId, String workspaceId) {
         Session session = requireCurrent(sessionId, userId, workspaceId);
 
+        dbLockTimeout.apply();
+        Session lockedSession = sessionRepository.findByIdForUpdate(session.getId())
+                .orElseThrow(() -> new CpApiException(
+                        HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
+        entityManager.refresh(lockedSession);
+        if (lockedSession.isArchived()
+                || !userId.equals(lockedSession.getUserId())
+                || !workspaceId.equals(lockedSession.getWorkspaceId())) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
+        }
+
         // Delete metadata and context rows explicitly so this remains correct on old live schemas.
         chatAttachmentService.deleteSessionAttachments(sessionId);
         fileRepository.deleteBySessionId(sessionId);
         messageRepository.deleteBySessionId(sessionId);
         contextProjectionRepository.deleteBySessionId(sessionId);
         eventStoreRepository.deleteBySessionId(sessionId);
-        dbLockTimeout.apply();
-        Session lockedSession = sessionRepository.findByIdForUpdate(session.getId())
-                .filter(candidate -> !candidate.isArchived()
-                        && userId.equals(candidate.getUserId())
-                        && workspaceId.equals(candidate.getWorkspaceId()))
-                .orElseThrow(() -> new CpApiException(
-                        HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
         authorizationGrantRepository.deleteBySubjectTypeAndSubjectId("agent", lockedSession.getId());
         sessionRepository.delete(lockedSession);
         // T1.7: session mode, L4 rules and reuse fingerprints must not outlive the session.

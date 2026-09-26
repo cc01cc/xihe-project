@@ -88,6 +88,7 @@ final class OperationViews {
         OperationPolicySummary.parse(item.getPolicySummary())
                 .ifPresent(policy -> view.put("policy", policy));
         view.put("approvalRequestId", item.getApprovalRequestId());
+        view.put("waitingOnRunId", item.getWaitingOnRunId() == null ? null : item.getWaitingOnRunId().toString());
         view.put("status", item.getStatus());
         view.put("errorCode", item.getErrorCode());
         view.put("startedAt", item.getStartedAt() == null ? null : item.getStartedAt().toString());
@@ -110,6 +111,7 @@ final class OperationViews {
         OperationPolicySummary.parse(item.getPolicySummary())
                 .ifPresent(policy -> view.put("policy", policy));
         view.put("approvalRequestId", item.getApprovalRequestId());
+        view.put("waitingOnRunId", item.getWaitingOnRunId() == null ? null : item.getWaitingOnRunId().toString());
         view.put("status", item.getStatus());
         view.put("resultRef", item.getResultRef());
         view.put("errorCode", item.getErrorCode());

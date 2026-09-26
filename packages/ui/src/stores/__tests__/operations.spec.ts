@@ -66,6 +66,7 @@ describe('useOperationStore', () => {
         toolName: 'write_file',
         source: 'mcp',
         policyDecision: 'allow',
+        waitingOnRunId: 'child-run-1',
         status: 'completed',
         policy: {
           // An auto verdict is an allow with a non-null allowedBy (CP PolicyVerdict.allowedByMode).
@@ -89,6 +90,7 @@ describe('useOperationStore', () => {
 
     expect(store.selectedTrace?.items[0]?.policy).toEqual(trace.items[0]?.policy)
     expect(store.selectedTrace?.items[0]?.policy?.allowedBy).toBe('auto@session')
+    expect(store.selectedTrace?.items[0]?.waitingOnRunId).toBe('child-run-1')
   })
 
   it('stores the error and rethrows failed loads', async () => {

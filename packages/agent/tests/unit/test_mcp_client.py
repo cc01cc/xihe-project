@@ -327,6 +327,47 @@ class TestMCPAgentToolApproval:
         }
 
     @pytest.mark.asyncio
+    async def test_spawn_agent_uses_cp_mcp_context_and_existing_approval_retry(self, context):
+        context.metadata["operationItemId"] = "spawn-item-1"
+        approval_tool = ApprovalAgentTool(timeout_seconds=5)
+        calls: list[tuple[dict, dict[str, str]]] = []
+
+        async def _call(name, arguments, headers):
+            calls.append((dict(arguments), dict(headers)))
+            if len(calls) == 1:
+                raise _gate_error("spawn_agent")
+            return _tool_result('{"sessionId":"child-session","runId":"child-run"}')
+
+        manager = _fake_manager(approval_tool=approval_tool)
+        manager.call_tool = AsyncMock(side_effect=_call)
+        arguments = {"prompt": "child task"}
+        tool = MCPAgentTool(_stub_tool("spawn_agent"), manager)
+
+        task = asyncio.create_task(tool.execute(arguments, context))
+        request_id = await _await_pending(approval_tool)
+        assert request_id == "apr-00000001"
+        assert approval_tool.resolve_approval_status(request_id, True) == ("accepted", True)
+        result = await asyncio.wait_for(task, timeout=5)
+
+        assert "child-session" in result["content"]
+        assert len(calls) == 2
+        assert calls[0] == (
+            arguments,
+            {
+                "X-Session-Id": "session-1",
+                "X-Chat-Run-Id": "run-1",
+                "X-Operation-Id": "operation-1",
+                "X-Operation-Item-Id": "spawn-item-1",
+            },
+        )
+        assert calls[1][0] == calls[0][0], "approval retry must retain identical spawn arguments"
+        assert calls[1][1] == {
+            **calls[0][1],
+            APPROVAL_GRANT_HEADER: request_id,
+        }
+        assert approval_tool.get_pending() == []
+
+    @pytest.mark.asyncio
     async def test_per_call_timeout_header_attached_only_for_named_tool(self, context):
         """PLAN-0308 T1.9：per-call 原始值随对应工具调用携带（CP 校验后采纳）。"""
         context.runtime_state["toolTimeouts"] = {"read_file": 120}

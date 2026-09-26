@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
@@ -13,8 +12,6 @@ import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Instant;
 import java.util.List;
 
@@ -35,24 +32,23 @@ public class ChatRunRecoveryService {
     private final ChatRunRepository chatRunRepository;
     private final ChatApprovalRepository approvalRepository;
     private final ChatController chatController;
-    private final OperationService operationService;
+    private final ChatRunTerminalService terminalService;
     private final RunCheckpointService runCheckpointService;
 
     public ChatRunRecoveryService(ChatRunRepository chatRunRepository,
                                   ChatApprovalRepository approvalRepository,
                                   ChatController chatController,
-                                  OperationService operationService,
+                                  ChatRunTerminalService terminalService,
                                   RunCheckpointService runCheckpointService) {
         this.chatRunRepository = chatRunRepository;
         this.approvalRepository = approvalRepository;
         this.chatController = chatController;
-        this.operationService = operationService;
+        this.terminalService = terminalService;
         this.runCheckpointService = runCheckpointService;
     }
 
     @Order(Ordered.HIGHEST_PRECEDENCE)
     @EventListener(ApplicationReadyEvent.class)
-    @Transactional
     public void reconcileOnStartup() {
         int cancelled = reconcileCancellingRuns();
         List<ChatRun> recoverable = chatRunRepository.findRecoverableRuns(ChatRunRepository.ACTIVE_LEASE_STATUSES);
@@ -73,14 +69,17 @@ public class ChatRunRecoveryService {
                     logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=awaiting_approval reason=live_approval",
                             run.getId(), run.getSessionId());
                 } else {
-                    run.setStatus("ambiguous");
-                    run.setTerminalOutcome("ambiguous");
-                    run.setErrorCode("CP_RESTARTED");
-                    run.setErrorDetail("Control plane restarted while the chat run was active");
-                    chatRunRepository.save(run);
-                    ambiguous++;
-                    logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=ambiguous errorCode=CP_RESTARTED",
-                            run.getId(), run.getSessionId());
+                    ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
+                            new ChatRunTerminalService.TerminalRequest(run.getId().toString(),
+                                    List.of(run.getStatus()), "ambiguous", "ambiguous", "CP_RESTARTED",
+                                    "Control plane restarted while the chat run was active",
+                                    run.getTokenCount(), run.getAssistantChars(),
+                                    ChatRunTerminalService.LedgerMode.RECONCILIATION, List.of()));
+                    if (result.committed()) {
+                        ambiguous++;
+                        logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=ambiguous errorCode=CP_RESTARTED",
+                                run.getId(), run.getSessionId());
+                    }
                 }
             } catch (Exception e) {
                 logger.error("[LIFECYCLE] service=cp event=chat_run_recovery_failed runId={} sessionId={}",
@@ -116,13 +115,16 @@ public class ChatRunRecoveryService {
         int cancelled = 0;
         for (ChatRun run : chatRunRepository.findByStatus("cancelling")) {
             try {
-                run.setStatus("cancelled");
-                run.setTerminalOutcome("cancelled");
-                chatRunRepository.save(run);
-                operationService.transitionOperationForRun(run.getId().toString(), "cancelled", null, null);
-                cancelled++;
-                logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=cancelled reason=restart_during_cancel",
-                        run.getId(), run.getSessionId());
+                ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
+                        new ChatRunTerminalService.TerminalRequest(run.getId().toString(),
+                                List.of("cancelling"), "cancelled", "cancelled", null, null,
+                                run.getTokenCount(), run.getAssistantChars(),
+                                ChatRunTerminalService.LedgerMode.CANCELLATION, List.of()));
+                if (result.committed()) {
+                    cancelled++;
+                    logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=cancelled reason=restart_during_cancel",
+                            run.getId(), run.getSessionId());
+                }
             } catch (Exception e) {
                 logger.error("[LIFECYCLE] service=cp event=chat_run_recovery_failed runId={} sessionId={} status=cancelling",
                         run.getId(), run.getSessionId(), e);
