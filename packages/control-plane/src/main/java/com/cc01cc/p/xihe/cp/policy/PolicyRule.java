@@ -3,14 +3,17 @@ package com.cc01cc.p.xihe.cp.policy;
 import java.util.Objects;
 
 /**
- * One authorization rule: {actionClass, resource, effect}. See PLAN-0328 spec/approval.md §8.
+ * One rule row: {actionClass, resource, effect}. See PLAN-0328 spec/approval.md §8.
+ *
+ * <p>PLAN-0407 T2.8 retired rule adjudication: rows remain as approval storage (saved/reject
+ * tiers, session state) and as dictionary inputs, but no longer select allow/ask/deny — the
+ * grant lookup and the approval ask list do (design #18/#21).</p>
  *
  * <p>{@code resource} supports three specificity tiers — exact, prefix (trailing {@code *}) and
- * glob. {@code seq} preserves insertion order so that same-priority ties resolve to the
- * last-matched rule (see {@link LayeredPolicyResolver}).</p>
+ * glob; {@code seq} preserves insertion order within a layer.</p>
  *
- * <p>{@code locked} rules (only settable from the INSTANCE layer, per decision #39) participate in
- * evaluation regardless of layer selection and may only be DENY or ASK.</p>
+ * <p>{@code locked} rules (only settable from the INSTANCE layer, per decision #39) may only be
+ * DENY or ASK.</p>
  */
 public record PolicyRule(
         String actionClass,

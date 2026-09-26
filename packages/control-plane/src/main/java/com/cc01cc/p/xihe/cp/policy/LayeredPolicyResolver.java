@@ -1,142 +1,19 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
-
 /**
- * Layered policy resolver: "select the layer per domain first, then evaluate" — no cross-layer
- * merge (PLAN-0328 decision #37, spec §4.2).
+ * Shape-aware resource matcher and approval mode constants.
  *
- * <p>Per domain ({@code actionClass}):</p>
- * <ol>
- *   <li>effective layer = highest layer that configures the domain (has at least one matching
- *       rule); locked rules from INSTANCE always participate;</li>
- *   <li>evaluate that layer's rules: any DENY match wins; ALLOW only when every requested
- *       resource is covered by an ALLOW rule; otherwise ASK (default when nothing matches).</li>
- * </ol>
- *
- * <p>Multi-domain: any DENY → DENY; else any ASK → ASK; else ALLOW.</p>
- *
- * <p>Mode {@code auto} turns ASK into ALLOW <em>after</em> DENY and records
- * {@code allowedBy}; {@code manual} leaves ASK for the approval workflow.</p>
+ * <p>PLAN-0407 T2.8 (design #18/#21/#27) retired the layered rule adjudication that used to live
+ * here ({@code resolve} → layer selection → allow/ask/deny): authorization is now the grant
+ * lookup and the approval trigger is the approval-policy ask list. What remains is the shared
+ * matcher consumed by {@link GrantIntersectionEvaluator} (design #27: keep the shared
+ * implementation, drop the rule verdict machinery) plus the {@code manual}/{@code auto} approval
+ * mode constants that belong to the approval system.</p>
  */
 public class LayeredPolicyResolver {
 
     public static final String MODE_MANUAL = "manual";
     public static final String MODE_AUTO = "auto";
-
-    /** One layer's ruleset. */
-    public record LayerInput(PolicyLayer layer, List<PolicyRule> rules) {
-        public LayerInput {
-            rules = List.copyOf(rules == null ? List.of() : rules);
-        }
-    }
-
-    public PolicyVerdict resolve(PolicyRequest request, List<LayerInput> layers, String mode, PolicyLayer modeLayer) {
-        String effectiveMode = mode == null ? MODE_MANUAL : mode;
-        PolicyLayer resolvedModeLayer = modeLayer == null ? PolicyLayer.BUILTIN : modeLayer;
-
-        PolicyVerdict combined = null;
-        for (String actionClass : request.actionClasses()) {
-            PolicyVerdict domain = evaluateDomain(actionClass, request, layers);
-            combined = combined == null ? domain : combine(combined, domain);
-        }
-        PolicyVerdict verdict = combined == null
-                ? PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN, effectiveMode, "no rules matched")
-                : combined;
-
-        if (verdict.effect() == PolicyEffect.ASK && MODE_AUTO.equals(effectiveMode)) {
-            return verdict.allowedByMode(MODE_AUTO + "@" + resolvedModeLayer.name());
-        }
-        return verdict;
-    }
-
-    private PolicyVerdict evaluateDomain(String actionClass, PolicyRequest request, List<LayerInput> layers) {
-        List<PolicyRule> selected = new ArrayList<>();
-        PolicyLayer effectiveLayer = null;
-
-        // Effective layer = the *highest-ranked* layer that configures this domain (spec §4.2 step 1).
-        for (LayerInput input : layers) {
-            List<PolicyRule> matchingDomain = input.rules().stream()
-                    .filter(rule -> coversActionClass(rule, actionClass))
-                    .toList();
-            if (!matchingDomain.isEmpty()
-                    && (effectiveLayer == null || input.layer().higherThan(effectiveLayer))) {
-                effectiveLayer = input.layer();
-                selected = new ArrayList<>(matchingDomain);
-            }
-        }
-
-        final List<PolicyRule> domainRules = selected;
-
-        // Locked rules are set by INSTANCE only and always participate (decision #39).
-        for (LayerInput input : layers) {
-            if (input.layer() != PolicyLayer.INSTANCE) {
-                continue;
-            }
-            input.rules().stream()
-                    .filter(PolicyRule::locked)
-                    .filter(rule -> coversActionClass(rule, actionClass))
-                    .filter(rule -> !domainRules.contains(rule))
-                    .forEach(domainRules::add);
-        }
-
-        if (effectiveLayer == null) {
-            effectiveLayer = PolicyLayer.BUILTIN;
-        }
-        if (domainRules.isEmpty()) {
-            return PolicyVerdict.of(PolicyEffect.ASK, null, effectiveLayer, null, "no rule for domain " + actionClass);
-        }
-
-        Optional<PolicyRule> deny = best(domainRules, request, PolicyEffect.DENY);
-        if (deny.isPresent()) {
-            PolicyRule rule = deny.get();
-            return PolicyVerdict.of(PolicyEffect.DENY, describe(rule), effectiveLayer, null,
-                    "denied by " + describe(rule) + " (" + actionClass + ")");
-        }
-
-        if (coversAllResources(domainRules, request)) {
-            Optional<PolicyRule> allow = best(domainRules, request, PolicyEffect.ALLOW);
-            return PolicyVerdict.of(PolicyEffect.ALLOW, allow.map(LayeredPolicyResolver::describe).orElse(null),
-                    effectiveLayer, null, "allowed by " + actionClass + " rules");
-        }
-
-        Optional<PolicyRule> ask = best(domainRules, request, PolicyEffect.ASK);
-        return PolicyVerdict.of(PolicyEffect.ASK, ask.map(LayeredPolicyResolver::describe).orElse(null),
-                effectiveLayer, null, "requires approval for domain " + actionClass
-                        + (ask.isPresent() ? "" : " (default ask)"));
-    }
-
-    private static boolean coversActionClass(PolicyRule rule, String actionClass) {
-        return "*".equals(rule.actionClass()) || rule.actionClass().equals(actionClass);
-    }
-
-    /** Best match for one effect: specificity desc, then priority desc, then last inserted. */
-    private static Optional<PolicyRule> best(List<PolicyRule> rules, PolicyRequest request, PolicyEffect effect) {
-        return rules.stream()
-                .filter(rule -> rule.effect() == effect)
-                .filter(rule -> matchesAnyResource(rule, request))
-                .max(Comparator.comparingInt(PolicyRule::specificity)
-                        .thenComparingInt(PolicyRule::priority)
-                        .thenComparingLong(PolicyRule::seq));
-    }
-
-    private static boolean matchesAnyResource(PolicyRule rule, PolicyRequest request) {
-        return request.resources().stream()
-                .anyMatch(resource -> matches(rule.resource(), resource, request.shape()));
-    }
-
-    /** ALLOW requires every requested resource to be covered by a matching ALLOW rule. */
-    private static boolean coversAllResources(List<PolicyRule> rules, PolicyRequest request) {
-        List<PolicyRule> allows = rules.stream().filter(rule -> rule.effect() == PolicyEffect.ALLOW).toList();
-        if (allows.isEmpty()) {
-            return false;
-        }
-        return request.resources().stream().allMatch(resource ->
-                allows.stream().anyMatch(rule -> matches(rule.resource(), resource, request.shape())));
-    }
 
     /** Path-style matching: {@code *} does not cross {@code /}, {@code **} does. */
     static boolean matches(String pattern, String value) {
@@ -185,20 +62,5 @@ public class LayeredPolicyResolver {
             }
         }
         return regex.toString();
-    }
-
-    private static PolicyVerdict combine(PolicyVerdict left, PolicyVerdict right) {
-        if (left.effect() == PolicyEffect.DENY || right.effect() == PolicyEffect.DENY) {
-            return left.effect() == PolicyEffect.DENY ? left : right;
-        }
-        if (left.effect() == PolicyEffect.ASK || right.effect() == PolicyEffect.ASK) {
-            return left.effect() == PolicyEffect.ASK ? left : right;
-        }
-        return left;
-    }
-
-    static String describe(PolicyRule rule) {
-        return "{ " + rule.actionClass() + ", \"" + rule.resource() + "\", " + rule.effect().name().toLowerCase()
-                + (rule.locked() ? ", locked" : "") + " }";
     }
 }

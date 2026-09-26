@@ -137,20 +137,17 @@ class PolicyRevisionCounterIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void deletingANonNewestRuleAdvancesTheRevision() {
+    void creatingRuleRowsAdvancesTheRevisionOnePerRow() {
         long initial = policyRevision.current();
 
-        PolicyRuleService.RuleView older = ruleService.create(WORKSPACE_LAYER, userId, workspaceId, false,
+        ruleService.create(WORKSPACE_LAYER, userId, workspaceId, false,
                 new PolicyRuleService.RuleInput("write", "*", "allow", 0, false));
         ruleService.create(WORKSPACE_LAYER, userId, workspaceId, false,
                 new PolicyRuleService.RuleInput("exec", "*", "deny", 0, false));
-        long afterCreates = policyRevision.current();
-        assertEquals(initial + 2, afterCreates);
 
-        ruleService.delete(older.id(), WORKSPACE_LAYER, userId, workspaceId, false);
-
-        assertEquals(afterCreates + 1, policyRevision.current(),
-                "deleting a rule that is not the newest row must still advance the durable revision");
+        assertEquals(initial + 2, policyRevision.current());
+        // The rule-delete path retired with the /policy/rules CRUD (PLAN-0407 T2.8); revision
+        // invalidation on remaining mutations is covered by the consume-time test below.
     }
 
     @Test
@@ -164,14 +161,10 @@ class PolicyRevisionCounterIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void tightenedDeleteInvalidatesAPreviouslyValidGrantAtConsume() {
-        PolicyRuleService.RuleView shadowingAllow = ruleService.create(WORKSPACE_LAYER, userId, workspaceId,
-                false, new PolicyRuleService.RuleInput("write", "*", "allow", 0, false));
-        ruleService.create(WORKSPACE_LAYER, userId, workspaceId, false,
-                new PolicyRuleService.RuleInput("exec", "*", "deny", 0, false));
-        assertEquals(PolicyEffect.ALLOW, policyEngine.evaluateVerdict(
-                        "write_file", "", sessionId, null, userId, workspaceId).effect(),
-                "the workspace ALLOW shadows the builtin ASK before the delete");
+    void ruleMutationStillInvalidatesAPreviouslyValidGrantEvenThoughRulesNoLongerAdjudicate() {
+        assertEquals(PolicyEffect.ASK, policyEngine.evaluateVerdict(
+                        "execute_command", "", sessionId, null, userId, workspaceId).effect(),
+                "baseline: exec sits on the default approval ask list");
 
         long grantRevision = policyRevision.current();
         String consumedBefore = UUID.randomUUID().toString();
@@ -183,21 +176,26 @@ class PolicyRevisionCounterIntegrationTest extends AbstractIntegrationTest {
         String stale = UUID.randomUUID().toString();
         approvedGrant(stale, grantRevision);
 
-        ruleService.delete(shadowingAllow.id(), WORKSPACE_LAYER, userId, workspaceId, false);
+        // Any durable rule mutation still advances the revision (retained approval purpose ③,
+        // V20/V21); the rule row itself no longer adjudicates anything (PLAN-0407 T2.8).
+        ruleService.create(WORKSPACE_LAYER, userId, workspaceId, false,
+                new PolicyRuleService.RuleInput("exec", "*", "deny", 0, false));
+        assertEquals(grantRevision + 1, policyRevision.current(),
+                "creating a rule row advances the durable revision by exactly one");
 
         assertEquals(PolicyEffect.ASK, policyEngine.evaluateVerdict(
-                        "write_file", "", sessionId, null, userId, workspaceId).effect(),
-                "removing the older ALLOW tightens the verdict back to the builtin ASK");
+                        "execute_command", "", sessionId, null, userId, workspaceId).effect(),
+                "a persisted deny rule no longer changes the verdict (rules retired as adjudicator)");
         assertFalse(approvalService.consumeApprovedGrant(stale, userId, workspaceId, sessionId,
                         "write_file", INVOCATION_BODY),
-                "the tightening delete must invalidate the grant that was valid before it");
+                "the rule mutation must invalidate the grant that was valid before it");
         assertNull(approvalRepository.findById(UUID.fromString(stale)).orElseThrow().getGrantConsumedAt());
 
         String fresh = UUID.randomUUID().toString();
         approvedGrant(fresh, policyRevision.current());
         assertTrue(approvalService.consumeApprovedGrant(fresh, userId, workspaceId, sessionId,
                         "write_file", INVOCATION_BODY),
-                "a grant captured after the delete remains consumable (rejection was revision-specific)");
+                "a grant captured after the mutation remains consumable (rejection was revision-specific)");
     }
 
     @Test

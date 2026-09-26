@@ -7,9 +7,7 @@ import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,7 +17,6 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Policy administration API (PLAN-0328 M1): rules, tool faces and session mode.
@@ -55,64 +52,9 @@ public class PolicyController {
         return ResponseEntity.ok(ruleService.domains(userId, workspaceId));
     }
 
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping("/rules")
-    public ResponseEntity<?> listRules(@RequestParam String layer) {
-        try {
-            return ResponseEntity.ok(ruleService.list(layer, TenantContext.getUserId(),
-                    TenantContext.getWorkspaceId(), isAdmin()));
-        } catch (CpApiException e) {
-            return problem(e);
-        }
-    }
-
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @PostMapping("/rules")
-    public ResponseEntity<?> createRule(@RequestBody Map<String, Object> body) {
-        String layer = body == null ? null : String.valueOf(body.get("layer"));
-        try {
-            PolicyRuleService.RuleInput input = new PolicyRuleService.RuleInput(
-                    asString(body, "actionClass"),
-                    asString(body, "resource"),
-                    asString(body, "effect"),
-                    asInt(body, "priority"),
-                    asBoolean(body, "locked"));
-            return ResponseEntity.ok(ruleService.create(layer, TenantContext.getUserId(),
-                    TenantContext.getWorkspaceId(), isAdmin(), input));
-        } catch (CpApiException e) {
-            return problem(e);
-        }
-    }
-
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @DeleteMapping("/rules/{id}")
-    public ResponseEntity<?> deleteRule(@PathVariable String id, @RequestParam String layer) {
-        UUID ruleId;
-        try {
-            ruleId = UUID.fromString(id);
-        } catch (IllegalArgumentException e) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "id must be a UUID");
-        }
-        try {
-            ruleService.delete(ruleId, layer, TenantContext.getUserId(),
-                    TenantContext.getWorkspaceId(), isAdmin());
-            return ResponseEntity.noContent().build();
-        } catch (CpApiException e) {
-            return problem(e);
-        }
-    }
-
-    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
-    @GetMapping("/rules/conflicts")
-    public ResponseEntity<?> conflicts(@RequestParam String layer) {
-        try {
-            return ResponseEntity.ok(ruleService.conflicts(layer, TenantContext.getUserId(),
-                    TenantContext.getWorkspaceId(), isAdmin()));
-        } catch (CpApiException e) {
-            return problem(e);
-        }
-    }
+    // PLAN-0407 T2.8 (design #18/#21): the /policy/rules CRUD routes are retired with the rule
+    // adjudication engine — authorization is the grant lookup and the approval trigger is the
+    // approval-policy ask list. The permission-rules UI page retires with PLAN-0374 T3.4.
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @GetMapping("/tool-faces")
@@ -213,15 +155,5 @@ public class PolicyController {
     private static String asString(Map<String, Object> body, String key) {
         Object value = body == null ? null : body.get(key);
         return value == null ? null : String.valueOf(value);
-    }
-
-    private static Integer asInt(Map<String, Object> body, String key) {
-        Object value = body == null ? null : body.get(key);
-        return value instanceof Number number ? number.intValue() : null;
-    }
-
-    private static Boolean asBoolean(Map<String, Object> body, String key) {
-        Object value = body == null ? null : body.get(key);
-        return value instanceof Boolean bool ? bool : null;
     }
 }

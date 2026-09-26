@@ -86,7 +86,7 @@ class OperationPolicySummaryTest {
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ASK,
                 "{ write, \"*\", ask }", PolicyLayer.SESSION, "auto", "requires approval")
                 .allowedByMode("auto@SESSION");
-        PolicyContext context = new PolicyContext(List.of(), Map.of(),
+        PolicyContext context = new PolicyContext(Map.of(),
                 "auto", PolicyLayer.SESSION);
 
         Map<String, Object> policy = OperationPolicySummary

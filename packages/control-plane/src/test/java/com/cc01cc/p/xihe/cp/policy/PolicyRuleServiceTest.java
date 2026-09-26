@@ -1,12 +1,9 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -14,15 +11,17 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
 import com.cc01cc.p.xihe.cp.repository.PolicyRuleRepository;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
-/** PLAN-0328 M1 batch 4: rule administration guardrails, effective-layer marking, conflicts. */
+/**
+ * PLAN-0328 M1 batch 4 guardrails, trimmed by PLAN-0407 T2.8: the list/conflicts/delete
+ * administration surface retired with the rule CRUD; what remains is the approval storage
+ * write path ({@code create}) and the domain dictionary ({@code domains}).
+ */
 class PolicyRuleServiceTest {
 
     private final PolicyRuleRepository repository = mock(PolicyRuleRepository.class);
@@ -55,8 +54,6 @@ class PolicyRuleServiceTest {
     void userAndWorkspaceLayersBindToCallerIdentity() {
         TenantContext.setWorkspaceRole("OWNER");
         when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(anyString(), anyString()))
-                .thenReturn(List.of());
 
         assertEquals("u1", service.create("user", "u1", "ws1", false, input("read", "*", "allow", false)).ownerId());
         assertEquals("ws1", service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)).ownerId());
@@ -81,70 +78,6 @@ class PolicyRuleServiceTest {
     }
 
     @Test
-    void marksRulesIneffectiveWhenHigherLayerConfiguresTheDomain() {
-        PolicyRuleEntity userRule = rule("user", "u1", "exec", "*", "allow", false);
-        when(repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance")).thenReturn(List.of());
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("user", "u1")).thenReturn(List.of(userRule));
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1"))
-                .thenReturn(List.of(rule("workspace", "ws1", "exec", "pnpm test *", "ask", false)));
-
-        List<PolicyRuleService.RuleView> views = service.list("user", "u1", "ws1", false);
-
-        assertEquals(1, views.size());
-        assertFalse(views.get(0).effective(), "workspace configures exec → the user rule is not effective");
-    }
-
-    @Test
-    void createdUserRuleIsIneffectiveWhenWorkspaceConfiguresSameDomain() {
-        List<PolicyRuleEntity> userRules = new ArrayList<>();
-        when(repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance")).thenReturn(List.of());
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("user", "u1")).thenReturn(userRules);
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1"))
-                .thenReturn(List.of(rule("workspace", "ws1", "exec", "pnpm test *", "ask", false)));
-        when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> {
-            PolicyRuleEntity entity = inv.getArgument(0);
-            userRules.add(entity);
-            return entity;
-        });
-
-        PolicyRuleService.RuleView view = service.create("user", "u1", "ws1", false,
-                input("exec", "*", "allow", false));
-
-        assertFalse(view.effective(), "workspace configures exec → the created user rule is not effective");
-    }
-
-    @Test
-    void createdUserRuleIsEffectiveWhenNoHigherLayerConfiguresTheDomain() {
-        List<PolicyRuleEntity> userRules = new ArrayList<>();
-        when(repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance")).thenReturn(List.of());
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("user", "u1")).thenReturn(userRules);
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1")).thenReturn(List.of());
-        when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> {
-            PolicyRuleEntity entity = inv.getArgument(0);
-            userRules.add(entity);
-            return entity;
-        });
-
-        PolicyRuleService.RuleView view = service.create("user", "u1", "ws1", false,
-                input("exec", "*", "allow", false));
-
-        assertTrue(view.effective(), "no higher layer configures exec → the created user rule is effective");
-    }
-
-    @Test
-    void reportsAllowFullyCoveredByBroaderDeny() {
-        PolicyRuleEntity allow = rule("workspace", "ws1", "exec", "pnpm test *", "allow", false);
-        PolicyRuleEntity deny = rule("workspace", "ws1", "exec", "pnpm *", "deny", false);
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1"))
-                .thenReturn(List.of(allow, deny));
-
-        List<PolicyRuleService.RuleView> conflicts = service.conflicts("workspace", "u1", "ws1", false);
-
-        assertEquals(1, conflicts.size());
-        assertTrue(conflicts.get(0).conflict().contains("不会生效"));
-    }
-
-    @Test
     void domainViewPicksHighestConfiguredLayer() {
         when(repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc("instance"))
                 .thenReturn(List.of(rule("instance", null, "exec", "git push *", "deny", true)));
@@ -164,30 +97,8 @@ class PolicyRuleServiceTest {
     }
 
     @Test
-    void deleteRejectsCrossScopeAccess() {
-        TenantContext.setWorkspaceRole("OWNER");
-        PolicyRuleEntity workspaceRule = rule("workspace", "ws2", "exec", "*", "deny", false);
-        when(repository.findById(workspaceRule.getId())).thenReturn(Optional.of(workspaceRule));
-
-        CpApiException error = assertThrows(CpApiException.class,
-                () -> service.delete(workspaceRule.getId(), "workspace", "u1", "ws1", false));
-        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
-    }
-
-    @Test
-    void instanceLayerListConflictsAndDeleteRequireAdmin() {
-        assertThrows(CpApiException.class, () -> service.list("instance", "u1", "ws1", false));
-        assertThrows(CpApiException.class, () -> service.conflicts("instance", "u1", "ws1", false));
-        assertThrows(CpApiException.class,
-                () -> service.delete(UUID.randomUUID(), "instance", "u1", "ws1", false));
-        assertEquals(0, service.list("instance", "u1", "ws1", true).size());
-    }
-
-    @Test
     void workspaceLayerCreateRequiresWorkspaceOwnerOrAdmin() {
         when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(anyString(), anyString()))
-                .thenReturn(List.of());
 
         TenantContext.setWorkspaceRole("MEMBER");
         CpApiException error = assertThrows(CpApiException.class,
@@ -200,43 +111,5 @@ class PolicyRuleServiceTest {
         TenantContext.setUserRole(null);
         TenantContext.setWorkspaceRole("ADMIN");
         assertNotNull(service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
-    }
-
-    @Test
-    void workspaceLayerDeleteRequiresWorkspaceOwnerOrAdmin() {
-        TenantContext.setWorkspaceRole("MEMBER");
-        CpApiException error = assertThrows(CpApiException.class,
-                () -> service.delete(UUID.randomUUID(), "workspace", "u1", "ws1", false));
-        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
-    }
-
-    @Test
-    void wildcardDenyShadowsPrefixedAllow() {
-        assertEquals(1, conflictsOf(rule("workspace", "ws1", "exec", "pnpm *", "allow", false),
-                rule("workspace", "ws1", "exec", "*", "deny", false)));
-    }
-
-    @Test
-    void broadAllowSurvivesNarrowDeny() {
-        assertEquals(0, conflictsOf(rule("workspace", "ws1", "exec", "*", "allow", false),
-                rule("workspace", "ws1", "exec", "docs/*", "deny", false)));
-    }
-
-    @Test
-    void prefixAllowSurvivesNarrowerDeny() {
-        assertEquals(0, conflictsOf(rule("workspace", "ws1", "exec", "docs/*", "allow", false),
-                rule("workspace", "ws1", "exec", "docs/secret/*", "deny", false)));
-    }
-
-    @Test
-    void identicalResourceAllowIsShadowed() {
-        assertEquals(1, conflictsOf(rule("workspace", "ws1", "exec", "docs/*", "allow", false),
-                rule("workspace", "ws1", "exec", "docs/*", "deny", false)));
-    }
-
-    private int conflictsOf(PolicyRuleEntity allow, PolicyRuleEntity deny) {
-        when(repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1"))
-                .thenReturn(List.of(allow, deny));
-        return service.conflicts("workspace", "u1", "ws1", false).size();
     }
 }

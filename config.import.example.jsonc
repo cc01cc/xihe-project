@@ -56,9 +56,15 @@
     }
   },
 
-  // approval-policy — 审批模式：**instance 层可写默认（平台管理员），workspace 可覆盖**，
-  // user 层不可写（显式例外）。缺省即 `manual`（fail-closed）。
-  // "approval-policy": { "mode": "manual" },
+  // approval-policy — 审批模式与要问清单：**instance 层可写默认（平台管理员），workspace 可覆盖**，
+  // user 层不可写（显式例外）。缺省 mode 即 `manual`（fail-closed）。
+  // askActionClasses[]（PLAN-0407 T2.8，ask 归审批策略 [0407 d19]）= 要问 actionClass 清单：
+  //   在册 + mode=manual → 弹审批；在册 + mode=auto → 放行并记 allowed_by；不在册 → 授权过后直过；
+  //   缺省 = 代码默认清单（保留原「无规则默认 ASK」域 + HardGuard 伴生 delete）。
+  // "approval-policy": {
+  //   "mode": "manual",
+  //   "askActionClasses": ["write", "exec", "delete", "credential", "CREATE_ACCOUNT", "CREATE_TEMPLATE", "MANAGE_WORKSPACE_AGENTS", "SPAWN_AGENT"]
+  // },
 
   // job-policy — job 运行时限（PLAN-0373 BL-22）：**instance 层默认值与硬上限权威，
   // workspace 可在上限内下调**，user 层不可写。maxTimeoutSecs=0 表示未设上限（不钳制）。

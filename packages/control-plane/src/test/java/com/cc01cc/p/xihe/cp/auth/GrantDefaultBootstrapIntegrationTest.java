@@ -5,9 +5,15 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
+import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.policy.PolicyContext;
+import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
+import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.service.ImportService;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -71,9 +77,16 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private WorkspaceRepository workspaceRepository;
 
+    @Autowired
+    private GrantAuthorizationService grantAuthorizationService;
+
+    @Autowired
+    private PolicyEngine policyEngine;
+
     private String userId;
     private String workspaceId;
     private String sessionId;
+    private UUID foreignWorkspaceId;
     private final List<UUID> grantIds = new ArrayList<>();
     private final List<UUID> auditIds = new ArrayList<>();
     private final List<UUID> importedSessionIds = new ArrayList<>();
@@ -102,6 +115,10 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         auditLogRepository.deleteAllById(auditIds);
         if (workspaceId != null) {
             workspaceRepository.deleteById(UUID.fromString(workspaceId));
+        }
+        if (foreignWorkspaceId != null) {
+            workspaceRepository.deleteById(foreignWorkspaceId);
+            foreignWorkspaceId = null;
         }
         if (userId != null) {
             userRepository.deleteById(UUID.fromString(userId));
@@ -169,6 +186,48 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 "agent", session.getId(), "default"));
         assertEquals(2, auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
                 .filter(row -> "authorization_default_grant_created".equals(row.getAction())).count());
+    }
+
+    /** design #15: registration materializes the USER minimal set, scoped to the registrant's own resources. */
+    @Test
+    void registeredUserDefaultGrantIsMinimalAndEvaluatorScopesItToOwnWorkspaceOnly() {
+        String email = "grant-minimal-" + UUID.randomUUID() + "@test.com";
+        AuthResponse registered = authService.register(
+                new RegisterRequest(email, "grant-test-password", "Minimal set test"));
+        userId = registered.getUser().getId();
+        workspaceId = registered.getWorkspaceId();
+
+        AuthorizationGrant userDefault = grantRepository
+                .findBySubjectTypeAndSubjectId("user", UUID.fromString(userId)).stream()
+                .filter(grant -> "default".equals(grant.getSource())).findFirst().orElseThrow();
+        grantIds.add(userDefault.getId());
+        assertEquals(5, userDefault.getPermissions().size(),
+                "the registered default set carries the five USER action classes only");
+
+        for (String actionClass : List.of("read", "write", "delete", "exec", "network")) {
+            assertTrue(grantAuthorizationService.allowsUserOnly(
+                            request(actionClass, "notes/today.md")),
+                    "the minimal set covers " + actionClass + " on the registrant's own workspace");
+        }
+        assertFalse(grantAuthorizationService.allowsUserOnly(
+                        request("credential", "provider_connections/*")),
+                "credential is outside the minimal set (zero over-privilege)");
+
+        Workspace foreignWorkspace = workspaceRepository.save(new Workspace("Foreign", userId));
+        foreignWorkspaceId = foreignWorkspace.getId();
+        assertFalse(grantAuthorizationService.allowsUserOnly(new PolicyRequest(
+                        "read_file", List.of("read"), List.of("src/main.java"), ToolShape.STRUCTURED,
+                        userId, foreignWorkspace.getId().toString(), null)),
+                "the default grant stays confined to workspaces where the registrant is a member");
+
+        assertTrue(policyEngine.allowsByGrant(PolicyContext.EMPTY, "read_file",
+                        "{\"params\":{\"arguments\":{\"path\":\"notes/today.md\"}}}",
+                        null, userId, workspaceId, true),
+                "a workspace-relative read inside the registrant's own workspace passes the gate");
+        assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file",
+                        "{\"params\":{\"arguments\":{\"path\":\"C:\\\\outside\\\\secret\"}}}",
+                        null, userId, workspaceId, true),
+                "the HardGuard L0 floor keeps the minimal set off absolute host paths");
     }
 
     @Test
@@ -305,5 +364,10 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
                 .filter(row -> userGrant.getId().toString().equals(row.getResourceId()))
                 .count());
+    }
+
+    private PolicyRequest request(String actionClass, String resource) {
+        return new PolicyRequest("probe_tool", List.of(actionClass), List.of(resource),
+                ToolShape.STRUCTURED, userId, workspaceId, null);
     }
 }

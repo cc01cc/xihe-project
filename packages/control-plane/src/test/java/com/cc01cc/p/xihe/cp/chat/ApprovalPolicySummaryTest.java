@@ -33,7 +33,7 @@ class ApprovalPolicySummaryTest {
     @Test
     void buildAtCreationUsesEmptyMcpBodyAndEffectiveSessionMode() {
         PolicyEngine engine = mock(PolicyEngine.class);
-        PolicyContext context = new PolicyContext(List.of(), Map.of(),
+        PolicyContext context = new PolicyContext(Map.of(),
                 LayeredPolicyResolver.MODE_AUTO, PolicyLayer.SESSION);
         PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ASK,
                 "{ write, \"*\", ask }", PolicyLayer.BUILTIN, null, "requires approval");

@@ -1,9 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
@@ -11,14 +9,15 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 /**
  * PolicyEngine evaluates whether a tool call should be allowed.
  *
- * <p>Since PLAN-0328 M1 the evaluation is layered ("select the layer per domain first, then
- * evaluate"; decision #37) and always runs a code-built hard guard before any rule
- * (decision #17 / #35). Persisted layers and tool faces come from a {@link PolicyContextProvider}
- * so the built-in sets below remain the L0 floor.</p>
+ * <p>PLAN-0407 T2.8 (design #18/#19): rule adjudication is retired. Authorization is decided by
+ * the grant lookup gate that runs before this engine ({@link GrantAuthorizationService}); this
+ * engine owns the hard guard (decision #17 / #35) and the approval trigger — the
+ * approval-policy ask list carried by {@link PolicyContext#askActionClasses()}. Persisted tool
+ * faces still come from a {@link PolicyContextProvider}.</p>
  *
  * <ul>
- *   <li>{@code auto_allow}: read-only tools (no workspace mutation)</li>
- *   <li>{@code require_approval}: mutation tools (write/edit/delete/command)</li>
+ *   <li>{@code auto_allow}: action class not on the ask list, or ask list passed by auto mode</li>
+ *   <li>{@code require_approval}: action class on the ask list under manual mode</li>
  *   <li>{@code ask}: unclassified tools (opaque, no automatic allow or reuse)</li>
  * </ul>
  */
@@ -30,8 +29,6 @@ public class PolicyEngine {
     private final GrantAuthorizationService grantAuthorizationService;
     private final ToolFaceRegistry builtinRegistry;
     private final HardGuard hardGuard;
-    private final LayeredPolicyResolver resolver;
-    private final List<LayeredPolicyResolver.LayerInput> builtinLayers;
 
     public PolicyEngine(AuditLogger audit, PolicyContextProvider contextProvider) {
         this(audit, contextProvider, null);
@@ -45,9 +42,6 @@ public class PolicyEngine {
         this.grantAuthorizationService = grantAuthorizationService;
         this.builtinRegistry = new ToolFaceRegistry();
         this.hardGuard = new HardGuard();
-        this.resolver = new LayeredPolicyResolver();
-        this.builtinLayers = List.of(new LayeredPolicyResolver.LayerInput(
-                PolicyLayer.BUILTIN, builtinRules()));
     }
 
     /** Checks hard guard and current grants before the approval resolver is allowed to run. */
@@ -134,24 +128,28 @@ public class PolicyEngine {
         return REQUIRE_APPROVAL_TOOLS;
     }
 
-    /** Built-in ruleset derived from the legacy tool sets, expressed over action classes. */
-    private static List<PolicyRule> builtinRules() {
-        List<PolicyRule> rules = new ArrayList<>();
-        long seq = 0;
-        ToolFaceRegistry registry = new ToolFaceRegistry();
-        Set<String> allowClasses = AUTO_ALLOW_TOOLS.stream()
-                .map(tool -> registry.faceOf(tool).actionClass())
-                .collect(Collectors.toSet());
-        Set<String> askClasses = REQUIRE_APPROVAL_TOOLS.stream()
-                .map(tool -> registry.faceOf(tool).actionClass())
-                .collect(Collectors.toSet());
-        for (String actionClass : allowClasses) {
-            rules.add(PolicyRule.of(actionClass, "*", PolicyEffect.ALLOW, 0, seq++));
+    /**
+     * Approval decision (PLAN-0407 T2.8, design #18/#19): after the grant gate, the action class
+     * is either on the approval-policy ask list or it is not — no rule adjudication remains.
+     * On-list asks under {@code manual} and auto-passes under {@code auto} (recorded as
+     * {@code allowed_by}); off-list passes directly. Deny never comes from here: the grant gate
+     * and the hard guard own it.
+     */
+    private PolicyVerdict approvalVerdict(ToolFaceRegistry.Face face, PolicyContext context,
+                                          String effectiveMode, PolicyLayer modeLayer) {
+        PolicyLayer source = context.askLayer();
+        if (!context.askActionClasses().contains(face.actionClass())) {
+            return PolicyVerdict.of(PolicyEffect.ALLOW, null, source, effectiveMode,
+                    "action class not on the approval ask list");
         }
-        for (String actionClass : askClasses) {
-            rules.add(PolicyRule.of(actionClass, "*", PolicyEffect.ASK, 0, seq++));
+        if (LayeredPolicyResolver.MODE_AUTO.equals(effectiveMode)) {
+            PolicyLayer bypassLayer = modeLayer == null ? PolicyLayer.BUILTIN : modeLayer;
+            return PolicyVerdict.of(PolicyEffect.ASK, null, source, effectiveMode,
+                    "action class on the approval ask list")
+                    .allowedByMode(LayeredPolicyResolver.MODE_AUTO + "@" + bypassLayer);
         }
-        return rules;
+        return PolicyVerdict.of(PolicyEffect.ASK, null, source, effectiveMode,
+                "action class on the approval ask list");
     }
 
     /**
@@ -246,7 +244,7 @@ public class PolicyEngine {
             return verdict;
         }
 
-        PolicyVerdict verdict = resolver.resolve(request, withBuiltin(context.layers()), effectiveMode, modeLayer);
+        PolicyVerdict verdict = approvalVerdict(face, context, effectiveMode, modeLayer);
 
         String legacyDetail = verdict.effect() == PolicyEffect.ALLOW ? "auto_allow" : "require_approval";
         audit.record(sessionId, toolName, "policy_check", legacyDetail);
@@ -256,14 +254,5 @@ public class PolicyEngine {
             audit.record(sessionId, toolName, "policy_allowed_by_mode", verdict.allowedBy());
         }
         return verdict;
-    }
-
-    private List<LayeredPolicyResolver.LayerInput> withBuiltin(List<LayeredPolicyResolver.LayerInput> persisted) {
-        if (persisted.isEmpty()) {
-            return builtinLayers;
-        }
-        List<LayeredPolicyResolver.LayerInput> all = new ArrayList<>(builtinLayers);
-        all.addAll(persisted);
-        return all;
     }
 }

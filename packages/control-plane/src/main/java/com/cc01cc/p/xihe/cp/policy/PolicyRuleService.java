@@ -17,14 +17,16 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Authorization rule administration (PLAN-0328 M1, spec §5/§8, decisions #53/#56).
+ * Rule-row administration: dictionary view plus the approval storage write path
+ * (PLAN-0328 M1; PLAN-0407 T2.8 retired the authorization CRUD — list/conflicts/delete routes
+ * and rule adjudication are gone, design #18/#21; {@code create} remains only so the approval
+ * system keeps materializing its saved/reject rows and advancing {@code policy_revision}).
  *
- * <p>Guardrails:</p>
+ * <p>Guardrails on {@code create}:</p>
  * <ul>
  *   <li>layer 只允许 instance / user / workspace；instance 层需 ADMIN（且 owner 恒为 null）；</li>
  *   <li>user 层 owner 取本人；workspace 层 owner 取当前 workspace（L3 写入需 workspace OWNER/ADMIN，决策 #58）；</li>
- *   <li>locked 仅 ADMIN 可设，且只能 deny/ask（与 V15 的 DB CHECK 一致）；</li>
- *   <li>删除按层校验归属，跨层/跨 owner 一律 404（不泄露存在性）。</li>
+ *   <li>locked 仅 ADMIN 可设，且只能 deny/ask（与 V15 的 DB CHECK 一致）。</li>
  * </ul>
  */
 @Service
@@ -49,30 +51,10 @@ public class PolicyRuleService {
     public record RuleInput(String actionClass, String resource, String effect, Integer priority, Boolean locked) {}
 
     public record RuleView(UUID id, String layer, String ownerId, String actionClass, String resource,
-                           String effect, int priority, boolean locked, boolean effective, String conflict) {}
+                           String effect, int priority, boolean locked) {}
 
     public record DomainView(String actionClass, String effectiveLayer, List<String> configuredLayers,
                              Map<String, Integer> ruleCounts) {}
-
-    @Transactional(readOnly = true)
-    public List<RuleView> list(String layer, String userId, String workspaceId, boolean admin) {
-        String owner = ownerFor(layer, userId, workspaceId, admin, false);
-        requireInstanceAdmin(layer, admin);
-        List<PolicyRuleEntity> rules = owner == null
-                ? repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc(layer)
-                : repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(layer, owner);
-        Map<String, String> conflicts = conflictIndex(layer, owner);
-        Set<String> effectiveDomains = effectiveDomains(layer, userId, workspaceId);
-        List<RuleView> views = new ArrayList<>();
-        for (PolicyRuleEntity rule : rules) {
-            String conflict = conflicts.get(rule.getId().toString());
-            boolean effective = effectiveDomains.contains(rule.getActionClass());
-            views.add(new RuleView(rule.getId(), rule.getLayer(), rule.getOwnerId(), rule.getActionClass(),
-                    rule.getResource(), rule.getEffect(), rule.getPriority(), rule.isLocked(),
-                    effective, conflict));
-        }
-        return views;
-    }
 
     @Transactional
     public RuleView create(String layer, String userId, String workspaceId, boolean admin, RuleInput input) {
@@ -99,25 +81,7 @@ public class PolicyRuleService {
                 resource, effect, priority, locked, userId == null ? "system" : userId);
         repository.save(entity);
         policyRevision.bump();
-        boolean effective = effectiveDomains(layer, userId, workspaceId).contains(actionClass);
-        return new RuleView(entity.getId(), layer, owner, actionClass, resource, effect, priority, locked,
-                effective, conflictOf(layer, owner, entity));
-    }
-
-    @Transactional
-    public void delete(UUID id, String layer, String userId, String workspaceId, boolean admin) {
-        String owner = ownerFor(layer, userId, workspaceId, admin, false);
-        requireInstanceAdmin(layer, admin);
-        requireWorkspaceAdmin(layer);
-        PolicyRuleEntity entity = repository.findById(id)
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Rule not found"));
-        boolean sameScope = layer.equals(entity.getLayer())
-                && (owner == null ? entity.getOwnerId() == null : owner.equals(entity.getOwnerId()));
-        if (!sameScope) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Rule not found");
-        }
-        repository.delete(entity);
-        policyRevision.bump();
+        return new RuleView(entity.getId(), layer, owner, actionClass, resource, effect, priority, locked);
     }
 
     /** Per-domain view: which layer is effective and how many rules each layer holds. */
@@ -148,101 +112,6 @@ public class PolicyRuleService {
             views.add(new DomainView(domain, effective, List.copyOf(counts.keySet()), counts));
         }
         return views;
-    }
-
-    /** Static conflict check: an ALLOW that a same-layer, at-least-as-specific DENY kills. */
-    @Transactional(readOnly = true)
-    public List<RuleView> conflicts(String layer, String userId, String workspaceId, boolean admin) {
-        return list(layer, userId, workspaceId, admin).stream()
-                .filter(view -> view.conflict() != null)
-                .toList();
-    }
-
-    /**
-     * Domains for which {@code layer} is the effective layer (i.e. no higher layer configures that
-     * domain) — mirrors "先选层再求值" so the UI can mark rules that actually take effect.
-     */
-    private Set<String> effectiveDomains(String layer, String userId, String workspaceId) {
-        Set<String> workspaceDomains = domainsOf(LAYER_WORKSPACE, workspaceId);
-        Set<String> userDomains = domainsOf(LAYER_USER, userId);
-        Set<String> instanceDomains = domainsOf(LAYER_INSTANCE, null);
-        return switch (layer) {
-            case LAYER_WORKSPACE -> workspaceDomains;
-            case LAYER_USER -> {
-                Set<String> result = new LinkedHashSet<>(userDomains);
-                result.removeAll(workspaceDomains);
-                yield result;
-            }
-            default -> {
-                Set<String> result = new LinkedHashSet<>(instanceDomains);
-                result.removeAll(userDomains);
-                result.removeAll(workspaceDomains);
-                yield result;
-            }
-        };
-    }
-
-    private Set<String> domainsOf(String layer, String owner) {
-        List<PolicyRuleEntity> rules = owner == null
-                ? repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc(layer)
-                : repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(layer, owner);
-        Set<String> domains = new LinkedHashSet<>();
-        rules.forEach(rule -> domains.add(rule.getActionClass()));
-        return domains;
-    }
-
-    private Map<String, String> conflictIndex(String layer, String owner) {
-        List<PolicyRuleEntity> rules = owner == null
-                ? repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc(layer)
-                : repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(layer, owner);
-        Map<String, String> conflicts = new LinkedHashMap<>();
-        for (PolicyRuleEntity rule : rules) {
-            String conflict = conflictOf(layer, owner, rule);
-            if (conflict != null) {
-                conflicts.put(rule.getId().toString(), conflict);
-            }
-        }
-        return conflicts;
-    }
-
-    private String conflictOf(String layer, String owner, PolicyRuleEntity rule) {
-        if (!"allow".equals(rule.getEffect())) {
-            return null;
-        }
-        List<PolicyRuleEntity> rules = owner == null
-                ? repository.findByLayerAndOwnerIdIsNullOrderByCreatedAtAscIdAsc(layer)
-                : repository.findByLayerAndOwnerIdOrderByCreatedAtAscIdAsc(layer, owner);
-        for (PolicyRuleEntity other : rules) {
-            if (!"deny".equals(other.getEffect()) || other.getId().equals(rule.getId())) {
-                continue;
-            }
-            if (shadows(other.getResource(), rule.getResource())) {
-                return "该 allow 不会生效：存在更具体的 deny \"" + other.getResource() + "\"";
-            }
-        }
-        return null;
-    }
-
-    /**
-     * True when {@code denyResource} fully covers {@code allowResource} — every request the ALLOW
-     * matches is also matched by the DENY, so the ALLOW can never win.
-     */
-    private static boolean shadows(String denyResource, String allowResource) {
-        if (denyResource.equals(allowResource)) {
-            return true;
-        }
-        String sample = allowResource.replace("*", "");
-        if (sample.isEmpty()) {
-            return false;
-        }
-        return LayeredPolicyResolver.matches(denyResource, sample, ToolShape.STRUCTURED)
-                || LayeredPolicyResolver.matches(denyResource, sample, ToolShape.INTERPRETER);
-    }
-
-    private static void requireInstanceAdmin(String layer, boolean admin) {
-        if (LAYER_INSTANCE.equals(layer) && !admin) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "instance-layer rules require ADMIN");
-        }
     }
 
     private static void requireWorkspaceAdmin(String layer) {

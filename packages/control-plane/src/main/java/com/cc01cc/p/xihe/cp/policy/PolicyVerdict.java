@@ -1,10 +1,12 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 /**
- * Verdict produced by {@link LayeredPolicyResolver}. Carries the effective layer and matched rule
- * so audits and the UI can answer "why was this allowed / blocked" (PLAN-0328 spec §4.2 step 7).
+ * Approval decision produced by {@link PolicyEngine} (PLAN-0407 T2.8: the ask list decides, not
+ * rule layers). Carries the source layer and reason so audits and the UI can answer "why was
+ * this allowed / asked" (PLAN-0328 spec §4.2 step 7); {@code matchedRule} stays null since rule
+ * adjudication retired.
  *
- * @param allowedBy non-null when the outcome came from an `auto` mode rather than rules
+ * @param allowedBy non-null when the outcome came from an `auto` mode rather than the ask list
  *                  (audit field `allowed_by`), e.g. {@code auto@SESSION}.
  */
 public record PolicyVerdict(

@@ -29,7 +29,7 @@ class PolicyEngineTest {
     void requireApproval_writeFile_returnsApproval() {
         PolicyVerdict verdict = createEngine().evaluateVerdict("write_file", "{}", "s1", null, null, null);
         assertEquals(PolicyEffect.ASK, verdict.effect());
-        assertTrue(verdict.reason().contains("write"));
+        assertTrue(verdict.reason().contains("ask list"));
     }
 
     @Test
@@ -76,8 +76,8 @@ class PolicyEngineTest {
     }
 
     @Test
-    void classifiedTool_usesNormalResolverAfterFaceIsPersisted() {
-        PolicyContext context = new PolicyContext(List.of(), Map.of(
+    void classifiedTool_usesTheAskListAfterFaceIsPersisted() {
+        PolicyContext context = new PolicyContext(Map.of(
                 "third_party_tool", new ToolFaceRegistry.Face(ToolFaceRegistry.ACTION_READ,
                         ToolShape.STRUCTURED)), null, null);
         PolicyEngine engine = new PolicyEngine(mock(AuditLogger.class), (userId, workspaceId, sessionId) -> context);
@@ -85,7 +85,7 @@ class PolicyEngineTest {
         PolicyVerdict verdict = engine.evaluateVerdict("third_party_tool", "{}", "s1", null, "u1", "ws1");
 
         assertEquals(PolicyEffect.ALLOW, verdict.effect());
-        assertEquals("allowed by read rules", verdict.reason());
+        assertEquals("action class not on the approval ask list", verdict.reason());
     }
 
     @Test
