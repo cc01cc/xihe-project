@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# 同步各包根目录 README symlink → docs/i18n/{lang}/
+# 同步 packages/* README symlink → docs/i18n/{lang}/
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-
-# 根级别 README.md → docs/i18n/zh-Hans/README.md
-ln -sf --relative "$ROOT/docs/i18n/zh-Hans/README.md" "$ROOT/README.md"
 
 # 包 README（4 包）
 declare -A PKG_MAP=(
