@@ -1,6 +1,6 @@
 # XH 事件流
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`protocol`；Owner：CP/Runtime/Agent 跨边界 owner；来源：PLAN-0385；更新：2026-09-20。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`protocol`；Owner：CP/Runtime/Agent 跨边界 owner；来源：PLAN-0385，Session 派生状态事件扩展由 PLAN-0408 顺序承接；更新：2026-09-27。
 
 ## 1. Chat Session SSE
 
@@ -10,6 +10,7 @@
 - `POST /api/v1/chat` **MUST** 先通过 SSE subscription 和 single-flight gate，再持久化消息/run。
 - `done` **MUST** 只结束当前 ChatRun，不得关闭 Session SSE。
 - `heartbeat` 是 transport event，不得进入 UI MessagePart。
+- `derived_state_changed` 是 child terminal 提交后的 best-effort refresh hint，发送到**父 Session**的 SSE channel；data JSON 恰好 `{sessionId,runId,state,at}` 四键，其中 `sessionId/runId/state` 标识 child Run，`at` 等于其 durable `chat_runs.terminal_at`。接收端只据此重新读取父 Session derived-state API；Inbox 是通知事实源，SSE 不承诺必达、replay 或与 DB 原子。
 - `token`、`tool_call`、`tool_result`、`approval_request`、`error` 和 `done` 的顺序/字段以事件实现和 OpenAPI 为准；重连只能回放被授权 Session 的可恢复事件。
 - `requestId`、`runId`、`sessionId`、`workspaceId` 必须贯通日志、durable record 和 UI 投影；不得把 raw tool arguments 放入 approval event。
 
@@ -28,6 +29,7 @@
 |---|---|---|---|
 | ChatRun/Agent event | Agent | CP | UI、durable ledger/context |
 | approval event | CP gate 或 Agent relay | CP | UI、Agent decision path |
+| derived_state_changed | CP ChatRunTerminalService（child terminal commit 后 best-effort） | Inbox 是 durable source；CP SSE 仅提示 | 父 Session UI → refetch derived-state |
 | Workspace file hint | Runtime watcher | CP Workspace event manager | UI |
 | Operation event | CP services/Runtime callback | CP ledger | UI audit、内部 trace |
 

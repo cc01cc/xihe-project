@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 18
 status: active
 created: 2026-09-02
-updated: 2026-09-06
+updated: 2026-09-27
 ---
 
 # DEV-018: Known Issues (Supplement)
@@ -21,6 +21,11 @@ updated: 2026-09-06
 - **Agent 单 workspace MCP 绑定（PLAN-262）**：Agent 进程首个 chat 绑定 workspace 后，其它 workspace 的 chat 将 fail（`MCP workspace context cannot be reused across workspaces`）。全量串行 host E2E 中跨 workspace 的 write_file 审批类 spec（checkpoint-rollback S1、checkpoint-slices S1、journey-a、journey-c）因此**预期失败**；单 spec 复跑（Agent 首绑=本 spec workspace）为验证口径。根治归 PLAN-0348 rebind。
 - llm-mode 是 boot 期属性：external 复用栈时 0365 已补 fixture 启动 + provider 重导入，但**最可靠做法仍是以目标 mode boot**。
 - 视觉基线（toHaveScreenshot）在 UI 结构变更后须重置，重置前先确认 DOM 断言全过。
+
+## CP 拉取 Runtime 根 AGENTS.md 返回 403（2026-09-27，待诊断）
+
+- Host E2E 创建 parent/child chat 时，CP `RuntimeContextSourceClient` 对 `/internal/v1/runtime/workspaces/{workspaceId}/files/read` 请求根 `AGENTS.md` 曾收到 403；CP 随后以 `Optional.empty` 继续，不注入该文件上下文。Runtime `ws_file_handler::map_error` 将 `PathTraversal` / `SymlinkEscape` 映射为 403，但本次日志未保留底层 Runtime error，实际触发原因未确认。
+- 该请求是 CP→Runtime 内部文件读取，不是浏览器的 `/api/v1/mcp` `list_directory` 403；属于独立的 Runtime 文件路径/符号链接诊断问题。优先核对 Host workspace 实际路径、materialization 与符号链接解析；确认触发原因前不放宽 Runtime 路径安全策略。
 
 ## PLAN-0345 工作区生命周期 — 行为变化与已知限制（2026-09-18）
 

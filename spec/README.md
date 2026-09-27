@@ -49,7 +49,7 @@ spec/
 
 | 领域 | 契约状态 | 实现状态 | Canonical owner | 承接关系 |
 |---|---|---|---|---|
-| architecture / communication | proposed | partial | 跨边界 owner | PLAN-0385；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
+| architecture / communication | proposed | partial | 跨边界 owner | PLAN-0385；Session 派生状态 SSE extension 顺序承接至 PLAN-0408；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
 | ui interaction | proposed | partial | UI + 跨边界 owner | PLAN-0388；PLAN-0384 仅负责 feature flow |
 | agent execution / Context | proposed | partial | Agent owner | PLAN-0387；0381/0382 仍为局部规范 |
 | session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开 |
@@ -77,7 +77,7 @@ Agent 处理 XH 任务时：
 
 ## 4.1 当前领域草案
 
-PLAN-0385 已建立第一批架构/通信/事件/账本草案。它们仍为 `proposed`，必须完成真实消费者、schema、错误/重试、幂等和 evidence 验证后才可转为 `active`：
+PLAN-0385 已建立第一批架构/通信/事件/账本草案。它们仍为 `proposed`，必须完成真实消费者、schema、错误/重试、幂等和 evidence 验证后才可转为 `active`。其中 Session 派生 child-terminal refresh hint 由 PLAN-0408 顺序承接 event-stream root SPEC 扩展；其余 0385 文件仍由原 owner 管理：
 
 - [模块边界](architecture/module-boundaries.md)
 - [模块通信](architecture/communication.md)
