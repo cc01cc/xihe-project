@@ -230,6 +230,20 @@ async function loadJobOutput(reset: boolean) {
        />
     </button>
 
+    <div
+      v-if="toolCall.waitingOn"
+      class="flex min-w-0 items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground"
+      role="status"
+      data-testid="tool-call-waiting-on"
+    >
+      <span class="truncate">
+        {{ t('chat.waitingOnChild') }}: {{ toolCall.waitingOn.name ?? t('chat.derivedStateUnnamedChild') }}
+      </span>
+      <span class="shrink-0" data-testid="tool-call-waiting-status">
+        {{ t(`chat.derivedStateStatus.${toolCall.waitingOn.status}`) }}
+      </span>
+    </div>
+
     <div v-if="expanded" class="space-y-2 border-t px-3 pb-3 pt-2 text-xs">
       <div v-if="hasDiagnostics" class="space-y-1.5" data-testid="tool-diagnostics">
         <div class="flex items-baseline justify-between gap-2">

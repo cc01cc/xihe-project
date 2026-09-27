@@ -29,6 +29,7 @@ import type {
     PolicyToolFaceQueryScope,
     PolicyToolFaceView,
     PendingApprovalSummary,
+    SessionDerivedStateResponse,
     SessionPolicyMode,
     SessionPolicyModeState,
     WorkspaceGitStatus,
@@ -1247,6 +1248,11 @@ export const api = {
     },
     async getSession(id: string): Promise<SessionResponse> {
         return normalizeSession(await request<unknown>(`/sessions/${encodeURIComponent(id)}`));
+    },
+    getSessionDerivedState(sessionId: string): Promise<SessionDerivedStateResponse> {
+        return request<SessionDerivedStateResponse>(
+            `/sessions/${encodeURIComponent(sessionId)}/derived-state`,
+        );
     },
     /** PLAN-0340 U1: source summary metadata only (no body). */
     getContextSources(sessionId: string) {

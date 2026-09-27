@@ -15,6 +15,8 @@ import type {
     AttachmentFile,
     CheckpointResult,
     Message,
+    SessionDerivedStateResponse,
+    ToolCallWaitingOn,
 } from "../../types";
 import MessageList from "./MessageList.vue";
 import InputArea from "./InputArea.vue";
@@ -22,6 +24,7 @@ import SSEStream from "./SSEStream.vue";
 import ApprovalModal from "./ApprovalModal.vue";
 import SessionPolicyControls from "./SessionPolicyControls.vue";
 import ContextSourcesU1 from "./ContextSourcesU1.vue";
+import SessionDerivedStatePanel from "./SessionDerivedStatePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../shared/BaseModal.vue";
@@ -52,6 +55,26 @@ const suggestions = computed(() =>
 const messages = computed(() => chatStore.getMessages(props.sessionId));
 const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
 const currentSession = computed(() => sessionStore.sessions.find((session) => session.id === props.sessionId));
+const derivedState = ref<SessionDerivedStateResponse | null>(null);
+const derivedStateLoading = ref(false);
+const derivedStateError = ref(false);
+const waitingOnByToolCallId = ref<Record<string, ToolCallWaitingOn>>({});
+let derivedStateRequestId = 0;
+let waitingOnRequestId = 0;
+
+const renderedMessages = computed(() =>
+    messages.value.map((message) => {
+        if (!message.toolCalls?.length) return message;
+        return {
+            ...message,
+            toolCalls: message.toolCalls.map((toolCall) => ({
+                ...toolCall,
+                waitingOn: waitingOnByToolCallId.value[toolCall.id] ?? null,
+            })),
+        };
+    }),
+);
+
 const showPrincipalBinding = ref(false);
 const principalChoices = ref<WorkspaceAgentBinding[]>([]);
 const selectedPrincipalId = ref("");
@@ -130,10 +153,127 @@ async function loadSessionMessages(sessionId: string) {
                 retryable: message.retryable,
             })),
         );
+        if (derivedState.value?.sessionId === sessionId) {
+            void loadWaitingOnProjection(
+                sessionId,
+                derivedState.value.activeChildren,
+                chatStore.getSessionRunId(sessionId),
+            );
+        }
     } catch (cause) {
         if (cause instanceof ApiError && cause.problem.code === "MESSAGE_NOT_FOUND") return;
         logger.error("Failed to load session messages", cause);
     }
+}
+
+function isSpawnToolCall(name: string): boolean {
+    return name === "spawn_agent" || name.endsWith("__spawn_agent") || name.endsWith("/spawn_agent");
+}
+
+async function loadWaitingOnProjection(
+    sessionId: string,
+    activeChildren: SessionDerivedStateResponse["activeChildren"],
+    preferredParentRunId?: string,
+) {
+    const requestId = ++waitingOnRequestId;
+    const activeByRunId = new Map(activeChildren.map((child) => [child.runId, child]));
+    if (activeByRunId.size === 0) {
+        waitingOnByToolCallId.value = {};
+        return;
+    }
+
+    const parentRunIds = new Set<string>();
+    if (preferredParentRunId) parentRunIds.add(preferredParentRunId);
+    for (const message of chatStore.getMessages(sessionId)) {
+        if (message.runId) parentRunIds.add(message.runId);
+        for (const toolCall of message.toolCalls ?? []) {
+            if (!isSpawnToolCall(toolCall.name)) continue;
+            if (toolCall.runId) parentRunIds.add(toolCall.runId);
+        }
+    }
+    if (parentRunIds.size === 0) {
+        waitingOnByToolCallId.value = {};
+        return;
+    }
+
+    try {
+        const waitingOn: Record<string, ToolCallWaitingOn> = {};
+        const resolvedRunIds = new Set<string>();
+        const matchedChildRunIds = new Set<string>();
+        let page = 0;
+        let totalPages = 1;
+        while (page < totalPages && matchedChildRunIds.size < activeByRunId.size) {
+            const operationPage = await api.listOperations({ sessionId, page, size: 50 });
+            totalPages = operationPage.totalPages;
+            const candidates = operationPage.operations.filter(
+                (operation) => operation.runId && parentRunIds.has(operation.runId)
+                    && !resolvedRunIds.has(operation.runId),
+            );
+            for (let offset = 0; offset < candidates.length && matchedChildRunIds.size < activeByRunId.size; offset += 8) {
+                const traces = await Promise.all(
+                    candidates.slice(offset, offset + 8).map(async (operation) => ({
+                        runId: operation.runId!,
+                        trace: await api.getOperationTrace(operation.id),
+                    })),
+                );
+                for (const { runId, trace } of traces) {
+                    resolvedRunIds.add(runId);
+                    for (const item of trace.items) {
+                        if (!item.toolCallId || !item.waitingOnRunId) continue;
+                        const child = activeByRunId.get(item.waitingOnRunId);
+                        if (!child) continue;
+                        waitingOn[item.toolCallId] = {
+                            childRunId: child.runId,
+                            name: child.name,
+                            status: child.status,
+                        };
+                        matchedChildRunIds.add(child.runId);
+                    }
+                }
+            }
+            page += 1;
+        }
+
+        if (props.sessionId === sessionId && requestId === waitingOnRequestId) {
+            waitingOnByToolCallId.value = waitingOn;
+        }
+    } catch (cause) {
+        if (props.sessionId === sessionId && requestId === waitingOnRequestId) {
+            waitingOnByToolCallId.value = {};
+        }
+        logger.error("Failed to load durable child wait links", cause);
+    }
+}
+
+async function refreshDerivedState(sessionId: string) {
+    if (!sessionId) return;
+    const requestId = ++derivedStateRequestId;
+    const parentRunIdAtRefresh = chatStore.getSessionRunId(sessionId);
+    derivedStateLoading.value = true;
+    derivedStateError.value = false;
+    try {
+        const result = await api.getSessionDerivedState(sessionId);
+        if (props.sessionId !== sessionId || requestId !== derivedStateRequestId) return;
+        derivedState.value = result;
+        const activeRunIds = new Set(result.activeChildren.map((child) => child.runId));
+        waitingOnByToolCallId.value = Object.fromEntries(
+            Object.entries(waitingOnByToolCallId.value).filter(([, child]) => activeRunIds.has(child.childRunId)),
+        );
+        await loadWaitingOnProjection(sessionId, result.activeChildren, parentRunIdAtRefresh);
+    } catch (cause) {
+        if (props.sessionId === sessionId && requestId === derivedStateRequestId) {
+            derivedStateError.value = true;
+            logger.error("Failed to load Session derived state", cause);
+        }
+    } finally {
+        if (props.sessionId === sessionId && requestId === derivedStateRequestId) {
+            derivedStateLoading.value = false;
+        }
+    }
+}
+
+function handleDerivedStateRefresh() {
+    void refreshDerivedState(props.sessionId);
 }
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null);
@@ -143,11 +283,20 @@ let previousSessionId: string | null = null;
 watch(
     () => props.sessionId,
     (sessionId) => {
+        derivedStateRequestId += 1;
+        waitingOnRequestId += 1;
+        derivedState.value = null;
+        derivedStateError.value = false;
+        derivedStateLoading.value = Boolean(sessionId);
+        waitingOnByToolCallId.value = {};
         if (previousSessionId && previousSessionId !== sessionId) {
             chatStore.detachLiveSession(previousSessionId);
         }
         previousSessionId = sessionId;
-        if (sessionId) void loadSessionMessages(sessionId);
+        if (sessionId) {
+            void loadSessionMessages(sessionId);
+            void refreshDerivedState(sessionId);
+        }
     },
     { immediate: true },
 );
@@ -421,9 +570,16 @@ watch(
             </button>
         </div>
 
+        <SessionDerivedStatePanel
+            :active-children="derivedState?.activeChildren ?? []"
+            :terminal-notices="derivedState?.terminalNotices ?? []"
+            :loading="derivedStateLoading"
+            :error="derivedStateError"
+        />
+
         <MessageList
             v-if="messages.length > 0"
-            :messages="messages"
+            :messages="renderedMessages"
             @approve="approveTool"
             @reject="rejectTool"
             @delete="handleDeleteMessage"
@@ -544,6 +700,7 @@ watch(
             :tool-mode="toolMode"
             :active="true"
             ref="streamComponent"
+            @derived-state-refresh="handleDerivedStateRefresh"
         />
     </div>
 </template>

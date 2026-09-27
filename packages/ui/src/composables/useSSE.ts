@@ -43,6 +43,10 @@ function normalizeTokenContent(content: unknown): string {
 }
 
 export interface SSECallbacks {
+    /** Connection open/reopen is a recovery signal; callers must refetch durable state. */
+    onOpen?: () => void;
+    /** Event payload is only a refresh hint; do not use it as durable session state. */
+    onDerivedStateChanged?: () => void;
     onStart?: () => void;
     onToken?: (token: string, hint?: "reasoning" | "text") => void;
     onToolCall?: (name: string, args: Record<string, unknown>) => void;
@@ -254,6 +258,11 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
 
             case "heartbeat":
                 resetStreamTimeout();
+                break;
+
+            case "derived_state_changed":
+                // PLAN-0408: the Inbox/API is durable; this event only asks the view to refresh.
+                currentCallbacks.onDerivedStateChanged?.();
                 break;
 
             case "tool_call":
@@ -500,11 +509,12 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             .sendMessages(currentSessionId, {
                 url,
                 headers: apiAuthHeaders(undefined, false),
-                onopen: () => {
-                    if (generation !== connectionGeneration) return;
-                    isConnected.value = true;
-                    error.value = null;
-                    connectionErrorReported = false;
+            onopen: () => {
+                if (generation !== connectionGeneration) return;
+                isConnected.value = true;
+                error.value = null;
+                connectionErrorReported = false;
+                currentCallbacks.onOpen?.();
                 },
                 onmessage: (message) => {
                     if (generation === connectionGeneration) handleMessage(message);

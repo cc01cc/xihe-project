@@ -102,6 +102,37 @@ describe("useSSE", () => {
         expect(isConnected.value).toBe(true);
     });
 
+    it("reports initial and reconnect open as durable-state refresh signals", async () => {
+        const transport = createTransportController();
+        const onOpen = vi.fn();
+        const { connect } = useSSE(SESSION_ID);
+        connect({ onOpen });
+        await flushPromises();
+        await transport.simulateOpen();
+        await transport.simulateClose();
+        await transport.simulateOpen();
+
+        expect(onOpen).toHaveBeenCalledTimes(2);
+        expect(onOpen).toHaveBeenCalledWith();
+    });
+
+    it("dispatches derived_state_changed only as a refresh hint", async () => {
+        const transport = createTransportController();
+        const onDerivedStateChanged = vi.fn();
+        const { connect } = useSSE(SESSION_ID);
+        connect({ onDerivedStateChanged });
+        await flushPromises();
+        await transport.simulateMessage("derived_state_changed", JSON.stringify({
+            sessionId: "a-child-session",
+            runId: "a-child-run",
+            state: "success",
+            at: "2026-09-27T04:00:00Z",
+        }));
+
+        expect(onDerivedStateChanged).toHaveBeenCalledTimes(1);
+        expect(onDerivedStateChanged).toHaveBeenCalledWith();
+    });
+
     it("passes Authorization header from localStorage token", async () => {
         localStorage.setItem("xihe-token", "my-token");
         const { connect } = useSSE(SESSION_ID);

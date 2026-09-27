@@ -4,10 +4,14 @@ import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import ChatPanel from '../ChatPanel.vue'
 import ApprovalModal from '../ApprovalModal.vue'
+import SessionDerivedStatePanel from '../SessionDerivedStatePanel.vue'
+import SSEStream from '../SSEStream.vue'
+import MessageList from '../MessageList.vue'
 import { i18n } from '../../../i18n'
 import { api } from '../../../composables/api'
 import { useAgentStore } from '../../../stores/agent'
-import type { ApprovalRequest } from '../../../types'
+import { useChatStore } from '../../../stores/chat'
+import type { ApprovalRequest, SessionDerivedStateResponse } from '../../../types'
 
 vi.mock('../../../composables/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../composables/api')>()
@@ -17,6 +21,10 @@ vi.mock('../../../composables/api', async (importOriginal) => {
       ...actual.api,
       decideChatApproval: vi.fn(),
       getPendingApprovals: vi.fn(),
+      getMessages: vi.fn(),
+      getSessionDerivedState: vi.fn(),
+      listOperations: vi.fn(),
+      getOperationTrace: vi.fn(),
     },
   }
 })
@@ -60,6 +68,23 @@ beforeEach(() => {
   vi.mocked(api.decideChatApproval).mockReset()
   vi.mocked(api.getPendingApprovals).mockReset()
   vi.mocked(api.getPendingApprovals).mockResolvedValue([])
+  vi.mocked(api.getMessages).mockReset()
+  vi.mocked(api.getMessages).mockResolvedValue([])
+  vi.mocked(api.getSessionDerivedState).mockReset()
+  vi.mocked(api.getSessionDerivedState).mockResolvedValue({
+    sessionId: SESSION_ID,
+    activeChildren: [],
+    terminalNotices: [],
+  })
+  vi.mocked(api.listOperations).mockReset()
+  vi.mocked(api.listOperations).mockResolvedValue({
+    operations: [],
+    page: 0,
+    size: 50,
+    totalElements: 0,
+    totalPages: 0,
+  })
+  vi.mocked(api.getOperationTrace).mockReset()
 })
 
 describe('ChatPanel approval decision correlation (PLAN-0328 T1.14)', () => {
@@ -200,5 +225,112 @@ describe('ChatPanel approval dismiss and reopen pill (PLAN-0404)', () => {
         expect(messages.chat[key], `${locale}.${key}`).not.toMatch(/\{[^}]*\}/)
       }
     }
+  })
+})
+
+describe('ChatPanel derived child state (PLAN-0408 M3)', () => {
+  const derivedState: SessionDerivedStateResponse = {
+    sessionId: SESSION_ID,
+    activeChildren: [{
+      childSessionId: '44444444-4444-4444-8444-444444444444',
+      runId: '55555555-5555-4555-8555-555555555555',
+      name: 'Research child',
+      status: 'running',
+    }],
+    terminalNotices: [],
+  }
+
+  it('loads the API projection for the current Session and renders it separately from messages', async () => {
+    vi.mocked(api.getSessionDerivedState).mockResolvedValue(derivedState)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(api.getSessionDerivedState).toHaveBeenCalledWith(SESSION_ID)
+    const panel = wrapper.findComponent(SessionDerivedStatePanel)
+    expect(panel.exists()).toBe(true)
+    expect(panel.props('activeChildren')).toEqual(derivedState.activeChildren)
+    expect(panel.props('terminalNotices')).toEqual([])
+  })
+
+  it('treats the SSE event as a refresh hint and associates tool waiting by durable childRunId', async () => {
+    const response = vi.mocked(api.getSessionDerivedState)
+    response.mockResolvedValue(derivedState)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const chatStore = useChatStore()
+    chatStore.addMessage(SESSION_ID, {
+      id: 'parent-user-message',
+      sessionId: SESSION_ID,
+      role: 'user',
+      content: 'run spawn_agent',
+      timestamp: '2026-09-27T00:00:00Z',
+      runId: RUN_ID,
+    })
+    chatStore.addMessage(SESSION_ID, {
+      id: 'message-tool-call',
+      sessionId: SESSION_ID,
+      role: 'assistant',
+      content: '',
+      timestamp: '2026-09-27T00:00:00Z',
+      toolCalls: [{ id: 'spawn-tool-call', runId: 'agent-tool-run', name: 'spawn_agent', arguments: '{}', status: 'completed' }],
+    })
+    vi.mocked(api.listOperations).mockResolvedValue({
+      operations: [{
+        id: 'operation-1',
+        sessionId: SESSION_ID,
+        workspaceId: '66666666-6666-4666-8666-666666666666',
+        runId: RUN_ID,
+        kind: 'chat',
+        source: 'ui',
+        actorType: 'user',
+        status: 'completed',
+      }],
+      page: 0,
+      size: 50,
+      totalElements: 1,
+      totalPages: 1,
+    })
+    vi.mocked(api.getOperationTrace).mockResolvedValue({
+      operation: {
+        id: 'operation-1',
+        sessionId: SESSION_ID,
+        workspaceId: '66666666-6666-4666-8666-666666666666',
+        runId: RUN_ID,
+        kind: 'chat',
+        source: 'ui',
+        actorType: 'user',
+        status: 'completed',
+      },
+      items: [{
+        id: 'item-1',
+        operationId: 'operation-1',
+        toolCallId: 'spawn-tool-call',
+        sequence: 1,
+        kind: 'tool_call',
+        toolName: 'spawn_agent',
+        source: 'agent',
+        waitingOnRunId: derivedState.activeChildren[0].runId,
+        status: 'running',
+      }],
+      attempts: [],
+      events: [],
+    })
+
+    const stream = wrapper.findComponent(SSEStream)
+    stream.vm.$emit('derivedStateRefresh')
+    await flushPromises()
+
+    expect(response).toHaveBeenCalledTimes(2)
+    expect(api.listOperations).toHaveBeenCalledWith({ sessionId: SESSION_ID, page: 0, size: 50 })
+    const rendered = wrapper.findComponent(MessageList).props('messages') as Array<{
+      id: string
+      toolCalls?: Array<{ waitingOn?: { childRunId: string; name: string | null; status: string } | null }>
+    }>
+    expect(rendered.find((message) => message.id === 'message-tool-call')?.toolCalls?.[0]?.waitingOn).toEqual({
+      childRunId: derivedState.activeChildren[0].runId,
+      name: 'Research child',
+      status: 'running',
+    })
   })
 })

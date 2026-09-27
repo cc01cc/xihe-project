@@ -121,6 +121,7 @@ function handleRenameKeydown(e: KeyboardEvent) {
         </button>
         <button
           class="w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors"
+          data-testid="session-item-delete"
           @click="handleDelete"
         >
           {{ t('sidebar.delete') }}

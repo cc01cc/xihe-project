@@ -20,6 +20,9 @@ const props = withDefaults(defineProps<{
 }>(), {
   toolMode: 'none',
 })
+const emit = defineEmits<{
+  derivedStateRefresh: []
+}>()
 
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
@@ -48,6 +51,12 @@ function connectSession(id: string) {
   let terminalError: SSEErrorPayload | null = null
   const isCurrentSession = () => props.sessionId === id
   connect({
+    onOpen: () => {
+      if (isCurrentSession()) emit('derivedStateRefresh')
+    },
+    onDerivedStateChanged: () => {
+      if (isCurrentSession()) emit('derivedStateRefresh')
+    },
     onStart: () => {
       if (!isCurrentSession()) return
       parser.reset()
@@ -118,6 +127,11 @@ function connectSession(id: string) {
       if (data.state !== undefined && data.state !== 'pending') return
       chatStore.setSessionRunState(id, 'awaiting_approval', activeRunId)
       agentStore.setStatus('awaiting_approval')
+    },
+    onToolResult: (data) => {
+      if (!isCurrentSession()) return
+      const toolName = typeof data.tool === 'string' ? data.tool : data.name
+      if (toolName === 'spawn_agent') emit('derivedStateRefresh')
     },
     onContextSourcesChanged: (data) => {
       if (!isCurrentSession()) return

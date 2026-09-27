@@ -22,6 +22,13 @@ const i18n = createI18n({
   locale: 'en',
   messages: { en: { chat: { toolStatus: { pending: 'Pending', running: 'Running', completed: 'Completed', failed: 'Failed', approved: 'Approved', rejected: 'Rejected' }, approve: 'Approve', reject: 'Reject', toolDiagnosticsTitle: 'Diagnostics', toolDiagnosticsSummary: '{total} total, {shown} shown', toolDiagnosticsMore: '{count} more', toolRawOutput: 'Raw output', jobOutputTitle: 'Background job output', jobOutputLoad: 'View output', jobOutputReload: 'Reload', jobOutputMore: 'Load more', jobOutputEmpty: '(no output yet)', jobOutputTruncated: 'Output reached the 1 MiB cap', jobOutputLost: 'Job output is no longer available', jobOutputExpired: 'Job output expired', jobOutputUnavailable: 'Runtime unavailable', jobCancelButton: 'Cancel this job', jobCancelHint: 'Only this job is terminated; the conversation continues', jobCancelConfirmHint: 'Cancel this job ({jobId})? Its output is kept and the run continues.', jobCancelConfirm: 'Confirm cancel', jobCancelBack: 'Back', jobCancelPending: 'Cancelling…', jobCancelDone: 'Cancelled: the job was terminated; this conversation continues.', jobCancelOrphaned: 'The job is gone; the archive was closed as orphaned.', jobCancelUnconfirmed: 'Cancellation unconfirmed: the process may still be running; retry later', jobCancelUnavailable: 'Runtime is temporarily unavailable; try again later', jobStatus: { running: 'Running', succeeded: 'Succeeded', cancelled: 'Cancelled', timeout: 'Timeout', orphaned: 'Orphaned' } } } },
 })
+i18n.global.mergeLocaleMessage('en', {
+  chat: {
+    waitingOnChild: 'Waiting for child task',
+    derivedStateUnnamedChild: 'Child session',
+    derivedStateStatus: { running: 'Running' },
+  },
+})
 
 function mountCard(props: any) {
   return mount(ToolCallCard, { props, global: { plugins: [i18n] } })
@@ -58,6 +65,19 @@ describe('ToolCallCard', () => {
   it('renders tool name', () => {
     const wrapper = mountCard({ toolCall: makeToolCall() })
     expect(wrapper.text()).toContain('read_file')
+  })
+
+  it('shows a child wait badge only from the durable waiting-on projection', () => {
+    const wrapper = mountCard({
+      toolCall: makeToolCall({
+        waitingOn: { childRunId: 'child-run-1', name: null, status: 'running' },
+      }),
+    })
+
+    expect(wrapper.get('[data-testid="tool-call-waiting-on"]').text()).toContain('Waiting for child task')
+    expect(wrapper.get('[data-testid="tool-call-waiting-on"]').text()).toContain('Child session')
+    expect(wrapper.get('[data-testid="tool-call-waiting-status"]').text()).toContain('Running')
+    expect(wrapper.text()).not.toContain('child-run-1')
   })
 
   it('shows duration when completed', () => {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
@@ -10,6 +11,7 @@ import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import SessionItem from './SessionItem.vue'
 import { workspaceChatPath } from '../../lib/routes'
+import BaseModal from '../shared/BaseModal.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -17,6 +19,11 @@ const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const agentStore = useAgentStore()
 const auth = useAuthStore()
+const pendingDeleteSessionId = ref<string | null>(null)
+const deleteLoading = ref(false)
+const pendingDeleteSession = computed(() =>
+  sessionStore.sessions.find((session) => session.id === pendingDeleteSessionId.value) ?? null,
+)
 
 const timeGroupLabels: Record<string, string> = {
   today: 'sidebar.today',
@@ -40,14 +47,31 @@ function handleRename(id: string, title: string) {
 }
 
 function handleDelete(id: string) {
-  sessionStore.deleteSession(id)
-    .then(() => chatStore.clearSession(id))
-    .catch((cause) => {
-      const message = cause instanceof ApiError ? cause.message : 'Failed to delete session'
-      logger.error('Delete session failed', cause)
-      toast.error(message)
-    })
+  pendingDeleteSessionId.value = id
 }
+
+function closeDeleteWarning() {
+  if (!deleteLoading.value) pendingDeleteSessionId.value = null
+}
+
+async function confirmDelete() {
+  const session = pendingDeleteSession.value
+  if (!session || deleteLoading.value) return
+  deleteLoading.value = true
+  const id = session.id
+  try {
+    await sessionStore.deleteSession(id)
+    chatStore.clearSession(id)
+    pendingDeleteSessionId.value = null
+  } catch (cause) {
+    const message = cause instanceof ApiError ? cause.message : t('sidebar.deleteFailed')
+    logger.error('Delete session failed', cause)
+    toast.error(message)
+  } finally {
+    deleteLoading.value = false
+  }
+}
+
 </script>
 
 <template>
@@ -76,4 +100,43 @@ function handleDelete(id: string) {
       {{ t('sidebar.empty') }}
     </div>
   </div>
+
+  <BaseModal :show="pendingDeleteSession !== null" @close="closeDeleteWarning">
+    <div
+      v-if="pendingDeleteSession"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="session-delete-title"
+      aria-describedby="session-delete-child-warning"
+      data-testid="session-delete-warning"
+    >
+      <h2 id="session-delete-title" class="text-base font-semibold">{{ t('sidebar.deleteConfirmTitle') }}</h2>
+      <p class="mt-2 text-sm text-muted-foreground" id="session-delete-child-warning">
+        {{ t('sidebar.deleteChildWarning') }}
+      </p>
+      <p class="mt-3 truncate rounded-md bg-muted/50 px-2 py-1 text-sm text-foreground">
+        {{ pendingDeleteSession.title }}
+      </p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button
+          type="button"
+          class="rounded-md border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
+          :disabled="deleteLoading"
+          data-testid="session-delete-cancel"
+          @click="closeDeleteWarning"
+        >
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          type="button"
+          class="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+          :disabled="deleteLoading"
+          data-testid="session-delete-confirm"
+          @click="confirmDelete"
+        >
+          {{ deleteLoading ? t('sidebar.deletePending') : t('sidebar.delete') }}
+        </button>
+      </div>
+    </div>
+  </BaseModal>
 </template>

@@ -36,6 +36,45 @@ export interface Session {
     context?: SessionContext;
 }
 
+export type SessionDerivedActiveStatus =
+    | "accepted"
+    | "queued"
+    | "running"
+    | "streaming"
+    | "awaiting_approval"
+    | "dispatching"
+    | "cancelling";
+
+export type SessionDerivedTerminalState = "success" | "error" | "partial" | "ambiguous" | "cancelled";
+
+export interface SessionDerivedActiveChild {
+    childSessionId: string;
+    runId: string;
+    name: string | null;
+    status: SessionDerivedActiveStatus;
+}
+
+export interface SessionDerivedTerminalNotice {
+    childSessionId: string;
+    runId: string;
+    name: string | null;
+    state: SessionDerivedTerminalState;
+    terminalAt: string;
+}
+
+export interface SessionDerivedStateResponse {
+    sessionId: string;
+    activeChildren: SessionDerivedActiveChild[];
+    terminalNotices: SessionDerivedTerminalNotice[];
+}
+
+/** Ephemeral UI join of a 0407 durable OperationItem link and derived child projection. */
+export interface ToolCallWaitingOn {
+    childRunId: string;
+    name: string | null;
+    status: SessionDerivedActiveStatus;
+}
+
 export type DiagnosticSeverity = "error" | "warning" | "note";
 export type DiagnosticConfidence = "high" | "low";
 
@@ -84,6 +123,8 @@ export interface ToolCall {
     startedAt?: string;
     completedAt?: string;
     diagnostics?: DiagnosticsBundle;
+    /** UI-only projection from durable OperationItem.waitingOnRunId + derived-state API. */
+    waitingOn?: ToolCallWaitingOn | null;
     /** PLAN-0344: durable job archival summary restored from the messages DTO after refresh. */
     jobSummary?: JobSummary;
 }
@@ -333,6 +374,7 @@ export type SSEEventType =
     | "token"
     | "tool_call"
     | "tool_result"
+    | "derived_state_changed"
     | "approval_request"
     | "status"
     | "error"
