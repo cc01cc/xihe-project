@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.InboxRepository;
 import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -87,6 +88,7 @@ public class ChatRunTerminalService {
     private final OperationItemRepository operationItems;
     private final OperationService operationService;
     private final RunCheckpointService checkpoints;
+    private final InboxRepository inboxes;
 
     public ChatRunTerminalService(
             DbLockTimeout dbLockTimeout,
@@ -97,7 +99,8 @@ public class ChatRunTerminalService {
             LedgerOperationRepository ledgerOperations,
             OperationItemRepository operationItems,
             OperationService operationService,
-            RunCheckpointService checkpoints) {
+            RunCheckpointService checkpoints,
+            InboxRepository inboxes) {
         this.dbLockTimeout = dbLockTimeout;
         this.datasourceUrl = datasourceUrl;
         this.entityManager = entityManager;
@@ -107,6 +110,7 @@ public class ChatRunTerminalService {
         this.operationItems = operationItems;
         this.operationService = operationService;
         this.checkpoints = checkpoints;
+        this.inboxes = inboxes;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -183,6 +187,10 @@ public class ChatRunTerminalService {
         if (parentLink != null && !parentLink.missing()) {
             operationService.settleWaitingChild(parentLink.operationId(), parentLink.itemId(), runId,
                     request.status(), run.getAssistantMessageId(), parentErrorCode(request));
+            // PLAN-0407 T2.6b: Inbox business key is the last lock/write of this
+            // transaction (design #45); an Inbox failure rolls back ChatRun
+            // terminal status, terminal_at, parent item settlement and link.
+            upsertChildTerminalInbox(parentLink.sessionId(), sessionId, runId, inboxState(request));
         } else if (parentLink != null) {
             logger.warn("[LIFECYCLE] service=cp event=derived_parent_missing runId={} parentSessionId={} parentRunId={}",
                     runId, parentLink.sessionId(), parentLink.runId());
@@ -272,6 +280,32 @@ public class ChatRunTerminalService {
             case RECONCILIATION -> operationService.reconcileStaleOperation(runId.toString(),
                     operationStatus(request.status()));
         }
+    }
+
+    /** PLAN-0407 T2.6b: one notice per (parent Session, child_terminal, child run), same transaction. */
+    private void upsertChildTerminalInbox(UUID parentSessionId, UUID childSessionId, UUID childRunId,
+                                          String state) {
+        String payload = "{\"sessionId\":\"" + childSessionId + "\",\"runId\":\"" + childRunId
+                + "\",\"state\":\"" + state + "\"}";
+        inboxes.upsertChildTerminal(UUID.randomUUID(), parentSessionId, childRunId, payload);
+        logger.debug("[LIFECYCLE] service=cp event=derived_inbox_upserted runId={} parentSessionId={} state={}",
+                childRunId, parentSessionId, state);
+    }
+
+    /** payload_pointer.state is the terminalOutcome wire enum {success,error,partial,ambiguous,cancelled}. */
+    private static String inboxState(TerminalRequest request) {
+        if (request.terminalOutcome() != null) {
+            return request.terminalOutcome();
+        }
+        return switch (request.status()) {
+            case "succeeded" -> "success";
+            case "partial" -> "partial";
+            case "failed" -> "error";
+            case "cancelled" -> "cancelled";
+            case "ambiguous" -> "ambiguous";
+            default -> throw new IllegalArgumentException(
+                    "Unsupported terminal status for Inbox payload: " + request.status());
+        };
     }
 
     private void requestCheckpointAfterCommit(String runId) {

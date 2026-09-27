@@ -115,7 +115,7 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void v44MapsTerminalAndWaitingColumnsWithoutV45Inbox() {
+    void v44TerminalColumnsAreMappedOnAChainThatIncludesV45() {
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM information_schema.columns "
                         + "WHERE table_schema = current_schema() AND table_name = 'chat_runs' "
@@ -126,8 +126,10 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
                         + "WHERE table_schema = current_schema() AND table_name = 'operation_items' "
                         + "AND column_name = 'waiting_on_run_id'",
                 Integer.class));
-        assertEquals(0, jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM flyway_schema_history WHERE version = '45'", Integer.class));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '45' AND success = true",
+                Integer.class),
+                "PLAN-0408 T1.1 added V45 to the chain this suite boots with");
     }
 
     @Test
