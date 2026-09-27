@@ -9,6 +9,8 @@ import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 
 import java.util.UUID;
@@ -26,6 +28,9 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -105,6 +110,114 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         wireMock.verify(postRequestedFor(urlEqualTo(runtimePath))
                 .withHeader("Content-Type", containing("application/json"))
                 .withRequestBody(containing("tools/list")));
+    }
+
+    @Test
+    void userWorkspaceUiFileToolUsesUserGrantAndForwardsWithoutAgentSession() throws Exception {
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        wireMock.stubFor(post(urlEqualTo(runtimePath))
+                .withRequestBody(containing("\"method\":\"tools/list\""))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":["
+                                + "{\"name\":\"list_directory\",\"inputSchema\":{\"type\":\"object\"}}"
+                                + "]},\"id\":1}")));
+        ResponseEntity<String> tools = restTemplate.postForEntity(
+                url("/api/v1/mcp"), mcpEntity(TOOLS_LIST_BODY), String.class);
+        assertEquals(HttpStatus.OK, tools.getStatusCode());
+        assertTrue(tools.getBody().contains("list_directory"));
+
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"list_directory\",\"arguments\":{\"path\":\"\"}},\"id\":31}";
+        wireMock.stubFor(post(urlEqualTo(runtimePath))
+                .withRequestBody(containing("\"name\":\"list_directory\""))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":["
+                                + "{\"type\":\"text\",\"text\":\"[]\"}]},\"id\":31}")));
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                url("/api/v1/mcp"), mcpEntity(body), String.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertTrue(response.getBody().contains("\"text\":\"[]\""));
+        wireMock.verify(postRequestedFor(urlEqualTo(runtimePath))
+                .withHeader("Authorization", equalTo("Bearer dev-token-not-secure"))
+                .withRequestBody(containing("list_directory")));
+
+        HttpHeaders forgedAgentContext = new HttpHeaders();
+        forgedAgentContext.setContentType(MediaType.APPLICATION_JSON);
+        forgedAgentContext.setBearerAuth(token);
+        forgedAgentContext.set("X-Workspace-Id", wsId);
+        forgedAgentContext.set("X-Chat-Run-Id", UUID.randomUUID().toString());
+        forgedAgentContext.set("X-Operation-Id", UUID.randomUUID().toString());
+        ResponseEntity<String> forgedResponse = restTemplate.postForEntity(
+                url("/api/v1/mcp"), new HttpEntity<>(body, forgedAgentContext), String.class);
+        assertEquals(HttpStatus.FORBIDDEN, forgedResponse.getStatusCode());
+        assertProblemRequestIdMatchesHeader(forgedResponse);
+        wireMock.verify(1, postRequestedFor(urlEqualTo(runtimePath))
+                .withRequestBody(containing("list_directory")));
+    }
+
+    @Test
+    void userCannotInvokeAgentToolAndAgentCannotExecuteToolsWithoutSession() throws Exception {
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        String userCall = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"execute_command\",\"arguments\":{}},\"id\":41}";
+        String requestId = "user-\"\\-0420";
+        HttpHeaders userHeaders = new HttpHeaders();
+        userHeaders.setContentType(MediaType.APPLICATION_JSON);
+        userHeaders.setBearerAuth(token);
+        userHeaders.set("X-Workspace-Id", wsId);
+        userHeaders.set("X-Request-Id", requestId);
+        ResponseEntity<String> userResponse = restTemplate.postForEntity(
+                url("/api/v1/mcp"), new HttpEntity<>(userCall, userHeaders), String.class);
+
+        assertEquals(HttpStatus.FORBIDDEN, userResponse.getStatusCode());
+        assertProblemRequestIdMatchesHeader(userResponse);
+
+        HttpHeaders serviceHeaders = new HttpHeaders();
+        serviceHeaders.setContentType(MediaType.APPLICATION_JSON);
+        serviceHeaders.setBearerAuth("dev-token-not-secure");
+        serviceHeaders.set("X-Workspace-Id", wsId);
+        String agentCall = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"README.md\"}},\"id\":42}";
+        ResponseEntity<String> agentResponse = restTemplate.postForEntity(
+                url("/api/v1/mcp"), new HttpEntity<>(agentCall, serviceHeaders), String.class);
+
+        assertEquals(HttpStatus.FORBIDDEN, agentResponse.getStatusCode());
+        assertProblemRequestIdMatchesHeader(agentResponse);
+        wireMock.verify(0, postRequestedFor(urlEqualTo(runtimePath)));
+    }
+
+    @Test
+    void malformedAgentSessionIdIsRejectedAsNotFoundBeforeRuntimeDispatch() throws Exception {
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth("dev-token-not-secure");
+        headers.set("X-Workspace-Id", wsId);
+        headers.set("X-Session-Id", "not-a-uuid");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"README.md\"}},\"id\":43}";
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                url("/api/v1/mcp"), new HttpEntity<>(body, headers), String.class);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        assertProblemRequestIdMatchesHeader(response);
+        assertEquals("SESSION_NOT_FOUND", objectMapper.readTree(response.getBody()).path("code").asText());
+        wireMock.verify(0, postRequestedFor(urlEqualTo(runtimePath)));
+    }
+
+    private void assertProblemRequestIdMatchesHeader(ResponseEntity<String> response) throws Exception {
+        String requestId = response.getHeaders().getFirst("X-Request-Id");
+        assertNotNull(requestId);
+        JsonNode problem = objectMapper.readTree(response.getBody());
+        assertEquals(requestId, problem.path("requestId").asText(),
+                "Problem Details requestId must match its response header");
     }
 
     /**

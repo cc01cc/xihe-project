@@ -35,8 +35,10 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -59,6 +61,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 
 /**
  * PLAN-0407 T2.6b: Inbox upsert inside the single terminal transaction, on the
@@ -93,10 +99,13 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     @Autowired private ChatRunTerminalService terminalService;
     @Autowired private SessionService sessionService;
     @Autowired private ChatRunCancellationService cancellationService;
+    @Autowired private ChatRunRecoveryService recoveryService;
+    @Autowired private ChatController chatController;
     @Autowired private ChatSubmissionService submissionService;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private PlatformTransactionManager transactionManager;
+    @MockitoSpyBean private SseEmitterManager sseEmitterManager;
 
     private String userId;
     private String workspaceId;
@@ -177,6 +186,117 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void partialChildTerminalCommitsPartialInboxState() {
+        SpawnFixture fixture = createSpawnFixture(true, "running");
+
+        assertTrue(terminalService.terminalize(
+                request(fixture.child(), "partial", "partial", "PARTIAL_RESULT",
+                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+
+        ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+        assertEquals("partial", child.getStatus());
+        assertNotNull(child.getTerminalAt());
+        assertEquals("partial", payloadField(fixture.child(), "state"));
+        assertEquals(1, inboxCountForParent(fixture.parent().session().getId()));
+    }
+
+    @Test
+    void terminalCommitPublishesExactRefreshHintToParentSessionChannel() throws Exception {
+        SpawnFixture fixture = createSpawnFixture(true, "running");
+
+        assertTrue(terminalService.terminalize(
+                request(fixture.child(), "succeeded", "success", null,
+                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(sseEmitterManager).send(eq(fixture.parent().session().getId().toString()),
+                eq("derived_state_changed"), payloadCaptor.capture());
+        JsonNode event = objectMapper.readTree(objectMapper.writeValueAsString(payloadCaptor.getValue()));
+        Set<String> eventKeys = new LinkedHashSet<>();
+        event.fieldNames().forEachRemaining(eventKeys::add);
+        assertEquals(Set.of("sessionId", "runId", "state", "at"), eventKeys,
+                "the SSE JSON must have exactly the four frozen keys");
+        assertEquals(fixture.child().session().getId().toString(), event.get("sessionId").asText());
+        assertEquals(fixture.child().run().getId().toString(), event.get("runId").asText());
+        assertEquals("success", event.get("state").asText());
+        Instant databaseTerminalAt = jdbcTemplate.queryForObject(
+                "SELECT terminal_at FROM chat_runs WHERE id = CAST(? AS UUID)",
+                (result, row) -> result.getTimestamp(1).toInstant(), fixture.child().run().getId().toString());
+        assertEquals(databaseTerminalAt, Instant.parse(event.get("at").asText()),
+                "SSE at must equal the committed durable terminal_at");
+    }
+
+    @Test
+    void failedSseSendDoesNotUndoTerminalOrInboxCommit() {
+        SpawnFixture fixture = createSpawnFixture(true, "running");
+        doThrow(new IllegalStateException("injected SSE send failure"))
+                .when(sseEmitterManager).send(eq(fixture.parent().session().getId().toString()),
+                        eq("derived_state_changed"), any());
+
+        assertTrue(terminalService.terminalize(
+                request(fixture.child(), "succeeded", "success", null,
+                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+
+        ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+        assertEquals("succeeded", child.getStatus());
+        assertNotNull(child.getTerminalAt());
+        assertEquals(1, inboxCountForParent(fixture.parent().session().getId()));
+    }
+
+    @Test
+    void startupRecoveryTerminalUsesTheSharedInboxTransaction() {
+        SpawnFixture fixture = createSpawnFixture(true, "running");
+        assertTrue(terminalService.terminalize(
+                request(fixture.parent(), "succeeded", "success", null,
+                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+
+        recoveryService.reconcileOnStartup();
+
+        ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+        assertEquals("ambiguous", child.getStatus());
+        assertEquals("ambiguous", child.getTerminalOutcome());
+        assertNotNull(child.getTerminalAt());
+        assertEquals(1, inboxCountForParent(fixture.parent().session().getId()));
+        assertEquals("ambiguous", payloadField(fixture.child(), "state"));
+    }
+
+    @Test
+    void startupRecoveryClosesCancellingChildThroughTheSharedInboxTransaction() {
+        SpawnFixture fixture = createSpawnFixture(true, "running");
+        assertEquals(ChatRunCancellationService.CancelOutcome.CLAIMED,
+                cancellationService.claimCancellation(fixture.child().run().getId().toString(),
+                        fixture.child().session().getId().toString(), userId, workspaceId).outcome());
+
+        recoveryService.reconcileOnStartup();
+
+        ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+        assertEquals("cancelled", child.getStatus());
+        assertEquals("cancelled", child.getTerminalOutcome());
+        assertNotNull(child.getTerminalAt());
+        assertEquals(1, inboxCountForParent(fixture.parent().session().getId()));
+        assertEquals("cancelled", payloadField(fixture.child(), "state"));
+    }
+
+    @Test
+    void staleReconciliationTerminalUsesTheSharedInboxTransaction() {
+        SpawnFixture fixture = createSpawnFixture(true, "running");
+        assertTrue(terminalService.terminalize(
+                request(fixture.parent(), "succeeded", "success", null,
+                        ChatRunTerminalService.LedgerMode.STREAM)).committed());
+        ChatRunReconciliationService reconciler = new ChatRunReconciliationService(
+                chatRunRepository, chatController, terminalService, -1);
+
+        reconciler.reconcileStaleRuns();
+
+        ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+        assertEquals("ambiguous", child.getStatus());
+        assertEquals("CP_RECONCILED", child.getErrorCode());
+        assertNotNull(child.getTerminalAt());
+        assertEquals(1, inboxCountForParent(fixture.parent().session().getId()));
+        assertEquals("ambiguous", payloadField(fixture.child(), "state"));
+    }
+
+    @Test
     void rootTerminalWritesNoInboxRow() {
         RunFixture root = createRun(createSession("root-no-inbox", null, null));
 
@@ -186,6 +306,47 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(0, inboxCountForRef(root.run().getId()),
                 "a root terminal has no parent recipient and must not write an Inbox row");
+    }
+
+    @Test
+    void realParentRunCreateClaimsInboxAtomicallyAndNeverTransfersIt() {
+        Session parentSession = createSession("claim-parent", null, null);
+        UUID firstInboxId = insertPendingInbox(parentSession.getId());
+        String firstRunId = UUID.randomUUID().toString();
+
+        ChatSubmissionService.Submission first = createParentRun(firstRunId, parentSession);
+
+        assertEquals(UUID.fromString(firstRunId), first.run().getId());
+        assertTrue(ledgerOperationRepository.findByRunId(firstRunId).isPresent(),
+                "the real parent operation root must exist with the claimed Run");
+        assertEquals(firstRunId, claimedRunId(firstInboxId),
+                "pending Inbox must be claimed in the real CP create transaction");
+
+        assertTrue(terminalService.terminalize(
+                request(new RunFixture(parentSession, first.run(),
+                                ledgerOperationRepository.findByRunId(firstRunId).orElseThrow().getId()),
+                        "succeeded", "success", null, ChatRunTerminalService.LedgerMode.STREAM)).committed());
+        String nextRunId = UUID.randomUUID().toString();
+        createParentRun(nextRunId, parentSession);
+        assertEquals(firstRunId, claimedRunId(firstInboxId),
+                "a later parent Run must not automatically take over an already-claimed notice");
+
+        Session rollbackSession = createSession("claim-rollback-parent", null, null);
+        UUID rollbackInboxId = insertPendingInbox(rollbackSession.getId());
+        String rolledBackRunId = UUID.randomUUID().toString();
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        transaction.executeWithoutResult(status -> {
+            createParentRun(rolledBackRunId, rollbackSession);
+            assertTrue(ledgerOperationRepository.findByRunId(rolledBackRunId).isPresent(),
+                    "the operation root must be in the same outer transaction");
+            assertEquals(rolledBackRunId, claimedRunId(rollbackInboxId));
+            status.setRollbackOnly();
+        });
+
+        assertTrue(chatRunRepository.findById(UUID.fromString(rolledBackRunId)).isEmpty());
+        assertTrue(ledgerOperationRepository.findByRunId(rolledBackRunId).isEmpty());
+        assertNull(claimedRunId(rollbackInboxId),
+                "Run, operation root and Inbox claim must roll back together");
     }
 
     // ------------------------------------------------------------------
@@ -232,9 +393,42 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void parentItemWriteFailureRollsBackTerminalAndInbox() {
+        SpawnFixture fixture = createSpawnFixture(true, "running");
+        try {
+            jdbcTemplate.execute("CREATE FUNCTION fail_parent_item_update_t12() RETURNS trigger "
+                    + "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected parent item update failure'; END $$");
+            jdbcTemplate.execute("CREATE TRIGGER fail_parent_item_update_t12 BEFORE UPDATE ON operation_items "
+                    + "FOR EACH ROW EXECUTE FUNCTION fail_parent_item_update_t12()");
+
+            assertThrows(Exception.class, () -> terminalService.terminalize(
+                    request(fixture.child(), "succeeded", "success", null,
+                            ChatRunTerminalService.LedgerMode.STREAM)));
+
+            ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+            assertEquals("running", child.getStatus());
+            assertNull(child.getTerminalAt());
+            assertEquals("running", ledgerOperationRepository
+                    .findByRunId(fixture.child().run().getId().toString()).orElseThrow().getStatus());
+            OperationItem parentItem = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
+            assertEquals("running", parentItem.getStatus());
+            assertNull(parentItem.getResultRef());
+            assertEquals(fixture.child().run().getId(), parentItem.getWaitingOnRunId());
+            assertEquals(0, inboxCountForRef(fixture.child().run().getId()));
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER IF EXISTS fail_parent_item_update_t12 ON operation_items");
+            jdbcTemplate.execute("DROP FUNCTION IF EXISTS fail_parent_item_update_t12()");
+        }
+    }
+
+    @Test
     void deletedParentCommitsChildLocalTerminalWithoutInboxAndEmitsDiagnostic() {
         SpawnFixture fixture = createSpawnFixture(true, "running");
         sessionService.delete(fixture.parent().session().getId().toString(), userId, workspaceId);
+        ChatRun beforeChildTerminal = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+        assertEquals("running", beforeChildTerminal.getStatus(),
+                "parent deletion must leave the child Run active for independent continuation");
+        assertNull(beforeChildTerminal.getTerminalAt());
 
         try (LogCapture logs = new LogCapture(ChatRunTerminalService.class)) {
             assertTrue(terminalService.terminalize(
@@ -295,6 +489,9 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                         ChatRunTerminalService.LedgerMode.STREAM)).committed());
 
         OperationItem settled = operationItemRepository.findById(fixture.parentItemId()).orElseThrow();
+        ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
+        assertEquals("failed", child.getStatus());
+        assertNotNull(child.getTerminalAt());
         assertEquals("running", settled.getStatus(), "the terminal parent item status must be preserved");
         assertNull(settled.getErrorCode());
         assertEquals(fixture.childAssistantMessageId(), settled.getResultRef());
@@ -448,6 +645,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                         ChatRunTerminalService.LedgerMode.CANCELLATION)).committed());
         ChatRun child = chatRunRepository.findById(fixture.child().run().getId()).orElseThrow();
         assertEquals("cancelled", child.getStatus());
+        assertNotNull(child.getTerminalAt());
         assertEquals(1, inboxCountForParent(fixture.parent().session().getId()),
                 "only the cancellation commits the single Inbox row");
         assertEquals("cancelled", payloadField(fixture.child(), "state"),
@@ -683,6 +881,30 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 null, "tool_call", "spawn_agent", "agent", "{}", null, null);
         operationService.transitionItem(item.getId(), "running", null, null, null, null);
         return item;
+    }
+
+    private ChatSubmissionService.Submission createParentRun(String runId, Session session) {
+        return submissionService.create(runId, session.getId().toString(), userId, workspaceId,
+                principalId.toString(), "claim-idem-" + runId, "a".repeat(64), "provider", "model",
+                "workspace", null, null, "t26b-claim", UUID.randomUUID().toString(),
+                "process pending child notices", "[]", List.of());
+    }
+
+    private UUID insertPendingInbox(UUID parentSessionId) {
+        UUID inboxId = UUID.randomUUID();
+        UUID childSessionId = UUID.randomUUID();
+        UUID childRunId = UUID.randomUUID();
+        String payload = "{\"sessionId\":\"" + childSessionId + "\",\"runId\":\"" + childRunId
+                + "\",\"state\":\"success\"}";
+        jdbcTemplate.update("INSERT INTO inbox (id, to_session_id, type, ref, payload_pointer) "
+                        + "VALUES (?, ?, 'child_terminal', ?, CAST(? AS jsonb))",
+                inboxId, parentSessionId, childRunId, payload);
+        return inboxId;
+    }
+
+    private String claimedRunId(UUID inboxId) {
+        return jdbcTemplate.queryForObject("SELECT injected_run_id::text FROM inbox WHERE id = CAST(? AS UUID)",
+                String.class, inboxId);
     }
 
     private SpawnFixture attachChild(RunFixture parent, OperationItem item, String title) {

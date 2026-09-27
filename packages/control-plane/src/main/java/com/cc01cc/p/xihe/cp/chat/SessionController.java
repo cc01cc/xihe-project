@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/sessions")
@@ -28,18 +29,22 @@ public class SessionController {
     private static final Duration SESSION_DELETE_SSE_WAIT = Duration.ofSeconds(2);
 
     private final SessionService sessionService;
+    private final com.cc01cc.p.xihe.cp.service.SessionDerivedStateService derivedStateService;
     private final ContextService contextService;
     private final ChatController chatController;
     private final ChatRunCancellationService chatRunCancellationService;
     private final SseEmitterManager sseEmitterManager;
     private final com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService;
 
-    public SessionController(SessionService sessionService, ContextService contextService,
+    public SessionController(SessionService sessionService,
+                             com.cc01cc.p.xihe.cp.service.SessionDerivedStateService derivedStateService,
+                             ContextService contextService,
                              ChatController chatController,
                              ChatRunCancellationService chatRunCancellationService,
                              SseEmitterManager sseEmitterManager,
                              com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService) {
         this.sessionService = sessionService;
+        this.derivedStateService = derivedStateService;
         this.contextService = contextService;
         this.chatController = chatController;
         this.chatRunCancellationService = chatRunCancellationService;
@@ -97,6 +102,24 @@ public class SessionController {
         String workspaceId = TenantContext.getWorkspaceId();
         try {
             return ResponseEntity.ok(toView(sessionService.requireCurrent(sessionId, userId, workspaceId)));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    @GetMapping("/{sessionId}/derived-state")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> derivedState(@PathVariable String sessionId) {
+        try {
+            UUID.fromString(sessionId);
+        } catch (IllegalArgumentException invalidSessionId) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
+        }
+        try {
+            Session parent = sessionService.requireCurrent(
+                    sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId());
+            return ResponseEntity.ok(derivedStateService.project(parent));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

@@ -48,7 +48,7 @@ public class ChatRunCancellationService {
     private static final Logger logger = LoggerFactory.getLogger(ChatRunCancellationService.class);
 
     /** 非终态 run 状态（含 cancelling：已在取消中，等待 release 即可）。 */
-    static final List<String> NON_TERMINAL_STATUSES = List.of(
+    public static final List<String> NON_TERMINAL_STATUSES = List.of(
             "accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching", "cancelling");
 
     private static final Duration CANCEL_TIMEOUT = Duration.ofSeconds(5);

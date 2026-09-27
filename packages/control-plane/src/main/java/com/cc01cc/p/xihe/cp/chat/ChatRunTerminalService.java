@@ -24,7 +24,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** The only CP owner that commits a ChatRun terminal state and its ledger projection. */
@@ -89,6 +91,7 @@ public class ChatRunTerminalService {
     private final OperationService operationService;
     private final RunCheckpointService checkpoints;
     private final InboxRepository inboxes;
+    private final SseEmitterManager sseEmitters;
 
     public ChatRunTerminalService(
             DbLockTimeout dbLockTimeout,
@@ -100,7 +103,8 @@ public class ChatRunTerminalService {
             OperationItemRepository operationItems,
             OperationService operationService,
             RunCheckpointService checkpoints,
-            InboxRepository inboxes) {
+            InboxRepository inboxes,
+            SseEmitterManager sseEmitters) {
         this.dbLockTimeout = dbLockTimeout;
         this.datasourceUrl = datasourceUrl;
         this.entityManager = entityManager;
@@ -111,6 +115,7 @@ public class ChatRunTerminalService {
         this.operationService = operationService;
         this.checkpoints = checkpoints;
         this.inboxes = inboxes;
+        this.sseEmitters = sseEmitters;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -191,6 +196,8 @@ public class ChatRunTerminalService {
             // transaction (design #45); an Inbox failure rolls back ChatRun
             // terminal status, terminal_at, parent item settlement and link.
             upsertChildTerminalInbox(parentLink.sessionId(), sessionId, runId, inboxState(request));
+            publishDerivedStateAfterCommit(parentLink.sessionId(), sessionId, runId,
+                    inboxState(request), run.getTerminalAt());
         } else if (parentLink != null) {
             logger.warn("[LIFECYCLE] service=cp event=derived_parent_missing runId={} parentSessionId={} parentRunId={}",
                     runId, parentLink.sessionId(), parentLink.runId());
@@ -306,6 +313,28 @@ public class ChatRunTerminalService {
             default -> throw new IllegalArgumentException(
                     "Unsupported terminal status for Inbox payload: " + request.status());
         };
+    }
+
+    /** SSE is only a post-commit refresh hint; the Inbox row remains authoritative. */
+    private void publishDerivedStateAfterCommit(UUID parentSessionId, UUID childSessionId, UUID childRunId,
+                                                String state, Instant terminalAt) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                Map<String, String> payload = new LinkedHashMap<>();
+                payload.put("sessionId", childSessionId.toString());
+                payload.put("runId", childRunId.toString());
+                payload.put("state", state);
+                payload.put("at", terminalAt.toString());
+                try {
+                    // The parent page owns the derived-state view; the payload identifies the child run.
+                    sseEmitters.send(parentSessionId.toString(), "derived_state_changed", payload);
+                } catch (RuntimeException error) {
+                    logger.warn("[LIFECYCLE] service=cp event=derived_state_sse_failed runId={} parentSessionId={}",
+                            childRunId, parentSessionId, error);
+                }
+            }
+        });
     }
 
     private void requestCheckpointAfterCommit(String runId) {

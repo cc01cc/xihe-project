@@ -21,6 +21,8 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
 
     boolean existsBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
 
+    List<ChatRun> findBySessionIdInAndStatusIn(Collection<String> sessionIds, Collection<String> statuses);
+
     List<String> ACTIVE_LEASE_STATUSES = List.of(
             "accepted", "queued", "running", "streaming", "awaiting_approval", "dispatching");
 

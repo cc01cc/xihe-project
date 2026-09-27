@@ -2,9 +2,11 @@ package com.cc01cc.p.xihe.cp.mcp;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.springframework.beans.factory.annotation.Value;
 import jakarta.annotation.PostConstruct;
 import org.springframework.http.*;
@@ -39,6 +41,7 @@ import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.OperationAttempt;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
+import com.cc01cc.p.xihe.cp.logging.RequestIdFilter;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -65,6 +68,11 @@ public class McpProxyController {
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String CP_MCP_SERVER_ID = "__cp__";
     private static final String SPAWN_AGENT_TOOL = ChatSubmissionService.SPAWN_TOOL_NAME;
+    private static final Set<String> USER_WORKSPACE_FILE_TOOLS = Set.of(
+            "list_directory", "read_file", "read_file_range", "write_file", "delete_file",
+            "move_file", "copy_file", "mkdir");
+    private static final Set<String> AGENT_EXECUTION_CONTEXT_HEADERS = Set.of(
+            "X-Chat-Run-Id", "X-Operation-Id", "X-Operation-Item-Id");
 
     @Value("${cp.mcp.session-id.hmac-secret}")
     private String sessionIdHmacSecret;
@@ -478,6 +486,20 @@ public class McpProxyController {
             return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Tool name is required");
         }
 
+        if (access == null) {
+            audit.record(sessionId, toolName, "caller_context_rejected", "missing authenticated caller");
+            return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+        }
+        if (!access.internalService()) {
+            if (!USER_WORKSPACE_FILE_TOOLS.contains(toolName) || hasAgentExecutionContext(headers)) {
+                audit.record(sessionId, toolName, "caller_tool_denied", "user caller is outside workspace UI tool path");
+                return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+            }
+        } else if (access.applicationSessionId() == null || access.applicationSessionId().isBlank()) {
+            audit.record(sessionId, toolName, "agent_session_required", "Agent tools/call requires an application Session");
+            return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+        }
+
         refreshCacheIfNeeded(wsId);
         Map<String, String> mapping = toolServerCache.getOrDefault(wsId, Collections.emptyMap());
         String serverId = mapping.get(toolName);
@@ -518,8 +540,7 @@ public class McpProxyController {
         // mode 传 null 表示由会话态决定）。硬保护/模式/命中层已在引擎内记录审计。
         // T1.15：同一次加载的 context 同时供 Verdict 与工具面解析使用（不二次加载）。
         PolicyContext policyContext = policy.loadContext(access.userId(), wsId, sessionId);
-        boolean userPrincipalOnly = isUserDirectMutation(headers, access)
-                && isWorkspaceUserMutationTool(toolName);
+        boolean userPrincipalOnly = !access.internalService();
         if (!policy.allowsByGrant(policyContext, toolName, rewritten, sessionId,
                 access.userId(), wsId, userPrincipalOnly)) {
             sse.send(sessionId, "tool_exec_denied", Map.of("tool", toolName, "reason", "authorization grant denied"));
@@ -1261,6 +1282,12 @@ public class McpProxyController {
                 && (operationId == null || operationId.isBlank());
     }
 
+    private static boolean hasAgentExecutionContext(HttpHeaders headers) {
+        return AGENT_EXECUTION_CONTEXT_HEADERS.stream()
+                .map(headers::getFirst)
+                .anyMatch(value -> value != null && !value.isBlank());
+    }
+
     private static boolean isWorkspaceUserMutationTool(String toolName) {
         // PLAN-292 T4: write_file_binary removed — Gateway never exposes it,
         // so a user-direct MCP call with that name cannot exist.
@@ -1915,6 +1942,20 @@ public class McpProxyController {
 
         String applicationSessionId = firstNonBlank(
                 headerValue(headers, "X-Session-Id"), bodyValue(body, "sessionId"));
+        UUID applicationSessionUuid = null;
+        if (applicationSessionId != null) {
+            try {
+                applicationSessionUuid = UUID.fromString(applicationSessionId);
+                if (!applicationSessionUuid.toString().equalsIgnoreCase(applicationSessionId)) {
+                    throw new IllegalArgumentException("Session ID is not a canonical UUID");
+                }
+            } catch (IllegalArgumentException e) {
+                logger.warn("MCP request rejected: malformed application Session ID requestId={}",
+                        MDC.get(RequestIdFilter.MDC_KEY));
+                return AuthorizationResult.failure(problem(
+                        HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
+            }
+        }
         String claimedUserId = firstNonBlank(
                 headerValue(headers, "X-User-Id"), bodyValue(body, "userId"));
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -1937,7 +1978,7 @@ public class McpProxyController {
             }
 
             if (applicationSessionId != null) {
-                Session session = sessionRepository.findById(UUID.fromString(applicationSessionId)).orElse(null);
+                Session session = sessionRepository.findById(applicationSessionUuid).orElse(null);
                 if (!matchesSession(session, workspaceId, null)) {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
@@ -1973,7 +2014,7 @@ public class McpProxyController {
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "User context does not match authenticated user"));
             }
             if (applicationSessionId != null) {
-                Session session = sessionRepository.findById(UUID.fromString(applicationSessionId)).orElse(null);
+                Session session = sessionRepository.findById(applicationSessionUuid).orElse(null);
                 if (!matchesSession(session, workspaceId, userId)) {
                     return AuthorizationResult.failure(problem(
                             HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
@@ -2213,14 +2254,27 @@ public class McpProxyController {
     }
 
     private ResponseEntity<String> problem(HttpStatus status, String code, String detail) {
-        String requestId = UUID.randomUUID().toString();
-        String body = "{\"type\":\"https://xihe.dev/problems/" + code.toLowerCase(Locale.ROOT)
-                + "\",\"title\":\"Request failed\",\"status\":" + status.value()
-                + ",\"code\":\"" + code + "\",\"detail\":\"" + detail
-                + "\",\"requestId\":\"" + requestId + "\"}";
+        String requestId = MDC.get(RequestIdFilter.MDC_KEY);
+        if (requestId == null || requestId.isBlank()) {
+            requestId = UUID.randomUUID().toString();
+        }
+        ObjectNode problem = objectMapper.createObjectNode();
+        problem.put("type", "https://xihe.dev/problems/" + code.toLowerCase(Locale.ROOT));
+        problem.put("title", "Request failed");
+        problem.put("status", status.value());
+        problem.put("code", code);
+        problem.put("detail", detail == null ? "Request failed" : detail);
+        problem.put("requestId", requestId);
+        String body;
+        try {
+            body = objectMapper.writeValueAsString(problem);
+        } catch (JsonProcessingException e) {
+            logger.error("MCP Problem Details serialization failed code={} requestId={}", code, requestId, e);
+            throw new IllegalStateException("Failed to serialize MCP Problem Details", e);
+        }
         return ResponseEntity.status(status)
                 .contentType(MediaType.parseMediaType("application/problem+json"))
-                .header("X-Request-Id", requestId)
+                .header(RequestIdFilter.HEADER, requestId)
                 .body(body);
     }
 }

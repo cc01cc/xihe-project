@@ -437,6 +437,14 @@ class ChatControllerTest extends AbstractH2Test {
     @Test
     void chat_repeatedIdempotencyKeyDoesNotStartSecondRun() throws IOException, InterruptedException {
         AtomicReference<Integer> agentCalls = new AtomicReference<>(0);
+        UUID inboxId = UUID.randomUUID();
+        UUID childSessionId = UUID.randomUUID();
+        UUID childRunId = UUID.randomUUID();
+        String inboxPayload = "{\"sessionId\":\"" + childSessionId + "\",\"runId\":\"" + childRunId
+                + "\",\"state\":\"success\"}";
+        jdbcTemplate.update("INSERT INTO inbox (id, to_session_id, type, ref, payload_pointer, created_at) "
+                        + "VALUES (?, ?, 'child_terminal', ?, CAST(? AS JSONB), CURRENT_TIMESTAMP)",
+                inboxId, UUID.fromString(sessionId), childRunId, inboxPayload);
         agentServer.createContext("/internal/v1/agent/chat", exchange -> {
             agentCalls.updateAndGet(value -> value + 1);
             byte[] body = ("event: token\ndata: {\"content\":\"once\"}\n\n"
@@ -473,9 +481,15 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, first.getBody().get("origin"));
         assertEquals(ChatRun.ORIGIN_USER_SUBMISSION, second.getBody().get("origin"));
         assertEquals(first.getBody().get("operationId"), second.getBody().get("operationId"));
+        assertEquals(first.getBody().get("runId"), jdbcTemplate.queryForObject(
+                "SELECT injected_run_id::text FROM inbox WHERE id = ?", String.class, inboxId),
+                "the first parent Run must claim the pending Inbox row");
         Thread.sleep(500);
         assertEquals(1, agentCalls.get());
         assertEquals("succeeded", chatRunRepository.findById(UUID.fromString((String) first.getBody().get("runId"))).orElseThrow().getStatus());
+        assertEquals(first.getBody().get("runId"), jdbcTemplate.queryForObject(
+                "SELECT injected_run_id::text FROM inbox WHERE id = ?", String.class, inboxId),
+                "an idempotency replay returns the original Run and never transfers its Inbox claim");
 
         Map<String, Object> conflictingRequest = Map.of(
                 "sessionId", sessionId,

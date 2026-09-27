@@ -32,6 +32,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.UUID;
@@ -86,6 +88,12 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private ChatRunTerminalService terminalService;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -311,6 +319,48 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertTrue(chatRunRepository.findById(UUID.fromString(rejectedRunId)).isEmpty());
     }
 
+    @Test
+    void createClaimsPendingInboxAndLaterRunDoesNotTakeItOver() throws Exception {
+        PendingInboxFixture fixture = createPendingInboxFixture("claim");
+        String firstRunId = UUID.randomUUID().toString();
+
+        ChatSubmissionService.Submission first = submit(firstRunId, fixture.session(), fixture.user(),
+                fixture.workspace(), "consume first inbox", fixture.principal().getId().toString());
+
+        assertEquals(UUID.fromString(firstRunId), first.run().getId());
+        assertEquals(firstRunId, claimedRunId(fixture.inboxId()),
+                "pending Inbox must be claimed by the newly-created parent ChatRun in its create transaction");
+
+        assertTrue(terminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
+                firstRunId, List.of("accepted"), "succeeded", "success", null, null,
+                0, 0, ChatRunTerminalService.LedgerMode.STREAM, List.of())).committed());
+        String laterRunId = UUID.randomUUID().toString();
+        submit(laterRunId, fixture.session(), fixture.user(), fixture.workspace(),
+                "later parent run", fixture.principal().getId().toString());
+
+        assertEquals(firstRunId, claimedRunId(fixture.inboxId()),
+                "a terminal/dispatch-failed claim is durable and never automatically transferred");
+    }
+
+    @Test
+    void parentCreateRollbackLeavesPendingInboxUnclaimed() throws Exception {
+        PendingInboxFixture fixture = createPendingInboxFixture("claim-rollback");
+        String runId = UUID.randomUUID().toString();
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+
+        transaction.executeWithoutResult(status -> {
+            submit(runId, fixture.session(), fixture.user(), fixture.workspace(),
+                    "rollback parent create", fixture.principal().getId().toString());
+            assertEquals(runId, claimedRunId(fixture.inboxId()),
+                    "the claim is visible inside the parent create transaction before rollback");
+            status.setRollbackOnly();
+        });
+
+        assertTrue(chatRunRepository.findById(UUID.fromString(runId)).isEmpty(),
+                "the parent ChatRun creation must roll back");
+        assertNull(claimedRunId(fixture.inboxId()), "the Inbox claim must roll back with the parent Run");
+    }
+
     private Session saveEmptySession(User user, Workspace workspace, String title) {
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), title);
         session.setId(UUID.randomUUID());
@@ -371,4 +421,35 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         return session;
     }
+
+    private PendingInboxFixture createPendingInboxFixture(String prefix) throws Exception {
+        User user = userRepository.save(new User(
+                prefix + "-" + UUID.randomUUID() + "@test.com", "hash", UserRole.USER, "Inbox claim test"));
+        Workspace workspace = workspaceRepository.save(new Workspace(prefix + "-workspace", user.getId().toString()));
+        workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspace.getId().toString(),
+                user.getId().toString(), WorkspaceRole.OWNER));
+        AgentPrincipal principal = savePrincipal(user);
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                workspace.getId().toString(), objectMapper.createArrayNode()));
+        Session session = saveEmptySession(user, workspace, prefix + "-session");
+        sessionRepository.saveAndFlush(boundSession(session, principal));
+
+        UUID inboxId = UUID.randomUUID();
+        UUID childSessionId = UUID.randomUUID();
+        UUID childRunId = UUID.randomUUID();
+        String payload = "{\"sessionId\":\"" + childSessionId + "\",\"runId\":\"" + childRunId
+                + "\",\"state\":\"success\"}";
+        jdbcTemplate.update("INSERT INTO inbox (id, to_session_id, type, ref, payload_pointer) "
+                        + "VALUES (?, ?, 'child_terminal', ?, CAST(? AS jsonb))",
+                inboxId, session.getId(), childRunId, payload);
+        return new PendingInboxFixture(user, workspace, session, principal, inboxId);
+    }
+
+    private String claimedRunId(UUID inboxId) {
+        return jdbcTemplate.queryForObject("SELECT injected_run_id::text FROM inbox WHERE id = CAST(? AS UUID)",
+                String.class, inboxId);
+    }
+
+    private record PendingInboxFixture(User user, Workspace workspace, Session session,
+                                       AgentPrincipal principal, UUID inboxId) {}
 }

@@ -16,6 +16,7 @@ import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
+import com.cc01cc.p.xihe.cp.repository.InboxRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -56,6 +57,7 @@ public class ChatSubmissionService {
     private static final Logger logger = LoggerFactory.getLogger(ChatSubmissionService.class);
 
     private final ChatRunRepository chatRunRepository;
+    private final InboxRepository inboxRepository;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
     private final OperationService operationService;
@@ -75,6 +77,7 @@ public class ChatSubmissionService {
     private final AuditLogger auditLogger;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
+                                 InboxRepository inboxRepository,
                                  MessageRepository messageRepository,
                                  FileRepository fileRepository,
                                  OperationService operationService,
@@ -93,6 +96,7 @@ public class ChatSubmissionService {
                                   ApprovalService approvalService,
                                   AuditLogger auditLogger) {
         this.chatRunRepository = chatRunRepository;
+        this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
         this.operationService = operationService;
@@ -611,6 +615,11 @@ public class ChatSubmissionService {
         OperationService.OperationStartResult operation = operationService.startOperation(
                 userId, sessionId, workspaceId, runId, requestId,
                 "chat", "ui", "user", userId, idempotencyKey, "Chat operation");
+        int claimedNotices = inboxRepository.claimPendingForRun(UUID.fromString(sessionId), UUID.fromString(runId));
+        if (claimedNotices > 0) {
+            logger.info("[LIFECYCLE] service=cp event=derived_inbox_claimed sessionId={} runId={} count={}",
+                    sessionId, runId, claimedNotices);
+        }
         return new Submission(chatRun, userMessage, operation);
     }
 

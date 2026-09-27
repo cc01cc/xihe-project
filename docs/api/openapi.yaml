@@ -135,7 +135,7 @@ paths:
         - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid, description: Required for the workspace layer when the token carries no workspace context; ignored for other layers. } }
       responses:
-        '200': { description: Raw templates[] entries of the requested layer, content: { application/json: { schema: { $ref: '#/components/schemas/AgentTemplateListView' } } } }
+        '200': { description: 'Raw templates[] entries of the requested layer', content: { application/json: { schema: { $ref: '#/components/schemas/AgentTemplateListView' } } } }
         '400': { description: 'INVALID_REQUEST — layer missing/unknown, workspaceId malformed, or workspace layer without any workspace context', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN — non-ADMIN instance read or non-member workspace read (no template content in the body)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -147,6 +147,16 @@ paths:
     get: { operationId: getSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     delete: { operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+  /api/v1/sessions/{sessionId}/derived-state:
+    get:
+      operationId: getSessionDerivedState
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Authorized active-child and terminal-notice projection, content: { application/json: { schema: { $ref: '#/components/schemas/SessionDerivedStateResponse' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/compact:
     post: { operationId: compactSessionContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { upToSequence: { type: integer, format: int64, description: Optional compaction cursor } } } } } }, responses: { '200': { description: 'Manual compaction applied (sequence/eventType/created_at); 409 when a chat run is active' }, '409': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/oauth/sessions:
@@ -525,6 +535,7 @@ paths:
         * `done` terminates a **run**, not the session SSE. The connection stays open across multiple `POST /api/v1/chat` turns and only closes on client disconnect, session deletion, or explicit server termination.
         * The server sends a `heartbeat` comment/event every 15s to keep the connection observable. Heartbeat never enters the message bubble nor resets the run's token count.
         * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
+        * `derived_state_changed` is sent on the parent Session channel after a child terminal commits. Its JSON is exactly `{sessionId,runId,state,at}`: `sessionId` and `runId` identify the child, `at` equals durable `chat_runs.terminal_at`; it is best-effort only and the parent page re-reads its own `GET /api/v1/sessions/{sessionId}/derived-state` for authoritative state.
         * PLAN-0338/0339: the session channel also carries `run_checkpoint` — `{runId, sessionId, sliceRef?, capturedAt?, state, changedCount, unrollableReason?, revert?}` — after a slice capture, a degraded capture, or a completed restore (`revert` = `{state, at, counts, ref, attemptCount}`). The event only annotates lifecycle; the workspace slice list remains the durable source on reload.
           * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for the channel-fact ledger; `request_approval` itself is represented by the approval event/item and does not emit a duplicate tool event. Approval live/replay envelopes are built from the durable row only and include `state`, the durable creation `origin` (`cp_gate` for CP-gate rows, `agent_relay` for model-initiated `request_approval`, null for rows predating V25) plus `replayed=false/true`; at creation, the display-only `policy` summary is persisted when it can be captured: `effect`, `sourceLayer`, `matchedRule`, `reason`, `mode`, `actionClass`, and `shape`. The policy summary never contains raw tool arguments. After the atomic decision claim, `policy.modeAtGrant` records the effective session mode at that decision and is never rewritten by a retry; replay uses the stored snapshot, and descriptor failure omits only policy metadata without blocking delivery. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable. A failed, parseable command result may carry an optional `diagnostics` bundle (`{items, total, confidence}`; `items` is the Top-N slice of `total`) on `tool_result` data — structured facts copied from the Agent tool-message artifact channel and relayed unchanged by CP; the model-visible `<diagnostics>` block stays inside the untrusted envelope.
       security: [{ bearerAuth: [] }]
@@ -571,6 +582,9 @@ paths:
 
                 event: heartbeat
                 data: {"type":"heartbeat","connectionGeneration":2}
+
+                event: derived_state_changed
+                data: {"sessionId":"child-session-uuid","runId":"child-run-uuid","state":"success","at":"2026-09-27T04:00:00Z"}
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -1510,7 +1524,7 @@ components:
     WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, permissions], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
     WorkspaceAgentCapView: { type: object, required: [principalId, workspaceId, permissions], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
     AgentPrincipalCreateView: { type: object, required: [principalId, createdAt], properties: { principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time } } }
-    AgentTemplateListView: { type: object, required: [layer, workspaceId, templates], properties: { layer: { type: string, enum: [instance, user, workspace] }, workspaceId: { type: [string, 'null'], format: uuid, description: Present only for the workspace layer; null for instance/user layers. }, templates: { type: array, description: Raw agent-templates.templates[] entries of exactly one layer, returned as stored. Roles and secret-like fields are never part of this response., items: { type: object, additionalProperties: false, required: [id, name, description, systemPrompt, toolMode, roleId], properties: { id: { type: string, format: uuid }, name: { type: string }, description: { type: string }, systemPrompt: { type: string }, toolMode: { type: string, enum: [none, workspace] }, provider: { type: string }, model: { type: string }, roleId: { type: string, format: uuid } } } } } }
+    AgentTemplateListView: { type: object, required: [layer, workspaceId, templates], properties: { layer: { type: string, enum: [instance, user, workspace] }, workspaceId: { type: [string, 'null'], format: uuid, description: Present only for the workspace layer; null for instance/user layers. }, templates: { type: array, description: 'Raw agent-templates.templates[] entries of exactly one layer, returned as stored. Roles and secret-like fields are never part of this response.', items: { type: object, additionalProperties: false, required: [id, name, description, systemPrompt, toolMode, roleId], properties: { id: { type: string, format: uuid }, name: { type: string }, description: { type: string }, systemPrompt: { type: string }, toolMode: { type: string, enum: [none, workspace] }, provider: { type: string }, model: { type: string }, roleId: { type: string, format: uuid } } } } } }
     CheckpointChangedFile:
        type: object
        additionalProperties: false
@@ -1637,6 +1651,33 @@ components:
     Session: { type: object, required: [id, workspaceId, title, archived, agentPrincipalId], properties: { id: { type: string }, workspaceId: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     SessionCreateRequest: { type: object, required: [agentPrincipalId], properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] }, agentPrincipalId: { type: string, format: uuid } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
+    SessionDerivedStateResponse:
+       type: object
+       additionalProperties: false
+       required: [sessionId, activeChildren, terminalNotices]
+       properties:
+         sessionId: { type: string, format: uuid }
+         activeChildren: { type: array, items: { $ref: '#/components/schemas/SessionDerivedActiveChild' } }
+         terminalNotices: { type: array, items: { $ref: '#/components/schemas/SessionDerivedTerminalNotice' } }
+    SessionDerivedActiveChild:
+       type: object
+       additionalProperties: false
+       required: [childSessionId, runId, name, status]
+       properties:
+         childSessionId: { type: string, format: uuid }
+         runId: { type: string, format: uuid }
+         name: { type: [string, 'null'] }
+         status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling] }
+    SessionDerivedTerminalNotice:
+       type: object
+       additionalProperties: false
+       required: [childSessionId, runId, name, state, terminalAt]
+       properties:
+         childSessionId: { type: string, format: uuid }
+         runId: { type: string, format: uuid }
+         name: { type: [string, 'null'] }
+         state: { type: string, enum: [success, error, partial, ambiguous, cancelled] }
+         terminalAt: { type: string, format: date-time }
     ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
     ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, operationId: { type: string, format: uuid, readOnly: true, description: Durable Operation Ledger root for this ChatRun }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     ChatApprovalDecisionRequest:

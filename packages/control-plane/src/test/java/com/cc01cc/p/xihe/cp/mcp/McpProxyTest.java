@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.mcp;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.test.util.ReflectionTestUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,6 +36,7 @@ import org.springframework.http.ResponseEntity;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -213,6 +215,82 @@ class McpProxyTest {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{},\"id\":1}";
         String name = (String) ReflectionTestUtils.invokeMethod(controller, "extractToolName", body);
         assertNull(name);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCallWorkspaceUiFileReadUsesUserGrantPath() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"list_directory\",\"arguments\":{\"path\":\"\"}},\"id\":31}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        seedToolCache("list_directory", "__system__");
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), eq("list_directory"), eq(body),
+                eq("mcp-init"), eq("u-1"), eq(TEST_WS_UUID), eq(true))).thenReturn(false);
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, new HttpHeaders(), "mcp-init",
+                accessContext(TEST_WS_UUID, "u-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verify(policyEngine).allowsByGrant(any(PolicyContext.class), eq("list_directory"), eq(body),
+                eq("mcp-init"), eq("u-1"), eq(TEST_WS_UUID), eq(true));
+        verify(policyEngine, never()).evaluateVerdict(any(), anyString(), anyString(), anyString(), any(), any(), any());
+        verifyNoInteractions(mcpServerRepository);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCallUserBearerCannotInvokeAgentToolEvenWithAgentHeaders() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"execute_command\",\"arguments\":{}},\"id\":32}";
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Chat-Run-Id", TEST_WS_UUID);
+        headers.set("X-Operation-Id", UUID.randomUUID().toString());
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, headers, "mcp-init",
+                accessContext(TEST_WS_UUID, "u-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verifyNoInteractions(policyEngine, mcpServerRepository, operationService, approvalService);
+        verify(auditLogger).record(eq("mcp-init"), eq("execute_command"),
+                eq("caller_tool_denied"), anyString());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCallAgentWithoutApplicationSessionIsRejectedBeforeGrantEvaluation() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":33}";
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, new HttpHeaders(), "mcp-init",
+                internalAccessContext(TEST_WS_UUID, "u-1", null));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verifyNoInteractions(policyEngine, mcpServerRepository, operationService, approvalService);
+        verify(auditLogger).record(eq("mcp-init"), eq("read_file"),
+                eq("agent_session_required"), anyString());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void problemResponseReusesRequestIdFilterCorrelationId() throws Exception {
+        String requestId = "req-\"\\-0420";
+        String detail = "detail \"quoted\" \\ path\nnext";
+        MDC.put(com.cc01cc.p.xihe.cp.logging.RequestIdFilter.MDC_KEY, requestId);
+        try {
+            ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "problem", HttpStatus.FORBIDDEN, "FORBIDDEN", detail);
+            JsonNode body = objectMapper.readTree(response.getBody());
+
+            assertEquals(requestId, response.getHeaders().getFirst("X-Request-Id"));
+            assertEquals(requestId, body.get("requestId").asText());
+            assertEquals(detail, body.get("detail").asText());
+            assertEquals(403, body.get("status").asInt());
+        } finally {
+            MDC.remove(com.cc01cc.p.xihe.cp.logging.RequestIdFilter.MDC_KEY);
+        }
     }
 
     @Test
@@ -407,7 +485,8 @@ class McpProxyTest {
             org.springframework.http.ResponseEntity<String> callResp =
                     (org.springframework.http.ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                             controller, "handleToolsCall", TEST_WS_UUID, callBody,
-                            new org.springframework.http.HttpHeaders(), "sess-1", access);
+                            new org.springframework.http.HttpHeaders(), "sess-1",
+                            internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
             assertNotNull(callResp);
             assertTrue(callResp.getBody().contains("wire-ok"),
                     "remote call must reach Fake, got: " + callResp.getBody());
@@ -433,7 +512,7 @@ class McpProxyTest {
         cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("write_file", "__system__")));
         timestamps.put(TEST_WS_UUID, Instant.now());
 
-        Object access = accessContext(TEST_WS_UUID, "u-1");
+        Object access = internalAccessContext(TEST_WS_UUID, "u-1", "sess-1");
         // PLAN-292 fix-up: PLAN-290 B2 lets user-direct calls (no agent headers)
         // bypass the approval gate, so an EMPTY header set no longer 409s. This
         // test guards the Agent path — it must carry the run header like the
@@ -471,7 +550,7 @@ class McpProxyTest {
         agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body,
-                agentHeaders, "sess-1", accessContext(TEST_WS_UUID, "u-1"));
+                agentHeaders, "sess-1", internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertTrue(response.getBody().contains("\"code\":\"APPROVAL_REQUIRED\""));
@@ -496,7 +575,7 @@ class McpProxyTest {
         agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body,
-                agentHeaders, "sess-1", accessContext(TEST_WS_UUID, "u-1"));
+                agentHeaders, "sess-1", internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
         // The hit dispatches (runtime is unreachable in a unit test, but not the 409 gate).
         assertNotEquals(HttpStatus.CONFLICT, response.getStatusCode());
@@ -537,7 +616,7 @@ class McpProxyTest {
         agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body,
-                agentHeaders, "sess-1", accessContextWithSession(TEST_WS_UUID, "u-1", "sess-1"));
+                agentHeaders, "sess-1", internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals(org.springframework.http.MediaType.APPLICATION_JSON,
@@ -590,7 +669,7 @@ class McpProxyTest {
         agentHeaders.set("X-Chat-Run-Id", TEST_WS_UUID);
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body,
-                agentHeaders, "sess-1", accessContextWithSession(TEST_WS_UUID, "u-1", "sess-1"));
+                agentHeaders, "sess-1", internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
         assertEquals(org.springframework.http.MediaType.APPLICATION_JSON,
@@ -731,7 +810,7 @@ class McpProxyTest {
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    accessContext(TEST_WS_UUID, "u-1"));
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
@@ -810,7 +889,7 @@ class McpProxyTest {
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    accessContext(TEST_WS_UUID, "u-1"));
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
@@ -846,7 +925,7 @@ class McpProxyTest {
         headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                accessContext(TEST_WS_UUID, "u-1"));
+                internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
         // A blocked call has no dispatch, so it must not create a ledger item or invent a verdict.
@@ -881,7 +960,7 @@ class McpProxyTest {
 
         assertThrows(RuntimeException.class, () -> ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                accessContext(TEST_WS_UUID, "u-1")));
+                internalAccessContext(TEST_WS_UUID, "u-1", "sess-1")));
         verify(operationService, never()).appendItem(
                 any(), any(), any(), anyString(), anyString(), anyString(), any(), any(), any());
         verify(operationService, never()).attachPolicySummary(any(), anyString());
@@ -915,7 +994,7 @@ class McpProxyTest {
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    accessContext(TEST_WS_UUID, "u-1"));
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             verify(operationService, never()).appendItem(
@@ -968,7 +1047,7 @@ class McpProxyTest {
         try {
             ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
                     "http://127.0.0.1:" + stub.getAddress().getPort());
-            Object access = accessContext(TEST_WS_UUID, "u-1");
+            Object access = internalAccessContext(TEST_WS_UUID, "u-1", "sess-1");
             HttpHeaders headers = new HttpHeaders();
             headers.set("X-Xihe-Approval-Request-Id", "grant-1");
             headers.set("X-Operation-Id", java.util.UUID.randomUUID().toString());
@@ -1042,7 +1121,7 @@ class McpProxyTest {
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    accessContext(TEST_WS_UUID, "u-1"));
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             assertEquals(itemToolCallId, outboundItemId[0],
@@ -1216,7 +1295,7 @@ class McpProxyTest {
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    accessContext(TEST_WS_UUID, "u-1"));
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             assertEquals("25", outboundTimeout[0]);
@@ -1274,7 +1353,7 @@ class McpProxyTest {
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    accessContext(TEST_WS_UUID, "u-1"));
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             assertEquals(
@@ -1295,7 +1374,7 @@ class McpProxyTest {
         seedToolCache("read_file", "__system__");
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":4}";
-        Object access = accessContext(TEST_WS_UUID, "u-1");
+        Object access = internalAccessContext(TEST_WS_UUID, "u-1", "sess-1");
 
         for (String bad : new String[] {"abc", "0", "-5", "31", "601", "12.5"}) {
             HttpHeaders headers = new HttpHeaders();
@@ -1350,7 +1429,7 @@ class McpProxyTest {
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    accessContext(TEST_WS_UUID, "u-1"));
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             assertEquals("8192", outboundLimit[0]);
@@ -1390,7 +1469,7 @@ class McpProxyTest {
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID,
                     "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"read_file\",\"arguments\":{}},\"id\":7}",
-                    headers, "sess-1", accessContext(TEST_WS_UUID, "u-1"));
+                    headers, "sess-1", internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             assertNull(outboundLimit[0], "未配置时不得下发输出上限头");
@@ -1476,7 +1555,7 @@ class McpProxyTest {
 
             ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                     controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                    accessContext(TEST_WS_UUID, "u-1"));
+                    internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             // 无 per-call、无配置 → 预算默认 30，出站 = 预算（Runtime 界）。
@@ -1509,7 +1588,7 @@ class McpProxyTest {
         headers.set("X-Operation-Item-Id", java.util.UUID.randomUUID().toString());
         return (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
-                accessContext(TEST_WS_UUID, "u-1"));
+                internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
     }
 
     private void seedReadFileAllow(String body) throws Exception {
