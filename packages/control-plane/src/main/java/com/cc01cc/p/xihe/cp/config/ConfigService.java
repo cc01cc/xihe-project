@@ -47,15 +47,15 @@ public class ConfigService {
     public static final Set<String> DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
         "agent-runtime", "agent-profile", "user-preference", "logging",
-        "approval-policy", "pricing", "job-policy");
+         "approval-policy", "agent-templates", "pricing", "job-policy");
 
     private static final Set<String> USER_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
-        "agent-runtime", "agent-profile", "user-preference");
+         "agent-runtime", "agent-profile", "user-preference", "agent-templates");
 
     private static final Set<String> WORKSPACE_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag", "agent-runtime",
-        "approval-policy", "job-policy");
+         "approval-policy", "agent-templates", "job-policy");
 
     /** Decision #17: instructions is instance-level behaviour, never user/workspace writable. */
     private static final Map<String, Set<String>> INSTANCE_ONLY_KEYS = Map.of(
@@ -180,6 +180,7 @@ public class ConfigService {
                                                        UUID userId, UUID workspaceId) {
         Map<String, Map<String, String>> result = new LinkedHashMap<>();
         for (String domain : domains) {
+            rejectEffectiveAgentTemplates(domain);
             Map<String, String> entries = layerEntries(layer, domain, userId, workspaceId);
             if (entries.isEmpty()) {
                 continue;
@@ -206,6 +207,7 @@ public class ConfigService {
     }
 
     public EffectiveConfig effective(String domain, UUID userId, UUID workspaceId) {
+        rejectEffectiveAgentTemplates(domain);
         Map<String, String> merged = new LinkedHashMap<>();
         List<ConfigEntity> rows = new ArrayList<>();
         String source = "default";
@@ -231,6 +233,12 @@ public class ConfigService {
 
         CODE_DEFAULTS.getOrDefault(domain, Map.of()).forEach(merged::putIfAbsent);
         return new EffectiveConfig(domain, revisionOf(rows), source, merged);
+    }
+
+    private static void rejectEffectiveAgentTemplates(String domain) {
+        if ("agent-templates".equals(domain)) {
+            throw new ConfigAccessException("Agent templates must be read from one explicit config layer");
+        }
     }
 
     private boolean applyEnvOverlay(String domain, Map<String, String> merged) {
@@ -507,7 +515,7 @@ public class ConfigService {
             try (InputStream is = resource.getInputStream()) {
                 String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
                 JsonNode root = objectMapper.readTree(stripJsoncComments(content));
-                ImportReport report = importJsoncNode(root, layer, userId, workspaceId);
+                ImportReport report = importJsoncNode(root, layer, userId, workspaceId, "import");
                 if (!report.warnings().isEmpty()) {
                     log.warn("Config import warnings from {}: {}", classpath, report.warnings());
                 }
@@ -522,16 +530,40 @@ public class ConfigService {
 
     @Transactional
     public ImportReport importJsonc(String jsoncContent, String layer, UUID userId, UUID workspaceId) {
+        return importJsonc(jsoncContent, layer, userId, workspaceId, "import");
+    }
+
+    @Transactional
+    public ImportReport importJsonc(String jsoncContent, String layer, UUID userId, UUID workspaceId,
+                                    String changedBy) {
         String stripped = stripJsoncComments(jsoncContent);
         try {
             JsonNode root = objectMapper.readTree(stripped);
-            return importJsoncNode(root, layer, userId, workspaceId);
+            return importJsoncNode(root, layer, userId, workspaceId, changedBy);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Invalid JSONC content: " + e.getMessage(), e);
         }
     }
 
-    private ImportReport importJsoncNode(JsonNode root, String layer, UUID userId, UUID workspaceId) {
+    public Optional<Map<String, String>> importDomainEntries(String jsoncContent, String domain) {
+        String stripped = stripJsoncComments(jsoncContent);
+        try {
+            JsonNode root = objectMapper.readTree(stripped);
+            JsonNode domainNode = root == null ? null : root.get(domain);
+            if (domainNode == null) {
+                return Optional.empty();
+            }
+            if (!domainNode.isObject()) {
+                throw new IllegalArgumentException("Imported config domain must be an object: " + domain);
+            }
+            return Optional.of(configEntries(domainNode));
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Invalid JSONC content: " + e.getMessage(), e);
+        }
+    }
+
+    private ImportReport importJsoncNode(JsonNode root, String layer, UUID userId, UUID workspaceId,
+                                         String changedBy) {
         int imported = 0;
         int skipped = 0;
         List<String> warnings = new ArrayList<>();
@@ -552,25 +584,27 @@ public class ConfigService {
                 continue;
             }
             if (domainNode.isObject()) {
-                Map<String, String> entries = new LinkedHashMap<>();
-                Iterator<Map.Entry<String, JsonNode>> domainFields = domainNode.fields();
-                while (domainFields.hasNext()) {
-                    Map.Entry<String, JsonNode> df = domainFields.next();
-                    // PLAN-0307 T2.17: nested structured values round-trip as
-                    // JSON text (decision #24 storage contract) instead of being
-                    // flattened to an empty scalar string.
-                    String value = df.getValue().isNull()
-                        ? ""
-                        : (df.getValue().isContainerNode()
-                            ? df.getValue().toString()
-                            : df.getValue().asText());
-                    entries.put(df.getKey(), value);
-                }
-                putLayer(layer, domain, entries, "import", userId, workspaceId);
+                Map<String, String> entries = configEntries(domainNode);
+                putLayer(layer, domain, entries, changedBy, userId, workspaceId);
                 imported += entries.size();
             }
         }
         return new ImportReport(imported, skipped, warnings);
+    }
+
+    private static Map<String, String> configEntries(JsonNode domainNode) {
+        Map<String, String> entries = new LinkedHashMap<>();
+        Iterator<Map.Entry<String, JsonNode>> fields = domainNode.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            // PLAN-0307 T2.17: nested values round-trip as JSON text, not empty scalars.
+            JsonNode valueNode = field.getValue();
+            String value = valueNode.isNull()
+                ? ""
+                : (valueNode.isContainerNode() ? valueNode.toString() : valueNode.asText());
+            entries.put(field.getKey(), value);
+        }
+        return entries;
     }
 
     @Transactional
@@ -659,6 +693,12 @@ public class ConfigService {
     }
 
     private String auditValue(ConfigEntity entity, String value) {
+        if ("agent-templates".equals(entity.getDomain())) {
+            if (value == null || value.isBlank()) {
+                return "missing";
+            }
+            return "present:" + sha256(value);
+        }
         if (!"llm-provider".equals(entity.getDomain())
                 || !isProviderSecretKey(entity.getConfigKey())) {
             return value;
@@ -666,10 +706,14 @@ public class ConfigService {
         if (value == null || value.isBlank()) {
             return "missing";
         }
+        return "present:" + sha256(value);
+    }
+
+    private static String sha256(String value) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(value.getBytes(StandardCharsets.UTF_8));
-            return "present:" + HexFormat.of().formatHex(digest);
+            return HexFormat.of().formatHex(digest);
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }

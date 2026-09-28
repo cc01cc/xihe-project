@@ -66,6 +66,13 @@
   //   "askActionClasses": ["write", "exec", "delete", "credential", "CREATE_ACCOUNT", "CREATE_TEMPLATE", "MANAGE_WORKSPACE_AGENTS", "SPAWN_AGENT"]
   // },
 
+  // agent-templates — 按 instance/user/workspace 层分别维护；role 仅定义权限 atom，template.roleId 只引用本层 role。
+  // 写入任一层均需独立 CREATE_TEMPLATE；模板不包含 provider secret。
+  // "agent-templates": {
+  //   "roles": [],
+  //   "templates": []
+  // },
+
   // job-policy — job 运行时限（PLAN-0373 BL-22）：**instance 层默认值与硬上限权威，
   // workspace 可在上限内下调**，user 层不可写。maxTimeoutSecs=0 表示未设上限（不钳制）。
   // CP 在 tools/call 出站前无条件覆写 timeout：未传→默认、>0→min(参数,上限)、0→钳到上限

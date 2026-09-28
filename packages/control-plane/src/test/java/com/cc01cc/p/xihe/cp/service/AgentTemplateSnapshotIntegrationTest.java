@@ -2,6 +2,9 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.AuditLog;
+import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
+import com.cc01cc.p.xihe.cp.entity.ConfigAuditEntity;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -11,8 +14,11 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.ConfigAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -63,6 +69,8 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceUserRepository workspaceUserRepository;
     @Autowired private ConfigJpaRepository configJpaRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
+    @Autowired private AuditLogRepository auditLogRepository;
+    @Autowired private ConfigAuditRepository configAuditRepository;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ObjectMapper objectMapper;
 
@@ -83,6 +91,8 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void cleanFixtures() {
+        configIds.forEach(configId -> configAuditRepository.deleteAll(
+                configAuditRepository.findByConfigIdOrderByChangedAtDesc(configId.toString())));
         configJpaRepository.deleteAllById(configIds);
         sessionIds.forEach(sessionRepository::deleteById);
         principalIds.forEach(principalId -> {
@@ -90,9 +100,12 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
                     GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId));
             agentPrincipalRepository.deleteById(principalId);
         });
-        if (memberUserId != null) {
-            grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
-                    GrantPrincipalPathResolver.USER, memberUserId));
+        for (UUID userId : new UUID[] {memberUserId, adminUserId, outsiderUserId}) {
+            if (userId != null) {
+                grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
+                        GrantPrincipalPathResolver.USER, userId));
+                auditLogRepository.deleteAll(auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId.toString()));
+            }
         }
         if (workspaceId != null) {
             workspaceUserRepository.deleteAll(workspaceUserRepository.findByIdWorkspaceId(workspaceId));
@@ -120,6 +133,13 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
                 adminUserId.toString(), adminEmail(), "ADMIN");
         String outsiderGlobal = TestDataFactory.createGlobalToken(
                 outsiderUserId.toString(), outsiderEmail(), "USER");
+
+        ResponseEntity<Map> mergedConfigDenied = restTemplate.exchange(
+                url("/api/v1/config/agent-templates"), HttpMethod.GET,
+                new HttpEntity<>(bearerHeaders(memberGlobal)), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, mergedConfigDenied.getStatusCode(),
+                "Agent template arrays must not be exposed through a merged effective view");
+        assertEquals("INVALID_REQUEST", mergedConfigDenied.getBody().get("code"));
 
         ResponseEntity<String> instanceDenied = get("?layer=instance", memberGlobal);
         assertEquals(HttpStatus.FORBIDDEN, instanceDenied.getStatusCode());
@@ -208,6 +228,34 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
                 "?layer=workspace&workspaceId=not-a-uuid", memberGlobal);
         assertEquals(HttpStatus.BAD_REQUEST, malformedWorkspaceId.getStatusCode());
         assertEquals("INVALID_REQUEST", problemCode(malformedWorkspaceId.getBody()));
+    }
+
+    @Test
+    void genericConfigLayerReadCannotExposeInstanceTemplatePromptToUser() {
+        fixture();
+        String memberGlobal = TestDataFactory.createGlobalToken(
+                memberUserId.toString(), memberEmail(), "USER");
+        String adminGlobal = TestDataFactory.createGlobalToken(
+                adminUserId.toString(), adminEmail(), "ADMIN");
+
+        ResponseEntity<String> instanceDenied = getConfigLayer("instance", null, memberGlobal);
+        assertEquals(HttpStatus.FORBIDDEN, instanceDenied.getStatusCode());
+        assertEquals("FORBIDDEN", problemCode(instanceDenied.getBody()));
+        assertFalse(instanceDenied.getBody().contains(INSTANCE_PROMPT));
+
+        ResponseEntity<String> instanceAllowed = getConfigLayer("instance", null, adminGlobal);
+        assertEquals(HttpStatus.OK, instanceAllowed.getStatusCode());
+        assertTrue(instanceAllowed.getBody().contains(INSTANCE_PROMPT));
+
+        ResponseEntity<String> userLayer = getConfigLayer("user", null, memberGlobal);
+        assertEquals(HttpStatus.OK, userLayer.getStatusCode());
+        assertTrue(userLayer.getBody().contains(USER_PROMPT));
+        assertFalse(userLayer.getBody().contains(INSTANCE_PROMPT));
+
+        ResponseEntity<String> workspaceLayer = getConfigLayer("workspace", workspaceId, memberGlobal);
+        assertEquals(HttpStatus.OK, workspaceLayer.getStatusCode());
+        assertTrue(workspaceLayer.getBody().contains(WORKSPACE_PROMPT));
+        assertFalse(workspaceLayer.getBody().contains(INSTANCE_PROMPT));
     }
 
     @Test
@@ -314,6 +362,122 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
                 "Session permission caps are frozen at creation");
     }
 
+    @Test
+    void templateWritesRequireLayerGrantsAndAuditKeyAndPermissionDiffs() throws Exception {
+        fixture();
+        addUserGrant(adminUserId, ToolFaceRegistry.ACTION_CREATE_TEMPLATE, "*");
+        addUserGrant(adminUserId, "read", "*");
+        addUserGrant(memberUserId, ToolFaceRegistry.ACTION_CREATE_TEMPLATE, "*");
+        addUserGrant(memberUserId, "read", "*");
+        addUserGrant(memberUserId, "write", "*");
+
+        String adminToken = TestDataFactory.createGlobalToken(adminUserId.toString(), adminEmail(), "ADMIN");
+        String memberToken = TestDataFactory.createGlobalToken(memberUserId.toString(), memberEmail(), "USER");
+
+        UUID instanceRoleId = UUID.randomUUID();
+        UUID instanceWriteTemplateId = UUID.randomUUID();
+        ResponseEntity<Map> instanceWrite = putConfig("instance", null, null, Map.of(
+                "roles", roleConfig(instanceRoleId, "New instance role", atoms("read")).toString(),
+                "templates", templateConfig(instanceWriteTemplateId, "New instance template",
+                        instanceRoleId, "instance-write-prompt").toString()), adminToken);
+        assertEquals(HttpStatus.OK, instanceWrite.getStatusCode());
+
+        UUID userRoleId = UUID.randomUUID();
+        UUID userWriteTemplateId = UUID.randomUUID();
+        ResponseEntity<Map> userWrite = putConfig("user", null, null, Map.of(
+                "roles", roleConfig(userRoleId, "New user role", atoms("read")).toString(),
+                "templates", templateConfig(userWriteTemplateId, "New user template",
+                        userRoleId, "user-write-prompt").toString()), memberToken);
+        assertEquals(HttpStatus.OK, userWrite.getStatusCode());
+
+        UUID workspaceRoleId = UUID.randomUUID();
+        UUID workspaceTemplateId = UUID.randomUUID();
+        int workspaceRowsBefore = configJpaRepository.findByWorkspaceIdAndDomain(workspaceId, "agent-templates").size();
+        ResponseEntity<Map> workspaceDenied = putConfig("workspace", null, workspaceId, Map.of(
+                "roles", roleConfig(workspaceRoleId, "New workspace role", atoms("read")).toString(),
+                "templates", templateConfig(workspaceTemplateId, "New workspace template",
+                        workspaceRoleId, "workspace-write-prompt").toString()), memberToken);
+        assertEquals(HttpStatus.FORBIDDEN, workspaceDenied.getStatusCode(),
+                "CREATE_TEMPLATE alone must not replace Workspace management permission");
+        assertEquals(workspaceRowsBefore,
+                configJpaRepository.findByWorkspaceIdAndDomain(workspaceId, "agent-templates").size());
+
+        addUserGrant(memberUserId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, workspaceId.toString());
+        ResponseEntity<Map> workspaceWrite = putConfig("workspace", null, workspaceId, Map.of(
+                "roles", roleConfig(workspaceRoleId, "New workspace role", atoms("read")).toString(),
+                "templates", templateConfig(workspaceTemplateId, "New workspace template",
+                        workspaceRoleId, "workspace-write-prompt").toString()), memberToken);
+        assertEquals(HttpStatus.OK, workspaceWrite.getStatusCode());
+
+        UUID importedRoleId = UUID.randomUUID();
+        UUID importedTemplateId = UUID.randomUUID();
+        String importJsonc = objectMapper.writeValueAsString(Map.of(
+                "agent-templates", Map.of(
+                        "roles", roleConfig(importedRoleId, "Imported role", atoms("read")),
+                        "templates", templateConfig(importedTemplateId, "Imported template",
+                                importedRoleId, "imported-prompt"))));
+        ResponseEntity<Map> imported = restTemplate.exchange(
+                url("/api/v1/config/import"), HttpMethod.POST,
+                new HttpEntity<>(importJsonc, bearerHeaders(adminToken)), Map.class);
+        assertEquals(HttpStatus.OK, imported.getStatusCode());
+
+        JsonNode instanceCreated = createdTemplateAudit(adminUserId, instanceWriteTemplateId);
+        JsonNode userCreated = createdTemplateAudit(memberUserId, userWriteTemplateId);
+        JsonNode workspaceCreated = createdTemplateAudit(memberUserId, workspaceTemplateId);
+        JsonNode importedCreated = createdTemplateAudit(adminUserId, importedTemplateId);
+        assertEquals(workspaceId.toString(), workspaceCreated.path("workspaceId").asText());
+        for (JsonNode audit : List.of(instanceCreated, userCreated, workspaceCreated, importedCreated)) {
+            assertEquals(ToolFaceRegistry.ACTION_CREATE_TEMPLATE,
+                    audit.path("details").path("authorizationAction").asText());
+            assertTrue(audit.path("details").path("changedKeys").size() > 0);
+            assertTrue(audit.path("details").has("permissionDiff"));
+        }
+
+        ConfigEntity templatesRow = configJpaRepository.findByLayerAndDomainAndConfigKey(
+                "instance", "agent-templates", "templates").orElseThrow();
+        List<ConfigAuditEntity> audits = configAuditRepository.findByConfigIdOrderByChangedAtDesc(
+                templatesRow.getId().toString());
+        assertFalse(audits.isEmpty());
+        assertTrue(audits.get(0).getNewValue().startsWith("present:"));
+        assertFalse(audits.get(0).getNewValue().contains("instance-write-prompt"),
+                "ConfigAudit must not retain raw template prompt content");
+    }
+
+    @Test
+    void templateWriteRejectsPermissionExpansionAndImportWithoutGrantIsAtomic() throws Exception {
+        fixture();
+        addUserGrant(outsiderUserId, ToolFaceRegistry.ACTION_CREATE_TEMPLATE, "*");
+        addUserGrant(outsiderUserId, "read", "*");
+        String outsiderToken = TestDataFactory.createGlobalToken(outsiderUserId.toString(), outsiderEmail(), "USER");
+
+        int outsiderRowsBefore = configJpaRepository.findByUserIdAndDomain(outsiderUserId, "agent-templates").size();
+        UUID roleId = UUID.randomUUID();
+        UUID templateId = UUID.randomUUID();
+        ResponseEntity<Map> overGrant = putConfig("user", null, null, Map.of(
+                "roles", roleConfig(roleId, "Too powerful role", atoms("read", "write")).toString(),
+                "templates", templateConfig(templateId, "Over-granted template", roleId,
+                        "must-not-persist-prompt").toString()), outsiderToken);
+        assertEquals(HttpStatus.FORBIDDEN, overGrant.getStatusCode(),
+                "CREATE_TEMPLATE must not let an actor grant permissions outside current User grants");
+        assertEquals(outsiderRowsBefore,
+                configJpaRepository.findByUserIdAndDomain(outsiderUserId, "agent-templates").size());
+        assertTrue(auditLogRepository.findByUserIdOrderByCreatedAtDesc(outsiderUserId.toString()).stream()
+                .noneMatch(audit -> audit.getAction().startsWith("agent_template_")));
+
+        String adminToken = TestDataFactory.createGlobalToken(adminUserId.toString(), adminEmail(), "ADMIN");
+        Map<String, Object> importBody = Map.of(
+                "logging", Map.of("levelCp", "WARN"),
+                "agent-templates", Map.of("roles", List.of(), "templates", List.of()));
+        String jsonc = objectMapper.writeValueAsString(importBody);
+        ResponseEntity<Map> importDenied = restTemplate.exchange(
+                url("/api/v1/config/import"), HttpMethod.POST,
+                new HttpEntity<>(jsonc, bearerHeaders(adminToken)), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, importDenied.getStatusCode(),
+                "ADMIN role alone must not bypass CREATE_TEMPLATE during import");
+        assertTrue(configJpaRepository.findByLayerAndDomain("instance", "logging").isEmpty(),
+                "the denied import must not partially write its earlier logging domain");
+    }
+
     private void fixture() {
         User member = userRepository.saveAndFlush(new User(
                 "tpl-snapshot-member-" + UUID.randomUUID() + "@test.com",
@@ -365,6 +529,59 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         saveTemplateConfig("workspace", null, workspaceId, "templates",
                 templateConfig(workspaceTemplateId, "Workspace template",
                         workspaceRoleId, WORKSPACE_PROMPT).toString());
+    }
+
+    private ResponseEntity<Map> putConfig(String layer, UUID userId, UUID targetWorkspaceId,
+                                          Map<String, String> body, String token) {
+        String path = switch (layer) {
+            case "instance" -> "/api/v1/config/instance/agent-templates";
+            case "user" -> "/api/v1/config/user/agent-templates";
+            case "workspace" -> "/api/v1/config/workspace/agent-templates?workspaceId=" + targetWorkspaceId;
+            default -> throw new IllegalArgumentException("Unknown config layer: " + layer);
+        };
+        HttpHeaders headers = bearerHeaders(token);
+        return restTemplate.exchange(url(path), HttpMethod.PUT, new HttpEntity<>(body, headers), Map.class);
+    }
+
+    private HttpHeaders bearerHeaders(String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        return headers;
+    }
+
+    private void addUserGrant(UUID userId, String actionClass, String resource) throws Exception {
+        AuthorizationGrant grant = new AuthorizationGrant();
+        grant.setId(UUID.randomUUID());
+        grant.setGranterType(GrantPrincipalPathResolver.USER);
+        grant.setGranterId(userId);
+        grant.setSubjectType(GrantPrincipalPathResolver.USER);
+        grant.setSubjectId(userId);
+        grant.setSource("direct");
+        grant.setReadState("read");
+        ObjectNode atom = objectMapper.createObjectNode();
+        atom.put("actionClass", actionClass);
+        atom.put("resource", resource);
+        ArrayNode permissions = objectMapper.createArrayNode();
+        permissions.add(atom);
+        grant.setPermissions(permissions);
+        grantRepository.saveAndFlush(grant);
+    }
+
+    private JsonNode createdTemplateAudit(UUID actorId, UUID templateId) {
+        AuditLog audit = auditLogRepository.findByUserIdOrderByCreatedAtDesc(actorId.toString()).stream()
+                .filter(entry -> "agent_template_created".equals(entry.getAction())
+                        && templateId.toString().equals(entry.getResourceId()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing agent_template_created audit for " + templateId));
+        ObjectNode result = objectMapper.createObjectNode();
+        result.put("userId", audit.getUserId());
+        result.put("workspaceId", audit.getWorkspaceId());
+        try {
+            result.set("details", objectMapper.readTree(audit.getDetails()));
+        } catch (Exception e) {
+            throw new IllegalStateException("Audit details are not valid JSON", e);
+        }
+        return result;
     }
 
     private Session saveAgentSession(AgentPrincipal principal) {
@@ -440,6 +657,17 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         return restTemplate.exchange(url("/api/v1/agent-templates" + query),
+                HttpMethod.GET, new HttpEntity<Void>(headers), String.class);
+    }
+
+    private ResponseEntity<String> getConfigLayer(String layer, UUID targetWorkspaceId, String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        String query = "?layer=" + layer;
+        if (targetWorkspaceId != null) {
+            query += "&workspaceId=" + targetWorkspaceId;
+        }
+        return restTemplate.exchange(url("/api/v1/config/agent-templates" + query),
                 HttpMethod.GET, new HttpEntity<Void>(headers), String.class);
     }
 

@@ -1,7 +1,7 @@
 # Agent principal 与 Workspace 绑定
 
 > 契约状态：`active`  
-> 实现状态：`partial`  
+> 实现状态：`partial`（T3.1b config-layer template write/auth/audit 和 askActionClasses Settings 字段已交付；V5/V7 与 T3.3 principal template form 仍待验收）
 > Profile：`security`  
 > Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）
 > 消费者：CP 授权/Session/Chat admission、Workspace Agent 管理 API、UI Agent 管理与 Session 选择、PLAN-0407/0409/0410  
@@ -16,7 +16,7 @@ Agent 独立主体（`agent_principals`）、Workspace 绑定 cap（`workspace_a
 
 - 授权模型 canonical（grant/路径交集/派生规则正文）归 `spec/security/principal-workspace-scope.md`（PLAN-0407）。
 - 不修改 PLAN-0387 active `spec/agent/role-scope-binding.md` 与 Session 生命周期 SPEC。
-- fork 创建/分支上下文归 PLAN-0409/0410；`agent-templates` CRUD 路由开放归 PLAN-0374 T3.1（依赖 0407 V44 canonical action）；Agent 自助 `CREATE_ACCOUNT/CREATE_TEMPLATE`（BL-71）与多层审批（BL-70）后置。
+- fork 创建/分支上下文归 PLAN-0409/0410；`agent-templates` config-layer writes、独立 `CREATE_TEMPLATE` 授权/审计和 `approval-policy.askActionClasses` Settings 字段归 PLAN-0374 T3.1b；principal 创建/管理表单归 T3.3。Agent 自助 `CREATE_ACCOUNT/CREATE_TEMPLATE`（BL-71）与多层审批（BL-70）后置。
 
 ## 静态模型
 
@@ -28,6 +28,8 @@ Agent 独立主体（`agent_principals`）、Workspace 绑定 cap（`workspace_a
 | `workspace_agents` | PK `(principal_id, workspace_id)`，`permissions_snapshot JSONB NOT NULL`，双 FK RESTRICT | 该 Workspace 的 binding cap；principal grants 子集 |
 
 principal grants、Workspace binding cap、Session instance cap 是三个独立约束面；不引入 `users.type` Agent 身份或 polymorphic membership。
+
+Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root 不变量；fork API、child Session producer 与复制流程由 PLAN-0409 唯一实现。
 
 ## 规范条款与不变式
 
@@ -72,4 +74,4 @@ UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}
 
 ## 来源与变更关系
 
-由 PLAN-0374 本地 spec 在实施波次晋升为 canonical；spawn caller 边界由 PLAN-0407 design #53 修订（Agent 经 CP-owned MCP tool；internal route 不变但不再作为 caller），caller 通道已随 0407 T2.10 交付（CP logical MCP `spawn_agent` + 既有 grant/approval gate）。契约状态 `active`、实现状态 `partial` 的差距项：fork 创建（PLAN-0409）、branch context（PLAN-0410）、`agent-templates` CRUD 路由与 `askActionClasses` UI（0374 T3.1，待 0407 V44/T2.8）。
+由 PLAN-0374 本地 spec 在实施波次晋升为 canonical；spawn caller 边界由 PLAN-0407 design #53 修订（Agent 经 CP-owned MCP tool；internal route 不变但不再作为 caller），caller 通道已随 0407 T2.10 交付（CP logical MCP `spawn_agent` + 既有 grant/approval gate）。契约状态 `active`、实现状态 `partial` 的差距项：fork 创建（PLAN-0409）、branch context（PLAN-0410）、principal template create/manage form 与 V5/V7 浏览器/审计验收（0374 T3.3/V5/V7）。T3.1b writes/authorization/import/audit 和 Settings 字段已有 `plans/PLAN-0374-XH-agent-workspace-scope/evidence/t3-1b-template-write.md`；本 SPEC 描述目标，不替代真实浏览器验收。

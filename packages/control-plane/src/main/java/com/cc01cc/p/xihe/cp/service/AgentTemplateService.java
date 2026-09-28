@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.ConfigDomainSchema;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -7,6 +8,9 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -24,8 +28,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -43,6 +49,7 @@ public class AgentTemplateService {
     private final AuthorizationGrantRepository grantRepository;
     private final GrantIntersectionEvaluator evaluator;
     private final ObjectMapper objectMapper;
+    private final AuditLogger auditLogger;
 
     public AgentTemplateService(ConfigService configService,
                                 ConfigDomainSchema schemaValidator,
@@ -51,7 +58,8 @@ public class AgentTemplateService {
                                 WorkspaceUserRepository workspaceUserRepository,
                                 AuthorizationGrantRepository grantRepository,
                                 GrantIntersectionEvaluator evaluator,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                AuditLogger auditLogger) {
         this.configService = configService;
         this.schemaValidator = schemaValidator;
         this.userRepository = userRepository;
@@ -60,6 +68,7 @@ public class AgentTemplateService {
         this.grantRepository = grantRepository;
         this.evaluator = evaluator;
         this.objectMapper = objectMapper;
+        this.auditLogger = auditLogger;
     }
 
     @Transactional(readOnly = true)
@@ -147,6 +156,296 @@ public class AgentTemplateService {
         ArrayNode templates = config == null
                 ? objectMapper.createArrayNode() : listTemplates(config, scope.layer());
         return new TemplateListView(scope.layer(), scope.workspaceId(), templates);
+    }
+
+    @Transactional
+    public int putConfigLayer(String actorUserId, String layer, UUID userId, UUID workspaceId,
+                              Map<String, String> entries) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        User actor = loadActor(actorId);
+        requireLayerWrite(actor, layer, userId, workspaceId);
+
+        Map<String, String> before = configService.layerEntries(layer, DOMAIN, userId, workspaceId);
+        Map<String, String> merged = new LinkedHashMap<>(before);
+        merged.putAll(entries);
+        ConfigScope scope = new ConfigScope(layer, userId, workspaceId);
+        ObjectNode parsed = parseLayer(scope, merged);
+        validateRoleIds(parsed, layer);
+        listTemplates(parsed, layer);
+        requireRolePermissionsWithinUserGrants(actorId, workspaceId, parsed);
+
+        Map<String, String> changed = changedEntries(before, entries);
+        if (!changed.isEmpty()) {
+            configService.putLayer(layer, DOMAIN, changed, actorId.toString(), userId, workspaceId);
+        }
+        auditConfigChange(actorId, layer, userId, workspaceId, before, merged, changed.keySet());
+        return changed.size();
+    }
+
+    @Transactional
+    public ConfigService.ImportReport importConfig(String actorUserId, String jsoncContent) {
+        Map<String, String> importedEntries = configService.importDomainEntries(jsoncContent, DOMAIN)
+                .orElse(null);
+        if (importedEntries == null) {
+            return configService.importJsonc(jsoncContent, "instance", null, null);
+        }
+
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        User actor = loadActor(actorId);
+        requireLayerWrite(actor, "instance", null, null);
+        Map<String, String> before = configService.layerEntries("instance", DOMAIN, null, null);
+        Map<String, String> merged = new LinkedHashMap<>(before);
+        merged.putAll(importedEntries);
+        ConfigScope scope = new ConfigScope("instance", null, null);
+        ObjectNode parsed = parseLayer(scope, merged);
+        validateRoleIds(parsed, "instance");
+        listTemplates(parsed, "instance");
+        requireRolePermissionsWithinUserGrants(actorId, null, parsed);
+
+        Map<String, String> changed = changedEntries(before, importedEntries);
+        ConfigService.ImportReport report = configService.importJsonc(
+                jsoncContent, "instance", null, null, actorId.toString());
+        auditConfigChange(actorId, "instance", null, null, before, merged, changed.keySet());
+        return report;
+    }
+
+    private User loadActor(UUID actorId) {
+        return userRepository.findById(actorId)
+                .orElseThrow(() -> new ConfigService.ConfigAccessException("Template writer is unavailable"));
+    }
+
+    private void requireLayerWrite(User actor, String layer, UUID userId, UUID workspaceId) {
+        UUID actorId = actor.getId();
+        String actionResource = "*";
+        switch (layer) {
+            case "instance" -> {
+                if (actor.getRole() != UserRole.ADMIN || userId != null || workspaceId != null) {
+                    throw new ConfigService.ConfigAccessException("Instance template write is not allowed");
+                }
+            }
+            case "user" -> {
+                if (!actorId.equals(userId) || workspaceId != null) {
+                    throw new ConfigService.ConfigAccessException("User template write must target the caller");
+                }
+            }
+            case "workspace" -> {
+                if (userId != null || workspaceId == null) {
+                    throw new ConfigService.ConfigAccessException("Workspace template scope is invalid");
+                }
+                requireReadableWorkspace(actorId, workspaceId);
+                actionResource = workspaceId.toString();
+                requireUserAction(actorId, workspaceId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+                        actionResource);
+            }
+            default -> throw new ConfigService.ConfigAccessException("Template layer is not writable");
+        }
+        requireUserAction(actorId, workspaceId, ToolFaceRegistry.ACTION_CREATE_TEMPLATE, actionResource);
+    }
+
+    private void requireUserAction(UUID actorId, UUID workspaceId, String actionClass, String resource) {
+        try {
+            Set<GrantIntersectionEvaluator.PermissionAtom> permissions = evaluator.union(
+                    grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, actorId));
+            PolicyRequest request = new PolicyRequest("config.agent-templates.write", List.of(actionClass),
+                    List.of(resource), ToolShape.STRUCTURED, actorId.toString(),
+                    workspaceId == null ? null : workspaceId.toString(), null);
+            if (!evaluator.allows(request, List.of(permissions))) {
+                throw new ConfigService.ConfigAccessException("Template write grant is required");
+            }
+        } catch (ConfigService.ConfigAccessException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            logger.error("Agent template grant evaluation failed closed: actor={}, action={}, errorType={}",
+                    actorId, actionClass, e.getClass().getSimpleName());
+            throw new ConfigService.ConfigAccessException("Template write grant could not be verified");
+        }
+    }
+
+    private void requireRolePermissionsWithinUserGrants(UUID actorId, UUID workspaceId, ObjectNode config) {
+        Set<GrantIntersectionEvaluator.PermissionAtom> actorPermissions;
+        try {
+            actorPermissions = evaluator.union(
+                    grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, actorId));
+        } catch (RuntimeException e) {
+            logger.error("Agent template writer grants failed closed: actor={}, errorType={}",
+                    actorId, e.getClass().getSimpleName());
+            throw new ConfigService.ConfigAccessException("Template writer permissions could not be verified");
+        }
+        ArrayNode roles = (ArrayNode) config.get("roles");
+        for (JsonNode role : roles) {
+            JsonNode rolePermissions = role.get("permissions");
+            if (rolePermissions == null || !rolePermissions.isArray()) {
+                throw new IllegalArgumentException("Role permissions must be an atom array");
+            }
+            for (JsonNode atom : rolePermissions) {
+                JsonNode resourceNode = atom.get("resource");
+                if (resourceNode != null && resourceNode.isTextual() && resourceNode.asText().isBlank()) {
+                    throw new IllegalArgumentException("Permission resource must not be blank");
+                }
+            }
+            Set<GrantIntersectionEvaluator.PermissionAtom> requested = evaluator.parse(rolePermissions);
+            for (GrantIntersectionEvaluator.PermissionAtom permission : requested) {
+                PolicyRequest request = new PolicyRequest("config.agent-templates.role", List.of(permission.actionClass()),
+                        List.of(permission.resource()), ToolShape.STRUCTURED, actorId.toString(),
+                        workspaceId == null ? null : workspaceId.toString(), null);
+                if (!evaluator.allows(request, List.of(actorPermissions))) {
+                    logger.warn("Denied Agent role permission beyond writer grants: actor={}, roleId={}",
+                            actorId, text(role, "id"));
+                    throw new ConfigService.ConfigAccessException(
+                            "Role permissions must be within the template writer's current grants");
+                }
+            }
+        }
+    }
+
+    private void validateRoleIds(ObjectNode config, String layer) {
+        Set<String> roleIds = new HashSet<>();
+        for (JsonNode role : (ArrayNode) config.get("roles")) {
+            String roleId = text(role, "id");
+            if (roleId == null || !roleIds.add(roleId)) {
+                logger.error("Duplicate or missing Agent template role ID: layer={}", layer);
+                throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
+                        "Stored Agent template role IDs are not unique");
+            }
+        }
+    }
+
+    private Map<String, String> changedEntries(Map<String, String> before, Map<String, String> requested) {
+        Map<String, String> changed = new LinkedHashMap<>();
+        requested.forEach((key, value) -> {
+            if (!Objects.equals(before.get(key), value)) {
+                changed.put(key, value);
+            }
+        });
+        return changed;
+    }
+
+    private void auditConfigChange(UUID actorId, String layer, UUID userId, UUID workspaceId,
+                                   Map<String, String> before, Map<String, String> after,
+                                   Set<String> changedKeys) {
+        ArrayNode keys = objectMapper.createArrayNode();
+        changedKeys.stream().sorted().forEach(keys::add);
+        ObjectNode details = objectMapper.createObjectNode();
+        details.put("authorizationAction", ToolFaceRegistry.ACTION_CREATE_TEMPLATE);
+        details.put("layer", layer);
+        details.set("changedKeys", keys);
+        details.set("permissionDiff", rolePermissionDiff(before, after, layer, userId, workspaceId));
+        String scopeId = switch (layer) {
+            case "instance" -> "instance";
+            case "user" -> userId.toString();
+            case "workspace" -> workspaceId.toString();
+            default -> throw new IllegalArgumentException("Unknown config layer: " + layer);
+        };
+        auditLogger.recordDurableChange(actorId.toString(),
+                workspaceId == null ? null : workspaceId.toString(),
+                "agent_template_config_updated", "agent_template_config", scopeId, details.toString());
+
+        Map<String, JsonNode> oldTemplates = templateIndex(before, layer, userId, workspaceId);
+        Map<String, JsonNode> newTemplates = templateIndex(after, layer, userId, workspaceId);
+        for (Map.Entry<String, JsonNode> entry : newTemplates.entrySet()) {
+            JsonNode oldTemplate = oldTemplates.get(entry.getKey());
+            if (oldTemplate != null && oldTemplate.equals(entry.getValue())) {
+                continue;
+            }
+            String action = oldTemplate == null ? "agent_template_created" : "agent_template_updated";
+            JsonNode role = findRole(after, layer, userId, workspaceId, text(entry.getValue(), "roleId"));
+            ObjectNode templateDetails = objectMapper.createObjectNode();
+            templateDetails.put("authorizationAction", ToolFaceRegistry.ACTION_CREATE_TEMPLATE);
+            templateDetails.put("layer", layer);
+            templateDetails.set("changedKeys", keys.deepCopy());
+            templateDetails.put("templateId", entry.getKey());
+            templateDetails.put("roleId", text(entry.getValue(), "roleId"));
+            if (role != null) {
+                templateDetails.set("permissionDiff", role.path("permissions").deepCopy());
+            }
+            auditLogger.recordDurableChange(actorId.toString(),
+                    workspaceId == null ? null : workspaceId.toString(),
+                    action, "agent_template", entry.getKey(), templateDetails.toString());
+        }
+        for (String templateId : oldTemplates.keySet()) {
+            if (!newTemplates.containsKey(templateId)) {
+                ObjectNode deleted = objectMapper.createObjectNode();
+                deleted.put("authorizationAction", ToolFaceRegistry.ACTION_CREATE_TEMPLATE);
+                deleted.put("layer", layer);
+                deleted.set("changedKeys", keys.deepCopy());
+                deleted.put("templateId", templateId);
+                auditLogger.recordDurableChange(actorId.toString(),
+                        workspaceId == null ? null : workspaceId.toString(),
+                        "agent_template_deleted", "agent_template", templateId, deleted.toString());
+            }
+        }
+    }
+
+    private ArrayNode rolePermissionDiff(Map<String, String> before, Map<String, String> after,
+                                         String layer, UUID userId, UUID workspaceId) {
+        Map<String, JsonNode> oldRoles = roleIndex(before, layer, userId, workspaceId);
+        Map<String, JsonNode> newRoles = roleIndex(after, layer, userId, workspaceId);
+        Set<String> roleIds = new HashSet<>(oldRoles.keySet());
+        roleIds.addAll(newRoles.keySet());
+        ArrayNode differences = objectMapper.createArrayNode();
+        roleIds.stream().sorted().forEach(roleId -> {
+            JsonNode oldRole = oldRoles.get(roleId);
+            JsonNode newRole = newRoles.get(roleId);
+            JsonNode oldPermissions = oldRole == null ? null : oldRole.get("permissions");
+            JsonNode newPermissions = newRole == null ? null : newRole.get("permissions");
+            if (!Objects.equals(oldPermissions, newPermissions)) {
+                ObjectNode diff = differences.addObject();
+                diff.put("roleId", roleId);
+                if (oldPermissions == null) diff.putNull("before");
+                else diff.set("before", oldPermissions.deepCopy());
+                if (newPermissions == null) diff.putNull("after");
+                else diff.set("after", newPermissions.deepCopy());
+            }
+        });
+        return differences;
+    }
+
+    private Map<String, JsonNode> roleIndex(Map<String, String> entries, String layer,
+                                           UUID userId, UUID workspaceId) {
+        try {
+            ObjectNode config = parseLayer(new ConfigScope(layer, userId, workspaceId), entries);
+            Map<String, JsonNode> result = new LinkedHashMap<>();
+            for (JsonNode role : (ArrayNode) config.get("roles")) {
+                result.put(text(role, "id"), role);
+            }
+            return result;
+        } catch (RuntimeException e) {
+            return Map.of();
+        }
+    }
+
+    private Map<String, JsonNode> templateIndex(Map<String, String> entries, String layer,
+                                                UUID userId, UUID workspaceId) {
+        try {
+            ObjectNode config = parseLayer(new ConfigScope(layer, userId, workspaceId), entries);
+            ArrayNode templates = listTemplates(config, layer);
+            Map<String, JsonNode> result = new LinkedHashMap<>();
+            for (JsonNode template : templates) {
+                result.put(text(template, "id"), template);
+            }
+            return result;
+        } catch (RuntimeException e) {
+            return Map.of();
+        }
+    }
+
+    private JsonNode findRole(Map<String, String> entries, String layer,
+                              UUID userId, UUID workspaceId, String roleId) {
+        if (roleId == null) {
+            return null;
+        }
+        try {
+            ObjectNode config = parseLayer(new ConfigScope(layer, userId, workspaceId), entries);
+            for (JsonNode role : (ArrayNode) config.get("roles")) {
+                if (roleId.equals(text(role, "id"))) {
+                    return role;
+                }
+            }
+        } catch (RuntimeException e) {
+            logger.error("Unable to resolve Agent template role for audit: layer={}, roleId={}, errorType={}",
+                    layer, roleId, e.getClass().getSimpleName());
+        }
+        return null;
     }
 
     private void requireReadableWorkspace(UUID actorId, UUID workspaceUuid) {

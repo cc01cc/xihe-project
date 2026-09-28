@@ -11,7 +11,7 @@ export type ConfigLayer = 'instance' | 'workspace' | 'user'
 export const INSTANCE_DOMAINS = [
   'llm-provider', 'context-policy', 'embedding', 'rag',
   'agent-runtime', 'agent-profile', 'user-preference', 'logging',
-  'approval-policy', 'job-policy',
+  'approval-policy', 'agent-templates', 'job-policy',
 ] as const
 
 /**
@@ -26,8 +26,8 @@ export type ConfigDomain = typeof CONFIG_DOMAINS[number]
 
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
   instance: INSTANCE_DOMAINS,
-  user: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'agent-profile', 'user-preference'],
-  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'approval-policy', 'job-policy'],
+  user: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'agent-profile', 'user-preference', 'agent-templates'],
+  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'approval-policy', 'agent-templates', 'job-policy'],
 }
 
 export interface ConfigImportReport {

@@ -38,6 +38,7 @@ const domainLabels: Record<string, string> = {
   'user-preference': t('settings.domainUserPreference'),
   'logging': t('settings.domainLogging'),
   'approval-policy': t('settings.domainApprovalPolicy'),
+  'agent-templates': t('settings.domainAgentTemplates'),
   'job-policy': t('settings.domainJobPolicy'),
 }
 
@@ -83,6 +84,11 @@ const domainSchemas: Record<string, DomainField[]> = {
       { label: t('settings.approvalModeManual'), value: 'manual' },
       { label: t('settings.approvalModeAuto'), value: 'auto' },
     ] },
+    { key: 'askActionClasses', label: t('settings.fieldApprovalAskActionClasses'), type: 'json' },
+  ],
+  'agent-templates': [
+    { key: 'roles', label: t('settings.fieldAgentTemplateRoles'), type: 'json' },
+    { key: 'templates', label: t('settings.fieldAgentTemplateTemplates'), type: 'json' },
   ],
   'job-policy': [
     { key: 'defaultTimeoutSecs', label: t('settings.fieldDefaultTimeoutSecs'), type: 'number' },

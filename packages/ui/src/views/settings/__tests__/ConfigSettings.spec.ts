@@ -137,3 +137,57 @@ describe('ConfigSettings job-policy (PLAN-0373)', () => {
     expect(wrapper.find('[data-testid="config-domain-job-policy"]').exists()).toBe(false)
   })
 })
+
+describe('ConfigSettings Agent template and approval policy (PLAN-0374)', () => {
+  it('registers agent-templates on all writable layers', () => {
+    expect(INSTANCE_DOMAINS).toContain('agent-templates')
+    expect(LAYER_DOMAINS.instance).toContain('agent-templates')
+    expect(LAYER_DOMAINS.user).toContain('agent-templates')
+    expect(LAYER_DOMAINS.workspace).toContain('agent-templates')
+  })
+
+  it('renders structured JSON fields for templates, roles, and ask action classes', async () => {
+    const wrapper = await mountView()
+
+    const templatesPanel = wrapper.find('[data-testid="config-domain-agent-templates"]')
+    expect(templatesPanel.exists()).toBe(true)
+    await templatesPanel.find('button').trigger('click')
+    expect(wrapper.find('[data-testid="config-field-agent-templates-roles"] textarea').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="config-field-agent-templates-templates"] textarea').exists()).toBe(true)
+
+    const approvalPanel = wrapper.find('[data-testid="config-domain-approval-policy"]')
+    expect(approvalPanel.exists()).toBe(true)
+    await approvalPanel.find('button').trigger('click')
+    expect(wrapper.find('[data-testid="config-field-approval-policy-askActionClasses"] textarea').exists()).toBe(true)
+  })
+
+  it('keeps approval-policy workspace-only while showing agent-templates in user settings', async () => {
+    const wrapper = await mountView()
+
+    await wrapper.find('[data-testid="config-tab-user"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="config-domain-agent-templates"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="config-domain-approval-policy"]').exists()).toBe(false)
+  })
+
+  it('saves askActionClasses as a JSON array value through the selected config layer', async () => {
+    const wrapper = await mountView()
+    const panel = wrapper.find('[data-testid="config-domain-approval-policy"]')
+    await panel.find('button').trigger('click')
+
+    const field = wrapper.find('[data-testid="config-field-approval-policy-askActionClasses"] textarea')
+    await field.setValue('["CREATE_TEMPLATE"]')
+    const saveLabel = i18n.global.t('common.save')
+    const saveButton = panel.findAll('button').find(button => button.text() === saveLabel)
+    expect(saveButton).toBeTruthy()
+    await saveButton!.trigger('click')
+    await flushPromises()
+
+    const request = vi.mocked(fetch).mock.calls.find(([input, init]) => {
+      const url = typeof input === 'string' ? input : input.url
+      return url.includes('/api/v1/config/instance/approval-policy') && init?.method === 'PUT'
+    })
+    expect(request).toBeTruthy()
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ askActionClasses: '["CREATE_TEMPLATE"]' })
+  })
+})

@@ -27,6 +27,7 @@ import com.cc01cc.p.xihe.cp.entity.McpServer;
 import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
+import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 /**
@@ -45,19 +46,22 @@ public class ConfigController {
     private final McpStdioServerRepository stdioRepo;
     private final McpServerRepository remoteRepo;
     private final com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger;
+    private final AgentTemplateService agentTemplateService;
 
     public ConfigController(ConfigService configService,
                             WorkspaceService workspaceService,
                             ObjectMapper objectMapper,
                             McpStdioServerRepository stdioRepo,
                             McpServerRepository remoteRepo,
-                            com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger) {
+                            com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger,
+                            AgentTemplateService agentTemplateService) {
         this.configService = configService;
         this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
         this.stdioRepo = stdioRepo;
         this.remoteRepo = remoteRepo;
         this.auditLogger = auditLogger;
+        this.agentTemplateService = agentTemplateService;
     }
 
     /** Decision #33: agent-runtime (instructions / workersDir) is not readable by non-admins. */
@@ -121,7 +125,15 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_DOMAIN", "Unknown config domain");
         }
+        if ("agent-templates".equals(domain) && layer == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Agent templates require an explicit config layer");
+        }
         UUID userId = currentUserId();
+        if ("agent-templates".equals(domain) && "instance".equals(layer) && !isAdmin()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance Agent templates are not readable by this user");
+        }
         String wsId = currentWorkspaceId(headerWorkspaceId, queryWorkspaceId);
         UUID workspaceId = null;
         if (wsId != null && !wsId.isBlank()) {
@@ -232,9 +244,18 @@ public class ConfigController {
 
     private ResponseEntity<Map<String, Object>> writeLayer(
             String layer, String domain, Map<String, String> body, String changedBy,
-            UUID userId, UUID workspaceId) {
+        UUID userId, UUID workspaceId) {
         try {
-            configService.putLayer(layer, domain, body, changedBy, userId, workspaceId);
+            if ("agent-templates".equals(domain)) {
+                UUID actorId = currentUserId();
+                if (actorId == null) {
+                    return ProblemDetailsHandler.problemResponse(
+                            HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+                }
+                agentTemplateService.putConfigLayer(actorId.toString(), layer, userId, workspaceId, body);
+            } else {
+                configService.putLayer(layer, domain, body, changedBy, userId, workspaceId);
+            }
             log.info("Config updated: layer={}, domain={}, keys={}", layer, domain, body.size());
             return ResponseEntity.ok(Map.of("status", "ok", "keys", body.size()));
         } catch (ConfigService.ConfigOwnershipException e) {
@@ -269,13 +290,22 @@ public class ConfigController {
                     HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", "Import content exceeds the size limit");
         }
         try {
-            ConfigService.ImportReport report = configService.importJsonc(jsoncContent, "instance", null, null);
+            UUID actorId = currentUserId();
+            if (actorId == null) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+            }
+            ConfigService.ImportReport report = agentTemplateService.importConfig(
+                    actorId.toString(), jsoncContent);
             log.info("Config imported via POST body ({} chars)", jsoncContent.length());
             return ResponseEntity.ok(Map.of(
                 "status", "ok",
                 "imported", report.imported(),
                 "skipped", report.skipped(),
                 "warnings", report.warnings()));
+        } catch (ConfigService.ConfigAccessException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration import is not allowed");
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Configuration import is invalid");
@@ -312,6 +342,10 @@ public class ConfigController {
             @PathVariable String domain,
             @RequestParam(value = "userId", required = false) String queryUserId,
             @RequestParam(value = "workspaceId", required = false) String queryWorkspaceId) {
+        if ("agent-templates".equals(domain)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_DOMAIN", "Agent templates have no merged effective view");
+        }
         if (!ConfigService.DOMAINS.contains(domain)) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_DOMAIN", "Unknown config domain");
