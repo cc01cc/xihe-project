@@ -294,7 +294,7 @@ function cancelRoleEdit() {
           <p class="mt-1 text-xs text-muted-foreground">{{ template.roleId ? roles.find((role) => role.id === template.roleId)?.name : t('settings.agentTemplateNoRole') }} · {{ template.toolMode }} · {{ template.provider || t('settings.notSet') }} / {{ template.model || t('settings.notSet') }}</p>
         </div>
         <div class="flex gap-2">
-          <button type="button" class="text-xs underline" :data-testid="`agent-template-edit-${template.id}`" @click="editTemplate(template)">{{ t('common.edit') }}</button>
+          <button type="button" class="text-xs underline" :data-testid="`agent-template-edit-${template.id}`" @click="editTemplate(template)">{{ t('settings.agentTemplateEdit') }}</button>
           <button type="button" class="text-xs text-destructive underline disabled:opacity-40" :disabled="malformedConfig || saving" :data-testid="`agent-template-delete-${template.id}`" @click="deleteTemplate(template)">
             {{ pendingDeleteId === template.id ? t('settings.agentTemplateConfirmDelete') : t('common.delete') }}
           </button>

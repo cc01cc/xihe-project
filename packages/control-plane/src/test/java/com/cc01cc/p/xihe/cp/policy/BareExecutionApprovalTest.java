@@ -247,7 +247,8 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
         var constructor = accessClass.getDeclaredConstructor(
                 String.class, String.class, String.class, String.class, boolean.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(wsId, userId, sessionId, null, false);
+        // tools/call is the internal Agent path; the public user path correctly rejects direct MCP mutation.
+        return constructor.newInstance(wsId, userId, sessionId, null, true);
     }
 
     private static String writeBody(String path) {

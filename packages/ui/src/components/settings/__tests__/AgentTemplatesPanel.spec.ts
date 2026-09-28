@@ -54,6 +54,7 @@ describe('AgentTemplatesPanel (PLAN-0374 T3.3)', () => {
     expect(JSON.stringify(template)).not.toMatch(/secret|api.?key|token/i)
     await wrapper.setProps({ entries: templateSave, saving: true })
     await wrapper.setProps({ saving: false })
+    expect(wrapper.get(`[data-testid="agent-template-edit-${template.id}"]`).text()).toBe('编辑模板')
   })
 
   it('requires confirmation before removing a template', async () => {

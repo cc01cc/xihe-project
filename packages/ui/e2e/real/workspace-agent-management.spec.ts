@@ -1,8 +1,12 @@
 import { execFileSync } from 'node:child_process'
+import { readdirSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { CP_URL, registerJourneyUser, seedPage } from './helpers/journey'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const TEMPLATE_PROMPT = 'Answer using only the scoped workspace material.'
+const PROVIDER_SECRET_SENTINEL = 'e2e-provider-secret-sentinel-0374'
 
 test.describe.configure({ retries: 0 })
 
@@ -53,6 +57,9 @@ test('@host V6 Workspace Agent management uses CP grants and persists isolated c
 
   seedUserGrant(ownerUserId, [
     { actionClass: 'CREATE_ACCOUNT', resource: '*' },
+    { actionClass: 'CREATE_TEMPLATE', resource: '*' },
+    { actionClass: 'read', resource: '*' },
+    { actionClass: 'write', resource: '*' },
     { actionClass: 'MANAGE_WORKSPACE_AGENTS', resource: workspaceA },
   ])
   seedUserGrant(secondUserId, [
@@ -68,6 +75,53 @@ test('@host V6 Workspace Agent management uses CP grants and persists isolated c
     }
   })
   seedPage(page, owner)
+
+  await page.goto('/settings/config', { waitUntil: 'load' })
+  await page.getByTestId('config-tab-user').click()
+  const templatePanel = page.getByTestId('agent-templates-panel')
+  await expect(templatePanel).toBeVisible()
+
+  await page.getByTestId('agent-role-name').fill('Browser Reader')
+  await page.getByTestId('agent-role-add-permission').click()
+  await page.getByTestId('agent-role-action-0').selectOption('read')
+  await page.getByTestId('agent-role-resource-0').fill('src/*')
+  await page.getByTestId('agent-role-add-permission').click()
+  await page.getByTestId('agent-role-action-1').selectOption('write')
+  await page.getByTestId('agent-role-resource-1').fill('*')
+  const roleWritePromise = page.waitForResponse((response) =>
+    response.url().endsWith('/api/v1/config/user/agent-templates') && response.request().method() === 'PUT',
+  )
+  await page.getByTestId('agent-role-form').getByTestId('agent-role-save').click()
+  expect((await roleWritePromise).status()).toBe(200)
+
+  await page.getByTestId('agent-template-name').fill('Browser Workspace Reader')
+  await page.getByTestId('agent-template-description').fill('Template created through Settings')
+  await page.getByTestId('agent-template-prompt').fill(TEMPLATE_PROMPT)
+  await page.getByTestId('agent-template-tool-mode').selectOption('workspace')
+  await page.getByTestId('agent-template-role').selectOption({ label: 'Browser Reader' })
+  await page.getByTestId('agent-template-provider').fill('openai')
+  await page.getByTestId('agent-template-model').fill('e2e-model')
+  const templateWritePromise = page.waitForResponse((response) =>
+    response.url().endsWith('/api/v1/config/user/agent-templates') && response.request().method() === 'PUT',
+  )
+  await page.getByTestId('agent-template-form').getByTestId('agent-template-save').click()
+  expect((await templateWritePromise).status()).toBe(200)
+
+  const templatesResponse = await request.get(`${CP_URL}/api/v1/agent-templates?layer=user`, {
+    headers: owner.headers,
+  })
+  expect(templatesResponse.status(), await templatesResponse.text()).toBe(200)
+  const visibleTemplates = await templatesResponse.json() as { templates: Array<{ id: string; name: string; roleId?: string }> }
+  const visibleTemplatesJson = JSON.stringify(visibleTemplates)
+  expect(visibleTemplatesJson).not.toContain(owner.authToken)
+  expect(visibleTemplatesJson).not.toContain(PROVIDER_SECRET_SENTINEL)
+  expect(visibleTemplatesJson).not.toMatch(/"(?:secret|token|apiKey|api_key|password)"/i)
+  const selectedTemplate = visibleTemplates.templates.find((template) => template.name === 'Browser Workspace Reader')
+  expect(selectedTemplate).toBeDefined()
+  const templateId = requireUuid(selectedTemplate!.id)
+  await expect(templatePanel.getByTestId(`agent-template-${templateId}`)).toContainText('Browser Workspace Reader')
+  await page.screenshot({ path: testInfo.outputPath('agent-template-created-in-settings.png') })
+
   await page.goto(`/workspace/${workspaceA}`, { waitUntil: 'load' })
 
   await page.getByTestId('workspace-toolbar-agents').click()
@@ -76,15 +130,42 @@ test('@host V6 Workspace Agent management uses CP grants and persists isolated c
   await expect(dialog.getByText('暂无活动会话')).toHaveCount(0)
 
   await page.getByTestId('agent-principal-name').fill('T4.4 Persistent Agent')
+  await page.getByTestId('agent-principal-template').selectOption(templateId)
+  await expect(page.getByTestId('agent-principal-create-form')).toContainText('Browser Workspace Reader')
+  await expect(page.getByTestId('agent-principal-create-form')).toContainText(selectedTemplate!.roleId!)
+  await expect(page.getByTestId('agent-principal-create-form')).toContainText('e2e-model')
   const createResponsePromise = page.waitForResponse((response) =>
     response.url().endsWith('/api/v1/agent-principals') && response.request().method() === 'POST',
   )
   await page.getByTestId('agent-principal-create').click()
   const createResponse = await createResponsePromise
   expect(createResponse.status()).toBe(201)
-  const createdPrincipal = await createResponse.json() as { principalId: string }
+  const createdPrincipal = await createResponse.json() as { principalId: string; templateId?: string; templateName?: string }
+  expect(createdPrincipal.templateId).toBe(templateId)
+  expect(createdPrincipal.templateName).toBe('Browser Workspace Reader')
+  expect(JSON.stringify(createdPrincipal)).not.toContain(TEMPLATE_PROMPT)
   const principalId = requireUuid(createdPrincipal.principalId)
   await expect(page.getByTestId('unbound-agent-principal')).toContainText(principalId)
+  await expect(page.getByTestId('unbound-agent-principal')).toContainText('Browser Workspace Reader')
+  await expect(page.getByTestId('unbound-agent-principal')).toContainText(templateId)
+  const principalSnapshotRaw = queryIsolatedPostgres(
+    `SELECT template_snapshot::text FROM agent_principals WHERE id = '${principalId}'::uuid`,
+  )
+  const principalSnapshot = JSON.parse(principalSnapshotRaw) as Record<string, unknown>
+  expect(principalSnapshot).toMatchObject({
+    templateId,
+    templateName: 'Browser Workspace Reader',
+    roleName: 'Browser Reader',
+    systemPrompt: TEMPLATE_PROMPT,
+    toolMode: 'workspace',
+    provider: 'openai',
+    model: 'e2e-model',
+    permissions: [
+      { actionClass: 'read', resource: 'src/*' },
+      { actionClass: 'write', resource: '*' },
+    ],
+  })
+  expect(Object.keys(principalSnapshot).some((key) => /secret|token|api.?key/i.test(key))).toBe(false)
   const principalGrantsBefore = queryIsolatedPostgres(
     `SELECT source || ':' || permissions::text FROM grants `
       + `WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY source`,
@@ -170,12 +251,121 @@ test('@host V6 Workspace Agent management uses CP grants and persists isolated c
   expect(scalarCount(`SELECT count(*) FROM workspace_agents WHERE principal_id = '${principalId}'::uuid AND workspace_id = '${workspaceA}'::uuid`)).toBe(0)
   expect(scalarCount(`SELECT count(*) FROM workspace_agents WHERE principal_id = '${principalId}'::uuid AND workspace_id = '${workspaceB}'::uuid`)).toBe(1)
   expect(scalarCount(`SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_created' AND user_id = '${ownerUserId}'::uuid AND resource_id = '${principalId}'`)).toBe(1)
+  const principalAudit = JSON.parse(queryIsolatedPostgres(
+    `SELECT details::text FROM audit_logs WHERE action = 'agent_principal_created' `
+      + `AND user_id = '${ownerUserId}'::uuid AND resource_id = '${principalId}'`,
+  )) as Record<string, unknown>
+  expect(principalAudit).toMatchObject({
+    authorizationAction: 'CREATE_ACCOUNT',
+    templateId,
+    permissions: [
+      { actionClass: 'read', resource: 'src/*' },
+      { actionClass: 'write' },
+    ],
+  })
+  expect(JSON.stringify(principalAudit)).not.toContain(TEMPLATE_PROMPT)
+  expect(JSON.stringify(principalAudit)).not.toContain(PROVIDER_SECRET_SENTINEL)
+  const templateAudit = queryIsolatedPostgres(
+    `SELECT details::text FROM audit_logs WHERE action = 'agent_template_created' `
+      + `AND user_id = '${ownerUserId}'::uuid AND resource_id = '${templateId}'`,
+  )
+  expect(scalarCount(
+    `SELECT count(*) FROM audit_logs WHERE action = 'agent_template_created' `
+      + `AND user_id = '${ownerUserId}'::uuid AND resource_id = '${templateId}'`,
+  )).toBe(1)
+  const templateAuditDetails = JSON.parse(templateAudit) as Record<string, unknown>
+  expect(templateAuditDetails).toMatchObject({
+    authorizationAction: 'CREATE_TEMPLATE',
+    layer: 'user',
+    changedKeys: ['templates'],
+    templateId,
+    roleId: selectedTemplate!.roleId,
+    permissionDiff: [
+      { actionClass: 'read', resource: 'src/*' },
+      { actionClass: 'write', resource: '*' },
+    ],
+  })
+  expect(templateAudit).not.toContain(TEMPLATE_PROMPT)
+  const templateConfigAudit = queryIsolatedPostgres(
+    `SELECT new_value FROM config_audit WHERE layer = 'user' AND domain = 'agent-templates' `
+      + `AND config_key = 'templates' ORDER BY changed_at DESC LIMIT 1`,
+  )
+  expect(templateConfigAudit).toMatch(/^present:/)
+  expect(templateConfigAudit).not.toContain(TEMPLATE_PROMPT)
   expect(scalarCount(`SELECT count(*) FROM audit_logs WHERE action = 'workspace_agent_bound' AND user_id = '${ownerUserId}'::uuid AND workspace_id = '${workspaceA}'::uuid AND resource_id = '${principalId}'`)).toBe(1)
   expect(scalarCount(`SELECT count(*) FROM audit_logs WHERE action = 'workspace_agent_cap_updated' AND user_id = '${ownerUserId}'::uuid AND workspace_id = '${workspaceA}'::uuid AND resource_id = '${principalId}'`)).toBe(1)
   expect(scalarCount(`SELECT count(*) FROM audit_logs WHERE action = 'workspace_agent_unbound' AND user_id = '${ownerUserId}'::uuid AND workspace_id = '${workspaceA}'::uuid AND resource_id = '${principalId}'`)).toBe(1)
+  const bindAudit = JSON.parse(queryIsolatedPostgres(
+    `SELECT details::text FROM audit_logs WHERE action = 'workspace_agent_bound' `
+      + `AND user_id = '${ownerUserId}'::uuid AND workspace_id = '${workspaceA}'::uuid `
+      + `AND resource_id = '${principalId}'`,
+  )) as Record<string, unknown>
+  expect(bindAudit).toMatchObject({
+    authorizationAction: 'MANAGE_WORKSPACE_AGENTS',
+    principalId,
+    permissionsBefore: [],
+    permissionsAfter: [{ actionClass: 'read', resource: 'src/*' }],
+  })
+  const capUpdateAudit = JSON.parse(queryIsolatedPostgres(
+    `SELECT details::text FROM audit_logs WHERE action = 'workspace_agent_cap_updated' `
+      + `AND user_id = '${ownerUserId}'::uuid AND workspace_id = '${workspaceA}'::uuid `
+      + `AND resource_id = '${principalId}'`,
+  )) as Record<string, unknown>
+  expect(capUpdateAudit).toMatchObject({
+    authorizationAction: 'MANAGE_WORKSPACE_AGENTS',
+    principalId,
+    permissionsBefore: [{ actionClass: 'read', resource: 'src/*' }],
+    permissionsAfter: [
+      { actionClass: 'read', resource: 'src/*' },
+      { actionClass: 'write', resource: 'reports/*' },
+    ],
+  })
+  const unbindAudit = JSON.parse(queryIsolatedPostgres(
+    `SELECT details::text FROM audit_logs WHERE action = 'workspace_agent_unbound' `
+      + `AND user_id = '${ownerUserId}'::uuid AND workspace_id = '${workspaceA}'::uuid `
+      + `AND resource_id = '${principalId}'`,
+  )) as Record<string, unknown>
+  expect(unbindAudit).toMatchObject({
+    authorizationAction: 'MANAGE_WORKSPACE_AGENTS',
+    principalId,
+    permissionsBefore: [
+      { actionClass: 'read', resource: 'src/*' },
+      { actionClass: 'write', resource: 'reports/*' },
+    ],
+  })
+  expect(unbindAudit).not.toHaveProperty('permissionsAfter')
 
   await page.getByTestId('modal-content').getByRole('button', { name: 'Close', exact: true }).click()
   await expect(page.getByTestId('workspace-agent-management-dialog')).toHaveCount(0)
+  await page.goto('/settings/config', { waitUntil: 'load' })
+  await page.getByTestId('config-tab-user').click()
+  const deleteTemplateButton = page.getByTestId(`agent-template-delete-${templateId}`)
+  await deleteTemplateButton.click()
+  await expect(deleteTemplateButton).toContainText('再次点击确认删除')
+  const deleteTemplateWritePromise = page.waitForResponse((response) =>
+    response.url().endsWith('/api/v1/config/user/agent-templates') && response.request().method() === 'PUT',
+  )
+  await deleteTemplateButton.click()
+  expect((await deleteTemplateWritePromise).status()).toBe(200)
+  await expect(page.getByTestId(`agent-template-${templateId}`)).toHaveCount(0)
+  const snapshotAfterTemplateDelete = JSON.parse(queryIsolatedPostgres(
+    `SELECT template_snapshot::text FROM agent_principals WHERE id = '${principalId}'::uuid`,
+  )) as Record<string, unknown>
+  expect(snapshotAfterTemplateDelete).toEqual(principalSnapshot)
+
+  const e2eRunId = process.env.XIHE_E2E_RUN_ID
+  if (!e2eRunId) throw new Error('XIHE_E2E_RUN_ID is required for isolated log scanning')
+  const logDir = resolve(process.cwd(), '../../.tmp/e2e-host', e2eRunId, 'logs')
+  const logFiles = readdirSync(logDir).filter((file) => file.endsWith('.log'))
+  expect(logFiles.length).toBeGreaterThan(0)
+  for (const file of logFiles) {
+    const content = readFileSync(resolve(logDir, file), 'utf8')
+    expect(content, `${file} leaked a template prompt`).not.toContain(TEMPLATE_PROMPT)
+    expect(content, `${file} leaked an owner token`).not.toContain(owner.authToken)
+    expect(content, `${file} leaked a second-owner token`).not.toContain(secondOwner.authToken)
+    expect(content, `${file} leaked a provider secret`).not.toContain(PROVIDER_SECRET_SENTINEL)
+  }
+
   const attemptedSessionPosts: string[] = []
   page.on('request', (outgoingRequest) => {
     if (outgoingRequest.url().endsWith('/api/v1/sessions') && outgoingRequest.method() === 'POST') {

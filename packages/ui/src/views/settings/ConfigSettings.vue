@@ -400,9 +400,13 @@ async function handleSave(domain: string, body: Record<string, string>) {
   try {
     await configStore.putLayerConfig(activeTab.value, domain, body, currentWorkspaceId())
     await reloadActiveLayer()
-    toast.success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
+    if (domain !== 'agent-templates') {
+      toast.success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
+    }
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : `${t('settings.saveFailed')} ${domain}`)
+    if (domain !== 'agent-templates') {
+      toast.error(e instanceof Error ? e.message : `${t('settings.saveFailed')} ${domain}`)
+    }
   } finally {
     savingDomains.value[domain] = false
   }
