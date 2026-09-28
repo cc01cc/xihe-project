@@ -76,7 +76,10 @@ test('@host V6 Workspace Agent management uses CP grants and persists isolated c
   })
   seedPage(page, owner)
 
-  await page.goto('/settings/config', { waitUntil: 'load' })
+  await page.goto('/settings/policy', { waitUntil: 'load' })
+  await expect(page).toHaveURL(/\/settings\/config$/)
+  await expect(page.locator('a[href="/settings/policy"]')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('settings-policy-deep-link-redirect.png') })
   await page.getByTestId('config-tab-user').click()
   const templatePanel = page.getByTestId('agent-templates-panel')
   await expect(templatePanel).toBeVisible()

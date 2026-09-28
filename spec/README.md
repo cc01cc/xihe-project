@@ -56,7 +56,7 @@ spec/
 | session branch context isolation | proposed | partial | CP Context + Agent Context owners | PLAN-0410；V43 数据面已实现（root/branch schema、branch path/cursor、per-branch 投影与 Agent 输入、并发与 fail-closed 验证），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费，不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
 | authentication / authorization | proposed | partial | Security owner | PLAN-0386；principal/role/scope 归 Security |
 | agent role/scope binding | proposed | partial | Agent owner | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
-| agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | PLAN-0374；V42 绑定/Session/API/UI 波次已实现；fork 创建归 PLAN-0409、模板 CRUD 归 0374 T3.1 |
+| agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | PLAN-0374 principal/Workspace binding、template CRUD/form 与 V5/V6/V7 已完成；fork 创建归 PLAN-0409/0410；Agent 铸造与多层审批后置 BL-70/71 |
 | capability / approval / audit | proposed | partial | Runtime/Security/CP owners | PLAN-0386/0389；能力策略、审批、审计分别建模 |
 | workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | PLAN-0389 |
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
@@ -104,7 +104,7 @@ PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑�
 - [ChatRun 与 Operation 生命周期](session/chat-run-operation.md)
 - [Runtime MCP Session 生命周期](session/mcp-session.md)
 
-PLAN-0374 冻结 Agent principal 与 Workspace 绑定契约（V42 schema、Session admission、管理 API/UI 波次已实现；fork 创建归 PLAN-0409、模板 CRUD 归 0374 T3.1；Security principal/grant canonical 归 PLAN-0407）：
+PLAN-0374 冻结 Agent principal 与 Workspace 绑定契约（V42 schema、Session admission、管理 API/UI 波次已实现；fork 创建归 PLAN-0409、`agent-templates` 写入授权归 T3.1b、模板/角色表单归 T3.3；Security principal/grant canonical 归 PLAN-0407）：
 
 - [Agent principal 与 Workspace 绑定](agent/principal-workspace-binding.md)
 

@@ -12,6 +12,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
+import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.UUID;
 
@@ -31,6 +34,12 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private SessionRepository sessionRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -190,6 +199,70 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.FORBIDDEN, agentResponse.getStatusCode());
         assertProblemRequestIdMatchesHeader(agentResponse);
         wireMock.verify(0, postRequestedFor(urlEqualTo(runtimePath)));
+    }
+
+    @Test
+    void internalAgentCatalogOmitsMintingToolsAndUnknownCallsCreateNoRecords() throws Exception {
+        String userId = jwtTokenProvider.getUserIdFromToken(token);
+        String sessionId = UUID.randomUUID().toString();
+        Session session = new Session(wsId, userId, "Agent minting tool surface");
+        session.setId(UUID.fromString(sessionId));
+        sessionRepository.saveAndFlush(session);
+
+        String runtimePath = "/internal/v1/runtime/workspaces/" + wsId + "/mcp";
+        wireMock.stubFor(post(urlEqualTo(runtimePath))
+                .withRequestBody(containing("\"method\":\"tools/list\""))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":["
+                                + "{\"name\":\"list_directory\"},{\"name\":\"read_file\"},"
+                                + "{\"name\":\"write_file\"}]},\"id\":1}")));
+
+        HttpHeaders agentHeaders = new HttpHeaders();
+        agentHeaders.setContentType(MediaType.APPLICATION_JSON);
+        agentHeaders.setBearerAuth("dev-token-not-secure");
+        agentHeaders.set("X-Workspace-Id", wsId);
+        agentHeaders.set("X-Session-Id", sessionId);
+        ResponseEntity<String> toolList = restTemplate.postForEntity(
+                url("/api/v1/mcp"), new HttpEntity<>(TOOLS_LIST_BODY, agentHeaders), String.class);
+
+        assertEquals(HttpStatus.OK, toolList.getStatusCode());
+        JsonNode tools = objectMapper.readTree(toolList.getBody()).path("result").path("tools");
+        java.util.Set<String> names = new java.util.HashSet<>();
+        tools.forEach(tool -> names.add(tool.path("name").asText()));
+        assertTrue(names.contains("spawn_agent"), "the current CP-owned Agent tool remains available");
+        assertTrue(names.contains("list_directory"), "the current Runtime tool list is forwarded");
+        assertFalse(names.contains("CREATE_ACCOUNT"));
+        assertFalse(names.contains("CREATE_TEMPLATE"));
+
+        int principalsBefore = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM agent_principals", Integer.class);
+        int templateConfigsBefore = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM config WHERE domain = 'agent-templates'", Integer.class);
+        int creationAuditsBefore = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE action IN ('agent_principal_created', 'agent_template_created')",
+                Integer.class);
+
+        for (String unavailableTool : java.util.List.of("CREATE_ACCOUNT", "CREATE_TEMPLATE")) {
+            String callBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":7,"
+                    + "\"params\":{\"name\":\"" + unavailableTool + "\",\"arguments\":{}}}";
+            ResponseEntity<String> denied = restTemplate.postForEntity(
+                    url("/api/v1/mcp"), new HttpEntity<>(callBody, agentHeaders), String.class);
+            assertEquals(HttpStatus.BAD_REQUEST, denied.getStatusCode(), unavailableTool);
+            assertEquals("UNKNOWN_TOOL", objectMapper.readTree(denied.getBody()).path("code").asText());
+        }
+
+        assertEquals(principalsBefore, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM agent_principals", Integer.class));
+        assertEquals(templateConfigsBefore, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM config WHERE domain = 'agent-templates'", Integer.class));
+        assertEquals(creationAuditsBefore, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE action IN ('agent_principal_created', 'agent_template_created')",
+                Integer.class));
+        wireMock.verify(0, postRequestedFor(urlEqualTo(runtimePath))
+                .withRequestBody(containing("\"name\":\"CREATE_ACCOUNT\"")));
+        wireMock.verify(0, postRequestedFor(urlEqualTo(runtimePath))
+                .withRequestBody(containing("\"name\":\"CREATE_TEMPLATE\"")));
     }
 
     @Test
