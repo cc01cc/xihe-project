@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import { useConfigStore, LAYER_DOMAINS, type ConfigLayer } from '../../stores/config'
 import ConfigDomainPanel, { type DomainField } from '../../components/settings/ConfigDomainPanel.vue'
+import AgentTemplatesPanel from '../../components/settings/AgentTemplatesPanel.vue'
 import McpStdioServerList from '../../components/settings/McpStdioServerList.vue'
 import ProviderHub from '../../components/settings/ProviderHub.vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
@@ -86,10 +87,6 @@ const domainSchemas: Record<string, DomainField[]> = {
     ] },
     { key: 'askActionClasses', label: t('settings.fieldApprovalAskActionClasses'), type: 'json' },
   ],
-  'agent-templates': [
-    { key: 'roles', label: t('settings.fieldAgentTemplateRoles'), type: 'json' },
-    { key: 'templates', label: t('settings.fieldAgentTemplateTemplates'), type: 'json' },
-  ],
   'job-policy': [
     { key: 'defaultTimeoutSecs', label: t('settings.fieldDefaultTimeoutSecs'), type: 'number' },
     { key: 'maxTimeoutSecs', label: t('settings.fieldMaxTimeoutSecs'), type: 'number' },
@@ -133,6 +130,7 @@ const domainSchemas: Record<string, DomainField[]> = {
 }
 
 const fetchError = ref(false)
+const savingDomains = ref<Record<string, boolean>>({})
 // Only the first load of a layer shows the full-page loading state. Reloads
 // after a save must keep the panels mounted (otherwise the expanded domain
 // panel and its save button unmount mid-interaction).
@@ -398,12 +396,15 @@ async function handleSave(domain: string, body: Record<string, string>) {
     toast.error(jsonError)
     return
   }
+  savingDomains.value[domain] = true
   try {
     await configStore.putLayerConfig(activeTab.value, domain, body, currentWorkspaceId())
     await reloadActiveLayer()
     toast.success(`${domainLabels[domain] || domain} ${t('common.saved')}`)
   } catch (e) {
     toast.error(e instanceof Error ? e.message : `${t('settings.saveFailed')} ${domain}`)
+  } finally {
+    savingDomains.value[domain] = false
   }
 }
 
@@ -535,7 +536,14 @@ async function handleImportFile(event: Event) {
               v-if="domain === 'llm-provider' && activeTab !== 'instance'"
               :scope="activeTab === 'user' ? 'USER' : 'WORKSPACE'"
             />
+            <AgentTemplatesPanel
+              v-if="domain === 'agent-templates'"
+              :entries="configStore.layerConfig[activeTab][domain] || {}"
+              :saving="savingDomains[domain] || false"
+              @save="handleSave(domain, $event)"
+            />
             <ConfigDomainPanel
+              v-else
               :domain="domain"
               :title="domainLabels[domain] || domain"
               :entries="configStore.layerConfig[activeTab][domain] || {}"

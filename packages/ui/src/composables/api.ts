@@ -118,6 +118,23 @@ export interface AgentPrincipalCreateResponse {
     createdAt: string;
 }
 
+export interface AgentTemplateSummary {
+    id: string;
+    name: string;
+    description?: string;
+    systemPrompt: string;
+    toolMode: "none" | "workspace";
+    provider?: string;
+    model?: string;
+    roleId?: string;
+}
+
+export interface AgentTemplateLayerResponse {
+    layer: "instance" | "user" | "workspace";
+    workspaceId: string | null;
+    templates: AgentTemplateSummary[];
+}
+
 export interface WorkspaceAgentPermission {
     actionClass: string;
     resource?: string;
@@ -1275,6 +1292,11 @@ export const api = {
     },
     getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
         return request<WorkspaceAgentBinding[]>(`/workspaces/${encodeURIComponent(workspaceId)}/agents`);
+    },
+    getAgentTemplates(layer: AgentTemplateLayerResponse["layer"], workspaceId?: string): Promise<AgentTemplateLayerResponse> {
+        const query = new URLSearchParams({ layer });
+        if (layer === "workspace" && workspaceId) query.set("workspaceId", workspaceId);
+        return request<AgentTemplateLayerResponse>(`/agent-templates?${query.toString()}`);
     },
     createAgentPrincipal(name: string, templateId?: string): Promise<AgentPrincipalCreateResponse> {
         return request<AgentPrincipalCreateResponse>("/agent-principals", {

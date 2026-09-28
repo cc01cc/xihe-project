@@ -22,6 +22,8 @@ vi.mock('../../composables/api', async (importOriginal) => {
       getSessions: vi.fn(),
       createSession: vi.fn(),
       getWorkspaceAgents: vi.fn(),
+      getAgentTemplates: vi.fn(),
+      createAgentPrincipal: vi.fn(),
     },
   }
 })
@@ -117,6 +119,17 @@ beforeEach(() => {
     ],
   })
   mockedApi.getWorkspaceAgents.mockResolvedValue([])
+  mockedApi.getAgentTemplates.mockImplementation(async (layer) => ({
+    layer,
+    workspaceId: layer === 'workspace' ? 'workspace-1' : null,
+    templates: layer === 'user'
+      ? [{ id: 'template-1', name: 'Stored template', systemPrompt: 'Frozen prompt', toolMode: 'workspace', roleId: 'role-1', provider: 'openai', model: 'gpt-example' }]
+      : [],
+  }))
+  mockedApi.createAgentPrincipal.mockResolvedValue({
+    principalId: 'principal-created', templateId: 'template-1', templateName: 'Stored template',
+    createdAt: new Date().toISOString(),
+  })
 })
 
 describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
@@ -246,5 +259,23 @@ describe('WorkspaceView conversation-first layout (PLAN-0328 M3 T3.7)', () => {
 
     expect(wrapper.findComponent(WorkspaceAgentManagementDialog).props('open')).toBe(true)
     expect(mockedApi.getWorkspaceAgents).toHaveBeenCalledWith('workspace-1')
+  })
+
+  it('creates a principal from the selected persisted template snapshot', async () => {
+    const wrapper = mountView()
+
+    await wrapper.find('[data-testid="workspace-toolbar-agents"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="agent-principal-name"]').setValue('Template-backed')
+    await wrapper.find('[data-testid="agent-principal-template"]').setValue('template-1')
+    expect(wrapper.find('[data-testid="agent-principal-create-form"]').text()).toContain('role-1')
+    expect(wrapper.find('[data-testid="agent-principal-create-form"]').text()).toContain('gpt-example')
+    await wrapper.find('[data-testid="agent-principal-create-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(mockedApi.createAgentPrincipal).toHaveBeenCalledWith('Template-backed', 'template-1')
+    expect(wrapper.find('[data-testid="unbound-agent-principal"]').text()).toContain('principal-created')
+    expect(wrapper.find('[data-testid="unbound-agent-principal"]').text()).toContain('Stored template')
+    expect((wrapper.find('[data-testid="agent-principal-create"]').element as HTMLButtonElement).disabled).toBe(true)
   })
 })

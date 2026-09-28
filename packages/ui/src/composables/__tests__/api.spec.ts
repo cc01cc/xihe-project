@@ -200,6 +200,20 @@ describe('api.createSession', () => {
 })
 
 describe('Workspace Agent management API', () => {
+  it('reads templates from one explicit layer and scopes workspace reads', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ layer: 'workspace', workspaceId: 'workspace-1', templates: [] }),
+    } as Response)
+
+    await api.getAgentTemplates('workspace', 'workspace-1')
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/v1/agent-templates?layer=workspace&workspaceId=workspace-1',
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+  })
+
   it('creates a principal without creating a Workspace binding', async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: true,

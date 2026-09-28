@@ -12,7 +12,7 @@ vi.mock('vue-router', () => ({
 
 const messages = {
   'zh-CN': {
-    settings: { configTab: '配置管理', knowledge: '知识库', dataControls: '数据控制', policyRules: '权限规则', toolFaces: '工具分类' },
+    settings: { configTab: '配置管理', knowledge: '知识库', dataControls: '数据控制', toolFaces: '工具分类' },
   },
 }
 
@@ -36,9 +36,9 @@ describe('SettingsNav', () => {
     expect(wrapper.text()).toContain('数据控制')
   })
 
-  it('renders the permission rules and tool classification tabs', () => {
+  it('retires the permission rules tab but keeps tool classification', () => {
     const wrapper = mount(SettingsNav, { global: { plugins: [createI18nInstance()] } })
-    expect(wrapper.text()).toContain('权限规则')
+    expect(wrapper.text()).not.toContain('权限规则')
     expect(wrapper.text()).toContain('工具分类')
   })
 
@@ -47,7 +47,7 @@ describe('SettingsNav', () => {
     expect(wrapper.html()).toContain('/settings/config')
     expect(wrapper.html()).toContain('/settings/knowledge')
     expect(wrapper.html()).toContain('/settings/data')
-    expect(wrapper.html()).toContain('/settings/policy')
+    expect(wrapper.html()).not.toContain('/settings/policy')
     expect(wrapper.html()).toContain('/settings/tool-faces')
   })
 })

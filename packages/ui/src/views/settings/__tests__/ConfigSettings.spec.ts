@@ -146,14 +146,16 @@ describe('ConfigSettings Agent template and approval policy (PLAN-0374)', () => 
     expect(LAYER_DOMAINS.workspace).toContain('agent-templates')
   })
 
-  it('renders structured JSON fields for templates, roles, and ask action classes', async () => {
+  it('renders the structured template editor while keeping approval action classes in approval-policy', async () => {
     const wrapper = await mountView()
 
-    const templatesPanel = wrapper.find('[data-testid="config-domain-agent-templates"]')
+    const templatesPanel = wrapper.find('[data-testid="agent-templates-panel"]')
     expect(templatesPanel.exists()).toBe(true)
-    await templatesPanel.find('button').trigger('click')
-    expect(wrapper.find('[data-testid="config-field-agent-templates-roles"] textarea').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="config-field-agent-templates-templates"] textarea').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-template-prompt"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-template-role"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-template-provider"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-template-model"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-template-secret"]').exists()).toBe(false)
 
     const approvalPanel = wrapper.find('[data-testid="config-domain-approval-policy"]')
     expect(approvalPanel.exists()).toBe(true)
@@ -166,7 +168,7 @@ describe('ConfigSettings Agent template and approval policy (PLAN-0374)', () => 
 
     await wrapper.find('[data-testid="config-tab-user"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-testid="config-domain-agent-templates"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="agent-templates-panel"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="config-domain-approval-policy"]').exists()).toBe(false)
   })
 

@@ -57,8 +57,7 @@ const router = createRouter({
         },
         {
           path: 'policy',
-          name: 'settings-policy',
-          component: () => import('../views/settings/PolicyRulesView.vue'),
+          redirect: { name: 'settings-config' },
         },
         {
           path: 'tool-faces',

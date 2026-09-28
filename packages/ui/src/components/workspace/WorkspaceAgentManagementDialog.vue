@@ -2,10 +2,12 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseModal from '../shared/BaseModal.vue'
+import { useAuthStore } from '../../stores/auth'
 import {
   ApiError,
   api,
   type AgentPrincipalCreateResponse,
+  type AgentTemplateSummary,
   type WorkspaceAgentBinding,
   type WorkspaceAgentPermission,
 } from '../../composables/api'
@@ -20,20 +22,26 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const authStore = useAuthStore()
 const actionClasses = ['read', 'write', 'delete', 'exec', 'network', 'credential'] as const
 const agents = ref<WorkspaceAgentBinding[]>([])
+const templates = ref<Array<{ layer: string; template: AgentTemplateSummary }>>([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const status = ref('')
 const name = ref('')
+const templateId = ref('')
 const createdPrincipal = ref<AgentPrincipalCreateResponse | null>(null)
 const permissions = ref<WorkspaceAgentPermission[]>([])
 const editingPrincipalId = ref<string | null>(null)
 const unbindConfirmationId = ref<string | null>(null)
 
 watch(() => props.open, (open) => {
-  if (open) void loadAgents()
+  if (open) {
+    void loadAgents()
+    void loadTemplates()
+  }
 })
 
 async function loadAgents() {
@@ -46,6 +54,19 @@ async function loadAgents() {
     error.value = cause instanceof ApiError ? cause.message : t('workspace.agentLoadFailed')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadTemplates() {
+  templates.value = []
+  try {
+    const layers = authStore.isAdmin
+      ? ['instance', 'user', 'workspace'] as const
+      : ['user', 'workspace'] as const
+    const results = await Promise.all(layers.map((layer) => api.getAgentTemplates(layer, props.workspaceId)))
+    templates.value = results.flatMap((result) => result.templates.map((template) => ({ layer: result.layer, template })))
+  } catch (cause) {
+    error.value = cause instanceof ApiError ? cause.message : t('workspace.agentTemplateLoadFailed')
   }
 }
 
@@ -76,12 +97,13 @@ function setPermissionResource(actionClass: string, resource: string) {
 }
 
 async function createPrincipal() {
-  if (!name.value.trim() || saving.value) return
+  if (!name.value.trim() || saving.value || createdPrincipal.value) return
   saving.value = true
   error.value = ''
   try {
-    createdPrincipal.value = await api.createAgentPrincipal(name.value.trim())
+    createdPrincipal.value = await api.createAgentPrincipal(name.value.trim(), templateId.value || undefined)
     name.value = ''
+    templateId.value = ''
     permissions.value = []
     status.value = t('workspace.agentPrincipalCreated')
   } catch (cause) {
@@ -167,9 +189,24 @@ async function unbind(agent: WorkspaceAgentBinding) {
           <input v-model="name" required maxlength="120" data-testid="agent-principal-name"
                  class="w-full rounded-md border bg-background px-3 py-2" />
         </label>
+        <label class="block space-y-1 text-sm">
+          <span>{{ t('workspace.agentTemplateChoice') }}</span>
+          <select v-model="templateId" data-testid="agent-principal-template" class="w-full rounded-md border bg-background px-3 py-2">
+            <option value="">{{ t('workspace.defaultAgentTemplate') }}</option>
+            <option v-for="item in templates" :key="`${item.layer}:${item.template.id}`" :value="item.template.id">
+              {{ item.template.name }} · {{ item.layer }}
+            </option>
+          </select>
+          <span v-if="templateId" class="block text-xs text-muted-foreground">
+            {{ templates.find((item) => item.template.id === templateId)?.template.roleId ?? t('workspace.defaultAgentTemplate') }} ·
+            {{ templates.find((item) => item.template.id === templateId)?.template.toolMode }} ·
+            {{ templates.find((item) => item.template.id === templateId)?.template.provider ?? t('settings.notSet') }} /
+            {{ templates.find((item) => item.template.id === templateId)?.template.model ?? t('settings.notSet') }}
+          </span>
+        </label>
         <button type="submit" data-testid="agent-principal-create"
                 class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                :disabled="!name.trim() || saving">
+                :disabled="!name.trim() || saving || !!createdPrincipal">
           {{ t('workspace.createAgentPrincipal') }}
         </button>
       </form>
@@ -179,6 +216,11 @@ async function unbind(agent: WorkspaceAgentBinding) {
         <div>
           <h3 class="text-sm font-semibold">{{ t('workspace.agentCreatedUnbound') }}</h3>
           <p class="mt-1 break-all font-mono text-xs text-muted-foreground">{{ createdPrincipal.principalId }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">
+            {{ createdPrincipal.templateName ?? t('workspace.defaultAgentTemplate') }} ·
+            {{ t('workspace.agentTemplateId') }}: {{ createdPrincipal.templateId ?? '—' }} ·
+            {{ t('workspace.agentCreatedAt') }}: {{ new Date(createdPrincipal.createdAt).toLocaleString() }}
+          </p>
         </div>
         <p class="text-xs text-muted-foreground">{{ t('workspace.agentCapNote') }}</p>
         <div class="space-y-2">
