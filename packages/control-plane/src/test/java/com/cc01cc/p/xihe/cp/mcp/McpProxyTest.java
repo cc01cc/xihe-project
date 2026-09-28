@@ -153,6 +153,8 @@ class McpProxyTest {
     void setUp() {
         requestRewriter = mock(RequestRewriter.class);
         policyEngine = mock(PolicyEngine.class);
+        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(true);
         auditLogger = mock(AuditLogger.class);
         approvalService = mock(ApprovalService.class);
         objectMapper = new ObjectMapper();
@@ -271,6 +273,34 @@ class McpProxyTest {
         verifyNoInteractions(policyEngine, mcpServerRepository, operationService, approvalService);
         verify(auditLogger).record(eq("mcp-init"), eq("read_file"),
                 eq("agent_session_required"), anyString());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCallRejectsAgentWithoutDurableRunToolCallBeforePolicy() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":34}";
+        String runId = "11111111-1111-1111-1111-111111111111";
+        String operationId = "22222222-2222-2222-2222-222222222222";
+        String toolCallId = "33333333-3333-3333-3333-333333333333";
+        when(policyEngine.hasCurrentAgentToolCall("u-1", TEST_WS_UUID, "sess-1",
+                runId, operationId, toolCallId, "read_file")).thenReturn(false);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Chat-Run-Id", runId);
+        headers.set("X-Operation-Id", operationId);
+        headers.set("X-Operation-Item-Id", toolCallId);
+        seedToolCache("read_file", "__system__");
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
+                internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verify(policyEngine, never()).allowsByGrant(any(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyBoolean());
+        verifyNoInteractions(mcpServerRepository, operationService, approvalService);
+        verify(auditLogger).record(eq("sess-1"), eq("read_file"),
+                eq("agent_tool_call_context_rejected"), anyString());
     }
 
     @Test

@@ -68,6 +68,14 @@ public class PolicyEngine {
                 : grantAuthorizationService.allows(request);
     }
 
+    public boolean hasCurrentAgentToolCall(String userId, String workspaceId, String sessionId,
+                                           String runId, String operationId, String toolCallId,
+                                           String toolName) {
+        return grantAuthorizationService != null
+                && grantAuthorizationService.hasCurrentAgentToolCall(
+                        userId, workspaceId, sessionId, runId, operationId, toolCallId, toolName);
+    }
+
     public static class PolicyDecision {
         private final PolicyResult result;
         private final String reason;

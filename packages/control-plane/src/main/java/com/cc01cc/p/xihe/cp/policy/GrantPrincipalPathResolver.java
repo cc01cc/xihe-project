@@ -1,10 +1,17 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
+import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
+import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -22,11 +29,17 @@ public class GrantPrincipalPathResolver {
 
     private final SessionRepository sessionRepository;
     private final ChatRunRepository chatRunRepository;
+    private final LedgerOperationRepository operationRepository;
+    private final OperationItemRepository operationItemRepository;
 
     public GrantPrincipalPathResolver(SessionRepository sessionRepository,
-                                      ChatRunRepository chatRunRepository) {
+                                      ChatRunRepository chatRunRepository,
+                                      LedgerOperationRepository operationRepository,
+                                      OperationItemRepository operationItemRepository) {
         this.sessionRepository = sessionRepository;
         this.chatRunRepository = chatRunRepository;
+        this.operationRepository = operationRepository;
+        this.operationItemRepository = operationItemRepository;
     }
 
     public AgentPath resolveAgent(String userId, String workspaceId, String sessionId) {
@@ -86,6 +99,51 @@ public class GrantPrincipalPathResolver {
 
         Collections.reverse(reverseSessionPath);
         return new AgentPath(agentPrincipalId, List.copyOf(reverseSessionPath));
+    }
+
+    /** Revalidates the existing Agent correlation keys against the current durable tool call. */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, propagation = Propagation.REQUIRES_NEW)
+    public void validateAgentToolCallContext(String userId, String workspaceId, String sessionId,
+                                             String runId, String operationId, String toolCallId,
+                                             String toolName) {
+        UUID userUuid = parseUuid(userId);
+        UUID workspaceUuid = parseUuid(workspaceId);
+        UUID sessionUuid = parseUuid(sessionId);
+        UUID runUuid = parseUuid(runId);
+        UUID operationUuid = parseUuid(operationId);
+        UUID toolCallUuid = parseUuid(toolCallId);
+
+        ChatRun run = chatRunRepository.findById(runUuid)
+                .orElseThrow(GrantPrincipalPathResolver::invalidPath);
+        if (!ChatRunRepository.ACTIVE_LEASE_STATUSES.contains(run.getStatus())
+                || !sessionUuid.equals(parseUuid(run.getSessionId()))
+                || !userUuid.equals(parseUuid(run.getUserId()))
+                || !workspaceUuid.equals(parseUuid(run.getWorkspaceId()))) {
+            throw invalidPath();
+        }
+
+        LedgerOperation operation = operationRepository.findById(operationUuid)
+                .orElseThrow(GrantPrincipalPathResolver::invalidPath);
+        if (!runUuid.equals(parseUuid(operation.getRunId()))
+                || !sessionUuid.equals(parseUuid(operation.getSessionId()))
+                || !userUuid.equals(parseUuid(operation.getUserId()))
+                || !workspaceUuid.equals(parseUuid(operation.getWorkspaceId()))
+                || operation.getFinishedAt() != null) {
+            throw invalidPath();
+        }
+
+        OperationItem item = operationItemRepository.findByOperationIdAndSourceAndToolCallId(
+                        operationUuid.toString(), "agent", toolCallUuid.toString())
+                .orElseThrow(GrantPrincipalPathResolver::invalidPath);
+        if (!"tool_call".equals(item.getKind())
+                || !toolName.equals(item.getToolName())
+                || item.getFinishedAt() != null
+                || !Set.of("pending", "running", "waiting_for_approval", "resolving")
+                        .contains(item.getStatus())) {
+            throw invalidPath();
+        }
+
+        resolveAgent(userId, workspaceId, sessionId);
     }
 
     private static UUID parseUuid(String value) {

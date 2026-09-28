@@ -52,6 +52,21 @@ public class GrantAuthorizationService {
         this.workspaceUserRepository = workspaceUserRepository;
     }
 
+    /** Checks that an Agent MCP call belongs to the current durable Session/Run/ToolCall tuple. */
+    public boolean hasCurrentAgentToolCall(String userId, String workspaceId, String sessionId,
+                                           String runId, String operationId, String toolCallId,
+                                           String toolName) {
+        try {
+            principalPathResolver.validateAgentToolCallContext(
+                    userId, workspaceId, sessionId, runId, operationId, toolCallId, toolName);
+            return true;
+        } catch (IllegalArgumentException e) {
+            logger.warn("[POLICY] event=agent_tool_call_context_fail_closed exceptionType={}",
+                    e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, propagation = Propagation.REQUIRES_NEW)
     public boolean allows(PolicyRequest request) {
         if (request == null) {

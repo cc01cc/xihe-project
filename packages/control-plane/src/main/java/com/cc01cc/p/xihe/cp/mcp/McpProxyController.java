@@ -520,6 +520,14 @@ public class McpProxyController {
         if (serverId == null) {
             return problem(HttpStatus.BAD_REQUEST, "UNKNOWN_TOOL", "Requested tool is unavailable");
         }
+        if (access.internalService() && !policy.hasCurrentAgentToolCall(
+                access.userId(), wsId, access.applicationSessionId(),
+                headers.getFirst("X-Chat-Run-Id"), headers.getFirst("X-Operation-Id"),
+                headers.getFirst("X-Operation-Item-Id"), toolName)) {
+            audit.record(sessionId, toolName, "agent_tool_call_context_rejected",
+                    "durable Session/Run/Operation/ToolCall mismatch");
+            return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+        }
         boolean cpOwnedSpawn = CP_MCP_SERVER_ID.equals(serverId) && SPAWN_AGENT_TOOL.equals(toolName);
         ChatSubmissionService.SpawnInvocation spawnInvocation = null;
         if (cpOwnedSpawn) {
