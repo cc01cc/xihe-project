@@ -201,7 +201,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { description: SESSION_NOT_FOUND / BRANCH_ANCHOR_NOT_FOUND / RUN_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-        '409': { description: IDEMPOTENCY_KEY_CONFLICT / IDEMPOTENCY_REQUEST_IN_PROGRESS / FORK_REQUEST_IN_PROGRESS / FORK_SOURCE_ATTACHMENT_CHANGED / BRANCH_ANCHOR_INVALID / BRANCH_ANCHOR_UNAVAILABLE / BRANCH_ANCHOR_RUN_ACTIVE / BRANCH_ANCHOR_ROLE_UNSUPPORTED / SESSION_PRINCIPAL_REQUIRED, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: IDEMPOTENCY_KEY_CONFLICT / IDEMPOTENCY_REQUEST_IN_PROGRESS / FORK_REQUEST_IN_PROGRESS / FORK_SOURCE_ATTACHMENT_CHANGED / BRANCH_ANCHOR_INVALID / BRANCH_ANCHOR_UNAVAILABLE / BRANCH_ANCHOR_RUN_ACTIVE / BRANCH_ANCHOR_ROLE_UNSUPPORTED / SESSION_PRINCIPAL_REQUIRED / SESSION_DELETING, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '500': { description: INTERNAL_ERROR; fork publication failed after request validation, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '503': { description: FORK_CLEANUP_PENDING; child remains unpublished and can be retried with the same key, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}:
@@ -843,7 +843,7 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/messages/{messageId}:
-    delete: { operationId: deleteMessage, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the Session snapshot is copying, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+    delete: { operationId: deleteMessage, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the Session snapshot is copying / SESSION_DELETING while a delete intent is recorded (V47), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/attachments:
     post: { operationId: uploadAttachments, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Upload result } } }
   /api/v1/sessions/{sessionId}/attachments/{fileId}:

@@ -19,6 +19,7 @@
 - `POST /api/v1/sessions/{sourceSessionId}/fork` 必须携带 `Idempotency-Key`，body 显式包含 `sourceBranchId`、`anchorMessageId`。CP 验证 owner、Workspace、branch path membership、message/run 归属与 terminal 状态。
 - Source Session 的其他 active Run 不阻止对更早 terminal anchor 的 fork；锚点及 seed 严格截止该 anchor cursor，不能包含后来写入。active Run 本身不能作为 anchor。
 - Request claim 短暂锁 source Session 以串行化 anchor snapshot 与 source deletion；它释放 Session lock 后才开始复制 bytes。Parent deletion 在存在 `copying` fork request 时返回 retryable `409 FORK_REQUEST_IN_PROGRESS`；request 不在 copying 后，parent 可独立删除。
+- Session DELETE 在同一短锁内（copying 预检之后、任何取消/job-close 副作用之前）记录持久删除意图（V47 `sessions.delete_requested_at`）。意图记录后，新的 fork claim 与变更面（`lockCurrentForMutation`）返回 `409 SESSION_DELETING`，直至行被物理删除；意图不可撤销，中断后的 DELETE 重试从该点续跑（re-entrant），不提供 undo，也不自动清扫。该互斥保证取消副作用发出时不可能再有在途 fork claim（PLAN-0409 design #22）。
 - 新建成功返回 `201 Created`、`Location: /api/v1/sessions/{childSessionId}` 和 Child Session view；completed same-key replay 返回 `200 OK`、相同 Location/body。错误使用 RFC 9457 Problem Details。
 
 ## Child Context Seed
