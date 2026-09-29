@@ -49,6 +49,8 @@ Chat 用 `sessionId`，Workspace 用 `workspaceId`，禁止互充（PLAN-222）�
 
 状态机：Active（可交互）→ Archived（前端不加载，数据按服务端契约保留/清理）→ 删除（服务端 API）。
 
+删除采用持久意图栅栏（V47 `sessions.delete_requested_at`，PLAN-0409 design #22）：DELETE 第一段在短锁 `copying` 预检同事务内落删除意图，其后的取消/job-close 副作用在锁外执行；意图在册期间，fork claim 与变更面（`lockCurrentForMutation`，含消息删除入口）返回 `409 SESSION_DELETING`，直至行物理删除。意图不可撤销（无 undo），中断后重试 DELETE 从该点续跑（可重入），无自动清扫；list/get/读消息等只读路径不受影响。
+
 Session 的模型绑定 canonical 形态为 `modelProvider + modelName`；`modelId` 不再由 UI 写入或推断。刷新时按服务端 pair rehydrate，provider/model catalog 不可用时不创建本地有效 binding。
 
 ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`terminalOutcome`、`errorCode` 和 `partial` 不能在刷新时被当作普通成功 assistant；`ambiguous` 需要人工确认后使用新的幂等键重试。
