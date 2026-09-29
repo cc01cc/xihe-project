@@ -13,6 +13,7 @@ import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
 import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
@@ -29,6 +30,7 @@ public class SessionService {
 
     private final SessionRepository sessionRepository;
     private final SessionForkRequestRepository forkRequestRepository;
+    private final SessionBranchRepository sessionBranchRepository;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
     private final EventStoreRepository eventStoreRepository;
@@ -44,6 +46,7 @@ public class SessionService {
 
     public SessionService(SessionRepository sessionRepository,
                           SessionForkRequestRepository forkRequestRepository,
+                          SessionBranchRepository sessionBranchRepository,
                           MessageRepository messageRepository,
                           FileRepository fileRepository,
                           EventStoreRepository eventStoreRepository,
@@ -58,6 +61,7 @@ public class SessionService {
                           EntityManager entityManager) {
         this.sessionRepository = sessionRepository;
         this.forkRequestRepository = forkRequestRepository;
+        this.sessionBranchRepository = sessionBranchRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
         this.eventStoreRepository = eventStoreRepository;
@@ -284,6 +288,12 @@ public class SessionService {
         // lockForDelete, not lockCurrentForMutation: the delete-intent marker set by
         // beginDeleteIntent is expected here (retry path) and must not self-reject.
         Session lockedSession = lockForDelete(sessionId, userId, workspaceId);
+
+        // Branch rows first: child branches hold ON DELETE RESTRICT anchor FKs to
+        // messages/chat_runs (V43), so message-first deletion 500s on any session
+        // that owns a non-root branch (browser journey 2026-09-30 regression).
+        // The bulk delete cascades branch-owned messages/runs/events/projections.
+        sessionBranchRepository.deleteAllBySessionId(sessionId);
 
         // Delete metadata and context rows explicitly so this remains correct on old live schemas.
         chatAttachmentService.deleteSessionAttachments(sessionId);
