@@ -314,6 +314,7 @@ export interface Message {
     toolCalls?: ToolCall[];
     isStreaming?: boolean;
     attachments?: AttachmentFile[];
+    branchId?: string;
     marker?: "status" | "date" | "tool";
     status?: string;
     runId?: string;

@@ -6,7 +6,7 @@ import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useAgentStore } from '../../stores/agent'
 import { useAuthStore } from '../../stores/auth'
-import { ApiError } from '../../composables/api'
+import { ApiError, api } from '../../composables/api'
 import { logger } from '../../lib/logger'
 import { toast } from 'vue-sonner'
 import SessionItem from './SessionItem.vue'
@@ -21,6 +21,8 @@ const agentStore = useAgentStore()
 const auth = useAuthStore()
 const pendingDeleteSessionId = ref<string | null>(null)
 const deleteLoading = ref(false)
+const forkingSessionId = ref<string | null>(null)
+const pendingForkKeys = new Map<string, string>()
 const pendingDeleteSession = computed(() =>
   sessionStore.sessions.find((session) => session.id === pendingDeleteSessionId.value) ?? null,
 )
@@ -48,6 +50,75 @@ function handleRename(id: string, title: string) {
 
 function handleDelete(id: string) {
   pendingDeleteSessionId.value = id
+}
+
+const terminalRunStatuses = new Set(['succeeded', 'failed', 'partial', 'ambiguous', 'cancelled'])
+
+async function handleFork(id: string) {
+  const session = sessionStore.sessions.find((item) => item.id === id)
+  if (!session || sessionStore.currentSessionId !== id || forkingSessionId.value) return
+
+  forkingSessionId.value = id
+  try {
+    let sourceBranchId = chatStore.getSelectedBranchId(id)
+    if (!sourceBranchId || !chatStore.getSessionBranches(id).some((branch) => branch.branchId === sourceBranchId)) {
+      await chatStore.loadSessionBranches(id)
+      sourceBranchId = chatStore.getSelectedBranchId(id)
+    }
+    if (!sourceBranchId || !chatStore.getSessionBranches(id).some((branch) => branch.branchId === sourceBranchId)) {
+      toast.error(t('sidebar.forkBranchUnavailable'))
+      return
+    }
+
+    const visibleRoles = new Map(chatStore.getMessages(id).map((message) => [message.id, message.role]))
+    const serverMessages = await api.getMessages(id, sourceBranchId)
+    let anchorMessageId: string | undefined
+    for (let index = serverMessages.length - 1; index >= 0; index -= 1) {
+      const message = serverMessages[index]!
+      const role = message.role.toLowerCase()
+      if (
+        visibleRoles.get(message.id) === role
+        && (role === 'user' || role === 'assistant')
+        && message.runId
+        && terminalRunStatuses.has(message.runStatus ?? '')
+      ) {
+        anchorMessageId = message.id
+        break
+      }
+    }
+    if (!anchorMessageId) {
+      toast.error(t('sidebar.forkAnchorUnavailable'))
+      return
+    }
+
+    const keyScope = `${id}:${sourceBranchId}:${anchorMessageId}`
+    const idempotencyKey = pendingForkKeys.get(keyScope) ?? globalThis.crypto.randomUUID()
+    pendingForkKeys.set(keyScope, idempotencyKey)
+    const forked = await api.forkSession(
+      id,
+      { sourceBranchId, anchorMessageId },
+      idempotencyKey,
+    )
+
+    const refreshedSessions = await sessionStore.loadSessions()
+    const child = refreshedSessions.find((item) => item.id === forked.id)
+      ?? await sessionStore.loadSession(forked.id)
+    const workspaceId = child.workspaceId ?? forked.workspaceId ?? session.workspaceId ?? auth.currentWorkspaceId
+    if (!workspaceId) throw new Error('Forked Session is missing its Workspace')
+
+    sessionStore.selectSession(child.id)
+    await router.push(workspaceChatPath(workspaceId, child.id))
+    pendingForkKeys.delete(keyScope)
+    toast.success(t('sidebar.forkCreated'))
+  } catch (cause) {
+    const message = cause instanceof ApiError
+      ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+      : cause instanceof Error ? cause.message : t('sidebar.forkFailed')
+    logger.error('Fork Session failed', cause)
+    toast.error(message)
+  } finally {
+    forkingSessionId.value = null
+  }
 }
 
 function closeDeleteWarning() {
@@ -88,9 +159,11 @@ async function confirmDelete() {
         :session="session"
         :is-active="session.id === sessionStore.currentSessionId"
         :pending-count="agentStore.pendingApprovalCount(session.id)"
+        :fork-busy="forkingSessionId === session.id"
         @select="handleSelect"
         @rename="handleRename"
         @delete="handleDelete"
+        @fork="handleFork"
       />
     </div>
     <div

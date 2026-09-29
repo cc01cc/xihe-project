@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted } from "vue";
+import { useI18n } from "vue-i18n";
 import type { AttachmentFile, Message } from "../../types";
 import TextPart from "./parts/TextPart.vue";
 import ReasoningPart from "./parts/ReasoningPart.vue";
@@ -19,20 +20,23 @@ import {
     AttachmentTitle,
 } from "@/components/ui/attachment";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
-import { Download, Brain, LoaderCircle, Clock, Bot, User, Trash2 } from "@lucide/vue";
+import { Download, Brain, LoaderCircle, Clock, Bot, User, Trash2, GitBranch } from "@lucide/vue";
 import { Message as MessageRoot, MessageAvatar, MessageContent } from "@/components/ui/message";
 import { Marker, MarkerIcon, MarkerContent } from "@/components/ui/marker";
 
 const props = defineProps<{
     message: Message;
     isStreaming?: boolean;
+    branchBusy?: boolean;
 }>();
+const { t } = useI18n();
 
 const emit = defineEmits<{
     approve: [id: string];
     reject: [id: string];
     delete: [id: string];
     retry: [id: string];
+    branch: [id: string];
     revert: [sliceRef: string];
 }>();
 
@@ -102,6 +106,11 @@ function handleDelete() {
 
 const canDelete = computed(() => !isMarker.value && props.message.role !== "system");
 const canRetry = computed(() => Boolean(props.message.error && props.message.retryable));
+const canCreateBranch = computed(() =>
+    (props.message.role === "user" || props.message.role === "assistant")
+    && Boolean(props.message.runId)
+    && ["succeeded", "failed", "partial", "ambiguous", "cancelled"].includes(props.message.runStatus ?? ""),
+);
 
 onUnmounted(() => {
     props.message.attachments?.forEach((attachment) => {
@@ -234,7 +243,7 @@ onUnmounted(() => {
             />
 
             <div
-                class="invisible mt-0.5 flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                class="invisible mt-0.5 flex items-center gap-2 opacity-0 transition-opacity group-hover/message:visible group-hover/message:opacity-100 group-focus-within/message:visible group-focus-within/message:opacity-100"
                 :class="isUser ? 'justify-end' : 'justify-start'"
             >
                 <span class="px-1 text-[10px] text-muted-foreground">{{ timestamp }}</span>
@@ -246,6 +255,18 @@ onUnmounted(() => {
                     @click="handleDelete"
                 >
                     <Trash2 class="size-3" />
+                </button>
+                <button
+                    v-if="canCreateBranch"
+                    type="button"
+                    data-testid="message-branch-button"
+                    class="p-1 rounded text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                    :aria-label="t('chat.branchFromMessage')"
+                    :disabled="branchBusy || isStreaming"
+                    :aria-busy="branchBusy"
+                    @click="emit('branch', message.id)"
+                >
+                    <GitBranch class="size-3" />
                 </button>
                 <VoiceOutput
                     v-if="!isUser && !isSystem"

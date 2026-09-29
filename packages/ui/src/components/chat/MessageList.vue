@@ -16,6 +16,7 @@ import {
 
 const props = defineProps<{
     messages: Message[];
+    branchBusy?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -23,6 +24,7 @@ const emit = defineEmits<{
     reject: [id: string];
     delete: [id: string];
     retry: [id: string];
+    branch: [id: string];
     revert: [sliceRef: string];
 }>();
 
@@ -99,10 +101,12 @@ const entries = computed(() => {
                                 <MessageItem
                                     :message="entry.msg"
                                     :is-streaming="entry.msg.isStreaming"
+                                    :branch-busy="branchBusy"
                                     @approve="emit('approve', $event)"
                                     @reject="emit('reject', $event)"
                                     @delete="emit('delete', $event)"
                                     @retry="emit('retry', $event)"
+                                    @branch="emit('branch', $event)"
                                     @revert="emit('revert', $event)"
                                 />
                             </MessageScrollerItem>

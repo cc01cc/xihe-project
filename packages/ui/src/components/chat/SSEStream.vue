@@ -34,11 +34,13 @@ const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(
   computed(() => props.sessionId),
 )
 let activeRunId: string | undefined
+let activeBranchId: string | undefined
 
 watch(
   () => props.sessionId,
   (id) => {
     activeRunId = undefined
+    activeBranchId = undefined
     if (id) {
       connectSession(id)
     }
@@ -60,7 +62,7 @@ function connectSession(id: string) {
     onStart: () => {
       if (!isCurrentSession()) return
       parser.reset()
-      chatStore.createStreamingMessage(id, activeRunId)
+      chatStore.createStreamingMessage(id, activeRunId, activeBranchId)
     },
     onToken: (token: string, hint?) => {
       if (!isCurrentSession()) return
@@ -112,6 +114,7 @@ function connectSession(id: string) {
       agentStore.setStatus('idle')
       chatStore.setSessionRunState(id, 'idle')
       activeRunId = undefined
+      activeBranchId = undefined
     },
     onError: (payload: SSEErrorPayload) => {
       if (!isCurrentSession()) return
@@ -172,13 +175,15 @@ function connectSession(id: string) {
   })
 }
 
-async function handleSend(content: string, options?: {
+async function handleSend(content: string, options: {
+  branchId: string
   attachments?: string[]
   toolMode?: 'none' | 'workspace'
   agentPrincipalId?: string
 }): Promise<ChatRunResponse | null> {
   const sessionId = props.sessionId
   if (!sessionId) return null
+  activeBranchId = options.branchId
 
   if (!isConnected.value) {
     connectSession(sessionId)
@@ -197,6 +202,7 @@ async function handleSend(content: string, options?: {
   const model = binding?.model ?? ''
   const result = await sendMessage({
     content,
+    branchId: options.branchId,
     model,
     provider: binding?.provider,
     toolMode: options?.toolMode ?? props.toolMode,
@@ -210,6 +216,8 @@ async function handleSend(content: string, options?: {
     activeRunId = result.runId
     chatStore.setSessionRunState(sessionId, 'thinking', result.runId)
     agentStore.setStatus('thinking')
+  } else {
+    activeBranchId = undefined
   }
   return result
 }

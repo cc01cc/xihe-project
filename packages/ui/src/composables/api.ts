@@ -93,6 +93,20 @@ export interface ApiSession {
     connectionRevision?: number;
 }
 
+export interface ApiSessionBranch {
+    branchId: string;
+    parentBranchId: string | null;
+    forkPointMessageId: string | null;
+    forkPointRunId: string | null;
+    createdAt: string;
+}
+
+export interface SessionBranchCreateResponse {
+    branchId: string;
+    parentBranchId: string;
+    forkPointMessageId: string;
+}
+
 export interface SessionResponse extends ApiSession {
     workspace?: ApiWorkspace;
 }
@@ -1266,6 +1280,17 @@ export const api = {
     async getSession(id: string): Promise<SessionResponse> {
         return normalizeSession(await request<unknown>(`/sessions/${encodeURIComponent(id)}`));
     },
+    async forkSession(
+        sessionId: string,
+        body: { sourceBranchId: string; anchorMessageId: string },
+        idempotencyKey: string,
+    ): Promise<SessionResponse> {
+        return normalizeSession(await request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/fork`, {
+            method: "POST",
+            headers: { "Idempotency-Key": idempotencyKey },
+            body: JSON.stringify(body),
+        }));
+    },
     getSessionDerivedState(sessionId: string): Promise<SessionDerivedStateResponse> {
         return request<SessionDerivedStateResponse>(
             `/sessions/${encodeURIComponent(sessionId)}/derived-state`,
@@ -1339,7 +1364,23 @@ export const api = {
     deleteSession(id: string) {
         return apiDelete(`/sessions/${encodeURIComponent(id)}`);
     },
-    getMessages(sessionId: string) {
+    getSessionBranches(sessionId: string) {
+        return request<{ sessionId: string; items: ApiSessionBranch[] }>(
+            `/sessions/${encodeURIComponent(sessionId)}/branches`,
+        );
+    },
+    createSessionBranch(
+        sessionId: string,
+        body: { sourceBranchId: string; anchorMessageId: string },
+        idempotencyKey: string,
+    ) {
+        return request<SessionBranchCreateResponse>(`/sessions/${encodeURIComponent(sessionId)}/branches`, {
+            method: "POST",
+            headers: { "Idempotency-Key": idempotencyKey },
+            body: JSON.stringify(body),
+        });
+    },
+    getMessages(sessionId: string, branchId: string) {
         return request<
             Array<{
                 id: string;
@@ -1365,7 +1406,7 @@ export const api = {
                     endedAt?: string | null;
                 }>;
             }>
-        >(`/sessions/${encodeURIComponent(sessionId)}/messages`);
+        >(`/sessions/${encodeURIComponent(sessionId)}/messages?branchId=${encodeURIComponent(branchId)}`);
     },
     getJobOutput(
         itemId: string,

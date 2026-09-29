@@ -8,14 +8,17 @@ const props = withDefaults(defineProps<{
   session: Session
   isActive: boolean
   pendingCount?: number
+  forkBusy?: boolean
 }>(), {
   pendingCount: 0,
+  forkBusy: false,
 })
 
 const emit = defineEmits<{
   select: [id: string]
   rename: [id: string, title: string]
   delete: [id: string]
+  fork: [id: string]
 }>()
 
 const { t } = useI18n()
@@ -58,6 +61,11 @@ function confirmRename() {
 function handleDelete() {
   showContextMenu.value = false
   emit('delete', props.session.id)
+}
+
+function handleFork() {
+  showContextMenu.value = false
+  emit('fork', props.session.id)
 }
 
 function handleRenameKeydown(e: KeyboardEvent) {
@@ -118,6 +126,16 @@ function handleRenameKeydown(e: KeyboardEvent) {
           @click="startRename"
         >
           {{ t('sidebar.rename') }}
+        </button>
+        <button
+          v-if="isActive"
+          type="button"
+          class="w-full px-3 py-1.5 text-left text-sm hover:bg-accent transition-colors disabled:opacity-50"
+          data-testid="session-item-fork"
+          :disabled="forkBusy"
+          @click.stop="handleFork"
+        >
+          {{ forkBusy ? t('sidebar.forking') : t('sidebar.fork') }}
         </button>
         <button
           class="w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors"

@@ -36,7 +36,9 @@ describe('SSEStream session ownership', () => {
       global: { plugins: [i18n] },
     })
 
-    await (wrapper.vm as unknown as { sendMessage: (content: string) => Promise<unknown> }).sendMessage('run')
+    await (wrapper.vm as unknown as {
+      sendMessage: (content: string, options: { branchId: string }) => Promise<unknown>
+    }).sendMessage('run', { branchId: 'branch-a' })
     await wrapper.setProps({ sessionId: 'session-b' })
     await (wrapper.vm as unknown as { stopStreaming: () => void }).stopStreaming()
 

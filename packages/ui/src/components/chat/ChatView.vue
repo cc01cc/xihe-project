@@ -24,6 +24,8 @@ const routeSessionId = computed(() => {
 })
 
 const currentSessionId = computed(() => routeSessionId.value || sessionStore.currentSessionId || '')
+const selectedBranchId = computed(() => chatStore.getSelectedBranchId(currentSessionId.value) ?? '')
+let messageLoadRequestId = 0
 
 const isStreaming = computed(() => chatStore.isStreaming(currentSessionId.value))
 const currentRunState = computed(() => chatStore.getSessionRunState(currentSessionId.value))
@@ -105,8 +107,18 @@ function jobSummariesToToolCalls(
 }
 
 async function loadSessionMessages(sessionId: string) {
+  const requestId = ++messageLoadRequestId
   try {
-    const rawMessages = await api.getMessages(sessionId)
+    let branchId = chatStore.getSelectedBranchId(sessionId)
+    if (!branchId) {
+      await chatStore.loadSessionBranches(sessionId)
+      branchId = chatStore.getSelectedBranchId(sessionId)
+    }
+    if (!branchId) return
+    const rawMessages = await api.getMessages(sessionId, branchId)
+    if (requestId !== messageLoadRequestId
+      || currentSessionId.value !== sessionId
+      || chatStore.getSelectedBranchId(sessionId) !== branchId) return
     if (!Array.isArray(rawMessages)) {
       logger.debug('Messages response is not an array, ignoring')
       return
@@ -162,6 +174,12 @@ watch(
   },
   { immediate: true },
 )
+
+watch(selectedBranchId, (branchId, previousBranchId) => {
+  if (branchId && branchId !== previousBranchId && currentSessionId.value) {
+    void loadSessionMessages(currentSessionId.value)
+  }
+})
 
 onMounted(async () => {
   if (!sessionStore.sessions.length) {

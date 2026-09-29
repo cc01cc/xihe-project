@@ -9,6 +9,7 @@ import { useChatStore } from "../../stores/chat";
 import { useCheckpointStore } from "../../stores/checkpoint";
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const BRANCH_ID = "11111111-1111-4111-8111-111111111111";
 const RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const REQUEST_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const LATE_REQUEST_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
@@ -551,7 +552,7 @@ describe("stream liveness timer (S-1)", () => {
                 json: async () => ({ runId: RUN_ID }),
             }),
         );
-        await sse.sendMessage({ content: "hello" });
+        await sse.sendMessage({ content: "hello", branchId: BRANCH_ID });
         await transport.simulateMessage("token", JSON.stringify({ content: "hi" }));
         return { transport, sse, onError, onDone };
     }
@@ -595,7 +596,7 @@ describe("stream liveness timer (S-1)", () => {
                 json: async () => ({ runId: RUN_ID }),
             }),
         );
-        await sse.sendMessage({ content: "hello" });
+        await sse.sendMessage({ content: "hello", branchId: BRANCH_ID });
 
         await vi.advanceTimersByTimeAsync(31_000);
 

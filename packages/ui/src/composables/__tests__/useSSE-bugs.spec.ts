@@ -8,6 +8,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { chatTransport } from '@/services/chatTransport'
 import { useSSE } from '../../composables/useSSE'
 
+const BRANCH_ID = '00000000-0000-0000-0000-000000000001'
+
 vi.mock('@/services/chatTransport', () => ({
   chatTransport: {
     sendMessages: vi.fn().mockResolvedValue(undefined),
@@ -32,7 +34,7 @@ describe('BUG-1: /chat Content-Type mismatch', () => {
     vi.stubGlobal('fetch', fetchSpy)
 
     const { sendMessage } = useSSE('test-session')
-    await sendMessage({ content: 'Hello world' })
+    await sendMessage({ content: 'Hello world', branchId: BRANCH_ID })
 
     const [endpoint, options] = fetchSpy.mock.calls[0]
     const body = options.body
@@ -43,6 +45,7 @@ describe('BUG-1: /chat Content-Type mismatch', () => {
     const parsed = JSON.parse(body)
     expect(parsed.content).toBe('Hello world')
     expect(parsed.sessionId).toBe('test-session')
+    expect(parsed.branchId).toBe(BRANCH_ID)
   })
 
   it('sendMessage should set Content-Type: application/json', async () => {
@@ -50,7 +53,7 @@ describe('BUG-1: /chat Content-Type mismatch', () => {
     vi.stubGlobal('fetch', fetchSpy)
 
     const { sendMessage } = useSSE('test-session')
-    await sendMessage({ content: 'Hello' })
+    await sendMessage({ content: 'Hello', branchId: BRANCH_ID })
 
     const [, options] = fetchSpy.mock.calls[0]
     const headers = options.headers || {}
@@ -100,7 +103,7 @@ describe('BUG-4: attachments must be sent as fileId array', () => {
     vi.stubGlobal('fetch', fetchSpy)
 
     const { sendMessage } = useSSE('test-session')
-    await sendMessage({ content: 'Analyze this', attachments: ['file-id-1'] })
+    await sendMessage({ content: 'Analyze this', branchId: BRANCH_ID, attachments: ['file-id-1'] })
 
     const [, options] = fetchSpy.mock.calls[0]
     const body = options.body
@@ -125,7 +128,7 @@ describe('BUG-5: /chat 502 error handling', () => {
     vi.stubGlobal('fetch', fetchSpy)
 
     const { sendMessage, error } = useSSE('test-session')
-    await sendMessage({ content: 'Hello' })
+    await sendMessage({ content: 'Hello', branchId: BRANCH_ID })
 
     expect(error.value).toContain('502')
   })
@@ -145,7 +148,7 @@ describe('BUG-6: /chat 409 when SSE subscription is missing', () => {
     const onError = vi.fn()
     const { connect, sendMessage, error } = useSSE('test-session')
     connect({ onError })
-    await sendMessage({ content: 'Hello' })
+    await sendMessage({ content: 'Hello', branchId: BRANCH_ID })
 
     // PLAN-247: errors carry a stable code plus safe detail, delivered as a
     // structured payload (not a bare string).
@@ -162,7 +165,7 @@ describe('BUG-6: /chat 409 when SSE subscription is missing', () => {
     vi.stubGlobal('fetch', fetchSpy)
 
     const { sendMessage, isStreaming } = useSSE('test-session')
-    await sendMessage({ content: 'Hello' })
+    await sendMessage({ content: 'Hello', branchId: BRANCH_ID })
 
     expect(isStreaming.value).toBe(false)
   })
@@ -185,7 +188,7 @@ describe('BUG-7: streaming lifecycle callbacks', () => {
     // must not fire for transport status alone.
     const { connect, sendMessage } = useSSE('test-session')
     connect({ onStart })
-    await sendMessage({ content: 'Hello' })
+    await sendMessage({ content: 'Hello', branchId: BRANCH_ID })
     expect(onStart).not.toHaveBeenCalled()
 
     await onmessage?.({ event: 'token', data: JSON.stringify({ content: 'Hello' }) })
@@ -203,7 +206,7 @@ describe('BUG-7: streaming lifecycle callbacks', () => {
 
     const { connect, sendMessage } = useSSE('test-session')
     connect({ onError })
-    await sendMessage({ content: 'Hello' })
+    await sendMessage({ content: 'Hello', branchId: BRANCH_ID })
 
     // PLAN-247: stable code plus safe detail in a structured payload.
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({

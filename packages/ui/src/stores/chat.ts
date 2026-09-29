@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ChatRunUsage, ChatSessionRunState, Message, MessagePart, ToolCall } from '../types'
-import { ApiError, api } from '../composables/api'
+import { ApiError, api, type ApiSessionBranch } from '../composables/api'
 import { logger } from '../lib/logger'
 import { useAgentStore } from './agent'
 
@@ -29,9 +29,58 @@ export const useChatStore = defineStore('chat', () => {
   // mapped usage event once per run). Not persisted across reloads — the
   // ledger is the durable record; the header line is live-run visibility.
   const sessionLastUsage = ref<Record<string, ChatRunUsage>>({})
+  const sessionBranches = ref<Record<string, ApiSessionBranch[]>>({})
+  const selectedBranchIds = ref<Record<string, string>>({})
+  const branchVersions = new Map<string, number>()
+  const branchLoadPromises = new Map<string, Promise<ApiSessionBranch[]>>()
 
   function getMessages(sessionId: string): Message[] {
     return messages.value[sessionId] ?? []
+  }
+
+  function getSessionBranches(sessionId: string): ApiSessionBranch[] {
+    return sessionBranches.value[sessionId] ?? []
+  }
+
+  function getSelectedBranchId(sessionId: string): string | undefined {
+    return selectedBranchIds.value[sessionId]
+  }
+
+  function setSessionBranches(sessionId: string, branches: ApiSessionBranch[]) {
+    sessionBranches.value[sessionId] = branches
+    const selected = selectedBranchIds.value[sessionId]
+    if (selected && branches.some((branch) => branch.branchId === selected)) return
+    const root = branches.find((branch) => branch.parentBranchId === null)
+    const fallback = root ?? branches[0]
+    if (fallback) selectedBranchIds.value[sessionId] = fallback.branchId
+    else delete selectedBranchIds.value[sessionId]
+  }
+
+  function selectBranch(sessionId: string, branchId: string): boolean {
+    if (!sessionBranches.value[sessionId]?.some((branch) => branch.branchId === branchId)) return false
+    selectedBranchIds.value[sessionId] = branchId
+    return true
+  }
+
+  async function loadSessionBranches(sessionId: string): Promise<ApiSessionBranch[]> {
+    const pending = branchLoadPromises.get(sessionId)
+    if (pending) return pending
+    const version = branchVersions.get(sessionId) ?? 0
+    const promise = api.getSessionBranches(sessionId).then(({ items }) => {
+      if ((branchVersions.get(sessionId) ?? 0) === version) setSessionBranches(sessionId, items)
+      return items
+    }).finally(() => {
+      if (branchLoadPromises.get(sessionId) === promise) branchLoadPromises.delete(sessionId)
+    })
+    branchLoadPromises.set(sessionId, promise)
+    return promise
+  }
+
+  function clearSessionBranches(sessionId: string) {
+    branchVersions.set(sessionId, (branchVersions.get(sessionId) ?? 0) + 1)
+    branchLoadPromises.delete(sessionId)
+    delete sessionBranches.value[sessionId]
+    delete selectedBranchIds.value[sessionId]
   }
 
   function getStreamingMessageId(sessionId: string): string | null {
@@ -124,12 +173,13 @@ export const useChatStore = defineStore('chat', () => {
     )
   }
 
-  function createStreamingMessage(sessionId: string, runId?: string): string {
+  function createStreamingMessage(sessionId: string, runId?: string, branchId?: string): string {
     // Tool-first runs create the live assistant message from `upsertToolCall`
     // before any token arrives; reuse it instead of spawning a second bubble.
     const existing = findStreamingMessage(sessionId)
     if (existing) {
       if (runId !== undefined) existing.runId = runId
+      if (branchId !== undefined) existing.branchId = branchId
       return existing.id
     }
     const id = crypto.randomUUID()
@@ -141,6 +191,7 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: new Date().toISOString(),
       isStreaming: true,
       runId,
+      branchId,
       runStatus: 'streaming',
     }
     addMessage(sessionId, message)
@@ -456,6 +507,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function clearSession(sessionId: string) {
     delete messages.value[sessionId]
+    clearSessionBranches(sessionId)
     delete streamingMessageId.value[sessionId]
     delete sessionRunStates.value[sessionId]
     delete runRecovery.value[sessionId]
@@ -476,6 +528,12 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
     messages.value = {}
+    sessionBranches.value = {}
+    selectedBranchIds.value = {}
+    for (const sessionId of new Set([...branchVersions.keys(), ...branchLoadPromises.keys()])) {
+      branchVersions.set(sessionId, (branchVersions.get(sessionId) ?? 0) + 1)
+    }
+    branchLoadPromises.clear()
     streamingMessageId.value = {}
     sessionRunStates.value = {}
     sessionLastUsage.value = {}
@@ -487,6 +545,12 @@ export const useChatStore = defineStore('chat', () => {
 
   function clearForUserSwitch() {
     messages.value = {}
+    sessionBranches.value = {}
+    selectedBranchIds.value = {}
+    for (const sessionId of new Set([...branchVersions.keys(), ...branchLoadPromises.keys()])) {
+      branchVersions.set(sessionId, (branchVersions.get(sessionId) ?? 0) + 1)
+    }
+    branchLoadPromises.clear()
     streamingMessageId.value = {}
     sessionRunStates.value = {}
     sessionLastUsage.value = {}
@@ -502,6 +566,12 @@ export const useChatStore = defineStore('chat', () => {
     sessionRunStates,
     runRecovery,
     getMessages,
+    getSessionBranches,
+    getSelectedBranchId,
+    setSessionBranches,
+    selectBranch,
+    loadSessionBranches,
+    clearSessionBranches,
     getStreamingMessageId,
     getSessionRunState,
     getSessionRunId,

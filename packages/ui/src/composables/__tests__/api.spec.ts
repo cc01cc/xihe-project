@@ -279,6 +279,79 @@ describe('api.deleteSession', () => {
   })
 })
 
+describe('Session branch APIs', () => {
+  it('loads branch options and scopes message reads by the required branch ID', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ sessionId: SESSION_ID, items: [] }),
+    } as Response)
+    await api.getSessionBranches(SESSION_ID)
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      `/api/v1/sessions/${SESSION_ID}/branches`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([]),
+    } as Response)
+    await api.getMessages(SESSION_ID, WORKSPACE_ID)
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      `/api/v1/sessions/${SESSION_ID}/messages?branchId=${WORKSPACE_ID}`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+  })
+
+  it('sends branch creation with an idempotency key', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ branchId: RUN_ID, parentBranchId: WORKSPACE_ID, forkPointMessageId: SESSION_ID }),
+    } as Response)
+
+    await api.createSessionBranch(
+      SESSION_ID,
+      { sourceBranchId: WORKSPACE_ID, anchorMessageId: WORKSPACE_ID },
+      'branch-create-key',
+    )
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/api/v1/sessions/${SESSION_ID}/branches`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': 'branch-create-key' }),
+        body: JSON.stringify({ sourceBranchId: WORKSPACE_ID, anchorMessageId: WORKSPACE_ID }),
+      }),
+    )
+  })
+
+  it('forks a session from a branch anchor with the required idempotency key', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        id: RUN_ID,
+        title: 'Forked session',
+        workspaceId: WORKSPACE_ID,
+      }),
+    } as Response)
+
+    const child = await api.forkSession(
+      SESSION_ID,
+      { sourceBranchId: WORKSPACE_ID, anchorMessageId: RUN_ID },
+      'session-fork-key',
+    )
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/api/v1/sessions/${SESSION_ID}/fork`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': 'session-fork-key' }),
+        body: JSON.stringify({ sourceBranchId: WORKSPACE_ID, anchorMessageId: RUN_ID }),
+      }),
+    )
+    expect(child).toMatchObject({ id: RUN_ID, title: 'Forked session', workspaceId: WORKSPACE_ID })
+  })
+})
+
 describe('api.decideChatApproval', () => {
   it('sends the structured decision body', async () => {
     fetchSpy.mockResolvedValueOnce({

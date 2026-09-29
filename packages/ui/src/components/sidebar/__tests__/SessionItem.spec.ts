@@ -57,4 +57,24 @@ describe('SessionItem', () => {
     expect(wrapper.emitted('select')).toEqual([['s1']])
     expect(wrapper.find('[data-testid="session-pending-badge"]').exists()).toBe(false)
   })
+
+  it('offers fork from the active session context menu only', async () => {
+    const session = { id: 's1', title: 'Current', updatedAt: new Date().toISOString() }
+    const active = mount(SessionItem, {
+      props: { session, isActive: true },
+      global: { stubs: { Teleport: true } },
+    })
+    await active.get('[data-testid="session-item"]').trigger('contextmenu')
+    await active.get('[data-testid="session-item-fork"]').trigger('click')
+    expect(active.emitted('fork')).toEqual([['s1']])
+
+    const inactive = mount(SessionItem, {
+      props: { session, isActive: false },
+      global: { stubs: { Teleport: true } },
+    })
+    await inactive.get('[data-testid="session-item"]').trigger('contextmenu')
+    expect(inactive.find('[data-testid="session-item-fork"]').exists()).toBe(false)
+    active.unmount()
+    inactive.unmount()
+  })
 })

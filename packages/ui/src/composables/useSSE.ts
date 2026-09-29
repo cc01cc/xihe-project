@@ -77,6 +77,7 @@ export interface SSEErrorPayload {
 
 export interface SendMessageOptions {
     content: string;
+    branchId: string;
     attachments?: string[];
     model?: string;
     sessionId?: string;
@@ -557,6 +558,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
 
     async function sendMessage({
         content,
+        branchId,
         attachments,
         model,
         provider,
@@ -575,6 +577,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             const body: Record<string, unknown> = {
                 content,
                 sessionId: sid,
+                branchId,
                 stream: true,
             };
             if (agentPrincipalId) body.agentPrincipalId = agentPrincipalId;

@@ -22,6 +22,8 @@ vi.mock('../../../composables/api', async (importOriginal) => {
       decideChatApproval: vi.fn(),
       getPendingApprovals: vi.fn(),
       getMessages: vi.fn(),
+      getSessionBranches: vi.fn(),
+      createSessionBranch: vi.fn(),
       getSessionDerivedState: vi.fn(),
       listOperations: vi.fn(),
       getOperationTrace: vi.fn(),
@@ -33,6 +35,7 @@ const SESSION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
 const STALE_REQUEST_ID = '22222222-2222-4222-8222-222222222222'
 const RUN_ID = '33333333-3333-4333-8333-333333333333'
+const ROOT_BRANCH_ID = '44444444-4444-4444-8444-444444444444'
 
 const approval: ApprovalRequest = {
   requestId: REQUEST_ID,
@@ -70,6 +73,18 @@ beforeEach(() => {
   vi.mocked(api.getPendingApprovals).mockResolvedValue([])
   vi.mocked(api.getMessages).mockReset()
   vi.mocked(api.getMessages).mockResolvedValue([])
+  vi.mocked(api.getSessionBranches).mockReset()
+  vi.mocked(api.getSessionBranches).mockResolvedValue({
+    sessionId: SESSION_ID,
+    items: [{
+      branchId: ROOT_BRANCH_ID,
+      parentBranchId: null,
+      forkPointMessageId: null,
+      forkPointRunId: null,
+      createdAt: '2026-09-29T00:00:00Z',
+    }],
+  })
+  vi.mocked(api.createSessionBranch).mockReset()
   vi.mocked(api.getSessionDerivedState).mockReset()
   vi.mocked(api.getSessionDerivedState).mockResolvedValue({
     sessionId: SESSION_ID,
@@ -133,6 +148,106 @@ describe('ChatPanel approval decision correlation (PLAN-0328 T1.14)', () => {
 
     expect(decideChatApproval).toHaveBeenCalledTimes(1)
     expect(decideChatApproval).toHaveBeenCalledWith(REQUEST_ID, { decision: 'session' })
+  })
+})
+
+describe('ChatPanel branch actions', () => {
+  it('creates a branch from a message, reloads the list and selects the result', async () => {
+    const anchorMessageId = '55555555-5555-4555-8555-555555555555'
+    const childBranchId = '66666666-6666-4666-8666-666666666666'
+    const root = {
+      branchId: ROOT_BRANCH_ID,
+      parentBranchId: null,
+      forkPointMessageId: null,
+      forkPointRunId: null,
+      createdAt: '2026-09-29T00:00:00Z',
+    }
+    const child = {
+      branchId: childBranchId,
+      parentBranchId: ROOT_BRANCH_ID,
+      forkPointMessageId: anchorMessageId,
+      forkPointRunId: RUN_ID,
+      createdAt: '2026-09-29T00:01:00Z',
+    }
+    vi.mocked(api.getSessionBranches).mockReset()
+      .mockResolvedValueOnce({ sessionId: SESSION_ID, items: [root] })
+      .mockResolvedValueOnce({ sessionId: SESSION_ID, items: [root, child] })
+    vi.mocked(api.createSessionBranch).mockReset().mockResolvedValue({
+      branchId: childBranchId,
+      parentBranchId: ROOT_BRANCH_ID,
+      forkPointMessageId: anchorMessageId,
+    })
+    vi.mocked(api.getMessages).mockResolvedValue([{
+      id: anchorMessageId,
+      sessionId: SESSION_ID,
+      role: 'ASSISTANT',
+      content: 'terminal anchor',
+      createdAt: '2026-09-29T00:00:00Z',
+      runId: RUN_ID,
+      runStatus: 'succeeded',
+      attachments: [],
+    }])
+    useChatStore().addMessage(SESSION_ID, {
+      id: anchorMessageId,
+      sessionId: SESSION_ID,
+      role: 'assistant',
+      content: 'terminal anchor',
+      timestamp: '2026-09-29T00:00:00Z',
+      runId: RUN_ID,
+      runStatus: 'succeeded',
+    })
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    wrapper.findComponent(MessageList).vm.$emit('branch', anchorMessageId)
+    await flushPromises()
+
+    expect(api.createSessionBranch).toHaveBeenCalledWith(
+      SESSION_ID,
+      { sourceBranchId: ROOT_BRANCH_ID, anchorMessageId },
+      expect.any(String),
+    )
+    expect(useChatStore().getSelectedBranchId(SESSION_ID)).toBe(childBranchId)
+    wrapper.unmount()
+  })
+
+  it('replaces optimistic streaming IDs with canonical persisted message IDs on terminal', async () => {
+    const canonicalId = '77777777-7777-4777-8777-777777777777'
+    vi.mocked(api.getMessages).mockResolvedValue([{
+      id: canonicalId,
+      sessionId: SESSION_ID,
+      role: 'ASSISTANT',
+      content: 'persisted answer',
+      createdAt: '2026-09-29T00:00:00Z',
+      runId: RUN_ID,
+      runStatus: 'succeeded',
+      attachments: [],
+    }])
+    const wrapper = mountPanel()
+    await flushPromises()
+    const store = useChatStore()
+    store.setSessionRunState(SESSION_ID, 'thinking', RUN_ID)
+    store.addMessage(SESSION_ID, {
+      id: 'client-stream-id',
+      sessionId: SESSION_ID,
+      role: 'assistant',
+      content: 'streaming answer',
+      timestamp: '2026-09-29T00:00:00Z',
+      runId: RUN_ID,
+      branchId: ROOT_BRANCH_ID,
+      runStatus: 'streaming',
+    })
+    expect(store.isStreaming(SESSION_ID)).toBe(true)
+    await nextTick()
+
+    store.setSessionRunState(SESSION_ID, 'idle')
+    expect(store.isStreaming(SESSION_ID)).toBe(false)
+    await nextTick()
+    await flushPromises()
+
+    expect(api.getMessages).toHaveBeenLastCalledWith(SESSION_ID, ROOT_BRANCH_ID)
+    expect(store.getMessages(SESSION_ID).map((message) => message.id)).toEqual([canonicalId])
+    wrapper.unmount()
   })
 })
 

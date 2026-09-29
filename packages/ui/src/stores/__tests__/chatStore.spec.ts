@@ -24,6 +24,31 @@ describe('useChatStore', () => {
     expect(store.getMessages('nonexistent')).toEqual([])
   })
 
+  it('keeps branch selection scoped to each session and defaults to its root', () => {
+    const store = useChatStore()
+    const root = {
+      branchId: 'root-a', parentBranchId: null, forkPointMessageId: null,
+      forkPointRunId: null, createdAt: '2026-09-29T00:00:00Z',
+    }
+    const child = {
+      branchId: 'child-a', parentBranchId: 'root-a', forkPointMessageId: 'message-a',
+      forkPointRunId: 'run-a', createdAt: '2026-09-29T00:01:00Z',
+    }
+    const otherRoot = {
+      branchId: 'root-b', parentBranchId: null, forkPointMessageId: null,
+      forkPointRunId: null, createdAt: '2026-09-29T00:00:00Z',
+    }
+
+    store.setSessionBranches('session-a', [root, child])
+    store.setSessionBranches('session-b', [otherRoot])
+
+    expect(store.getSelectedBranchId('session-a')).toBe(root.branchId)
+    expect(store.getSelectedBranchId('session-b')).toBe(otherRoot.branchId)
+    expect(store.selectBranch('session-a', child.branchId)).toBe(true)
+    expect(store.getSelectedBranchId('session-a')).toBe(child.branchId)
+    expect(store.getSelectedBranchId('session-b')).toBe(otherRoot.branchId)
+  })
+
   it('addMessage stores a message for a session', () => {
     const store = useChatStore()
     const msg = {
@@ -327,9 +352,15 @@ describe('useChatStore', () => {
       id: 'm1', sessionId: 's1', role: 'user' as const,
       content: 'x', timestamp: '2024-01-01',
     })
+    store.setSessionBranches('s1', [{
+      branchId: 'root', parentBranchId: null, forkPointMessageId: null,
+      forkPointRunId: null, createdAt: '2026-09-29T00:00:00Z',
+    }])
     store.createStreamingMessage('s1')
     store.clearSession('s1')
     expect(store.getMessages('s1')).toEqual([])
+    expect(store.getSessionBranches('s1')).toEqual([])
+    expect(store.getSelectedBranchId('s1')).toBeUndefined()
     expect(store.getStreamingMessageId('s1')).toBeNull()
     expect(store.isStreaming('s1')).toBe(false)
   })

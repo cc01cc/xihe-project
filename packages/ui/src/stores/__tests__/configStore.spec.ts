@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { useConfigStore, INSTANCE_DOMAINS, LAYER_DOMAINS } from '../config'
+import { useConfigStore, CONFIG_DOMAINS, INSTANCE_DOMAINS, LAYER_DOMAINS } from '../config'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -63,9 +63,11 @@ describe('useConfigStore', () => {
     })
 
     it('loadAllDomains fetches and updates mergedConfig', async () => {
+      const requestedDomains: string[] = []
       vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
         const url = typeof input === 'string' ? input : input.url
         const domain = url.split('/').pop()?.split('?')[0] ?? ''
+        requestedDomains.push(domain)
         const payload: Record<string, Record<string, string>> = {
           logging: { logLevel: 'DEBUG' },
           'llm-provider': { defaultProvider: 'deepseek', defaultModel: 'deepseek-chat' },
@@ -87,6 +89,10 @@ describe('useConfigStore', () => {
       expect(store.mergedConfig['llm-provider']?.defaultModel).toBe('deepseek-chat')
       expect(store.loading).toBe(false)
       expect(store.error).toBeNull()
+      expect(CONFIG_DOMAINS).not.toContain('agent-templates')
+      expect(INSTANCE_DOMAINS).toContain('agent-templates')
+      expect(requestedDomains).not.toContain('agent-templates')
+      expect(store.mergedConfig['agent-templates']).toBeUndefined()
     })
 
     it('loadAllDomains sets error on failure', async () => {
@@ -253,14 +259,14 @@ describe('useConfigStore', () => {
 
       await store.loadLayerDomains('workspace', 'ws-1')
 
-      // PLAN-0373: workspace 层新增 job-policy → 7 域。
-      expect(calls).toHaveLength(7)
+      // Workspace includes approval-policy, agent-templates, and job-policy.
+      expect(calls).toHaveLength(8)
       for (const call of calls) {
         expect(call.url).toContain('layer=workspace')
         expect(call.url).toContain('includeMeta=true')
         expect(call.url).toContain('workspaceId=ws-1')
       }
-      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(7)
+      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(8)
       expect(store.layerConfig.workspace['embedding']).toEqual({ 'workspace-embedding-key': 'value' })
       expect(store.envOverridden['embedding']).toEqual({ model: 'env-model' })
       expect(store.envOverridden['rag']).toEqual({})
@@ -282,17 +288,18 @@ describe('useConfigStore', () => {
       expect(store.layerConfig.user['job-policy']).toBeUndefined()
     })
 
-    it('loadLayerDomains loads the seven user domains without workspace query', async () => {
+    it('loadLayerDomains loads all eight user domains without workspace query', async () => {
       const calls = mockLayerFetch()
       const store = useConfigStore()
 
       await store.loadLayerDomains('user')
 
-      expect(calls).toHaveLength(7)
+      expect(calls).toHaveLength(8)
       for (const call of calls) {
         expect(call.url).toContain('layer=user')
         expect(call.url).not.toContain('workspaceId=')
       }
+      expect(calls.some((call) => call.url.includes('/config/agent-templates?layer=user'))).toBe(true)
       expect(store.layerConfig.user['logging']).toBeUndefined()
     })
 

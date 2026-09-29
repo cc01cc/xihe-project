@@ -55,6 +55,26 @@ const suggestions = computed(() =>
 const messages = computed(() => chatStore.getMessages(props.sessionId));
 const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
 const currentSession = computed(() => sessionStore.sessions.find((session) => session.id === props.sessionId));
+const sessionBranches = computed(() => chatStore.getSessionBranches(props.sessionId));
+const selectedBranchId = computed(() => chatStore.getSelectedBranchId(props.sessionId) ?? "");
+const branchOptions = computed(() => {
+    const byId = new Map(sessionBranches.value.map((branch) => [branch.branchId, branch]));
+    const depthOf = (branchId: string) => {
+        let depth = 0;
+        let parentId = byId.get(branchId)?.parentBranchId ?? null;
+        while (parentId && byId.has(parentId) && depth < 8) {
+            depth += 1;
+            parentId = byId.get(parentId)?.parentBranchId ?? null;
+        }
+        return depth;
+    };
+    return sessionBranches.value.map((branch) => ({
+        branchId: branch.branchId,
+        label: `${"- ".repeat(depthOf(branch.branchId))}${branch.parentBranchId === null
+            ? t("chat.branchMainPath")
+            : `${t("chat.branchPathOption")} ${branch.branchId.slice(0, 8)}`}`,
+    }));
+});
 const derivedState = ref<SessionDerivedStateResponse | null>(null);
 const derivedStateLoading = ref(false);
 const derivedStateError = ref(false);
@@ -78,8 +98,11 @@ const renderedMessages = computed(() =>
 const showPrincipalBinding = ref(false);
 const principalChoices = ref<WorkspaceAgentBinding[]>([]);
 const selectedPrincipalId = ref("");
-const pendingSend = ref<{ content: string; attachments?: AttachmentFile[] } | null>(null);
+const pendingSend = ref<{ content: string; attachments?: AttachmentFile[]; branchId: string } | null>(null);
 const loadingPrincipalChoices = ref(false);
+const creatingBranchForMessageId = ref<string | null>(null);
+const pendingBranchKeys = new Map<string, string>();
+let messageLoadRequestId = 0;
 
 const pendingApproval = computed(
     () =>
@@ -130,8 +153,17 @@ watch(pendingApproval, (approval, previous) => {
 const canClassifyApproval = computed(() => authStore.canClassifyTools);
 
 async function loadSessionMessages(sessionId: string) {
+    const requestId = ++messageLoadRequestId;
     try {
-        const rawMessages = await api.getMessages(sessionId);
+        let branchId = chatStore.getSelectedBranchId(sessionId);
+        if (!branchId) {
+            await chatStore.loadSessionBranches(sessionId);
+            branchId = chatStore.getSelectedBranchId(sessionId);
+        }
+        if (!branchId) return;
+        const rawMessages = await api.getMessages(sessionId, branchId);
+        if (props.sessionId !== sessionId || requestId !== messageLoadRequestId
+            || chatStore.getSelectedBranchId(sessionId) !== branchId) return;
         if (!Array.isArray(rawMessages)) return;
         chatStore.loadMessages(
             sessionId,
@@ -283,8 +315,10 @@ let previousSessionId: string | null = null;
 watch(
     () => props.sessionId,
     (sessionId) => {
+        messageLoadRequestId += 1;
         derivedStateRequestId += 1;
         waitingOnRequestId += 1;
+        creatingBranchForMessageId.value = null;
         derivedState.value = null;
         derivedStateError.value = false;
         derivedStateLoading.value = Boolean(sessionId);
@@ -301,13 +335,41 @@ watch(
     { immediate: true },
 );
 
-async function handleSend(content: string, attachments?: AttachmentFile[]) {
+watch(selectedBranchId, (branchId, previousBranchId) => {
+    if (branchId && branchId !== previousBranchId && props.sessionId) {
+        void loadSessionMessages(props.sessionId);
+    }
+});
+
+watch(isStreaming, (streaming, previous) => {
+    if (previous && !streaming && props.sessionId) {
+        void loadSessionMessages(props.sessionId);
+    }
+});
+
+async function handleSend(content: string, attachments?: AttachmentFile[], branchIdOverride?: string) {
     const id = props.sessionId;
     if (!id) return;
+    if (isStreaming.value) return;
+    let branchId: string | undefined = branchIdOverride ?? selectedBranchId.value;
+    if (!branchId) {
+        try {
+            await chatStore.loadSessionBranches(id);
+            branchId = branchIdOverride ?? chatStore.getSelectedBranchId(id);
+        } catch (cause) {
+            logger.error("Failed to load branch selector before Chat submission", cause);
+            toast.error(t("chat.branchLoadFailed"));
+            return;
+        }
+    }
+    if (!branchId) {
+        toast.error(t("chat.branchLoadFailed"));
+        return;
+    }
 
     const selectedPrincipal = currentSession.value?.agentPrincipalId;
     if (selectedPrincipal) {
-        await submitMessage(content, attachments, selectedPrincipal);
+        await submitMessage({ content, attachments, agentPrincipalId: selectedPrincipal, branchId });
         return;
     }
 
@@ -320,7 +382,7 @@ async function handleSend(content: string, attachments?: AttachmentFile[]) {
             toast.error(t("workspace.noBoundAgent"));
             return;
         }
-        pendingSend.value = { content, attachments };
+        pendingSend.value = { content, attachments, branchId };
         selectedPrincipalId.value = "";
         showPrincipalBinding.value = true;
     } catch (cause) {
@@ -332,14 +394,20 @@ async function handleSend(content: string, attachments?: AttachmentFile[]) {
     }
 }
 
-async function submitMessage(content: string, attachments: AttachmentFile[] | undefined,
-                             agentPrincipalId: string) {
+async function submitMessage(input: {
+    content: string;
+    attachments?: AttachmentFile[];
+    agentPrincipalId: string;
+    branchId: string;
+}) {
+    const { content, attachments, agentPrincipalId, branchId } = input;
     const id = props.sessionId;
 
     const fileIds = attachments
         ?.map((a) => a.fileId)
         .filter((fileId): fileId is string => fileId !== undefined);
     const result = await streamComponent.value?.sendMessage(content, {
+        branchId,
         attachments: fileIds,
         toolMode: props.toolMode,
         agentPrincipalId,
@@ -354,6 +422,7 @@ async function submitMessage(content: string, attachments: AttachmentFile[] | un
         role: "user",
         content,
         timestamp: new Date().toISOString(),
+        branchId,
         attachments,
         runId: result.runId,
         runStatus: result.status,
@@ -367,7 +436,12 @@ async function confirmPrincipalBinding() {
     const principalId = selectedPrincipalId.value;
     pendingSend.value = null;
     showPrincipalBinding.value = false;
-    await submitMessage(pending.content, pending.attachments, principalId);
+    await submitMessage({
+        content: pending.content,
+        attachments: pending.attachments,
+        agentPrincipalId: principalId,
+        branchId: pending.branchId,
+    });
 }
 
 async function handleRetry(messageId: string) {
@@ -381,7 +455,44 @@ async function handleRetry(messageId: string) {
         }
     }
     if (!userMessage) return;
-    await handleSend(userMessage.content);
+    await handleSend(userMessage.content, userMessage.attachments, userMessage.branchId);
+}
+
+function handleBranchSelection(event: Event) {
+    if (isStreaming.value) return;
+    const branchId = (event.target as HTMLSelectElement).value;
+    chatStore.selectBranch(props.sessionId, branchId);
+}
+
+async function handleCreateBranch(anchorMessageId: string) {
+    const sessionId = props.sessionId;
+    const sourceBranchId = selectedBranchId.value;
+    if (!sessionId || !sourceBranchId || isStreaming.value || creatingBranchForMessageId.value) return;
+
+    const keyScope = `${sessionId}:${sourceBranchId}:${anchorMessageId}`;
+    const idempotencyKey = pendingBranchKeys.get(keyScope) ?? crypto.randomUUID();
+    pendingBranchKeys.set(keyScope, idempotencyKey);
+    creatingBranchForMessageId.value = anchorMessageId;
+    try {
+        const created = await api.createSessionBranch(
+            sessionId,
+            { sourceBranchId, anchorMessageId },
+            idempotencyKey,
+        );
+        if (props.sessionId !== sessionId) return;
+        await chatStore.loadSessionBranches(sessionId);
+        chatStore.selectBranch(sessionId, created.branchId);
+        pendingBranchKeys.delete(keyScope);
+        toast.success(t("chat.branchCreated"));
+    } catch (cause) {
+        const message = cause instanceof ApiError
+            ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
+            : t("chat.branchCreateFailed");
+        logger.error("Failed to create Session branch", cause);
+        toast.error(message);
+    } finally {
+        if (props.sessionId === sessionId) creatingBranchForMessageId.value = null;
+    }
 }
 
 async function handleDeleteMessage(messageId: string) {
@@ -552,6 +663,23 @@ watch(
     <div class="flex flex-col h-full min-h-0 overflow-hidden">
         <SessionPolicyControls :session-id="sessionId" />
         <ContextSourcesU1 :session-id="sessionId" />
+        <div class="flex items-center gap-3 border-b px-4 py-2" data-testid="session-branch-selector">
+            <label :for="`session-branch-${sessionId}`" class="text-xs font-medium text-muted-foreground">
+                {{ t("chat.branchSelectorLabel") }}
+            </label>
+            <select
+                :id="`session-branch-${sessionId}`"
+                :value="selectedBranchId"
+                :disabled="isStreaming || branchOptions.length === 0 || creatingBranchForMessageId !== null || pendingSend !== null"
+                data-testid="session-branch-select"
+                class="min-w-0 rounded-md border bg-background px-2 py-1 text-xs disabled:opacity-50"
+                @change="handleBranchSelection"
+            >
+                <option v-for="branch in branchOptions" :key="branch.branchId" :value="branch.branchId">
+                    {{ branch.label }}
+                </option>
+            </select>
+        </div>
 
         <div
             v-if="runRecovery"
@@ -580,10 +708,12 @@ watch(
         <MessageList
             v-if="messages.length > 0"
             :messages="renderedMessages"
+            :branch-busy="creatingBranchForMessageId !== null"
             @approve="approveTool"
             @reject="rejectTool"
             @delete="handleDeleteMessage"
             @retry="handleRetry"
+            @branch="handleCreateBranch"
             @revert="openRevertPreview"
         />
 
