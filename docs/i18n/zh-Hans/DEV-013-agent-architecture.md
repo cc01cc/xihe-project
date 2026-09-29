@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 sidebar_order: 13
 status: active
 created: 2026-07-07
-updated: 2026-09-25
+updated: 2026-09-29
 ---
 
 # DEV-013: Agent 架构与接口抽象
@@ -117,7 +117,7 @@ flowchart TD
 | `context.source_changed` | AGENTS 等源变更（PLAN-0340：投影改为 **L1 槽替换**，不再追加 history；失败 `status=failed` 清 L1） |
 | `epoch.started` / `epoch.replaced` | epoch 开始/替换 |
 | `runtime.state_cleared` | `AgentRunner.reset()` |
-| `session.forked` | 会话 fork |
+| `session.forked` | 会话 fork；child seed 用投影 `messages` + 可选 SUM 初始化 child history，child EventStore sequence 为本地 cursor；忽略 source `at_sequence`（PLAN-0410 T3.6） |
 | `compaction.applied` | 上下文压缩——自动/overflow 触发，ChatRun-scoped（correlation=Run，PLAN-0410 §4）；PLAN-0341：`messages` 不再写入摘要，摘要仅 `epoch.system_messages`/`summary_hash` |
 | `compaction.manual_applied` | 上下文压缩——**手动触发（无 Run）**，branch-targeted：correlation 恒 NULL、branch 为 CP 校验的显式值（PLAN-0410 D7-B1=C）；payload 与应用语义同 `compaction.applied` |
 | `context.prune` | prune 墓碑（PLAN-0341 T1.2：`tool_call_id`/hash/size/首尾 + `pruned`；投影按 hash 原地替换，防复活） |

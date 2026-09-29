@@ -146,13 +146,28 @@ TOKEN=$(
   python3 -c 'import sys,json; print(json.load(sys.stdin)["accessToken"])'
 )
 
+# 2.1a 查询当前 Workspace 与一个已绑定的 Agent principal
+WORKSPACE_ID=$(
+  curl -sS -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/auth/me" |
+  python3 -c 'import sys,json; print(json.load(sys.stdin)["workspaceId"])'
+)
+# 从当前 Workspace 的 Agent principal 列表中选择一个 principalId
+curl -sS -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/workspaces/$WORKSPACE_ID/agents"
+AGENT_PRINCIPAL_ID="<principalId>"
+
 # 2.2 创建一个真实 Session（/events 要求 Session 已属于当前用户和 Workspace，不会自动创建）
 SESSION_ID=$(
   curl -sS -X POST "http://localhost:12631/api/v1/sessions" \
     -H "Authorization: Bearer $TOKEN" \
     -H 'Content-Type: application/json' \
-    -d '{"title":"curl verification"}' |
+    -d "{\"title\":\"curl verification\",\"agentPrincipalId\":\"$AGENT_PRINCIPAL_ID\"}" |
   python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])'
+)
+
+# 2.2a 查询服务端创建的 root branch；Chat 不再隐式回退到 root
+BRANCH_ID=$(
+  curl -sS -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/sessions/$SESSION_ID/branches" |
+  python3 -c 'import sys,json; print(next(x["branchId"] for x in json.load(sys.stdin)["items"] if x["parentBranchId"] is None))'
 )
 
 # 2.3 终端 A：保持 SSE 长连接（阻塞；用第二个终端执行 2.4/2.5）
@@ -172,7 +187,7 @@ curl -sS -H "Authorization: Bearer $TOKEN" "http://localhost:12631/api/v1/models
 curl -sS -X POST "http://localhost:12631/api/v1/chat" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d "{\"sessionId\":\"$SESSION_ID\",\"content\":\"hi\"}"
+  -d "{\"sessionId\":\"$SESSION_ID\",\"branchId\":\"$BRANCH_ID\",\"content\":\"hi\"}"
 ```
 
 | 陷阱 | 排查 |

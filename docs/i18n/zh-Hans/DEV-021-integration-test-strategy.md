@@ -88,9 +88,11 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         // Act: 通过 CP 公共端点触发 → CP 内部转发到 Agent
         String token = registerAndLogin();
+        String sessionId = fixture.sessionId();
+        String branchId = fixture.rootBranchId(sessionId);
         var response = restTemplate.postForEntity(
             url("/api/v1/chat"),
-            httpEntity(Map.of("content", "hello"), token),
+            httpEntity(Map.of("sessionId", sessionId, "branchId", branchId, "content", "hello"), token),
             String.class);
 
         // Assert: WireMock 验证 CP 发出的请求格式

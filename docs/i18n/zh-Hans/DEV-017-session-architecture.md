@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 status: active
 sidebar_order: 17
 created: 2026-09-03
-updated: 2026-09-25
+updated: 2026-09-29
 ---
 
 # DEV-017: Session 架构
@@ -23,6 +23,8 @@ Session、ChatRun/Operation 和 Runtime MCP session 的目标态生命周期边�
 - [`spec/session/chat-run-operation.md`](../../../spec/session/chat-run-operation.md)
 - [`spec/session/mcp-session.md`](../../../spec/session/mcp-session.md)
 - [`spec/session/branch-context-isolation.md`](../../../spec/session/branch-context-isolation.md)（同一 Session 内的分支可见性与 cursor；PLAN-0410）
+- [`spec/session/fork-and-branch-actions.md`](../../../spec/session/fork-and-branch-actions.md)（跨 Session fork、child seed 与幂等恢复；PLAN-0409）
+- [`spec/session/derived-collaboration-inbox.md`](../../../spec/session/derived-collaboration-inbox.md)（parent Inbox terminal notice 生命周期；PLAN-0408）
 
 这些文档不把三类生命周期合并，也不改变本 DEV 文档和 CP/Runtime 代码的当前事实源。
 
@@ -34,6 +36,8 @@ Session 是用户一次连贯工作上下文，独立于视图：
 |------|------|
 | Session/Message | 以 CP 服务端 API 为 canonical source；不落 localStorage，历史值不恢复 |
 | 派生来源（PLAN-0407 M2） | V37 保存 `spawned_from_session_id/run_id/spawned_at`；V40 用 `kind=spawn/fork` 区分权限 lineage。root 为全空 provenance；spawn 沿父 Agent Session 收敛权限/停止，fork 保留来源链接但作为独立权限根；删除父后子转独立 root（T2.5）。PLAN-0407 T2.10 通过 CP-owned logical MCP `spawn_agent` caller 接入独立 grant/approval、waiting link 与 child dispatch；Agent 不直调 `/internal/v1/agents/spawn` |
+| Fork context seed（PLAN-0409/0410） | `session.forked` child root event 携带 selected branch/terminal anchor 前的投影消息与可选 SUM；child EventStore sequence 是 child-local cursor，parent 来源字段仅作 lineage，不参与 child 授权；Workspace L1 在 child Run 前刷新 |
+| 派生协作通知（PLAN-0408） | child terminal 写入 parent Inbox 为 durable source；父 ChatRun 可在创建事务领取；UI 从 derived-state API 恢复，SSE 仅作 refresh hint；parent 删除不级联 child |
 | Message | 属于 Session，由 `useChatStore` 按 `sessionId` 索引；生命周期（创建/流式/完成）走 chat store |
 | Attachment | Session-scoped；后端 Session 专属空间持久化（`{base}/{sessionId}/` 下按 fileId 存取），`Message.attachments` 存元数据；workspace 对附件只读（文件本身经 workspace store 可写，见 DEV-010 §5） |
 | File | 物理文件归 Runtime；Session 经 `fileContext` 存引用（workspaceFiles/activeFilePath） |
@@ -60,12 +64,12 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 - 每个 Session 恰有一个 root `session_branches` 行（partial unique）；非 root 分支携带 `parent_branch_id` + `fork_point_message_id/run_id/sequence`（同 Session、同 parent branch 由 anchor composite FK 保证）。`messages`/`chat_runs`/`context_projections.branch_id NOT NULL`、`context_events.branch_id NULL`；投影唯一键 `(session_id, projection_type, branch_id)`。
 - 每个 ChatRun/Message 创建时由 CP 固化 branchId 且 Run 分支不可变；可见集 = Session/global 事件 ∪ 每层祖先段至 child `fork_point_sequence` ∪ 当前分支（cursor 仍是 Session 全局 sequence，不引入 per-branch 计数）。
 - anchor 必须属于 terminal Run：`'USER'` 锚取该 Run 唯一 `prompt.admitted` sequence、`'ASSISTANT'` 锚取 Run 最大 correlated sequence；不可锚定（legacy 无 correlation/无 cursor）一律 409 fail-closed，不用 wall-clock 猜测。
-- 同 Session 单飞不变（`409 CHAT_IN_PROGRESS`）；公开 branch 创建/切换、`409 BRANCH_LOCK`、`ChatRequest.branchId` 与浏览器验收归 **PLAN-0409**。契约见 [`spec/session/branch-context-isolation.md`](../../../spec/session/branch-context-isolation.md)，内部 API 见 DEV-014 §8d。
+- 同 Session 单飞不变（`409 CHAT_IN_PROGRESS`）；公开 `GET/POST /api/v1/sessions/{sessionId}/branches`、`GET /messages?branchId=`、`ChatRequest.branchId`、manual compact `branchId` 与 `409 BRANCH_LOCK` 归 **PLAN-0409**。UI path 选择按 Session 隔离；服务器仍按 V43/0410 可见性解析，不信任客户端 parent/anchor 推断。契约见 [`spec/session/branch-context-isolation.md`](../../../spec/session/branch-context-isolation.md)，内部 API 见 DEV-014 §8d。
 
 ## 2. Store 职责边界（选项 B：共享 + 视图分离）
 
 - **useSessionStore**（`stores/session.ts`，跨视图）：`sessions`、`currentSessionId`、`searchQuery`、附件投影、`fileContext`；独占创建/删除/重命名 Session；`setFileContext`/`setSessionAgents`/`setRAGContext`/`setMCPContext`。
-- **useChatStore**（`stores/chat.ts`，视图层）：按 Session 分组 `messages`、`streamingMessageId`；`getMessages/addMessage/addMarker`；流式三件套 `createStreamingMessage` / `replaceStreamingParts`（整量替换 MessagePart[]，PLAN-230）/ `finalizeStreaming`；不存 Session 元数据与 Agent/RAG/MCP 配置。
+- **useChatStore**（`stores/chat.ts`，视图层）：按 Session 分组 `messages`、branch list/selected branch 与 `streamingMessageId`；`getMessages/addMessage/addMarker`；branch selector 是 UI path 状态，不是授权事实；流式三件套 `createStreamingMessage` / `replaceStreamingParts`（整量替换 MessagePart[]，PLAN-230）/ `finalizeStreaming`；不存 Session 元数据与 Agent/RAG/MCP 配置。
 - **useWorkspaceStore**（`stores/workspace.ts`，视图层）：`fileTree`、`expandedPaths`、`openFiles`、`activeFilePath`、`uploadQueue`；可选地通过 `syncActiveFileToSession()` 回写当前 Session 的文件上下文；不存 Session 元数据。没有当前 Session 时，Workspace 文件操作和 Workspace 事件订阅仍可工作，不能伪造 Session。文件变更操作（`renameNode/moveNode/duplicateNode/createDirectory`）返回 `Promise<boolean>`，调用方按结果分支 toast（禁假成功，PLAN-262 M1/B-2）；`refreshAfterMutation` 保持展开态；上传按 MIME 分派（文本 `write_file` MCP / 二进制 `POST /api/v1/files/upload`，PLAN-262 M0/B-3）。v1 无导入入口。
 
 ## 3. 跨 Store 同步

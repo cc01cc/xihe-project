@@ -58,7 +58,7 @@ sequenceDiagram
 
 ## 实现差距
 
-- Agent `EventType` literal 与 `AgentContext.apply_event()` 对 `context.prune`、`context.env_updated` 的覆盖尚未完全一致。
+- Agent `EventType` literal 与 `AgentContext.apply_event()` 均覆盖 `context.prune`、`context.env_updated`；CP Event Store 自由字符串尚未形成跨层机器校验闭环。
 - Agent payload 目前没有独立 Agent principal/schema；该 gap 由 PLAN-0374 与 Security 前置决策承接。
 
 ## 验证映射

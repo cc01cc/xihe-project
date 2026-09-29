@@ -143,10 +143,71 @@ paths:
   /api/v1/sessions:
     get: { operationId: listSessions, security: [{ bearerAuth: [] }], responses: { '200': { description: Sessions } } }
     post: { operationId: createSession, security: [{ bearerAuth: [] }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/sessions/{sessionId}/branches:
+    get:
+      operationId: listSessionBranches
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Branches in this Session, content: { application/json: { schema: { $ref: '#/components/schemas/SessionBranchListResponse' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createSessionBranch
+      description: sourceBranchId selects the visible path used to validate the anchor. parentBranchId is the branch that owns the anchor Message/Run under V43 and may therefore be an ancestor of sourceBranchId.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionBranchCreateRequest' }
+      responses:
+        '201': { description: Created branch or same-key replay, content: { application/json: { schema: { $ref: '#/components/schemas/SessionBranchCreatedResponse' } } } }
+        '400': { description: INVALID_REQUEST / IDEMPOTENCY_KEY_REQUIRED, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { description: IDEMPOTENCY_KEY_CONFLICT / BRANCH_LOCK / BRANCH_ANCHOR_INVALID / BRANCH_ANCHOR_UNAVAILABLE / BRANCH_ANCHOR_RUN_ACTIVE / BRANCH_ANCHOR_ROLE_UNSUPPORTED, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/sessions/{sessionId}/fork:
+    post:
+      operationId: forkSession
+      summary: Create an independent child Session from a terminal branch anchor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionForkRequest' }
+      responses:
+        '201':
+          description: New child Session; child rows and seed become visible only after atomic publication.
+          headers:
+            Location: { required: true, schema: { type: string }, description: Child Session URL }
+          content: { application/json: { schema: { $ref: '#/components/schemas/SessionForkResponse' } } }
+        '200':
+          description: Same-key/same-hash replay of the completed fork; returns the original child.
+          headers:
+            Location: { required: true, schema: { type: string }, description: Original Child Session URL }
+          content: { application/json: { schema: { $ref: '#/components/schemas/SessionForkResponse' } } }
+        '400': { description: IDEMPOTENCY_KEY_REQUIRED / INVALID_REQUEST, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: SESSION_NOT_FOUND / BRANCH_ANCHOR_NOT_FOUND / RUN_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: IDEMPOTENCY_KEY_CONFLICT / IDEMPOTENCY_REQUEST_IN_PROGRESS / FORK_REQUEST_IN_PROGRESS / FORK_SOURCE_ATTACHMENT_CHANGED / BRANCH_ANCHOR_INVALID / BRANCH_ANCHOR_UNAVAILABLE / BRANCH_ANCHOR_RUN_ACTIVE / BRANCH_ANCHOR_ROLE_UNSUPPORTED / SESSION_PRINCIPAL_REQUIRED, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '500': { description: INTERNAL_ERROR; fork publication failed after request validation, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '503': { description: FORK_CLEANUP_PENDING; child remains unpublished and can be retried with the same key, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}:
     get: { operationId: getSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
-    delete: { operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+    delete: { operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the source Session is being copied, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/derived-state:
     get:
       operationId: getSessionDerivedState
@@ -158,7 +219,23 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/compact:
-    post: { operationId: compactSessionContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { upToSequence: { type: integer, format: int64, description: Optional compaction cursor } } } } } }, responses: { '200': { description: 'Manual compaction applied (sequence/eventType/created_at); 409 when a chat run is active' }, '409': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+    post:
+      operationId: compactSessionContext
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionCompactRequest' }
+      responses:
+        '200': { description: Manual branch-targeted compaction, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCompactResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { description: BRANCH_LOCK while the Session has an active ChatRun, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/oauth/sessions:
     post:
       operationId: startOAuthSession
@@ -289,7 +366,7 @@ paths:
         Accepts a user message for the given session and enqueues an async relay to the Agent.
         The caller must already hold an active `GET /api/v1/events?sessionId=` subscription for the same session;
         otherwise the request is rejected with `409 SSE_SUBSCRIPTION_REQUIRED`.
-        Only one in-flight run per session is allowed (`409 CHAT_IN_PROGRESS`).
+        Each request must identify its selected branch with `branchId`; the branch is validated before durable Run/Message creation and remains bound through Run ID recovery. Only one in-flight run per session is allowed (`409 CHAT_IN_PROGRESS`).
         The accepted run streams `token` events followed by a terminal `done` over the persistent session SSE —
         `done` ends the run, not the SSE connection. The SSE remains reusable for the next chat.
         A new run is rejected with `403 FORBIDDEN` unless the persisted Session resolves to an active Agent principal
@@ -299,11 +376,7 @@ paths:
         Historical/user-operation/tool-event Sessions cannot be bound by this path.
       security: [{ bearerAuth: [] }]
       parameters:
-        - in: header
-          name: Idempotency-Key
-          required: false
-          schema: { type: string, maxLength: 128 }
-          description: Reuses an existing run for the same request hash; conflicting payloads return 409.
+        - { in: header, name: Idempotency-Key, required: false, schema: { type: string, maxLength: 128 }, description: Reuses an existing run for the same request hash, including branchId; conflicting payloads return 409. }
       requestBody:
         required: true
         content:
@@ -323,7 +396,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
         '409':
-          description: SSE subscription missing or run already active
+          description: SSE subscription missing, run already active, or idempotency key reused with a different branch/request
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -757,9 +830,20 @@ paths:
     get: { operationId: exportConfig, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }, { in: query, name: includeSecrets, required: false, schema: { type: boolean, default: true } }], responses: { '200': { description: JSON configuration (plaintext secrets unless includeSecrets=false) } } }
   # /api/v1/providers removed (PLAN-0307 T2.22): use /api/v1/provider-connections + /api/v1/provider-catalog
   /api/v1/sessions/{sessionId}/messages:
-    get: { operationId: listMessages, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Messages } } }
+    get:
+      operationId: listMessages
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: branchId, required: true, schema: { type: string, format: uuid }, description: Returns only messages visible on this server-resolved branch path. }
+      responses:
+        '200': { description: Messages visible on the selected branch path, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SessionMessage' } } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/messages/{messageId}:
-    delete: { operationId: deleteMessage, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+    delete: { operationId: deleteMessage, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the Session snapshot is copying, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/attachments:
     post: { operationId: uploadAttachments, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Upload result } } }
   /api/v1/sessions/{sessionId}/attachments/{fileId}:
@@ -1649,7 +1733,25 @@ components:
        properties:
          counts: { type: object, required: [deleted, kept], properties: { deleted: { type: integer }, kept: { type: integer } } }
     Session: { type: object, required: [id, workspaceId, title, archived, agentPrincipalId], properties: { id: { type: string }, workspaceId: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    SessionForkResponse:
+      allOf:
+        - { $ref: '#/components/schemas/Session' }
+        - type: object
+          required: [kind, spawnedFromSessionId, spawnedFromRunId, spawnedAt]
+          properties:
+            kind: { type: string, enum: [fork] }
+            spawnedFromSessionId: { type: string, format: uuid, description: Lineage only; not an authorization root. }
+            spawnedFromRunId: { type: string, format: uuid, description: Lineage only; not an authorization root. }
+            spawnedAt: { type: string, format: date-time }
     SessionCreateRequest: { type: object, required: [agentPrincipalId], properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] }, agentPrincipalId: { type: string, format: uuid } } }
+    SessionForkRequest: { type: object, additionalProperties: false, required: [sourceBranchId, anchorMessageId], properties: { sourceBranchId: { type: string, format: uuid }, anchorMessageId: { type: string, format: uuid } } }
+    SessionBranchCreateRequest: { type: object, additionalProperties: false, required: [sourceBranchId, anchorMessageId], properties: { sourceBranchId: { type: string, format: uuid, description: Selected branch path used to validate anchor visibility. }, anchorMessageId: { type: string, format: uuid } } }
+    SessionBranchListResponse: { type: object, additionalProperties: false, required: [sessionId, items], properties: { sessionId: { type: string, format: uuid }, items: { type: array, items: { $ref: '#/components/schemas/SessionBranch' } } } }
+    SessionBranch: { type: object, additionalProperties: false, required: [branchId, createdAt], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: [string, 'null'], format: uuid, description: Branch that owns the fork-point Message/Run; it can be an ancestor of the requested sourceBranchId. }, forkPointMessageId: { type: [string, 'null'], format: uuid }, forkPointRunId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
+    SessionBranchCreatedResponse: { type: object, additionalProperties: false, required: [branchId, parentBranchId, forkPointMessageId], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: string, format: uuid }, forkPointMessageId: { type: string, format: uuid } } }
+    SessionCompactRequest: { type: object, additionalProperties: false, required: [branchId], properties: { branchId: { type: string, format: uuid }, upToSequence: { type: integer, format: int64, minimum: 0 } } }
+    SessionCompactResponse: { type: object, additionalProperties: false, required: [sequence, eventType, createdAt], properties: { sequence: { type: integer, format: int64 }, eventType: { type: string, const: compaction.manual_applied }, createdAt: { type: string, format: date-time } } }
+    SessionMessage: { type: object, required: [id, sessionId, role, content, createdAt, attachments], properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, role: { type: string, enum: [USER, ASSISTANT] }, content: { type: string }, createdAt: { type: string, format: date-time }, runId: { type: string, format: uuid }, runStatus: { type: string }, terminalOutcome: { type: string }, errorCode: { type: string }, errorDetail: { type: string }, partial: { type: boolean }, jobSummary: { type: array, items: { type: object } }, attachments: { type: array, items: { type: object } } } }
     SessionUpdateRequest: { type: object, properties: { title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'] } } }
     SessionDerivedStateResponse:
        type: object
@@ -1678,7 +1780,7 @@ components:
          name: { type: [string, 'null'] }
          state: { type: string, enum: [success, error, partial, ambiguous, cancelled] }
          terminalAt: { type: string, format: date-time }
-    ChatRequest: { type: object, required: [sessionId, content], properties: { sessionId: { type: string }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
+    ChatRequest: { type: object, required: [sessionId, branchId, content], properties: { sessionId: { type: string }, branchId: { type: string, format: uuid, description: Required selected branch; included in Chat idempotency request hash. }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
     ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, operationId: { type: string, format: uuid, readOnly: true, description: Durable Operation Ledger root for this ChatRun }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     ChatApprovalDecisionRequest:
       type: object

@@ -162,7 +162,7 @@ sequenceDiagram
   Note over Human,RT: 场景 A: 聊天消息流 — 持久会话 SSE (PLAN-230)
   UI->>CP: GET /api/v1/events?sessionId=xxx (会话级持久 SSE, heartbeat 15s)
   Human->>UI: 输入消息 #1
-  UI->>CP: POST /api/v1/chat {sessionId, content} (202 + runId)
+  UI->>CP: POST /api/v1/chat {sessionId, branchId, content} (202 + runId)
   CP->>Agent: POST /internal/v1/agent/chat {stream:true, X-Request-Id, X-Chat-Run-Id}
   Agent-->>CP: SSE stream (多个 token chunk, streaming=True)
   CP-->>UI: SSE event: token (×n) → done (仅结束 run, SSE 保留)
@@ -212,7 +212,7 @@ chat 与 workspace 可以在同一工作界面协作，但 Workspace 是独立�
 ## 6. ChatRun 与工具边界（PLAN-247）
 
 - `POST /api/v1/chat` 是唯一聊天提交入口；`GET /api/v1/events?sessionId=` 是会话级持久 SSE，`done` 只结束当前 run。
-- CP 在 gate 通过后持久化 `ChatRun` 与 user `Message`，以 `(userId, sessionId, Idempotency-Key)` 幂等；`Message.runId` 关联 durable terminal outcome。
+- CP 在 gate 通过后持久化 `ChatRun` 与 user `Message`，以 `(userId, sessionId, Idempotency-Key)` 幂等；request hash 含所选 `branchId`，并由 Run/Message 固化；`Message.runId` 关联 durable terminal outcome。
 - `success`、`error`、`partial`、`ambiguous` 是不同终态。连接断开且无法证明 provider 未执行时为 `ambiguous`，禁止自动 retry；人工确认后使用新 idempotency key。
 - UI 仅在首个 token/reasoning/artifact 后创建 assistant bubble；空失败不会留下 ghost row，错误同时有 inline 状态和 Toast。
 - 普通 Chat 固定 `toolMode=none`，不触发 MCP discovery；Workspace/tool 操作显式使用 `toolMode=workspace`。Agent MCP client 不跨 workspace 复用，无法隔离时 fail-fast。

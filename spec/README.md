@@ -52,8 +52,8 @@ spec/
 | architecture / communication | proposed | partial | 跨边界 owner | PLAN-0385；Session 派生状态 SSE extension 顺序承接至 PLAN-0408；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
 | ui interaction | proposed | partial | UI + 跨边界 owner | PLAN-0388；PLAN-0384 仅负责 feature flow |
 | agent execution / Context | proposed | partial | Agent owner | PLAN-0387；0381/0382 仍为局部规范 |
-| session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开 |
-| session branch context isolation | proposed | partial | CP Context + Agent Context owners | PLAN-0410；V43 数据面已实现（root/branch schema、branch path/cursor、per-branch 投影与 Agent 输入、并发与 fail-closed 验证），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费，不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
+| session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408 |
+| session branch context isolation | active | partial | CP Context + Agent Context owners | PLAN-0410；V43 数据面已实现并承接 child `session.forked` seed consumer（T3.6），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费；不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
 | authentication / authorization | proposed | partial | Security owner | PLAN-0386；principal/role/scope 归 Security |
 | agent role/scope binding | proposed | partial | Agent owner | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
 | agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | PLAN-0374 principal/Workspace binding、template CRUD/form 与 V5/V6/V7 已完成；fork 创建归 PLAN-0409/0410；Agent 铸造与多层审批后置 BL-70/71 |
@@ -104,11 +104,19 @@ PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑�
 - [ChatRun 与 Operation 生命周期](session/chat-run-operation.md)
 - [Runtime MCP Session 生命周期](session/mcp-session.md)
 
+PLAN-0408 建立 parent Session 派生 child terminal Inbox 的独立生命周期规范；不修改 PLAN-0387 的 Session 生命周期规范：
+
+- [派生协作 Inbox 生命周期](session/derived-collaboration-inbox.md)
+
 PLAN-0374 冻结 Agent principal 与 Workspace 绑定契约（V42 schema、Session admission、管理 API/UI 波次已实现；fork 创建归 PLAN-0409、`agent-templates` 写入授权归 T3.1b、模板/角色表单归 T3.3；Security principal/grant canonical 归 PLAN-0407）：
 
 - [Agent principal 与 Workspace 绑定](agent/principal-workspace-binding.md)
 
-PLAN-0410 建立 Session branch-aware Context proposed 契约，单独拥有分支祖先路径、Run cursor、EventStore 投影与 compaction/prune 隔离；实现仍未开始，用户可见 fork/branch API 与浏览器验收由 PLAN-0409 承接：
+PLAN-0409 冻结跨 Session fork 与同 Session branch actions；child fork seed 消费由 PLAN-0410 独占维护：
+
+- [Session Fork 与 Branch Actions](session/fork-and-branch-actions.md)
+
+PLAN-0410 拥有 Session branch-aware Context 契约、分支祖先路径、Run cursor、EventStore 投影与 compaction/prune 隔离，并承接 child `session.forked` seed 的 CP/Agent 消费；用户可见 fork/branch API 与浏览器验收由 PLAN-0409 承接：
 
 - [Session 分支上下文隔离](session/branch-context-isolation.md)
 

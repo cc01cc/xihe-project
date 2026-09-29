@@ -228,14 +228,14 @@ sequenceDiagram
   UI->>CP: GET /api/v1/events?sessionId=xxx (persistent SSE per session, 1 emitter/session, heartbeat 15s)
   CP-->>UI: event: connected (generation bumps, replaces prior emitter)
   Human->>UI: Input message #1
-  UI->>CP: POST /api/v1/chat {sessionId, content, runId=run-1} (validate hasEmitter, single-flight lease)
+  UI->>CP: POST /api/v1/chat {sessionId, branchId, content, runId=run-1} (validate branch, hasEmitter, single-flight lease)
   CP->>Agent: POST /internal/v1/agent/chat {stream:true, X-Request-Id, X-Chat-Run-Id: run-1}
   Agent-->>CP: SSE stream on_chat_model_stream (multiple token chunks, streaming=True)
   CP-->>UI: SSE event: token (×n, incremental)
   Agent-->>CP: SSE event: done (terminates run-1)
   CP-->>UI: SSE event: done (run only, SSE retained)
   Human->>UI: Input message #2 (reuses same SSE, no reconnect needed)
-  UI->>CP: POST /api/v1/chat {sessionId, content, runId=run-2} (202 accepted)
+  UI->>CP: POST /api/v1/chat {sessionId, branchId, content, runId=run-2} (202 accepted)
   CP->>Agent: POST /internal/v1/agent/chat {stream:true, run-2}
   Agent-->>CP: SSE token ×m
   CP-->>UI: SSE token ×m
@@ -427,7 +427,7 @@ See `plans/PLAN-030-XH-chat-attachment-backend.md` and `plans/PLAN-031-XH-chat-a
 ## 9. ChatRun and Tool Boundary (PLAN-247)
 
 - `POST /api/v1/chat` is the only chat submission endpoint; `GET /api/v1/events?sessionId=` is persistent session SSE and `done` terminates only the current run.
-- After the CP gate passes, CP persists a `ChatRun` and user `Message`, deduplicated by `(userId, sessionId, Idempotency-Key)`; `Message.runId` links the durable terminal outcome.
+- After the CP gate passes, CP persists a `ChatRun` and user `Message`, deduplicated by `(userId, sessionId, Idempotency-Key)`; the request hash includes the selected `branchId`, which is persisted on Run/Message; `Message.runId` links the durable terminal outcome.
 - `success`, `error`, `partial`, and `ambiguous` are distinct outcomes. A disconnect whose provider execution cannot be ruled out is `ambiguous`, with no automatic retry; a confirmed manual retry uses a new idempotency key.
 - The UI creates an assistant bubble only after the first token/reasoning/artifact; an empty failure leaves no ghost row and exposes both inline state and a toast.
 - Normal Chat is fixed to `toolMode=none` and does not trigger MCP discovery. Workspace/tool actions explicitly use `toolMode=workspace`; Agent MCP clients never reuse tools across workspaces and fail fast when isolation is unavailable.

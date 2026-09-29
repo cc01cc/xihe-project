@@ -1,13 +1,13 @@
 # Session 分支上下文隔离
 
-> 契约状态：`proposed`  
+> 契约状态：`active`
 > Profile：`protocol`  
 > Owner：CP Context + Agent Context owners（PLAN-0410）  
 > 消费者：CP Chat/EventStore/Context、Agent Context、PLAN-0407、PLAN-0409  
 > 来源：PLAN-0410  
-> 更新日期：2026-09-26
+> 更新日期：2026-09-29
 >
-> 实现状态：`partial`（**PLAN-0410 已完成 2026-09-26**：M0–M3 数据面 + T0.3 taxonomy 冻结——V43 schema、branch path/cursor、per-branch 投影与 Agent 输入、并发与 fail-closed 验证、三类 event taxonomy 与未登记类型 fail-closed 门、`compaction.manual_applied` branch-targeted 拆分；公开 branch selector、fork 动作与浏览器验收仍归 PLAN-0409，故保持 partial）
+> 实现状态：`partial`（V43 branch path/cursor、per-branch 投影与 Agent 输入已实现；child `session.forked` seed consumer 由 PLAN-0410 T3.6 实施；公开 branch selector、fork producer/API 与浏览器验收由 PLAN-0409 实施）
 
 ## 范围
 
@@ -20,6 +20,7 @@
 3. 给定 branch 的 Agent 输入只包含 Session/global facts、祖先路径中未被子 branch fork cursor 截断的 facts，以及当前 branch facts。兄弟 branch 与 cursor 之后的消息、工具结果、摘要、usage、prune tombstone 和 recovery/circuit 状态不可见。
 4. Branch 只过滤上下文，不授予读取 Session、Workspace、Message、Attachment 或 Run 的权限；CP 必须继续执行既有 principal、owner 和 Workspace 授权。
 5. Session-wide EventStore sequence 保持唯一事实源；branch path 通过 parent 与 cursor 过滤，不创建 per-branch sequence 或第二套 EventStore。
+6. `kind=fork` child 是独立 Session 与 permission root；parent Session/Run 仅是创建时 lineage，不得作为 child 后续 Chat、Agent Context 或授权检查的可用性前置条件。
 
 ## Anchor 与 cursor
 
@@ -33,6 +34,9 @@
 - Run-scoped Agent events 必须携带 canonical `correlation_id=ChatRun.id`。CP 校验 Run 所属 Session 后派生 branchId；请求体不得覆盖 Session、Workspace、principal 或 branch 权威。未知 EventType 在登记分类前不得被默认视为 global。
 - User-triggered manual compaction 经 CP 校验 branch 后写入 branch-scoped event，不伪造 ChatRun correlation；Run-triggered compaction 从 durable ChatRun.branchId 派生。
 - ContextProjection 按 Session 和 branch 独立缓存及重建；`latestCompaction`、manual/automatic/overflow compaction、preflight、UsageAggregator、recovery-band、circuit 与 prune replay 必须使用同一 branch path。Session/global L1 与环境事实仅按明确 taxonomy 共享。
+- Child `session.forked` seed 是 Session/global root event，事件行 `branch_id=NULL`、`correlation_id=NULL`；其持久化 sequence 是 child-local projection/compaction cursor。Source branch 与 anchor cursor 只选择 seed 输入，不作为 child cursor。
+- Seed 含 anchor 前规范化 `messages` 和可选 SUM `summary`/`summaryHash`，并分配新的 child-owned `contextEpoch`；不复制 source Run/correlation/usage/runtime/audit state。Source projection 与 summary lookup 必须经同一 branch path 且 `sequence <= anchorCursor`，不能让 anchor 后的 compaction 进入 child。
+- CP `ContextProjectionService` 与 Agent `AgentContext.apply_event("session.forked")` 对 seed 产生等价 messages/SUM。Parent L1/env 不复制；既有 per-run `ContextSourceRefreshService` 在 child 首次 Chat 前重新装入 Workspace L1。
 - Agent 只消费 CP 为当前 durable Run 解析的 snapshot。不得按 sessionId 重新读取整段历史覆盖 path filter。必需 ContextEvent append 或 snapshot 失败时必须可观测并使 Run 显式失败，禁止静默继续或回退到完整 Session history。
 
 ## 存量数据
@@ -43,4 +47,4 @@
 
 ## 实现映射
 
-具体表字段、复合外键、索引、迁移版本、EventType taxonomy、internal payload、测试与验收命令以 PLAN-0410 `spec/branch-aware-context.md`、tasks 和 verify 为准。公开 route、branchId 请求契约及真实 UI 验收以 PLAN-0409 为准；本规范不替代 OpenAPI 或 Flyway。
+具体表字段、复合外键、索引、迁移版本、EventType taxonomy、internal payload、测试与验收命令以 PLAN-0410 `spec/branch-aware-context.md`、`spec/field-matrix.md`、tasks 和 verify 为准。公开 route、branchId/fork 请求契约及真实 UI 验收以 PLAN-0409 为准；本规范不替代 OpenAPI 或 Flyway。

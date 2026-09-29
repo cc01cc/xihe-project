@@ -37,7 +37,7 @@ PLAN-0381 负责 tool-call/result durable message shape、projection round-trip�
 
 ## 当前实现差距
 
-- `AgentContext.apply_event()` 已处理 `context.prune` 与 `context.env_updated`，但 Python `EventType` literal 尚未覆盖它们。
+- `AgentContext.apply_event()` 与 Python `EventType` literal 均覆盖 `context.prune` 与 `context.env_updated`；CP Event Store 仍接收自由字符串，跨层机器校验 gap 见下一条。
 - CP Event Store 接收自由字符串 `eventType`，机器校验与 Agent 类型声明尚未形成闭环。
 - 当前 tool/output 真实字段由 Agent adapter、CP relay、Operation Ledger 和 Runtime artifact contract 分散拥有。
 

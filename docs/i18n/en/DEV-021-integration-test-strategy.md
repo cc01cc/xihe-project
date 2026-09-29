@@ -94,9 +94,11 @@ class AgentChatIntegrationTest {
 
         // Act: Trigger via CP HTTP endpoint → CP internally forwards to Agent
         String token = registerAndLogin();
+        String sessionId = fixture.sessionId();
+        String branchId = fixture.rootBranchId(sessionId);
         var response = restTemplate.postForEntity(
-            url("/v1/chat"),
-            httpEntity(Map.of("content", "hello"), token),
+            url("/api/v1/chat"),
+            httpEntity(Map.of("sessionId", sessionId, "branchId", branchId, "content", "hello"), token),
             String.class);
 
         // Assert: WireMock verifies CP's outgoing request format
