@@ -127,17 +127,101 @@ def test_agent_context_apply_epoch_started():
     assert ctx.epoch.sources[0].key == "agents_md"
 
 
-def test_agent_context_apply_session_forked():
+def test_agent_context_apply_legacy_session_forked_ignores_source_cursor():
     ctx = AgentContext.empty("session-2")
     event = Event(
         aggregate_id="session-2",
         sequence=1,
         type="session.forked",
-        payload={"source_session_id": "session-1", "at_sequence": 5},
+        payload={
+            "source_session_id": "session-1",
+            "anchor_message_id": "message-5",
+            "at_sequence": 5,
+        },
         created_at=datetime.now(UTC),
     )
     ctx.apply_event(event)
-    assert ctx.metadata["forked_from"] == {"source_session_id": "session-1", "at_sequence": 5}
+    assert ctx.latest_sequence == 1
+    assert ctx.metadata["forked_from"] == {
+        "source_session_id": "session-1",
+        "anchor_message_id": "message-5",
+    }
+    assert "at_sequence" not in ctx.metadata["forked_from"]
+
+
+def test_agent_context_apply_fork_seed_restores_messages_and_summary():
+    ctx = AgentContext.empty("session-2")
+    ctx.runtime_state["tool_calls"] = [{"call_id": "parent-call"}]
+    event = Event(
+        aggregate_id="session-2",
+        sequence=7,
+        type="session.forked",
+        payload={
+            "source_session_id": "session-1",
+            "anchor_message_id": "message-5",
+            "at_sequence": 50,
+            "summary_seed": {
+                "messages": [
+                    {"role": "human", "content": "earlier prompt"},
+                    {"role": "tool", "content": "visible tool result"},
+                    {"role": "ai", "content": "last answer"},
+                ],
+                "summary": "earlier history summary",
+                "summaryHash": "sha256-seed",
+                "contextEpoch": "child-epoch-1",
+            },
+        },
+        created_at=datetime.now(UTC),
+    )
+
+    ctx.apply_event(event)
+
+    assert ctx.latest_sequence == 7
+    assert [(message.role, message.content) for message in ctx.messages] == [
+        ("human", "earlier prompt"),
+        ("tool", "visible tool result"),
+        ("ai", "last answer"),
+    ]
+    assert ctx.epoch is not None
+    assert ctx.epoch.epoch_id == "child-epoch-1"
+    assert ctx.epoch.summary_hash == "sha256-seed"
+    assert ctx.epoch.system_messages == [
+        "Conversation summary of compacted history:",
+        "earlier history summary",
+    ]
+    assert ctx.runtime_state == {}
+    assert ctx.metadata["forked_from"] == {
+        "source_session_id": "session-1",
+        "anchor_message_id": "message-5",
+    }
+
+
+def test_agent_context_apply_uncompressed_fork_seed_has_messages_without_summary_baseline():
+    ctx = AgentContext.empty("session-2")
+    event = Event(
+        aggregate_id="session-2",
+        sequence=2,
+        type="session.forked",
+        payload={
+            "source_session_id": "session-1",
+            "anchor_message_id": "message-2",
+            "summary_seed": {
+                "messages": [{"role": "human", "content": "uncompressed history"}],
+                "contextEpoch": "child-epoch-2",
+            },
+        },
+        created_at=datetime.now(UTC),
+    )
+
+    ctx.apply_event(event)
+
+    assert ctx.latest_sequence == 2
+    assert len(ctx.messages) == 1
+    assert ctx.messages[0].content == "uncompressed history"
+    assert ctx.epoch is not None
+    assert ctx.epoch.epoch_id == "child-epoch-2"
+    assert ctx.epoch.summary_hash == ""
+    assert ctx.epoch.system_messages == []
 
 
 def test_agent_context_apply_compaction():

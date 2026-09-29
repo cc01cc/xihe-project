@@ -63,8 +63,8 @@ class TestAgentCPIntegration:
         r = httpx.post(f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5)
         assert r.status_code == 401
 
-    def test_chat_endpoint_accepts_authenticated_request(self):
-        """CP /v1/chat returns 202 with valid auth."""
+    def test_chat_endpoint_rejects_missing_session_with_explicit_branch(self):
+        """Authenticated Chat requests still require an existing Session and branch."""
         email = f"chat-{time.time():.0f}@test.com"
         # Register
         r = httpx.post(
@@ -72,33 +72,24 @@ class TestAgentCPIntegration:
             json={"email": email, "password": "Pass1234!", "name": "Test"},
             timeout=10,
         )
-        assert r.status_code in (200, 201)
-        assert "accessToken" in r.json()
+        auth = r.json()
+        token = auth["accessToken"]
 
-    def test_chat_endpoint_requires_auth(self):
-        """CP /v1/chat returns 401 without auth token."""
-        r = httpx.post(f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5)
-        assert r.status_code == 401
-
-    def test_chat_endpoint_accepts_authenticated_request(self):
-        """CP /v1/chat returns 202 with valid auth."""
-        email = f"chat-{time.time():.0f}@test.com"
-        # Register
-        r = httpx.post(
-            f"{CP_URL}/api/v1/auth/register",
-            json={"email": email, "password": "Pass1234!", "name": "Test"},
-            timeout=10,
-        )
-        token = r.json()["accessToken"]
-
-        # Chat
         r = httpx.post(
             f"{CP_URL}/api/v1/chat",
-            json={"content": "hello", "sessionId": "test"},
-            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "content": "hello",
+                "sessionId": "00000000-0000-0000-0000-000000000000",
+                "branchId": "00000000-0000-0000-0000-000000000000",
+            },
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Workspace-Id": auth["workspaceId"],
+            },
             timeout=10,
         )
-        assert r.status_code in [200, 202, 409]  # 202 Accepted, 409 = no SSE session
+        assert r.status_code == 404
+        assert r.json()["code"] == "SESSION_NOT_FOUND"
 
     def test_mcp_endpoint_returns_tools(self):
         """CP /api/v1/mcp tools/list returns tool list."""

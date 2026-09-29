@@ -70,7 +70,7 @@ class TestAgentCPRealIntegration:
         r = httpx.post(f"{CP_URL}/api/v1/chat", json={"content": "hi"}, timeout=5)
         assert r.status_code == 401
 
-    def test_chat_endpoint_accepts_authenticated_request(self):
+    def test_chat_endpoint_rejects_missing_session_with_explicit_branch(self):
         email = f"chat-{time.time():.0f}@test.com"
         r = httpx.post(
             f"{CP_URL}/api/v1/auth/register",
@@ -78,15 +78,24 @@ class TestAgentCPRealIntegration:
             timeout=10,
         )
         assert r.status_code in (200, 201)
-        token = r.json()["accessToken"]
+        auth = r.json()
+        token = auth["accessToken"]
 
         r = httpx.post(
             f"{CP_URL}/api/v1/chat",
-            json={"content": "hello", "sessionId": "test"},
-            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "content": "hello",
+                "sessionId": "00000000-0000-0000-0000-000000000000",
+                "branchId": "00000000-0000-0000-0000-000000000000",
+            },
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Workspace-Id": auth["workspaceId"],
+            },
             timeout=10,
         )
-        assert r.status_code in [200, 202, 409]
+        assert r.status_code == 404
+        assert r.json()["code"] == "SESSION_NOT_FOUND"
 
     def test_mcp_endpoint_returns_response(self):
         r = httpx.post(

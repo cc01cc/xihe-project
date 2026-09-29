@@ -131,10 +131,14 @@ class AgentContext:
         elif event_type == "runtime.state_cleared":
             self.clear_runtime_state()
         elif event_type == "session.forked":
-            self.metadata["forked_from"] = {
-                "source_session_id": payload.get("source_session_id"),
-                "at_sequence": payload.get("at_sequence"),
-            }
+            forked_from: dict[str, str] = {}
+            if payload.get("source_session_id"):
+                forked_from["source_session_id"] = payload["source_session_id"]
+            if payload.get("anchor_message_id"):
+                forked_from["anchor_message_id"] = payload["anchor_message_id"]
+            self.metadata["forked_from"] = forked_from
+            if "summary_seed" in payload:
+                self._apply_fork_seed(payload)
         elif event_type in ("compaction.applied", "compaction.manual_applied"):
             # PLAN-0341 T1.4 (V4): summary lives only in epoch.system_messages
             # (SUM). messages is truncated to the keep-recent tail — never
@@ -241,6 +245,51 @@ class AgentContext:
                     q["answer"] = payload.get("answer", "")
                     break
         return self
+
+    def _apply_fork_seed(self, payload: dict[str, Any]) -> None:
+        seed = payload.get("summary_seed")
+        if not isinstance(seed, dict):
+            raise ValueError("session.forked summary_seed must be an object")
+        raw_messages = seed.get("messages")
+        context_epoch = seed.get("contextEpoch")
+        if not isinstance(raw_messages, list) or not isinstance(context_epoch, str) or not context_epoch:
+            raise ValueError("session.forked summary_seed requires messages and child contextEpoch")
+
+        messages: list[Message] = []
+        for raw_message in raw_messages:
+            if not isinstance(raw_message, dict):
+                raise ValueError("session.forked summary_seed message must be an object")
+            role = raw_message.get("role")
+            content = raw_message.get("content")
+            if role not in {"human", "ai", "tool"} or not isinstance(content, str):
+                raise ValueError("session.forked summary_seed message has invalid role/content")
+            messages.append(TextMessage(role=role, content=content))
+
+        summary = seed.get("summary", "")
+        summary_hash = seed.get("summaryHash", "")
+        if not isinstance(summary, str) or not isinstance(summary_hash, str):
+            raise ValueError("session.forked summary and summaryHash must be strings")
+        if bool(summary.strip()) != bool(summary_hash.strip()):
+            raise ValueError("session.forked summary and summaryHash must be present together")
+
+        previous = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])
+        system_messages = previous.system_messages
+        if summary:
+            system_messages = ["Conversation summary of compacted history:", summary]
+        self.messages = messages
+        self.runtime_state.clear()
+        self.epoch = ContextEpoch(
+            epoch_id=context_epoch,
+            baseline_hash=previous.baseline_hash,
+            system_messages=system_messages,
+            sources=previous.sources,
+            source_hash=previous.source_hash,
+            summary_hash=summary_hash,
+            l1_rendered=previous.l1_rendered,
+            env_branch=previous.env_branch,
+            env_head=previous.env_head,
+            env_is_repository=previous.env_is_repository,
+        )
 
     def _add_message_from_payload(self, payload: dict[str, Any], role: str) -> None:
         content = ""
