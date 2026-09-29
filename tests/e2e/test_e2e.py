@@ -89,9 +89,21 @@ def _create_session(base_url: str, name: str) -> tuple[str, dict[str, str]]:
     return session.json()["id"], headers
 
 
+def _root_branch_id(base_url: str, session_id: str, headers: dict[str, str]) -> str:
+    response = httpx.get(
+        f"{base_url}/api/v1/sessions/{session_id}/branches",
+        headers=headers,
+        timeout=10,
+        trust_env=False,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["items"][0]["branchId"]
+
+
 def test_e2e_chat(backend_stack):
     """User sends message → Agent replies via CP → UI receives SSE."""
     session_id, headers = _create_session(backend_stack["cp_url"], "e2e-chat")
+    branch_id = _root_branch_id(backend_stack["cp_url"], session_id, headers)
     events_url = f"{backend_stack['cp_url']}/api/v1/events?sessionId={session_id}"
 
     with httpx.stream("GET", events_url, headers=headers, timeout=30, trust_env=False) as events_response:
@@ -101,7 +113,7 @@ def test_e2e_chat(backend_stack):
 
         chat_response = httpx.post(
             f"{backend_stack['cp_url']}/api/v1/chat",
-            json={"sessionId": session_id, "content": "你好", "stream": True, "toolMode": "none"},
+            json={"sessionId": session_id, "branchId": branch_id, "content": "你好", "stream": True, "toolMode": "none"},
             headers=headers,
             timeout=30,
             trust_env=False,
@@ -117,6 +129,7 @@ def test_e2e_chat(backend_stack):
 def test_e2e_tool_call(backend_stack):
     """User asks to read file → Agent calls tool → returns file content."""
     session_id, headers = _create_session(backend_stack["cp_url"], "e2e-tool")
+    branch_id = _root_branch_id(backend_stack["cp_url"], session_id, headers)
     events_url = f"{backend_stack['cp_url']}/api/v1/events?sessionId={session_id}"
 
     with httpx.stream("GET", events_url, headers=headers, timeout=30, trust_env=False) as events_response:
@@ -126,7 +139,7 @@ def test_e2e_tool_call(backend_stack):
 
         chat_response = httpx.post(
             f"{backend_stack['cp_url']}/api/v1/chat",
-            json={"sessionId": session_id, "content": "读取 test.txt", "stream": True, "toolMode": "workspace"},
+            json={"sessionId": session_id, "branchId": branch_id, "content": "读取 test.txt", "stream": True, "toolMode": "workspace"},
             headers=headers,
             timeout=30,
             trust_env=False,

@@ -12,6 +12,12 @@ AGENT_URL = "http://localhost:8000"
 RUNTIME_URL = "http://localhost:8001"
 
 
+def _root_branch_id(session_id, headers):
+    response = httpx.get(f"{CP_URL}/api/v1/sessions/{session_id}/branches", headers=headers, timeout=10)
+    assert response.status_code == 200, response.text
+    return response.json()["items"][0]["branchId"]
+
+
 # ── 服务健康检查 ──────────────────────────────────────────────────────────
 
 @pytest.mark.e2e
@@ -135,16 +141,18 @@ class TestChatFlow:
 
     def test_chat_returns_accepted(self):
         session_id, headers = self._create_session()
+        branch_id = _root_branch_id(session_id, headers)
         r = httpx.post(f"{CP_URL}/api/v1/chat",
-            json={"content": "hello", "sessionId": session_id, "toolMode": "none"},
+            json={"content": "hello", "sessionId": session_id, "branchId": branch_id, "toolMode": "none"},
             headers=headers,
             timeout=15)
         assert r.status_code in [200, 201, 202, 409]  # 409 = session already exists
 
     def test_chat_persists_message(self):
         session_id, headers = self._create_session()
+        branch_id = _root_branch_id(session_id, headers)
         r = httpx.post(f"{CP_URL}/api/v1/chat",
-            json={"content": "持久化测试", "sessionId": session_id, "toolMode": "none"},
+            json={"content": "持久化测试", "sessionId": session_id, "branchId": branch_id, "toolMode": "none"},
             headers=headers,
             timeout=15)
         assert r.status_code in [200, 201, 202, 409]

@@ -82,6 +82,11 @@ async def test_chat_sse():
             log(f"❌ 创建 session 失败 ({session.status_code})")
             return False
         session_id = session.json()["id"]
+        branches = await c.get(f"{CP_URL}/api/v1/sessions/{session_id}/branches", headers=headers)
+        if branches.status_code != 200 or not branches.json().get("items"):
+            log(f"❌ 读取 session branches 失败 ({branches.status_code})")
+            return False
+        branch_id = branches.json()["items"][0]["branchId"]
     
         log("✅ 认证成功")
 
@@ -105,7 +110,8 @@ async def test_chat_sse():
                     if event_type == "connected" and not chat_sent:
                         chat_resp = await c.post(
                             f"{CP_URL}/api/v1/chat",
-                            json={"content": "用中文说你好", "sessionId": session_id, "toolMode": "none"},
+                            json={"content": "用中文说你好", "sessionId": session_id,
+                                  "branchId": branch_id, "toolMode": "none"},
                             headers=headers,
                         )
                         if chat_resp.status_code != 202:

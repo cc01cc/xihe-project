@@ -18,6 +18,17 @@ os.environ.pop("ALL_PROXY", None)
 os.environ.pop("all_proxy", None)
 
 
+def _root_branch_id(cp_url: str, session_id: str, headers: dict[str, str]) -> str:
+    response = httpx.get(
+        f"{cp_url}/api/v1/sessions/{session_id}/branches",
+        headers=headers,
+        timeout=10,
+        trust_env=False,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["items"][0]["branchId"]
+
+
 @pytest.mark.integration
 class TestFullChatFlow:
     """验证注册 → 登录 → 发消息 → SSE 响应完整链路。"""
@@ -50,9 +61,10 @@ class TestFullChatFlow:
         """完整流程：注册 → 登录 → 发消息 → 接受请求。"""
         cp_url = backend_stack["cp_url"]
         session_id, headers = self._create_session(cp_url, "Flow Test")
+        branch_id = _root_branch_id(cp_url, session_id, headers)
         r = httpx.post(
             f"{cp_url}/api/v1/chat",
-            json={"content": "hello", "sessionId": session_id, "toolMode": "none"},
+            json={"content": "hello", "sessionId": session_id, "branchId": branch_id, "toolMode": "none"},
             headers=headers,
             timeout=15,
             trust_env=False,
@@ -119,17 +131,19 @@ class TestSessionIsolation:
         cp_url = backend_stack["cp_url"]
         session_a, headers = self._create_session(cp_url, "Session A")
         session_b, _ = self._create_session(cp_url, "Session B", headers)
+        branch_a = _root_branch_id(cp_url, session_a, headers)
+        branch_b = _root_branch_id(cp_url, session_b, headers)
 
         r1 = httpx.post(
             f"{cp_url}/api/v1/chat",
-            json={"content": "session A message", "sessionId": session_a, "toolMode": "none"},
+            json={"content": "session A message", "sessionId": session_a, "branchId": branch_a, "toolMode": "none"},
             headers=headers,
             timeout=15,
             trust_env=False,
         )
         r2 = httpx.post(
             f"{cp_url}/api/v1/chat",
-            json={"content": "session B message", "sessionId": session_b, "toolMode": "none"},
+            json={"content": "session B message", "sessionId": session_b, "branchId": branch_b, "toolMode": "none"},
             headers=headers,
             timeout=15,
             trust_env=False,
@@ -142,11 +156,12 @@ class TestSessionIsolation:
         """同一会话并发请求不会崩溃。"""
         cp_url = backend_stack["cp_url"]
         session_id, headers = self._create_session(cp_url, "Concurrent")
+        branch_id = _root_branch_id(cp_url, session_id, headers)
 
         def send_chat(i: int) -> int:
             r = httpx.post(
                 f"{cp_url}/api/v1/chat",
-                json={"content": f"msg-{i}", "sessionId": session_id, "toolMode": "none"},
+                json={"content": f"msg-{i}", "sessionId": session_id, "branchId": branch_id, "toolMode": "none"},
                 headers=headers,
                 timeout=15,
                 trust_env=False,
@@ -187,10 +202,11 @@ class TestChatPersistence:
         """聊天消息被持久化。"""
         cp_url = backend_stack["cp_url"]
         session_id, headers = self._create_session(cp_url)
+        branch_id = _root_branch_id(cp_url, session_id, headers)
 
         r = httpx.post(
             f"{cp_url}/api/v1/chat",
-            json={"content": "持久化测试消息", "sessionId": session_id, "toolMode": "none"},
+            json={"content": "持久化测试消息", "sessionId": session_id, "branchId": branch_id, "toolMode": "none"},
             headers=headers,
             timeout=15,
             trust_env=False,

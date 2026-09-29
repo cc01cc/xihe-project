@@ -90,9 +90,21 @@ def _create_session(base_url: str) -> tuple[str, dict[str, str]]:
     return session.json()["id"], headers
 
 
+def _root_branch_id(base_url: str, session_id: str, headers: dict[str, str]) -> str:
+    response = httpx.get(
+        f"{base_url}/api/v1/sessions/{session_id}/branches",
+        headers=headers,
+        timeout=10,
+        trust_env=False,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["items"][0]["branchId"]
+
+
 def test_ui_dev_proxy_stream(ui_stack):
     """Vite dev proxy should stream CP responses through /api."""
     session_id, headers = _create_session(ui_stack["ui_url"])
+    branch_id = _root_branch_id(ui_stack["ui_url"], session_id, headers)
     events_url = f"{ui_stack['ui_url']}/api/v1/events?sessionId={session_id}"
 
     with httpx.stream("GET", events_url, headers=headers, timeout=30, trust_env=False) as events_response:
@@ -105,6 +117,7 @@ def test_ui_dev_proxy_stream(ui_stack):
             f"{ui_stack['ui_url']}/api/v1/chat",
             json={
                 "sessionId": session_id,
+                "branchId": branch_id,
                 "content": "读取 test.txt",
                 "stream": True,
                 "toolMode": "workspace",
