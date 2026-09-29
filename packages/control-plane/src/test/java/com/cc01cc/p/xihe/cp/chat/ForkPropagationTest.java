@@ -1,8 +1,11 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.Message;
+import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -17,12 +20,14 @@ import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.awaitility.Awaitility;
@@ -43,6 +48,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -56,14 +62,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * （{@code ChatRunTerminalService.lockParentLink} 的 kind 门）、权限祖先路径只沿
  * kind=spawn / fork 为新 root（{@code GrantPrincipalPathResolver} 直连断言，spec §3.2）。
  *
- * <p><b>PLAN-0409-pending（本类不断言、不发明）</b>：
+ * <p><b>PLAN-0409 fork 生产路径（已落地，本类不重复断言）</b>：
  * <ul>
- *   <li>fork Session 的生产创建路径不存在——main 中没有任何写入 {@code kind='fork'}
- *       的生产代码（fork rows 仅由测试 fixture 构造；{@code ContextController.fork}
- *       是 PLAN-0410 分支概念，与 sessions.kind 无关）；</li>
- *   <li>{@code fork run_id → SET NULL 降级} 未实现：V37 只加了三列 + 部分索引、
- *       无 FK（V37__session_provenance.sql:7-18），该降级归 PLAN-0409
- *       （authorization spec §8 下游消费冻结表）。</li>
+ *   <li>fork Session 的生产创建路径为 {@code SessionForkService.fork} →
+ *       {@code SessionService.createForkSession}（写入 {@code kind='fork'}），
+ *       端到端行为由 {@code SessionForkIntegrationTest} 覆盖；</li>
+ *   <li>{@code fork run_id → SET NULL 降级}已由
+ *       {@code SessionForkIntegrationTest#forkEndpointCopiesIndependentRowsReplaysAndSurvivesParentDeletion}
+ *       覆盖（V4）。</li>
  * </ul>
  */
 class ForkPropagationTest extends AbstractIntegrationTest {
@@ -118,6 +124,21 @@ class ForkPropagationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private MessageRepository messageRepository;
+
+    @Autowired
+    private BranchPathService branchPathService;
+
+    @Autowired
+    private EventStoreService eventStoreService;
+
+    @Autowired
+    private SessionForkService sessionForkService;
+
+    @Autowired
+    private MessageController messageController;
 
     private String userId;
     private String workspaceId;
@@ -299,7 +320,103 @@ class ForkPropagationTest extends AbstractIntegrationTest {
                 "a deleted source Session/Run must not invalidate the fork's own permission root");
     }
 
+    /**
+     * V7 缺失子句：删除 fork child 侧不得改动 source——本类既有用例只覆盖反向
+     * （删 source 后 fork 存活），这里断言 sessions / messages / chat_runs 三表
+     * 逐项计数与删除前相等，且 source 的 messages 读取照常返回全部可见行。
+     */
+    @Test
+    void deletingForkChildLeavesSourceUntouched() {
+        ensureWorkspace();
+        Session parent = new Session(workspaceId, userId, "Fork child delete source");
+        parent.setId(UUID.randomUUID());
+        parent.setAgentPrincipalId(principalId.toString());
+        parent.setAgentPermissionsSnapshot(capNode());
+        parent.setModelProvider("openai");
+        parent.setModelName("gpt-test");
+        parent = sessionRepository.saveAndFlush(parent);
+        String sourceId = parent.getId().toString();
+
+        String rootBranchId = branchPathService.ensureRootBranchId(sourceId);
+        String runId = UUID.randomUUID().toString();
+        ChatRun run = new ChatRun(runId, sourceId, userId, workspaceId,
+                "fork-child-delete-" + runId, "b".repeat(64), "openai", "gpt-test", "none", "succeeded");
+        run.setBranchId(rootBranchId);
+        run.setTerminalAt(Instant.now());
+        run.setTerminalOutcome("success");
+        run = chatRunRepository.saveAndFlush(run);
+
+        Message userMessage = new Message(sourceId, MessageRole.USER, "fork child delete prompt");
+        userMessage.setRunId(runId);
+        userMessage.setBranchId(rootBranchId);
+        userMessage = messageRepository.saveAndFlush(userMessage);
+        Message assistantMessage = new Message(sourceId, MessageRole.ASSISTANT, "fork child delete answer");
+        assistantMessage.setRunId(runId);
+        assistantMessage.setBranchId(rootBranchId);
+        assistantMessage = messageRepository.saveAndFlush(assistantMessage);
+        run.setUserMessageId(userMessage.getId().toString());
+        run.setAssistantMessageId(assistantMessage.getId().toString());
+        chatRunRepository.saveAndFlush(run);
+
+        eventStoreService.append(sourceId, workspaceId, userId, "prompt.admitted",
+                Map.of("message", Map.of("role", "human", "content", "fork child delete prompt")),
+                runId, rootBranchId);
+        eventStoreService.append(sourceId, workspaceId, userId, "assistant.responded",
+                Map.of("message", Map.of("role", "ai", "content", "fork child delete answer")),
+                runId, rootBranchId);
+
+        SessionForkService.ForkResult forked = sessionForkService.fork(sourceId, userId, workspaceId,
+                rootBranchId, assistantMessage.getId().toString(), "fork-child-delete-key");
+        assertFalse(forked.replayed());
+        Session child = forked.session();
+        assertEquals(Session.KIND_FORK, child.getKind());
+        assertEquals(parent.getId(), child.getSpawnedFromSessionId());
+
+        int sessionsBefore = countRows("select count(*) from sessions where id = ?", parent.getId());
+        int messagesBefore = countRows("select count(*) from messages where session_id = ?", parent.getId());
+        int runsBefore = countRows("select count(*) from chat_runs where session_id = ?", parent.getId());
+        assertEquals(1, sessionsBefore);
+        assertEquals(2, messagesBefore);
+        assertEquals(1, runsBefore);
+
+        sessionService.delete(child.getId().toString(), userId, workspaceId);
+
+        assertTrue(sessionRepository.findById(child.getId()).isEmpty());
+        assertEquals(sessionsBefore, countRows("select count(*) from sessions where id = ?", parent.getId()),
+                "deleting the fork child must not touch the source Session row");
+        assertEquals(messagesBefore, countRows("select count(*) from messages where session_id = ?", parent.getId()),
+                "deleting the fork child must not touch source Message rows");
+        assertEquals(runsBefore, countRows("select count(*) from chat_runs where session_id = ?", parent.getId()),
+                "deleting the fork child must not touch source ChatRun rows");
+
+        ResponseEntity<?> sourceMessages = listMessagesViaController(sourceId, rootBranchId);
+        assertEquals(HttpStatus.OK, sourceMessages.getStatusCode());
+        assertEquals(2, ((List<?>) sourceMessages.getBody()).size(),
+                "the source messages read stays healthy after the child is deleted");
+    }
+
     // ── fixtures ────────────────────────────────────────────────────────────
+
+    private int countRows(String sql, Object id) {
+        return jdbcTemplate.queryForObject(sql, Integer.class, id);
+    }
+
+    /** 与 {@link #cancelViaController} 同一手法：直连 Controller 需要 SecurityContext + TenantContext。 */
+    private ResponseEntity<?> listMessagesViaController(String sessionId, String branchId) {
+        com.cc01cc.p.xihe.cp.config.TenantContext.setUserId(userId);
+        com.cc01cc.p.xihe.cp.config.TenantContext.setWorkspaceId(workspaceId);
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        userId, null,
+                        List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                                "ROLE_USER"))));
+        try {
+            return messageController.listMessages(sessionId, branchId);
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            com.cc01cc.p.xihe.cp.config.TenantContext.clear();
+        }
+    }
 
     /**
      * cancel 的 settle 会 fire-and-forget 排队 checkpoint capture（后台单线程）；

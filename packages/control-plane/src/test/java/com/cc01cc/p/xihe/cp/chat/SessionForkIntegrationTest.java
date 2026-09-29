@@ -578,6 +578,244 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void forkWithoutIdempotencyKeyIsRejected() throws Exception {
+        Source source = createSource("missing idempotency key bytes"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        Map<String, Object> body = Map.of(
+                "sourceBranchId", source.branchId(),
+                "anchorMessageId", source.anchorMessageId());
+        ResponseEntity<Map> response = restTemplate.exchange(
+                url("/api/v1/sessions/" + source.session().getId() + "/fork"),
+                HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("IDEMPOTENCY_KEY_REQUIRED", response.getBody().get("code"));
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "select count(*) from session_fork_requests where source_session_id = ?",
+                Integer.class, source.session().getId()),
+                "a rejected fork must not reserve a request row");
+    }
+
+    @Test
+    void sameAnchorDifferentKeysCreateDistinctChildren() throws Exception {
+        Source source = createSource("distinct idempotency keys bytes"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+
+        ResponseEntity<Map> first = postFork(source, "fork-key-distinct-one", source.anchorMessageId());
+        ResponseEntity<Map> second = postFork(source, "fork-key-distinct-two", source.anchorMessageId());
+        assertEquals(HttpStatus.CREATED, first.getStatusCode());
+        assertEquals(HttpStatus.CREATED, second.getStatusCode());
+
+        String firstChild = (String) first.getBody().get("id");
+        String secondChild = (String) second.getBody().get("id");
+        assertNotNull(firstChild);
+        assertNotNull(secondChild);
+        assertNotEquals(firstChild, secondChild,
+                "the same anchor under different Idempotency-Keys must publish distinct children");
+        assertEquals(2, jdbcTemplate.queryForObject(
+                "select count(*) from session_fork_requests where source_session_id = ?",
+                Integer.class, source.session().getId()));
+        assertEquals(2, jdbcTemplate.queryForObject(
+                "select count(*) from sessions where kind = ? and spawned_from_session_id = ?",
+                Integer.class, Session.KIND_FORK, source.session().getId()));
+    }
+
+    @Test
+    void forkWithoutAgentPrincipalIsRejected() throws Exception {
+        Session principalless = sessionService.createWithId(UUID.randomUUID().toString(), userId, workspaceId,
+                "Principal-less fork source", "openai", "gpt-test");
+        assertNull(principalless.getAgentPrincipalId());
+        String sessionId = principalless.getId().toString();
+        String branchId = branchPathService.ensureRootBranchId(sessionId);
+
+        String runId = UUID.randomUUID().toString();
+        ChatRun run = new ChatRun(runId, sessionId, userId, workspaceId,
+                "no-principal-" + runId, "a".repeat(64), "openai", "gpt-test", "none", "succeeded");
+        run.setBranchId(branchId);
+        run.setTerminalAt(Instant.now());
+        run.setTerminalOutcome("success");
+        run = chatRunRepository.saveAndFlush(run);
+
+        Message userMessage = new Message(sessionId, MessageRole.USER, "principal-less prompt");
+        userMessage.setRunId(runId);
+        userMessage.setBranchId(branchId);
+        userMessage = messageRepository.saveAndFlush(userMessage);
+        Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, "principal-less answer");
+        assistantMessage.setRunId(runId);
+        assistantMessage.setBranchId(branchId);
+        assistantMessage = messageRepository.saveAndFlush(assistantMessage);
+        run.setUserMessageId(userMessage.getId().toString());
+        run.setAssistantMessageId(assistantMessage.getId().toString());
+        chatRunRepository.saveAndFlush(run);
+
+        ResponseEntity<Map> response = postForkBody(sessionId, "fork-key-no-principal",
+                Map.of("sourceBranchId", branchId,
+                        "anchorMessageId", assistantMessage.getId().toString()));
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals("SESSION_PRINCIPAL_REQUIRED", response.getBody().get("code"));
+        assertTrue(forkRequestRepository
+                .findBySourceSessionIdAndIdempotencyKey(principalless.getId(), "fork-key-no-principal").isEmpty());
+    }
+
+    @Test
+    void forkByNonOwnerReturnsNotFound() throws Exception {
+        Source source = createSource("non-owner fork bytes"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+
+        String otherEmail = "session-fork-other-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        ResponseEntity<AuthResponse> registered = restTemplate.postForEntity(
+                url("/api/v1/auth/register"),
+                new RegisterRequest(otherEmail, com.cc01cc.p.xihe.cp.integration.TestDataFactory.PASSWORD,
+                        "SessionForkOtherUser"),
+                AuthResponse.class);
+        assertEquals(HttpStatus.CREATED, registered.getStatusCode());
+        String otherToken = registered.getBody().getAccessToken();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(otherToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", "fork-key-non-owner");
+        Map<String, Object> body = Map.of(
+                "sourceBranchId", source.branchId(),
+                "anchorMessageId", source.anchorMessageId());
+        ResponseEntity<Map> response = restTemplate.exchange(
+                url("/api/v1/sessions/" + source.session().getId() + "/fork"),
+                HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        assertEquals("SESSION_NOT_FOUND", response.getBody().get("code"));
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "select count(*) from session_fork_requests where source_session_id = ?",
+                Integer.class, source.session().getId()));
+    }
+
+    @Test
+    void siblingPathAnchorIsRejected() throws Exception {
+        Source source = createSource("sibling path anchor bytes"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+        String sessionId = source.session().getId().toString();
+
+        ResponseEntity<Map> branch = postBranch(source, "branch-sibling-anchor",
+                source.branchId(), source.anchorMessageId());
+        assertEquals(HttpStatus.CREATED, branch.getStatusCode());
+        String branchId = (String) branch.getBody().get("branchId");
+
+        String branchRunId = UUID.randomUUID().toString();
+        ChatRun branchRun = new ChatRun(branchRunId, sessionId, userId, workspaceId,
+                "sibling-anchor-" + branchRunId, "c".repeat(64), "openai", "gpt-test", "none", "succeeded");
+        branchRun.setBranchId(branchId);
+        branchRun.setTerminalAt(Instant.now());
+        branchRun.setTerminalOutcome("success");
+        branchRun = chatRunRepository.saveAndFlush(branchRun);
+        Message siblingMessage = new Message(sessionId, MessageRole.USER, "branch-only prompt");
+        siblingMessage.setRunId(branchRunId);
+        siblingMessage.setBranchId(branchId);
+        siblingMessage = messageRepository.saveAndFlush(siblingMessage);
+        branchRun.setUserMessageId(siblingMessage.getId().toString());
+        chatRunRepository.saveAndFlush(branchRun);
+        eventStoreService.append(sessionId, workspaceId, userId, "prompt.admitted",
+                Map.of("message", Map.of("role", "human", "content", "branch-only prompt")),
+                branchRunId, branchId);
+
+        ResponseEntity<Map> response = postFork(source, "fork-key-sibling-anchor",
+                siblingMessage.getId().toString());
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals("BRANCH_ANCHOR_INVALID", response.getBody().get("code"),
+                "the anchor resolves, but is not visible on the root path");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "select count(*) from session_fork_requests where source_session_id = ?",
+                Integer.class, source.session().getId()));
+    }
+
+    @Test
+    void sessionWideDeleteBeforeForkFailsWithoutChild() throws Exception {
+        Source source = createSource("session wide delete bytes"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+        UUID sourceId = source.session().getId();
+
+        ResponseEntity<Map> deletion = deleteSession(sourceId.toString());
+        assertEquals(HttpStatus.NO_CONTENT, deletion.getStatusCode());
+        assertTrue(sessionRepository.findById(sourceId).isEmpty());
+
+        ResponseEntity<Map> fork = postFork(source, "fork-after-session-delete", source.anchorMessageId());
+        assertEquals(HttpStatus.NOT_FOUND, fork.getStatusCode());
+        assertEquals("SESSION_NOT_FOUND", fork.getBody().get("code"));
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "select count(*) from session_fork_requests where source_session_id = ?",
+                Integer.class, sourceId));
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "select count(*) from sessions where kind = ? and spawned_from_session_id = ?",
+                Integer.class, Session.KIND_FORK, sourceId),
+                "a fully deleted source must not publish any fork child");
+    }
+
+    @Test
+    void branchCreationAndMessageDoNotRewriteRootPathRows() throws Exception {
+        Source source = createSource("root path immutability bytes"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+        String sessionId = source.session().getId().toString();
+        List<Map<String, Object>> before = rootPathSnapshot(sessionId, source.branchId());
+        assertEquals(2, before.size());
+
+        ResponseEntity<Map> branch = postBranch(source, "branch-root-immutability",
+                source.branchId(), source.anchorMessageId());
+        assertEquals(HttpStatus.CREATED, branch.getStatusCode());
+        String branchId = (String) branch.getBody().get("branchId");
+
+        Message branchOnly = new Message(sessionId, MessageRole.USER, "branch-only message");
+        branchOnly.setBranchId(branchId);
+        messageRepository.saveAndFlush(branchOnly);
+
+        List<Map<String, Object>> after = rootPathSnapshot(sessionId, source.branchId());
+        assertEquals(before, after,
+                "branch creation and a branch-scoped Message must not rewrite root path rows");
+
+        ResponseEntity<List<Map<String, Object>>> rootMessages = getMessages(sessionId, source.branchId());
+        assertEquals(HttpStatus.OK, rootMessages.getStatusCode());
+        assertEquals(2, rootMessages.getBody().size());
+        assertTrue(rootMessages.getBody().stream()
+                .noneMatch(message -> "branch-only message".equals(message.get("content"))));
+
+        ResponseEntity<List<Map<String, Object>>> branchMessages = getMessages(sessionId, branchId);
+        assertEquals(HttpStatus.OK, branchMessages.getStatusCode());
+        assertEquals(3, branchMessages.getBody().size());
+        assertTrue(branchMessages.getBody().stream()
+                .anyMatch(message -> "branch-only message".equals(message.get("content"))));
+    }
+
+    @Test
+    void forkKeepsSourceRowCountsUnchanged() throws Exception {
+        Source source = createSource("row count bytes"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+        UUID sourceId = source.session().getId();
+
+        int sourceMessages = countRows("select count(*) from messages where session_id = ?", sourceId);
+        int sourceRuns = countRows("select count(*) from chat_runs where session_id = ?", sourceId);
+        int sourceLedger = countRows("select count(*) from ledger_operations where session_id = ?", sourceId);
+        int sourceItems = countRows(ITEMS_BY_SESSION_SQL, sourceId);
+        assertEquals(2, sourceMessages);
+        assertEquals(1, sourceRuns);
+
+        ResponseEntity<Map> forked = postFork(source, "fork-key-row-counts", source.anchorMessageId());
+        assertEquals(HttpStatus.CREATED, forked.getStatusCode());
+        UUID childId = UUID.fromString((String) forked.getBody().get("id"));
+
+        assertEquals(sourceMessages, countRows("select count(*) from messages where session_id = ?", sourceId));
+        assertEquals(sourceRuns, countRows("select count(*) from chat_runs where session_id = ?", sourceId));
+        assertEquals(sourceLedger, countRows("select count(*) from ledger_operations where session_id = ?", sourceId));
+        assertEquals(sourceItems, countRows(ITEMS_BY_SESSION_SQL, sourceId));
+
+        assertEquals(0, countRows("select count(*) from chat_runs where session_id = ?", childId));
+        assertEquals(0, countRows("select count(*) from ledger_operations where session_id = ?", childId));
+        assertEquals(0, countRows(ITEMS_BY_SESSION_SQL, childId),
+                "the fork child inherits no ledger rows");
+    }
+
+    @Test
     void failedCleanupStaysHiddenAndSameKeyRetryReusesReservedChildId() throws Exception {
         byte[] bytes = "retry attachment bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Source source = createSource(bytes, true);
@@ -768,6 +1006,23 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
         return restTemplate.exchange(url("/api/v1/sessions/" + source.session().getId()
                         + "/attachments/" + source.file().getId()),
                 HttpMethod.DELETE, new HttpEntity<>(headers), Map.class);
+    }
+
+    /** {@code operation_items} has no session column; scope it through its ledger root. */
+    private static final String ITEMS_BY_SESSION_SQL =
+            "select count(*) from operation_items where operation_id in "
+                    + "(select id from ledger_operations where session_id = ?)";
+
+    private int countRows(String sql, Object sessionId) {
+        return jdbcTemplate.queryForObject(sql, Integer.class, sessionId);
+    }
+
+    /** messages has no {@code sequence} column (V1/V43): order the snapshot by created_at + id. */
+    private List<Map<String, Object>> rootPathSnapshot(String sessionId, String branchId) {
+        return jdbcTemplate.queryForList(
+                "select id, content, created_at, run_id, role, branch_id from messages "
+                        + "where session_id = ? and branch_id = ? order by created_at, id",
+                UUID.fromString(sessionId), UUID.fromString(branchId));
     }
 
     private void reduceWorkspaceCapToReadOnly() throws Exception {
