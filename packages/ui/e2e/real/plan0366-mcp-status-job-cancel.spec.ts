@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
-import { ensureAgentWorkspaceBinding } from './helpers/journey'
+import { ensureAgentWorkspaceBinding, getRootBranchId } from './helpers/journey'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -122,7 +122,8 @@ test.describe('@host PLAN-0366 MCP status + single job cancel', () => {
     request: import('@playwright/test').APIRequestContext,
     sessionId: string,
   ): Promise<Array<{ itemId: string; jobId: string; status?: string }>> {
-    const res = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages`, {
+    const branchId = await getRootBranchId(request, sessionId, sharedHeaders)
+    const res = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`, {
       headers: sharedHeaders,
     })
     expect(res.ok(), `messages DTO ${res.status()}`).toBeTruthy()

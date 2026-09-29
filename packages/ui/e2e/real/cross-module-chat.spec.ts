@@ -1,5 +1,6 @@
 import { generateE2EPassword } from './helpers/password'
 import { gotoWorkspaceWithChat } from './helpers/chat'
+import { getRootBranchId } from './helpers/journey'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 import { test, expect } from '@playwright/test'
@@ -68,10 +69,10 @@ test.describe('Cross-Module — Full Chain Chat', () => {
       return sessionId
     }, { timeout: 10000 }).not.toBe('')
 
+    const headers = { Authorization: `Bearer ${auth.accessToken}`, 'X-Workspace-Id': auth.workspaceId }
+    const branchId = await getRootBranchId(request, sessionId, headers)
     const getMessages = async () => {
-      const response = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages`, {
-        headers: { Authorization: `Bearer ${auth.accessToken}`, 'X-Workspace-Id': auth.workspaceId },
-      })
+      const response = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`, { headers })
       return response.ok() ? await response.json() : []
     }
 
@@ -427,4 +428,3 @@ test.describe('Cross-Module — Full Chain Chat', () => {
     expect(afterDisconnect.status()).toBe(404)
   })
 })
-

@@ -5,6 +5,7 @@ import {
   awaitLastOperationCompleted,
   ensureChatReady,
   evidenceDir,
+  getRootBranchId,
   registerJourneyUser,
   seedPage,
   sendChat,
@@ -74,9 +75,10 @@ test.describe('@host Journey D — overflow retry (CTX-1)', () => {
     const sessions = await page.request.get(`${CP_URL}/api/v1/sessions`, { headers: sharedHeaders })
     const sessionsBody = (await sessions.json()) as { sessions?: Array<{ id: string }> }
     const sessionId = sessionsBody.sessions?.[0]?.id
-    expect(sessionId, 'session list has an id').toBeTruthy()
+    if (!sessionId) throw new Error('Session list has no session id')
+    const branchId = await getRootBranchId(page.request, sessionId, sharedHeaders)
     const messagesRes = await page.request.get(
-      `${CP_URL}/api/v1/sessions/${sessionId}/messages`,
+      `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
       { headers: sharedHeaders },
     )
     expect(messagesRes.ok(), `messages fetch status=${messagesRes.status()}`).toBe(true)

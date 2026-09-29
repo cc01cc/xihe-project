@@ -76,6 +76,13 @@ async function installApprovalSSE(page: import('@playwright/test').Page) {
           !requestUrl.includes('/api/v1/chat/approvals/') &&
           (init?.method ?? 'GET') === 'POST'
         ) {
+          const payload = typeof init?.body === 'string' ? JSON.parse(init.body) as { branchId?: string } : {}
+          if (!payload.branchId) {
+            return new Response(JSON.stringify({ code: 'INVALID_REQUEST', detail: 'branchId is required' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/problem+json' },
+            })
+          }
           return new Response(JSON.stringify({ status: 'accepted', sessionId, runId }), {
             status: 202,
             headers: { 'Content-Type': 'application/json' },

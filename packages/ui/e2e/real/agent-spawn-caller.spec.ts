@@ -5,6 +5,7 @@ import { test, expect } from "@playwright/test";
 import {
     CP_URL,
     ensureAgentWorkspaceBinding,
+    getRootBranchId,
     registerJourneyUser,
     sendChat,
     seedPage,
@@ -96,7 +97,25 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];
     const apiFailures: string[] = [];
+    const consoleErrorEvents: Array<{
+        text: string;
+        sourceUrl: string;
+        lineNumber: number;
+        observedAt: string;
+    }> = [];
+    const browserHttpFailures: Array<{
+        method: string;
+        url: string;
+        resourceType: string;
+        status: number;
+        requestId: string | null;
+        correlationHeaders: Record<string, string>;
+        observedAt: string;
+        metadataCaptureFailed?: boolean;
+    }> = [];
+    const httpFailureCaptures: Promise<void>[] = [];
     const browserChatRequests: string[] = [];
+    const browserChatSubmissions: Array<{ idempotencyKey: string | null; body: string }> = [];
     const derivedStateResponses: Array<{
         status: number;
         body: {
@@ -129,13 +148,74 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     }> = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     page.on("console", (message) => {
-        if (message.type() === "error") consoleErrors.push(message.text());
+        if (message.type() === "error") {
+            consoleErrors.push(message.text());
+            const location = message.location();
+            consoleErrorEvents.push({
+                text: message.text(),
+                sourceUrl: location.url,
+                lineNumber: location.lineNumber,
+                observedAt: new Date().toISOString(),
+            });
+        }
     });
     page.on("requestfailed", (failed) => {
         if (failed.url().startsWith(CP_URL)) apiFailures.push(`${failed.method()} ${failed.url()}`);
     });
+    page.on("response", (response) => {
+        if (response.status() < 400) return;
+        const browserRequest = response.request(),
+            safeUrl = new URL(response.url()),
+            url = `${safeUrl.origin}${safeUrl.pathname}`;
+        const capture = response
+            .allHeaders()
+            .then((responseHeaders) => {
+                const requestHeaders = browserRequest.headers();
+                browserHttpFailures.push({
+                    method: browserRequest.method(),
+                    url,
+                    resourceType: browserRequest.resourceType(),
+                    status: response.status(),
+                    requestId: responseHeaders["x-request-id"] ?? null,
+                    correlationHeaders: Object.fromEntries(
+                        [
+                            "x-request-id",
+                            "x-chat-run-id",
+                            "x-operation-id",
+                            "x-agent-session-id",
+                            "x-workspace-id",
+                            "x-session-id",
+                        ]
+                            .filter((name) => requestHeaders[name])
+                            .map((name) => [name, requestHeaders[name]]),
+                    ),
+                    observedAt: new Date().toISOString(),
+                });
+            })
+            .catch(() => {
+                browserHttpFailures.push({
+                    method: browserRequest.method(),
+                    url,
+                    resourceType: browserRequest.resourceType(),
+                    status: response.status(),
+                    requestId: null,
+                    correlationHeaders: {},
+                    observedAt: new Date().toISOString(),
+                    metadataCaptureFailed: true,
+                });
+            });
+        httpFailureCaptures.push(capture);
+    });
     page.on("request", (outgoing) => {
-        if (outgoing.url().includes("/api/v1/chat")) browserChatRequests.push(outgoing.method());
+        if (outgoing.url().includes("/api/v1/chat")) {
+            browserChatRequests.push(outgoing.method());
+            if (outgoing.method() === "POST") {
+                browserChatSubmissions.push({
+                    idempotencyKey: outgoing.headers()["idempotency-key"] ?? null,
+                    body: outgoing.postData() ?? "",
+                });
+            }
+        }
     });
     page.on("response", async (response) => {
         if (
@@ -475,7 +555,9 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         ).toBe(1);
 
         const parentAssistant = page.locator('[data-slot="message"][data-align="start"]').last();
-        await expect(parentAssistant).toContainText("SPAWN_PARENT_DONE", { timeout: 60_000 });
+        await expect(parentAssistant).toContainText("SPAWN_PARENT_DONE child dispatched", {
+            timeout: 60_000,
+        });
         const parentRunStatus = queryIsolatedPostgres(
             `SELECT status FROM chat_runs WHERE id = '${parentRunId}'::uuid`,
         );
@@ -515,10 +597,32 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         await expect(page.getByTestId("derived-terminal-notice")).toContainText(childName);
         await expect(page.getByTestId("derived-active-child")).toHaveCount(0);
         await expect(page.getByTestId("tool-call-waiting-on")).toHaveCount(0);
+        const terminalScreenshotPath = test.info().outputPath("derived-state-terminal-visible.png");
+        await page.screenshot({ path: terminalScreenshotPath, fullPage: false });
         await test.info().attach("derived-state-terminal-visible.png", {
-            body: await page.screenshot({ fullPage: false }),
+            path: terminalScreenshotPath,
             contentType: "image/png",
         });
+
+        const derivedResponsesBeforeReconnect = derivedStateResponses.length;
+        await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
+        await page.goto(workspaceChatPath(workspaceId, parentSessionId), { waitUntil: "load" });
+        await expect(page.getByTestId("derived-terminal-notice")).toContainText(childName);
+        await expect
+            .poll(
+                () =>
+                    derivedStateResponses
+                        .slice(derivedResponsesBeforeReconnect)
+                        .some(
+                            (item) =>
+                                item.status === 200 &&
+                                item.body.terminalNotices?.some(
+                                    (notice) => notice.runId === childRunId,
+                                ),
+                        ),
+                { timeout: 30_000, intervals: [250, 500, 1_000] },
+            )
+            .toBeTruthy();
 
         const derivedResponsesBeforeReload = derivedStateResponses.length;
         await page.reload({ waitUntil: "load" });
@@ -573,8 +677,9 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                 },
             ]);
 
+        const childBranchId = await getRootBranchId(request, childSessionId, workspaceHeaders);
         const childMessagesResponse = await request.get(
-            `${CP_URL}/api/v1/sessions/${childSessionId}/messages`,
+            `${CP_URL}/api/v1/sessions/${childSessionId}/messages?branchId=${childBranchId}`,
             { headers: workspaceHeaders },
         );
         expect(childMessagesResponse.ok(), await childMessagesResponse.text()).toBeTruthy();
@@ -590,6 +695,126 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             ),
         ).toBe(true);
 
+        const pendingInboxId = requireUuid(
+            queryIsolatedPostgres(
+                `SELECT id FROM inbox WHERE to_session_id = '${parentSessionId}'::uuid AND injected_run_id IS NULL`,
+            ),
+        );
+        const parentRunsBeforeClaim = scalarCount(
+            `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
+        );
+        const parentOperationsBeforeClaim = scalarCount(
+            `SELECT count(*) FROM ledger_operations WHERE session_id = '${parentSessionId}'::uuid`,
+        );
+        const submissionsBeforeClaim = browserChatSubmissions.length;
+        await sendChat(page, `Acknowledge completed child ${token}`);
+        await expect.poll(() => browserChatSubmissions.length).toBe(submissionsBeforeClaim + 1);
+
+        const claimSubmission = browserChatSubmissions.at(-1);
+        expect(claimSubmission?.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i);
+        expect(claimSubmission?.body).not.toBe("");
+        const claimBody = JSON.parse(claimSubmission!.body) as { sessionId?: string };
+        expect(claimBody.sessionId).toBe(parentSessionId);
+        await expect
+            .poll(
+                () =>
+                    scalarCount(
+                        `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
+                    ),
+                { timeout: 30_000, intervals: [100, 250, 500] },
+            )
+            .toBe(parentRunsBeforeClaim + 1);
+
+        const claimRunId = requireUuid(
+            queryIsolatedPostgres(
+                `SELECT id FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid ORDER BY created_at DESC LIMIT 1`,
+            ),
+        );
+        const claimedRunId = () =>
+            queryIsolatedPostgres(
+                `SELECT injected_run_id FROM inbox WHERE id = '${pendingInboxId}'::uuid`,
+            );
+        await expect
+            .poll(claimedRunId, { timeout: 30_000, intervals: [100, 250, 500] })
+            .toBe(claimRunId);
+        expect(claimSubmission!.body.branchId).toBeTruthy();
+
+        const replayResponse = await request.post(`${CP_URL}/api/v1/chat`, {
+            headers: {
+                ...workspaceHeaders,
+                "Content-Type": "application/json",
+                "Idempotency-Key": claimSubmission!.idempotencyKey!,
+            },
+            data: claimSubmission!.body,
+        });
+        expect(replayResponse.status(), await replayResponse.text()).toBe(202);
+        const replay = (await replayResponse.json()) as { runId?: string; operationId?: string };
+        expect(replay.runId).toBe(claimRunId);
+        const claimOperationId = requireUuid(
+            queryIsolatedPostgres(
+                `SELECT id FROM ledger_operations WHERE run_id = '${claimRunId}'::uuid`,
+            ),
+        );
+        expect(replay.operationId).toBe(claimOperationId);
+        expect(
+            scalarCount(
+                `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
+            ),
+        ).toBe(parentRunsBeforeClaim + 1);
+        expect(
+            scalarCount(
+                `SELECT count(*) FROM ledger_operations WHERE session_id = '${parentSessionId}'::uuid`,
+            ),
+        ).toBe(parentOperationsBeforeClaim + 1);
+        expect(claimedRunId()).toBe(claimRunId);
+
+        await expect
+            .poll(
+                () =>
+                    queryIsolatedPostgres(
+                        `SELECT status FROM chat_runs WHERE id = '${claimRunId}'::uuid`,
+                    ),
+                { timeout: 30_000, intervals: [250, 500, 1_000] },
+            )
+            .toBe("succeeded");
+        await expect(page.getByText("SPAWN_CHILD_READY", { exact: true })).toBeVisible();
+        const inboxClaimScreenshotPath = test.info().outputPath("inbox-claim-run-completed.png");
+        await page.screenshot({ path: inboxClaimScreenshotPath, fullPage: false });
+        await test.info().attach("inbox-claim-run-completed.png", {
+            path: inboxClaimScreenshotPath,
+            contentType: "image/png",
+        });
+
+        const claimReplayEvidencePath = test.info().outputPath("inbox-claim-replay.json");
+        await writeFile(
+            claimReplayEvidencePath,
+            JSON.stringify(
+                {
+                    parentSessionId,
+                    childSessionId,
+                    childRunId,
+                    inboxId: pendingInboxId,
+                    claimRunId,
+                    replayRunId: replay.runId,
+                    claimOperationId,
+                    replayOperationId: replay.operationId,
+                    inboxInjectedRunId: claimedRunId(),
+                    runCount: scalarCount(
+                        `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
+                    ),
+                    operationCount: scalarCount(
+                        `SELECT count(*) FROM ledger_operations WHERE session_id = '${parentSessionId}'::uuid`,
+                    ),
+                },
+                null,
+                2,
+            ),
+        );
+        await test.info().attach("inbox-claim-replay.json", {
+            path: claimReplayEvidencePath,
+            contentType: "application/json",
+        });
+
         const parentSessionItem = page.locator('[data-testid="session-item"][aria-current="page"]');
         await expect(parentSessionItem).toBeVisible();
         await expect(parentSessionItem).toContainText(parentSessionTitle);
@@ -597,6 +822,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         await page.getByTestId("session-item-delete").click();
         const deleteWarning = page.getByTestId("session-delete-warning");
         await expect(deleteWarning).toBeVisible();
+        await expect(page.getByTestId("modal-backdrop")).toHaveCSS("opacity", "1");
         await expect(deleteWarning).toContainText(
             /子会话和运行会保留|Spawned child sessions and runs remain/,
         );
@@ -612,8 +838,10 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         });
         expect(deleteButtonStyle.pointerEvents).toBe("auto");
         expect(deleteButtonStyle.color).not.toBe(deleteButtonStyle.backgroundColor);
+        const deleteWarningScreenshotPath = test.info().outputPath("parent-delete-warning.png");
+        await page.screenshot({ path: deleteWarningScreenshotPath, fullPage: false });
         await test.info().attach("parent-delete-warning.png", {
-            body: await page.screenshot({ fullPage: false }),
+            path: deleteWarningScreenshotPath,
             contentType: "image/png",
         });
         await confirmDelete.click();
@@ -633,10 +861,25 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             1,
         );
 
+        await page.goto(workspaceChatPath(workspaceId, childSessionId), { waitUntil: "load" });
+        await expect(page).toHaveURL(workspaceChatPath(workspaceId, childSessionId));
+        await expect(page.getByTestId("chat-input")).toBeVisible();
+        await expect(page.getByTestId("workspace-tree-loading")).toBeHidden({ timeout: 30_000 });
+        const childAfterDeleteScreenshotPath = test
+            .info()
+            .outputPath("child-after-parent-delete.png");
+        await page.screenshot({ path: childAfterDeleteScreenshotPath, fullPage: false });
+        await test.info().attach("child-after-parent-delete.png", {
+            path: childAfterDeleteScreenshotPath,
+            contentType: "image/png",
+        });
+
+        await Promise.allSettled(httpFailureCaptures);
         expect(browserChatRequests).toContain("POST");
         expect(pageErrors).toEqual([]);
         expect(consoleErrors).toEqual([]);
         expect(apiFailures).toEqual([]);
+        expect(browserHttpFailures, JSON.stringify(browserHttpFailures, null, 2)).toEqual([]);
         expect(derivedStateResponses.every((item) => item.status === 200)).toBe(true);
 
         await test.info().attach("agent-spawn-evidence.json", {
@@ -658,6 +901,16 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             contentType: "application/json",
         });
     } finally {
+        await Promise.allSettled(httpFailureCaptures);
+        const browserErrorsPath = test.info().outputPath("host-browser-errors.json");
+        await writeFile(
+            browserErrorsPath,
+            JSON.stringify({ consoleErrorEvents, browserHttpFailures, pageErrors, apiFailures }, null, 2),
+        );
+        await test.info().attach("host-browser-errors.json", {
+            path: browserErrorsPath,
+            contentType: "application/json",
+        });
         if (childReleaseNeeded) {
             const release = await request
                 .post(`${FAKE_LLM_URL}/__test/release-spawn-child`)

@@ -108,15 +108,14 @@ async function sendCompletion(response, provider, requestBody) {
   response.end('data: [DONE]\n\n')
 }
 
-// Deterministic approval flow: the first completion requests the
-// request_approval tool; any completion that already carries a tool result
-// streams a plain answer so the run can reach done(success). A brand-new user
-// turn (phase 2) must request the tool again — the fake server is stateless.
+// Deterministic approval flow: each new user turn requests the request_approval
+// tool; the corresponding ToolMessage receives a plain answer so the run can
+// reach done(success). Earlier tool results in chat history do not suppress a
+// fresh approval request on a later user turn.
 function sendApprovalCompletion(response, requestBody) {
   const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
   const last = messages.at(-1) ?? {}
-  const hasToolResult = messages.some((m) => m.role === 'tool')
-  const followUp = last.role === 'tool' || (hasToolResult && last.role === 'user')
+  const followUp = last.role === 'tool'
 
   if (!followUp) {
     const toolCallDelta = {
@@ -393,7 +392,9 @@ function sendSpawnAgentCompletion(response, requestBody) {
 
   if (last.role === 'tool') {
     const toolResult = typeof last.content === 'string' ? last.content : JSON.stringify(last.content)
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `SPAWN_PARENT_DONE ${toolResult}` } }] })}\n\n`)
+    const childDispatched = toolResult.includes('sessionId') && toolResult.includes('runId')
+    const summary = childDispatched ? 'child dispatched' : 'child dispatch failed'
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `SPAWN_PARENT_DONE ${summary}` } }] })}\n\n`)
     response.end('data: [DONE]\n\n')
     return
   }

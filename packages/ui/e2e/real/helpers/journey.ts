@@ -19,6 +19,38 @@ export interface JourneyContext {
   headers: Record<string, string>
 }
 
+/** Wait for CP's cached Agent health, which gates chat admission, after an Agent rebind. */
+export async function waitForControlPlaneAgentReady(
+  request: import('@playwright/test').APIRequestContext,
+  headers: Record<string, string>,
+): Promise<void> {
+  let lastObserved = 'unobserved'
+  await expect.poll(async () => {
+    try {
+      const response = await request.get(`${CP_URL}/api/v1/status`, { headers })
+      if (!response.ok()) {
+        lastObserved = `HTTP ${response.status()}`
+        return 'unavailable'
+      }
+      const body = await response.json() as {
+        services?: Array<{ key: string; status?: string; liveness?: string; llmReady?: string }>
+      }
+      const agent = body.services?.find((service) => service.key === 'agent')
+      lastObserved = agent
+        ? `${agent.status}/${agent.liveness}/${agent.llmReady}`
+        : 'Agent entry missing'
+      return lastObserved
+    } catch (cause) {
+      lastObserved = cause instanceof Error ? cause.message : String(cause)
+      return 'unavailable'
+    }
+  }, {
+    timeout: 45_000,
+    intervals: [250, 500, 1000, 2000],
+    message: `CP Agent readiness did not reach up/up/ready; last observation: ${lastObserved}`,
+  }).toBe('up/up/ready')
+}
+
 /** Register a fresh user (one per spec — the Agent binds one workspace per process). */
 export async function registerJourneyUser(request: import('@playwright/test').APIRequestContext, name: string): Promise<JourneyContext> {
   const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
@@ -32,6 +64,25 @@ export async function registerJourneyUser(request: import('@playwright/test').AP
     workspaceId: auth.workspaceId,
     headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' },
   }
+}
+
+/** Resolve the server-created root path for API assertions; tests do not synthesize branch IDs. */
+export async function getRootBranchId(
+  request: import('@playwright/test').APIRequestContext,
+  sessionId: string,
+  headers: Record<string, string>,
+): Promise<string> {
+  const response = await request.get(
+    `${CP_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}/branches`,
+    { headers },
+  )
+  expect(response.ok(), `branch list ${response.status()}: ${await response.text()}`).toBeTruthy()
+  const body = await response.json() as {
+    items?: Array<{ branchId: string; parentBranchId: string | null }>
+  }
+  const root = body.items?.find((branch) => branch.parentBranchId === null)
+  if (!root?.branchId) throw new Error('Server did not return a root branch')
+  return root.branchId
 }
 
 // ── PLAN-0369: Agent workspace binding ──────────────────────────────────────
@@ -235,6 +286,20 @@ export async function awaitLastOperationCompleted(
     const body = (await res.json()) as { operations?: Array<{ status?: string }> }
     return body.operations?.[0]?.status ?? 'unknown'
   }, { timeout: 120000, intervals: [2_000] }).toBe('completed')
+}
+
+/** Wait for the operation correlated with this ChatRun, not another Session's latest row. */
+export async function awaitOperationCompletedForRun(
+  request: import('@playwright/test').APIRequestContext,
+  headers: Record<string, string>,
+  runId: string,
+): Promise<void> {
+  await expect.poll(async () => {
+    const res = await request.get(`${CP_URL}/api/v1/operations?size=50`, { headers })
+    if (!res.ok()) return 'unavailable'
+    const body = (await res.json()) as { operations?: Array<{ runId?: string; status?: string }> }
+    return body.operations?.find((operation) => operation.runId === runId)?.status ?? 'missing'
+  }, { timeout: 120000, intervals: [500, 1000, 2000] }).toBe('completed')
 }
 
 /**

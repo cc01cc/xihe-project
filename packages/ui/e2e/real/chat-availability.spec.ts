@@ -1,11 +1,13 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { generateE2EPassword } from './helpers/password'
+import { getRootBranchId } from './helpers/journey'
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword()
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
 const mode = process.env.XIHE_E2E_LLM_MODE ?? 'mock'
 
 type Auth = { accessToken: string; workspaceId: string }
+const rootBranchIds = new Map<string, string>()
 
 async function register(request: APIRequestContext, name: string): Promise<Auth> {
   const response = await request.post(`${CP_URL}/api/v1/auth/register`, {
@@ -38,12 +40,16 @@ async function sessionId(request: APIRequestContext, auth: Auth): Promise<string
 }
 
 async function messages(request: APIRequestContext, auth: Auth, id: string) {
-  const response = await request.get(`${CP_URL}/api/v1/sessions/${id}/messages`, {
-    headers: {
-      Authorization: `Bearer ${auth.accessToken}`,
-      'X-Workspace-Id': auth.workspaceId,
-    },
-  })
+  const headers = {
+    Authorization: `Bearer ${auth.accessToken}`,
+    'X-Workspace-Id': auth.workspaceId,
+  }
+  let branchId = rootBranchIds.get(id)
+  if (!branchId) {
+    branchId = await getRootBranchId(request, id, headers)
+    rootBranchIds.set(id, branchId)
+  }
+  const response = await request.get(`${CP_URL}/api/v1/sessions/${id}/messages?branchId=${branchId}`, { headers })
   return response.ok() ? await response.json() : []
 }
 

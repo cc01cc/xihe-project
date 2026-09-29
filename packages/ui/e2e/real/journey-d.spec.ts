@@ -7,6 +7,7 @@ import {
     ensureAgentWorkspaceBinding,
     ensureChatReady,
     evidenceDir,
+    getRootBranchId,
     registerJourneyUser,
     seedPage,
     sendChat,
@@ -249,7 +250,8 @@ test.describe("@host Journey D — context pipeline", () => {
             `${sess.modelProvider ?? ""}/${sess.modelName ?? ""}`,
             "route binding unchanged",
         ).toBe("xiaomi/mimo-v2.5");
-        const messagesRes = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages`, {
+        const branchId = await getRootBranchId(request, sessionId, headers)
+        const messagesRes = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`, {
             headers,
         });
         const stored = messagesRes.ok() ? await messagesRes.json() : [];
@@ -317,9 +319,10 @@ test.describe("@host Journey D — context pipeline", () => {
         const body = (await sessRes.json()) as { sessions?: Array<{ id: string }> };
         const sessionId = body.sessions?.[0]?.id ?? "";
         expect(sessionId, "session id resolvable").not.toBe("");
+        const branchId = await getRootBranchId(page.request, sessionId, headers);
         const comp2 = await page.request.post(`${CP_URL}/api/v1/sessions/${sessionId}/compact`, {
             headers,
-            data: {},
+            data: { branchId },
         });
         expect(
             comp2.ok(),

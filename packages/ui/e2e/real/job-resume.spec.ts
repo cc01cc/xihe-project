@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
-import { ensureAgentWorkspaceBinding } from './helpers/journey'
+import { ensureAgentWorkspaceBinding, getRootBranchId } from './helpers/journey'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -72,8 +72,9 @@ test.describe('@host PLAN-0344 durable job resume', () => {
     expect(sessionsRes.ok(), `sessions list ${sessionsRes.status()}`).toBeTruthy()
     const sessions = (await sessionsRes.json()) as { sessions?: Array<{ id: string }> }
     const sessionId = sessions.sessions?.[0]?.id
-    expect(sessionId, 'session created by the workspace chat').toBeTruthy()
-    const messagesRes = await page.request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages`, {
+    if (!sessionId) throw new Error('session created by the workspace chat was not listed')
+    const branchId = await getRootBranchId(page.request, sessionId, sharedHeaders)
+    const messagesRes = await page.request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`, {
       headers: sharedHeaders,
     })
     expect(messagesRes.ok(), `messages ${messagesRes.status()}`).toBeTruthy()

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { generateE2EPassword } from './helpers/password'
-import { awaitLastOperationCompleted, ensureAgentWorkspaceBinding, sendChat } from './helpers/journey'
+import { awaitLastOperationCompleted, ensureAgentWorkspaceBinding, getRootBranchId, sendChat } from './helpers/journey'
 import { test, expect } from '@playwright/test'
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || '12631'}`
@@ -146,7 +146,8 @@ test.describe('@host Journey A — AI write_file approve/reject', () => {
     const sessions = (await sessionsRes.json()) as { sessions: Array<{ id: string }> }
     expect(sessions.sessions.length).toBeGreaterThan(0)
     const sid = sessions.sessions[0].id
-    const messagesRes = await request.get(`${CP_URL}/api/v1/sessions/${sid}/messages`, {
+    const branchId = await getRootBranchId(request, sid, authHeaders)
+    const messagesRes = await request.get(`${CP_URL}/api/v1/sessions/${sid}/messages?branchId=${branchId}`, {
       headers: authHeaders,
     })
     expect(messagesRes.ok()).toBeTruthy()

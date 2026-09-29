@@ -4,6 +4,7 @@ import { test, expect } from '@playwright/test'
 import {
   CP_URL,
   evidenceDir,
+  getRootBranchId,
   registerJourneyUser,
   seedPage,
 } from './helpers/journey'
@@ -33,7 +34,8 @@ test.describe('@host Journey D — compaction circuit (U4)', () => {
     expect([200, 201]).toContain(create.status())
     const created = (await create.json()) as { id?: string; session?: { id?: string } }
     const sessionId = created.id ?? created.session?.id
-    expect(sessionId, 'session id').toBeTruthy()
+    if (!sessionId) throw new Error('Session create response did not contain an id')
+    const branchId = await getRootBranchId(request, sessionId, ctx.headers)
 
     const serviceHeaders = {
       Authorization: `Bearer ${SERVICE_TOKEN}`,
@@ -69,7 +71,7 @@ test.describe('@host Journey D — compaction circuit (U4)', () => {
     // Public compact triggers applyRecoveryBand → SSE circuit open → U4 toast.
     const compact = await request.post(`${CP_URL}/api/v1/sessions/${sessionId}/compact`, {
       headers: ctx.headers,
-      data: {},
+      data: { branchId },
     })
     expect(compact.ok(), `compact status=${compact.status()} ${await compact.text()}`).toBe(true)
 

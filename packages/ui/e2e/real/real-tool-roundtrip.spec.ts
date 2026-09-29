@@ -6,6 +6,7 @@ import {
     ensureAgentWorkspaceBinding,
     ensureChatReady,
     evidenceDir,
+    getRootBranchId,
     registerJourneyUser,
     seedPage,
     sendChat,
@@ -81,6 +82,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                 { timeout: 30000 },
             )
             .not.toBe("");
+        const branchId = await getRootBranchId(request, sessionId, headers);
         await expect
             .poll(
                 async () => {
@@ -169,7 +171,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         // operation parking at awaiting_approval/waiting_for_approval after a
         // successful post-approval completion (CP lifecycle gap, out of this
         // harness-only PLAN's scope — see evidence/m2-real-ab.md).
-        const messagesRes = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages`, {
+        const messagesRes = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`, {
             headers,
         });
         expect(messagesRes.ok(), `messages list ${messagesRes.status()}`).toBeTruthy();
@@ -189,7 +191,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
             .poll(
                 async () => {
                     const res = await request.get(
-                        `${CP_URL}/api/v1/sessions/${sessionId}/messages`,
+                        `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
                         { headers },
                     );
                     if (!res.ok()) return -1;

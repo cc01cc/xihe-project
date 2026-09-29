@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 
 export interface MockSSEStream {
   tokens: string[]
@@ -37,7 +38,18 @@ export interface MockSessionOptions {
   createSession?: boolean
 }
 
+const MOCK_ROOT_BRANCH_ID = '00000000-0000-4000-8000-000000000001'
+type MockBranch = {
+  branchId: string
+  parentBranchId: string | null
+  forkPointMessageId: string | null
+  forkPointRunId: string | null
+  createdAt: string
+}
+
 export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
+  const branchesBySession = new Map<string, MockBranch[]>()
+  const branchResponses = new Map<string, { requestHash: string; response: { branchId: string; parentBranchId: string; forkPointMessageId: string } }>()
   await page.addInitScript(() => {
     localStorage.setItem('xihe-token', 'mock-token')
     localStorage.setItem(
@@ -144,6 +156,15 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
   }
 
   await page.route('**/api/v1/chat', async (route) => {
+    const body = route.request().postDataJSON() as { branchId?: string } | null
+    if (!body?.branchId) {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({ code: 'INVALID_REQUEST', detail: 'branchId is required' }),
+      })
+      return
+    }
     await route.fulfill({ status: 202, body: JSON.stringify({ status: 'accepted' }) })
   })
 
@@ -167,6 +188,81 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     }
     if (url.includes('/api/v1/events') || url.includes('/chat') || url.includes('/models')) {
       return route.fallback()
+    }
+    const branchRoute = url.match(/\/api\/v1\/sessions\/([^/?]+)\/branches(?:\?|$)/)
+    if (branchRoute) {
+      const sessionId = branchRoute[1]
+      const method = route.request().method()
+      if (method === 'GET') {
+        const items = branchesBySession.get(sessionId) ?? [{
+          branchId: MOCK_ROOT_BRANCH_ID,
+          parentBranchId: null,
+          forkPointMessageId: null,
+          forkPointRunId: null,
+          createdAt: '2026-09-29T00:00:00.000Z',
+        }]
+        branchesBySession.set(sessionId, items)
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ sessionId, items }),
+        })
+        return
+      }
+      if (method === 'POST') {
+        const body = route.request().postDataJSON() as {
+          sourceBranchId?: string
+          anchorMessageId?: string
+        }
+        if (!body.sourceBranchId || !body.anchorMessageId || !route.request().headers()['idempotency-key']) {
+          await route.fulfill({
+            status: 400,
+            contentType: 'application/problem+json',
+            body: JSON.stringify({ code: 'INVALID_REQUEST', detail: 'branch request is incomplete' }),
+          })
+          return
+        }
+        const key = `${sessionId}:${route.request().headers()['idempotency-key']}`
+        const requestHash = `${body.sourceBranchId}:${body.anchorMessageId}`
+        const prior = branchResponses.get(key)
+        if (prior && prior.requestHash !== requestHash) {
+          await route.fulfill({
+            status: 409,
+            contentType: 'application/problem+json',
+            body: JSON.stringify({ code: 'IDEMPOTENCY_KEY_CONFLICT', detail: 'branch key conflict' }),
+          })
+          return
+        }
+        const response = prior?.response ?? {
+          branchId: randomUUID(),
+          parentBranchId: body.sourceBranchId,
+          forkPointMessageId: body.anchorMessageId,
+        }
+        branchResponses.set(key, { requestHash, response })
+        const items = branchesBySession.get(sessionId) ?? [{
+          branchId: MOCK_ROOT_BRANCH_ID,
+          parentBranchId: null,
+          forkPointMessageId: null,
+          forkPointRunId: null,
+          createdAt: '2026-09-29T00:00:00.000Z',
+        }]
+        if (!items.some((item) => item.branchId === response.branchId)) {
+          items.push({
+            branchId: response.branchId,
+            parentBranchId: response.parentBranchId,
+            forkPointMessageId: response.forkPointMessageId,
+            forkPointRunId: null,
+            createdAt: new Date().toISOString(),
+          })
+        }
+        branchesBySession.set(sessionId, items)
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify(response),
+        })
+        return
+      }
     }
     const workspaceMatch = url.match(/\/api\/v1\/workspaces\/([^/?]+)$/)
     if (workspaceMatch?.[1] === 'current' && route.request().method() === 'GET') {
@@ -251,6 +347,13 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     archived: false,
   }))
   const messages = options.messages ?? {}
+  const branches = new Map<string, MockBranch[]>(sessions.map((session) => [session.id, [{
+    branchId: MOCK_ROOT_BRANCH_ID,
+    parentBranchId: null,
+    forkPointMessageId: null,
+    forkPointRunId: null,
+    createdAt: now,
+  }]]))
 
   await page.route('**/api/v1/sessions', async (route) => {
     if (route.request().method() === 'GET') {
@@ -275,6 +378,13 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         archived: false,
       }
       sessions.unshift(created)
+      branches.set(created.id, [{
+        branchId: MOCK_ROOT_BRANCH_ID,
+        parentBranchId: null,
+        forkPointMessageId: null,
+        forkPointRunId: null,
+        createdAt: created.createdAt,
+      }])
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(created) })
       return
     }
@@ -292,6 +402,48 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     if (!sessionId) {
       await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({}) })
       return
+    }
+    if (parts.at(-1) === 'branches') {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ sessionId, items: branches.get(sessionId) ?? [] }),
+        })
+        return
+      }
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON() as {
+          sourceBranchId?: string
+          anchorMessageId?: string
+        } | null
+        const key = route.request().headers()['idempotency-key']
+        if (!body?.sourceBranchId || !body.anchorMessageId || !key) {
+          await route.fulfill({
+            status: 400,
+            contentType: 'application/problem+json',
+            body: JSON.stringify({ code: 'INVALID_REQUEST', detail: 'branch request is incomplete' }),
+          })
+          return
+        }
+        const branchId = randomUUID()
+        const response = {
+          branchId,
+          parentBranchId: body.sourceBranchId,
+          forkPointMessageId: body.anchorMessageId,
+        }
+        const items = branches.get(sessionId) ?? []
+        items.push({
+          branchId,
+          parentBranchId: body.sourceBranchId,
+          forkPointMessageId: body.anchorMessageId,
+          forkPointRunId: null,
+          createdAt: new Date().toISOString(),
+        })
+        branches.set(sessionId, items)
+        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(response) })
+        return
+      }
     }
     if (parts.at(-1) === 'messages' && route.request().method() === 'GET') {
       await route.fulfill({
