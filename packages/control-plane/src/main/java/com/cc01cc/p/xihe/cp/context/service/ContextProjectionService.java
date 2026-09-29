@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.context.service;
 import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
 import com.cc01cc.p.xihe.cp.context.entity.ContextProjection;
 import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -317,10 +318,65 @@ public class ContextProjectionService {
         if (payload.has("source_session_id")) {
             forkInfo.put("source_session_id", payload.path("source_session_id").asText());
         }
-        if (payload.has("at_sequence")) {
-            forkInfo.put("at_sequence", payload.path("at_sequence").asLong());
+        if (payload.has("anchor_message_id")) {
+            forkInfo.put("anchor_message_id", payload.path("anchor_message_id").asText());
         }
         metadata.set("forked_from", forkInfo);
+
+        JsonNode seed = payload.get("summary_seed");
+        if (seed == null) {
+            return;
+        }
+        if (!seed.isObject()
+                || !seed.path("messages").isArray()
+                || seed.path("contextEpoch").asText().isBlank()
+                || payload.path("source_session_id").asText().isBlank()
+                || payload.path("anchor_message_id").asText().isBlank()) {
+            throw invalidForkSeed(context, "missing required child seed fields");
+        }
+
+        ArrayNode messages = objectMapper.createArrayNode();
+        for (JsonNode sourceMessage : seed.path("messages")) {
+            String role = sourceMessage.path("role").asText();
+            if (!sourceMessage.isObject()
+                    || !List.of("human", "ai", "tool").contains(role)
+                    || !sourceMessage.path("content").isTextual()) {
+                throw invalidForkSeed(context, "invalid projected message");
+            }
+            ObjectNode message = objectMapper.createObjectNode();
+            message.put("role", role);
+            message.put("content", sourceMessage.path("content").asText());
+            messages.add(message);
+        }
+        context.set("messages", messages);
+        clearRuntimeState(context);
+
+        ObjectNode epoch = (ObjectNode) context.get("epoch");
+        if (epoch == null) {
+            emptyContextSlots(context);
+            epoch = (ObjectNode) context.get("epoch");
+        }
+        epoch.put("epoch_id", seed.path("contextEpoch").asText());
+        String summary = seed.path("summary").asText("");
+        String summaryHash = seed.path("summaryHash").asText("");
+        if (summary.isBlank() != summaryHash.isBlank()) {
+            throw invalidForkSeed(context, "summary and summaryHash must be present together");
+        }
+        if (!summary.isBlank()) {
+            epoch.put("summary_hash", summaryHash);
+            ArrayNode systemMessages = objectMapper.createArrayNode();
+            systemMessages.add("Conversation summary of compacted history:");
+            systemMessages.add(summary);
+            epoch.set("system_messages", systemMessages);
+        } else {
+            epoch.put("summary_hash", "");
+        }
+    }
+
+    private IllegalArgumentException invalidForkSeed(ObjectNode context, String detail) {
+        logger.error("Invalid session.forked summary seed: sessionId={} reason={}",
+                context.path("aggregate_id").asText(), detail);
+        return new IllegalArgumentException("Invalid session.forked summary seed: " + detail);
     }
 
     /**

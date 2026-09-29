@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.LedgerOperation;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
@@ -9,16 +10,21 @@ import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.springframework.stereotype.Component;
+import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.locks.LockSupport;
 
 /** Resolves stable principal identities for one tool-call authorization snapshot. */
 @Component
@@ -26,20 +32,25 @@ public class GrantPrincipalPathResolver {
 
     public static final String USER = "user";
     public static final String AGENT_PRINCIPAL = "agent_principal";
+    private static final Duration TOOL_CALL_ITEM_WAIT_LIMIT = Duration.ofSeconds(1);
+    private static final Duration TOOL_CALL_ITEM_POLL_INTERVAL = Duration.ofMillis(20);
 
     private final SessionRepository sessionRepository;
     private final ChatRunRepository chatRunRepository;
     private final LedgerOperationRepository operationRepository;
     private final OperationItemRepository operationItemRepository;
+    private final DbLockTimeout dbLockTimeout;
 
     public GrantPrincipalPathResolver(SessionRepository sessionRepository,
                                       ChatRunRepository chatRunRepository,
                                       LedgerOperationRepository operationRepository,
-                                      OperationItemRepository operationItemRepository) {
+                                      OperationItemRepository operationItemRepository,
+                                      DbLockTimeout dbLockTimeout) {
         this.sessionRepository = sessionRepository;
         this.chatRunRepository = chatRunRepository;
         this.operationRepository = operationRepository;
         this.operationItemRepository = operationItemRepository;
+        this.dbLockTimeout = dbLockTimeout;
     }
 
     public AgentPath resolveAgent(String userId, String workspaceId, String sessionId) {
@@ -79,6 +90,25 @@ public class GrantPrincipalPathResolver {
                 throw invalidPath();
             }
 
+            if (Session.KIND_FORK.equals(kind)) {
+                // Fork is a new permission root. Validate live lineage when both
+                // source rows remain, but source deletion must not invalidate the child.
+                Session parent = sessionRepository.findById(parentSessionId).orElse(null);
+                ChatRun parentRun = chatRunRepository.findById(parentRunId).orElse(null);
+                if ((parent == null) != (parentRun == null)) {
+                    throw invalidPath();
+                }
+                if (parent != null && (!parentSessionId.toString().equals(parentRun.getSessionId())
+                        || !userId.equals(parentRun.getUserId())
+                        || !workspaceId.equals(parentRun.getWorkspaceId())
+                        || !userUuid.equals(parseUuid(parent.getUserId()))
+                        || !workspaceUuid.equals(parseUuid(parent.getWorkspaceId()))
+                        || !agentPrincipalId.equals(parseUuid(parent.getAgentPrincipalId())))) {
+                    throw invalidPath();
+                }
+                break;
+            }
+
             Session parent = sessionRepository.findById(parentSessionId)
                     .orElseThrow(GrantPrincipalPathResolver::invalidPath);
             ChatRun parentRun = chatRunRepository.findById(parentRunId)
@@ -91,9 +121,6 @@ public class GrantPrincipalPathResolver {
                     || !agentPrincipalId.equals(parseUuid(parent.getAgentPrincipalId()))) {
                 throw invalidPath();
             }
-            if (Session.KIND_FORK.equals(kind)) {
-                break;
-            }
             current = parent;
         }
 
@@ -102,7 +129,7 @@ public class GrantPrincipalPathResolver {
     }
 
     /** Revalidates the existing Agent correlation keys against the current durable tool call. */
-    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, propagation = Propagation.REQUIRES_NEW)
+    @Transactional(readOnly = true, isolation = Isolation.READ_COMMITTED, propagation = Propagation.REQUIRES_NEW)
     public void validateAgentToolCallContext(String userId, String workspaceId, String sessionId,
                                              String runId, String operationId, String toolCallId,
                                              String toolName) {
@@ -132,9 +159,7 @@ public class GrantPrincipalPathResolver {
             throw invalidPath();
         }
 
-        OperationItem item = operationItemRepository.findByOperationIdAndSourceAndToolCallId(
-                        operationUuid.toString(), "agent", toolCallUuid.toString())
-                .orElseThrow(GrantPrincipalPathResolver::invalidPath);
+        OperationItem item = findAgentToolCallItem(operationUuid, toolCallUuid);
         if (!"tool_call".equals(item.getKind())
                 || !toolName.equals(item.getToolName())
                 || item.getFinishedAt() != null
@@ -144,6 +169,40 @@ public class GrantPrincipalPathResolver {
         }
 
         resolveAgent(userId, workspaceId, sessionId);
+    }
+
+    private OperationItem findAgentToolCallItem(UUID operationId, UUID toolCallId) {
+        long deadline = System.nanoTime() + TOOL_CALL_ITEM_WAIT_LIMIT.toNanos();
+        while (true) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0 || Thread.currentThread().isInterrupted()) {
+                throw invalidToolCallDeadline();
+            }
+            long queryTimeoutMs = Math.max(1, (remaining + 999_999L) / 1_000_000L);
+            Optional<OperationItem> item;
+            try {
+                dbLockTimeout.applyBounded(queryTimeoutMs);
+                item = operationItemRepository.findByOperationIdAndSourceAndToolCallId(
+                        operationId.toString(), "agent", toolCallId.toString());
+            } catch (PessimisticLockingFailureException | QueryTimeoutException e) {
+                throw invalidToolCallDeadline();
+            }
+            if (System.nanoTime() >= deadline || Thread.currentThread().isInterrupted()) {
+                throw invalidToolCallDeadline();
+            }
+            if (item.isPresent()) {
+                return item.get();
+            }
+            remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                throw invalidToolCallDeadline();
+            }
+            LockSupport.parkNanos(Math.min(TOOL_CALL_ITEM_POLL_INTERVAL.toNanos(), remaining));
+        }
+    }
+
+    private static IllegalArgumentException invalidToolCallDeadline() {
+        return new IllegalArgumentException("Agent ToolCall was not persisted before the bounded CP deadline");
     }
 
     private static UUID parseUuid(String value) {

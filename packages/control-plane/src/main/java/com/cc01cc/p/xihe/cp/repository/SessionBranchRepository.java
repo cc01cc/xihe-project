@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.entity.SessionBranch;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -11,4 +12,8 @@ import java.util.UUID;
 public interface SessionBranchRepository extends JpaRepository<SessionBranch, UUID> {
 
     Optional<SessionBranch> findBySessionIdAndParentBranchIdIsNull(String sessionId);
+
+    Optional<SessionBranch> findBySessionIdAndIdempotencyKey(String sessionId, String idempotencyKey);
+
+    List<SessionBranch> findBySessionIdOrderByCreatedAtAscIdAsc(String sessionId);
 }

@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,6 +30,7 @@ public class SessionController {
     private static final Duration SESSION_DELETE_SSE_WAIT = Duration.ofSeconds(2);
 
     private final SessionService sessionService;
+    private final SessionForkService sessionForkService;
     private final com.cc01cc.p.xihe.cp.service.SessionDerivedStateService derivedStateService;
     private final ContextService contextService;
     private final ChatController chatController;
@@ -37,6 +39,7 @@ public class SessionController {
     private final com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService;
 
     public SessionController(SessionService sessionService,
+                             SessionForkService sessionForkService,
                              com.cc01cc.p.xihe.cp.service.SessionDerivedStateService derivedStateService,
                              ContextService contextService,
                              ChatController chatController,
@@ -44,6 +47,7 @@ public class SessionController {
                              SseEmitterManager sseEmitterManager,
                              com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService) {
         this.sessionService = sessionService;
+        this.sessionForkService = sessionForkService;
         this.derivedStateService = derivedStateService;
         this.contextService = contextService;
         this.chatController = chatController;
@@ -67,6 +71,33 @@ public class SessionController {
         return ResponseEntity.ok(Map.of("sessions", sessions));
     }
 
+    @PostMapping("/{sessionId}/fork")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> fork(@PathVariable String sessionId,
+                                  @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                                  @RequestBody(required = false) ForkRequest request) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (request == null
+                || request.sourceBranchId() == null || request.sourceBranchId().isBlank()
+                || request.anchorMessageId() == null || request.anchorMessageId().isBlank()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sourceBranchId and anchorMessageId are required");
+        }
+        try {
+            SessionForkService.ForkResult result = sessionForkService.fork(
+                    sessionId, userId, workspaceId,
+                    request.sourceBranchId(), request.anchorMessageId(), idempotencyKey);
+            String childId = result.session().getId().toString();
+            HttpStatus success = result.replayed() ? HttpStatus.OK : HttpStatus.CREATED;
+            return ResponseEntity.status(success)
+                    .location(URI.create("/api/v1/sessions/" + childId))
+                    .body(toForkView(result.session()));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
     // PLAN-294 decision #15: user-facing manual compaction. The context
     // controller exposes the same operation on /internal/v1 (service-only);
     // this is the browser-reachable entry with USER ownership checks.
@@ -75,23 +106,45 @@ public class SessionController {
     public ResponseEntity<?> compact(@PathVariable String sessionId,
                                      @RequestBody(required = false) Map<String, Object> body) {
         Session session = sessionService.requireCurrent(sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId());
+        Object rawBranchId = body == null ? null : body.get("branchId");
+        if (!(rawBranchId instanceof String branchValue) || branchValue.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
+        }
+        String branchId;
+        try {
+            branchId = UUID.fromString(branchValue).toString();
+        } catch (IllegalArgumentException invalidBranchId) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId must be a UUID");
+        }
         // PLAN-294 D.4-8 (decision #15/#18): a manual compaction must not
         // tear context out from under an active run (appendix E.4 "no tools
         // in flight during compaction").
         if (chatController.activeRunId(sessionId) != null) {
             return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
+                    HttpStatus.CONFLICT, "BRANCH_LOCK",
                     "A chat run is already active for this session; compaction is deferred until it finishes");
         }
-        Long upToSequence = body != null && body.get("upToSequence") != null
-                ? Long.valueOf(body.get("upToSequence").toString())
-                : null;
+        Long upToSequence = null;
+        if (body != null && body.get("upToSequence") != null) {
+            try {
+                upToSequence = Long.valueOf(body.get("upToSequence").toString());
+                if (upToSequence < 0) {
+                    throw new NumberFormatException("negative cursor");
+                }
+            } catch (NumberFormatException invalidCursor) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "upToSequence must be a non-negative integer");
+            }
+        }
         var event = contextService.compact(
-                sessionId, session.getWorkspaceId(), session.getUserId(), upToSequence);
+                sessionId, session.getWorkspaceId(), session.getUserId(), upToSequence,
+                "manual", null, branchId);
         return ResponseEntity.ok(Map.of(
                 "sequence", event.getSequence(),
                 "eventType", event.getEventType(),
-                "created_at", event.getCreatedAt().toString()
+                "createdAt", event.getCreatedAt().toString()
         ));
     }
 
@@ -172,7 +225,8 @@ public class SessionController {
         try {
             // PLAN-0352 LIF-1（决策 #1/#2/#3）：授权校验 → 删除事务外取消在飞 run +
             // 有界等待终态投递 → 删除事务 → 成功后 complete（删除失败保留连接）。
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            // Reject an already-copying fork before cancellation has any side effect.
+            sessionService.lockCurrentForMutation(sessionId, userId, workspaceId);
             List<String> inFlightRuns = chatRunCancellationService.cancelInFlightForSession(
                     sessionId, userId, workspaceId, "session_deleted");
             chatRunCancellationService.awaitTerminalDelivery(
@@ -216,6 +270,15 @@ public class SessionController {
         return view;
     }
 
+    private static Map<String, Object> toForkView(Session session) {
+        Map<String, Object> view = toView(session);
+        view.put("kind", session.getKind());
+        view.put("spawnedFromSessionId", session.getSpawnedFromSessionId());
+        view.put("spawnedFromRunId", session.getSpawnedFromRunId());
+        view.put("spawnedAt", session.getSpawnedAt() == null ? null : session.getSpawnedAt().toString());
+        return view;
+    }
+
     private static Map<String, Object> toSummary(Session session) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", session.getId());
@@ -230,6 +293,7 @@ public class SessionController {
 
     public record CreateSessionRequest(String title, String modelProvider, String modelName,
                                        String providerConnectionId, String agentPrincipalId) {}
+    public record ForkRequest(String sourceBranchId, String anchorMessageId) {}
     public record UpdateSessionRequest(String title, String modelProvider, String modelName,
                                        String providerConnectionId) {}
 }

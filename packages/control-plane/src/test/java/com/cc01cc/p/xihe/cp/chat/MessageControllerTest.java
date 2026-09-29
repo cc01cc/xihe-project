@@ -25,6 +25,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,9 @@ class MessageControllerTest extends AbstractH2Test {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private BranchPathService branchPathService;
+
     @LocalServerPort
     private int serverPort;
 
@@ -61,6 +65,7 @@ class MessageControllerTest extends AbstractH2Test {
     private String userId;
     private String workspaceId;
     private String sessionId;
+    private String branchId;
     private Message message;
 
     @BeforeEach
@@ -92,8 +97,10 @@ class MessageControllerTest extends AbstractH2Test {
         Session session = new Session(workspaceId, userId, "Message Test");
         session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
+        branchId = branchPathService.ensureRootBranchId(sessionId);
 
         message = new Message(sessionId, MessageRole.USER, "Hello");
+        message.setBranchId(branchId);
         messageRepository.save(message);
     }
 
@@ -104,7 +111,7 @@ class MessageControllerTest extends AbstractH2Test {
         HttpEntity<Void> request = new HttpEntity<>(headers);
 
         ResponseEntity<List> response = restTemplate.exchange(
-                baseUrl + "/api/v1/sessions/" + sessionId + "/messages",
+                baseUrl + "/api/v1/sessions/" + sessionId + "/messages?branchId=" + branchId,
                 HttpMethod.GET, request, List.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
@@ -134,7 +141,7 @@ class MessageControllerTest extends AbstractH2Test {
     @Test
     void listMessages_withoutAuth_returns401() {
         ResponseEntity<Map> response = restTemplate.getForEntity(
-                baseUrl + "/api/v1/sessions/" + sessionId + "/messages", Map.class);
+                baseUrl + "/api/v1/sessions/" + sessionId + "/messages?branchId=" + branchId, Map.class);
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
     }
 }

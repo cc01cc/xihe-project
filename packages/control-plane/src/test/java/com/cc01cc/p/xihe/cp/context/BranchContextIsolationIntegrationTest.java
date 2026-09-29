@@ -214,6 +214,90 @@ class BranchContextIsolationIntegrationTest extends AbstractIntegrationTest {
                 "compaction.applied events must carry their Run's branch, never NULL");
     }
 
+    @Test
+    void forkSeedUsesSelectedBranchAndAnchorBoundedSummary() {
+        String sessionId = newSession("fork-seed-anchor");
+        String rootId = rootBranchId(sessionId);
+
+        ChatRun rootRun = newChatRun(sessionId, rootId, "succeeded");
+        Message rootAnchor = newMessageOnBranch(sessionId, MessageRole.USER, rootRun.getId().toString(), rootId);
+        eventStoreService.append(sessionId, workspaceId, userId, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "root anchor prompt")), rootRun.getId().toString());
+        long rootCursor = branchPathService.resolveAnchor(
+                sessionId, workspaceId, rootAnchor.getId().toString()).cursor();
+
+        String branchA = newChildBranch(sessionId, rootId, rootAnchor, rootRun, rootCursor, "seed-a");
+        eventStoreService.append(sessionId, workspaceId, userId, "compaction.manual_applied", Map.of(
+                "summary", "summary before anchor",
+                "summaryHash", "hash-before-anchor",
+                "contextEpoch", "source-epoch-before",
+                "up_to_sequence", rootCursor), null, branchA);
+
+        String branchB = newChildBranch(sessionId, rootId, rootAnchor, rootRun, rootCursor, "seed-b");
+        String siblingRun = newRunOnBranch(sessionId, branchB);
+        eventStoreService.append(sessionId, workspaceId, userId, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "sibling-only marker")), siblingRun);
+
+        String anchorRun = newRunOnBranch(sessionId, branchA);
+        eventStoreService.append(sessionId, workspaceId, userId, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "anchor run prompt")), anchorRun);
+        eventStoreService.append(sessionId, workspaceId, userId, "assistant.responded", Map.of(
+                "message", Map.of("role", "ai", "content", "anchor run answer")), anchorRun);
+        Message anchorMessage = newMessageOnBranch(
+                sessionId, MessageRole.ASSISTANT, anchorRun, branchA);
+        long anchorCursor = branchPathService.resolveAnchor(
+                sessionId, workspaceId, anchorMessage.getId().toString()).cursor();
+
+        String laterRun = newRunOnBranch(sessionId, branchA);
+        eventStoreService.append(sessionId, workspaceId, userId, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "after anchor marker")), laterRun);
+        eventStoreService.append(sessionId, workspaceId, userId, "compaction.manual_applied", Map.of(
+                "summary", "summary after anchor",
+                "summaryHash", "hash-after-anchor",
+                "contextEpoch", "source-epoch-after",
+                "up_to_sequence", anchorCursor), null, branchA);
+
+        ObjectNode seed = contextService.buildForkSeed(sessionId, branchA, anchorCursor);
+        List<String> seededMessages = contents(seed);
+
+        assertTrue(contains(seededMessages, "root anchor prompt"));
+        assertTrue(contains(seededMessages, "anchor run prompt"));
+        assertTrue(contains(seededMessages, "anchor run answer"));
+        assertFalse(contains(seededMessages, "sibling-only marker"),
+                "sibling events before the anchor cursor must not enter the seed");
+        assertFalse(contains(seededMessages, "after anchor marker"),
+                "events after the anchor cursor must not enter the seed");
+        assertEquals("summary before anchor", seed.path("summary").asText());
+        assertEquals("hash-before-anchor", seed.path("summaryHash").asText());
+        assertFalse(seed.has("up_to_sequence"), "the source cursor is not serialized in the child seed");
+        assertFalse(seed.has("branch_id"), "the source branch ID is not serialized in the child seed");
+        assertFalse(seed.has("runtime_state"), "the parent runtime state is not copied");
+
+        String childSessionId = newSession("fork-seed-child");
+        ObjectNode childSeed = seed.deepCopy();
+        childSeed.put("contextEpoch", "child-context-epoch");
+        var forkEvent = eventStoreService.append(childSessionId, workspaceId, userId, "session.forked", Map.of(
+                "source_session_id", sessionId,
+                "anchor_message_id", anchorMessage.getId().toString(),
+                "summary_seed", childSeed), null, null);
+        assertNull(forkEvent.getBranchId(), "session.forked is Session/global");
+        assertNull(forkEvent.getCorrelationId(), "session.forked has no Run correlation");
+        assertEquals(forkEvent.getSequence(),
+                contextService.latestCompaction(childSessionId, null).path("up_to_sequence").asLong());
+
+        String uncompressedChildId = newSession("fork-seed-uncompressed-child");
+        var uncompressedForkEvent = eventStoreService.append(uncompressedChildId, workspaceId, userId, "session.forked", Map.of(
+                "source_session_id", sessionId,
+                "anchor_message_id", anchorMessage.getId().toString(),
+                "summary_seed", Map.of(
+                        "messages", List.of(Map.of("role", "human", "content", "uncompressed history")),
+                        "contextEpoch", "uncompressed-child-epoch")), null, null);
+        assertTrue(uncompressedForkEvent.getSequence() > 0L,
+                "a no-summary seed still persists at a child EventStore sequence");
+        assertNull(contextService.latestCompaction(uncompressedChildId, null),
+                "a no-summary seed preserves EventStore cursor but is not a compaction baseline");
+    }
+
     // ------------------------------------------------------------------
     // T2.2: usage aggregation + recovery circuit on the same branch path
     // ------------------------------------------------------------------
@@ -466,6 +550,13 @@ class BranchContextIsolationIntegrationTest extends AbstractIntegrationTest {
     private Message newMessage(String sessionId, MessageRole role, String runId) {
         Message message = new Message(sessionId, role, "content-" + UUID.randomUUID());
         message.setRunId(runId);
+        return messageRepository.save(message);
+    }
+
+    private Message newMessageOnBranch(String sessionId, MessageRole role, String runId, String branchId) {
+        Message message = new Message(sessionId, role, "content-" + UUID.randomUUID());
+        message.setRunId(runId);
+        message.setBranchId(branchId);
         return messageRepository.save(message);
     }
 

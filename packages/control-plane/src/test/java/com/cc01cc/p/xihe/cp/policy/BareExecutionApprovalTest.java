@@ -13,6 +13,7 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.mcp.McpProxyController;
+import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -104,10 +105,15 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private OperationService operationService;
+
     private String userId;
     private String workspaceId;
     private String sessionId;
     private String runId;
+    private String operationId;
+    private String toolCallId;
     private UUID principalId;
     private WorkspaceAgentId bindingId;
     private final List<UUID> grantIds = new ArrayList<>();
@@ -201,7 +207,9 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
         PolicyVerdict underDocker = policyEngine.evaluateVerdict(
                 policyEngine.loadContext(userId, workspaceId, sessionId),
                 "write_file", bareBody, sessionId, null, userId, workspaceId);
-        ResponseEntity<String> dockerGate = callGate(writeBody("sandbox-control.md"));
+        String dockerBody = writeBody("sandbox-control.md");
+        createAgentToolCall(dockerBody);
+        ResponseEntity<String> dockerGate = callGate(dockerBody);
 
         assertEquals(PolicyEffect.ASK, underBare.effect());
         assertEquals(PolicyEffect.ASK, underDocker.effect());
@@ -235,6 +243,8 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Chat-Run-Id", runId);
+        headers.set("X-Operation-Id", operationId);
+        headers.set("X-Operation-Item-Id", toolCallId);
 
         return ReflectionTestUtils.invokeMethod(mcpProxyController, "handleToolsCall",
                 workspaceId, body, headers, sessionId,
@@ -299,6 +309,11 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
         chatRunRepository.save(new ChatRun(runId, sessionId, userId, workspaceId,
                 "bare-execution-" + UUID.randomUUID(), "hash", "openai", "gpt-test",
                 "workspace", "running"));
+        OperationService.OperationStartResult operation = operationService.startOperation(
+                userId, sessionId, workspaceId, runId, UUID.randomUUID().toString(),
+                "chat", "ui", "user", userId, "bare-operation-" + UUID.randomUUID(), "Bare approval check");
+        operationId = operation.operationId().toString();
+        createAgentToolCall(writeBody("bare.md"));
 
         Workspace workspace = workspaceRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
         workspace.setExecutionMode("windows-host");
@@ -315,5 +330,12 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
             permissions.add(atom);
         }
         return permissions;
+    }
+
+    private void createAgentToolCall(String body) {
+        toolCallId = UUID.randomUUID().toString();
+        var item = operationService.appendItem(UUID.fromString(operationId), toolCallId, null,
+                "tool_call", "write_file", "agent", body, null, null);
+        operationService.transitionItem(item.getId(), "running", null, null, null, null);
     }
 }

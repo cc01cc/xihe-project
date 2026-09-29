@@ -18,6 +18,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -31,6 +32,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
@@ -86,6 +88,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private ChatRunRepository chatRunRepository;
 
     @Autowired
+    private EventStoreService eventStoreService;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
@@ -111,6 +116,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private AgentTemplateService agentTemplateService;
+
+    @Autowired
+    private BranchPathService branchPathService;
 
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
@@ -330,6 +338,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         openSse(sessionId);
         Map<String, Object> request = Map.of(
                 "sessionId", sessionId,
+                "branchId", branchPathService.ensureRootBranchId(sessionId),
                 "content", "Hello, this is a test message",
                 "userId", userId,
                 "workspaceId", workspaceId
@@ -349,6 +358,63 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         assertEquals(sessionId, body.get("sessionId"));
         assertNotNull(body.get("messageId"));
         assertNotNull(body.get("runId"));
+    }
+
+    @Test
+    void publicChatPersistsSelectedBranchOnRunAndUserMessage() {
+        String sessionId = UUID.randomUUID().toString();
+        createSession(sessionId);
+        String rootBranchId = branchPathService.ensureRootBranchId(sessionId);
+
+        String historyRunId = UUID.randomUUID().toString();
+        ChatRun historyRun = new ChatRun(historyRunId, sessionId, userId, workspaceId,
+                "branch-history-" + historyRunId, "a".repeat(64), "provider", "model", "none", "succeeded");
+        historyRun.setBranchId(rootBranchId);
+        historyRun.setTerminalAt(java.time.Instant.now());
+        historyRun.setTerminalOutcome("success");
+        historyRun = chatRunRepository.saveAndFlush(historyRun);
+        Message historyUser = new Message(sessionId, MessageRole.USER, "historical prompt");
+        historyUser.setRunId(historyRunId);
+        historyUser.setBranchId(rootBranchId);
+        historyUser = messageRepository.saveAndFlush(historyUser);
+        Message historyAssistant = new Message(sessionId, MessageRole.ASSISTANT, "historical answer");
+        historyAssistant.setRunId(historyRunId);
+        historyAssistant.setBranchId(rootBranchId);
+        historyAssistant = messageRepository.saveAndFlush(historyAssistant);
+        historyRun.setUserMessageId(historyUser.getId().toString());
+        historyRun.setAssistantMessageId(historyAssistant.getId().toString());
+        chatRunRepository.saveAndFlush(historyRun);
+        eventStoreService.append(sessionId, workspaceId, userId, "prompt.admitted",
+                Map.of("message", Map.of("role", "human", "content", "historical prompt")),
+                historyRunId, rootBranchId);
+        eventStoreService.append(sessionId, workspaceId, userId, "assistant.responded",
+                Map.of("message", Map.of("role", "ai", "content", "historical answer")),
+                historyRunId, rootBranchId);
+
+        Message anchor = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                .filter(message -> message.getRole() == MessageRole.ASSISTANT)
+                .reduce((first, second) -> second)
+                .orElseThrow();
+        ResponseEntity<Map> createdBranch = postBranch(
+                sessionId, "branch-chat-create", rootBranchId, anchor.getId().toString());
+        assertEquals(HttpStatus.CREATED, createdBranch.getStatusCode(), String.valueOf(createdBranch.getBody()));
+        String selectedBranchId = (String) createdBranch.getBody().get("branchId");
+
+        openSse(sessionId);
+        ResponseEntity<Map> response = postChatOnBranch(
+                sessionId, "write on selected branch", selectedBranchId, principalId, "branch-chat-selected");
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertEquals(selectedBranchId, run.getBranchId());
+        Message userMessage = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                .filter(message -> runId.equals(message.getRunId()))
+                .filter(message -> message.getRole() == MessageRole.USER)
+                .findFirst().orElseThrow();
+        assertEquals(selectedBranchId, userMessage.getBranchId());
+        awaitMessageCount(sessionId, 4);
+        awaitDoneEvents(1);
     }
 
     @Test
@@ -377,6 +443,7 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         openSse(sessionId);
         Map<String, Object> request = Map.of(
                 "sessionId", sessionId,
+                "branchId", branchPathService.ensureRootBranchId(sessionId),
                 "content", "This message must be persisted",
                 "userId", userId,
                 "workspaceId", workspaceId
@@ -678,8 +745,16 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     private ResponseEntity<Map> postChat(String sessionId, String content, String requestedPrincipalId,
                                          String idempotencyKey) {
+        String selectedBranchId = sessionRepository.existsById(UUID.fromString(sessionId))
+                ? branchPathService.ensureRootBranchId(sessionId) : UUID.randomUUID().toString();
+        return postChatOnBranch(sessionId, content, selectedBranchId, requestedPrincipalId, idempotencyKey);
+    }
+
+    private ResponseEntity<Map> postChatOnBranch(String sessionId, String content, String branchId,
+                                                  String requestedPrincipalId, String idempotencyKey) {
         Map<String, Object> request = new java.util.HashMap<>();
         request.put("sessionId", sessionId);
+        request.put("branchId", branchId);
         request.put("content", content);
         request.put("workspaceId", workspaceId);
         request.put("userId", userId);
@@ -691,6 +766,19 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         return restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
                 new HttpEntity<>(request, headers), Map.class);
+    }
+
+    private ResponseEntity<Map> postBranch(String sessionId, String idempotencyKey,
+                                           String sourceBranchId, String anchorMessageId) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", idempotencyKey);
+        Map<String, Object> request = Map.of(
+                "sourceBranchId", sourceBranchId,
+                "anchorMessageId", anchorMessageId);
+        return restTemplate.exchange(baseUrl + "/api/v1/sessions/" + sessionId + "/branches",
+                HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
     }
 
     private void openSse(String sessionId) {

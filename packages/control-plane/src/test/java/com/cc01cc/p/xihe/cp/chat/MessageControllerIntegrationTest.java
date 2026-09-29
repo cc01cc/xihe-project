@@ -22,6 +22,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 
 import java.util.List;
 import java.util.Map;
@@ -50,10 +51,14 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private BranchPathService branchPathService;
+
     private String authToken;
     private String userId;
     private String workspaceId;
     private String sessionId;
+    private String branchId;
     private Message message;
 
     @BeforeEach
@@ -74,8 +79,10 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
         Session session = new Session(workspaceId, userId, "Message Int Test");
         session.setId(UUID.fromString(sessionId));
         sessionRepository.save(session);
+        branchId = branchPathService.ensureRootBranchId(sessionId);
 
         message = new Message(sessionId, MessageRole.USER, "Integration message");
+        message.setBranchId(branchId);
         messageRepository.save(message);
     }
 
@@ -84,7 +91,7 @@ class MessageControllerIntegrationTest extends AbstractIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         ResponseEntity<List> response = restTemplate.exchange(
-                baseUrl + "/api/v1/sessions/" + sessionId + "/messages",
+                baseUrl + "/api/v1/sessions/" + sessionId + "/messages?branchId=" + branchId,
                 HttpMethod.GET, new HttpEntity<>(headers), List.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());

@@ -26,6 +26,7 @@ import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +53,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatSubmissionService submissionService;
+
+    @Autowired
+    private BranchPathService branchPathService;
 
     @Autowired
     private UserRepository userRepository;
@@ -382,15 +386,17 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     private ChatSubmissionService.Submission submit(String runId, Session session, User user,
-                                                    Workspace workspace, String content, String agentPrincipalId) {
+                                                     Workspace workspace, String content, String agentPrincipalId) {
+        String branchId = branchPathService.ensureRootBranchId(session.getId().toString());
         if (agentPrincipalId != null) {
             return submissionService.create(runId, session.getId().toString(), user.getId().toString(),
-                    workspace.getId().toString(), agentPrincipalId, "idem-" + runId, "request-hash",
+                    workspace.getId().toString(), branchId, agentPrincipalId,
+                    "idem-" + runId, "request-hash",
                     "provider", "model", "none", null, null, "lease-owner", UUID.randomUUID().toString(),
                     content, "[]", java.util.List.of());
         }
         return submissionService.create(runId, session.getId().toString(), user.getId().toString(),
-                workspace.getId().toString(), "idem-" + runId, "request-hash", "provider", "model",
+                workspace.getId().toString(), branchId, "idem-" + runId, "request-hash", "provider", "model",
                 "none", null, null, "lease-owner", UUID.randomUUID().toString(), content, "[]", java.util.List.of());
     }
 

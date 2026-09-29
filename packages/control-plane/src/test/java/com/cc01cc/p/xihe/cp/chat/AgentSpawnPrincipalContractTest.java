@@ -13,17 +13,26 @@ import com.cc01cc.p.xihe.cp.entity.UserRole;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceUserId;
+import com.cc01cc.p.xihe.cp.mcp.McpProxyController;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,21 +44,34 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.containing;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
@@ -69,6 +91,9 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private WorkspaceUserRepository workspaceUserRepository;
 
     @Autowired
     private UserRepository userRepository;
@@ -95,7 +120,13 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     private ChatApprovalRepository chatApprovalRepository;
 
     @Autowired
-    private com.cc01cc.p.xihe.cp.repository.OperationItemRepository operationItemRepository;
+    private McpProxyController mcpProxyController;
+
+    @Autowired
+    private OperationItemRepository operationItemRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @MockitoBean
     private ChatController chatController;
@@ -112,9 +143,15 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     private String userId;
     private String workspaceId;
     private UUID principalId;
+    private final List<UUID> restrictedPrincipalIds = new java.util.ArrayList<>();
+    private final List<UUID> additionalWorkspaceIds = new java.util.ArrayList<>();
 
     @AfterEach
     void cleanFixtures() {
+        for (UUID additionalWorkspaceId : additionalWorkspaceIds) {
+            jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?",
+                    additionalWorkspaceId.toString());
+        }
         if (workspaceId != null) {
             jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
         }
@@ -128,6 +165,18 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
                     "agent_principal", principalId));
             agentPrincipalRepository.deleteById(principalId);
         }
+        for (UUID restrictedPrincipalId : restrictedPrincipalIds) {
+            WorkspaceAgentId bindingId = new WorkspaceAgentId(restrictedPrincipalId, UUID.fromString(workspaceId));
+            if (workspaceAgentRepository.existsById(bindingId)) {
+                workspaceAgentRepository.deleteById(bindingId);
+            }
+            agentPrincipalRepository.deleteById(restrictedPrincipalId);
+        }
+        restrictedPrincipalIds.clear();
+        for (UUID additionalWorkspaceId : additionalWorkspaceIds) {
+            workspaceRepository.deleteById(additionalWorkspaceId);
+        }
+        additionalWorkspaceIds.clear();
         if (workspaceId != null) {
             workspaceRepository.deleteById(UUID.fromString(workspaceId));
         }
@@ -505,14 +554,346 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         assertEquals(runsBefore + 1, runCount());
     }
 
+    @Test
+    void internalMcpToolCallMustMatchDurableRunSessionOperationAndAgentToolCall() throws Exception {
+        ParentFixture authorized = fixtureWithoutAgentToolCall("read_file", "{\"path\":\"authorized.md\"}");
+        ParentFixture restricted = restrictedFixture("read_file", "{\"path\":\"restricted.md\"}");
+        markAgentToolCallRunning(restricted);
+
+        WireMockServer runtime = new WireMockServer(options().dynamicPort());
+        runtime.start();
+        String originalRuntimeUrl = (String) ReflectionTestUtils.getField(mcpProxyController, "runtimeBaseUrl");
+        @SuppressWarnings("unchecked")
+        Map<String, Map<String, String>> toolCache =
+                (Map<String, Map<String, String>>) ReflectionTestUtils.getField(mcpProxyController, "toolServerCache");
+        @SuppressWarnings("unchecked")
+        Map<String, Instant> cacheTimestamps =
+                (Map<String, Instant>) ReflectionTestUtils.getField(mcpProxyController, "cacheTimestamps");
+        Map<String, String> oldWorkspaceCache = toolCache.put(workspaceId,
+                new ConcurrentHashMap<>(Map.of("read_file", "__system__", "list_directory", "__system__")));
+        Instant oldCacheTimestamp = cacheTimestamps.put(workspaceId, Instant.now());
+        String runtimePath = "/internal/v1/runtime/workspaces/" + workspaceId + "/mcp";
+        runtime.stubFor(post(urlPathEqualTo(runtimePath))
+                .withRequestBody(containing("\"method\":\"tools/call\""))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"jsonrpc\":\"2.0\",\"id\":14,\"result\":{\"content\":["
+                                + "{\"type\":\"text\",\"text\":\"read-ok\"}],\"isError\":false}}")));
+        ReflectionTestUtils.setField(mcpProxyController, "runtimeBaseUrl", runtime.baseUrl());
+        ExecutorService requestExecutor = Executors.newSingleThreadExecutor();
+
+        try {
+            int approvalsBefore = approvalCount(authorized.parentSessionId);
+            AtomicReference<Future<ResponseEntity<String>>> allowedRequest = new AtomicReference<>();
+            TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+            transaction.executeWithoutResult(status -> {
+                jdbcTemplate.execute("LOCK TABLE operation_items IN ACCESS EXCLUSIVE MODE");
+                allowedRequest.set(requestExecutor.submit(() -> mcpToolCall(
+                        authorized.parentSessionId, authorized.parentRunId, authorized.operationId.toString(),
+                        authorized.toolCallId, "read_file")));
+                Awaitility.await().atMost(Duration.ofSeconds(5)).pollInterval(Duration.ofMillis(25))
+                        .untilAsserted(() -> assertTrue(jdbcTemplate.queryForObject(
+                                "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() "
+                                        + "AND state = 'active' AND wait_event_type = 'Lock' "
+                                        + "AND query ILIKE '%operation_items%'", Integer.class) > 0,
+                                "CP should be waiting on the uncommitted Agent ToolCall lookup"));
+                persistAgentToolCall(authorized, "{\"path\":\"authorized.md\"}");
+            });
+            ResponseEntity<String> allowed = allowedRequest.get().get(20, TimeUnit.SECONDS);
+            assertEquals(HttpStatus.OK, allowed.getStatusCode(), allowed.getBody());
+            runtime.verify(1, postRequestedFor(urlPathEqualTo(runtimePath))
+                    .withRequestBody(containing("\"name\":\"read_file\"")));
+            int operationItemsAfterAllow = operationItemCount(authorized.operationId);
+            assertEquals(approvalsBefore, approvalCount(authorized.parentSessionId));
+
+            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, restricted.parentRunId,
+                    restricted.operationId.toString(), restricted.toolCallId, "read_file", runtimePath, runtime);
+            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
+                    restricted.operationId.toString(), restricted.toolCallId, "read_file", runtimePath, runtime);
+            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
+                    authorized.operationId.toString(), UUID.randomUUID().toString(), "read_file", runtimePath, runtime);
+            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
+                    authorized.operationId.toString(), authorized.toolCallId, "list_directory", runtimePath, runtime);
+            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
+                    authorized.operationId.toString(), null, "read_file", runtimePath, runtime);
+
+            ParentFixture otherWorkspace = fixtureInOtherWorkspace();
+            int crossWorkspaceItemsBefore = operationItemCount(otherWorkspace.operationId);
+            int crossWorkspaceAttemptsBefore = operationAttemptCount(otherWorkspace.operationId);
+            assertMcpCallDeniedWithoutRuntime(otherWorkspace.parentSessionId, otherWorkspace.parentRunId,
+                    otherWorkspace.operationId.toString(), otherWorkspace.toolCallId, "read_file", runtimePath,
+                    runtime, HttpStatus.NOT_FOUND, null);
+            assertEquals(crossWorkspaceItemsBefore, operationItemCount(otherWorkspace.operationId),
+                    "cross-workspace rejection must not append an MCP ledger item");
+            assertEquals(crossWorkspaceAttemptsBefore, operationAttemptCount(otherWorkspace.operationId),
+                    "cross-workspace rejection must not create an attempt");
+
+            ChatRun terminalRun = chatRunRepository.findById(UUID.fromString(authorized.parentRunId))
+                    .orElseThrow();
+            terminalRun.setStatus("completed");
+            terminalRun.setTerminalAt(Instant.now());
+            chatRunRepository.saveAndFlush(terminalRun);
+            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
+                    authorized.operationId.toString(), authorized.toolCallId, "read_file", runtimePath, runtime);
+
+            ParentFixture revoked = fixture("read_file", "{\"path\":\"revoked.md\"}");
+            markAgentToolCallRunning(revoked);
+            revokeReadGrant();
+            assertMcpCallDeniedWithoutRuntime(revoked.parentSessionId, revoked.parentRunId,
+                    revoked.operationId.toString(), revoked.toolCallId, "read_file", runtimePath, runtime);
+
+            assertEquals(operationItemsAfterAllow, operationItemCount(authorized.operationId),
+                    "denied caller contexts must not append MCP ledger items");
+            assertEquals(approvalsBefore, approvalCount(authorized.parentSessionId),
+                    "denied caller contexts must not create approvals");
+
+            ParentFixture lateCommit = fixtureWithoutAgentToolCall("read_file", "{\"path\":\"late.md\"}");
+            AtomicReference<Future<ResponseEntity<String>>> timedOutRequest = new AtomicReference<>();
+            TransactionTemplate delayedCommit = new TransactionTemplate(transactionManager);
+            delayedCommit.executeWithoutResult(status -> {
+                jdbcTemplate.execute("LOCK TABLE operation_items IN ACCESS EXCLUSIVE MODE");
+                long timeoutStart = System.nanoTime();
+                timedOutRequest.set(requestExecutor.submit(() -> mcpToolCall(
+                        lateCommit.parentSessionId, lateCommit.parentRunId, lateCommit.operationId.toString(),
+                        lateCommit.toolCallId, "read_file")));
+                Awaitility.await().atMost(Duration.ofSeconds(5)).pollInterval(Duration.ofMillis(25))
+                        .untilAsserted(() -> assertTrue(jdbcTemplate.queryForObject(
+                                "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() "
+                                        + "AND state = 'active' AND wait_event_type = 'Lock' "
+                                        + "AND query ILIKE '%operation_items%'", Integer.class) > 0,
+                                "CP should be blocked on the delayed ToolCall lookup"));
+                ResponseEntity<String> denied;
+                try {
+                    denied = timedOutRequest.get().get(4, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while awaiting bounded MCP rejection", e);
+                } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+                    throw new IllegalStateException("Bounded MCP rejection did not complete", e);
+                }
+                long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - timeoutStart);
+                assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), denied.getBody());
+                assertTrue(elapsedMs < 2_000,
+                        "blocked lookup must fail within the bounded deadline, elapsedMs=" + elapsedMs);
+                persistAgentToolCall(lateCommit, "{\"path\":\"late.md\"}");
+            });
+            assertMcpCallDeniedWithoutRuntime(lateCommit.parentSessionId, lateCommit.parentRunId,
+                    lateCommit.operationId.toString(), lateCommit.toolCallId, "read_file", runtimePath, runtime);
+        } finally {
+            requestExecutor.shutdownNow();
+            ReflectionTestUtils.setField(mcpProxyController, "runtimeBaseUrl", originalRuntimeUrl);
+            cacheTimestamps.remove(workspaceId);
+            if (oldCacheTimestamp != null) {
+                cacheTimestamps.put(workspaceId, oldCacheTimestamp);
+            }
+            toolCache.remove(workspaceId);
+            if (oldWorkspaceCache != null) {
+                toolCache.put(workspaceId, oldWorkspaceCache);
+            }
+            runtime.stop();
+        }
+    }
+
     private record ParentFixture(String parentSessionId, String parentRunId, String itemPk,
                                  String toolCallId, UUID operationId) {}
+
+    private ParentFixture restrictedFixture(String toolName, String argumentsPreview) {
+        ensureWorkspace();
+        AgentPrincipal restricted = new AgentPrincipal();
+        restricted.setName("Restricted principal " + UUID.randomUUID().toString().substring(0, 8));
+        restricted.setCreatedByUserId(userId);
+        var snapshot = objectMapper.createObjectNode();
+        snapshot.set("permissions", objectMapper.createArrayNode());
+        restricted.setTemplateSnapshot(snapshot);
+        restricted = agentPrincipalRepository.saveAndFlush(restricted);
+        restrictedPrincipalIds.add(restricted.getId());
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(restricted.getId().toString(), workspaceId,
+                objectMapper.createArrayNode()));
+
+        Session parentSession = new Session(workspaceId, userId,
+                "Restricted parent " + UUID.randomUUID().toString().substring(0, 8));
+        parentSession.setId(UUID.randomUUID());
+        parentSession.setAgentPrincipalId(restricted.getId().toString());
+        parentSession.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        parentSession.setApprovalMode("auto");
+        sessionRepository.saveAndFlush(parentSession);
+
+        String parentRunId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(
+                parentRunId, parentSession.getId().toString(), userId, workspaceId,
+                "restricted-parent-" + parentRunId, "restricted-parent-hash", "provider", "model", "workspace", "running"));
+        OperationService.OperationStartResult operation = operationService.startOperation(
+                userId, parentSession.getId().toString(), workspaceId, parentRunId,
+                UUID.randomUUID().toString(), "chat", "ui", "user", userId,
+                "restricted-submit-" + parentRunId, "Restricted parent chat");
+        String toolCallId = UUID.randomUUID().toString();
+        OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
+                "tool_call", toolName, "agent", argumentsPreview, null, null);
+        return new ParentFixture(parentSession.getId().toString(), parentRunId,
+                item.getId().toString(), toolCallId, operation.operationId());
+    }
+
+    private ParentFixture fixtureInOtherWorkspace() {
+        ensureWorkspace();
+        Workspace otherWorkspace = workspaceRepository.saveAndFlush(
+                new Workspace("Cross-workspace gate test", userId));
+        String otherWorkspaceId = otherWorkspace.getId().toString();
+        additionalWorkspaceIds.add(otherWorkspace.getId());
+
+        Session parentSession = new Session(otherWorkspaceId, userId,
+                "Cross-workspace parent " + UUID.randomUUID().toString().substring(0, 8));
+        parentSession.setId(UUID.randomUUID());
+        parentSession.setAgentPrincipalId(principalId.toString());
+        parentSession.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        parentSession.setApprovalMode("auto");
+        sessionRepository.saveAndFlush(parentSession);
+
+        String parentRunId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(
+                parentRunId, parentSession.getId().toString(), userId, otherWorkspaceId,
+                "cross-workspace-parent-" + parentRunId, "cross-workspace-parent-hash",
+                "provider", "model", "workspace", "running"));
+        OperationService.OperationStartResult operation = operationService.startOperation(
+                userId, parentSession.getId().toString(), otherWorkspaceId, parentRunId,
+                UUID.randomUUID().toString(), "chat", "ui", "user", userId,
+                "cross-workspace-submit-" + parentRunId, "Cross-workspace parent chat");
+        String toolCallId = UUID.randomUUID().toString();
+        OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
+                "tool_call", "read_file", "agent", "{\"path\":\"other.md\"}", null, null);
+        operationService.transitionItem(item.getId(), "running", null, null, null, null);
+        return new ParentFixture(parentSession.getId().toString(), parentRunId,
+                item.getId().toString(), toolCallId, operation.operationId());
+    }
+
+    private void markAgentToolCallRunning(ParentFixture parent) {
+        operationService.transitionItem(UUID.fromString(parent.itemPk), "running", null, null, null, null);
+    }
+
+    private void persistAgentToolCall(ParentFixture parent, String argumentsPreview) {
+        OperationItem item = operationService.appendItem(parent.operationId, parent.toolCallId, null,
+                "tool_call", "read_file", "agent", argumentsPreview, null, null);
+        operationService.transitionItem(item.getId(), "running", null, null, null, null);
+    }
+
+    private ResponseEntity<String> mcpToolCall(String sessionId, String runId, String operationId,
+                                               String toolCallId, String toolName) throws Exception {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(SERVICE_TOKEN);
+        headers.set("X-Workspace-Id", workspaceId);
+        headers.set("X-Session-Id", sessionId);
+        if (runId != null) {
+            headers.set("X-Chat-Run-Id", runId);
+        }
+        if (operationId != null) {
+            headers.set("X-Operation-Id", operationId);
+        }
+        if (toolCallId != null) {
+            headers.set("X-Operation-Item-Id", toolCallId);
+        }
+        String body = objectMapper.writeValueAsString(Map.of(
+                "jsonrpc", "2.0", "method", "tools/call", "id", 14,
+                "params", Map.of("name", toolName, "arguments", Map.of("path", "probe.md"))));
+        return restTemplate.postForEntity(url("/api/v1/mcp"), new HttpEntity<>(body, headers), String.class);
+    }
+
+    private void assertMcpCallDeniedWithoutRuntime(String sessionId, String runId, String operationId,
+                                                   String toolCallId, String toolName, String runtimePath,
+                                                   WireMockServer runtime) throws Exception {
+        assertMcpCallDeniedWithoutRuntime(sessionId, runId, operationId, toolCallId, toolName,
+                runtimePath, runtime, HttpStatus.FORBIDDEN, "FORBIDDEN");
+    }
+
+    private void assertMcpCallDeniedWithoutRuntime(String sessionId, String runId, String operationId,
+                                                   String toolCallId, String toolName, String runtimePath,
+                                                   WireMockServer runtime, HttpStatus expectedStatus,
+                                                   String expectedCode) throws Exception {
+        int itemCountBefore = workspaceOperationItemCount();
+        int attemptCountBefore = workspaceOperationAttemptCount();
+        int approvalCountBefore = approvalCount(sessionId);
+        int runtimeCallsBefore = runtime.findAll(postRequestedFor(urlPathEqualTo(runtimePath))
+                .withRequestBody(containing("\"method\":\"tools/call\""))).size();
+
+        ResponseEntity<String> response = mcpToolCall(sessionId, runId, operationId, toolCallId, toolName);
+
+        assertEquals(expectedStatus, response.getStatusCode());
+        if (expectedCode != null) {
+            assertEquals(expectedCode, objectMapper.readTree(response.getBody()).path("code").asText());
+        }
+        assertEquals(itemCountBefore, workspaceOperationItemCount(), "rejected call must not append ledger items");
+        assertEquals(attemptCountBefore, workspaceOperationAttemptCount(), "rejected call must not start attempts");
+        assertEquals(approvalCountBefore, approvalCount(sessionId), "rejected call must not create approvals");
+        assertEquals(runtimeCallsBefore, runtime.findAll(postRequestedFor(urlPathEqualTo(runtimePath))
+                .withRequestBody(containing("\"method\":\"tools/call\""))).size(),
+                "rejected call must not dispatch to Runtime");
+    }
+
+    private int workspaceOperationItemCount() {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM operation_items item JOIN ledger_operations op ON op.id = item.operation_id "
+                        + "WHERE CAST(op.workspace_id AS VARCHAR) = ?",
+                Integer.class, workspaceId);
+    }
+
+    private int operationItemCount(UUID operationId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM operation_items WHERE operation_id = ?", Integer.class, operationId);
+    }
+
+    private int operationAttemptCount(UUID operationId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM operation_attempts attempt "
+                        + "JOIN operation_items item ON item.id = attempt.item_id "
+                        + "WHERE item.operation_id = ?",
+                Integer.class, operationId);
+    }
+
+    private int workspaceOperationAttemptCount() {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM operation_attempts attempt "
+                        + "JOIN operation_items item ON item.id = attempt.item_id "
+                        + "JOIN ledger_operations op ON op.id = item.operation_id "
+                        + "WHERE CAST(op.workspace_id AS VARCHAR) = ?",
+                Integer.class, workspaceId);
+    }
+
+    private void revokeReadGrant() {
+        AuthorizationGrant grant = grantRepository.findBySubjectTypeAndSubjectId("agent_principal", principalId)
+                .stream()
+                .filter(candidate -> {
+                    com.fasterxml.jackson.databind.JsonNode permissions = candidate.getPermissions();
+                    for (com.fasterxml.jackson.databind.JsonNode permission : permissions) {
+                        if ("read".equals(permission.path("actionClass").asText())) {
+                            return true;
+                        }
+                    }
+                    return false;
+                })
+                .findFirst()
+                .orElseThrow();
+        ArrayNode remaining = objectMapper.createArrayNode();
+        for (com.fasterxml.jackson.databind.JsonNode permission : grant.getPermissions()) {
+            if (!"read".equals(permission.path("actionClass").asText())) {
+                remaining.add(permission);
+            }
+        }
+        grant.setPermissions(remaining);
+        grantRepository.saveAndFlush(grant);
+    }
 
     private ParentFixture fixture(String toolName, String argumentsPreview) {
         return fixture(toolName, argumentsPreview, "agent");
     }
 
     private ParentFixture fixture(String toolName, String argumentsPreview, String source) {
+        return fixture(toolName, argumentsPreview, source, true);
+    }
+
+    private ParentFixture fixtureWithoutAgentToolCall(String toolName, String argumentsPreview) {
+        return fixture(toolName, argumentsPreview, "agent", false);
+    }
+
+    private ParentFixture fixture(String toolName, String argumentsPreview, String source,
+                                  boolean createToolCall) {
         ensureWorkspace();
         Session parentSession = new Session(workspaceId, userId,
                 "Parent " + UUID.randomUUID().toString().substring(0, 8));
@@ -531,10 +912,14 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
                 UUID.randomUUID().toString(), "chat", "ui", "user", userId,
                 "parent-submit-" + parentRunId, "Parent chat");
         String toolCallId = UUID.randomUUID().toString();
-        OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
-                "tool_call", toolName, source, argumentsPreview, null, null);
+        String itemPk = null;
+        if (createToolCall) {
+            OperationItem item = operationService.appendItem(operation.operationId(), toolCallId, null,
+                    "tool_call", toolName, source, argumentsPreview, null, null);
+            itemPk = item.getId().toString();
+        }
         return new ParentFixture(parentSession.getId().toString(), parentRunId,
-                item.getId().toString(), toolCallId, operation.operationId());
+                itemPk, toolCallId, operation.operationId());
     }
 
     private String appendToolCall(ParentFixture parent, String toolName, String source) {
@@ -552,6 +937,10 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         userId = user.getId().toString();
         Workspace workspace = workspaceRepository.save(new Workspace("Spawn route test", userId));
         workspaceId = workspace.getId().toString();
+        WorkspaceUserId membershipId = new WorkspaceUserId(workspaceId, userId);
+        if (!workspaceUserRepository.existsById(membershipId)) {
+            workspaceUserRepository.saveAndFlush(new WorkspaceUser(workspaceId, userId, WorkspaceRole.OWNER));
+        }
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("Spawn route principal");
         principal.setCreatedByUserId(userId);

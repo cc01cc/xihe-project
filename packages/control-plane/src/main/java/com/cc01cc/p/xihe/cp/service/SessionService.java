@@ -4,6 +4,7 @@ import jakarta.persistence.EntityManager;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.SessionForkRequest;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
@@ -12,12 +13,14 @@ import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
 import com.cc01cc.p.xihe.cp.context.repository.ContextProjectionRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,6 +28,7 @@ import java.util.UUID;
 public class SessionService {
 
     private final SessionRepository sessionRepository;
+    private final SessionForkRequestRepository forkRequestRepository;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
     private final EventStoreRepository eventStoreRepository;
@@ -39,6 +43,7 @@ public class SessionService {
     private final EntityManager entityManager;
 
     public SessionService(SessionRepository sessionRepository,
+                          SessionForkRequestRepository forkRequestRepository,
                           MessageRepository messageRepository,
                           FileRepository fileRepository,
                           EventStoreRepository eventStoreRepository,
@@ -52,6 +57,7 @@ public class SessionService {
                           AgentPrincipalService agentPrincipalService,
                           EntityManager entityManager) {
         this.sessionRepository = sessionRepository;
+        this.forkRequestRepository = forkRequestRepository;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
         this.eventStoreRepository = eventStoreRepository;
@@ -109,6 +115,34 @@ public class SessionService {
     }
 
     @Transactional
+    public Session createForkSession(String sourceSessionId, UUID childSessionId, String anchorRunId,
+                                     String userId, String workspaceId) {
+        Session source = requireCurrent(sourceSessionId, userId, workspaceId);
+        String agentPrincipalId = source.getAgentPrincipalId();
+        if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_REQUIRED",
+                    "A fork requires a stable AgentPrincipal on the source Session");
+        }
+
+        com.fasterxml.jackson.databind.JsonNode currentCap = agentPrincipalService.resolveSessionCap(
+                agentPrincipalId, workspaceId);
+        Session child = new Session(workspaceId, userId, normalizeTitle("Fork of " + source.getTitle()));
+        child.setId(childSessionId);
+        child.setAgentPrincipalId(agentPrincipalId);
+        child.setAgentPermissionsSnapshot(currentCap);
+        child.setModelProvider(source.getModelProvider());
+        child.setModelName(source.getModelName());
+        child.setApprovalMode(source.getApprovalMode());
+        child.setKind(Session.KIND_FORK);
+        child.setSpawnedFromSessionId(source.getId());
+        child.setSpawnedFromRunId(UUID.fromString(anchorRunId));
+        child.setSpawnedAt(Instant.now());
+        bindProviderConnection(child, userId, workspaceId,
+                source.getProviderConnectionId(), source.getModelProvider());
+        return sessionRepository.saveAndFlush(child);
+    }
+
+    @Transactional
     public Session createWithId(String sessionId, String userId, String workspaceId, String title,
                                 String modelProvider, String modelName) {
         return createWithId(sessionId, userId, workspaceId, title, modelProvider, modelName, null);
@@ -140,6 +174,28 @@ public class SessionService {
                         UUID.fromString(sessionId), userId, workspaceId)
                 .orElseThrow(() -> new CpApiException(
                         HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
+    }
+
+    @Transactional
+    public Session lockCurrentForMutation(String sessionId, String userId, String workspaceId) {
+        requireWorkspace(userId, workspaceId);
+        UUID sessionUuid = UUID.fromString(sessionId);
+        dbLockTimeout.apply();
+        Session lockedSession = sessionRepository.findByIdForUpdate(sessionUuid)
+                .orElseThrow(() -> new CpApiException(
+                        HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
+        entityManager.refresh(lockedSession);
+        if (lockedSession.isArchived()
+                || !userId.equals(lockedSession.getUserId())
+                || !workspaceId.equals(lockedSession.getWorkspaceId())) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
+        }
+        if (forkRequestRepository.existsBySourceSessionIdAndState(
+                lockedSession.getId(), SessionForkRequest.COPYING)) {
+            throw new CpApiException(HttpStatus.CONFLICT, "FORK_REQUEST_IN_PROGRESS",
+                    "Session cannot be mutated while a fork snapshot is copying");
+        }
+        return lockedSession;
     }
 
     @Transactional
@@ -199,22 +255,13 @@ public class SessionService {
 
     @Transactional
     public void delete(String sessionId, String userId, String workspaceId) {
-        Session session = requireCurrent(sessionId, userId, workspaceId);
-
-        dbLockTimeout.apply();
-        Session lockedSession = sessionRepository.findByIdForUpdate(session.getId())
-                .orElseThrow(() -> new CpApiException(
-                        HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
-        entityManager.refresh(lockedSession);
-        if (lockedSession.isArchived()
-                || !userId.equals(lockedSession.getUserId())
-                || !workspaceId.equals(lockedSession.getWorkspaceId())) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
-        }
+        Session lockedSession = lockCurrentForMutation(sessionId, userId, workspaceId);
 
         // Delete metadata and context rows explicitly so this remains correct on old live schemas.
         chatAttachmentService.deleteSessionAttachments(sessionId);
         fileRepository.deleteBySessionId(sessionId);
+        // Fork Message rows retain parent Run IDs only as nullable lineage; do not leave them dangling.
+        messageRepository.clearRunReferencesToSession(sessionId);
         messageRepository.deleteBySessionId(sessionId);
         contextProjectionRepository.deleteBySessionId(sessionId);
         eventStoreRepository.deleteBySessionId(sessionId);

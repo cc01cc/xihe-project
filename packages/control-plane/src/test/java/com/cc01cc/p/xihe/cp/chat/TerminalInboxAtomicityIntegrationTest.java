@@ -24,6 +24,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -102,6 +103,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     @Autowired private ChatRunRecoveryService recoveryService;
     @Autowired private ChatController chatController;
     @Autowired private ChatSubmissionService submissionService;
+    @Autowired private BranchPathService branchPathService;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private PlatformTransactionManager transactionManager;
@@ -884,8 +886,9 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     }
 
     private ChatSubmissionService.Submission createParentRun(String runId, Session session) {
+        String branchId = branchPathService.ensureRootBranchId(session.getId().toString());
         return submissionService.create(runId, session.getId().toString(), userId, workspaceId,
-                principalId.toString(), "claim-idem-" + runId, "a".repeat(64), "provider", "model",
+                branchId, principalId.toString(), "claim-idem-" + runId, "a".repeat(64), "provider", "model",
                 "workspace", null, null, "t26b-claim", UUID.randomUUID().toString(),
                 "process pending child notices", "[]", List.of());
     }

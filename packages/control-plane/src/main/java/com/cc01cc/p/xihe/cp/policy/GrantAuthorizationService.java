@@ -61,8 +61,7 @@ public class GrantAuthorizationService {
                     userId, workspaceId, sessionId, runId, operationId, toolCallId, toolName);
             return true;
         } catch (IllegalArgumentException e) {
-            logger.warn("[POLICY] event=agent_tool_call_context_fail_closed exceptionType={}",
-                    e.getClass().getSimpleName());
+            logger.warn("[POLICY] event=agent_tool_call_context_fail_closed reason={}", e.getMessage());
             return false;
         }
     }

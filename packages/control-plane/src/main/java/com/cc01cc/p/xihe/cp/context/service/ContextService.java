@@ -132,6 +132,53 @@ public class ContextService {
         return projectionService.projectAndSave(sessionId, workspaceId, userId, effectiveAfter, scopeBranch);
     }
 
+    /**
+     * PLAN-0410 T3.6: build the normalized child history from one selected
+     * source branch, bounded by the terminal anchor cursor. Parent identifiers
+     * and the source cursor are intentionally not part of this seed.
+     */
+    @Transactional(readOnly = true)
+    public ObjectNode buildForkSeed(String sessionId, String branchId, long anchorCursor) {
+        BranchScope scope = resolveScope(sessionId, null, branchId);
+        long branchLatest = latestVisibleSequence(sessionId, scope);
+        if (anchorCursor < 0 || anchorCursor > branchLatest) {
+            throw new com.cc01cc.p.xihe.cp.config.CpApiException(
+                    org.springframework.http.HttpStatus.CONFLICT, "BRANCH_ANCHOR_UNAVAILABLE",
+                    "The selected anchor cursor is outside the visible branch path");
+        }
+
+        ObjectNode source = projectionService.projectUpTo(sessionId, anchorCursor, scope.visibility());
+        JsonNode sourceMessages = source.path("messages");
+        if (!sourceMessages.isArray()) {
+            throw new IllegalStateException("Branch projection messages are not an array");
+        }
+        ArrayNode messages = objectMapper.createArrayNode();
+        for (JsonNode sourceMessage : sourceMessages) {
+            String role = sourceMessage.path("role").asText();
+            if (!sourceMessage.isObject()
+                    || !List.of("human", "ai", "tool").contains(role)
+                    || !sourceMessage.path("content").isTextual()) {
+                throw new IllegalStateException("Branch projection contains an invalid message");
+            }
+            ObjectNode message = objectMapper.createObjectNode();
+            message.put("role", role);
+            message.put("content", sourceMessage.path("content").asText());
+            messages.add(message);
+        }
+
+        ObjectNode seed = objectMapper.createObjectNode();
+        seed.set("messages", messages);
+        JsonNode summary = latestCompaction(sessionId, scope.visibility(), anchorCursor);
+        if (summary != null && summary.path("summary").isTextual()
+                && !summary.path("summary").asText().isBlank()) {
+            String summaryText = summary.path("summary").asText();
+            String summaryHash = summary.path("summaryHash").asText("");
+            seed.put("summary", summaryText);
+            seed.put("summaryHash", summaryHash.isBlank() ? computeSha256(summaryText) : summaryHash);
+        }
+        return seed;
+    }
+
     @Transactional(readOnly = true)
     public List<ContextEvent> readEvents(String sessionId, Long afterSequence) {
         return eventStoreService.read(sessionId, afterSequence);
@@ -520,22 +567,61 @@ public class ContextService {
      * (PLAN-0410 T2.2: sibling summaries never feed this branch's cursor).
      */
     public com.fasterxml.jackson.databind.JsonNode latestCompaction(String sessionId, String branchId) {
+        return latestCompaction(sessionId, branchId, null);
+    }
+
+    /** PLAN-0410 T3.6: return the last summary visible at or before an anchor cursor. */
+    public com.fasterxml.jackson.databind.JsonNode latestCompaction(
+            String sessionId, String branchId, Long upToSequence) {
         BranchScope scope = resolveScope(sessionId, null, branchId);
-        return latestCompaction(sessionId, scope.visibility());
+        long upperBound = upToSequence == null
+                ? Long.MAX_VALUE
+                : Math.min(upToSequence, latestVisibleSequence(sessionId, scope));
+        return latestCompaction(sessionId, scope.visibility(), upperBound);
     }
 
     private com.fasterxml.jackson.databind.JsonNode latestCompaction(
             String sessionId, com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
+        return latestCompaction(sessionId, visibility, Long.MAX_VALUE);
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode latestCompaction(
+            String sessionId,
+            com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility,
+            long upperBound) {
         List<com.cc01cc.p.xihe.cp.context.entity.ContextEvent> events =
                 eventStoreService.read(sessionId, 0L, visibility);
         for (int i = events.size() - 1; i >= 0; i--) {
             com.cc01cc.p.xihe.cp.context.entity.ContextEvent e = events.get(i);
+            if (e.getSequence() > upperBound) {
+                continue;
+            }
             if ("compaction.applied".equals(e.getEventType())
                     || "compaction.manual_applied".equals(e.getEventType())) {
                 try {
                     return objectMapper.readTree(e.getPayload());
                 } catch (Exception ex) {
                     logger.warn("[LIFECYCLE] service=cp event=compaction_payload_parse_failed sessionId={}", sessionId);
+                    return null;
+                }
+            }
+            if ("session.forked".equals(e.getEventType())) {
+                try {
+                    JsonNode payload = objectMapper.readTree(e.getPayload());
+                    JsonNode seed = payload.path("summary_seed");
+                    String summary = seed.path("summary").asText("");
+                    if (!summary.isBlank()) {
+                        ObjectNode normalized = objectMapper.createObjectNode();
+                        normalized.put("summary", summary);
+                        normalized.put("summaryHash", seed.path("summaryHash").asText(""));
+                        normalized.put("contextEpoch", seed.path("contextEpoch").asText(""));
+                        // A seed has no source cursor; the persisted child event sequence is authoritative.
+                        normalized.put("up_to_sequence", e.getSequence());
+                        return normalized;
+                    }
+                } catch (Exception ex) {
+                    logger.warn("[LIFECYCLE] service=cp event=fork_seed_payload_parse_failed sessionId={}",
+                            sessionId);
                     return null;
                 }
             }

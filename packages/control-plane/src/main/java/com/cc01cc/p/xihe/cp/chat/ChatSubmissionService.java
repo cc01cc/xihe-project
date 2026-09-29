@@ -118,23 +118,23 @@ public class ChatSubmissionService {
 
     @Transactional
     public Submission create(String runId, String sessionId, String userId, String workspaceId,
-                             String idempotencyKey, String requestHash, String provider,
+                             String branchId, String idempotencyKey, String requestHash, String provider,
                              String model, String toolMode, String providerConnectionId,
                              Long connectionRevision, String leaseOwner, String requestId,
                              String content, String attachmentsJson, List<String> attachmentIds) {
-        return create(runId, sessionId, userId, workspaceId, null, idempotencyKey, requestHash,
+        return create(runId, sessionId, userId, workspaceId, branchId, null, idempotencyKey, requestHash,
                 provider, model, toolMode, providerConnectionId, connectionRevision,
                 leaseOwner, requestId, content, attachmentsJson, attachmentIds);
     }
 
     @Transactional
     public Submission create(String runId, String sessionId, String userId, String workspaceId,
-                             String agentPrincipalId, String idempotencyKey, String requestHash,
+                             String branchId, String agentPrincipalId, String idempotencyKey, String requestHash,
                              String provider, String model, String toolMode, String providerConnectionId,
                              Long connectionRevision, String leaseOwner, String requestId,
                              String content, String attachmentsJson, List<String> attachmentIds) {
         return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
-                idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
+                branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
                 agentPrincipalId);
     }
@@ -217,8 +217,9 @@ public class ChatSubmissionService {
         // Idempotent replay has already returned; the winner's retry returns the same child.
         requireActiveParentRunForSpawn(parentRun);
 
+        String childBranchId = branchPathService.ensureRootBranchId(spawn.childSessionId());
         return persist(ChatRun.ORIGIN_SPAWN, spawn.runId(), spawn.childSessionId(), spawn.userId(),
-                spawn.workspaceId(), idempotencyKey, requestHash, spawn.provider(), spawn.model(),
+                spawn.workspaceId(), childBranchId, idempotencyKey, requestHash, spawn.provider(), spawn.model(),
                 spawn.toolMode(), spawn.providerConnectionId(), spawn.connectionRevision(), spawn.leaseOwner(),
                 spawn.requestId(), spawn.content(), attachments.json(), attachments.fileIds(), null);
     }
@@ -383,8 +384,9 @@ public class ChatSubmissionService {
         String requestId = UUID.randomUUID().toString();
         String childRunId = UUID.randomUUID().toString();
         String idempotencyKey = item.getId().toString();
+        String childBranchId = branchPathService.ensureRootBranchId(childSession.getId().toString());
         Submission created = persist(ChatRun.ORIGIN_SPAWN, childRunId, childSession.getId().toString(),
-                parentRun.getUserId(), parentRun.getWorkspaceId(), idempotencyKey,
+                parentRun.getUserId(), parentRun.getWorkspaceId(), childBranchId, idempotencyKey,
                 requestHash,
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
@@ -574,17 +576,19 @@ public class ChatSubmissionService {
     }
 
     private Submission persist(String origin, String runId, String sessionId, String userId, String workspaceId,
-                               String idempotencyKey, String requestHash, String provider, String model,
+                               String requestedBranchId, String idempotencyKey, String requestHash,
+                               String provider, String model,
                                String toolMode, String providerConnectionId, Long connectionRevision,
                                String leaseOwner, String requestId, String content, String attachmentsJson,
                                List<String> attachmentIds, String requestedPrincipalId) {
         bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
         rejectConcurrentSubmission(sessionId, userId, idempotencyKey);
-        // PLAN-0410 T1.3: resolve the durable branch binding BEFORE any row is
-        // written — a missing/failed branch resolution aborts the whole
-        // submission instead of leaving a half-created Run/Message pair. M1 has
-        // no branch selector, so Run and Message share the Session root.
-        String branchId = branchPathService.ensureRootBranchId(sessionId);
+        if (requestedBranchId == null || requestedBranchId.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
+        }
+        // PLAN-0410 T1.3: resolve the explicitly selected durable branch before
+        // any Run/Message row is written; a missing path aborts the transaction.
+        String branchId = branchPathService.resolveVisibility(sessionId, requestedBranchId).currentBranchId();
 
         ChatRun chatRun = new ChatRun(
                 runId, sessionId, userId, workspaceId, idempotencyKey, requestHash,

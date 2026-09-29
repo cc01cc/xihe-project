@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.OperationItem;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -12,6 +13,7 @@ import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.OperationItemRepository;
 import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,14 +22,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
-import java.util.UUID;
 import java.util.LinkedHashMap;
-import java.util.UUID;
 import java.util.List;
-import java.util.UUID;
 import java.util.Map;
 import java.util.UUID;
 
@@ -45,6 +45,7 @@ public class MessageController {
     private final LedgerOperationRepository ledgerOperationRepository;
     private final OperationItemRepository operationItemRepository;
     private final JobStateService jobStateService;
+    private final BranchPathService branchPathService;
 
     public MessageController(MessageRepository messageRepository,
                              ChatRunRepository chatRunRepository,
@@ -53,7 +54,8 @@ public class MessageController {
                              ObjectMapper objectMapper,
                              LedgerOperationRepository ledgerOperationRepository,
                              OperationItemRepository operationItemRepository,
-                             JobStateService jobStateService) {
+                             JobStateService jobStateService,
+                             BranchPathService branchPathService) {
         this.messageRepository = messageRepository;
         this.chatRunRepository = chatRunRepository;
         this.fileRepository = fileRepository;
@@ -62,11 +64,13 @@ public class MessageController {
         this.ledgerOperationRepository = ledgerOperationRepository;
         this.operationItemRepository = operationItemRepository;
         this.jobStateService = jobStateService;
+        this.branchPathService = branchPathService;
     }
 
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @GetMapping
-    public ResponseEntity<?> listMessages(@PathVariable String sessionId) {
+    public ResponseEntity<?> listMessages(@PathVariable String sessionId,
+                                          @RequestParam(value = "branchId", required = false) String branchId) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
@@ -78,17 +82,69 @@ public class MessageController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+        if (branchId == null || branchId.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "branchId is required");
+        }
+        try {
+            branchId = UUID.fromString(branchId).toString();
+        } catch (IllegalArgumentException invalidBranchId) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "branchId must be a UUID");
+        }
+
+        BranchPathService.BranchVisibility visibility;
+        String rootBranchId;
+        try {
+            visibility = branchPathService.resolveVisibility(sessionId, branchId);
+            rootBranchId = branchPathService.resolvePath(sessionId, branchId);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
 
         List<Message> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         List<Map<String, Object>> result = new ArrayList<>();
         for (Message message : messages) {
-            result.add(toMessageDto(message));
+            if (isVisibleOnPath(message, sessionId, workspaceId, rootBranchId, visibility)) {
+                result.add(toMessageDto(message));
+            }
         }
         return ResponseEntity.ok(result);
     }
 
+    private boolean isVisibleOnPath(Message message, String sessionId, String workspaceId,
+                                    String rootBranchId,
+                                    BranchPathService.BranchVisibility visibility) {
+        String messageBranchId = message.getBranchId();
+        if (messageBranchId == null || messageBranchId.isBlank()) {
+            return false;
+        }
+        if (messageBranchId.equals(visibility.currentBranchId())) {
+            return true;
+        }
+        if (!visibility.ancestorCutoffs().containsKey(messageBranchId)) {
+            return false;
+        }
+        if (message.getRunId() == null || message.getRunId().isBlank()) {
+            return messageBranchId.equals(rootBranchId);
+        }
+        try {
+            BranchPathService.AnchorResolution cursor = branchPathService.resolveAnchor(
+                    sessionId, workspaceId, message.getId().toString());
+            return visibility.isVisible(cursor.branchId(), cursor.cursor());
+        } catch (CpApiException e) {
+            if ("BRANCH_ANCHOR_UNAVAILABLE".equals(e.getCode())
+                    || "BRANCH_ANCHOR_RUN_ACTIVE".equals(e.getCode())
+                    || "BRANCH_ANCHOR_ROLE_UNSUPPORTED".equals(e.getCode())) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     @DeleteMapping("/{messageId}")
+    @Transactional
     public ResponseEntity<?> deleteMessage(@PathVariable String sessionId, @PathVariable String messageId) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
@@ -97,7 +153,7 @@ public class MessageController {
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
         }
         try {
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            sessionService.lockCurrentForMutation(sessionId, userId, workspaceId);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -107,11 +163,13 @@ public class MessageController {
                     HttpStatus.NOT_FOUND, "MESSAGE_NOT_FOUND", "Message not found");
         }
         messageRepository.delete(message);
-        fileRepository.findByMessageId(messageId)
-                .forEach(file -> {
-                    file.setMessageId(null);
-                    fileRepository.save(file);
-                });
+        for (var candidate : fileRepository.findByMessageIdOrderByIdAsc(messageId)) {
+            var file = fileRepository.findByIdForUpdate(candidate.getId()).orElse(null);
+            if (file != null && messageId.equals(file.getMessageId())) {
+                file.setMessageId(null);
+                fileRepository.save(file);
+            }
+        }
         logger.info("Message deleted session={} messageId={} userId={}", sessionId, messageId, userId);
         return ResponseEntity.ok(Map.of("deleted", messageId));
     }
@@ -124,17 +182,20 @@ public class MessageController {
         dto.put("content", message.getContent());
         dto.put("createdAt", message.getCreatedAt());
         if (message.getRunId() != null) {
-            chatRunRepository.findById(UUID.fromString(message.getRunId())).ifPresent(run -> {
+            ChatRun run = chatRunRepository.findById(UUID.fromString(message.getRunId())).orElse(null);
+            // Forked Message rows may keep the parent Run id as nullable lineage.
+            // Only the Run owned by this Message's Session is safe for the public view.
+            if (run != null && message.getSessionId().equals(run.getSessionId())) {
                 dto.put("runId", run.getId());
                 dto.put("runStatus", run.getStatus());
                 dto.put("terminalOutcome", run.getTerminalOutcome());
                 dto.put("errorCode", run.getErrorCode());
                 dto.put("errorDetail", run.getErrorDetail());
                 dto.put("partial", "partial".equals(run.getStatus()));
-            });
-            // PLAN-0344 T1.4：刷新后 job 卡片与续看入口的数据源
-            // （tool_result 本身不持久化，jobSummary 从账本档案还原）。
-            dto.put("jobSummary", jobSummariesForRun(message.getRunId()));
+                // PLAN-0344 T1.4：刷新后 job 卡片与续看入口的数据源。
+                // Parent-run job summaries are not projected onto a fork child.
+                dto.put("jobSummary", jobSummariesForRun(message.getRunId()));
+            }
         }
         if (message.getAttachments() != null && !message.getAttachments().isBlank()) {
             try {

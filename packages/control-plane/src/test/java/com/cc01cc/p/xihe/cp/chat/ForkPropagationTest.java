@@ -23,6 +23,7 @@ import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
+import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
@@ -84,6 +85,9 @@ class ForkPropagationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private SessionService sessionService;
 
     @Autowired
     private OperationItemRepository operationItemRepository;
@@ -273,6 +277,26 @@ class ForkPropagationTest extends AbstractIntegrationTest {
                 "spawn permission ancestors follow the kind=spawn chain up to the root (spec §3.2)");
         assertEquals(List.of(forkChild.getId()), sessionIds(forkPath),
                 "fork is a new root: no ancestor session joins its permission path (spec §3.2)");
+    }
+
+    @Test
+    void forkPermissionRootSurvivesSourceSessionAndRunDeletion() {
+        ensureWorkspace();
+        Session parent = new Session(workspaceId, userId, "Fork root parent");
+        parent.setId(UUID.randomUUID());
+        parent.setAgentPrincipalId(principalId.toString());
+        parent.setAgentPermissionsSnapshot(capNode());
+        parent = sessionRepository.saveAndFlush(parent);
+        String parentRunId = saveRun(parent, "running");
+        Session forkChild = forkSession(parent.getId().toString(), parentRunId);
+
+        sessionService.delete(parent.getId().toString(), userId, workspaceId);
+
+        assertTrue(sessionRepository.findById(parent.getId()).isEmpty());
+        GrantPrincipalPathResolver.AgentPath forkPath = principalPathResolver.resolveAgent(
+                userId, workspaceId, forkChild.getId().toString());
+        assertEquals(List.of(forkChild.getId()), sessionIds(forkPath),
+                "a deleted source Session/Run must not invalidate the fork's own permission root");
     }
 
     // ── fixtures ────────────────────────────────────────────────────────────

@@ -219,6 +219,18 @@ public class ChatController {
         if (sessionId == null || sessionId.isBlank()) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
         }
+        Object rawBranchId = request.get("branchId");
+        if (!(rawBranchId instanceof String branchValue) || branchValue.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
+        }
+        String branchId;
+        try {
+            branchId = UUID.fromString(branchValue).toString();
+        } catch (IllegalArgumentException invalidBranchId) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId must be a UUID");
+        }
         String content = (String) request.getOrDefault("content", "");
         Object rawPrincipalId = request.get("agentPrincipalId");
         if (rawPrincipalId != null && !(rawPrincipalId instanceof String)) {
@@ -340,7 +352,7 @@ public class ChatController {
         }
 
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
-                perCallTimeouts.values(), agentPrincipalId);
+                perCallTimeouts.values(), agentPrincipalId, branchId);
         ChatRun existingRun = chatRunRepository
                 .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
                 .orElse(null);
@@ -369,7 +381,7 @@ public class ChatController {
         boolean handedOff = false;
         try {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
-                    runId, sessionId, userId, workspaceId, agentPrincipalId, idempotencyKey, requestHash,
+                    runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
                     instanceId(), requestId, content, attachmentsJson, attachmentIds);
             ChatRun chatRun = submission.run();
@@ -1197,9 +1209,9 @@ public class ChatController {
 
     private String requestHash(String content, String provider, String model,
                                String toolMode, List<String> attachmentIds,
-                               Map<String, Integer> toolTimeouts, String agentPrincipalId) {
+                               Map<String, Integer> toolTimeouts, String agentPrincipalId, String branchId) {
         return ChatRequestHash.calculate(objectMapper, content, provider, model,
-                toolMode, attachmentIds, toolTimeouts, agentPrincipalId);
+                toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId);
     }
 
     private Map<String, Object> runResponse(ChatRun run) {

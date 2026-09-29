@@ -46,4 +46,13 @@ public class DbLockTimeout {
         }
         entityManager.createNativeQuery("SET LOCAL lock_timeout = " + timeoutMs).executeUpdate();
     }
+
+    /** Applies transaction-scoped lock and statement bounds for one database hop. */
+    public void applyBounded(long queryTimeoutMs) {
+        if (!postgres || queryTimeoutMs <= 0) {
+            return;
+        }
+        entityManager.createNativeQuery("SET LOCAL lock_timeout = " + queryTimeoutMs).executeUpdate();
+        entityManager.createNativeQuery("SET LOCAL statement_timeout = " + queryTimeoutMs).executeUpdate();
+    }
 }

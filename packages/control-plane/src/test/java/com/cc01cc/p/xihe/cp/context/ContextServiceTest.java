@@ -59,6 +59,36 @@ class ContextServiceTest extends AbstractH2Test {
     }
 
     @Test
+    void forkSeedSummaryUsesChildEventSequenceAsCompactionCursor() {
+        String childSessionId = "aaaaaaa9-0000-0000-0000-000000000000";
+        contextService.appendEvent(childSessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS,
+                "user_id", TEST_USER,
+                "epoch_id", "child-bootstrap",
+                "system_messages", List.of("child system")
+        ));
+        var forked = contextService.appendEvent(childSessionId, TEST_WS, TEST_USER, "session.forked", Map.of(
+                "source_session_id", TEST_SESSION_A,
+                "anchor_message_id", "anchor-1",
+                "summary_seed", Map.of(
+                        "messages", List.of(Map.of("role", "human", "content", "prior turn")),
+                        "summary", "parent history summary",
+                        "summaryHash", "summary-hash",
+                        "contextEpoch", "child-epoch")
+        ));
+
+        var latest = contextService.latestCompaction(childSessionId, null);
+
+        assertThat(latest).isNotNull();
+        assertThat(latest.get("summary").asText()).isEqualTo("parent history summary");
+        assertThat(latest.get("summaryHash").asText()).isEqualTo("summary-hash");
+        assertThat(latest.get("up_to_sequence").asLong()).isEqualTo(forked.getSequence());
+        assertThat(contextService.latestCompaction(childSessionId, null, forked.getSequence() - 1L))
+                .as("a child seed after the requested cursor is not visible")
+                .isNull();
+    }
+
+    @Test
     void replayReturnsSnapshotAndEvents() {
         String sessionId = "aaaaaaa6-0000-0000-0000-000000000000";
 

@@ -47,6 +47,7 @@ import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.operation.OperationService;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -55,6 +56,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -63,6 +65,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -126,6 +129,9 @@ class ChatControllerTest extends AbstractH2Test {
     private AgentTemplateService agentTemplateService;
 
     @Autowired
+    private BranchPathService branchPathService;
+
+    @Autowired
     private ApprovalService approvalService;
 
     @Autowired
@@ -163,6 +169,7 @@ class ChatControllerTest extends AbstractH2Test {
     private String userId;
     private String workspaceId;
     private String sessionId;
+    private String branchId;
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -231,6 +238,7 @@ class ChatControllerTest extends AbstractH2Test {
         session.setAgentPrincipalId(principal.getId().toString());
         session.setAgentPermissionsSnapshot(permissions.deepCopy());
         sessionRepository.save(session);
+        branchId = branchPathService.ensureRootBranchId(sessionId);
     }
 
     @AfterEach
@@ -273,7 +281,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
         assertEquals("FORBIDDEN", response.getBody().get("code"));
@@ -281,6 +289,21 @@ class ChatControllerTest extends AbstractH2Test {
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
         assertTrue(ledgerOperationRepository.findBySessionIdOrderByCreatedAtDesc(sessionId).isEmpty());
+    }
+
+    @Test
+    void chatRequiresExplicitBranchId() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                new HttpEntity<>(Map.of("sessionId", sessionId, "content", "missing branch"), headers), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("INVALID_REQUEST", response.getBody().get("code"));
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
     }
 
     @Test
@@ -319,7 +342,7 @@ class ChatControllerTest extends AbstractH2Test {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
+        HttpEntity<Map<String, Object>> entity = chatEntity(request, headers);
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST, entity, Map.class);
@@ -382,7 +405,7 @@ class ChatControllerTest extends AbstractH2Test {
             });
             ResponseEntity<Map> response = noErrorClient.exchange(
                     baseUrl + "/api/v1/chat", HttpMethod.POST,
-                    new HttpEntity<>(request, headers), Map.class);
+                    chatEntity(request, headers), Map.class);
 
             assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
             assertEquals("LLM_NOT_CONFIGURED", response.getBody().get("code"));
@@ -422,7 +445,7 @@ class ChatControllerTest extends AbstractH2Test {
 
             ResponseEntity<Map> response = noErrorClient.exchange(
                     baseUrl + "/api/v1/chat", HttpMethod.POST,
-                    new HttpEntity<>(request, headers), Map.class);
+                    chatEntity(request, headers), Map.class);
 
             assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
             assertEquals("LLM_NOT_CONFIGURED", response.getBody().get("code"));
@@ -470,10 +493,10 @@ class ChatControllerTest extends AbstractH2Test {
 
         ResponseEntity<Map> first = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
         ResponseEntity<Map> second = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
         assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
@@ -484,12 +507,20 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(first.getBody().get("runId"), jdbcTemplate.queryForObject(
                 "SELECT injected_run_id::text FROM inbox WHERE id = ?", String.class, inboxId),
                 "the first parent Run must claim the pending Inbox row");
-        Thread.sleep(500);
-        assertEquals(1, agentCalls.get());
+        await().during(1, TimeUnit.SECONDS).atMost(5, TimeUnit.SECONDS)
+                .untilAsserted(() -> assertEquals(1, agentCalls.get()));
         assertEquals("succeeded", chatRunRepository.findById(UUID.fromString((String) first.getBody().get("runId"))).orElseThrow().getStatus());
         assertEquals(first.getBody().get("runId"), jdbcTemplate.queryForObject(
                 "SELECT injected_run_id::text FROM inbox WHERE id = ?", String.class, inboxId),
                 "an idempotency replay returns the original Run and never transfers its Inbox claim");
+
+        Map<String, Object> otherBranchRequest = new LinkedHashMap<>(request);
+        otherBranchRequest.put("branchId", UUID.randomUUID().toString());
+        ResponseEntity<Map> branchConflict = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(otherBranchRequest, headers), Map.class);
+        assertEquals(HttpStatus.CONFLICT, branchConflict.getStatusCode());
+        assertEquals("IDEMPOTENCY_KEY_CONFLICT", branchConflict.getBody().get("code"));
 
         Map<String, Object> conflictingRequest = Map.of(
                 "sessionId", sessionId,
@@ -499,7 +530,7 @@ class ChatControllerTest extends AbstractH2Test {
         );
         ResponseEntity<Map> conflict = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(conflictingRequest, headers), Map.class);
+                chatEntity(conflictingRequest, headers), Map.class);
         assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
         assertEquals("IDEMPOTENCY_KEY_CONFLICT", conflict.getBody().get("code"));
     }
@@ -525,7 +556,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals("IDEMPOTENCY_KEY_CONFLICT", response.getBody().get("code"));
@@ -560,7 +591,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         pollMessages(5000);
@@ -607,7 +638,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         ResponseEntity<Map> first = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
 
         List<Message> messages = pollMessages(5000);
@@ -618,7 +649,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         ResponseEntity<Map> duplicate = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, duplicate.getStatusCode());
         assertEquals(first.getBody().get("runId"), duplicate.getBody().get("runId"));
         assertEquals(1, agentCalls.get());
@@ -665,7 +696,7 @@ class ChatControllerTest extends AbstractH2Test {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
+        HttpEntity<Map<String, Object>> entity = chatEntity(request, headers);
 
         restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST, entity, Map.class);
 
@@ -703,7 +734,7 @@ class ChatControllerTest extends AbstractH2Test {
             request.put("toolTimeouts", Map.of("execute_command", bad));
             ResponseEntity<Map> response = restTemplate.exchange(
                     baseUrl + "/api/v1/chat", HttpMethod.POST,
-                    new HttpEntity<>(request, headers), Map.class);
+                    chatEntity(request, headers), Map.class);
 
             assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), "value " + bad);
             assertEquals("INVALID_REQUEST", response.getBody().get("code"), "value " + bad);
@@ -715,7 +746,7 @@ class ChatControllerTest extends AbstractH2Test {
         wrongType.put("toolTimeouts", List.of(20));
         ResponseEntity<Map> wrongTypeResponse = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(wrongType, headers), Map.class);
+                chatEntity(wrongType, headers), Map.class);
         assertEquals(HttpStatus.BAD_REQUEST, wrongTypeResponse.getStatusCode());
         assertEquals("INVALID_REQUEST", wrongTypeResponse.getBody().get("code"));
     }
@@ -748,7 +779,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
 
         long deadline = System.currentTimeMillis() + 5000;
         while (capturedBody[0] == null && System.currentTimeMillis() < deadline) {
@@ -800,7 +831,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
 
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
@@ -865,7 +896,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
-                new HttpEntity<>(request, headers), Map.class);
+                chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
 
         // T1.9: the blocked Agent waiter is notified exactly like a user rejection...
@@ -909,6 +940,12 @@ class ChatControllerTest extends AbstractH2Test {
         return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
     }
 
+    private HttpEntity<Map<String, Object>> chatEntity(Map<String, Object> request, HttpHeaders headers) {
+        Map<String, Object> body = new LinkedHashMap<>(request);
+        body.putIfAbsent("branchId", branchId);
+        return new HttpEntity<>(body, headers);
+    }
+
     @Test
     void chat_withUsageEvent_persistsExtensionAndWritesTokenCount() throws IOException {
         // PLAN-294 M1 (decisions #13/#14): the relay must intercept the
@@ -942,7 +979,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
 
         String runId = (String) response.getBody().get("runId");
@@ -1004,7 +1041,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
 
         String runId = (String) response.getBody().get("runId");
@@ -1055,7 +1092,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
 
         String runId = (String) response.getBody().get("runId");
@@ -1105,7 +1142,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         String runId = (String) response.getBody().get("runId");
 
@@ -1162,7 +1199,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         String runId = (String) response.getBody().get("runId");
         String operationId = (String) response.getBody().get("operationId");
@@ -1236,7 +1273,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         String runId = (String) response.getBody().get("runId");
         String operationId = (String) response.getBody().get("operationId");
@@ -1272,7 +1309,7 @@ class ChatControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                baseUrl + "/api/v1/chat", HttpMethod.POST, new HttpEntity<>(request, headers), Map.class);
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         String runId = (String) response.getBody().get("runId");
 

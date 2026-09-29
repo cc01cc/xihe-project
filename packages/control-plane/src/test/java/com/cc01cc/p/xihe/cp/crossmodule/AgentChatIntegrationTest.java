@@ -20,6 +20,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
+import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,7 @@ import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -72,6 +74,9 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
     private AgentTemplateService agentTemplateService;
+
+    @Autowired
+    private BranchPathService branchPathService;
 
     private String token;
     private String userId;
@@ -125,6 +130,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         Map<String, Object> body = Map.of(
                 "sessionId", sessionId,
+                "branchId", branchPathService.ensureRootBranchId(sessionId),
                 "content", "Hello",
                 "userId", userId,
                 "workspaceId", workspaceId
@@ -146,6 +152,15 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 .withRequestBody(matchingJsonPath("$.sessionId"))
                 .withRequestBody(matchingJsonPath("$.content"))
                 .withRequestBody(matchingJsonPath("$.stream", equalTo("true"))));
+
+        String forwardedBody = wireMock.findAll(postRequestedFor(urlEqualTo("/internal/v1/agent/chat")))
+                .getFirst().getBodyAsString();
+        for (String authorityField : List.of(
+                "agentPrincipalId", "principalId", "roleId", "scope", "grants", "capabilities",
+                "approvalRequestId", "approvalGrant", "authorizedTools")) {
+            assertFalse(forwardedBody.contains("\"" + authorityField + "\""),
+                    "CP→Agent payload must not include authority-bearing field " + authorityField);
+        }
     }
 
     @Test
@@ -163,6 +178,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         Map<String, Object> body = Map.of(
                 "sessionId", sessionId,
+                "branchId", branchPathService.ensureRootBranchId(sessionId),
                 "content", "Execute this",
                 "workspaceId", workspaceId,
                 "userId", userId
@@ -209,6 +225,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         Map<String, Object> body = Map.of(
                 "sessionId", sessionId,
+                "branchId", branchPathService.ensureRootBranchId(sessionId),
                 "content", "Hello overrides",
                 "userId", userId,
                 "workspaceId", workspaceId
@@ -255,6 +272,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         Map<String, Object> body = Map.of(
                 "sessionId", sessionId,
+                "branchId", branchPathService.ensureRootBranchId(sessionId),
                 "content", "Hi",
                 "userId", userId,
                 "workspaceId", workspaceId

@@ -1,9 +1,11 @@
 package com.cc01cc.p.xihe.cp.files;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -17,9 +19,15 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceUserRepository;
 
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.LinkOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -147,7 +155,7 @@ public class ChatAttachmentService {
     public void delete(String sessionId, String fileId, String userId, String workspaceId) {
         verifyWorkspaceMembership(userId, workspaceId);
         requireOwnedSession(sessionId, workspaceId, userId);
-        File file = fileRepository.findByIdAndSessionId(UUID.fromString(fileId), sessionId)
+        File file = fileRepository.findByIdAndSessionIdForUpdate(UUID.fromString(fileId), sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Attachment not found: " + fileId));
         verifyFileOwnership(file, userId, workspaceId);
         deletePhysicalFile(file.getStoragePath());
@@ -167,17 +175,103 @@ public class ChatAttachmentService {
 
     @Transactional
     public void deleteSessionAttachments(String sessionId) {
-        List<File> files = fileRepository.findBySessionId(sessionId);
-        for (File file : files) {
-            try {
-                deletePhysicalFile(file.getStoragePath());
-                fileRepository.delete(file);
-                logger.info("Session attachment deleted session={} fileId={}", sessionId, file.getId());
-            } catch (Exception e) {
-                logger.warn("Failed to delete session attachment session={} fileId={}", sessionId, file.getId(), e);
+        List<File> files = fileRepository.findBySessionIdOrderByIdAsc(sessionId);
+        for (File candidate : files) {
+            // Share the same lock and deterministic order as an in-flight fork copy.
+            File file = fileRepository.findByIdForUpdate(candidate.getId()).orElse(null);
+            if (file == null) {
+                continue;
             }
+            deletePhysicalFile(file.getStoragePath());
+            fileRepository.delete(file);
+            logger.info("Session attachment deleted session={} fileId={}", sessionId, file.getId());
         }
         deleteDirectoryIfEmpty(Paths.get(attachmentsBasePath, sessionId));
+    }
+
+    @Transactional
+    public File copyForFork(UUID sourceFileId, String sourceSessionId, String sourceMessageId,
+                            String childSessionId, String childMessageId, String userId, String workspaceId) {
+        File source = fileRepository.findByIdAndSessionIdForUpdate(sourceFileId, sourceSessionId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.CONFLICT, "FORK_SOURCE_ATTACHMENT_CHANGED",
+                        "A source attachment changed during fork copy"));
+        if (!sourceMessageId.equals(source.getMessageId())) {
+            throw new CpApiException(HttpStatus.CONFLICT, "FORK_SOURCE_ATTACHMENT_CHANGED",
+                    "A source attachment changed during fork copy");
+        }
+        verifyFileOwnership(source, userId, workspaceId);
+        try {
+            Path sourcePath = resolveSourceFilePath(sourceSessionId, source);
+            Path childDirectory = resolveSessionDirectory(childSessionId);
+            Path temporaryPath = Files.createTempFile(childDirectory, ".fork-", ".tmp");
+            Files.copy(sourcePath, temporaryPath, StandardCopyOption.REPLACE_EXISTING);
+            if (Files.size(temporaryPath) != source.getSizeBytes()) {
+                throw new IOException("Copied attachment size did not match its source metadata");
+            }
+
+            File child = new File();
+            child.setUserId(userId);
+            child.setWorkspaceId(workspaceId);
+            child.setSessionId(childSessionId);
+            child.setMessageId(childMessageId);
+            child.setFilename(source.getFilename());
+            child.setMimeType(source.getMimeType());
+            child.setSizeBytes(source.getSizeBytes());
+            child.setStoragePath(temporaryPath.toString());
+            child = fileRepository.saveAndFlush(child);
+
+            Path childPath = childDirectory.resolve(child.getId().toString());
+            Files.move(temporaryPath, childPath);
+            child.setStoragePath(childPath.toString());
+            return fileRepository.save(child);
+        } catch (IOException e) {
+            logger.error("Fork attachment copy failed sourceFileId={} childSessionId={}",
+                    sourceFileId, childSessionId, e);
+            throw new CpApiException(HttpStatus.CONFLICT, "FORK_SOURCE_ATTACHMENT_CHANGED",
+                    "A source attachment changed or became unavailable during fork copy", e);
+        }
+    }
+
+    public void deleteForkNamespaceStrict(String cleanupRef) throws IOException {
+        UUID childSessionId;
+        try {
+            childSessionId = UUID.fromString(cleanupRef);
+        } catch (IllegalArgumentException e) {
+            logger.error("Invalid fork cleanup reference");
+            throw new IOException("Invalid fork cleanup reference", e);
+        }
+
+        Path root = attachmentsRoot();
+        Path namespace = root.resolve(childSessionId.toString()).normalize();
+        requireContained(namespace, root);
+        if (!Files.exists(namespace, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        if (Files.isSymbolicLink(namespace)) {
+            Files.delete(namespace);
+        } else {
+            Path realNamespace = namespace.toRealPath();
+            requireContained(realNamespace, root);
+            Files.walkFileTree(realNamespace, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    Files.delete(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path directory, IOException error) throws IOException {
+                    if (error != null) {
+                        throw error;
+                    }
+                    Files.delete(directory);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
+        if (Files.exists(namespace, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Fork cleanup did not remove its child namespace");
+        }
     }
 
     @Transactional
@@ -307,6 +401,73 @@ public class ChatAttachmentService {
             }
         } catch (Exception e) {
             logger.warn("Failed to delete empty directory: {}", directory, e);
+        }
+    }
+
+    private Path resolveSourceFilePath(String sourceSessionId, File source) throws IOException {
+        UUID sourceSessionUuid;
+        try {
+            sourceSessionUuid = UUID.fromString(sourceSessionId);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid source Session identifier", e);
+        }
+        Path root = attachmentsRoot();
+        Path sourceDirectory = root.resolve(sourceSessionUuid.toString()).normalize();
+        requireContained(sourceDirectory, root);
+        if (Files.isSymbolicLink(sourceDirectory) || !Files.isDirectory(sourceDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Fork source attachment directory is unavailable");
+        }
+        Path realDirectory = sourceDirectory.toRealPath();
+        requireContained(realDirectory, root);
+
+        if (source.getStoragePath() == null || source.getStoragePath().isBlank()) {
+            throw new IOException("Fork source attachment has no storage path");
+        }
+        Path storedPath = Paths.get(source.getStoragePath()).toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(storedPath)) {
+            throw new IOException("Fork source attachment cannot be a symbolic link");
+        }
+        Path realFile = storedPath.toRealPath();
+        requireContained(realFile, realDirectory);
+        if (!Files.isRegularFile(realFile, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Fork source attachment is not a regular file");
+        }
+        return realFile;
+    }
+
+    private Path resolveSessionDirectory(String sessionId) throws IOException {
+        UUID sessionUuid;
+        try {
+            sessionUuid = UUID.fromString(sessionId);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid child Session identifier", e);
+        }
+        Path root = attachmentsRoot();
+        Path directory = root.resolve(sessionUuid.toString()).normalize();
+        requireContained(directory, root);
+        if (Files.isSymbolicLink(directory)) {
+            throw new IOException("Fork child attachment directory cannot be a symbolic link");
+        }
+        Files.createDirectories(directory);
+        Path realDirectory = directory.toRealPath();
+        requireContained(realDirectory, root);
+        return realDirectory;
+    }
+
+    private Path attachmentsRoot() throws IOException {
+        Path configuredRoot = Paths.get(attachmentsBasePath).toAbsolutePath().normalize();
+        Files.createDirectories(configuredRoot);
+        return configuredRoot.toRealPath();
+    }
+
+    private void requireContained(Path candidate, Path root) throws IOException {
+        String normalizedCandidate = candidate.toAbsolutePath().normalize().toString()
+                .replace('\\', '/').toLowerCase(Locale.ROOT);
+        String normalizedRoot = root.toAbsolutePath().normalize().toString()
+                .replace('\\', '/').toLowerCase(Locale.ROOT);
+        String rootPrefix = normalizedRoot.endsWith("/") ? normalizedRoot : normalizedRoot + "/";
+        if (!normalizedCandidate.equals(normalizedRoot) && !normalizedCandidate.startsWith(rootPrefix)) {
+            throw new IOException("Attachment path escapes its configured root");
         }
     }
 

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -103,6 +104,86 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         assertThat(messages).hasSize(2);
         assertThat(messages.get(1).get("role").asText()).isEqualTo("ai");
         assertThat(messages.get(1).get("content").asText()).isEqualTo("hello human");
+    }
+
+    @Test
+    void projectSessionForkedSeedRestoresChildMessagesAndSumWithoutSourceCursor() {
+        String sessionId = "bbbbbbb1-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS,
+                "user_id", TEST_USER,
+                "epoch_id", "source-epoch",
+                "system_messages", List.of("child base system")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "context.source_changed", Map.of(
+                "status", "created",
+                "source_hash", "child-l1-hash",
+                "rendered_text", "child L1",
+                "sources", List.of(Map.of(
+                        "key", "AGENTS.md",
+                        "source_type", "agents_md",
+                        "content", "child L1",
+                        "content_hash", "child-l1-hash"))
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.forked", Map.of(
+                "source_session_id", TEST_SESSION_A,
+                "anchor_message_id", "anchor-1",
+                "at_sequence", 999L,
+                "summary_seed", Map.of(
+                        "messages", List.of(
+                                Map.of("role", "human", "content", "forked prompt"),
+                                Map.of("role", "tool", "content", "forked tool result"),
+                                Map.of("role", "ai", "content", "forked answer")),
+                        "summary", "history summary",
+                        "summaryHash", "child-summary-hash",
+                        "contextEpoch", "child-epoch-1")
+        ));
+
+        ObjectNode context = projectionService.project(sessionId, 0L);
+
+        assertThat(context.get("latest_sequence").asLong()).isEqualTo(3L);
+        assertThat(context.get("messages")).hasSize(3);
+        assertThat(context.get("messages").get(0).get("content").asText()).isEqualTo("forked prompt");
+        assertThat(context.get("messages").get(1).get("role").asText()).isEqualTo("tool");
+        assertThat(context.get("messages").get(2).get("content").asText()).isEqualTo("forked answer");
+
+        var epoch = context.get("epoch");
+        assertThat(epoch.get("epoch_id").asText()).isEqualTo("child-epoch-1");
+        assertThat(epoch.get("summary_hash").asText()).isEqualTo("child-summary-hash");
+        assertThat(epoch.get("system_messages").toString()).contains("history summary");
+        assertThat(epoch.get("source_hash").asText()).isEqualTo("child-l1-hash");
+        assertThat(epoch.get("l1_rendered").asText()).isEqualTo("child L1");
+
+        var forkInfo = context.path("metadata").path("forked_from");
+        assertThat(forkInfo.path("source_session_id").asText()).isEqualTo(TEST_SESSION_A);
+        assertThat(forkInfo.path("anchor_message_id").asText()).isEqualTo("anchor-1");
+        assertThat(forkInfo.has("at_sequence")).isFalse();
+    }
+
+    @Test
+    void projectUncompressedForkSeedKeepsMessagesWithoutCreatingSummaryBaseline() {
+        String sessionId = "bbbbbbb2-0000-0000-0000-000000000000";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.created", Map.of(
+                "workspace_id", TEST_WS,
+                "user_id", TEST_USER,
+                "epoch_id", "child-bootstrap",
+                "system_messages", List.of("child base system")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.forked", Map.of(
+                "source_session_id", TEST_SESSION_A,
+                "anchor_message_id", "anchor-2",
+                "summary_seed", Map.of(
+                        "messages", List.of(Map.of("role", "human", "content", "uncompressed history")),
+                        "contextEpoch", "child-epoch-2")
+        ));
+
+        ObjectNode context = projectionService.project(sessionId, 0L);
+
+        assertThat(context.get("messages")).hasSize(1);
+        assertThat(context.get("messages").get(0).get("content").asText()).isEqualTo("uncompressed history");
+        assertThat(context.get("epoch").get("epoch_id").asText()).isEqualTo("child-epoch-2");
+        assertThat(context.get("epoch").get("summary_hash").asText()).isEmpty();
+        assertThat(context.get("epoch").get("system_messages").toString()).contains("child base system");
     }
 
     @Test
