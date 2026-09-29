@@ -104,6 +104,7 @@ class JobTimeoutClampTest {
                 anyString(), any(), any(), any()))
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN,
                         "manual", "auto_allow"));
+        when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any(), any())).thenReturn(true);
         when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
                 .thenReturn(new ToolFaceRegistry.Face("exec", ToolShape.STRUCTURED));
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
@@ -480,7 +481,7 @@ class JobTimeoutClampTest {
             var constructor = accessClass.getDeclaredConstructor(
                     String.class, String.class, String.class, String.class, boolean.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(wsId, userId, null, null, true);
+            return constructor.newInstance(wsId, userId, "app-session-clamp", null, true);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

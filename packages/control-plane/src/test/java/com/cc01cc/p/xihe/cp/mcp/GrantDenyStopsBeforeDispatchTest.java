@@ -134,7 +134,6 @@ class GrantDenyStopsBeforeDispatchTest {
         timestamps.put(TEST_WS_UUID, Instant.now());
 
         HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Chat-Run-Id", TEST_WS_UUID);
         ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
                 accessContext(TEST_WS_UUID, "u-1", "sess-1"));
