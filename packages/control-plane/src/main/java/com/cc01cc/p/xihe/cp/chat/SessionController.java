@@ -225,8 +225,12 @@ public class SessionController {
         try {
             // PLAN-0352 LIF-1（决策 #1/#2/#3）：授权校验 → 删除事务外取消在飞 run +
             // 有界等待终态投递 → 删除事务 → 成功后 complete（删除失败保留连接）。
-            // Reject an already-copying fork before cancellation has any side effect.
-            sessionService.lockCurrentForMutation(sessionId, userId, workspaceId);
+            // Reject an already-copying fork before cancellation has any side effect,
+            // and record the durable delete intent (PLAN-0409 design #22, V47) in the
+            // same short lock: later fork claims/mutations get SESSION_DELETING, so the
+            // lock-free cancellation window below can no longer race a fork claim.
+            // Re-entrant: a retried DELETE resumes from here; the intent has no undo.
+            sessionService.beginDeleteIntent(sessionId, userId, workspaceId);
             List<String> inFlightRuns = chatRunCancellationService.cancelInFlightForSession(
                     sessionId, userId, workspaceId, "session_deleted");
             chatRunCancellationService.awaitTerminalDelivery(

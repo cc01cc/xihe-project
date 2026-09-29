@@ -178,6 +178,32 @@ public class SessionService {
 
     @Transactional
     public Session lockCurrentForMutation(String sessionId, String userId, String workspaceId) {
+        Session lockedSession = lockForDelete(sessionId, userId, workspaceId);
+        if (lockedSession.getDeleteRequestedAt() != null) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
+                    "Session is being deleted");
+        }
+        return lockedSession;
+    }
+
+    /**
+     * PLAN-0409 design #22: record the durable delete intent inside the same
+     * short lock as the copying precheck. Commits before any cancellation /
+     * job-close side effect runs lock-free, so a later fork claim is rejected
+     * with SESSION_DELETING instead of racing the final delete transaction.
+     * Re-entrant: a retry of Session DELETE resumes from here. No undo path.
+     */
+    @Transactional
+    public Session beginDeleteIntent(String sessionId, String userId, String workspaceId) {
+        Session lockedSession = lockForDelete(sessionId, userId, workspaceId);
+        if (lockedSession.getDeleteRequestedAt() == null) {
+            lockedSession.setDeleteRequestedAt(Instant.now());
+            sessionRepository.saveAndFlush(lockedSession);
+        }
+        return lockedSession;
+    }
+
+    private Session lockForDelete(String sessionId, String userId, String workspaceId) {
         requireWorkspace(userId, workspaceId);
         UUID sessionUuid = UUID.fromString(sessionId);
         dbLockTimeout.apply();
@@ -255,7 +281,9 @@ public class SessionService {
 
     @Transactional
     public void delete(String sessionId, String userId, String workspaceId) {
-        Session lockedSession = lockCurrentForMutation(sessionId, userId, workspaceId);
+        // lockForDelete, not lockCurrentForMutation: the delete-intent marker set by
+        // beginDeleteIntent is expected here (retry path) and must not self-reject.
+        Session lockedSession = lockForDelete(sessionId, userId, workspaceId);
 
         // Delete metadata and context rows explicitly so this remains correct on old live schemas.
         chatAttachmentService.deleteSessionAttachments(sessionId);

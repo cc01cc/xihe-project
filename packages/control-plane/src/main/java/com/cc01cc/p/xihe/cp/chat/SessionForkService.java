@@ -215,6 +215,13 @@ public class SessionForkService {
         if (source.isArchived() || !userId.equals(source.getUserId()) || !workspaceId.equals(source.getWorkspaceId())) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
         }
+        // PLAN-0409 design #22: the durable delete intent is set under this same row
+        // lock before any deletion side effect, so a claim landing after DELETE's
+        // precheck is rejected here instead of racing the final delete transaction.
+        if (source.getDeleteRequestedAt() != null) {
+            throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
+                    "Session is being deleted");
+        }
         if (source.getAgentPrincipalId() == null || source.getAgentPrincipalId().isBlank()) {
             throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_REQUIRED",
                     "A fork requires a stable AgentPrincipal on the source Session");

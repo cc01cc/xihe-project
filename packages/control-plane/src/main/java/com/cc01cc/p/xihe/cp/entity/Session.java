@@ -72,6 +72,15 @@ public class Session {
     @Column(nullable = false)
     private boolean archived;
 
+    /**
+     * PLAN-0409 design #22 durable delete-intent barrier (V47): set inside the
+     * short locking precheck of Session DELETE, blocks fork claims and mutation
+     * guards until the row is physically removed. Irreversible, no undo.
+     */
+    @Column(name = "delete_requested_at")
+    private Instant deleteRequestedAt;
+
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -158,6 +167,10 @@ public class Session {
 
     public boolean isArchived() { return archived; }
     public void setArchived(boolean archived) { this.archived = archived; }
+
+    public Instant getDeleteRequestedAt() { return deleteRequestedAt; }
+    public void setDeleteRequestedAt(Instant deleteRequestedAt) { this.deleteRequestedAt = deleteRequestedAt; }
+
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

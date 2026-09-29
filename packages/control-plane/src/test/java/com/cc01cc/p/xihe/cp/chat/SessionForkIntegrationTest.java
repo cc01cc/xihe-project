@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -539,6 +540,41 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
             releaseCopy.countDown();
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void deleteIntentBarrierRejectsForkClaimAndResumedDeleteCompletes() throws Exception {
+        Source source = createSource("delete intent bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8), false);
+        String sessionId = source.session().getId().toString();
+
+        // First DELETE segment commits the durable intent inside the short lock
+        // (SessionController calls beginDeleteIntent before lock-free side effects).
+        sessionService.beginDeleteIntent(sessionId, userId, workspaceId);
+        assertNotNull(sessionRepository.findById(source.session().getId()).orElseThrow().getDeleteRequestedAt());
+
+        // A fork claim landing in the delete window is rejected before any claim row exists.
+        ResponseEntity<Map> forked = postFork(source, "fork-key-deleting", source.anchorMessageId());
+        assertEquals(HttpStatus.CONFLICT, forked.getStatusCode());
+        assertEquals("SESSION_DELETING", forked.getBody().get("code"));
+        assertTrue(forkRequestRepository
+                .findBySourceSessionIdAndIdempotencyKey(source.session().getId(), "fork-key-deleting").isEmpty());
+
+        // The mutation guard surfaces the same barrier (PLAN-0409 design #22).
+        CpApiException mutation = assertThrows(CpApiException.class,
+                () -> sessionService.lockCurrentForMutation(sessionId, userId, workspaceId));
+        assertEquals("SESSION_DELETING", mutation.getCode());
+
+        // A retried DELETE resumes from the recorded intent (re-entrant, no undo path)
+        // and finishes; the marker disappears together with the row.
+        ResponseEntity<Map> deletion = deleteSession(sessionId);
+        assertEquals(HttpStatus.NO_CONTENT, deletion.getStatusCode());
+        assertTrue(sessionRepository.findById(source.session().getId()).isEmpty());
+        Integer sessions = jdbcTemplate.queryForObject(
+                "select count(*) from sessions where id = ?", Integer.class, source.session().getId());
+        assertEquals(0, sessions);
+        Integer messages = jdbcTemplate.queryForObject(
+                "select count(*) from messages where session_id = ?", Integer.class, source.session().getId());
+        assertEquals(0, messages);
     }
 
     @Test
