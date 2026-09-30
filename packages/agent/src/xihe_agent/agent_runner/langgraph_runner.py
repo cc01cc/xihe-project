@@ -106,6 +106,7 @@ def _tool_event_payload(
     arguments: dict[str, Any] | None = None,
     result: Any = None,
     include_status: bool,
+    status: str = "completed",
 ) -> dict[str, Any]:
     """Contract §2: dual payload shapes behind the writer gate."""
     if not event_writer_v2_enabled():
@@ -115,6 +116,10 @@ def _tool_event_payload(
             legacy["tool_input"] = arguments
         if include_status:
             legacy["result"] = result
+            # PLAN-0381 T3.2 / m3-contract §1.1：gate OFF 仅非 completed 写
+            # status（failed 显式落账；completed 保持 pre-gate 字段集逐字节）。
+            if status != "completed":
+                legacy["status"] = status
         legacy["operation_id"] = base.get("operation_id")
         legacy["operation_item_id"] = base.get("operation_item_id")
         return legacy
@@ -131,7 +136,8 @@ def _tool_event_payload(
         # D4: complete raw arguments, bounded by the frozen limit (§4).
         payload["arguments"] = bound_tool_arguments(arguments)
     if include_status:
-        payload["status"] = "completed"
+        # PLAN-0381 T3.2：status 参数化（completed/failed/…），gate ON 恒写。
+        payload["status"] = status
         payload["result"] = result
     return payload
 
@@ -586,7 +592,33 @@ class LCToolAdapter(BaseTool):
         previous_item_id = self._context.metadata.get("operationItemId")
         self._context.metadata["operationItemId"] = call_id
         try:
-            result = await self._tool.execute(kwargs, self._context)
+            try:
+                result = await self._tool.execute(kwargs, self._context)
+            except ApprovalTerminalError:
+                # PLAN-0381 T3.2 / m3-contract §1.1：审批终态走独立事件序列，
+                # 不落 failed tool.result（已知边界，契约登记）。
+                raise
+            except Exception as exc:
+                # T3.2 failed write path：先闭合 durable 事件对（有界 error
+                # preview + status=failed），再原样 re-raise——缺果声明在下一轮
+                # 会被回放成「run interrupted」，failed 被缺省读成 completed 都
+                # 是伪造。append 自身失败只记日志，不吞原异常。
+                try:
+                    preview, preview_meta = bound_tool_preview(
+                        f"Tool execution failed: {type(exc).__name__}: {exc}", None
+                    )
+                    await self._append_tool_result(
+                        call_id,
+                        build_tool_event_result(preview, preview_meta),
+                        status="failed",
+                    )
+                except Exception:
+                    logger.error(
+                        "failed to close tool.result for failed callId={}",
+                        call_id,
+                        exc_info=True,
+                    )
+                raise
             content = result.get("content", result)
             if not isinstance(content, str):
                 content = str(content)
@@ -707,6 +739,8 @@ class LCToolAdapter(BaseTool):
         # PLAN-0381 T2.3：有界 preview 字符串（gate OFF）或 preview 对象（ON）。
         result: Any,
         diagnostics: dict[str, Any] | None = None,
+        # PLAN-0381 T3.2：completed 缺省；失败闭合路径传 "failed"。
+        status: str = "completed",
     ) -> None:
         if self._event_store is None:
             return
@@ -721,6 +755,7 @@ class LCToolAdapter(BaseTool):
             arguments=None,
             result=result,
             include_status=True,
+            status=status,
         )
         # PLAN-0342 T1.2: only a real bundle widens the durable payload.
         if diagnostics is not None:
