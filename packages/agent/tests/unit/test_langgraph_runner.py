@@ -454,8 +454,12 @@ async def test_arun_survives_diagnostics_extraction_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_arun_does_not_truncate_non_command_tool_results():
-    """PLAN-0342 P2-4: the 48k middle truncation is command-result scoped."""
+async def test_arun_bounds_non_command_tool_results_to_preview_limit():
+    """PLAN-0381 T2.3（Frozen #1）：非命令结果进模型前统一有界 + 显式标记。
+
+    PLAN-0342 P2-4 的 48k middle truncation 仍只作用于命令分支（对 ≤4096 的
+    preview 恒 no-op）；非命令大输出（read_file/MCP 等）不再整段进模型。
+    """
     giant = json.dumps({"notes": "x" * 60_000})
     adapter = LCToolAdapter(
         FakeCommandTool(giant, name="read_file"),
@@ -467,8 +471,17 @@ async def test_arun_does_not_truncate_non_command_tool_results():
 
     assert artifact is None
     assert "中段已截断" not in text
+    assert "[output truncated: first" in text  # 显式截断，不静默丢失
     assert giant[:200] in text
-    assert giant[-200:] in text
+    assert giant[-200:] not in text  # 大输出正文不再进模型
+
+    preview, meta = langgraph_runner_module.bound_tool_preview(giant, None)
+    assert len(preview) <= langgraph_runner_module.RESULT_PREVIEW_LIMIT
+    assert meta == {
+        "truncated": True,
+        "sizeBytes": len(giant.encode("utf-8")),
+        "status": "unavailable",
+    }
 
 
 @pytest.mark.asyncio

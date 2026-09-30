@@ -117,6 +117,11 @@ def _locate_command_payload(payload: Any, depth: int = 0) -> dict[str, Any] | No
     return None
 
 
+def locate_command_payload(payload: Any) -> dict[str, Any] | None:
+    """PLAN-0381 T2.3：公开定位命令载荷（结构化 preview 就地改写用）。"""
+    return _locate_command_payload(payload)
+
+
 def _as_text(value: Any) -> str:
     if isinstance(value, str):
         return value

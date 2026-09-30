@@ -6,11 +6,209 @@ by CP's `ContextProjectionService` from the Event Store and returned via the
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from xihe_agent.interfaces.event import Event
-from xihe_agent.interfaces.message import Message, TextMessage
+from xihe_agent.interfaces.message import Message, TextMessage, ToolCallRef
+
+# PLAN-0381 T1.1/T1.5 (frozen cross-language contract: evidence/m1-contract.md
+# §3–§4). CP's ContextProjectionService mirrors these helpers — markers and
+# limits must stay byte-identical for the same input.
+ARG_LIMIT = 4096
+JSON_PREVIEW_LIMIT = 4096
+_ARG_PREFIX_CHARS = 4000
+_JSON_PREVIEW_SUFFIX = "...[truncated]"
+
+
+def compact_json(value: Any) -> str:
+    """Deterministic compact serialization (mirrors CP writeValueAsString)."""
+    import json
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _fit_marker_payload(payload: dict[str, Any], text_key: str, limit: int = ARG_LIMIT) -> dict[str, Any]:
+    """标记对象自身序列化后必须仍 ≤ limit。
+
+    前缀作为 JSON 字符串值会被**二次转义**放大（反斜杠 ×2、控制字符可达
+    ×6），按观测比例迭代收缩前缀直至合规（review P1-1，两语言同规则）。
+    """
+    for _ in range(8):
+        dumped = compact_json(payload)
+        if len(dumped) <= limit:
+            return payload
+        prefix = str(payload.get(text_key, ""))
+        if not prefix:
+            return payload
+        keep = max(16, int(len(prefix) * limit / len(dumped)))
+        if keep >= len(prefix):
+            keep = len(prefix) - 1
+        if keep < 1:
+            return payload
+        payload = {**payload, text_key: prefix[:keep]}
+    return payload
+
+
+def bound_tool_arguments(arguments: Any) -> dict[str, Any]:
+    """D4 (accepted 2026-09-30): complete raw arguments, bounded by the
+    frozen 4096-char limit. Truncation replaces the object with an explicit
+    marker — never silent, never in-place value rewriting.
+    """
+    if arguments is None:
+        return {}
+    if isinstance(arguments, dict):
+        serialized = compact_json(arguments)
+        if len(serialized) <= ARG_LIMIT:
+            return arguments
+        return _fit_marker_payload(
+            {
+                "__xihe_truncated__": True,
+                "__chars__": len(serialized),
+                "__prefix__": serialized[:_ARG_PREFIX_CHARS],
+            },
+            "__prefix__",
+        )
+    raw = arguments if isinstance(arguments, str) else compact_json(arguments)
+    payload = {"_raw": raw}
+    if len(compact_json(payload)) > ARG_LIMIT:
+        payload = _fit_marker_payload(
+            {"_raw": raw[:_ARG_PREFIX_CHARS], "__xihe_truncated__": True},
+            "_raw",
+        )
+    return payload
+
+
+@dataclass(frozen=True)
+class ParsedToolResult:
+    """Normalized `tool.result` content (contract §3 result-shape table)."""
+
+    content: str
+    truncated: bool = False
+    artifact_ref: str = ""
+    size_bytes: int | None = None
+    error_code: str = ""
+    legacy_normalized: bool = False
+
+
+def _result_whitelist(result: dict[str, Any]) -> dict[str, Any]:
+    size_bytes = result.get("sizeBytes")
+    return {
+        "truncated": bool(result.get("truncated", False)),
+        "artifact_ref": str(result.get("artifactRef") or result.get("artifact_ref") or ""),
+        "size_bytes": size_bytes if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) else None,
+        "error_code": str(result.get("errorCode") or result.get("error_code") or ""),
+    }
+
+
+def _bounded_json_preview(value: Any) -> tuple[str, bool]:
+    import json
+
+    serialized = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    if len(serialized) <= JSON_PREVIEW_LIMIT:
+        return serialized, False
+    return serialized[: JSON_PREVIEW_LIMIT - len(_JSON_PREVIEW_SUFFIX)] + _JSON_PREVIEW_SUFFIX, True
+
+
+def parse_tool_result(result: Any) -> ParsedToolResult:
+    """B1 fix: object/array results must never collapse to an empty string.
+
+    Shape-based reading (contract §3): string, object-with-content,
+    object-with-preview (M2 reader-first), else bounded JSON + marker.
+    """
+    if result is None:
+        return ParsedToolResult(content="")
+    if isinstance(result, str):
+        return ParsedToolResult(content=result)
+    if isinstance(result, dict):
+        content = result.get("content")
+        if isinstance(content, str):
+            return ParsedToolResult(content=content, **_result_whitelist(result))
+        preview = result.get("preview")
+        if isinstance(preview, str):
+            # reader-first for the M2 bounded-preview payload shape.
+            return ParsedToolResult(content=preview, **_result_whitelist(result))
+        serialized, cut = _bounded_json_preview(result)
+        return ParsedToolResult(content=serialized, truncated=cut, legacy_normalized=True)
+    serialized, cut = _bounded_json_preview(result)
+    return ParsedToolResult(content=serialized, truncated=cut, legacy_normalized=True)
+
+
+def _pairing_field(payload: dict[str, Any], v2_key: str, legacy_key: str, default: str = "") -> str:
+    """Contract §3 dual-read: v2 camelCase payload keys fall back to legacy."""
+    value = payload.get(v2_key)
+    if value is None or value == "":
+        value = payload.get(legacy_key)
+    return str(value) if value is not None else default
+
+
+def _snapshot_message(message: Message) -> dict[str, Any]:
+    """Contract §5 snapshot shape: plain messages stay two-key; tool-history
+    fields are emitted only when set (backward-compatible with old readers)."""
+    data: dict[str, Any] = {"role": message.role, "content": message.content}
+    if isinstance(message, TextMessage):
+        if message.tool_calls:
+            data["tool_calls"] = [
+                {"call_id": ref.call_id, "tool_name": ref.tool_name, "arguments": ref.arguments}
+                for ref in message.tool_calls
+            ]
+        if message.tool_call_id:
+            data["tool_call_id"] = message.tool_call_id
+        if message.tool_name:
+            data["tool_name"] = message.tool_name
+        if message.status:
+            data["status"] = message.status
+        if message.truncated:
+            data["truncated"] = True
+        if message.artifact_ref:
+            data["artifact_ref"] = message.artifact_ref
+        if message.size_bytes is not None:
+            data["size_bytes"] = message.size_bytes
+        if message.error_code:
+            data["error_code"] = message.error_code
+        if message.degraded:
+            data["degraded"] = True
+        if message.legacy_normalized:
+            data["legacy_normalized"] = True
+    return data
+
+
+def message_from_dict(raw: dict[str, Any]) -> TextMessage:
+    role = raw.get("role", "human")
+    if role not in ("system", "human", "ai", "tool"):
+        role = "human"
+    tool_calls: tuple[ToolCallRef, ...] = ()
+    for entry in raw.get("tool_calls") or []:
+        if isinstance(entry, dict) and entry.get("call_id"):
+            tool_calls = (
+                *tool_calls,
+                ToolCallRef(
+                    call_id=str(entry.get("call_id", "")),
+                    tool_name=str(entry.get("tool_name", "")),
+                    arguments=entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {},
+                ),
+            )
+    size_bytes = raw.get("size_bytes")
+    message = TextMessage(
+        role=role,
+        content=raw.get("content", ""),
+        tool_call_id=str(raw.get("tool_call_id", "") or ""),
+        tool_name=str(raw.get("tool_name", "") or ""),
+        status=str(raw.get("status", "") or ""),
+        truncated=bool(raw.get("truncated", False)),
+        artifact_ref=str(raw.get("artifact_ref", "") or ""),
+        size_bytes=size_bytes if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) else None,
+        error_code=str(raw.get("error_code", "") or ""),
+        degraded=bool(raw.get("degraded", False)),
+        legacy_normalized=bool(raw.get("legacy_normalized", False)),
+        tool_calls=tool_calls,
+    )
+    # Contract §5/V3: legacy snapshots and fork seeds carry tool messages
+    # without a pairing id — record the degraded state at read time.
+    if message.role == "tool" and not message.tool_call_id:
+        return replace(message, degraded=True)
+    return message
+
 
 ContextSourceType = Literal[
     "agents_md",
@@ -97,15 +295,19 @@ class AgentContext:
             # conversation either way.
             self._add_message_from_payload(payload, "ai")
         elif event_type == "tool.result":
-            self._add_message_from_payload(payload, "tool")
+            # PLAN-0381 T1.1/T1.5: pairing fields + shape-based result read.
+            self._add_tool_result_message(payload)
         elif event_type == "tool.called":
+            # PLAN-0381 T1.1: assistant tool-call declaration joins history
+            # (contract §6 merge rule) — runtime_state keeps its legacy shape.
             self.runtime_state.setdefault("tool_calls", []).append(
                 {
-                    "call_id": payload.get("call_id"),
-                    "tool_name": payload.get("tool_name"),
-                    "tool_input": payload.get("tool_input", {}),
+                    "call_id": _pairing_field(payload, "toolCallId", "call_id") or None,
+                    "tool_name": _pairing_field(payload, "toolName", "tool_name") or None,
+                    "tool_input": payload.get("arguments", payload.get("tool_input", {})),
                 }
             )
+            self._apply_tool_called(payload)
         elif event_type == "context.source_changed":
             # PLAN-0340: replace L1 half of epoch; never append into messages.
             self._apply_source_changed(payload)
@@ -263,7 +465,9 @@ class AgentContext:
             content = raw_message.get("content")
             if role not in {"human", "ai", "tool"} or not isinstance(content, str):
                 raise ValueError("session.forked summary_seed message has invalid role/content")
-            messages.append(TextMessage(role=role, content=content))
+            # Contract §9: seeds only carry role/content today — tool messages
+            # degrade explicitly (no id) instead of fabricating a pair.
+            messages.append(message_from_dict(raw_message))
 
         summary = seed.get("summary", "")
         summary_hash = seed.get("summaryHash", "")
@@ -289,6 +493,54 @@ class AgentContext:
             env_branch=previous.env_branch,
             env_head=previous.env_head,
             env_is_repository=previous.env_is_repository,
+        )
+
+    def _apply_tool_called(self, payload: dict[str, Any]) -> None:
+        """Contract §6: merge consecutive declarations into one ai message.
+
+        A payload without a resolvable call id must NOT fabricate a pair —
+        it degrades to an explicit ai text fact (no tool_calls entry).
+        """
+        call_id = _pairing_field(payload, "toolCallId", "call_id")
+        tool_name = _pairing_field(payload, "toolName", "tool_name") or "unknown"
+        raw_arguments = payload.get("arguments")
+        if raw_arguments is None:
+            raw_arguments = payload.get("tool_input")
+        arguments = bound_tool_arguments(raw_arguments)
+        if not call_id:
+            fact = f"[unpaired tool call: {tool_name}] {compact_json(arguments)}"
+            self.messages.append(TextMessage(role="ai", content=fact, degraded=True))
+            return
+        ref = ToolCallRef(call_id=call_id, tool_name=tool_name, arguments=arguments)
+        last = self.messages[-1] if self.messages else None
+        if isinstance(last, TextMessage) and last.role == "ai" and last.tool_calls:
+            self.messages[-1] = replace(last, tool_calls=(*last.tool_calls, ref))
+        else:
+            self.messages.append(TextMessage(role="ai", content="", tool_calls=(ref,)))
+
+    def _add_tool_result_message(self, payload: dict[str, Any]) -> None:
+        """Contract §3/§5: pairing fields + shape-based content, always appended.
+
+        Unlike `_add_message_from_payload`, an EMPTY result is still a real
+        result (V12) — it must not be silently dropped.
+        """
+        call_id = _pairing_field(payload, "toolCallId", "call_id")
+        parsed = parse_tool_result(payload.get("result"))
+        status = str(payload.get("status") or "completed")
+        self.messages.append(
+            TextMessage(
+                role="tool",
+                content=parsed.content,
+                tool_call_id=call_id,
+                tool_name=_pairing_field(payload, "toolName", "tool_name"),
+                status=status,
+                truncated=parsed.truncated,
+                artifact_ref=parsed.artifact_ref,
+                size_bytes=parsed.size_bytes,
+                error_code=parsed.error_code,
+                legacy_normalized=parsed.legacy_normalized,
+                degraded=not call_id,
+            )
         )
 
     def _add_message_from_payload(self, payload: dict[str, Any], role: str) -> None:
@@ -321,7 +573,12 @@ class AgentContext:
                 continue
             digest = hashlib.sha256(msg.content.encode("utf-8", errors="replace")).hexdigest()
             if digest in pruned_hashes:
-                self.messages[i] = TextMessage(role="tool", content=placeholder)
+                # PLAN-0381 contract §8: mask replaces content only — pair
+                # identity (id/name/status/degraded) survives tombstones.
+                if isinstance(msg, TextMessage):
+                    self.messages[i] = replace(msg, content=placeholder)
+                else:
+                    self.messages[i] = TextMessage(role="tool", content=placeholder)
 
     def _apply_source_changed(self, payload: dict[str, Any]) -> None:
         status = payload.get("status", "updated")
@@ -384,7 +641,7 @@ class AgentContext:
             "aggregate_id": self.aggregate_id,
             "latest_sequence": self.latest_sequence,
             "branch_id": self.branch_id,
-            "messages": [{"role": m.role, "content": m.content} for m in self.messages],
+            "messages": [_snapshot_message(m) for m in self.messages],
             "epoch": self._epoch_to_dict() if self.epoch else None,
             "runtime_state": self.runtime_state,
             "metadata": self.metadata,
@@ -404,10 +661,7 @@ class AgentContext:
             branch_id=snapshot.get("branch_id", "") or "",
         )
         for raw in snapshot.get("messages", []):
-            role = raw.get("role", "human")
-            if role not in ("system", "human", "ai", "tool"):
-                role = "human"
-            ctx.messages.append(TextMessage(role=role, content=raw.get("content", "")))
+            ctx.messages.append(message_from_dict(raw))
         epoch_raw = snapshot.get("epoch")
         if epoch_raw:
             ctx.epoch = ContextEpoch(

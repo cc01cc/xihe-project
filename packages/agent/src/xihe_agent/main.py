@@ -1602,34 +1602,19 @@ def _content_length(content: Any) -> int:
 
 
 def _deserialize_messages(raw: list[dict[str, Any]]) -> list[Message]:
-    result: list[Message] = []
-    for item in raw:
-        role = item.get("role", "human")
-        if role not in ("human", "ai", "system", "tool"):
-            role = "human"
-        result.append(TextMessage(role=role, content=item.get("content", "")))
-    return result
+    # PLAN-0381 T1.1: tool-history fields (pairing ids/flags) survive the
+    # request-history round-trip; same reader rules as the snapshot loader.
+    from xihe_agent.interfaces.context import message_from_dict
+
+    return [message_from_dict(item) for item in raw]
 
 
 def _to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
-    from langchain_core.messages import (
-        AIMessage,
-        HumanMessage,
-        SystemMessage,
-        ToolMessage,
-    )
+    # PLAN-0381 T1.4: one shared provider mapping (contract §7) — the runner
+    # and this supervisor path must not diverge on pairing/degradation rules.
+    from xihe_agent.agent_runner.langgraph_runner import to_langchain_messages
 
-    result: list[BaseMessage] = []
-    for msg in messages:
-        if msg.role == "human":
-            result.append(HumanMessage(content=msg.content))
-        elif msg.role == "ai":
-            result.append(AIMessage(content=msg.content))
-        elif msg.role == "system":
-            result.append(SystemMessage(content=msg.content))
-        elif msg.role == "tool":
-            result.append(ToolMessage(content=msg.content, tool_call_id=""))
-    return result
+    return to_langchain_messages(messages)
 
 
 @app.post("/internal/v1/agent/approval/respond")

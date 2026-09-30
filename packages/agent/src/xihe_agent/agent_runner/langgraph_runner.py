@@ -2,8 +2,10 @@
 
 import asyncio
 import hashlib
+import json
+import os
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
@@ -33,12 +35,13 @@ from xihe_agent.context.diagnostics import (
     extract_diagnostics,
     format_diagnostics_block,
     get_diagnostics_ledger,
+    locate_command_payload,
     make_bundle,
     sort_diagnostics,
     truncate_middle,
 )
 from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunnerConfig
-from xihe_agent.interfaces.context import AgentContext
+from xihe_agent.interfaces.context import AgentContext, bound_tool_arguments
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.event_store import EventStore
@@ -82,6 +85,213 @@ def _raise_if_event_store_failed(context: AgentContext) -> None:
     failures = context.metadata.get(EVENT_STORE_FAILURES_KEY)
     if failures:
         raise RuntimeError(f"required context event append failed: {failures}")
+
+
+# PLAN-0381 T1.2 / D5 writer gate (contract: evidence/m1-contract.md §1).
+# Default OFF = legacy-compatible payloads byte-for-byte; rollout opens the
+# gate only after readers are deployed (reader-first), closes it before rollback.
+EVENT_WRITER_V2_ENV = "XIHE_CONTEXT_EVENT_WRITER_V2"
+
+
+def event_writer_v2_enabled() -> bool:
+    return (os.environ.get(EVENT_WRITER_V2_ENV, "") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _tool_event_payload(
+    base: dict[str, Any],
+    *,
+    call_id: str,
+    tool_name: str,
+    run_id: str | None,
+    arguments: dict[str, Any] | None = None,
+    result: Any = None,
+    include_status: bool,
+) -> dict[str, Any]:
+    """Contract §2: dual payload shapes behind the writer gate."""
+    if not event_writer_v2_enabled():
+        # Legacy mode: exact pre-gate field set AND insertion order (§1).
+        legacy: dict[str, Any] = {"call_id": call_id, "tool_name": tool_name}
+        if arguments is not None:
+            legacy["tool_input"] = arguments
+        if include_status:
+            legacy["result"] = result
+        legacy["operation_id"] = base.get("operation_id")
+        legacy["operation_item_id"] = base.get("operation_item_id")
+        return legacy
+    payload: dict[str, Any] = {
+        "schemaVersion": 2,
+        "toolCallId": call_id,
+        "toolName": tool_name,
+        "operation_id": base.get("operation_id"),
+        "operation_item_id": base.get("operation_item_id"),
+    }
+    if run_id:
+        payload["runId"] = run_id
+    if arguments is not None:
+        # D4: complete raw arguments, bounded by the frozen limit (§4).
+        payload["arguments"] = bound_tool_arguments(arguments)
+    if include_status:
+        payload["status"] = "completed"
+        payload["result"] = result
+    return payload
+
+
+# ── PLAN-0381 M2 / T2.3（契约：plans/PLAN-0381-.../evidence/m2-contract.md §3）──
+# 模型与 context event 只携带有界 preview；边界恒生效，writer gate 只换形状。
+# 冻结值见 spec/tool-output-contract.md：preview 4096 字符；命令结构化字段
+# 预算 3072/512 字符（保证 exit_code/artifact_id 等骨架键存活且总长 <4096）。
+RESULT_PREVIEW_LIMIT = 4096
+COMMAND_STDOUT_PREVIEW_CHARS = 3072
+COMMAND_STDERR_PREVIEW_CHARS = 512
+
+
+def _dump_len(text: str) -> int:
+    """compact JSON 编码后的字符数（含引号），用于字段预算判据。"""
+    return len(json.dumps(text, ensure_ascii=False))
+
+
+def _bound_command_field(value: str, budget: int) -> tuple[str, bool]:
+    """Cut ``value`` + inline marker so its compact JSON encoding fits ``budget``.
+
+    转义可把单字符放大到 6×（\\uXXXX），按观测比例迭代收缩——预算远大于
+    marker，必然收敛（m2-contract.md §3）。
+    """
+    if _dump_len(value) <= budget:
+        return value, False
+    total = len(value)
+    shown = max(1, min(len(value), budget))
+    for _ in range(8):
+        candidate = value[:shown] + f"[truncated: first {shown} of {total} chars]"
+        dumped = _dump_len(candidate)
+        if dumped <= budget:
+            return candidate, True
+        shown = max(1, shown * budget // dumped)
+    # 预算 ≥512 时 marker+1 字符必然放下：兜底不可能超限。
+    return value[:1] + f"[truncated: first 1 of {total} chars]", True
+
+
+def _generic_truncation_marker(shown: int, total: int) -> str:
+    return (
+        f"\n[output truncated: first {shown} of {total} chars; "
+        "no retained copy — re-query with a narrower range]"
+    )
+
+
+def _bound_generic_preview(content: str) -> tuple[str, dict[str, Any]]:
+    if len(content) <= RESULT_PREVIEW_LIMIT:
+        return content, {"truncated": False, "sizeBytes": len(content.encode("utf-8"))}
+    total = len(content)
+    shown = RESULT_PREVIEW_LIMIT
+    marker = _generic_truncation_marker(shown, total)
+    for _ in range(4):
+        marker = _generic_truncation_marker(shown, total)
+        new_shown = RESULT_PREVIEW_LIMIT - len(marker)
+        if new_shown == shown:
+            break
+        shown = new_shown
+    # 循环收敛后 marker 与 shown 必然对齐（shown 由 marker 长度定义，等式
+    # 自洽），preview 恰好 ≤ RESULT_PREVIEW_LIMIT。
+    shown = RESULT_PREVIEW_LIMIT - len(marker)
+    preview = content[:shown] + marker
+    return preview, {
+        "truncated": True,
+        "sizeBytes": len(content.encode("utf-8")),
+        "status": "unavailable",
+    }
+
+
+def _bound_command_preview(content: str) -> tuple[str, dict[str, Any]]:
+    """结构化命令 preview：保留 exit_code/success/artifact_id，字段内截断。
+
+    返回 (preview, meta)，meta 键按 m2-contract.md §1.2 矩阵。
+    """
+    try:
+        tree = json.loads(content)
+    except Exception:
+        # parsed 来自同一 content，正常不至此；退化为通用界（登记的兜底）。
+        return _bound_generic_preview(content)
+    located = locate_command_payload(tree)
+    if located is None:
+        return _bound_generic_preview(content)
+
+    def _as_text(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        return "" if value is None else str(value)
+
+    stdout_raw = _as_text(located.get("stdout"))
+    stderr_raw = _as_text(located.get("stderr"))
+    wire_stdout = located.get("stdout_truncated") is True
+    wire_stderr = located.get("stderr_truncated") is True
+    artifact_raw = located.get("artifact_id", located.get("artifactId"))
+    artifact_id = artifact_raw if isinstance(artifact_raw, str) and artifact_raw else None
+
+    stdout_new, stdout_cut = _bound_command_field(stdout_raw, COMMAND_STDOUT_PREVIEW_CHARS)
+    stderr_new, stderr_cut = _bound_command_field(stderr_raw, COMMAND_STDERR_PREVIEW_CHARS)
+    if stdout_cut:
+        located["stdout"] = stdout_new
+    if stderr_cut:
+        located["stderr"] = stderr_new
+
+    wire_truncated = wire_stdout or wire_stderr or artifact_id is not None
+    truncated = wire_truncated or stdout_cut or stderr_cut
+    if not truncated:
+        if len(content) <= RESULT_PREVIEW_LIMIT:
+            # wire 侧未截断且字段未切 = preview 即完整结果：原文字节透传。
+            return content, {"truncated": False, "sizeBytes": len(content.encode("utf-8"))}
+        # Review P0-2：命令形载荷可由其他大键撑爆（read_file 读到含 exit_code
+        # 的 JSON 即命中）——wire 未截断也必须过统一 4096 界（矩阵第 4 行）。
+        return _bound_generic_preview(content)
+
+    if stdout_cut or stderr_cut:
+        preview = json.dumps(tree, ensure_ascii=False, separators=(",", ":"))
+    else:
+        preview = content
+    # 病态兜底（其他大键/转义爆炸）：整体走通用截断（m2-contract.md §3）。
+    if len(preview) > RESULT_PREVIEW_LIMIT:
+        preview, meta = _bound_generic_preview(preview)
+        if artifact_id is not None:
+            meta["artifactRef"] = artifact_id
+            meta["status"] = "available"
+        elif wire_truncated:
+            meta["errorCode"] = "artifact_unavailable"
+        if wire_truncated:
+            meta.pop("sizeBytes", None)  # wire 截断过 → 完整大小未知
+        else:
+            meta["sizeBytes"] = len(content.encode("utf-8"))
+        return preview, meta
+
+    meta: dict[str, Any] = {"truncated": True}
+    if artifact_id is not None:
+        meta["artifactRef"] = artifact_id
+        meta["status"] = "available"
+    else:
+        meta["status"] = "unavailable"
+        if wire_truncated:
+            # wire 截断过但 bundle 没落成（预算满/IO 失败/旧 runtime）。
+            meta["errorCode"] = "artifact_unavailable"
+    if not wire_truncated:
+        # wire 未截断 = 我们看到的就是完整输出，字节数已知；反之未知 → 省略。
+        meta["sizeBytes"] = len(content.encode("utf-8"))
+    return preview, meta
+
+
+def bound_tool_preview(content: str, parsed: tuple[str, str, int] | None) -> tuple[str, dict[str, Any]]:
+    """T2.3 单入口：有界 preview + 元数据（截断/ref/大小/状态/错误码）。"""
+    if parsed is not None:
+        return _bound_command_preview(content)
+    return _bound_generic_preview(content)
+
+
+def build_tool_event_result(preview: str, meta: dict[str, Any]) -> Any:
+    """D5 gate 只换形状：OFF=有界字符串（legacy 字段集不变），ON=对象。"""
+    if not event_writer_v2_enabled():
+        return preview
+    result: dict[str, Any] = {"preview": preview, "truncated": bool(meta.get("truncated"))}
+    for key in ("artifactRef", "sizeBytes", "status", "errorCode"):
+        if meta.get(key) is not None:
+            result[key] = meta[key]
+    return result
 
 # PLAN-294 #17 / PLAN-0341 T1.2: cheapest-first prune of historical tool
 # results. Rules (decision #30/#47/#60):
@@ -195,7 +405,12 @@ def prune_history_tool_results(
                     tool_call_id=tool_call_id,
                 )
             )
-            result.append(TextMessage(role="tool", content=MASK_PLACEHOLDER))
+            # PLAN-0381 contract §8: mask swaps content only — pairing fields
+            # (id/name/status/degraded) survive so V9 keeps pairs intact.
+            if isinstance(msg, TextMessage):
+                result.append(replace(msg, content=MASK_PLACEHOLDER))
+            else:
+                result.append(TextMessage(role="tool", content=MASK_PLACEHOLDER))
         else:
             result.append(msg)
     return PruneResult(messages=result, tombstones=tombstones)
@@ -386,11 +601,19 @@ class LCToolAdapter(BaseTool):
                     exc_info=True,
                 )
                 diagnostics = None
-            await self._append_tool_result(call_id, result, diagnostics=diagnostics)
+            # PLAN-0381 T2.3：事件只携带有界 preview（gate 决定字符串/对象
+            # 形状）；诊断从原始 content 提取，顺序在加界之前冻结。
+            preview, preview_meta = bound_tool_preview(content, parsed)
+            await self._append_tool_result(
+                call_id,
+                build_tool_event_result(preview, preview_meta),
+                diagnostics=diagnostics,
+            )
 
-            # PLAN-0342 P2-4: the 48k middle truncation applies to command
-            # results only; other tool payloads (read_file, ...) stay intact.
-            body = truncate_middle(content) if parsed is not None else content
+            # PLAN-0342 P2-4 → PLAN-0381 T2.3：48k middle truncation 保留为命令
+            # 分支兜底（对 ≤4096 的 preview 恒 no-op）；非命令载荷同样只出
+            # 有界 preview——`read_file` 等超限内容不再整段进模型。
+            body = truncate_middle(preview) if parsed is not None else preview
             if diagnostics is not None and diagnostics["items"]:
                 block = format_diagnostics_block(diagnostics["items"], diagnostics["total"])
                 body = f"{body}\n{block}"
@@ -443,19 +666,27 @@ class LCToolAdapter(BaseTool):
     async def _append_tool_called(self, call_id: str, input: dict[str, Any]) -> None:
         if self._event_store is None:
             return
+        # PLAN-0381 T1.2: payload shape behind the D5 writer gate; legacy
+        # mode stays byte-identical to the pre-gate writer (contract §1/§2).
+        payload = _tool_event_payload(
+            {
+                "operation_id": self._context.metadata.get("operationId"),
+                "operation_item_id": call_id,
+            },
+            call_id=call_id,
+            tool_name=self._tool.spec.name,
+            run_id=self._context.metadata.get("runId"),
+            arguments=input,
+            result=None,
+            include_status=False,
+        )
         try:
             await self._event_store.append(
                 Event(
                     aggregate_id=self._context.aggregate_id,
                     sequence=0,
                     type="tool.called",
-                    payload={
-                        "call_id": call_id,
-                        "tool_name": self._tool.spec.name,
-                        "tool_input": input,
-                        "operation_id": self._context.metadata.get("operationId"),
-                        "operation_item_id": call_id,
-                    },
+                    payload=payload,
                     created_at=datetime.now(UTC),
                     correlation_id=_run_correlation(self._context),
                 )
@@ -473,18 +704,24 @@ class LCToolAdapter(BaseTool):
     async def _append_tool_result(
         self,
         call_id: str,
-        result: dict[str, Any],
+        # PLAN-0381 T2.3：有界 preview 字符串（gate OFF）或 preview 对象（ON）。
+        result: Any,
         diagnostics: dict[str, Any] | None = None,
     ) -> None:
         if self._event_store is None:
             return
-        payload: dict[str, Any] = {
-            "call_id": call_id,
-            "tool_name": self._tool.spec.name,
-            "result": result,
-            "operation_id": self._context.metadata.get("operationId"),
-            "operation_item_id": call_id,
-        }
+        payload: dict[str, Any] = _tool_event_payload(
+            {
+                "operation_id": self._context.metadata.get("operationId"),
+                "operation_item_id": call_id,
+            },
+            call_id=call_id,
+            tool_name=self._tool.spec.name,
+            run_id=self._context.metadata.get("runId"),
+            arguments=None,
+            result=result,
+            include_status=True,
+        )
         # PLAN-0342 T1.2: only a real bundle widens the durable payload.
         if diagnostics is not None:
             payload["diagnostics"] = diagnostics
@@ -865,15 +1102,111 @@ def _render_env_block(epoch=None) -> str:
     )
 
 
-def _to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
+# PLAN-0381 contract §7: explicit markers for wire-invalid history states.
+MISSING_TOOL_RESULT_CONTENT = "[missing tool result: run interrupted]"
+
+
+def _langchain_tool_status(status: str) -> Literal["success", "error"]:
+    """Contract §7: our status domain → LangChain's success/error literal.
+
+    Legacy messages carry no status (the presence of a result event means
+    the call completed) → success; failed/interrupted/expired → error.
+    """
+    normalized = (status or "").strip().lower()
+    if normalized in ("", "completed", "success"):
+        return "success"
+    return "error"
+
+
+def to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
+    """PLAN-0381 T1.4 / contract §7: provider mapping with explicit pairing.
+
+    Reconstructs assistant tool-call declarations + tool results into the
+    provider protocol shape without ever re-executing historical calls:
+    unanswered calls get an explicit missing-result marker, unpaired results
+    degrade to system text facts (never a fabricated pair).
+    """
     result: list[BaseMessage] = []
-    for msg in messages:
-        if msg.role == "human":
-            result.append(HumanMessage(content=msg.content))
-        elif msg.role == "ai":
-            result.append(AIMessage(content=msg.content))
-        elif msg.role == "system":
-            result.append(SystemMessage(content=msg.content))
-        elif msg.role == "tool":
-            result.append(ToolMessage(content=msg.content, tool_call_id=""))
+    pending: dict[str, str] = {}  # tool_call_id -> tool_name (contract §7)
+
+    def _flush_missing() -> None:
+        # Contract §7.5: a declaration must be answered before any non-tool
+        # message — synthesized marker keeps the wire protocol valid while
+        # never claiming a completed result.
+        for missing_id in list(pending):
+            missing_name = pending.pop(missing_id)
+            result.append(
+                ToolMessage(
+                    content=MISSING_TOOL_RESULT_CONTENT,
+                    tool_call_id=missing_id,
+                    name=missing_name or None,
+                    status="error",
+                )
+            )
+
+    for message in messages:
+        role = message.role
+        if role == "ai":
+            tool_calls = getattr(message, "tool_calls", ())
+            if tool_calls:
+                _flush_missing()
+                result.append(
+                    AIMessage(
+                        content=message.content,
+                        tool_calls=[
+                            {
+                                "name": ref.tool_name,
+                                "args": bound_tool_arguments(ref.arguments),
+                                "id": ref.call_id,
+                            }
+                            for ref in tool_calls
+                        ],
+                    )
+                )
+                for ref in tool_calls:
+                    pending[ref.call_id] = ref.tool_name
+                continue
+            _flush_missing()
+            result.append(AIMessage(content=message.content))
+            continue
+        if role == "tool":
+            call_id = getattr(message, "tool_call_id", "") or ""
+            tool_name = getattr(message, "tool_name", "") or "unknown"
+            if call_id and call_id in pending:
+                pending.pop(call_id, None)
+                # Frozen #1 历史回放条款（review P1-2）：回放进模型前统一 4096
+                # 界。本函数只塑造回放前缀——当前轮 ToolMessage 由 LangGraph
+                # 自建、不经过这里，因此当轮诊断块/jit 不受影响。
+                content, _ = bound_tool_preview(message.content, None)
+                result.append(
+                    ToolMessage(
+                        content=content,
+                        tool_call_id=call_id,
+                        name=getattr(message, "tool_name", "") or None,
+                        status=_langchain_tool_status(getattr(message, "status", "")),
+                    )
+                )
+                continue
+            # Contract §7.4: no declaration (legacy/fork/compaction-split) —
+            # degrade to a text fact, never a fabricated pair. 先组装降级事实
+            # 再整体加界（标签前缀计入 4096 预算）。
+            logger.warning("Degrading unpaired tool result to a text fact: toolCallId={!r}", call_id)
+            degraded, _ = bound_tool_preview(
+                f"[unpaired tool result: {tool_name}] {message.content}", None
+            )
+            result.append(SystemMessage(content=degraded))
+            continue
+        # human / system / plain ai: flush pending declarations first (§7.5)
+        _flush_missing()
+        if role == "system":
+            result.append(SystemMessage(content=message.content))
+        elif role == "human":
+            result.append(HumanMessage(content=message.content))
+        else:
+            result.append(AIMessage(content=message.content))
+    _flush_missing()
     return result
+
+
+# Back-compat alias: existing call sites and tests import the private name.
+_to_langchain_messages = to_langchain_messages
