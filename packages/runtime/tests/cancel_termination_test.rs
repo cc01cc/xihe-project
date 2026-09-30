@@ -205,6 +205,8 @@ async fn oneshot_abort_frame_kills_process_group_and_reports_cancelled() {
         "payload": {
             // exec_shell_command 直接用 `sh -c <command>`，marker 写在注释里仅用于可读性；
             // 唯一性由 sleep 的秒数承担（pgrep 按整串匹配）。
+            // PLAN-0381 T2.1：workspaceId 必填（retained bundle 归属记录，m2-contract §1）。
+            "workspaceId": "ws-cancel-test",
             "command": format!("sleep 987654 # {marker}"),
             "args": [],
             "timeout": 300,

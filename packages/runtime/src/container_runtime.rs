@@ -423,6 +423,13 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             Ok(serde_json::json!({"content": text}))
         }
         "execute_command" => {
+            // PLAN-0381 T2.1：workspaceId 随请求落到 bundle 归属（读侧校验用）。
+            let workspace_id = req
+                .payload
+                .get("workspaceId")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing workspaceId".into()))?
+                .to_string();
             let command = req
                 .payload
                 .get("command")
@@ -441,7 +448,8 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
                 .unwrap_or_default();
             let timeout = req.payload.get("timeout").and_then(|v| v.as_u64());
             let truncate_limit = req.payload.get("truncate_limit").and_then(|v| v.as_u64());
-            let res = exec_shell_command(&command, args, timeout, truncate_limit).await?;
+            let res =
+                exec_shell_command(&command, args, timeout, truncate_limit, &workspace_id).await?;
             Ok(serde_json::to_value(res).unwrap())
         }
         "start_background_process" => {
@@ -496,11 +504,23 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
             Ok(serde_json::json!({"status": res}))
         }
         "read_command_output" => {
+            // PLAN-0381 T2.2（m2-contract.md §2）：stream 选择 + workspace 归属
+            // 校验 + 结构化分页直出（offset/nextOffset/sizeBytes/truncated/…）。
             let artifact_id = req
                 .payload
                 .get("artifact_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| RuntimeError::InvalidPath("missing artifact_id".into()))?;
+            let workspace_id = req
+                .payload
+                .get("workspaceId")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RuntimeError::InvalidPath("missing workspaceId".into()))?;
+            let stream = req
+                .payload
+                .get("stream")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdout");
             let offset = req
                 .payload
                 .get("offset")
@@ -511,8 +531,14 @@ async fn dispatch_operation(req: &OperationRequest) -> Result<serde_json::Value,
                 .get("limit")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
-            let content = read_job_output(artifact_id, offset, limit)?;
-            Ok(serde_json::json!({"content": content}))
+            read_command_output_page(
+                Path::new(JOB_DIR),
+                artifact_id,
+                stream,
+                offset,
+                limit,
+                workspace_id,
+            )
         }
         // PLAN-0344 T1.2：CP 续看端点的结构化分页读（字节游标 + UTF-8 边界）。
         "read_job_output" => {
@@ -578,6 +604,137 @@ struct ExecResult {
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     artifact_id: Option<String>,
+    /// PLAN-0381 T2.1：该 stream 的 wire 预览是否被截断（缺省 false 不序列化，
+    /// 旧读者按缺省读）。`stdout_truncated||stderr_truncated` ≡ 超过预览阈值
+    /// ≡ retained bundle 同一触发条件（m2-contract.md §1）。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stdout_truncated: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stderr_truncated: bool,
+}
+
+/// PLAN-0381 T2.1（m2-contract.md §1）：wire 预览 + retained bundle 落盘。
+///
+/// 两 stream 均未超预览阈值 → 原文直出、无 bundle；任一超限 → 两 stream 的
+/// 完整捕获字节写入既有 TTL 载体（`JOB_DIR/<uuid>`，无 `command` 文件的
+/// 判别物），超限 stream 按 `truncate_limit` 字节 UTF-8 安全截断进 wire，
+/// 并回传 `*_truncated` 标志。bundle 写失败（预算满/IO）→ `artifact_id=None`
+/// 但标志仍为 true——调用方必须能看到「被截断且无引用」的显式状态。
+fn retain_sync_output(
+    job_root: &Path,
+    workspace_id: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+    limit: usize,
+) -> (String, String, Option<String>, bool, bool) {
+    let stdout_over = stdout.len() > limit;
+    let stderr_over = stderr.len() > limit;
+    let stdout_text = String::from_utf8_lossy(stdout).to_string();
+    let stderr_text = String::from_utf8_lossy(stderr).to_string();
+    let (stdout_final, _) = if stdout_over {
+        truncate_utf8_safe(&stdout_text, limit)
+    } else {
+        (stdout_text, false)
+    };
+    let (stderr_final, _) = if stderr_over {
+        truncate_utf8_safe(&stderr_text, limit)
+    } else {
+        (stderr_text, false)
+    };
+    let artifact_id = if stdout_over || stderr_over {
+        write_sync_artifact(job_root, workspace_id, stdout, stderr)
+    } else {
+        None
+    };
+    (
+        stdout_final,
+        stderr_final,
+        artifact_id,
+        stdout_over,
+        stderr_over,
+    )
+}
+
+/// 既有 100 目录上限的具名化：后台 job 与同步 bundle **各自独立**计数到
+/// 100（同一注册数值，两个计数器，m2-contract.md §4）。
+const JOB_DIR_SLOTS: usize = 100;
+
+/// PLAN-0381 T2.1：把同步命令的完整（有捕获上限）输出写进既有 job 载体。
+///
+/// 先跑一次 TTL 回收腾槽；无 `command` 文件的目录即 bundle（§1.3 判别物），
+/// 与后台 job 预算互不挤占。任何写失败清理半成品并返回 None——不得把
+/// 不完整 bundle 当作可读引用。
+fn write_sync_artifact(
+    job_root: &Path,
+    workspace_id: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Option<String> {
+    std::fs::create_dir_all(job_root).ok()?;
+    // best-effort：先回收过期目录给 bundle 让出槽位（读不到/杀不掉都不阻塞写）。
+    let _ = cleanup_expired_jobs_with(job_root, JOB_TTL_SECS, process_group_alive);
+    let bundles = std::fs::read_dir(job_root)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let path = entry.path();
+            path.is_dir() && !path.join("command").exists()
+        })
+        .count();
+    if bundles >= JOB_DIR_SLOTS {
+        return None;
+    }
+    let artifact_id = uuid::Uuid::new_v4().to_string();
+    let dir = job_root.join(&artifact_id);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let writes = [
+        std::fs::write(dir.join("stdout"), stdout),
+        std::fs::write(dir.join("stderr"), stderr),
+        std::fs::write(dir.join("meta"), "succeeded"),
+        std::fs::write(dir.join("workspace_id"), workspace_id),
+        std::fs::write(dir.join("started_at"), &now),
+        std::fs::write(dir.join("updated_at"), &now),
+    ];
+    if writes.into_iter().any(|result| result.is_err()) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return None;
+    }
+    Some(artifact_id)
+}
+
+/// PLAN-0381 T2.2（m2-contract.md §2）：带 workspace 归属校验的分页读。
+///
+/// 目录存在 → `workspace_id` 文件必须等于调用方 workspace（缺失/不等 =
+/// fail-closed 拒绝）；目录不存在 → 交给 `read_job_output_json_at` 返回
+/// 结构化 `available:false/job_missing`（过期、容器重建的显式不可用语义）。
+fn read_command_output_page(
+    job_root: &Path,
+    artifact_id: &str,
+    stream: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    workspace_id: &str,
+) -> Result<serde_json::Value, RuntimeError> {
+    if !is_safe_job_id(artifact_id) {
+        return Err(RuntimeError::InvalidPath(format!(
+            "invalid artifact id: {artifact_id}"
+        )));
+    }
+    let dir = job_root.join(artifact_id);
+    if dir.exists() {
+        let owner = std::fs::read_to_string(dir.join("workspace_id"))
+            .map(|raw| raw.trim().to_string())
+            .unwrap_or_default();
+        if owner.is_empty() || owner != workspace_id {
+            return Err(RuntimeError::InvalidPath(format!(
+                "artifact {artifact_id} is not readable from this workspace"
+            )));
+        }
+    }
+    read_job_output_json_at(job_root, artifact_id, stream, offset, limit)
 }
 
 async fn exec_shell_command(
@@ -585,6 +742,7 @@ async fn exec_shell_command(
     args: Vec<String>,
     timeout: Option<u64>,
     truncate_limit: Option<u64>,
+    workspace_id: &str,
 ) -> Result<ExecResult, RuntimeError> {
     let timeout_dur = Duration::from_secs(timeout.unwrap_or(30));
     let limit = truncate_limit.unwrap_or(4096) as usize;
@@ -624,8 +782,13 @@ async fn exec_shell_command(
                 match pipe.read(&mut tmp).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        if buf.len() < limit + 8192 {
-                            buf.extend_from_slice(&tmp[..n]);
+                        // PLAN-0381 T2.1：捕获预算 = 既有 JOB_CAP（1 MiB/stream，
+                        // Frozen #2）——超过阈值的完整输出要落 retained bundle，
+                        // 但载体本身按 JOB_CAP 封顶；超出部分继续排空、不入内存。
+                        // 按剩余容量截读（review P2-5：整块 extend 会超封顶一个读块）。
+                        if buf.len() < JOB_CAP {
+                            let take = n.min(JOB_CAP - buf.len());
+                            buf.extend_from_slice(&tmp[..take]);
                         }
                     }
                     Err(_) => break,
@@ -645,8 +808,13 @@ async fn exec_shell_command(
                 match pipe.read(&mut tmp).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        if buf.len() < limit + 8192 {
-                            buf.extend_from_slice(&tmp[..n]);
+                        // PLAN-0381 T2.1：捕获预算 = 既有 JOB_CAP（1 MiB/stream，
+                        // Frozen #2）——超过阈值的完整输出要落 retained bundle，
+                        // 但载体本身按 JOB_CAP 封顶；超出部分继续排空、不入内存。
+                        // 按剩余容量截读（review P2-5：整块 extend 会超封顶一个读块）。
+                        if buf.len() < JOB_CAP {
+                            let take = n.min(JOB_CAP - buf.len());
+                            buf.extend_from_slice(&tmp[..take]);
                         }
                     }
                     Err(_) => break,
@@ -705,21 +873,24 @@ async fn exec_shell_command(
     let stderr_bytes = stderr_handle
         .await
         .map_err(|e| RuntimeError::Command(e.to_string()))?;
-    let stdout_str = String::from_utf8_lossy(&stdout_bytes).to_string();
-    let stderr_str = String::from_utf8_lossy(&stderr_bytes).to_string();
-    let (stdout_final, artifact_id) = if stdout_str.len() > limit {
-        // 截断点必须是字符边界（此前按字节下标切片，多字节内容会 panic）。
-        let (truncated, _) = truncate_utf8_safe(&stdout_str, limit);
-        (truncated, None)
-    } else {
-        (stdout_str, None)
-    };
+    // PLAN-0381 T2.1/T2.2：wire 预览（stderr 对齐同一阈值）+ 超限时完整输出
+    // 落 retained bundle 并回传 artifact_id（B3 修复点，m2-contract.md §1）。
+    let (stdout_final, stderr_final, artifact_id, stdout_truncated, stderr_truncated) =
+        retain_sync_output(
+            Path::new(JOB_DIR),
+            workspace_id,
+            &stdout_bytes,
+            &stderr_bytes,
+            limit,
+        );
     Ok(ExecResult {
         stdout: stdout_final,
-        stderr: stderr_str,
+        stderr: stderr_final,
         exit_code: status.code().unwrap_or(-1),
         success: status.success(),
         artifact_id,
+        stdout_truncated,
+        stderr_truncated,
     })
 }
 
@@ -855,11 +1026,13 @@ async fn start_background_job_at(
     timeout_secs: u64,
 ) -> Result<String, RuntimeError> {
     std::fs::create_dir_all(job_dir).map_err(RuntimeError::Io)?;
-    let jobs = std::fs::read_dir(job_dir)
-        .map(|entries| entries.filter_map(Result::ok).count())
-        .unwrap_or_default();
-    if jobs >= 100 {
-        return Err(RuntimeError::InvalidPath("job limit reached (100)".into()));
+    // PLAN-0381 T2.1：预算只数含 `command` 的目录——同步输出 bundle 走独立
+    // 100 槽（JOB_DIR_SLOTS），不挤占后台 job 槽位（m2-contract.md §1.1）。
+    let jobs = count_background_jobs(job_dir);
+    if jobs >= JOB_DIR_SLOTS {
+        return Err(RuntimeError::InvalidPath(format!(
+            "job limit reached ({JOB_DIR_SLOTS})"
+        )));
     }
     let job_id = uuid::Uuid::new_v4().to_string();
     let job_path = job_dir.join(&job_id);
@@ -892,31 +1065,63 @@ async fn start_background_job_at(
 }
 
 fn list_jobs() -> Result<Vec<JobInfo>, RuntimeError> {
+    list_jobs_at(Path::new(JOB_DIR))
+}
+
+fn list_jobs_at(job_dir: &Path) -> Result<Vec<JobInfo>, RuntimeError> {
     let mut jobs = Vec::new();
-    let job_dir = Path::new(JOB_DIR);
     if !job_dir.exists() {
         return Ok(jobs);
     }
-    for entry in std::fs::read_dir(job_dir).map_err(RuntimeError::Io)? {
-        let entry = entry.map_err(RuntimeError::Io)?;
-        let job_id = entry.file_name().to_string_lossy().to_string();
-        if let Ok(job) = get_job(&job_id) {
+    // PLAN-0381 T2.1：无 `command` 文件的目录是同步输出 bundle，不是后台
+    // 进程——不得经 `list_background_processes` 冒充 job（m2-contract.md §1.3）。
+    let job_ids: Vec<String> = std::fs::read_dir(job_dir)
+        .map_err(RuntimeError::Io)?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir() && entry.path().join("command").exists())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    for job_id in job_ids {
+        if let Ok(job) = get_job_at(job_dir, &job_id) {
             jobs.push(job);
         }
     }
     Ok(jobs)
 }
 
+/// 后台 job 槽位计数：只数含 `command` 的目录（同步 bundle 走独立预算）。
+fn count_background_jobs(job_dir: &Path) -> usize {
+    std::fs::read_dir(job_dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().is_dir() && entry.path().join("command").exists())
+                .count()
+        })
+        .unwrap_or_default()
+}
+
 fn get_job(job_id: &str) -> Result<JobInfo, RuntimeError> {
+    get_job_at(Path::new(JOB_DIR), job_id)
+}
+
+fn get_job_at(job_dir: &Path, job_id: &str) -> Result<JobInfo, RuntimeError> {
     if !is_safe_job_id(job_id) {
         return Err(RuntimeError::InvalidPath(format!(
             "invalid job id: {job_id}"
         )));
     }
-    let job_path = PathBuf::from(JOB_DIR).join(job_id);
+    let job_path = job_dir.join(job_id);
     if !job_path.exists() {
         return Err(RuntimeError::InvalidPath(format!(
             "job not found: {job_id}"
+        )));
+    }
+    // PLAN-0381 T2.1（review P2-1）：无 `command` 文件的目录是同步输出
+    // bundle——按后台 job 直读会返回「空命令伪 job」，显式拒绝（§1.3 判别物）。
+    if !job_path.join("command").exists() {
+        return Err(RuntimeError::InvalidPath(format!(
+            "not a background job: {job_id}"
         )));
     }
     let meta = std::fs::read_to_string(job_path.join("meta"))
@@ -1149,24 +1354,6 @@ fn read_job_output_json_at(
         "truncated": bytes.len() >= JOB_CAP,
         "jobStatus": job_status,
     }))
-}
-
-fn read_job_output(
-    job_id: &str,
-    offset: Option<usize>,
-    limit: Option<usize>,
-) -> Result<String, RuntimeError> {
-    let chunk = read_job_output_json_at(Path::new(JOB_DIR), job_id, "stdout", offset, limit)?;
-    if chunk.get("available").and_then(|value| value.as_bool()) == Some(true) {
-        return Ok(chunk
-            .get("data")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string());
-    }
-    Err(RuntimeError::FileNotFound(format!(
-        "output not found for job {job_id}"
-    )))
 }
 
 fn cleanup_expired_jobs() -> Result<usize, RuntimeError> {
@@ -1969,6 +2156,250 @@ mod tests {
             read_job_output_json_at(tmp.path(), "job-missing", "stdout", None, None).unwrap();
         assert_eq!(missing["available"], false);
         assert_eq!(missing["reason"], "job_missing");
+    }
+
+    // ── PLAN-0381 M2（T2.1/T2.2/T2.4）：同步输出 retained bundle 与分页读 ────
+
+    #[test]
+    fn retain_sync_output_keeps_small_output_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let (stdout, stderr, artifact, stdout_cut, stderr_cut) =
+            retain_sync_output(tmp.path(), "ws-1", b"ok\n", b"", 4096);
+        assert_eq!(stdout, "ok\n");
+        assert_eq!(stderr, "");
+        assert!(artifact.is_none(), "in-threshold output needs no bundle");
+        assert!(!stdout_cut && !stderr_cut);
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn retain_sync_output_writes_full_bundle_and_cuts_wire_on_overflow() {
+        let tmp = TempDir::new().unwrap();
+        let big = vec![b'x'; 4096 + 2048];
+        let (stdout, stderr, artifact, stdout_cut, stderr_cut) =
+            retain_sync_output(tmp.path(), "ws-1", &big, b"tail-err", 4096);
+        let artifact = artifact.expect("over-limit output must produce a ref (B3 regression)");
+        assert!(stdout_cut && !stderr_cut);
+        assert!(stdout.starts_with(&"x".repeat(4096)));
+        assert!(stdout.ends_with("[truncated to 4096 bytes]"));
+        assert_eq!(stderr, "tail-err");
+
+        let dir = tmp.path().join(&artifact);
+        assert_eq!(
+            std::fs::read(dir.join("stdout")).unwrap(),
+            big,
+            "bundle must retain the full captured bytes, not the wire preview"
+        );
+        assert_eq!(std::fs::read(dir.join("stderr")).unwrap(), b"tail-err");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("meta")).unwrap(),
+            "succeeded"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("workspace_id")).unwrap(),
+            "ws-1"
+        );
+        assert!(
+            !dir.join("command").exists(),
+            "bundle 判别物缺失 command——不得被 list_background_processes 当成 job"
+        );
+    }
+
+    #[test]
+    fn retain_sync_output_aligns_stderr_to_the_same_threshold() {
+        // T2.2：stderr 现状不截断，M2 与 stdout 对齐同一阈值并显式标记。
+        let tmp = TempDir::new().unwrap();
+        let big_err = vec![b'e'; 4096 + 10];
+        let (stdout, stderr, artifact, stdout_cut, stderr_cut) =
+            retain_sync_output(tmp.path(), "ws-1", b"fine", &big_err, 4096);
+        assert!(
+            !stdout_cut && stderr_cut,
+            "stderr truncation must be explicit"
+        );
+        assert!(stderr.starts_with(&"e".repeat(4096)));
+        assert!(stderr.ends_with("[truncated to 4096 bytes]"));
+        assert_eq!(stdout, "fine");
+        assert!(artifact.is_some());
+    }
+
+    #[test]
+    fn retain_wire_preview_never_splits_multibyte_chars() {
+        let tmp = TempDir::new().unwrap();
+        let text = "汉".repeat(3000); // 9000 bytes > 4096
+        let (stdout, _, _, stdout_cut, _) =
+            retain_sync_output(tmp.path(), "ws-1", text.as_bytes(), b"", 4096);
+        assert!(stdout_cut);
+        assert!(
+            !stdout.contains('\u{fffd}'),
+            "wire preview must stay on a UTF-8 boundary: {stdout:?}"
+        );
+        // limit=4096 落在第二个「汉」(3B) 中间 → 回退到 4095 字节边界。
+        assert!(stdout.ends_with("[truncated to 4095 bytes]"));
+    }
+
+    #[test]
+    fn write_sync_artifact_fails_when_bundle_slots_are_exhausted() {
+        let tmp = TempDir::new().unwrap();
+        for i in 0..JOB_DIR_SLOTS {
+            std::fs::create_dir_all(tmp.path().join(format!("bundle-{i}"))).unwrap();
+        }
+        let (stdout, _, artifact, stdout_cut, _) =
+            retain_sync_output(tmp.path(), "ws-1", &vec![b'x'; 5000], b"", 4096);
+        assert!(stdout_cut, "truncation stays explicit even without a ref");
+        assert!(
+            artifact.is_none(),
+            "exhausted bundle slots must fail open (flags, no ref), never a half bundle"
+        );
+        assert!(stdout.ends_with("[truncated to 4096 bytes]"));
+    }
+
+    #[test]
+    fn retain_sync_output_reports_failure_when_bundle_root_unusable() {
+        let tmp = TempDir::new().unwrap();
+        let root_file = tmp.path().join("root-is-a-file");
+        std::fs::write(&root_file, b"not a dir").unwrap();
+        let (stdout, _, artifact, stdout_cut, _) =
+            retain_sync_output(&root_file, "ws-1", &vec![b'x'; 5000], b"", 4096);
+        assert!(
+            stdout_cut && artifact.is_none(),
+            "IO failure → 显式无引用截断"
+        );
+        assert!(stdout.ends_with("[truncated to 4096 bytes]"));
+    }
+
+    #[test]
+    fn list_jobs_and_budget_ignore_sync_bundle_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let bundle =
+            write_sync_artifact(tmp.path(), "ws-1", b"out", b"err").expect("bundle should write");
+        let job = tmp.path().join("job-1");
+        std::fs::create_dir_all(&job).unwrap();
+        std::fs::write(job.join("command"), "sleep 1").unwrap();
+        std::fs::write(job.join("meta"), "succeeded").unwrap();
+
+        let jobs = list_jobs_at(tmp.path()).unwrap();
+        assert_eq!(jobs.len(), 1, "bundle must not appear as a background job");
+        assert_eq!(jobs[0].job_id, "job-1");
+        assert_eq!(
+            count_background_jobs(tmp.path()),
+            1,
+            "bundles must not consume background job slots"
+        );
+        assert!(
+            is_safe_job_id(&bundle),
+            "bundle id must be an opaque safe ref"
+        );
+    }
+
+    #[test]
+    fn read_command_output_page_scopes_to_own_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let id = write_sync_artifact(tmp.path(), "ws-1", b"hello", b"err-out").unwrap();
+
+        let page = read_command_output_page(tmp.path(), &id, "stderr", None, None, "ws-1").unwrap();
+        assert_eq!(page["available"], true);
+        assert_eq!(page["stream"], "stderr");
+        assert_eq!(page["data"], "err-out");
+        assert_eq!(page["sizeBytes"], 7);
+
+        let err = read_command_output_page(tmp.path(), &id, "stdout", None, None, "ws-2")
+            .expect_err("cross-workspace read must be rejected");
+        assert!(
+            err.to_string().contains("not readable from this workspace"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn read_command_output_page_rejects_workspace_id_missing_bundle() {
+        // legacy/手工目录缺 workspace_id → fail-closed（m2-contract.md §2）。
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("orphan-1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("stdout"), b"data").unwrap();
+        let err = read_command_output_page(tmp.path(), "orphan-1", "stdout", None, None, "ws-1")
+            .expect_err("missing owner must fail closed");
+        assert!(
+            err.to_string().contains("not readable from this workspace"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn read_command_output_page_reports_missing_bundle_as_explicit_unavailable() {
+        let tmp = TempDir::new().unwrap();
+        let page =
+            read_command_output_page(tmp.path(), "gone-1", "stdout", None, None, "ws-1").unwrap();
+        assert_eq!(page["available"], false);
+        assert_eq!(page["reason"], "job_missing");
+    }
+
+    #[test]
+    fn read_command_output_page_rejects_unknown_stream_and_bad_id() {
+        let tmp = TempDir::new().unwrap();
+        let id = write_sync_artifact(tmp.path(), "ws-1", b"out", b"err").unwrap();
+        let err = read_command_output_page(tmp.path(), &id, "stdin", None, None, "ws-1")
+            .expect_err("unknown stream must be rejected");
+        assert!(err.to_string().contains("invalid stream"), "{err}");
+        let err = read_command_output_page(tmp.path(), "../escape", "stdout", None, None, "ws-1")
+            .expect_err("path traversal id must be rejected");
+        assert!(err.to_string().contains("invalid artifact id"), "{err}");
+    }
+
+    #[test]
+    fn read_command_output_page_paginates_with_byte_offset() {
+        let tmp = TempDir::new().unwrap();
+        let id = write_sync_artifact(tmp.path(), "ws-1", b"hello", b"").unwrap();
+        let page =
+            read_command_output_page(tmp.path(), &id, "stdout", Some(1), Some(3), "ws-1").unwrap();
+        assert_eq!(page["data"], "ell");
+        assert_eq!(page["offset"], 1);
+        assert_eq!(page["nextOffset"], 4);
+        assert_eq!(page["sizeBytes"], 5);
+        assert_eq!(page["truncated"], false);
+    }
+
+    #[test]
+    fn read_command_output_page_flags_capped_bundle_as_truncated() {
+        let tmp = TempDir::new().unwrap();
+        let id = write_sync_artifact(tmp.path(), "ws-1", &vec![b'z'; JOB_CAP], b"").unwrap();
+        let page = read_command_output_page(tmp.path(), &id, "stdout", None, None, "ws-1").unwrap();
+        assert_eq!(page["sizeBytes"], JOB_CAP as u64);
+        assert_eq!(
+            page["truncated"], true,
+            "JOB_CAP-capped retained output must report truncated"
+        );
+    }
+
+    #[test]
+    fn sync_bundle_is_reclaimed_by_ttl_cleanup() {
+        // 判别物保证：meta=succeeded（非 running）→ 不进运行保护，按 TTL 回收。
+        let tmp = TempDir::new().unwrap();
+        let id = write_sync_artifact(tmp.path(), "ws-1", b"out", b"err").unwrap();
+        let dir = tmp.path().join(&id);
+        let fresh_cleaned = cleanup_expired_jobs_with(tmp.path(), 900, |_pid| {
+            panic!("bundle must never probe process liveness")
+        })
+        .unwrap();
+        assert_eq!(
+            fresh_cleaned, 0,
+            "fresh bundle must survive a 900s TTL sweep"
+        );
+        assert!(dir.exists(), "fresh bundle must survive a 900s TTL sweep");
+
+        // 伪造成过期（写伪 mtime）：复用 write_fake_job 的老化语义。
+        // 注意：老化后不得再写该目录内任何文件——TTL 按目录内最新文件 mtime 计。
+        let aged = write_fake_job(tmp.path(), "bundle-aged", "succeeded", None, 86400);
+        let cleaned = cleanup_expired_jobs_with(tmp.path(), 900, |_pid| false).unwrap();
+        assert_eq!(
+            cleaned, 1,
+            "aged bundle must be reclaimed with its job dirs"
+        );
+        assert!(!aged.exists());
+        assert!(
+            tmp.path().join(&id).exists(),
+            "fresh bundle must not be swept with the aged one"
+        );
     }
 
     #[test]

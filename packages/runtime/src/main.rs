@@ -241,6 +241,8 @@ pub struct ExecuteCommandRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadCommandOutputRequest {
     pub artifact_id: String,
+    /// PLAN-0381 T2.2：stdout（缺省）或 stderr——不把 stderr 默默并入 stdout。
+    pub stream: Option<String>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
 }
@@ -485,31 +487,27 @@ impl XiheRuntime {
         Ok(Json(result))
     }
 
-    #[tool(description = "Read paginated command output by artifact_id")]
+    #[tool(
+        description = "Read one page of retained command output by artifact_id (stream=stdout|stderr, byte offset/limit; returns available/data/offset/nextOffset/sizeBytes/truncated, or available=false with a reason when expired or missing)"
+    )]
     async fn read_command_output(
         &self,
         Parameters(ReadCommandOutputRequest {
             artifact_id,
+            stream,
             offset,
             limit,
         }): Parameters<ReadCommandOutputRequest>,
-    ) -> Result<Json<Vec<String>>, String> {
+    ) -> Result<Json<serde_json::Value>, String> {
+        // PLAN-0381 T2.2：结构化分页页直出（不再是行数组），stream 与
+        // workspace 归属校验在容器侧 fail-closed（m2-contract.md §2）。
+        let stream = stream.as_deref().unwrap_or("stdout");
         let val = self
             .router
-            .read_command_output(&self.ws_id, &artifact_id, offset, limit)
+            .read_command_output(&self.ws_id, &artifact_id, stream, offset, limit)
             .await
             .map_err(|e| e.to_string())?;
-        if let Some(content) = val.get("content").and_then(|v| v.as_str()) {
-            Ok(Json(content.lines().map(|s| s.to_string()).collect()))
-        } else if let Some(arr) = val.get("content").and_then(|v| v.as_array()) {
-            Ok(Json(
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect(),
-            ))
-        } else {
-            Ok(Json(vec![]))
-        }
+        Ok(Json(val))
     }
 
     #[tool(description = "Get file or directory metadata")]

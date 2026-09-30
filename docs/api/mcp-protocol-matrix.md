@@ -10,7 +10,7 @@
 | `start_background_process` | MCP tool (opaque `jobId`) | container `start_exec(detach)` + `/tmp/xihe-jobs/<jobId>/` state files | workspace MCP auth | `{meta,pid,stdout,stderr,exit}` bounded 1 MiB, TTL 15 min |
 | `list/get_background_process` | MCP tool | oneshot exec reads job state files | workspace MCP auth | 404 `job not found` when orphaned by container rebuild |
 | `cancel_background_process` | MCP tool | oneshot exec `kill -- -PGID` + `meta=cancelled` | workspace MCP auth | returns `cancelled`; TTL cleanup is periodic oneshot exec |
-| `read_command_output` | MCP tool | reads retained preview from job state files | workspace MCP auth | offset/limit paged; never unbounded |
+| `read_command_output` | MCP tool (structured page) | reads retained output bundle from `/tmp/xihe-jobs/<artifact_id>/` state files | workspace MCP auth | `stream=stdout\|stderr` (default stdout); returns `available/data/offset/nextOffset/sizeBytes/truncated` or `available:false+reason` (expired/rebuilt); cross-workspace and unknown ids rejected; offset/limit paged, never unbounded (PLAN-0381 T2.2) |
 
 MCP protocol names, JSON-RPC keys, `Mcp-Session-Id`, `Last-Event-ID`, and
 OAuth wire fields are protocol-owned and are not camel-cased.

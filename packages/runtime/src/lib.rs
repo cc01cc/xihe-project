@@ -62,6 +62,8 @@ mod tests {
             exit_code: 0,
             success: true,
             artifact_id: None,
+            stdout_truncated: false,
+            stderr_truncated: false,
         };
         assert!(result.success);
     }

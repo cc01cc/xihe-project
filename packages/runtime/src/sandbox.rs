@@ -23,6 +23,12 @@ pub struct CommandResult {
     pub exit_code: i64,
     pub success: bool,
     pub artifact_id: Option<String>,
+    /// PLAN-0381 T2.1：wire 预览截断标志（容器侧 ExecResult 镜像；缺省 false
+    /// = 旧 runtime 无此字段时按未截断读，m2-contract.md §1）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stdout_truncated: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stderr_truncated: bool,
 }
 
 // ── Background Process (frozen v1 schema) ────────────────────────────────

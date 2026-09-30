@@ -1609,7 +1609,9 @@ impl WorkspaceExecutionRouter {
             tool_timeout::time_guard(tool_timeout::current_or_resolve().seconds, timeout);
         let guard_limit =
             tool_timeout::output_limit_guard(tool_timeout::current_output_limit(), truncate_limit);
-        let payload = serde_json::json!({"command": command, "args": args, "timeout": guard_seconds, "truncate_limit": guard_limit});
+        // PLAN-0381 T2.1：workspaceId 随请求下发，retained bundle 落归属记录
+        // （read 侧 fail-closed 校验，m2-contract.md §1/§2）。
+        let payload = serde_json::json!({"workspaceId": workspace_id, "command": command, "args": args, "timeout": guard_seconds, "truncate_limit": guard_limit});
         self.exec_oneshot(workspace_id, "execute_command", payload)
             .await
     }
@@ -1700,15 +1702,23 @@ impl WorkspaceExecutionRouter {
         Ok(ids)
     }
 
+    /// PLAN-0381 T2.2：结构化分页读（stream 选择 + workspace 归属校验 +
+    /// offset/nextOffset/sizeBytes/truncated 直出，m2-contract.md §2）。
     pub async fn read_command_output(
         &self,
         workspace_id: &str,
         artifact_id: &str,
+        stream: &str,
         offset: Option<usize>,
         limit: Option<usize>,
     ) -> Result<Value> {
-        let payload =
-            serde_json::json!({"artifact_id": artifact_id, "offset": offset, "limit": limit});
+        let payload = serde_json::json!({
+            "artifact_id": artifact_id,
+            "workspaceId": workspace_id,
+            "stream": stream,
+            "offset": offset,
+            "limit": limit,
+        });
         self.exec_oneshot(workspace_id, "read_command_output", payload)
             .await
     }
