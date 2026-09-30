@@ -2403,6 +2403,111 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_read_during_rewrite_and_cleanup_never_yields_partial_page() {
+        // PLAN-0381 T3.5 / m3-contract §3：读侧只见「完整旧页 / 完整新页 /
+        // 显式 unavailable」三态，竞态不产生静默半页（V19）。
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex, mpsc};
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+        let page_a: Vec<u8> = [b"PAGE-A:".to_vec(), vec![b'a'; 3000]].concat();
+        let page_b: Vec<u8> = [b"PAGE-B:".to_vec(), vec![b'b'; 5000]].concat();
+        let id = write_sync_artifact(&root, "ws-1", &page_a, b"err").unwrap();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let observations: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+
+        let reader_stop = Arc::clone(&stop);
+        let reader_obs = Arc::clone(&observations);
+        let reader_root = root.clone();
+        let reader_id = id.clone();
+        let reader = std::thread::spawn(move || {
+            let mut notified = false;
+            loop {
+                // 有效 id：读取永不 Err——目录/文件缺失走结构化 available:false。
+                let page = read_job_output_json_at(&reader_root, &reader_id, "stdout", None, None)
+                    .expect("valid artifact id must never error the read path");
+                let mut guard = reader_obs.lock().unwrap();
+                let first = guard.len();
+                guard.push(page);
+                drop(guard);
+                if !notified && first == 0 {
+                    notified = true;
+                    let _ = ready_tx.send(());
+                }
+                if reader_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+            }
+        });
+
+        // 显式同步（无固定 sleep）：确认读线程已产生首个观测后再进入竞态窗口。
+        ready_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("reader must produce an observation within the timeout");
+
+        // 竞态窗口 1：原子换名重写（模拟 head -c 封顶的 tmp+mv 模式）。
+        for i in 0..50 {
+            let bytes = if i % 2 == 0 { &page_b } else { &page_a };
+            let tmp_file = root.join(&id).join("stdout.tmp");
+            std::fs::write(&tmp_file, bytes).unwrap();
+            std::fs::rename(&tmp_file, root.join(&id).join("stdout")).unwrap();
+        }
+
+        // 竞态窗口 2：老化全部文件后跑 TTL 清理（读线程仍在循环读）。
+        for entry in std::fs::read_dir(root.join(&id)).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                let file = std::fs::File::options().write(true).open(&path).unwrap();
+                file.set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(86400),
+                )
+                .unwrap();
+            }
+        }
+        let removed = cleanup_expired_jobs_with(&root, 900, |_pid| false).unwrap();
+
+        // review P2-4：先停读线程再断言——任一断言失败都不遗留自旋线程。
+        stop.store(true, Ordering::Relaxed);
+        reader.join().unwrap();
+
+        assert_eq!(removed, 1, "aged bundle must be reclaimed");
+
+        // 确定性收尾断言：清理后的读 = 显式 unavailable，不是空成功。
+        let after = read_job_output_json_at(&root, &id, "stdout", None, None).unwrap();
+        assert_eq!(after["available"], false);
+        assert_eq!(after["reason"], "job_missing");
+
+        let seen = observations.lock().unwrap();
+        assert!(!seen.is_empty(), "concurrent observations must exist");
+        for page in seen.iter() {
+            if page["available"] == true {
+                let data = page["data"].as_str().unwrap();
+                let full_a = String::from_utf8_lossy(&page_a);
+                let full_b = String::from_utf8_lossy(&page_b);
+                assert!(
+                    data == full_a.as_ref() || data == full_b.as_ref(),
+                    "partial page observed: {} bytes (expected {} or {})",
+                    data.len(),
+                    full_a.len(),
+                    full_b.len()
+                );
+                assert_eq!(page["sizeBytes"].as_u64().unwrap() as usize, data.len());
+                assert_eq!(page["offset"].as_u64().unwrap(), 0);
+                assert_eq!(page["nextOffset"].as_u64().unwrap() as usize, data.len());
+            } else {
+                let reason = page["reason"].as_str().unwrap();
+                assert!(
+                    reason == "job_missing" || reason == "output_missing",
+                    "unavailable must be explicit, got {reason}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cleanup_keeps_running_job_even_when_expired() {
         let tmp = TempDir::new().unwrap();
         let job = write_fake_job(tmp.path(), "job-running", "running", Some("4321"), 86400);
