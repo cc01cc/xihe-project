@@ -148,7 +148,12 @@ public class ContextProjectionService {
             // projection shape as llm.token so snapshots carry the AI side of
             // the conversation for history assembly and compaction.
             case "assistant.responded" -> addMessage(context, payload, "ai");
-            case "tool.result" -> addMessage(context, payload, "tool");
+            // PLAN-0381 T1.3 (contract §6): assistant tool-call declarations
+            // join history so tool results pair by call id, never by adjacency.
+            case "tool.called" -> addToolCalled(context, payload);
+            // PLAN-0381 T1.3 (contract §3): shape-based result read — B1 fix,
+            // object/array results must never collapse to an empty string.
+            case "tool.result" -> addToolResult(context, payload);
             // PLAN-0340: source updates replace the epoch L1 slot; they must not
             // append into messages (old path was truncated by HISTORY_LIMIT).
             case "context.source_changed" -> applySourceChanged(context, payload);
@@ -195,6 +200,238 @@ public class ContextProjectionService {
         message.put("content", content);
         ArrayNode messages = (ArrayNode) context.get("messages");
         messages.add(message);
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0381 M1 — cross-language contract (Agent evidence/m1-contract.md).
+    // Python mirrors: interfaces/context.py (bound_tool_arguments,
+    // parse_tool_result, apply_event) and langgraph_runner mapping rules.
+    // ------------------------------------------------------------------
+
+    /** ARG/preview bounds (contract §4): Python slices by code point; Java
+     * slices UTF-16 units with a surrogate-pair guard so a surrogate pair is
+     * never split. */
+    private static final int ARG_LIMIT = 4096;
+    private static final int ARG_PREFIX_CHARS = 4000;
+    private static final int JSON_PREVIEW_LIMIT = 4096;
+    private static final String JSON_TRUNCATED_SUFFIX = "...[truncated]";
+
+    /** Contract §3 dual-read: v2 camelCase payload keys fall back to legacy. */
+    private static String pairingField(ObjectNode payload, String v2Key, String legacyKey) {
+        JsonNode value = payload.get(v2Key);
+        if (value == null || value.isNull() || value.asText("").isBlank()) {
+            value = payload.get(legacyKey);
+        }
+        return value == null || value.isNull() ? "" : value.asText("");
+    }
+
+    private static String utf16SafeCut(String value, int limit) {
+        if (value.length() <= limit) {
+            return value;
+        }
+        int cut = limit;
+        if (cut > 0 && Character.isHighSurrogate(value.charAt(cut - 1))) {
+            cut--;
+        }
+        return value.substring(0, cut);
+    }
+
+    /** Marker objects must themselves serialize ≤ ARG_LIMIT: the prefix is a
+     * JSON string value, so escaping inflates it (\\ ×2, controls up to ×6)
+     * past the frozen limit (review P1-1 — Python {@code _fit_marker_payload}
+     * mirrors this). Shrink iteratively by the observed ratio. */
+    private static ObjectNode shrinkMarker(ObjectNode marker, String textKey) {
+        for (int i = 0; i < 8 && marker.toString().length() > ARG_LIMIT; i++) {
+            String text = marker.get(textKey).asText("");
+            if (text.isEmpty()) {
+                break;
+            }
+            int dumped = marker.toString().length();
+            int keep = Math.max(16, (int) ((long) text.length() * ARG_LIMIT / dumped));
+            if (keep >= text.length()) {
+                keep = text.length() - 1;
+            }
+            // 收缩切点同样不得劈开代理对（contract §4，与 utf16SafeCut 同规则）。
+            if (keep > 0 && Character.isHighSurrogate(text.charAt(keep - 1))) {
+                keep--;
+            }
+            if (keep < 1) {
+                break;
+            }
+            marker.put(textKey, text.substring(0, keep));
+        }
+        return marker;
+    }
+
+    /** Contract §4: complete raw arguments bounded by the frozen 4096 limit —
+     * truncation replaces the object with an explicit marker, never an
+     * in-place value rewrite. */
+    private JsonNode boundArguments(JsonNode raw) {
+        if (raw == null || raw.isNull()) {
+            return objectMapper.createObjectNode();
+        }
+        JsonNode object = raw;
+        if (!raw.isObject()) {
+            ObjectNode wrapped = objectMapper.createObjectNode();
+            wrapped.put("_raw", raw.isTextual() ? raw.asText() : raw.toString());
+            object = wrapped;
+        }
+        String serialized = object.toString();
+        if (serialized.length() <= ARG_LIMIT) {
+            return object;
+        }
+        if (!raw.isObject()) {
+            ObjectNode out = objectMapper.createObjectNode();
+            out.put("_raw", utf16SafeCut(raw.isTextual() ? raw.asText() : raw.toString(), ARG_PREFIX_CHARS));
+            out.put("__xihe_truncated__", true);
+            return shrinkMarker(out, "_raw");
+        }
+        ObjectNode marker = objectMapper.createObjectNode();
+        marker.put("__xihe_truncated__", true);
+        marker.put("__chars__", serialized.length());
+        marker.put("__prefix__", utf16SafeCut(serialized, ARG_PREFIX_CHARS));
+        return shrinkMarker(marker, "__prefix__");
+    }
+
+    private ObjectNode toolCallEntry(String callId, String toolName, JsonNode arguments) {
+        ObjectNode entry = objectMapper.createObjectNode();
+        entry.put("call_id", callId);
+        entry.put("tool_name", toolName);
+        entry.set("arguments", arguments);
+        return entry;
+    }
+
+    /**
+     * PLAN-0381 T1.3 / contract §6: assistant tool-call declarations join the
+     * projected history; consecutive declarations merge into ONE ai message.
+     * A payload without a resolvable call id must not fabricate a pair — it
+     * degrades to an explicit ai text fact (the snapshot never emits
+     * {@code system}: buildForkSeed only accepts human/ai/tool roles).
+     */
+    private void addToolCalled(ObjectNode context, ObjectNode payload) {
+        String callId = pairingField(payload, "toolCallId", "call_id");
+        String toolName = pairingField(payload, "toolName", "tool_name");
+        JsonNode rawArguments = payload.hasNonNull("arguments") ? payload.get("arguments") : payload.get("tool_input");
+        JsonNode arguments = boundArguments(rawArguments);
+        ArrayNode messages = (ArrayNode) context.get("messages");
+        if (callId.isBlank()) {
+            String name = toolName.isBlank() ? "unknown" : toolName;
+            ObjectNode fact = objectMapper.createObjectNode();
+            fact.put("role", "ai");
+            fact.put("content", "[unpaired tool call: " + name + "] " + arguments.toString());
+            fact.put("degraded", true);
+            messages.add(fact);
+            return;
+        }
+        if (!messages.isEmpty()) {
+            JsonNode last = messages.get(messages.size() - 1);
+            if (last.isObject() && "ai".equals(last.path("role").asText())) {
+                JsonNode existing = last.get("tool_calls");
+                if (existing != null && existing.isArray() && !existing.isEmpty()) {
+                    ((ArrayNode) existing).add(toolCallEntry(callId, toolName, arguments));
+                    return;
+                }
+            }
+        }
+        ObjectNode message = objectMapper.createObjectNode();
+        message.put("role", "ai");
+        message.put("content", "");
+        ArrayNode calls = objectMapper.createArrayNode();
+        calls.add(toolCallEntry(callId, toolName, arguments));
+        message.set("tool_calls", calls);
+        messages.add(message);
+    }
+
+    /** Whitelist passthrough for object results (contract §3): only bounded
+     * preview metadata fields move onto the projected message. */
+    private void putResultWhitelist(ObjectNode message, ObjectNode result) {
+        if (result.path("truncated").asBoolean(false)) {
+            message.put("truncated", true);
+        }
+        JsonNode artifactRef = result.hasNonNull("artifactRef") ? result.get("artifactRef") : result.get("artifact_ref");
+        if (artifactRef != null && !artifactRef.asText("").isBlank()) {
+            message.put("artifact_ref", artifactRef.asText(""));
+        }
+        JsonNode sizeBytes = result.get("sizeBytes");
+        if (sizeBytes != null && sizeBytes.isIntegralNumber()) {
+            message.put("size_bytes", sizeBytes.asLong());
+        }
+        JsonNode errorCode = result.hasNonNull("errorCode") ? result.get("errorCode") : result.get("error_code");
+        if (errorCode != null && !errorCode.asText("").isBlank()) {
+            message.put("error_code", errorCode.asText(""));
+        }
+    }
+
+    /** Contract §3 rule 5: content-less objects/arrays normalize to a bounded
+     * JSON preview; the cut is explicit (truncated + legacy_normalized). */
+    private void putBoundedJsonPreview(ObjectNode message, JsonNode value) {
+        String serialized = value.toString();
+        if (serialized.length() <= JSON_PREVIEW_LIMIT) {
+            message.put("content", serialized);
+            return;
+        }
+        message.put("content", utf16SafeCut(serialized, JSON_PREVIEW_LIMIT - JSON_TRUNCATED_SUFFIX.length()) + JSON_TRUNCATED_SUFFIX);
+        message.put("truncated", true);
+    }
+
+    /**
+     * PLAN-0381 T1.3 / contract §3 result-shape table (B1 fix): string,
+     * object-with-content, object-with-preview (M2 reader-first), else bounded
+     * JSON + legacy marker. An empty string is a legitimate result and is
+     * still projected (V12) — it is never dropped.
+     */
+    private void putResultContent(ObjectNode message, JsonNode result) {
+        String content = "";
+        boolean legacyNormalized = false;
+        if (result != null && !result.isNull()) {
+            if (result.isTextual()) {
+                content = result.asText();
+            } else if (result.isObject()) {
+                ObjectNode object = (ObjectNode) result;
+                JsonNode inner = object.get("content");
+                if (inner != null && inner.isTextual()) {
+                    content = inner.asText();
+                    putResultWhitelist(message, object);
+                } else {
+                    JsonNode preview = object.get("preview");
+                    if (preview != null && preview.isTextual()) {
+                        content = preview.asText();
+                        putResultWhitelist(message, object);
+                    } else {
+                        putBoundedJsonPreview(message, object);
+                        legacyNormalized = true;
+                    }
+                }
+            } else {
+                putBoundedJsonPreview(message, result);
+                legacyNormalized = true;
+            }
+        }
+        if (legacyNormalized) {
+            message.put("legacy_normalized", true);
+        } else {
+            // putBoundedJsonPreview already wrote content on the legacy path.
+            message.put("content", content);
+        }
+    }
+
+    private void addToolResult(ObjectNode context, ObjectNode payload) {
+        String callId = pairingField(payload, "toolCallId", "call_id");
+        String toolName = pairingField(payload, "toolName", "tool_name");
+        ObjectNode message = objectMapper.createObjectNode();
+        message.put("role", "tool");
+        putResultContent(message, payload.get("result"));
+        if (callId.isBlank()) {
+            message.put("degraded", true);
+        } else {
+            message.put("tool_call_id", callId);
+        }
+        if (!toolName.isBlank()) {
+            message.put("tool_name", toolName);
+        }
+        String status = payload.path("status").asText("");
+        message.put("status", status.isBlank() ? "completed" : status);
+        ((ArrayNode) context.get("messages")).add(message);
     }
 
     private void emptyContextSlots(ObjectNode context) {

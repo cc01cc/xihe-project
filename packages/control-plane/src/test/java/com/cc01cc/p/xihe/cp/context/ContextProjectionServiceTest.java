@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.context.service.ContextProjectionService;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -264,5 +265,262 @@ class ContextProjectionServiceTest extends AbstractH2Test {
             }
         }
         assertThat(foundPlaceholder).isTrue();
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0381 M1 (contract: PLAN-0381/evidence/m1-contract.md): tool
+    // history projection — assistant declarations pair by call id, shape-
+    // based result reading (B1), dual-read legacy/v2 payloads, explicit
+    // degradation, frozen argument bounds.
+    // ------------------------------------------------------------------
+
+    @Test
+    void toolCalledProjectsAssistantDeclaration() {
+        String sessionId = "aaaaab00-0000-0000-0000-000000000001";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "schemaVersion", 2,
+                "toolCallId", "c1",
+                "toolName", "read_file",
+                "arguments", Map.of("path", "a")
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("role").asText()).isEqualTo("ai");
+        assertThat(message.path("content").asText()).isEmpty();
+        assertThat(message.path("tool_calls").get(0).path("call_id").asText()).isEqualTo("c1");
+        assertThat(message.path("tool_calls").get(0).path("tool_name").asText()).isEqualTo("read_file");
+        assertThat(message.path("tool_calls").get(0).path("arguments").path("path").asText()).isEqualTo("a");
+    }
+
+    @Test
+    void legacyToolCalledPayloadDualRead() {
+        String sessionId = "aaaaab00-0000-0000-0000-000000000002";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c9",
+                "tool_name", "read_file",
+                "tool_input", Map.of("path", "b")
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("tool_calls").get(0).path("call_id").asText()).isEqualTo("c9");
+        assertThat(message.path("tool_calls").get(0).path("arguments").path("path").asText()).isEqualTo("b");
+    }
+
+    @Test
+    void adjacentToolCalledMergeIntoSingleAssistantMessage() {
+        String sessionId = "aaaaab00-0000-0000-0000-000000000003";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c1", "tool_name", "t", "tool_input", Map.of()
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c2", "tool_name", "t", "tool_input", Map.of()
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        assertThat(messages).hasSize(1);
+        assertThat(messages.get(0).path("tool_calls")).hasSize(2);
+        assertThat(messages.get(0).path("tool_calls").get(0).path("call_id").asText()).isEqualTo("c1");
+        assertThat(messages.get(0).path("tool_calls").get(1).path("call_id").asText()).isEqualTo("c2");
+    }
+
+    @Test
+    void toolCalledWithoutIdDegradesToTextFact() {
+        String sessionId = "aaaaab00-0000-0000-0000-000000000004";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "tool_name", "read_file",
+                "tool_input", Map.of("path", "x")
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("role").asText()).isEqualTo("ai");
+        assertThat(message.path("degraded").asBoolean(false)).isTrue();
+        assertThat(message.path("tool_calls").isMissingNode()).isTrue();
+        assertThat(message.path("content").asText()).startsWith("[unpaired tool call: read_file]");
+    }
+
+    @Test
+    void toolResultObjectContentProjectsContent() {
+        // PLAN-0381 B1 regression: object results used to collapse to "".
+        String sessionId = "aaaaab00-0000-0000-0000-000000000005";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "call_id", "c1",
+                "tool_name", "read_file",
+                "result", Map.of("content", "file content")
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("role").asText()).isEqualTo("tool");
+        assertThat(message.path("content").asText()).isEqualTo("file content");
+        assertThat(message.path("tool_call_id").asText()).isEqualTo("c1");
+        assertThat(message.path("tool_name").asText()).isEqualTo("read_file");
+        assertThat(message.path("status").asText()).isEqualTo("completed");
+        assertThat(message.path("degraded").isMissingNode()).isTrue();
+        assertThat(message.path("legacy_normalized").isMissingNode()).isTrue();
+    }
+
+    @Test
+    void toolResultStringKeepsPlainContent() {
+        String sessionId = "aaaaab00-0000-0000-0000-000000000006";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "call_id", "c1",
+                "tool_name", "read_file",
+                "result", "plain output"
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("content").asText()).isEqualTo("plain output");
+        assertThat(message.path("legacy_normalized").isMissingNode()).isTrue();
+    }
+
+    @Test
+    void toolResultContentlessObjectNormalizesToJsonPreview() {
+        String sessionId = "aaaaab00-0000-0000-0000-000000000007";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "call_id", "c1",
+                "tool_name", "t",
+                "result", Map.of("foo", 1)
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("content").asText()).isEqualTo("{\"foo\":1}");
+        assertThat(message.path("legacy_normalized").asBoolean(false)).isTrue();
+    }
+
+    @Test
+    void toolResultArrayNormalizesToJsonPreview() {
+        String sessionId = "aaaaab00-0000-0000-0000-000000000008";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "call_id", "c1",
+                "tool_name", "t",
+                "result", List.of(1, 2)
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("content").asText()).isEqualTo("[1,2]");
+        assertThat(message.path("legacy_normalized").asBoolean(false)).isTrue();
+    }
+
+    @Test
+    void toolResultM2PreviewShapeCarriesWhitelistFields() {
+        // reader-first: the M2 bounded-preview payload must be readable now.
+        String sessionId = "aaaaab00-0000-0000-0000-000000000009";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "toolCallId", "c1",
+                "toolName", "read_file",
+                "status", "failed",
+                "result", Map.of(
+                        "preview", "bounded",
+                        "truncated", true,
+                        "artifactRef", "art-1",
+                        "sizeBytes", 9000,
+                        "errorCode", "E1"
+                )
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("content").asText()).isEqualTo("bounded");
+        assertThat(message.path("tool_call_id").asText()).isEqualTo("c1");
+        assertThat(message.path("status").asText()).isEqualTo("failed");
+        assertThat(message.path("truncated").asBoolean(false)).isTrue();
+        assertThat(message.path("artifact_ref").asText()).isEqualTo("art-1");
+        assertThat(message.path("size_bytes").asInt()).isEqualTo(9000);
+        assertThat(message.path("error_code").asText()).isEqualTo("E1");
+    }
+
+    @Test
+    void toolResultMissingCallIdMarksDegraded() {
+        String sessionId = "aaaaab00-0000-0000-0000-00000000000a";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "tool_name", "t",
+                "result", "legacy"
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(0);
+        assertThat(message.path("degraded").asBoolean(false)).isTrue();
+        assertThat(message.path("tool_call_id").isMissingNode()).isTrue();
+        assertThat(message.path("status").asText()).isEqualTo("completed");
+        assertThat(message.path("content").asText()).isEqualTo("legacy");
+    }
+
+    @Test
+    void pairingRoundTripThroughProjection() {
+        String sessionId = "aaaaab00-0000-0000-0000-00000000000b";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c1", "tool_name", "read_file", "tool_input", Map.of("path", "a")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "call_id", "c1", "tool_name", "read_file", "result", Map.of("content", "out")
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).path("tool_calls").get(0).path("call_id").asText()).isEqualTo("c1");
+        assertThat(messages.get(1).path("tool_call_id").asText()).isEqualTo("c1");
+    }
+
+    @Test
+    void oversizedToolArgumentsBoundedWithMarker() {
+        String sessionId = "aaaaab00-0000-0000-0000-00000000000c";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c1",
+                "tool_name", "write_file",
+                "tool_input", Map.of("content", "x".repeat(5000))
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var arguments = ctx.get("messages").get(0).path("tool_calls").get(0).path("arguments");
+        assertThat(arguments.path("__xihe_truncated__").asBoolean(false)).isTrue();
+        assertThat(arguments.path("__chars__").asInt()).isGreaterThan(4096);
+    }
+
+    @Test
+    void oversizedArgumentMarkerSurvivesEscapingInflation() {
+        // review P1-1：prefix 作为 JSON 字符串值会二次转义放大（反斜杠 ×2），
+        // 标记对象自身序列化后必须仍 ≤ ARG_LIMIT（与 Python _fit_marker_payload 同规则）。
+        String sessionId = "aaaaab00-0000-0000-0000-00000000000d";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c1",
+                "tool_name", "write_file",
+                "tool_input", Map.of("path", "\\".repeat(6000))
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        JsonNode arguments = ctx.get("messages").get(0).path("tool_calls").get(0).path("arguments");
+        assertThat(arguments.path("__xihe_truncated__").asBoolean(false)).isTrue();
+        assertThat(arguments.toString().length())
+                .as("marker must fit ARG_LIMIT after escape inflation")
+                .isLessThanOrEqualTo(4096);
+    }
+
+    @Test
+    void astralArgumentPrefixNeverSplitsSurrogatePairs() {
+        // review P1-3 / contract §4：UTF-16 截断（含收缩切点）不得劈开代理对。
+        String sessionId = "aaaaab00-0000-0000-0000-00000000000e";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c1",
+                "tool_name", "write_file",
+                "tool_input", Map.of("content", "😀".repeat(3000))
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        JsonNode arguments = ctx.get("messages").get(0).path("tool_calls").get(0).path("arguments");
+        assertThat(arguments.path("__xihe_truncated__").asBoolean(false)).isTrue();
+        String prefix = arguments.path("__prefix__").asText();
+        assertThat(prefix).isNotEmpty();
+        assertThat(Character.isHighSurrogate(prefix.charAt(prefix.length() - 1)))
+                .as("prefix must never end with a lone high surrogate")
+                .isFalse();
+        assertThat(arguments.toString().length()).isLessThanOrEqualTo(4096);
     }
 }
