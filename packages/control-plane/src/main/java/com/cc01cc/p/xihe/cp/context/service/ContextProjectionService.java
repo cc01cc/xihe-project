@@ -301,6 +301,45 @@ public class ContextProjectionService {
         return entry;
     }
 
+    private static boolean isToolResult(JsonNode message) {
+        return message != null && message.isObject()
+                && "tool".equals(message.path("role").asText(""));
+    }
+
+    /**
+     * PLAN-0381 T3.5 / m3-contract §3 idempotency: the projection is rebuilt
+     * from the event log on every read (no cross-request state), so the
+     * duplicate checks are linear scans over the current messages — the
+     * accepted O(events×messages) cost of the contract.
+     */
+    private static boolean hasDeclarationFor(ArrayNode messages, String callId) {
+        for (JsonNode message : messages) {
+            if (!"ai".equals(message.path("role").asText(""))) {
+                continue;
+            }
+            JsonNode toolCalls = message.get("tool_calls");
+            if (toolCalls == null || !toolCalls.isArray()) {
+                continue;
+            }
+            for (JsonNode toolCall : toolCalls) {
+                if (callId.equals(toolCall.path("call_id").asText(""))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** m3-contract §3: first-wins — a replayed {@code tool.result} repeats one fact. */
+    private static boolean hasResultFor(ArrayNode messages, String callId) {
+        for (JsonNode message : messages) {
+            if (isToolResult(message) && callId.equals(message.path("tool_call_id").asText(""))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * PLAN-0381 T1.3 / contract §6: assistant tool-call declarations join the
      * projected history; consecutive declarations merge into ONE ai message.
@@ -321,6 +360,13 @@ public class ContextProjectionService {
             fact.put("content", "[unpaired tool call: " + name + "] " + arguments.toString());
             fact.put("degraded", true);
             messages.add(fact);
+            return;
+        }
+        // m3-contract §3: a declaration already present for this call id wins —
+        // no second ref, no second message (degraded payloads carry no id and
+        // are never deduplicated).
+        if (hasDeclarationFor(messages, callId)) {
+            logger.info("[LIFECYCLE] service=cp event=duplicate_declaration_ignored toolCallId={}", callId);
             return;
         }
         if (!messages.isEmpty()) {
@@ -418,6 +464,14 @@ public class ContextProjectionService {
     private void addToolResult(ObjectNode context, ObjectNode payload) {
         String callId = pairingField(payload, "toolCallId", "call_id");
         String toolName = pairingField(payload, "toolName", "tool_name");
+        ArrayNode messages = (ArrayNode) context.get("messages");
+        // m3-contract §3: first-wins on the call id — a replayed event is the
+        // same fact, so the first result stays authoritative. A blank/absent
+        // id keeps the legacy degraded path (no dedup key to compare).
+        if (!callId.isBlank() && hasResultFor(messages, callId)) {
+            logger.info("[LIFECYCLE] service=cp event=duplicate_result_ignored toolCallId={}", callId);
+            return;
+        }
         ObjectNode message = objectMapper.createObjectNode();
         message.put("role", "tool");
         putResultContent(message, payload.get("result"));
@@ -431,7 +485,7 @@ public class ContextProjectionService {
         }
         String status = payload.path("status").asText("");
         message.put("status", status.isBlank() ? "completed" : status);
-        ((ArrayNode) context.get("messages")).add(message);
+        messages.add(message);
     }
 
     private void emptyContextSlots(ObjectNode context) {
@@ -580,9 +634,18 @@ public class ContextProjectionService {
                     || !sourceMessage.path("content").isTextual()) {
                 throw invalidForkSeed(context, "invalid projected message");
             }
+            // PLAN-0381 T3.1 / m3-contract §2.2: whole-object copy — the
+            // projection's pairing fields (tool_calls / tool_call_id /
+            // tool_name / status / truncated / artifact_ref / size_bytes /
+            // error_code / degraded / legacy_normalized / pruned) must reach
+            // the child unchanged. No field whitelist; the role/content checks
+            // above stay fail-closed.
             ObjectNode message = objectMapper.createObjectNode();
-            message.put("role", role);
-            message.put("content", sourceMessage.path("content").asText());
+            var fieldNames = sourceMessage.fieldNames();
+            while (fieldNames.hasNext()) {
+                String field = fieldNames.next();
+                message.set(field, sourceMessage.get(field));
+            }
             messages.add(message);
         }
         context.set("messages", messages);
@@ -693,6 +756,16 @@ public class ContextProjectionService {
             if (messages != null) {
                 int size = messages.size();
                 int keepFrom = Math.max(0, size - ContextService.KEEP_RECENT_MESSAGES);
+                // PLAN-0381 T3.1 / m3-contract §2.1 pair-preserving fuse (same
+                // rule as Agent _align_truncation_start): the keep-recent window
+                // must never begin on a tool result whose declaration was cut —
+                // walk the cut point back over leading tool results so the
+                // declaration and its results stay in the window together.
+                // Walk-back may push kept past KEEP_RECENT_MESSAGES by the
+                // walked-back declaration side (registered in contract §6).
+                while (keepFrom > 0 && isToolResult(messages.get(keepFrom))) {
+                    keepFrom--;
+                }
                 ArrayNode kept = objectMapper.createArrayNode();
                 for (int i = keepFrom; i < size; i++) {
                     kept.add(messages.get(i));

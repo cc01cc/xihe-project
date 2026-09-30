@@ -523,4 +523,240 @@ class ContextProjectionServiceTest extends AbstractH2Test {
                 .isFalse();
         assertThat(arguments.toString().length()).isLessThanOrEqualTo(4096);
     }
+
+    @Test
+    void toolHistoryWriteOnceUnderRedeliveryWithoutLedgerInjection() {
+        // PLAN-0381 T3.4（m3-contract §3 + 机制账本）：同一轮工具事实在历史侧
+        // 重投只写一次；Operation Ledger 字段绝不注入模型历史（消息键白名单 =
+        // 注入防护）；runId/toolCallId 关联贯穿声明与结果。
+        String sessionId = "aaaaab00-0000-0000-0000-000000000014";
+        for (int delivery = 0; delivery < 2; delivery++) { // 第二次 = relay 重投
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                    "schemaVersion", 2,
+                    "toolCallId", "c-cor",
+                    "toolName", "t",
+                    "runId", "run-cor",
+                    "arguments", Map.of("a", 1)
+            ));
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                    "schemaVersion", 2,
+                    "toolCallId", "c-cor",
+                    "toolName", "t",
+                    "runId", "run-cor",
+                    "status", "completed",
+                    "result", "out"
+            ));
+        }
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        assertThat(messages).as("redelivery must not duplicate history").hasSize(2);
+        // 关联证据：同一 toolCallId 贯穿声明与结果（runId 属事件信封，不进消息）。
+        assertThat(messages.get(0).path("tool_calls").get(0).path("call_id").asText())
+                .isEqualTo("c-cor");
+        assertThat(messages.get(1).path("tool_call_id").asText()).isEqualTo("c-cor");
+        assertThat(messages.get(1).path("status").asText()).isEqualTo("completed");
+
+        // 注入防护：消息顶层键 ⊆ 白名单（operation_id/itemId/requestId/source 等
+        // ledger 字段一旦出现即为跨机制注入）。
+        java.util.Set<String> allowed = java.util.Set.of(
+                "role", "content", "tool_calls", "tool_call_id", "tool_name", "status",
+                "truncated", "artifact_ref", "size_bytes", "error_code", "degraded",
+                "legacy_normalized", "pruned");
+        for (JsonNode message : messages) {
+            var fieldNames = message.fieldNames();
+            while (fieldNames.hasNext()) {
+                String key = fieldNames.next();
+                assertThat(allowed)
+                        .as("ledger/operation fields must never enter model history")
+                        .contains(key);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0381 M3 (contract: PLAN-0381/evidence/m3-contract.md): §2.1 the
+    // keep-recent window never opens on an orphan tool result, §2.2 fork
+    // seeds carry the pairing fields, §3 projection idempotency per call id.
+    // ------------------------------------------------------------------
+
+    /** m3-contract §2.1/§2.3: every kept tool result keeps its declaration. */
+    private static void assertNoOrphanToolResults(JsonNode messages) {
+        java.util.Set<String> declared = new java.util.HashSet<>();
+        for (JsonNode message : messages) {
+            if (!"ai".equals(message.path("role").asText(""))) {
+                continue;
+            }
+            JsonNode toolCalls = message.get("tool_calls");
+            if (toolCalls == null || !toolCalls.isArray()) {
+                continue;
+            }
+            for (JsonNode toolCall : toolCalls) {
+                String id = toolCall.path("call_id").asText("");
+                if (!id.isBlank()) {
+                    declared.add(id);
+                }
+            }
+        }
+        for (JsonNode message : messages) {
+            if (!"tool".equals(message.path("role").asText(""))) {
+                continue;
+            }
+            String id = message.path("tool_call_id").asText("");
+            if (id.isBlank()) {
+                continue;
+            }
+            assertThat(declared).as("tool result %s has no declaration in the window", id).contains(id);
+        }
+    }
+
+    @Test
+    void compactionKeepRecentWindowNeverOpensOnToolResult() {
+        // m3-contract §2.1: 12 projected messages put the naive cut (size-10)
+        // exactly on the c1 tool result — the fuse must not leave it head-first.
+        String sessionId = "aaaaab00-0000-0000-0000-00000000000f";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "q1")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c1", "tool_name", "read_file", "tool_input", Map.of("path", "a")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "call_id", "c1", "tool_name", "read_file", "result", "r1"));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "q2")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c2", "tool_name", "read_file", "tool_input", Map.of("path", "b")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "call_id", "c2", "tool_name", "read_file", "result", "r2"));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "q3")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "assistant.responded", Map.of(
+                "message", Map.of("role", "ai", "content", "a3")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "c3", "tool_name", "read_file", "tool_input", Map.of("path", "c")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "call_id", "c3", "tool_name", "read_file", "result", "r3"));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "assistant.responded", Map.of(
+                "message", Map.of("role", "ai", "content", "a4")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "q4")));
+
+        // Index 2 of 12 is the c1 tool result — the boundary case under test.
+        assertThat(projectionService.project(sessionId, 0L).get("messages")).hasSize(12);
+
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "compaction.applied", Map.of(
+                "summary", "compacted history summary",
+                "summaryHash", "summary-hash-m3",
+                "contextEpoch", "epoch-m3-1",
+                "up_to_sequence", 13L));
+
+        JsonNode messages = projectionService.project(sessionId, 0L).get("messages");
+        // §2.1: the window never opens on a tool result; the fuse walks back to
+        // the c1 declaration so the pair enters together (§6: kept may exceed 10).
+        assertThat(messages.size()).isGreaterThanOrEqualTo(10);
+        assertThat(messages.get(0).path("role").asText()).isNotEqualTo("tool");
+        assertThat(messages.get(0).path("tool_calls").get(0).path("call_id").asText())
+                .as("fuse walks back to the declaration of the first kept pair")
+                .isEqualTo("c1");
+        assertThat(messages.get(1).path("tool_call_id").asText())
+                .as("the walked-back declaration keeps its result beside it")
+                .isEqualTo("c1");
+        assertNoOrphanToolResults(messages);
+    }
+
+    @Test
+    void duplicateToolCalledProjectsSingleDeclarationPerCallId() {
+        // m3-contract §3: a replayed tool.called is the same fact — first wins.
+        String sessionId = "aaaaab00-0000-0000-0000-000000000010";
+        for (int i = 0; i < 2; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                    "call_id", "dup-call", "tool_name", "read_file", "tool_input", Map.of("path", "a")));
+        }
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        assertThat(messages).hasSize(1);
+        assertThat(messages.get(0).path("role").asText()).isEqualTo("ai");
+        assertThat(messages.get(0).path("tool_calls")).hasSize(1);
+        assertThat(messages.get(0).path("tool_calls").get(0).path("call_id").asText())
+                .isEqualTo("dup-call");
+    }
+
+    @Test
+    void duplicateToolResultProjectsSingleResultPerCallId() {
+        // m3-contract §3: first-wins on tool_call_id — no second tool message.
+        String sessionId = "aaaaab00-0000-0000-0000-000000000011";
+        for (int i = 0; i < 2; i++) {
+            contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                    "call_id", "dup-result", "tool_name", "read_file", "result", "output"));
+        }
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        assertThat(messages).hasSize(1);
+        assertThat(messages.get(0).path("role").asText()).isEqualTo("tool");
+        assertThat(messages.get(0).path("tool_call_id").asText()).isEqualTo("dup-result");
+        assertThat(messages.get(0).path("content").asText()).isEqualTo("output");
+    }
+
+    @Test
+    void duplicateToolCalledOnlySkipsTheRepeatedCallId() {
+        // m3-contract §3: distinct ids must never be collapsed by a duplicate.
+        String sessionId = "aaaaab00-0000-0000-0000-000000000012";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "id-a", "tool_name", "read_file", "tool_input", Map.of("path", "a")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "id-b", "tool_name", "read_file", "tool_input", Map.of("path", "b")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "id-a", "tool_name", "read_file", "tool_input", Map.of("path", "a")));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "call_id", "id-b", "tool_name", "read_file", "tool_input", Map.of("path", "b")));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var messages = ctx.get("messages");
+        assertThat(messages).hasSize(1);
+        JsonNode toolCalls = messages.get(0).path("tool_calls");
+        assertThat(toolCalls).hasSize(2);
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        toolCalls.forEach(call -> ids.add(call.path("call_id").asText()));
+        assertThat(ids).containsExactly("id-a", "id-b");
+    }
+
+    @Test
+    void forkSeedCarriesToolPairingFieldsIntoChildProjection() {
+        // m3-contract §2.2: recordFork copies whole seed messages — pairing
+        // fields (tool_calls / tool_call_id / tool_name / status / refs)
+        // must survive into the child projection, not only role + content.
+        String sessionId = "aaaaab00-0000-0000-0000-000000000013";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "session.forked", Map.of(
+                "source_session_id", TEST_SESSION_A,
+                "anchor_message_id", "anchor-m3",
+                "summary_seed", Map.of(
+                        "messages", List.of(
+                                Map.of("role", "human", "content", "fork prompt"),
+                                Map.of("role", "ai", "content", "",
+                                        "tool_calls", List.of(Map.of(
+                                                "call_id", "seed-c1",
+                                                "tool_name", "read_file",
+                                                "arguments", Map.of("path", "a")))),
+                                Map.of("role", "tool", "content", "seed output",
+                                        "tool_call_id", "seed-c1",
+                                        "tool_name", "read_file",
+                                        "status", "completed",
+                                        "artifact_ref", "art-1",
+                                        "size_bytes", 11,
+                                        "truncated", true)),
+                        "contextEpoch", "epoch-m3-seed")));
+
+        JsonNode messages = projectionService.project(sessionId, 0L).get("messages");
+        assertThat(messages).hasSize(3);
+        assertThat(messages.get(1).path("tool_calls").get(0).path("call_id").asText())
+                .isEqualTo("seed-c1");
+        assertThat(messages.get(2).path("tool_call_id").asText()).isEqualTo("seed-c1");
+        assertThat(messages.get(2).path("tool_name").asText()).isEqualTo("read_file");
+        assertThat(messages.get(2).path("status").asText()).isEqualTo("completed");
+        assertThat(messages.get(2).path("artifact_ref").asText()).isEqualTo("art-1");
+        assertThat(messages.get(2).path("size_bytes").asInt()).isEqualTo(11);
+        assertThat(messages.get(2).path("truncated").asBoolean()).isTrue();
+        assertNoOrphanToolResults(messages);
+    }
 }

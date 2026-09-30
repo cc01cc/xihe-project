@@ -160,9 +160,17 @@ public class ContextService {
                     || !sourceMessage.path("content").isTextual()) {
                 throw new IllegalStateException("Branch projection contains an invalid message");
             }
+            // PLAN-0381 T3.1 / m3-contract §2.2: whole-object copy — carry every
+            // projection field (tool_calls / tool_call_id / tool_name / status /
+            // truncated / artifact_ref / size_bytes / error_code / degraded /
+            // legacy_normalized / pruned) into the seed. No whitelist; the
+            // role/content validation above stays fail-closed.
             ObjectNode message = objectMapper.createObjectNode();
-            message.put("role", role);
-            message.put("content", sourceMessage.path("content").asText());
+            var fieldNames = sourceMessage.fieldNames();
+            while (fieldNames.hasNext()) {
+                String field = fieldNames.next();
+                message.set(field, sourceMessage.get(field));
+            }
             messages.add(message);
         }
 
