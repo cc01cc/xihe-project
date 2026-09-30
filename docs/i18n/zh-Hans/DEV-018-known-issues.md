@@ -22,10 +22,13 @@ updated: 2026-09-27
 - llm-mode 是 boot 期属性：external 复用栈时 0365 已补 fixture 启动 + provider 重导入，但**最可靠做法仍是以目标 mode boot**。
 - 视觉基线（toHaveScreenshot）在 UI 结构变更后须重置，重置前先确认 DOM 断言全过。
 
-## CP 拉取 Runtime 根 AGENTS.md 返回 403（2026-09-27，待诊断）
+## CP 拉取 Runtime 根 AGENTS.md 返回 403（2026-09-27 登记；2026-09-30 静态复核收敛）
 
-- Host E2E 创建 parent/child chat 时，CP `RuntimeContextSourceClient` 对 `/internal/v1/runtime/workspaces/{workspaceId}/files/read` 请求根 `AGENTS.md` 曾收到 403；CP 随后以 `Optional.empty` 继续，不注入该文件上下文。Runtime `ws_file_handler::map_error` 将 `PathTraversal` / `SymlinkEscape` 映射为 403，但本次日志未保留底层 Runtime error，实际触发原因未确认。
-- 该请求是 CP→Runtime 内部文件读取，不是浏览器的 `/api/v1/mcp` `list_directory` 403；属于独立的 Runtime 文件路径/符号链接诊断问题。优先核对 Host workspace 实际路径、materialization 与符号链接解析；确认触发原因前不放宽 Runtime 路径安全策略。
+- **现象**：Host E2E 创建 parent/child chat 时，CP `RuntimeContextSourceClient` 以固定 body `{"path":"AGENTS.md"}` 调 `/internal/v1/runtime/workspaces/{workspaceId}/files/read` 收到 403；CP 以 `Optional.empty` 继续，不注入该文件上下文。与浏览器 `/api/v1/mcp` `list_directory` 403 是不同 route/caller，互不归因（见 PLAN-0420 `evidence/m0-auth-call-path-inventory.md`）。
+- **根因（高置信，静态复核；非新问题）**：该 403 只能来自 `PathTraversal`/`SymlinkEscape`（`ws_file_handler::map_error`）；`fs.rs resolve_canonical` 把 canonicalize 任意失败（**含 ENOENT**）判为 `PathTraversal`，因此**目标文件不存在即回 403 而非 404**（`FileNotFound → 404` 在 read/stat 路径不可达）。host E2E 新注册 workspace 根目录无 `AGENTS.md` 写入者，故命中。同结论已有容器 probe 实锤：`plans/archive/20260919/PLAN-0345-XH-workspace-lifecycle-core/evidence/validation.md`、`plans/archive/20260918/PLAN-0365-XH-host-e2e-legacy-failures/{design.md,evidence/triage-matrix.md}`；**PLAN-0365 决策 #3 已裁定维持 403 现状不改 404**（0340 `readAgents` 容忍失败）。原「待诊断」系未交叉引用归档证据的重复登记。
+- **为何当时无底层 error**：结构性缺口而非丢日志——Runtime 全 app 无 per-request trace、`map_error` 不打日志、problem `detail` 为静态串且 `requestId` 自造，该请求在 Runtime 侧零日志；CP 侧唯一痕迹是 `Runtime AGENTS.md read failed` WARN，并被 `ContextSourceRefreshService` 归为 `status=unchanged`，UI 无提示。
+- **剩余低概率分支（未复现排除）**：① workspace 根目录未物化/挂载空（`resolve_canonical` 先试文件后试根，根缺失也先落 403）；② `AGENTS.md` 为外指 symlink/断链。单变量判定：同 workspace `files/list {"path":"."}` 200 = 根存在 → 只剩文件缺失；`files/stat` 与缺文件 `read` 同为 403 = 语义复现；`files/write` 后 read 200 = 闭环。
+- **边界**：确认上述分支前不放宽 Runtime 路径安全策略；「403→404 语义矫正」与 PLAN-0365 决策 #3 冲突，属 B 类设计变更，须经用户裁定。
 
 ## PLAN-0345 工作区生命周期 — 行为变化与已知限制（2026-09-18）
 
