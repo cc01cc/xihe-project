@@ -112,8 +112,8 @@ flowchart TD
 | `session.created` | 创建 session |
 | `prompt.admitted` | 用户输入进入对话 |
 | `llm.token` | 模型流式输出 |
-| `tool.called` | 工具被调用 |
-| `tool.result` | 工具返回 |
+| `tool.called` | 工具被调用（PLAN-0381：writer gate 双形状——legacy `call_id/tool_name/tool_input` 或 v2 `schemaVersion=2/toolCallId/toolName/arguments`；arguments 超 4096 字符降级为显式标记对象，不静默改写） |
+| `tool.result` | 工具返回（PLAN-0381：以同一 call id 与声明配对；gate ON 恒写 `status`、OFF 仅非 completed 写 `failed`；`result` 为有界 preview 字符串或 `{preview,truncated,artifactRef?,sizeBytes?,status?,errorCode?}` 对象——工具失败先落 `status=failed` 闭合事件对再 re-raise；回放进模型的历史 tool 正文统一 ≤4096 字符） |
 | `context.source_changed` | AGENTS 等源变更（PLAN-0340：读模型改为 **L1 槽替换**，不再追加 history；失败 `status=failed` 清 L1） |
 | `epoch.started` / `epoch.replaced` | epoch 开始/替换 |
 | `runtime.state_cleared` | `AgentRunner.reset()` |
@@ -244,6 +244,7 @@ if recover_ids:
 - PLAN-0342 诊断回灌与工具卡片呈现（L0/L2 + 四通道）— 本节 §3.5
 - PLAN-0343 用量与成本契约（usage 事件注入 `model`=`provider/model`；CP 终态一次映射 cost，unmapped→`cost=null`+log warn；schemaVersion 仍 1）— 本节 §3 事件表 `llm.usage`
 - PLAN-0354 摘要提供方 seam 与 LLM 回退（Agent 摘要端点与 `llm/summarize.py`）— 本节 §3.6；CP 侧见 DEV-014 §10
+- PLAN-0381 context history 与 tool output bounds（call id 配对、bounded preview、failed 事件闭合、双 provider 实测、回放 4096 界）— 本节 §3.2 事件表 `tool.called`/`tool.result`
 - PLAN-294 上下文事件流与自动压缩门
 
 - `PLAN-033-XH-agent-module-decoupling.md`
