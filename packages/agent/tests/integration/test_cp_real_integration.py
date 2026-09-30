@@ -71,6 +71,14 @@ class TestAgentCPRealIntegration:
         assert r.status_code == 401
 
     def test_chat_endpoint_rejects_missing_session_with_explicit_branch(self):
+        # 对齐当前库状态（2026-10-30 核）：POST /chat 的 SSE gate
+        # （SSE_SUBSCRIPTION_REQUIRED 409）先于 session 存在性检查，且 SSE
+        # 订阅本身对缺失 session 即 404——因此本用例覆盖两处真实拒绝面：
+        # ① SSE 订阅对缺失会话显式 SESSION_NOT_FOUND（原「chat 404」意图由
+        #    events 端点承接——从未存在的会话不可能有 emitter，chat 的
+        #    requireCurrent 404 分支只在「已订阅后会话被删」时可达）；
+        # ② chat 端点在无订阅时 409。
+        missing = "00000000-0000-0000-0000-000000000000"
         email = f"chat-{time.time():.0f}@test.com"
         r = httpx.post(
             f"{CP_URL}/api/v1/auth/register",
@@ -81,13 +89,10 @@ class TestAgentCPRealIntegration:
         auth = r.json()
         token = auth["accessToken"]
 
-        r = httpx.post(
-            f"{CP_URL}/api/v1/chat",
-            json={
-                "content": "hello",
-                "sessionId": "00000000-0000-0000-0000-000000000000",
-                "branchId": "00000000-0000-0000-0000-000000000000",
-            },
+        # ① 缺失会话在 SSE 订阅面被显式拒绝（原断言的 session-missing 意图）。
+        r = httpx.get(
+            f"{CP_URL}/api/v1/events",
+            params={"sessionId": missing},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Workspace-Id": auth["workspaceId"],
@@ -96,6 +101,23 @@ class TestAgentCPRealIntegration:
         )
         assert r.status_code == 404
         assert r.json()["code"] == "SESSION_NOT_FOUND"
+
+        # ② chat 端点在 SSE gate 处 409（不可能带缺失会话的订阅）。
+        r = httpx.post(
+            f"{CP_URL}/api/v1/chat",
+            json={
+                "content": "hello",
+                "sessionId": missing,
+                "branchId": "00000000-0000-0000-0000-000000000000",
+            },
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Workspace-Id": auth["workspaceId"],
+            },
+            timeout=10,
+        )
+        assert r.status_code == 409
+        assert r.json()["code"] == "SSE_SUBSCRIPTION_REQUIRED"
 
     def test_mcp_endpoint_returns_response(self):
         r = httpx.post(
