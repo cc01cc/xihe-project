@@ -12,7 +12,7 @@ updated: 2026-09-21
 # DEV-032: Terminology (Polysemy and Synonyms)
 
 > **Role**: SSOT for wording in XH docs and unstarted PLANs. Two problem classes: (1) **polysemy** → disambiguated canonical names; (2) **synonyms** → one canonical term plus aliases.
-> **Scope**: `plans/PLAN-*-XH-*` (drafts first), `A03-xihe/docs/`, prose in project `AGENTS.md`. Completed packages and `review/` history are **not** rewritten unless the file is edited again.
+> **Scope**: `plans/PLAN-*-XH-*` (drafts first), `A03-xihe/docs/`, root-level `spec/` (extended by PLAN-0426), prose in project `AGENTS.md`. Completed packages and `review/` history are **not** rewritten unless the file is edited again.
 > **Out of scope**: OpenAPI path literals and locked code identifiers (renames need their own PLAN, cf. PLAN-0356).
 
 ## 0. Rules
@@ -44,6 +44,13 @@ updated: 2026-09-21
 | | Retired mechanism | **`legacy snapshot`** | blend with checkpoint |
 | **收敛 / 收口** | Many paths → one authority | **converge** | use “close” for state-machine merge |
 | | Scattered entries → one seam | **route-to-seam** (“收口”) | use “converge” for REST→executor |
+| **projection** | A. CP durable authoritative record | **`<domain> durable record`** (Job durable record = Job source of truth; checkpoint slice record) | `projection` for sense A; call B a source of truth | 0426; not rebuildable |
+| | B. CP rebuildable read model | **`Context projection`** (first use: rebuilt by CP from `context_events`; not a source of truth; never executes tools) | bare `projection`; `ContextProjectionService` / `context_projections` stay as identifiers | 0426; `checkpoint projection` retired → checkpoint slice record |
+| | C. API response data shape | **`<object> response` / `<object> response view`** | `<object> projection` | 0426 |
+| | D. UI local display state | **`UI local view`** (non-authoritative) | UI projection, store projection | 0426 |
+| | E. State / field mapping | **`state mapping` / `field mapping`** | projection fold-back, capability projection | 0426 |
+| | F1. Length/time-bounded presentation | **`bounded preview`** | verbatim projection | 0426 |
+| | F2. Permission/field-redacted presentation | **`redacted summary`** | security projection | 0426; F1 and F2 may stack, not exclusive |
 
 ## 2. Synonyms → canonical + aliases
 
@@ -94,6 +101,7 @@ updated: 2026-09-21
 |---|---|
 | 2026-09-16 | Align unstarted XH PLAN README/spec to §1–§3 |
 | 2026-09-21 | Add `scope` / `interrupted` / `runtimeBootId`; §2.3 separates **durable job continuation** from Workspace `unpause` / `run resume` (PLAN-0390) |
+| 2026-09-30 (PLAN-0426) | Add `projection` six senses (A durable record / B read model / C response view / D UI local view / E mapping / F1 bounded preview / F2 redacted summary); scope extended to root-level `spec/`; bare `projection` banned in prose, identifiers and history excepted |
 | Completed / archive / review | No historical rewrite; align when file is edited |
 | Code identifiers | Separate PLAN if renamed (cf. 0356) |
 

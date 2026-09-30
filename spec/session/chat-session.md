@@ -26,7 +26,7 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 
 1. Session MUST 最多绑定一个 Workspace；Session 生命周期内不得 rebind 到另一个 Workspace。
 2. Workspace 切换 MUST 通过选择已有 Session 或创建新 Session 表达，不把 Workspace 切换写成 Session rebind。
-3. Session API、消息和附件的 canonical source 是 CP；UI local store 只能作为 projection。
+3. Session API、消息和附件的 canonical source 是 CP；UI local store 只能作为 UI 本地视图（非权威）。
 4. Session 删除前 MUST 通过 CP 取消/收口非终态 ChatRun，并在有界等待后完成删除；不能只删除 UI 状态。
 5. Chat SSE 按 `sessionId` 订阅；Workspace SSE 按 `workspaceId` 订阅，两者不能互充。
 

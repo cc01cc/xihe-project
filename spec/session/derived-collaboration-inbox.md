@@ -10,7 +10,7 @@
 
 ## 范围
 
-本规范冻结子 ChatRun terminal 结果向 parent Session 投影的最小 durable Inbox 生命周期。API DTO 以 OpenAPI 为准；用户旅程和实现验收见 PLAN-0408。不得修改 PLAN-0387 当前 Owner 的 Session 生命周期 SPEC。
+本规范冻结子 ChatRun terminal 结果向 parent Session 派生视图（durable Inbox）的最小生命周期。API DTO 以 OpenAPI 为准；用户旅程和实现验收见 PLAN-0408。不得修改 PLAN-0387 当前 Owner 的 Session 生命周期 SPEC。
 
 ## 数据关系
 

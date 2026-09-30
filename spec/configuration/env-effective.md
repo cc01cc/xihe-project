@@ -20,7 +20,7 @@ Credentials 不等于普通 config KV：API key/token 由 provider connection/le
 | CP | DB instance/user/workspace、EnvOverlayRegistry、code defaults、per-call/CLI input | Runtime host env/CLI 的实时值 | effective value/source/revision/lock/conflict；audit change |
 | Agent | CP 下发的 effective config/run payload、必要 lease | CP DB、Runtime host env、其他 Workspace config | metadata 标 source/revision；不自行 resolve precedence |
 | Runtime | 自身 bootstrap env/CLI（PORT/HOST/DB/JWT/backend/storage 等）和 CP execution spec | CP user/workspace DB layer，除非 CP 显式下发 | environment snapshot/provenance；host secrets 不回传 |
-| UI | CP effective/layer/env lock projection、capability available/reason | 进程 env、DB raw secret、Runtime host absolute path | 展示最终 source、被覆盖 key、lock reason 和 capability reason |
+| UI | CP 生效结果/层级/env lock 响应、capability available/reason | 进程 env、DB raw secret、Runtime host absolute path | 展示最终 source、被覆盖 key、lock reason 和 capability reason |
 
 Runtime env 不是 CP/Agent 可直接读取的 source；Agent env block 由 Runtime 基于最终实际执行环境生成，再经 CP 打包传播。
 

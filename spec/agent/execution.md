@@ -19,7 +19,7 @@
 | CP | 创建 ChatRun，计算可执行输入，拥有 ChatRun/Operation 终态 |
 | Agent | 执行模型循环、工具调用和事件翻译；不得自行扩大授权 |
 | Runtime | 承载文件、命令、进程和 MCP 执行 |
-| UI | 消费 CP relay 的 SSE/HTTP projection，不把本地状态当作 durable authority |
+| UI | 消费 CP relay 的 SSE/HTTP 状态映射与响应，不把本地状态当作 durable authority |
 | Security | 拥有通用 principal/role/scope/authorization 正文 |
 
 `AgentRunner`、`RunnerConfig`、`AgentEvent` 和 `EventAdapter` 是 Agent 当前接口事实源；LangGraph 只允许位于接口实现之后。
@@ -45,7 +45,7 @@ sequenceDiagram
     Agent->>Runtime: 经 CP logical MCP/执行通道调用工具
     Runtime-->>Agent: 工具结果
     Agent-->>CP: AgentEvent 流
-    CP-->>UI: SSE projection + durable status
+    CP-->>UI: SSE 状态映射 + durable status
 ```
 
 图下注释：Agent 不绕过 CP 直接拥有通用授权；图中 Runtime 调用表示既有 CP/Agent logical boundary，不新增直连协议。

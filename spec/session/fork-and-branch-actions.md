@@ -4,13 +4,13 @@
 > 实现状态：`partial`  
 > Profile：`protocol`  
 > Owner：CP Session owner（PLAN-0409）  
-> 消费者：CP Session/Chat API、UI、PLAN-0410 Context projection、Agent Context  
+> 消费者：CP Session/Chat API、UI、PLAN-0410 Context projection 读模型、Agent Context  
 > 来源：PLAN-0409  
 > 更新日期：2026-09-29
 
 ## 范围
 
-本规范定义跨 Session fork、同 Session branch actions、消息/附件复制、幂等与失败恢复。分支 path、Run cursor、ContextEvent/EventStore 投影与 Agent context 消费由 [Session 分支上下文隔离](branch-context-isolation.md)（PLAN-0410）唯一拥有；本规范定义其 fork 消费方式，不重复实现 branch resolver 或 Agent context filter。
+本规范定义跨 Session fork、同 Session branch actions、消息/附件复制、幂等与失败恢复。分支 path、Run cursor、ContextEvent/EventStore 读模型与 Agent context 消费由 [Session 分支上下文隔离](branch-context-isolation.md)（PLAN-0410）唯一拥有；本规范定义其 fork 消费方式，不重复实现 branch resolver 或 Agent context filter。
 
 ## Fork 身份与 anchor
 
@@ -24,7 +24,7 @@
 
 ## Child Context Seed
 
-Child 通过现有 `session.forked` Session/global root event 接收 PLAN-0410 生成的 anchor-bounded projection seed，不新增 EventType 或第二套 EventStore：
+Child 通过现有 `session.forked` Session/global root event 接收 PLAN-0410 生成的 anchor 截止上下文种子（Context projection 读模型），不新增 EventType 或第二套 EventStore：
 
 ```json
 {
@@ -44,9 +44,9 @@ Child 通过现有 `session.forked` Session/global root event 接收 PLAN-0410 �
 ```
 
 - Event row retains the 0410 Session/global envelope: `branch_id=NULL`, `correlation_id=NULL`; its child-assigned Session sequence is the child compaction cursor.
-- `messages` is the CP projection visible on the requested source branch through the terminal anchor cursor. It is required whether or not a summary exists. `summary` and `summaryHash` appear together only when the anchor-bounded projection has SUM state. `contextEpoch` is always new and child-owned.
+- `messages` is the CP read model visible on the requested source branch through the terminal anchor cursor. It is required whether or not a summary exists. `summary` and `summaryHash` appear together only when the anchor-bounded read model has SUM state. `contextEpoch` is always new and child-owned.
 - Source Session and anchor message IDs are lineage only. Do not copy source sequence/cursor, branch ID, source Run/correlation, usage/provider accounting, runtime state, parent L1, or audit/execution rows into child context. L1/environment context is rebuilt for the child by the existing pre-run refresh.
-- Source branch filtering and anchor sequence cutoff apply before selecting messages or summary. A later compaction after the anchor cannot enter the seed. CP and Agent apply the event to equivalent `messages`/SUM projections; later child compaction uses the child event sequence as `up_to_sequence`.
+- Source branch filtering and anchor sequence cutoff apply before selecting messages or summary. A later compaction after the anchor cannot enter the seed. CP and Agent apply the event to equivalent `messages`/SUM read models; later child compaction uses the child event sequence as `up_to_sequence`.
 
 ## Copy and Publication
 
@@ -67,6 +67,6 @@ Child 通过现有 `session.forked` Session/global root event 接收 PLAN-0410 �
 
 ## In-Session Branch Actions
 
-- Rewind/edit/path selection remain within the same Session and preserve original path rows. Branch path reads, anchor mapping and Context projection use PLAN-0410 services.
+- Rewind/edit/path selection remain within the same Session and preserve original path rows. Branch path reads, anchor mapping and Context projection 读模型 use PLAN-0410 services.
 - Mutating an in-session branch while a Run is active returns `409 BRANCH_LOCK`; normal Session single-flight behavior remains `409 CHAT_IN_PROGRESS`.
 - Every public action enforces Bearer authentication, Session owner/Workspace visibility and RFC 9457 Problem Details; browser clients cannot synthesize branch membership or child context.

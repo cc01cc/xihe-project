@@ -20,7 +20,7 @@ Agent 模块负责 LLM 编排、工具调用与上下文管理。为降低对 La
 
 1. **可替换的编排框架** — 通过 `AgentRunner` 接口隔离 LangGraph 实现。
 2. **可替换的工具实现** — 通过 `BaseAgentTool` 接口隔离 `BaseTool`。
-3. **可观测、可恢复的对话状态** — 通过 CP Event Store 持久化事件，CP Projection Service 生成快照。
+3. **可观测、可恢复的对话状态** — 通过 CP Event Store 持久化事件，CP Context Projection Service（读模型构建）生成快照。
 
 ### SPEC 指针
 
@@ -46,7 +46,7 @@ execution/role/context 三份仍是目标态边界；独立 Agent principal、Wo
 | `Message` / `TextMessage` | `interfaces/message.py` | 最小消息协议：`role` + `content` |
 | `Event` / `EventEnvelope` | `interfaces/event.py` | 持久化域事件 |
 | `EventStore` | `interfaces/event_store.py` | 事件存储抽象：append / read / fork |
-| `AgentContext` / `ContextEpoch` / `ContextProvider` | `interfaces/context.py` | 事件投影后的上下文快照 |
+| `AgentContext` / `ContextEpoch` / `ContextProvider` | `interfaces/context.py` | 事件重建（Context projection 读模型）后的上下文快照 |
 
 ### 2.1 AgentRunner
 
@@ -94,14 +94,14 @@ flowchart TD
 
 锚点：`ContextProjectionService.java`、`ContextController.java:83`、`event_sourced_provider.py`。
 
-- CP 是唯一真相源，负责事件持久化与投影。
-- Agent 无状态，通过 `/internal/v1/context/{sessionId}/snapshot` 获取投影快照。
+- CP 是唯一真相源，负责事件持久化与读模型构建。
+- Agent 无状态，通过 `/internal/v1/context/{sessionId}/snapshot` 获取读模型快照。
 - **分支上下文（PLAN-0410/V43）**：snapshot 携 `?runId`/`?branchId` 选择器（两者并存必须一致，未知/伪造 404、冲突 409 fail-closed，缺省=root）；Agent 只消费 CP 给定的 branch（`AgentContext.branch_id`），从不自选或回退整 Session history；run-scoped Event 写 `correlation_id=runId`，必需 append 失败使 Run 收敛失败而非静默续跑。
 - 事件写入当前为同步；性能测试显示批量写入已足够快（~17k events/s），未引入异步队列。
 
 ### 3.1b 收缩管道与 prune（PLAN-0341）
 
-- **装配**：`langgraph_runner.stream` 消费 CP 投影 keep-recent → `prune_history_tool_results`（固定窗 `pruneWindowChars` 默认 80K chars，可配）→ 写 `context.prune` 墓碑；`HISTORY_TRUNCATION_LIMIT=20` 仅装配熔断，窗口起点落在 tool 结果时回退对齐（`_align_truncation_start`）。
+- **装配**：`langgraph_runner.stream` 消费 CP 读模型 keep-recent → `prune_history_tool_results`（固定窗 `pruneWindowChars` 默认 80K chars，可配）→ 写 `context.prune` 墓碑；`HISTORY_TRUNCATION_LIMIT=20` 仅装配熔断，窗口起点落在 tool 结果时回退对齐（`_align_truncation_start`）。
 - **配置**：`context_policy.resolve` 读 effective `context-policy`（`defaults`/`models` JSON）：`maxInputTokens` 覆盖 litellm 窗、`pruneWindowChars`、`recoveryBand`、`tokenizerRef`（受信命名空间 allowlist）；日志 `context_policy_resolved source=config|default`。
 - **SUM**：压缩摘要只在 `epoch.system_messages`；`AgentContext.apply_event("compaction.applied" | "compaction.manual_applied")` 截断 keep-recent 且不把摘要塞进 `messages`（两类同构，见 §事件表）。
 
@@ -114,16 +114,16 @@ flowchart TD
 | `llm.token` | 模型流式输出 |
 | `tool.called` | 工具被调用 |
 | `tool.result` | 工具返回 |
-| `context.source_changed` | AGENTS 等源变更（PLAN-0340：投影改为 **L1 槽替换**，不再追加 history；失败 `status=failed` 清 L1） |
+| `context.source_changed` | AGENTS 等源变更（PLAN-0340：读模型改为 **L1 槽替换**，不再追加 history；失败 `status=failed` 清 L1） |
 | `epoch.started` / `epoch.replaced` | epoch 开始/替换 |
 | `runtime.state_cleared` | `AgentRunner.reset()` |
-| `session.forked` | 会话 fork；child seed 用投影 `messages` + 可选 SUM 初始化 child history，child EventStore sequence 为本地 cursor；忽略 source `at_sequence`（PLAN-0410 T3.6） |
+| `session.forked` | 会话 fork；child seed 用读模型 `messages` + 可选 SUM 初始化 child history，child EventStore sequence 为本地 cursor；忽略 source `at_sequence`（PLAN-0410 T3.6） |
 | `compaction.applied` | 上下文压缩——自动/overflow 触发，ChatRun-scoped（correlation=Run，PLAN-0410 §4）；PLAN-0341：`messages` 不再写入摘要，摘要仅 `epoch.system_messages`/`summary_hash` |
 | `compaction.manual_applied` | 上下文压缩——**手动触发（无 Run）**，branch-targeted：correlation 恒 NULL、branch 为 CP 校验的显式值（PLAN-0410 D7-B1=C）；payload 与应用语义同 `compaction.applied` |
-| `context.prune` | prune 墓碑（PLAN-0341 T1.2：`tool_call_id`/hash/size/首尾 + `pruned`；投影按 hash 原地替换，防复活） |
+| `context.prune` | prune 墓碑（PLAN-0341 T1.2：`tool_call_id`/hash/size/首尾 + `pruned`；读模型按 hash 原地替换，防复活） |
 | `context.compaction_circuit` | 恢复带熔断开/关（PLAN-0341 T1.3：`state=open|closed`；overflow 强制压缩绕过熔断） |
 | `context.overflow_retry` | 溢出重跑审计（PLAN-0341 T1.1：runId + 预检 maxInputTokens） |
-| `assistant.responded` | assistant 回复持久化（PLAN-294 M1；runner 流成功终态 append，投影映射为 ai 消息） |
+| `assistant.responded` | assistant 回复持久化（PLAN-294 M1；runner 流成功终态 append，读模型映射为 ai 消息） |
 | `llm.usage` | run 用量镜像（PLAN-294 M3；CP relay 写入，压缩门信号源。PLAN-0343：payload 增 `model`（`provider/model`，pricing 查表键）与 `cost/costCurrency/costSource/costNote`（CP 终态一次映射；unmapped→`cost=null`+告警，禁 0） |
 
 两套事件命名空间不同，映射由 `LangGraphEventAdapter` 维护：
@@ -144,14 +144,14 @@ flowchart TD
 | SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done`；工具事件携带 `toolCallId` + `origin`（`local`/`mcp`）供 CP 按通道事实记账，`request_approval` 工具事件抑制、以审批事件为正规记录 |
 | 持久化域 `Event` | 见 §3.2 事件表 |
 
-### 3.3 AgentContext 投影
+### 3.3 AgentContext 读模型
 
 `AgentContext` 由 CP `ContextProjectionService` 从事件流生成，包含：
 
 - `messages` — 当前对话消息列表。
 - `epoch` — 当前系统上下文 epoch（`system_messages` + Context Sources）。
 - `runtime_state` — 请求级运行时状态。
-- `latest_sequence` — 已投影到的最新事件序列号。
+- `latest_sequence` — 读模型已应用到的最新事件序列号。
 - `branch_id` — CP 为该 Run/snapshot 解析的分支（PLAN-0410；Agent 从不自行填写，缺省空串表示早于分支感知的旧快照）。
 
 Agent 侧分工：
@@ -165,7 +165,7 @@ CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` �
 
 1. 经 Runtime 读 workspace 根 `AGENTS.md`，SHA-256（超 32KiB 截断标注）。
 2. 对比 **session epoch `source_hash`**（首注入必发，不跨 session 抑制）；workspace 表仅作增量优化。
-3. 变化 → `context.source_changed`（`created|updated` + `rendered_text` + sources）→ 投影 **L1 槽替换**；I/O 失败 → `status=failed` 清 L1；未变 → `unchanged` 不发事件。
+3. 变化 → `context.source_changed`（`created|updated` + `rendered_text` + sources）→ 读模型 **L1 槽替换**；I/O 失败 → `status=failed` 清 L1；未变 → `unchanged` 不发事件。
 4. Runtime `GET .../git-facts`（branch+HEAD，无 dirty）变化 → `context.env_updated` 存 epoch；U2 **不**因 env 告警。
 5. Agent `_build_system_messages`：`L0 → L1(l1_rendered) → env 块 → SUM`；不受 20 条历史截断。
 

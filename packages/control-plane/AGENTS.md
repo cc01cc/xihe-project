@@ -16,7 +16,7 @@ Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、
 - `policy/`：分层策略、Tool Face、模式与 guard。
 - `chat/`：ChatRun、SSE、审批与 checkpoint API。
 - `mcp/`：MCP 代理、请求重写与工具面。
-- `operation/`：Operation ledger 与投影。
+- `operation/`：Operation ledger 与读模型。
 - `event/`：Workspace 事件信封与 SSE 扇出（`WorkspaceEvent` 只携带相对路径，`WorkspaceEventManager` 负责按 workspace 订阅/发布、序列号定序与 `snapshot_required`）。
 - `runtime/`、`agent/`、`config/`：Runtime/Agent 客户端及配置/认证边界。
 - `service/`、`entity/`、`repository/`：应用服务、持久化模型与仓储。
@@ -47,8 +47,8 @@ mvn -o -q checkstyle:check
 
 ## 实现边界
 
-- Policy、audit 记录不得写入原始 arguments/secret；仅保存必要的 canonical hash、摘要与脱敏元数据。Operation/审批 preview 只作**有界原文投影**（≤4096 裸前缀截断），不做正则脱敏/改写，也不参与授权或批准后执行；结构化审计仍用 hash/白名单字段，日志出口由序列化层统一脱敏（PLAN-0407 T1.3 措辞，收敛后落位于本节）。
-- 不绕过状态机直接写入状态表或 durable projection；状态变更必须经既有 service/transition 路径。
+- Policy、audit 记录不得写入原始 arguments/secret；仅保存必要的 canonical hash、摘要与脱敏元数据。Operation/审批 preview 只作**有界预览**（≤4096 裸前缀截断），不做正则脱敏/改写，也不参与授权或批准后执行；结构化审计仍用 hash/白名单字段，日志出口由序列化层统一脱敏（PLAN-0407 T1.3 措辞，收敛后落位于本节）。
+- 不绕过状态机直接写入状态表或 durable 记录；状态变更必须经既有 service/transition 路径。
 - CP→Runtime/Agent 调用保持显式超时与错误结果，禁止 host fallback 或静默降级。
 - 禁止新增固定 `sleep`、`Thread.sleep` 或无诊断的等待循环；超时、就绪与清理规则见 [`command-execution-strategies`](../../../.agents/skills/command-execution-strategies/SKILL.md)。
 - 跨协议/跨服务改动先按 [`xc-cross-cutting-checklist`](../../../.agents/skills/xc-cross-cutting-checklist/SKILL.md) 定契约，再落地代码、测试与证据。

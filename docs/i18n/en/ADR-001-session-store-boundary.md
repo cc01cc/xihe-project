@@ -62,7 +62,7 @@ Located at `packages/ui/src/stores/session.ts`.
 - `updateSessionContext(id, context)` / `setSessionAgents(id, agentIds)` / `setRAGContext(id, ragContext)` / `setMCPContext(id, mcpContext)` / `setFileContext(id, fileContext)`
 - `addAttachment(id, attachment)` / `removeAttachment(id, attachmentId)` / `clearAttachments(id)` / `getAttachments(id)`
 
-**Note**: Server APIs are the canonical source for business Session/Message/attachment data. Pinia keeps only the reactive view projection and transient references, never restoring business data from `localStorage`; Workspace file content is owned by Runtime.
+**Note**: Server APIs are the canonical source for business Session/Message/attachment data. Pinia keeps only the reactive UI local view and transient references, never restoring business data from `localStorage`; Workspace file content is owned by Runtime.
 
 ### 4.2. useChatStore (View Layer: Message Flow)
 

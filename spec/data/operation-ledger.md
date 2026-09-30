@@ -11,7 +11,7 @@
 | Attempt | 某一 item 的一次执行尝试 | CP durable ledger |
 | OperationEvent | append-only 状态/事实事件 | CP durable ledger |
 | Extension | 类型化附加事实，如 usage/job/policy | CP durable ledger + schema |
-| Tool pair | Agent/MCP 两侧同一 tool call 的只读配对投影 | CP projection |
+| Tool pair | Agent/MCP 两侧同一 tool call 的只读配对视图（读模型） | CP 读模型 |
 
 Workspace Job 复用本条 ledger 链：`ledger_operations(kind=job)` → `operation_items(kind=job)` → `operation_extensions(extension_kind='job_state', schema_version=1)`。`job_state` extension 由 **CP 独占持有与写入**（Runtime 只返回执行事实，不写 CP DB）；payload 键见 DEV-019 §3.7，Job 契约（scope/收口/`interrupted`/start route）见 [`spec/workspace/execution-job.md`](../workspace/execution-job.md)。
 
@@ -20,7 +20,7 @@ Workspace Job 复用本条 ledger 链：`ledger_operations(kind=job)` → `opera
 - `operationId` 是根操作键；`operationItemId` 是 item 的 canonical durable 键。
 - `toolCallId` 是跨 Agent/MCP channel 的关联键；同一事实的各层必须复用，禁止从 event id、run id 或展示名称重新派生。
 - item 的 `source`（例如 `agent`/`mcp`）描述通道事实，不等于 actor 身份。
-- 原始 prompt、tool arguments、文件内容和 token 不进入普通 ledger summary；安全投影只暴露必要字段。
+- 原始 prompt、tool arguments、文件内容和 token 不进入普通 ledger summary；安全摘要只暴露必要字段。
 
 ## 3. 幂等与终态
 
@@ -37,9 +37,9 @@ Operation 状态、item 状态、attempt 状态和 approval 状态必须分别�
 
 ## 4. 消费者与验证
 
-- public operation projection：用户拥有的脱敏列表/trace；跨用户不存在资源泄露。
+- public operation 响应视图：用户拥有的脱敏列表/trace；跨用户不存在资源泄露。
 - internal trace：CP、Agent、Runtime 调试和对账；artifact 内容仍需单独读取。
-- UI audit view：消费安全 projection、tool pairs、policy summary，不重新推导状态。
+- UI audit view：消费安全摘要、tool pairs、policy summary，不重新推导状态。
 - 测试事实源包括 OperationService integration tests、CP routes、AgentEvent/SSE mapping、UI operations tests 和 Runtime late-termination integration。
 
 完整字段、DB schema、错误响应和 route 以 OpenAPI/Flyway/代码为准；本文只冻结对象边界、来源、关联键和终态规则。

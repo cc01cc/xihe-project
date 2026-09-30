@@ -19,7 +19,7 @@
 | loading | spinner/skeleton/status text | 相关 control disabled，保留取消/返回语义 | 服务端成功 |
 | error | inline error + Toast 或 alert region | 文案包含稳定 code/可理解 detail；焦点可到达 | console log |
 | warning | non-blocking notice | 不伪装成 success/error | 审批或授权 decision |
-| success | visible result/status | 以 response/projection 为依据 | optimistic mutation |
+| success | visible result/status | 以 response/服务端响应为依据 | optimistic mutation |
 | reconnecting | subtle status region，不使用漂移 spinner 作为唯一提示 | 不重复创建 ChatRun | durable recovery |
 | dispatch_unknown | warning/status region + request/run context | 禁止直接二次提交 decision；提供 refresh/status action | approved/rejected |
 | disabled | contrast + `disabled`/`inert`/`aria-disabled` 语义 | 必须解释原因或由 label 提供上下文 | 仅降低 opacity |

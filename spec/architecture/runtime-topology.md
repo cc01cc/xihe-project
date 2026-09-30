@@ -67,8 +67,8 @@ flowchart LR
 | WorkspaceStorage（direct-attach） | 用户显式授权目录 | 用户；Runtime 校验后使用 | 用户目录自身生命周期 | Runtime 不拥有，不负责其存亡 |
 | shadow Git slice | `hostRoot/.xihe-shadow/workspaceId.git` | Runtime checkpoint | 随 Workspace；retention GC（数量 + TTL） | slice 可按 retention 清理；不承担唯一真源职责 |
 | Sandbox 容器 | Docker Engine | Runtime lifecycle | 懒物化 → 六态 → 注销 | 可丢弃；可重建 |
-| Job projection（durable） | CP PostgreSQL `operation_extensions(extension_kind='job_state')` | CP（唯一 durable writer） | 随账本；终态不可回退 | 不可丢弃；Job 事实源；Runtime 只返回执行事实 |
-| Docker job 状态文件（backend 细节） | 容器内 `/tmp/xihe-jobs/jobId` | Runtime container runtime | 随容器存活 + TTL | 可丢弃；容器重建即孤儿化（显式行为）。**不是 Job 的唯一存放处**，只是 Docker backend 的本地状态，业务事实由上面的 Job projection 承载 |
+| Job durable 记录（Job 事实源） | CP PostgreSQL `operation_extensions(extension_kind='job_state')` | CP（唯一 durable writer） | 随账本；终态不可回退 | 不可丢弃；Job 事实源；Runtime 只返回执行事实 |
+| Docker job 状态文件（backend 细节） | 容器内 `/tmp/xihe-jobs/jobId` | Runtime container runtime | 随容器存活 + TTL | 可丢弃；容器重建即孤儿化（显式行为）。**不是 Job 的唯一存放处**，只是 Docker backend 的本地状态，业务事实由上面的 Job durable 记录承载 |
 | file watcher | Runtime host 进程内 | Runtime workspace_events | 随 Workspace materialize 建立 | 可丢弃；随 destroy/eviction 停止 |
 
 不变式：
@@ -157,6 +157,6 @@ Sandbox 容器隔离基线（Docker backend 当前事实）：workspace 目录 b
 - 拓扑与通道事实：DEV-015、`packages/runtime/src/{main,executor,workspace,backend}.rs`。
 - 资源归属与路径安全：`spec/workspace/lifecycle.md`、`spec/workspace/storage-checkpoint.md`、`storage.rs`、`checkpoint.rs`。
 - 执行模式与 probe：`spec/workspace/sandbox-backend.md`、DEV-031、`process_guard.rs`。
-- Job projection 与 start / `bootId` 对账：`spec/workspace/execution-job.md`、`packages/runtime/src/main.rs`（`jobs/start`、`diagnostics`）、`packages/control-plane/.../WorkspaceJobStartService.java`、DEV-014 §9。
+- Job durable 记录与 start / `bootId` 对账：`spec/workspace/execution-job.md`、`packages/runtime/src/main.rs`（`jobs/start`、`diagnostics`）、`packages/control-plane/.../WorkspaceJobStartService.java`、DEV-014 §9。
 - 六态生命周期：`spec/workspace/lifecycle.md`、`lifecycle.rs`、PLAN-0345。
 - 真实 backend 证据（MXC/host）：PLAN-0379、PLAN-0389 T3.2/V7，尚未完成。

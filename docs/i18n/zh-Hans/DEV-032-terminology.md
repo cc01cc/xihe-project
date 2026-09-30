@@ -12,7 +12,7 @@ updated: 2026-09-27
 # DEV-032: 术语规范（一词多义与多词一义）
 
 > **定位**：XH 文档与未实施 PLAN 的**用词 SSOT**。解决两类问题：① 同一裸词多义 → **分义正名**；② 同一概念多词 → **单正名 + 别名表**。
-> **适用**：`plans/PLAN-*-XH-*`（草稿与未开工包优先；已完成包仅在被再次编辑时对齐）、`A03-xihe/docs/`、项目 `AGENTS.md` 叙述。归档与 review 历史记录**不回写**。
+> **适用**：`plans/PLAN-*-XH-*`（草稿与未开工包优先；已完成包仅在被再次编辑时对齐）、`A03-xihe/docs/`、根级 `spec/`（PLAN-0426 扩展）、项目 `AGENTS.md` 叙述。归档与 review 历史记录**不回写**。
 > **不适用**：OpenAPI 路径字面、已合并且行为锁死的代码标识符（改名走独立 PLAN）。
 
 ## 0. 总规则
@@ -47,6 +47,13 @@ updated: 2026-09-27
 | | 遗留机制 | **`legacy snapshot`**（仅历史/退役叙述） | 与 checkpoint 混用 | 0357 |
 | **收敛 vs 收口** | 多路径 → 单一权威状态/写路径 | **收敛（converge）** | 用「收口」指状态机双路径合并 | Registry/状态机 |
 | | 散入口 → 唯一 seam 出口 | **收口（route-to-seam）** | 用「收敛」指 REST 改走 executor | REST 文件面 |
+| **projection / 投影** | A. CP durable 权威记录 | **`<域> durable 记录`**（Job durable 记录（Job 事实源）、checkpoint 切片记录） | 用 projection/投影指称 A；把 B 称为事实源 | 0426；不可重建，删除即失真 |
+| | B. CP 可重建读模型 | **`Context projection`**（首现注：CP 由 `context_events` 重建、非事实源、不触发执行） | 裸「投影/projection」；`ContextProjectionService`/`context_projections` 表列为标识符不改 | 0426；`checkpoint projection` 退役 → checkpoint 切片记录 |
+| | C. API 响应数据形状 | **`<对象> 响应`／`<对象> 响应视图`** | `<对象> projection` | 0426 |
+| | D. UI 本地展示状态 | **`UI 本地视图`**（非权威） | UI projection、内存投影、store projection | 0426 |
+| | E. 状态/字段转换 | **`状态映射`／`字段映射`** | 投影折回、能力投影、路由投影、投影状态 | 0426 |
+| | F1. 长度/时间截断呈现 | **`有界预览`** | 有界原文投影 | 0426 |
+| | F2. 权限/字段裁剪呈现 | **`安全摘要`** | 安全投影、redacted projection | 0426；F1 与 F2 可叠加，非互斥 |
 
 ### 1.1 主体与角色（2026-09-17 增补）
 
@@ -117,6 +124,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | 本文档发布（2026-09-16） | 未实施 XH PLAN README/spec 按 §1–§3 对齐；完成包不强制回写 |
 | 2026-09-17 增补 | 新增 §1.1（principal / membership / 协作≠委托）、`owner` 第三义（资源归属）、`role` 分域；未实施 PLAN 与 docs 按新正名；实现归 backlog BL-18（原标注不实施；2026-09-23 G2 冻结入 PLAN-0407 承接，执行中） |
 | 2026-09-21 增补 | 新增 `scope` / `interrupted` / `runtimeBootId` 分义；§2.3 明确 **durable job 续看 ≠ Workspace `unpause` / `run resume`**（0390） |
+| 2026-09-30 增补（PLAN-0426） | 新增 `projection` 六义分义（A durable 记录 / B 可重建读模型 / C 响应视图 / D UI 本地视图 / E 映射 / F1 有界预览 / F2 安全摘要）；适用范围扩展至根级 `spec/`；裸 `projection`/「投影」叙述禁用，标识符与历史记录除外 |
 | 已完成 PLAN / archive / review | **不改**历史证据用词；再次编辑该文件时顺带对齐 |
 | 代码标识符 | 不在本文档批量改名；需改名另开 PLAN（参考 0356） |
 

@@ -39,7 +39,7 @@
 
 ## 测试证据
 
-- 单元测试可覆盖 aria 属性、状态分支和 store projection，但不能替代封装组件的真实 focus/keyboard 行为。
+- 单元测试可覆盖 aria 属性、状态分支和 store 本地视图，但不能替代封装组件的真实 focus/keyboard 行为。
 - Playwright real/mock 分工：mock 验证确定性分支；real 验证真实 request/response/persistence/visible result；关键流程需要 action-after screenshot、DOM/computed style、console/network。
 - 代表 viewport：桌面 1440px、移动 390px；异常路径至少覆盖 loading、error、reconnect、approval pending/terminal、empty 和 disabled。
 

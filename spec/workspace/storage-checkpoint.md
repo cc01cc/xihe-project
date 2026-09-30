@@ -2,7 +2,7 @@
 
 > 契约状态：`proposed`  
 > 实现状态：`partial`（shadow Git slice 已有）  
-> Owner：Runtime storage/checkpoint + CP logical projection  
+> Owner：Runtime storage/checkpoint + CP checkpoint 切片记录  
 > 消费者：CP workspace API、UI、Runtime、Operation audit  
 > 来源：PLAN-0389、DEV-015、PLAN-0338/0339/0358、windows-storage-safety  
 > 更新日期：2026-09-21
@@ -11,7 +11,7 @@
 
 - Logical Workspace identity 是 `workspaceId`；`storageRef` 是经过 CP/Runtime binding 校验的逻辑引用。
 - Runtime canonicalizes hostRoot + storageRef，做 case-insensitive prefix、reparse/symlink、ownership 和 TOCTOU 校验；`../`、绝对路径、junction escape、cross-workspace storageRef 必须拒绝。
-- 物理 canonical path 不作为任意 public response；UI 使用 display path/availability projection。
+- 物理 canonical path 不作为任意 public response；UI 使用 display path/可用性摘要（按权限裁剪）。
 - execution entity destroy/rebuild、pause/stop/evict 不删除 WorkspaceStorage。
 
 ## Checkpoint slice

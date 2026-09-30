@@ -111,7 +111,7 @@ erDiagram
 
 - `config_audit.config_id` FK config **ON DELETE SET NULL**（V12 起审计行不随配置删除丢失，决策 #30）；按 `(layer, domain, config_key [+ user_id/workspace_id])` 定位历史配置行（`environment` 为历史快照列）
 - `context_events`：UNIQUE `(session_id, sequence)`，Event Sourcing 只追加
-- `context_projections`：UNIQUE `session_id`，单会话单投影，可由事件重放重建
+- `context_projections`：UNIQUE `session_id`，单会话单读模型，可由事件重放重建
 - `context_source_hashes` / `document_chunks`：无边实体（前者按 `(workspace_id, source_key)` 去重，后者无 FK 独立生命周期），见 §3.5
 
 ### 2.5 文件审计
@@ -334,11 +334,11 @@ erDiagram
 
 > 索引：`idx_grants_subject(subject_type, subject_id)`；`uq_grants_default_subject(subject_type, subject_id) WHERE source='default'` — 每主体一份默认权限集；spawn/direct/template 同主体允许多条。
 
-**run_checkpoints**（PLAN-0339 T0.4 / V27 重建，workspace slice projection）：每行代表一个 workspace 时间线切片，不再代表某个 Run 的区间。0339 上线时先物理清空旧投影行，再按以下切片语义重建；不转换、不回填旧格式数据。
+**run_checkpoints**（PLAN-0339 T0.4 / V27 重建，workspace 切片记录）：每行代表一个 workspace 时间线切片，不再代表某个 Run 的区间。0339 上线时先物理清空旧记录行，再按以下切片语义重建；不转换、不回填旧格式数据。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
-| id | UUID | PK | CP 投影行键 |
+| id | UUID | PK | CP 切片记录行键 |
 | workspace_id | VARCHAR(36) | NOT NULL FK `workspaces(id) ON DELETE CASCADE` | workspace 归属 |
 | slice_ref | TEXT | nullable（有效切片唯一；降级捕获可为空） | Runtime 影子 Git `refs/xihe/slices/<capturedAt>-<hash>` |
 | captured_at | TIMESTAMPTZ | nullable（降级捕获可为空） | 切片捕获时刻；按此排序 |
@@ -355,10 +355,10 @@ erDiagram
 | revert_summary | JSONB | nullable | 脱敏后的计数、逐路径结果、安全原因 |
 | reverted_at | TIMESTAMPTZ | nullable | 最近一次接受的恢复时间 |
 | revert_attempt_count | INTEGER | NOT NULL DEFAULT 0 | 恢复尝试次数 |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 投影创建时间 |
-| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 投影更新时间 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 记录创建时间 |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 记录更新时间 |
 
-> 索引与约束：`idx_run_checkpoints_workspace_captured (workspace_id, captured_at DESC)`；有效 `slice_ref` 在 workspace 内唯一。公共列表只返回非 `expired` 行；清理流程先成功删除 Runtime shadow Git，再删除该 workspace 的投影行。
+> 索引与约束：`idx_run_checkpoints_workspace_captured (workspace_id, captured_at DESC)`；有效 `slice_ref` 在 workspace 内唯一。公共列表只返回非 `expired` 行；清理流程先成功删除 Runtime shadow Git，再删除该 workspace 的切片记录行。
 
 **approval_requests**（基线 `V1` 内建，`V7` 加 `grant_consumed_at`，`V9` 加 `arguments_hash`，`V25` 加 `origin`；Entity `entity/ChatApproval.java`）：工具高危操作人审。
 
@@ -633,12 +633,12 @@ erDiagram
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | UUID | PK DEFAULT `gen_random_uuid()` | — |
-| session_id | VARCHAR(36) | NOT NULL UNIQUE FK `sessions(id) ON DELETE CASCADE` | 单会话单投影 |
+| session_id | VARCHAR(36) | NOT NULL UNIQUE FK `sessions(id) ON DELETE CASCADE` | 单会话单读模型 |
 | workspace_id | VARCHAR(36) | NOT NULL | 冗余归属 |
 | user_id | VARCHAR(36) | NOT NULL | 冗余归属 |
-| projection_type | VARCHAR(50) | NOT NULL DEFAULT 'agent_context' | 投影类型 |
+| projection_type | VARCHAR(50) | NOT NULL DEFAULT 'agent_context' | 读模型类型（列名保留） |
 | latest_sequence | BIGINT | NOT NULL DEFAULT 0 | 已物化到的事件序号 |
-| payload | JSONB | NOT NULL DEFAULT '{}' | 投影内容 |
+| payload | JSONB | NOT NULL DEFAULT '{}' | 读模型内容 |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 | updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
@@ -753,7 +753,7 @@ erDiagram
 | policy_decision | VARCHAR(24) | nullable | 策略判定（开放域） |
 | approval_request_id | UUID | nullable FK `approval_requests(request_id) ON DELETE SET NULL` | 关联审批 |
 | request_hash | VARCHAR(64) | nullable | 请求哈希 |
-| arguments_preview | JSONB | nullable | 有界原文投影参数（≤4096 前缀截断，见下） |
+| arguments_preview | JSONB | nullable | 有界预览参数（≤4096 前缀截断，见下） |
 | normalized_argv | JSONB | nullable | 规范化参数 |
 | cwd | VARCHAR(1024) | nullable | 工作目录 |
 | env_policy_hash | VARCHAR(64) | nullable | 环境策略哈希 |
@@ -867,7 +867,7 @@ erDiagram
 | `mcp_call` | 网关 | `httpStatus` int、`durationMs` bigint、`resultHash` string?、`resultSize` int?、`errorCode` string? |
 | `llm_usage` | 中继 | `inputTokens` int、`outputTokens` int、`totalTokens` int、`source` string（`real`/`estimated`） |
 
-`arguments_preview`（operation_items JSONB）：**原文投影**的参数 JSON（PLAN-0407 T1.3 / design #8）——保留原始参数文本，有界 ≤4096、超长按前缀裸截断，不做正则脱敏/改写、不携带 `truncated` 标记、不参与授权或批准后执行；日志出口脱敏由序列化层 `LogRedactor` 承担。
+`arguments_preview`（operation_items JSONB）：**有界预览**的参数 JSON（PLAN-0407 T1.3 / design #8）——保留原始参数文本，有界 ≤4096、超长按前缀裸截断，不做正则脱敏/改写、不携带 `truncated` 标记、不参与授权或批准后执行；日志出口脱敏由序列化层 `LogRedactor` 承担。
 
 **V14/V30/V31/V33 变更**：V14 drop 空表 `runtime_jobs`（悬空 registry，PLAN-274 债务 #11）并把工具调用唯一键替换为上式（历史不迁移，开发态按 fresh baseline 清库）；V30 增 `ck_ledger_operations_chat_session`（`kind='chat' ⇒ session_id IS NOT NULL`；随 V33 改名）；V31 补 `operation_events` 两条 FK 子列索引；V33 表改名 + 14 项跟随改名（PK ×1、FK ×4、CHECK ×5、唯一索引 ×2、普通索引 ×2）。
 
@@ -930,14 +930,14 @@ erDiagram
 | V19 | `V19__operation_policy_summary.sql` | 操作账本安全策略摘要 | `operation_items` |
 | V20 | `V20__approval_grant_reuse.sql` | grant reuse 绑定、范围与消费约束 | `approval_requests` |
 | V21 | `V21__policy_revision_counter.sql` | 持久化单调策略 revision counter | `policy_revision` |
-| V22 | `V22__run_checkpoints.sql` | Run checkpoint CP 投影、状态与账本 kind 约束扩展 | `run_checkpoints/operation_items` |
+| V22 | `V22__run_checkpoints.sql` | Run checkpoint CP 切片记录、状态与账本 kind 约束扩展 | `run_checkpoints/operation_items` |
 | V23 | `V23__run_checkpoint_revert.sql` | checkpoint revert 状态、引用、摘要与尝试计数 | `run_checkpoints` |
 | V24 | `V24__session_approval_mode.sql` | 会话审批模式落库（`manual`/`auto`；NULL = 继承 workspace；PLAN-0337） | `sessions.approval_mode` |
 | V25 | `V25__approval_request_origin.sql` | 审批 durable 来源标识（`cp_gate`/`agent_relay`；NULL = 历史行；PLAN-0337） | `approval_requests.origin` |
 | V26 | `V26__run_checkpoint_slice_state_vocabulary.sql` | checkpoint 切片状态词表（`captured`/`abnormal-captured`）；切片表重建归 PLAN-0339 | `run_checkpoints` |
-| V27 | `V27__run_checkpoints_workspace_slices.sql` | 物理清空旧投影并重建 workspace slice rows、来源/前驱/嵌套仓库与 revert bookkeeping | `run_checkpoints` |
+| V27 | `V27__run_checkpoints_workspace_slices.sql` | 物理清空旧记录行并重建 workspace slice rows、来源/前驱/嵌套仓库与 revert bookkeeping | `run_checkpoints` |
 | V28 | `V28__legacy_snapshot_retirement.sql` | Legacy snapshot 退役：删 `idx_approval_requests_snapshot`、`approval_requests.snapshot_id/policy_class`、`workspace_snapshot_files`、`workspace_snapshots`（PLAN-0357；实测空表，纯清理，不触碰切片表/shadow Git） | `approval_requests/workspace_snapshots/workspace_snapshot_files` |
-| V29 | `V29__clear_context_source_hashes.sql` | 清空遗留单键源哈希（L1 状态改走事件投影；仅数据清空，无 schema 变更；PLAN-0340 决策 #10） | `context_source_hashes` |
+| V29 | `V29__clear_context_source_hashes.sql` | 清空遗留单键源哈希（L1 状态改走事件读模型；仅数据清空，无 schema 变更；PLAN-0340 决策 #10） | `context_source_hashes` |
 | V30 | `V30__session_operation_chat_session_check.sql` | 直接 ADD CHECK（免存量）：`kind='chat' ⇒ session_id IS NOT NULL`（PLAN-0351 DDL-3；表名后随 V33 改名） | `ledger_operations`（`ck_ledger_operations_chat_session`） |
 | V31 | `V31__ledger_fk_child_indexes.sql` | 补 FK 子列索引：`chat_runs.workspace_id`、`operation_events.item_id/attempt_id`（PLAN-0351 DDL-5） | `chat_runs/operation_events` |
 | V32 | `V32__drop_dead_json_columns.sql` | 删死列：`workspaces.settings/storage_path`、`users.settings`、`messages.metadata`、`mcp_remote_servers.auth_config`（PLAN-0351 DDL-9/10；JSON 新列一律 JSONB） | `workspaces/users/messages/mcp_remote_servers` |
@@ -965,7 +965,7 @@ erDiagram
 | 重置 admin | `mise run reset-admin`（`scripts/reset-admin.ps1 -Password <pw>`，免重启，不删数据） |
 | 重建 dev 库 | `mise run dev:reset`（默认 dry-run，显式 `-Reset` 才执行，先备份） |
 
-> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace slice projection，不做旧格式数据迁移；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象（空表纯清理，V4/V5 原文保留为不可变历史）；V29 清空遗留单键源哈希（无 schema 变更）；V30–V33 为 PLAN-0351 的 schema 清理与 `ledger_operations` 改名（V33，见 §4）；V34 为 PLAN-0367 的 `operation_extensions` 目标 FK CASCADE 修复（读路径无改动）；V35 为 PLAN-0376 的 Workspace 导入 durable 记录表；V36 为 PLAN-0390 的 Workspace Job 幂等部分唯一索引（无 Session root，见 §3.7 `job_state`）；V37–V41 为 PLAN-0407 的会话 provenance/kind、授权 grants、ChatRun origin/幂等约束与 default grant backfill。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
+> **当前链备注**：V21 的 `policy_revision` 是审批 grant 失效判断的 durable counter；V22/V23/V26 是 checkpoint 切片语义落地前的历史增量；V27 按 PLAN-0339 物理清空旧 `run_checkpoints` 行并重建 workspace 切片记录行，不做旧格式数据迁移；V28 按 PLAN-0357 删除 V4/V5 legacy snapshot 对象（空表纯清理，V4/V5 原文保留为不可变历史）；V29 清空遗留单键源哈希（无 schema 变更）；V30–V33 为 PLAN-0351 的 schema 清理与 `ledger_operations` 改名（V33，见 §4）；V34 为 PLAN-0367 的 `operation_extensions` 目标 FK CASCADE 修复（读路径无改动）；V35 为 PLAN-0376 的 Workspace 导入 durable 记录表；V36 为 PLAN-0390 的 Workspace Job 幂等部分唯一索引（无 Session root，见 §3.7 `job_state`）；V37–V41 为 PLAN-0407 的会话 provenance/kind、授权 grants、ChatRun origin/幂等约束与 default grant backfill。具体约束以对应 SQL 文件为准，禁止通过手工 DROP 表回滚 active 链。
 
 ## 附录 A：表—Entity—迁移三向对照
 

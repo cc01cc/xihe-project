@@ -43,7 +43,7 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 
 - CP 启动 recovery/reconciliation 负责处理 lease 过期、审批等待和取消中断。
 - `ambiguous` 表示无法证明 provider/Agent 是否已完成；只能使用新的 idempotency key 人工重试。
-- UI 通过 ChatRun/Operation projection 恢复，不从 Agent 内存推断成功。
+- UI 通过 ChatRun/Operation 响应视图恢复，不从 Agent 内存推断成功。
 
 ## 验证映射
 

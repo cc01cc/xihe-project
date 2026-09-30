@@ -2,7 +2,7 @@
 
 > 契约状态：`proposed`  
 > 实现状态：`partial`  
-> Owner：Runtime watcher（hint）+ CP sequence/SSE projection  
+> Owner：Runtime watcher（hint）+ CP sequence/SSE 事件映射  
 > 消费者：UI Workspace store、CP refresh、Runtime file tools  
 > 来源：PLAN-0389、PLAN-0350、DEV-015  
 > 更新日期：2026-09-21

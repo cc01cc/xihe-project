@@ -46,7 +46,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - 每个 catch 必须有日志 + stacktrace
 - `interfaces/` 目录下禁止直接 import `langchain*`；LangChain 特定代码收敛到 `agent_runner/langgraph_runner.py` 和 `adapters/`
 - Agent 编排通过 `AgentRunner` 接口，不直接调用 LangGraph
-- Context 通过 `ContextProvider.load()` 获取 CP 投影后的 `AgentContext` 快照；事件持久化由 `EventStore` 写入 CP
+- Context 通过 `ContextProvider.load()` 获取 CP Context projection 读模型（由事件重建）的 `AgentContext` 快照；事件持久化由 `EventStore` 写入 CP
 - 分支上下文（PLAN-0410）：`CPContextServiceClient` 的 snapshot 请求携 `runId`/`branchId`，`AgentContext.branch_id` 只能来自 CP（Agent 从不自填）；选择器解析失败 fail-closed（404/409），禁止回退整 Session history；run-scoped 写点带 `correlation_id=runId`，必需 append 失败使 Run 收敛失败
 - Agent 执行、role/scope 绑定传播和 Context/Tool 边界的项目级 proposed SPEC 见 `../../spec/agent/`；通用授权正文仍归 `../../spec/security/`
 - **Agent principal / spawn caller**：Agent 不本地推导 principal；`spawn_agent` 是 CP-owned tool，只能经 CP logical MCP endpoint 发现/调用；`LCToolAdapter` 使用 LangChain callback `run_manager.run_id` 作为 EventStore/AgentEvent/MCP context 的唯一 tool-call correlation id。LLM provider ToolMessage ID 仅用于 LangGraph 内部。`POST /internal/v1/agents/spawn` 是非-Agent service surface，不得由 Agent 直调。主体/Workspace 与 `SPAWN_AGENT` grant 由 CP durable 数据派生；契约见 `../../spec/agent/principal-workspace-binding.md` 与 PLAN-0407 T2.10。

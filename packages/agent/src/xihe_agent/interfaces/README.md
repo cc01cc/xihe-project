@@ -13,7 +13,7 @@
 | `message.py` | `Message` / `TextMessage` | 最小消息协议：`role` + `content` |
 | `event.py` | `Event` / `EventEnvelope` | PLAN-035 持久化域事件 |
 | `event_store.py` | `EventStore` | 事件存储抽象：append / read / fork |
-| `context.py` | `AgentContext` / `ContextEpoch` / `ContextProvider` | 事件投影后的上下文快照 |
+| `context.py` | `AgentContext` / `ContextEpoch` / `ContextProvider` | 事件重建（Context projection 读模型）后的上下文快照 |
 
 ## 设计原则
 

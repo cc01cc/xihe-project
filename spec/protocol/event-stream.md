@@ -12,7 +12,7 @@
 - `heartbeat` 是 transport event，不得进入 UI MessagePart。
 - `derived_state_changed` 是 child terminal 提交后的 best-effort refresh hint，发送到**父 Session**的 SSE channel；data JSON 恰好 `{sessionId,runId,state,at}` 四键，其中 `sessionId/runId/state` 标识 child Run，`at` 等于其 durable `chat_runs.terminal_at`。接收端只据此重新读取父 Session derived-state API；Inbox 是通知事实源，SSE 不承诺必达、replay 或与 DB 原子。
 - `token`、`tool_call`、`tool_result`、`approval_request`、`error` 和 `done` 的顺序/字段以事件实现和 OpenAPI 为准；重连只能回放被授权 Session 的可恢复事件。
-- `requestId`、`runId`、`sessionId`、`workspaceId` 必须贯通日志、durable record 和 UI 投影；不得把 raw tool arguments 放入 approval event。
+- `requestId`、`runId`、`sessionId`、`workspaceId` 必须贯通日志、durable record 和 UI 本地视图；不得把 raw tool arguments 放入 approval event。
 
 ## 2. Workspace SSE
 

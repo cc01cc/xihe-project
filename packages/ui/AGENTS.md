@@ -17,7 +17,7 @@
 - `src/stores/`：Pinia stores；`src/types/`：跨层类型；`src/i18n/`：本地化。
 - `src/**/__tests__/`：Vitest 单元测试；`e2e/mock/`：Mock E2E；`e2e/real/`：真实链路 E2E。
 
-Session/ChatRun/Operation、Agent 可见状态及 UI 交互/设计/无障碍的目标态见 `../../spec/` 对应 proposed SPEC，不能当作已实现事实；UI store 只做 projection，不拥有 CP durable lifecycle。
+Session/ChatRun/Operation、Agent 可见状态及 UI 交互/设计/无障碍的目标态见 `../../spec/` 对应 proposed SPEC，不能当作已实现事实；UI store 只做本地视图（非权威），不拥有 CP durable lifecycle。
 
 在本目录执行聚焦验证：
 

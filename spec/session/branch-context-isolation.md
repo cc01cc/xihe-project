@@ -7,11 +7,11 @@
 > 来源：PLAN-0410  
 > 更新日期：2026-09-29
 >
-> 实现状态：`partial`（V43 branch path/cursor、per-branch 投影与 Agent 输入已实现；child `session.forked` seed consumer 由 PLAN-0410 T3.6 实施；公开 branch selector、fork producer/API 与浏览器验收由 PLAN-0409 实施）
+> 实现状态：`partial`（V43 branch path/cursor、per-branch Context projection 读模型与 Agent 输入已实现；child `session.forked` seed consumer 由 PLAN-0410 T3.6 实施；公开 branch selector、fork producer/API 与浏览器验收由 PLAN-0409 实施）
 
 ## 范围
 
-本规范定义同一 Chat Session 中分支路径对 CP 持久化事件、Context 投影、摘要/压缩及 Agent prompt 的可见性。Session 生命周期与 ChatRun/Operation 终态仍由 PLAN-0387 对应 SPEC 负责；User/Agent principal 与授权由 Security 负责；公开 fork/branch API、UI 和唯一真实浏览器验收由 PLAN-0409 负责。
+本规范定义同一 Chat Session 中分支路径对 CP 持久化事件、Context projection 读模型（CP 由 `context_events` 重建，非事实源）、摘要/压缩及 Agent prompt 的可见性。Session 生命周期与 ChatRun/Operation 终态仍由 PLAN-0387 对应 SPEC 负责；User/Agent principal 与授权由 Security 负责；公开 fork/branch API、UI 和唯一真实浏览器验收由 PLAN-0409 负责。
 
 ## 核心不变式
 
@@ -28,14 +28,14 @@
 - User Message 的 cursor 是所属 Run 唯一的 `prompt.admitted` event sequence；Assistant Message 的 cursor 是所属 Run 最后一个 correlated ContextEvent sequence。CP 在同一持久化事务中校验并保存 Message、Run 与 cursor；缺少可信 cursor 时 fail-closed，不按时间猜测。
 - 同 Session 的回退/编辑若需创建 branch，且存在 active ChatRun，返回 `409 BRANCH_LOCK`。跨 Session fork 由 PLAN-0409 执行：source Session 存在另一个 active Run 不阻止对更早 terminal anchor 的 fork，但 active Run 本身不是合法 anchor；快照不得包含 anchor cursor 之后写入的事件。
 
-## EventStore 与投影
+## EventStore 与投影读模型
 
 - Session/global events 的 `correlation_id` 与 `branch_id` 均为空，并按既定 taxonomy 对该 Session 所有 branch 可见。
 - Run-scoped Agent events 必须携带 canonical `correlation_id=ChatRun.id`。CP 校验 Run 所属 Session 后派生 branchId；请求体不得覆盖 Session、Workspace、principal 或 branch 权威。未知 EventType 在登记分类前不得被默认视为 global。
 - User-triggered manual compaction 经 CP 校验 branch 后写入 branch-scoped event，不伪造 ChatRun correlation；Run-triggered compaction 从 durable ChatRun.branchId 派生。
-- ContextProjection 按 Session 和 branch 独立缓存及重建；`latestCompaction`、manual/automatic/overflow compaction、preflight、UsageAggregator、recovery-band、circuit 与 prune replay 必须使用同一 branch path。Session/global L1 与环境事实仅按明确 taxonomy 共享。
-- Child `session.forked` seed 是 Session/global root event，事件行 `branch_id=NULL`、`correlation_id=NULL`；其持久化 sequence 是 child-local projection/compaction cursor。Source branch 与 anchor cursor 只选择 seed 输入，不作为 child cursor。
-- Seed 含 anchor 前规范化 `messages` 和可选 SUM `summary`/`summaryHash`，并分配新的 child-owned `contextEpoch`；不复制 source Run/correlation/usage/runtime/audit state。Source projection 与 summary lookup 必须经同一 branch path 且 `sequence <= anchorCursor`，不能让 anchor 后的 compaction 进入 child。
+- ContextProjection（读模型）按 Session 和 branch 独立缓存及重建；`latestCompaction`、manual/automatic/overflow compaction、preflight、UsageAggregator、recovery-band、circuit 与 prune replay 必须使用同一 branch path。Session/global L1 与环境事实仅按明确 taxonomy 共享。
+- Child `session.forked` seed 是 Session/global root event，事件行 `branch_id=NULL`、`correlation_id=NULL`；其持久化 sequence 是 child-local 读模型/compaction cursor。Source branch 与 anchor cursor 只选择 seed 输入，不作为 child cursor。
+- Seed 含 anchor 前规范化 `messages` 和可选 SUM `summary`/`summaryHash`，并分配新的 child-owned `contextEpoch`；不复制 source Run/correlation/usage/runtime/audit state。Source 读模型与 summary lookup 必须经同一 branch path 且 `sequence <= anchorCursor`，不能让 anchor 后的 compaction 进入 child。
 - CP `ContextProjectionService` 与 Agent `AgentContext.apply_event("session.forked")` 对 seed 产生等价 messages/SUM。Parent L1/env 不复制；既有 per-run `ContextSourceRefreshService` 在 child 首次 Chat 前重新装入 Workspace L1。
 - Agent 只消费 CP 为当前 durable Run 解析的 snapshot。不得按 sessionId 重新读取整段历史覆盖 path filter。必需 ContextEvent append 或 snapshot 失败时必须可观测并使 Run 显式失败，禁止静默继续或回退到完整 Session history。
 

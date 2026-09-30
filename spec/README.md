@@ -34,7 +34,7 @@ spec/
 |-- workspace/           # 生命周期、Sandbox、Checkpoint、导入、事件
 |-- configuration/       # env/config 生效链和凭证
 |-- protocol/            # HTTP、事件流、MCP、内部消息
-`-- data/                # 领域对象、事件、Projection、账本边界
+`-- data/                # 领域对象、事件、读模型、账本边界
 ```
 
 目录清单不等于领域契约已经实现。状态轴必须分开：
@@ -116,7 +116,7 @@ PLAN-0409 冻结跨 Session fork 与同 Session branch actions；child fork seed
 
 - [Session Fork 与 Branch Actions](session/fork-and-branch-actions.md)
 
-PLAN-0410 拥有 Session branch-aware Context 契约、分支祖先路径、Run cursor、EventStore 投影与 compaction/prune 隔离，并承接 child `session.forked` seed 的 CP/Agent 消费；用户可见 fork/branch API 与浏览器验收由 PLAN-0409 承接：
+PLAN-0410 拥有 Session branch-aware Context 契约、分支祖先路径、Run cursor、EventStore 投影读模型与 compaction/prune 隔离，并承接 child `session.forked` seed 的 CP/Agent 消费；用户可见 fork/branch API 与浏览器验收由 PLAN-0409 承接：
 
 - [Session 分支上下文隔离](session/branch-context-isolation.md)
 

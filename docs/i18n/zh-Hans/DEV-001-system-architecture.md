@@ -58,7 +58,7 @@ flowchart LR
 关键能力：
 
 - 经 CP 获取工具清单并决策；Agent 间委派 / 并行 / 合并。
-- Event Sourcing 上下文（PLAN-035）：只消费 CP 投影的 `AgentContext` 快照。
+- Event Sourcing 上下文（PLAN-035）：只消费 CP Context projection 读模型（由事件重建）的 `AgentContext` 快照。
 - MCP 集成经 CP 单一入口。
 - `AgentRunner` / `BaseAgentTool` / `EventAdapter` / `LLMProvider` 接口隔离实现。
 
@@ -200,7 +200,7 @@ chat 与 workspace 可以在同一工作界面协作，但 Workspace 是独立�
 
 - Chat 用 `/chat/:sessionId`，Workspace 用 `/workspace/:workspaceId`。
 - Workspace 可以没有 Session；需要聊天时再选择或创建绑定该 Workspace 的 Session。
-- `useSessionStore` 承载服务端 Session 投影；`useChatStore`/`useWorkspaceStore` 为视图层状态。
+- `useSessionStore` 承载服务端 Session 数据的 UI 本地视图；`useChatStore`/`useWorkspaceStore` 为视图层状态。
 - 附件持久化到后端 Session 专属空间（`{base}/{sessionId}/{fileId}`），刷新仍可渲染。
 
 ## 5. 远程 MCP 与 OAuth 边界（摘要，详见 DEV-016/DEV-014）
