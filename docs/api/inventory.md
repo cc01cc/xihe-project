@@ -66,6 +66,7 @@ current canonical routes after the targeted WorkspaceExecutionSpec migration and
 | CP | `/internal/v1/context/**` | `/internal/v1/context/**` | service Bearer | Agent context client（events/snapshot/refresh-sources/compact/fork） |
 | CP | `/context/{sessionId}/sources` | `GET /api/v1/context/{sessionId}/sources` | user Bearer | UI `ContextSourcesU1` U1 元信息（无正文，PLAN-0340） |
 | Runtime | `/workspace/**` | `/internal/v1/runtime/workspaces/**` | service Bearer | CP, UI through CP |
+| Runtime | workspace file read | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/read`（PLAN-0427）：`{path,max_bytes?}` → `200 {found,content,truncated}`；**缺文件/根未物化 = `200 found:false`**（ENOENT 在 `fs::resolve_canonical` 归类为 `FileNotFound`，非错误通道）；未注册/Spec 缺失 workspace 仍 404（`ensure_workspace` 先拦）、真越界仍 403 `FORBIDDEN`、状态冲突 409；CP `readAgents` 对 `found:false` 行为与旧 403 等价（`Optional.empty` 路径），消费 `found` 三态归 PLAN-0382 | service Bearer | CP `RuntimeContextSourceClient.readAgents` / `RuntimeWorkspaceFileClient.readText`；UI e2e 直连 |
 | Runtime | Workspace filesystem event ingress | `POST /internal/v1/runtime/workspaces/{workspaceId}/events` | service Bearer | Runtime notify watcher → CP Workspace SSE fan-out; path is Workspace-relative and never host-absolute |
 | Runtime | git porcelain status | `/internal/v1/runtime/workspaces/{workspaceId}/git-status` | service Bearer | CP dual-diff 待提交侧 |
 | Runtime | git branch+HEAD 事实 | `/internal/v1/runtime/workspaces/{workspaceId}/git-facts` | service Bearer | CP L1b env（PLAN-0340，仅 branch/HEAD，无 dirty） |

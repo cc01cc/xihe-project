@@ -1513,7 +1513,30 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
   /internal/v1/runtime/workspaces/{workspaceId}/files/read:
-    post: { operationId: runtimeReadFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: File content } } }
+    post:
+      operationId: runtimeReadFile
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeReadFileRequest' }
+      responses:
+        '200':
+          description: >
+            File content. found=false means the path resolved to no content
+            (missing file, or registered workspace whose root is not
+            materialized) — an absence fact, not an error. Workspace absence
+            (unregistered / execution spec missing) is still 404, intercepted
+            before file resolution; real traversal remains 403.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeReadFileResult' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '500': { $ref: '#/components/responses/Problem' }
   /internal/v1/runtime/workspaces/{workspaceId}/files/list:
     post: { operationId: runtimeListFiles, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Directory listing } } }
   /internal/v1/runtime/workspaces/{workspaceId}/files/delete:
@@ -1596,6 +1619,8 @@ components:
       description: RFC 9457 Problem Details
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
+    RuntimeReadFileRequest: { type: object, required: [path], additionalProperties: false, properties: { path: { type: string, description: 'Workspace-relative path.' }, max_bytes: { type: integer, description: 'Truncate content to N bytes; truncated=true marks an applied cut.' } } }
+    RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
     AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Agent tool-call correlation id of the durable spawn_agent OperationItem; never the OperationItem primary key' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
     RegisterRequest: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string }, name: { type: string } } }

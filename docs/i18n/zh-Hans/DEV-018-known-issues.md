@@ -29,6 +29,7 @@ updated: 2026-09-27
 - **为何当时无底层 error**：结构性缺口而非丢日志——Runtime 全 app 无 per-request trace、`map_error` 不打日志、problem `detail` 为静态串且 `requestId` 自造，该请求在 Runtime 侧零日志；CP 侧唯一痕迹是 `Runtime AGENTS.md read failed` WARN，并被 `ContextSourceRefreshService` 归为 `status=unchanged`，UI 无提示。
 - **剩余低概率分支（未复现排除）**：① workspace 根目录未物化/挂载空（`resolve_canonical` 先试文件后试根，根缺失也先落 403）；② `AGENTS.md` 为外指 symlink/断链。单变量判定：同 workspace `files/list {"path":"."}` 200 = 根存在 → 只剩文件缺失；`files/stat` 与缺文件 `read` 同为 403 = 语义复现；`files/write` 后 read 200 = 闭环。
 - **边界**：确认上述分支前不放宽 Runtime 路径安全策略；「403→404 语义矫正」与 PLAN-0365 决策 #3 冲突，属 B 类设计变更，须经用户裁定。
+- **处置更新（2026-10-01，PLAN-0427）**：用户裁定机制三并立项 **PLAN-0427** 承接——`fs.rs resolve_canonical` 区分 ENOENT→`FileNotFound`（真越界/`ELOOP` 仍 403，路径安全零放宽），`files/read` 缺文件承载为 **`200 {found:false}`**（自描述成功响应，非错误通道），supersede 归档 PLAN-0365 决策 #3（#2 的 handler 特判否决维持，落点仍在 fs 层）。**本条目的 403 现象随 0427 落地关闭**；CP `readAgents` 对 `found:false` 行为与旧 403 等价（`Optional.empty`→`ContextSourceRefreshService` 同一「无文件」分支），消费 `found` 区分 missing/unavailable 归 PLAN-0382 Q2=A。**本条目保留的残项**：Runtime 零日志（无 per-request trace、`map_error` 不打日志、problem `requestId` 自造）为独立可观测性债，不随 0427 关闭，待另行立项。
 
 ## PLAN-0345 工作区生命周期 — 行为变化与已知限制（2026-09-18）
 

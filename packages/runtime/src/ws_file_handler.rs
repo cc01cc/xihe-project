@@ -140,8 +140,18 @@ pub struct ReadFileRestRequest {
 
 #[derive(Serialize, Deserialize)]
 pub struct ReadFileResult {
+    /// PLAN-0427: false when the path resolves to no content (missing file or
+    /// unmaterialized root) — a self-describing success, not an HTTP error.
+    #[serde(default = "found_default")]
+    pub found: bool,
     pub content: String,
     pub truncated: bool,
+}
+
+fn found_default() -> bool {
+    // Deserialize compatibility for pre-0427 payloads: content-bearing bodies
+    // are treated as found; empty bodies default via explicit set in tests.
+    true
 }
 
 // ---- Error mapping ----
@@ -214,11 +224,21 @@ pub async fn handle_read_file(
     // response shape is unchanged for REST consumers.
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
-    let mut content = app
-        .router
-        .read_file(&ws_id, &req.path)
-        .await
-        .map_err(map_error)?;
+    // PLAN-0427 T2.1: absence is a domain fact, not an error — FileNotFound
+    // (ENOENT classified in fs::resolve_canonical) answers 200 {found:false}.
+    // Real traversal still fails via map_error below (403), and workspace
+    // absence was already intercepted by ensure_workspace (404).
+    let mut content = match app.router.read_file(&ws_id, &req.path).await {
+        Ok(content) => content,
+        Err(RuntimeError::FileNotFound(_)) => {
+            return Ok(Json(ReadFileResult {
+                found: false,
+                content: String::new(),
+                truncated: false,
+            }));
+        }
+        Err(e) => return Err(map_error(e)),
+    };
     let truncated = if let Some(max) = req.max_bytes {
         if content.len() > max {
             content.truncate(max);
@@ -229,7 +249,11 @@ pub async fn handle_read_file(
     } else {
         false
     };
-    Ok(Json(ReadFileResult { content, truncated }))
+    Ok(Json(ReadFileResult {
+        found: true,
+        content,
+        truncated,
+    }))
 }
 
 pub async fn handle_write_binary(
@@ -503,8 +527,47 @@ mod tests {
             max_bytes: None,
         });
         let result = handle_read_file(state, path, json).await.unwrap();
+        assert!(result.found);
         assert_eq!(result.content, "Hello, REST!");
         assert!(!result.truncated);
+    }
+
+    // PLAN-0427 T2.1: absence answers 200 {found:false}; an existing but
+    // empty file answers 200 {found:true, content:""} — the two must differ.
+    #[tokio::test]
+    async fn test_read_missing_file_returns_found_false() {
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
+
+        let state = State(app);
+        let path = Path(ws_id);
+        let json = Json(ReadFileRestRequest {
+            path: "does-not-exist.txt".into(),
+            max_bytes: None,
+        });
+        let result = handle_read_file(state, path, json).await.unwrap();
+        assert!(!result.found, "missing file must answer found:false");
+        assert_eq!(result.content, "");
+        assert!(!result.truncated);
+    }
+
+    #[tokio::test]
+    async fn test_read_empty_file_returns_found_true() {
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
+
+        let ws = app.registry.get(&ws_id).await.unwrap();
+        fs::write_file_binary("empty.txt", b"", &ws.workspace_path)
+            .await
+            .unwrap();
+
+        let state = State(app);
+        let path = Path(ws_id);
+        let json = Json(ReadFileRestRequest {
+            path: "empty.txt".into(),
+            max_bytes: None,
+        });
+        let result = handle_read_file(state, path, json).await.unwrap();
+        assert!(result.found, "empty file must answer found:true");
+        assert_eq!(result.content, "");
     }
 
     #[tokio::test]

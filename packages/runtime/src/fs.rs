@@ -251,6 +251,16 @@ fn resolve_canonical(path: &Path, workspace: &Path) -> Result<PathBuf> {
     }
     let canonical = match path.canonicalize() {
         Ok(canonical) => canonical,
+        // PLAN-0427 T1.1: ENOENT is absence, not a traversal. Classifying the
+        // missing file (or missing parent) as FileNotFound lets REST answer
+        // `200 {found:false}` and keeps ELOOP/EACCES/other canonicalize
+        // failures as PathTraversal (403). Security boundaries (lexical,
+        // in-bounds, openat2) are unchanged.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(RuntimeError::FileNotFound(
+                path.to_string_lossy().to_string(),
+            ));
+        }
         Err(_) => {
             return Err(RuntimeError::PathTraversal {
                 path: path.to_string_lossy().to_string(),
@@ -1048,8 +1058,8 @@ mod tests {
 
     #[test]
     fn test_resolve_path_accepts_relative() {
-        // resolve_read_path requires the path to exist (canonicalize).
-        // For pure lexical tests, use lexically_safe directly.
+        // resolve_read_path canonicalizes the path; a missing path returns
+        // FileNotFound (PLAN-0427), while pure lexical checks use lexically_safe.
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_str().unwrap();
         fs::write(dir.path().join("bar.txt"), "data").unwrap();
@@ -1057,6 +1067,61 @@ mod tests {
         assert_eq!(
             result,
             fs::canonicalize(dir.path().join("bar.txt")).unwrap()
+        );
+    }
+
+    // PLAN-0427 T1.3: ENOENT classifies as FileNotFound (absence), not PathTraversal.
+    #[test]
+    fn test_resolve_read_missing_file_is_file_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_str().unwrap();
+        let err = resolve_read_path("does_not_exist.txt", ws).unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::FileNotFound(_)),
+            "expected FileNotFound for missing file, got {err}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_read_missing_parent_is_file_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_str().unwrap();
+        let err = resolve_read_path("missing_dir/nested.txt", ws).unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::FileNotFound(_)),
+            "expected FileNotFound for missing parent dir, got {err}"
+        );
+    }
+
+    // PLAN-0427 T1.3/B4: a symlink loop canonicalizes with ELOOP (not NotFound)
+    // and must stay PathTraversal -> REST 403.
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_read_symlink_loop_stays_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_str().unwrap();
+        std::os::unix::fs::symlink(dir.path().join("loop-b"), dir.path().join("loop-a")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("loop-a"), dir.path().join("loop-b")).unwrap();
+        let err = resolve_read_path("loop-a", ws).unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::PathTraversal { .. }),
+            "expected PathTraversal for symlink loop (ELOOP), got {err}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_resolve_read_symlink_loop_stays_path_traversal_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_str().unwrap();
+        std::os::windows::fs::symlink_file(dir.path().join("loop-b"), dir.path().join("loop-a"))
+            .expect("create symlink loop a->b");
+        std::os::windows::fs::symlink_file(dir.path().join("loop-a"), dir.path().join("loop-b"))
+            .expect("create symlink loop b->a");
+        let err = resolve_read_path("loop-a", ws).unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::PathTraversal { .. }),
+            "expected PathTraversal for symlink loop (ELOOP), got {err}"
         );
     }
 

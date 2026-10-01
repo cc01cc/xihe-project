@@ -100,7 +100,7 @@ Both interfaces share underlying core functions like `fs.rs` — the same busine
 
 | Endpoint | Consumer | Purpose |
 |----------|----------|---------|
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/read` | CP → Runtime | Read file content (optional `max_bytes` truncation) |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/read` | CP → Runtime | Read file content (optional `max_bytes` truncation; `200 {found,content,truncated}` with `found:false` for absent paths — PLAN-0427) |
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/write/{path}` | CP → Runtime | Write file (binary body) |
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/list` | CP → Runtime | List directory |
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/delete` | CP → Runtime | Delete file |

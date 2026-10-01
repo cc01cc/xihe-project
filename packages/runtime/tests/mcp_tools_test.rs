@@ -116,9 +116,11 @@ fn test_read_non_existent_file() {
     let err = rt
         .block_on(xihe_fs::read_file("does_not_exist.txt", ws))
         .unwrap_err();
+    // PLAN-0427 T1.2: ENOENT is absence (FileNotFound -> REST 200 {found:false}),
+    // not a traversal. True traversal stays PathTraversal (test above).
     assert!(
-        matches!(err, RuntimeError::PathTraversal { .. }),
-        "expected PathTraversal for non-existent file (canonicalize fails), got: {:?}",
+        matches!(err, RuntimeError::FileNotFound(_)),
+        "expected FileNotFound for non-existent file (ENOENT), got: {:?}",
         err
     );
 }
