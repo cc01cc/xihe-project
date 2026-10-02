@@ -22,9 +22,11 @@ mise run setup
 
 # Start daily host development: PostgreSQL in Docker; other modules native
 mise run dev:host
+# Config import and Provider Connection setup are separate explicit CLI tasks
+mise run xihe -- --help
 ```
 
-The UI uses port `12630` by default. See [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md) for prerequisites and run modes. `mise run dev:full` is for a one-off Compose baseline, not daily development.
+The UI uses port `12630` by default. `dev:host` does not import config or create a provider connection; use the explicit `mise run dev:host:import-config` / `mise run dev:host:provider-init` tasks when needed. See [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md). `mise run dev:full` is for a one-off Compose baseline, not daily development.
 
 ## 2. Architecture
 

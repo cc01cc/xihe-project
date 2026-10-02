@@ -79,10 +79,12 @@ sequenceDiagram
   C-->>M: /actuator/health + /internal/v1/agent/health + /health + UI 根路径就绪
 ```
 
-要点（锚点：`mise.toml: dev:host` + `scripts/dev-host.ps1`）：
+要点（锚点：`mise.toml: dev:host` + `scripts/dev-host-watch.mjs`）：
 
 - PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。
-- CP ready 后自动导入 `config.import.local.jsonc`（如存在，需 `XIHE_DEV_ADMIN_PASSWORD` 环境变量，否则跳过并提示；见 `scripts/dev-host-import-config.mjs`）。
+- 默认启动**不导入配置，也不创建/更新 Provider Connection**。
+- 需要配置时，CP ready 后显式运行 `mise run dev:host:import-config`；该命令只导入非密钥 JSONC。
+- 需要创建 Provider Connection 时，单独运行 `mise run dev:host:provider-init -- --provider xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY`。
 - Runtime 用 `XIHE_WORKSPACE_HOST_ROOT`（默认 `A03-xihe/.xihe-workspaces`）作宿主 WorkspaceStorage 根。
 - `/health` 为 liveness，`/ready` 不等待全部 Sandbox 物化；Workspace 按 `workspaceId` 首次操作时懒物化。
 
@@ -90,10 +92,32 @@ sequenceDiagram
 
 | 命令 | 说明 |
 |------|------|
+| `mise run xihe -- --help` | 查看 CLI 命令 |
+| `mise run dev:host:check` | 检查开发环境 |
+| `mise run dev:host:import-config` | 显式导入非密钥配置 |
+| `mise run dev:host:provider-init` | 创建或复用 Provider Connection |
+| `mise run test:e2e:host:real` | 运行指定真实 MiMo 用例 |
 | `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
 | `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |
 | `mise run dev:reset` | 默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity |
 | `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启 |
+
+命令示例：
+
+```bash
+mise run dev:host:provider-init -- --provider xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY
+mise run xihe -- provider add xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY
+mise run xihe -- provider update <connection-id> --api-key-env XIHE_XIAOMI_API_KEY
+mise run xihe -- provider list
+mise run xihe -- provider verify <connection-id>
+mise run test:e2e:host:real -- e2e/real/real-tool-roundtrip.spec.ts --route openai-compat
+```
+
+CLI 与 UI 并列调用 CP API；Agent 不调用运维 CLI。Provider Key 经 CP 加密保存。real E2E 通过 Agent 的独立环境变量路径运行，不代表验证了 Provider Connection lease。
+
+`--api-key-env` 指向当前进程已注入的变量；交互终端缺少变量时 CLI 会以无回显方式提示，非交互任务则失败。CLI 不自行读取 `.env.local`；无人值守时由调用方安全注入环境变量。
+
+`real-tool-roundtrip` 最多提交两轮模型提示，可能产生相应费用；Playwright 整条用例自动重试已关闭，失败后需操作者决定是否重跑。
 
 ### 模式 B：Docker Compose 全栈（一次性基线）
 

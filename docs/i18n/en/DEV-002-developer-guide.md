@@ -232,14 +232,16 @@ CP ConfigService is the unified configuration management entry point, using a tw
 curl -X PUT http://localhost:8080/config/admin/llm-provider \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"deepseekApiKey": "sk-xxx", "defaultProvider": "deepseek"}'
+  -d '{"defaultProvider": "deepseek"}'
 
 # Read current effective configuration
 curl http://localhost:8080/config/llm-provider \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-**Method B: JSONC Import** (batch initialization, recommended for dev startup)
+Provider API keys are not ConfigService values. Manage them through the Provider Connection commands below; `config import` accepts non-secret settings only.
+
+**Method B: Explicit JSONC Import** (for non-secret settings)
 
 ```bash
 # Import configuration to admin layer (canonical path: /api/v1/config/import)
@@ -249,15 +251,25 @@ curl -X POST http://localhost:12631/api/v1/config/import \
   -d @config.import.local.jsonc
 ```
 
-`mise run dev:host` and `mise run dev:full` both auto-import `config.import.local.jsonc` after CP is ready when `XIHE_DEV_ADMIN_PASSWORD` is set (OS env only; never commit to scripts/git/logs). Without it, run `mise run reset-admin` to obtain the password and import manually, or configure via the UI settings page.
+`mise run dev:host` does **not** import config or create/update Provider Connections. After CP is ready, explicitly run `mise run dev:host:import-config` (or `mise run xihe -- config import <file>`) for non-secret JSONC settings. The one-off `mise run dev:full` Compose script retains its separate legacy, environment-triggered import behavior.
 
 JSONC supports comments and trailing commas; you can directly copy MCP configuration snippets from Claude Desktop / Cursor.
 
 #### Development Workflow
 
-1. **`cp config.import.example.jsonc config.import.local.jsonc`** — Fill in API keys (PowerShell: `Copy-Item`)
-2. **`mise run dev:full`** — Docker Compose startup; import `config.import.local.jsonc` manually after CP is ready (see above)
-3. **Runtime debugging** — `PUT /api/v1/config/admin/{domain}` or UI settings page modification, takes effect immediately
+1. **`cp config.import.example.jsonc config.import.local.jsonc`** — Fill in non-secret settings only (PowerShell: `Copy-Item`); API keys belong in Provider Connections, not JSONC.
+2. **`mise run dev:host`** — Start the daily host stack; config import remains separate.
+3. **`mise run dev:host:import-config`** — Explicitly import local non-secret config after CP is ready.
+4. **`mise run dev:host:provider-init -- --provider xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY`** — Create or reuse and verify a local provider connection.
+5. **`mise run test:e2e:host:real -- e2e/real/real-tool-roundtrip.spec.ts --route openai-compat`** — Run one real MiMo host test; requires `XIHE_E2E_REAL_XIAOMI_KEY`.
+
+The CLI is an operator entry point. It calls CP's authenticated HTTP API for Provider Connections; Agent execution continues to use its own lease/protocol path. The real E2E key is injected directly into the isolated Agent process and does not test a Provider Connection lease.
+
+`--api-key-env` reads a variable already present in the CLI process. An interactive terminal prompts without echo when needed; non-interactive tasks must inject the environment variable. The CLI does not read `.env.local` itself.
+
+`real-tool-roundtrip` may send up to two model prompts and can incur provider charges. Playwright retries are disabled for this command; decide manually whether to rerun after a failure.
+
+6. **Runtime debugging** — `PUT /api/v1/config/admin/{domain}` or UI settings page modification, takes effect immediately
 
 #### Configuration Clients
 
