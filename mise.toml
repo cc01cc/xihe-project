@@ -100,9 +100,14 @@ dir = "packages/runtime"
 alias = "build:runtime"
 
 [tasks.test]
-depends = ["test:ui", "test:agent", "test:cp", "test:runtime:lib"]
+depends = ["test:ui", "test:agent", "test:cp", "test:runtime:lib", "test:cli"]
 description = "Run all tests"
 alias = "test"
+
+[tasks."test:cli"]
+run = "node --test scripts/xihe-cli.test.mjs"
+description = "Run the dev/ops CLI unit tests"
+alias = "test:cli"
 
 [tasks."test:ui"]
 run = "pnpm --ignore-workspace run test:unit"
@@ -143,6 +148,16 @@ alias = "test:e2e"
 run = "node scripts/e2e-host.mjs"
 description = "Run host-only E2E tests in an isolated per-run native stack"
 alias = "test:e2e:host"
+
+[tasks.xihe]
+run = "node scripts/xihe.mjs"
+description = "Run the XH development and operations CLI; pass command arguments after --"
+alias = "xihe"
+
+[tasks."test:e2e:host:real"]
+run = "node scripts/xihe.mjs test real"
+description = "Run one explicit real-MiMo host spec; pass the spec and --route after --"
+alias = "test:e2e:host:real"
 
 [tasks."test:integration"]
 depends = ["test:integration:t2", "test:integration:t3"]
@@ -226,16 +241,22 @@ alias = "validate:full"
 [tasks."dev:host"]
 depends = ["dev:host:start:pg"]
 run = [
-  { tasks = ["dev:host:start:cp", "dev:host:start:agent", "dev:host:start:runtime", "dev:host:start:ui", "dev:host:import-config"] }
+  { tasks = ["dev:host:start:cp", "dev:host:start:agent", "dev:host:start:runtime", "dev:host:start:ui"] }
 ]
-description = "Start PostgreSQL in Docker and CP/Agent/Runtime/UI as mise-managed native tasks"
+description = "Start PostgreSQL in Docker and CP/Agent/Runtime/UI; does not import config or create provider connections"
 alias = "dev:host"
 
 [tasks."dev:host:import-config"]
-run = "node scripts/dev-host-import-config.mjs"
-description = "Import config.import.local.jsonc after CP ready (needs XIHE_DEV_ADMIN_PASSWORD, skips otherwise)"
+run = "node scripts/xihe.mjs config import config.import.local.jsonc"
+description = "Explicitly import non-secret local config after CP is ready; not part of dev:host startup"
 dir = "."
 alias = "dev:host:import-config"
+
+[tasks."dev:host:provider-init"]
+run = "node scripts/xihe.mjs dev init"
+description = "Initialize/verify an explicit provider and scope; pass CLI options after --"
+dir = "."
+alias = "dev:host:provider-init"
 
 [tasks."dev:host:watch"]
 run = "node scripts/dev-host-watch.mjs"
@@ -243,8 +264,8 @@ description = "Keep the mise-managed native host stack alive and restart it afte
 alias = "dev:host:watch"
 
 [tasks."dev:host:check"]
-run = "pwsh -File scripts/dev-host.ps1 -Check"
-description = "Preflight check for dev:host (Docker npipe, ports, host root, tools)"
+run = "node scripts/xihe.mjs dev check"
+description = "Read-only preflight for host tools, Docker, ports, config sources, and workspace root"
 alias = "dev:host:check"
 
 [tasks."dev:reset"]
