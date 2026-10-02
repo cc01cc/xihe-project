@@ -30,9 +30,11 @@ mise install
 # 安装各模块依赖并启动日常 host 开发栈
 mise run setup
 mise run dev:host
+# 查看开发/运维 CLI；配置导入与 Provider 初始化需显式执行
+mise run xihe -- --help
 ```
 
-`.env` 与 `.env.dev` 已作为安全基线入库，无需复制或覆盖；个人凭据写入 gitignored 的 `.env.local`，不得提交或写入日志。日常开发中 PostgreSQL 使用 Docker，其余服务由 mise 在宿主机启动。UI 默认端口为 `12630`。`mise run dev:full` 仅用于一次性全容器基线场景，环境说明见 [DEV-002](DEV-002-developer-guide.md)。
+`.env` 与 `.env.dev` 已作为安全基线入库，无需复制或覆盖；个人凭据写入 gitignored 的 `.env.local`，不得提交或写入日志。日常开发中 PostgreSQL 使用 Docker，其余服务由 mise 在宿主机启动。`dev:host` 不会导入配置或创建 Provider Connection；需要时运行 `mise run dev:host:import-config` 和 `mise run dev:host:provider-init`。UI 默认端口为 `12630`。`mise run dev:full` 仅用于一次性全容器基线场景，环境说明见 [DEV-002](DEV-002-developer-guide.md)。
 
 开发管理员密码通过 `mise run reset-admin` 临时重置；命令输出只用于本地登录，不要保存到脚本、源码或日志。
 

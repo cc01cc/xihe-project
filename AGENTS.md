@@ -18,7 +18,7 @@
 ## Setup
 
 - 使用 `mise install` 和 `mise run setup` 安装固定工具链与依赖；前置条件及模块命令见 DEV-002。
-- 日常 host 开发运行 `mise run dev:host`：仅 PostgreSQL 在 Docker 中，CP、Agent、Runtime、UI 由 mise 原生启动。
+- 日常 host 开发运行 `mise run dev:host`：仅 PostgreSQL 在 Docker 中，CP、Agent、Runtime、UI 由 mise 原生启动；该命令不导入配置或创建 Provider Connection。项目开发/运维命令见 DEV-002 与 `mise run xihe -- --help`。
 - `mise run dev:full` 仅用于一次性 Compose 场景，不替代 host E2E 或 Runtime 创建的 Workspace/Sandbox 验证。
 - `mise run dev:reset` 默认 dry-run；显式重置前检查备份与数据范围。`reset-admin` 输出临时开发密码，不得写入脚本、源码或日志。
 

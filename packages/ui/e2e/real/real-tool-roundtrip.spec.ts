@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
@@ -10,6 +12,7 @@ import {
     registerJourneyUser,
     seedPage,
     sendChat,
+    waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 
 // PLAN-0372 (BL-28) decision #B: real-lane workspace tool round-trip over the
@@ -27,6 +30,45 @@ const HOST_ROOT =
         ? path.resolve(process.cwd(), "../../.tmp/e2e-host", process.env.XIHE_E2E_RUN_ID)
         : path.resolve(process.cwd(), "../../.xihe-workspaces"));
 const EVIDENCE_DIR = evidenceDir("plan-0372-real-compat");
+
+// Fresh journey users carry no grants; the template/principal/binding writes
+// below need them (same fixture as session-branch/approval specs).
+function seedUserGrant(userId: string, workspaceId: string) {
+    const container = process.env.XIHE_E2E_PG_CONTAINER;
+    const database = process.env.XIHE_E2E_PG_DATABASE;
+    const dbUser = process.env.XIHE_E2E_PG_USER;
+    if (!container || !database || !dbUser) {
+        throw new Error(
+            "isolated PostgreSQL fixture metadata is unavailable; run through scripts/e2e-host.mjs",
+        );
+    }
+    const permissions = JSON.stringify([
+        { actionClass: "CREATE_ACCOUNT", resource: "*" },
+        { actionClass: "CREATE_TEMPLATE", resource: "*" },
+        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceId },
+        { actionClass: "write", resource: "*" },
+    ]).replaceAll("'", "''");
+    execFileSync(
+        process.platform === "win32" ? "docker.exe" : "docker",
+        [
+            "exec",
+            container,
+            "psql",
+            "-X",
+            "-A",
+            "-t",
+            "-U",
+            dbUser,
+            "-d",
+            database,
+            "-c",
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, read_state) `
+                + `VALUES (gen_random_uuid(), 'user', '${userId}'::uuid, 'user', '${userId}'::uuid, `
+                + `'${permissions}'::jsonb, 'direct', 'read')`,
+        ],
+        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+    );
+}
 
 test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip", () => {
     test.describe.configure({ mode: "serial" });
@@ -51,9 +93,71 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         // PLAN-0372 (BL-28): per-run workspace binding; the restart contract in
         // this mode carries XIHE_OPENAI_API_KEY (same real key, never printed).
         await ensureAgentWorkspaceBinding(wsId);
+        // The rebind leaves CP's cached agent readiness stale until its next
+        // probe; the chat gate rejects with AGENT_UNAVAILABLE (llmReady unknown)
+        // if the first send wins that race (2026-10-02 real run, 114ms miss).
+        await waitForControlPlaneAgentReady(request, headers);
+
+        // PLAN-0374 session gates: Session creation requires at least one
+        // workspace-bound agent principal, so seed grants/template/principal/
+        // binding and create the Session through the API (session-branch pattern).
+        const meRes = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
+        expect(meRes.ok(), await meRes.text()).toBeTruthy();
+        const userId = (await meRes.json() as { id: string }).id;
+        seedUserGrant(userId, wsId);
+        const setupHeaders = { ...headers, "X-Workspace-Id": wsId };
+        const roleId = randomUUID();
+        const templateId = randomUUID();
+        const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
+            headers: setupHeaders,
+            data: {
+                roles: JSON.stringify([
+                    {
+                        id: roleId,
+                        name: "Real Compat Role",
+                        permissions: [{ actionClass: "write", resource: "*" }],
+                    },
+                ]),
+                templates: JSON.stringify([
+                    {
+                        id: templateId,
+                        name: "Real Compat Agent",
+                        description: "Workspace-bound fixture for the openai-compat round trip",
+                        systemPrompt: "Use only the Workspace tools provided by CP.",
+                        toolMode: "workspace",
+                        provider: "openai",
+                        model: MODEL_ID,
+                        roleId,
+                    },
+                ]),
+            },
+        });
+        expect(templateWrite.status(), await templateWrite.text()).toBe(200);
+        const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
+            headers: setupHeaders,
+            data: { name: "Real Compat Agent", templateId },
+        });
+        expect(principalRes.status(), await principalRes.text()).toBe(201);
+        const principalId = (await principalRes.json() as { principalId: string }).principalId;
+        const bindRes = await request.put(
+            `${CP_URL}/api/v1/workspaces/${wsId}/agents/${principalId}`,
+            {
+                headers: setupHeaders,
+                data: { permissions: [{ actionClass: "write", resource: "*" }] },
+            },
+        );
+        expect(bindRes.status(), await bindRes.text()).toBe(200);
+        const sessionRes = await request.post(`${CP_URL}/api/v1/sessions`, {
+            headers: setupHeaders,
+            data: { title: "Real compat round trip", agentPrincipalId: principalId },
+        });
+        expect(sessionRes.status(), await sessionRes.text()).toBe(201);
+        const seededSessionId = (await sessionRes.json() as { id: string }).id;
 
         seedPage(page, { authToken: ctx.authToken, workspaceId: wsId, headers });
-        await page.goto("/workspace/" + wsId, { waitUntil: "load" });
+        await page.goto("/workspace/" + wsId + "/chat/" + seededSessionId, {
+            waitUntil: "load",
+        });
         await ensureChatReady(page);
 
         // Pin the canonical pair to the OpenAI-compatible route (in this mode the
@@ -68,20 +172,9 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         });
         await modelSearch.press("Enter");
 
-        // The session exists once the workspace chat is up; assert the pair.
-        let sessionId = "";
-        await expect
-            .poll(
-                async () => {
-                    const res = await request.get(`${CP_URL}/api/v1/sessions`, { headers });
-                    if (!res.ok()) return "";
-                    const body = (await res.json()) as { sessions?: Array<{ id?: string }> };
-                    sessionId = body.sessions?.[0]?.id ?? "";
-                    return sessionId;
-                },
-                { timeout: 30000 },
-            )
-            .not.toBe("");
+        // The session was created above; use it directly instead of racing the
+        // session list (2026-10-02 review: the poll could pick another session).
+        const sessionId = seededSessionId;
         const branchId = await getRootBranchId(request, sessionId, headers);
         await expect
             .poll(
@@ -102,7 +195,24 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
 
         const fileName = `xh-real-compat-${Date.now().toString(36)}.txt`;
         const content = `openai-compat round trip ${fileName}`;
-        const hostFile = path.join(HOST_ROOT, wsId, fileName);
+        // The model may address the file at the workspace root or under an
+        // explicit `workspace/` subfolder (2026-10-02 real run observed the
+        // latter); both are in-bounds writes inside the isolated host root.
+        const hostFileCandidates = [
+            path.join(HOST_ROOT, wsId, fileName),
+            path.join(HOST_ROOT, wsId, "workspace", fileName),
+        ];
+        const readHostFile = (): string => {
+            for (const candidate of hostFileCandidates) {
+                try {
+                    const text = readFileSync(candidate, "utf8");
+                    if (text !== "") return text;
+                } catch {
+                    // Missing candidate: keep scanning the remaining layout.
+                }
+            }
+            return "";
+        };
         const modal = page.locator('[data-testid="modal-content"]');
 
         // The real model may answer with prose instead of calling the tool; one
@@ -130,15 +240,9 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
             try {
                 await expect
                     .poll(
-                        async () => {
-                            try {
-                                return readFileSync(hostFile, "utf8");
-                            } catch {
-                                return "";
-                            }
-                        },
+                        async () => readHostFile(),
                         {
-                            message: `expected ${hostFile} to contain the requested content`,
+                            message: `expected ${fileName} under ${path.join(HOST_ROOT, wsId)} to contain the requested content`,
                             timeout: approved ? 60000 : 15000,
                         },
                     )

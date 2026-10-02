@@ -162,7 +162,23 @@ curl -X POST "http://localhost:12631/api/v1/config/import?layer=instance" \
   -d @config.import.local.jsonc
 ```
 
-`mise run dev:host` 与 `mise run dev:full` 均在 CP ready 后自动导入 `config.import.local.jsonc`（如存在，需 `XIHE_DEV_ADMIN_PASSWORD`，否则跳过并提示）；也可通过 UI Settings 或 API 手动修改。导入为**按域合并覆盖**（只更新携带的键），旧模板若含 `*ApiKey` 会被 403 拒绝——删除这些键即可。
+`mise run dev:host` **不会自动导入**配置。CP ready 后如需导入，显式运行 `mise run dev:host:import-config`，或 `mise run xihe -- config import <file>`；需要本机管理员认证。导入为**按域合并覆盖**（只更新携带的键），旧模板若含 `*ApiKey` 会被 403 拒绝——删除这些键即可。
+
+`mise run dev:full` 是独立的一次性 Compose 脚本，仍保留其原有显式环境变量触发导入的行为；不要把它的启动语义套用到日常 `dev:host`。
+
+**XH CLI 与 Provider Connection**：`provider add/update/list/verify` 经 CP 认证 API 管理连接，密钥由 CP 加密存入 `provider_connections`。`dev init` 需要显式 provider/scope；无连接时创建，有连接时复用并 verify，不自动换 key。通过 `--api-key-env <NAME>` 指定当前进程环境变量，或在交互终端输入无回显密钥；CLI 不自行读取 `.env.local`，非交互任务必须由调用方安全注入变量。禁止把 key 值放在命令参数或 JSONC 中。
+
+```bash
+mise run xihe -- provider add xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY
+mise run xihe -- provider update <connection-id> --api-key-env XIHE_XIAOMI_API_KEY
+mise run xihe -- provider list
+mise run xihe -- provider verify <connection-id>
+mise run dev:host:provider-init -- --provider xiaomi --scope USER --label xh-local
+```
+
+Catalog 标为 manual discovery 的 Provider（如 Ark）创建连接时，还须明确提交模型 ID，例如 `--models doubao-pro,deepseek-v3`；模型发现方式只跟随 Catalog，CLI 不提供覆盖参数。remote-models Provider 拒绝 `--models`。列表与 verify 不回显远端模型列表。
+
+Provider verify 的 ready 只表示 CP 当前 remote `/models` 响应结构有效（`data` 数组可为空），不代表模型 completion 成功。`test:e2e:host:real` 沿用 Agent 进程的 `XIHE_E2E_REAL_XIAOMI_KEY` 通路，不消费此处的 Provider Connection lease；两条路径不可相互替代。
 
 **导入导出契约（决策 #36/#37，T2.21/T2.25）**：导出 `GET /api/v1/config/export?layer=instance&includeSecrets=<bool>`（ADMIN）—— config KV + `provider-connections` 元数据（label/status/modelDiscovery/manualModels/enabled/ownerType/ownerId/baseUrl）；`includeSecrets=false` 仅排除明文 `apiKey`，**任何模式都不输出库内密文**；导出写 AUDIT sink（actor/时间/是否含密钥，不记响应体）且响应 `Cache-Control: no-store`。导入**不恢复任何凭证**——`provider-connections` 条目整体跳过并在响应 `{imported, skipped, warnings}` 中列出（owner id 跨实例不可映射），需人工经凭证 API/UI 重建。导出产物落盘使用 `config.export*.jsonc`（gitignored）。UI 实例页内提供导出（含可选明文密钥开关）与导入（文件 + WARN 清单）入口。
 
