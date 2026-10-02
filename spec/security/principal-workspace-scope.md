@@ -1,6 +1,7 @@
 # XH Principal、Workspace Scope 与资源归属
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security + Workspace；Active PLAN：PLAN-0420；来源：PLAN-0386/DEV-032/PLAN-0407（授权模型条款回写自 PLAN-0407 spec/authorization-and-derivation.md）；更新：2026-09-27。
+> 消费者：CP authorization/session/MCP、Workspace Agent API、Agent、UI Agent 管理与 Session 选择
 
 ## 1. 术语
 

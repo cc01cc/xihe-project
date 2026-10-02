@@ -1,6 +1,7 @@
 # XH 事件流
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`protocol`；Owner：CP/Runtime/Agent 跨边界 owner；来源：PLAN-0385，Session 派生状态事件扩展由 PLAN-0408 顺序承接；更新：2026-09-28。
+> 消费者：CP、UI、Agent、Runtime
 
 ## 1. Chat Session SSE
 

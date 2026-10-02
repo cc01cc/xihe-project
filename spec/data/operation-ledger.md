@@ -1,6 +1,7 @@
 # XH Operation Ledger
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`data`；Owner：CP durable-record owner；来源：PLAN-0385；更新：2026-09-21。
+> 消费者：CP、Agent、Runtime、UI、Audit
 
 ## 1. 对象边界
 

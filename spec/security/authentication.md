@@ -1,6 +1,7 @@
 # XH 身份认证
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security/CP；来源：PLAN-0386；更新：2026-09-20。
+> 消费者：CP API、UI 登录客户端、Agent/Runtime 内部服务客户端
 
 ## 1. 当前实现
 

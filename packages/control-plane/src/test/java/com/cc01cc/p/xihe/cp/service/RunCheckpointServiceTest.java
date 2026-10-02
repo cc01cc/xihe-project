@@ -203,6 +203,24 @@ class RunCheckpointServiceTest {
     }
 
     @Test
+    void terminalCapturePersistsOpaqueNestedRepos() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(RuntimeCheckpointClient.Outcome.OK,
+                        RUN_ID, false, SLICE_REF, "ab12cd", "2026-09-15T00:00:00Z",
+                        RunCheckpoint.STATE_CAPTURED,
+                        List.of(new RuntimeCheckpointClient.ChangedFile("M", "src/a.txt")),
+                        List.of("vendor/lib"), null, null));
+
+        assertTrue(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(1, rows.size());
+        assertEquals("[\"vendor/lib\"]", rows.get(0).getOpaqueNestedRepos());
+        assertEquals(List.of("vendor/lib"), service.list(WORKSPACE_ID).get(0).opaqueNestedRepos());
+    }
+
+    @Test
     void abnormalTerminalCapturesAbnormalState() {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("ambiguous")));

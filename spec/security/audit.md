@@ -1,6 +1,7 @@
 # XH 安全审计
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：CP/Security；来源：PLAN-0386、logging-observability-security；更新：2026-09-20。
+> 消费者：CP AuditLogger、授权/审批调用方、Operation audit
 
 ## 1. 审计记录
 

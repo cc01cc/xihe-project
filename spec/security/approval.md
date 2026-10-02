@@ -1,6 +1,7 @@
 # XH 审批契约
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：CP/Security；来源：PLAN-0386、DEV-014、PLAN-0407 spec §9（ask 清单补录）；更新：2026-09-27。
+> 消费者：CP approval gate、Agent approval relay、UI approval modal、Audit
 
 ## 1. 请求身份
 

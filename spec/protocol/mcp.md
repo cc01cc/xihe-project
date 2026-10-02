@@ -1,6 +1,7 @@
 # XH MCP 通信边界
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`protocol`；Owner：CP/Runtime/MCP owner；来源：PLAN-0385；更新：2026-09-20。
+> 消费者：Agent MCP adapter、CP MCP proxy、Runtime MCP session、Workspace lifecycle
 
 ## 1. 路由边界
 

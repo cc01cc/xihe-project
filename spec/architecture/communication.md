@@ -1,6 +1,7 @@
 # XH 模块通信
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`protocol`；Owner：XH 跨边界 owner；来源：PLAN-0385；更新：2026-09-20。
+> 消费者：UI、CP、Agent、Runtime、跨模块调用方
 
 ## 1. 两类通信流
 

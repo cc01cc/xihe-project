@@ -3,6 +3,7 @@
 > 本文件是 A03 根级 SPEC 的唯一写作指南。根级 SPEC 使用中文为主，面向实现者、跨模块协作者、审查者和 Agent。
 >
 > 契约状态：`active`；实现状态：`implemented`；Profile：`governance`；Owner：XH 项目维护者；来源：PLAN-0383。
+> 消费者：XH Agent、SPEC 作者、实现者、跨模块协作者、审查者
 
 ## 1. 语言与术语
 

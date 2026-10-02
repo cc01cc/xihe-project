@@ -1,6 +1,7 @@
 # XH 执行能力边界
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Runtime/Security；来源：PLAN-0386/DEV-031；更新：2026-09-20。
+> 消费者：Runtime backend、CP capability preflight、UI capability 状态
 
 ## 1. 独立决策层
 

@@ -1,6 +1,7 @@
 # XH 授权模型
 
 > 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security/CP；来源：PLAN-0386；PLAN-0407 T2.8 按其 spec §9 根级写回（policy/rules 裁决 → 查表语义）；更新：2026-09-27。
+> 消费者：CP 授权/policy、Workspace API、MCP 工具调用门、UI 授权结果
 
 ## 1. 决策输入
 

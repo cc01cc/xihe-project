@@ -47,21 +47,21 @@ spec/
 
 ## 3. 当前领域登记
 
-| 领域 | 契约状态 | 实现状态 | Canonical owner | 承接关系 |
-|---|---|---|---|---|
-| architecture / communication | proposed | partial | 跨边界 owner | PLAN-0385；Session 派生状态 SSE extension 顺序承接至 PLAN-0408；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
-| ui interaction | proposed | partial | UI + 跨边界 owner | PLAN-0388；PLAN-0384 仅负责 feature flow |
-| agent execution / Context | proposed | partial | Agent owner | PLAN-0387；0381/0382 仍为局部规范 |
-| session boundaries | proposed | partial | CP/Session owner | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408 |
-| session branch context isolation | active | partial | CP Context + Agent Context owners | PLAN-0410；V43 数据面已实现并承接 child `session.forked` seed consumer（T3.6），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费；不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
-| authentication / authorization | proposed | partial | Security owner | PLAN-0386；principal/role/scope 归 Security |
-| agent role/scope binding | proposed | partial | Agent owner | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
-| agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | PLAN-0374 principal/Workspace binding、template CRUD/form 与 V5/V6/V7 已完成；fork 创建归 PLAN-0409/0410；Agent 铸造与多层审批后置 BL-70/71 |
-| capability / approval / audit | proposed | partial | Runtime/Security/CP owners | PLAN-0386/0389；能力策略、审批、审计分别建模 |
-| workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | PLAN-0389 |
-| execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
-| configuration / env | proposed | partial | CP ConfigService owner | PLAN-0389；以现行配置模型整合历史来源 |
-| protocol / data | proposed | partial | 对应协议和 durable-record owners | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
+| 领域 | 契约状态 | 实现状态 | Canonical owner | 消费者 | 所在仓库 | 承接关系 |
+|---|---|---|---|---|---|---|
+| architecture / communication | proposed | partial | 跨边界 owner | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；Session 派生状态 SSE extension 顺序承接至 PLAN-0408；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
+| ui interaction | proposed | partial | UI + 跨边界 owner | UI、CP、Agent、Session、Workspace | A03-xihe | PLAN-0388；PLAN-0384 仅负责 feature flow |
+| agent execution / Context | proposed | partial | Agent owner | Agent、CP、Runtime、UI、Security | A03-xihe | PLAN-0387；PLAN-0381/0382 局部规范状态见其文件级消费者/来源字段 |
+| session boundaries | proposed | partial | CP/Session owner | UI、CP/Session、Agent、Context、Operation、Workspace、Runtime/MCP | A03-xihe | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408 |
+| session branch context isolation | active | partial | CP Context + Agent Context owners | CP Chat/EventStore/Context、Agent Context、UI | A03-xihe | PLAN-0410；V43 数据面已实现并承接 child `session.forked` seed consumer（T3.6），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费；不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
+| authentication / authorization | proposed | partial | Security owner | Authentication：CP API、UI 登录、Agent/Runtime 内部客户端；Authorization：CP policy、Workspace API、MCP 工具门、UI 结果 | A03-xihe | PLAN-0386；principal/role/scope 归 Security |
+| agent role/scope binding | proposed | partial | Agent owner | CP、Agent、Runtime、UI 审计 | A03-xihe | PLAN-0387；只写绑定、传播和消费，不复制授权模型 |
+| agent principal / Workspace binding | active | partial | Agent binding owner（PLAN-0374；Security canonical 归 PLAN-0407） | CP authorization/session/MCP、Workspace Agent API、Agent、UI Agent 管理与 Session 选择 | A03-xihe | PLAN-0374 principal/Workspace binding、template CRUD/form 与 V5/V6/V7 已完成；fork 创建归 PLAN-0409/0410；Agent 铸造与多层审批后置 BL-70/71 |
+| capability / approval / audit | proposed | partial | Runtime/Security/CP owners | Capability：Runtime、CP、UI；Approval：CP、Agent、UI、Audit；Audit：CP、授权/审批调用方、Operation | A03-xihe | PLAN-0386/0389；能力策略、审批、审计分别建模 |
+| workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | CP、Runtime、UI、Agent | A03-xihe | PLAN-0389 |
+| execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | CP Job API/durable record、Runtime Job backend、UI、Agent | A03-xihe | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
+| configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源 |
+| protocol / data | proposed | partial | 对应协议和 durable-record owners | Protocol：UI、CP、Agent、Runtime；Operation Ledger：CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |
 
 ## 4. Agent 读取规则
 
