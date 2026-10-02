@@ -37,6 +37,7 @@ use tokio::sync::Mutex;
 use workspace_events::WorkspaceEventWatchers;
 use xihe_runtime::backend::{DockerBackend, SandboxBackend, SandboxHandle};
 use xihe_runtime::checkpoint::NestedRepoPolicy;
+use xihe_runtime::checkpoint::WorkspaceGitFacts;
 use xihe_runtime::checkpoint_api::{
     C0_RUN_ID, CaptureFailure, CheckpointService, CleanupFailure, GcFailure,
 };
@@ -2733,13 +2734,102 @@ async fn workspace_git_status_handler(
     }
 }
 
-/// PLAN-0340 L1b: branch + short HEAD (no dirty).
+/// PLAN-0382 T1.1: workspace facts = git half (owned by the checkpoint
+/// engine) + execution env half composed here per the frozen value-source
+/// table (spec §2.1). `null` env fields mean "unknown, do not guess":
+/// host/mxc modes never report a host-absolute `cwd` or a shell layer that
+/// does not exist; an unknown mode (never materialized in this Runtime
+/// lifetime) reports all three as unknown. `observedAt` is report-time only
+/// and never an idempotency key (spec §2.1 double rule).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFactsResult {
+    #[serde(flatten)]
+    git: WorkspaceGitFacts,
+    /// Logical in-sandbox cwd; `null` = unknown (host/mxc must not leak a
+    /// host-absolute path — §4 model-visible boundary).
+    cwd: Option<String>,
+    /// Execution-face platform (container OS / Runtime host OS).
+    platform: Option<String>,
+    /// Tool-exec shell entry; `null` = no shell layer (host direct) or unknown.
+    shell: Option<String>,
+    /// RFC3339 UTC time this facts response was composed.
+    observed_at: String,
+}
+
+/// PLAN-0382 T1.1 value-source table (spec §2.1): mode → (cwd, platform, shell).
+fn facts_env_half(mode: Option<&str>) -> (Option<String>, Option<String>, Option<String>) {
+    match mode {
+        Some("docker") => (
+            Some("/workspace".to_string()),
+            Some("linux".to_string()),
+            Some("xihe-shell".to_string()),
+        ),
+        Some("windows-host") | Some("windows-mxc") => (
+            // Host-absolute cwd is model-invisible (§4) → unknown; platform is
+            // the real execution face (no path involved); host direct launch
+            // has no shell layer → unknown.
+            None,
+            Some(std::env::consts::OS.to_string()),
+            None,
+        ),
+        _ => (None, None, None),
+    }
+}
+
+#[cfg(test)]
+mod workspace_facts_tests {
+    use super::facts_env_half;
+
+    // spec §2.1 value-source table: docker reports the three container facts.
+    #[test]
+    fn docker_mode_reports_container_facts() {
+        let (cwd, platform, shell) = facts_env_half(Some("docker"));
+        assert_eq!(cwd.as_deref(), Some("/workspace"));
+        assert_eq!(platform.as_deref(), Some("linux"));
+        assert_eq!(shell.as_deref(), Some("xihe-shell"));
+    }
+
+    // host/mxc: never leak a host-absolute cwd; no shell layer; platform is
+    // the real execution face (std::env::consts::OS of this Runtime).
+    #[test]
+    fn host_modes_never_report_cwd_or_shell() {
+        for mode in ["windows-host", "windows-mxc"] {
+            let (cwd, platform, shell) = facts_env_half(Some(mode));
+            assert_eq!(cwd, None, "{mode} must not report cwd");
+            assert_eq!(shell, None, "{mode} has no shell layer");
+            assert_eq!(platform.as_deref(), Some(std::env::consts::OS));
+        }
+    }
+
+    // Unknown/absent mode (never materialized in this Runtime lifetime):
+    // all three fields unknown — CP maps absent/null to env_status=unknown.
+    #[test]
+    fn unknown_mode_reports_all_unknown() {
+        assert_eq!(facts_env_half(None), (None, None, None));
+        assert_eq!(facts_env_half(Some("someday")), (None, None, None));
+    }
+}
+
+/// PLAN-0340 L1b: branch + short HEAD (no dirty); PLAN-0382 T1.1 extends the
+/// response with execution env facts (cwd/platform/shell/observedAt).
 async fn workspace_git_facts_handler(
     Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
 ) -> Response {
     match app.checkpoints.git_facts(&ws_id).await {
-        Ok(facts) => AxumJson(facts).into_response(),
+        Ok(git) => {
+            let (cwd, platform, shell) =
+                facts_env_half(app.router.execution_mode(&ws_id).as_deref());
+            AxumJson(WorkspaceFactsResult {
+                git,
+                cwd,
+                platform,
+                shell,
+                observed_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            })
+            .into_response()
+        }
         Err(failure) => git_status_failure_response(failure),
     }
 }

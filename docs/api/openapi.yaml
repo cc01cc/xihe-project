@@ -1257,7 +1257,22 @@ paths:
   /internal/v1/context/{sourceSessionId}/fork:
     post: { operationId: forkContext, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sourceSessionId, required: true, schema: { type: string } }], responses: { '201': { description: Forked } } }
   /internal/v1/runtime/workspaces/{workspaceId}/git-facts:
-    get: { operationId: workspaceGitFacts, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: 'branch + short HEAD only (PLAN-0340 L1b); non-git isRepository=false' } } }
+    get:
+      operationId: workspaceGitFacts
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: >
+            Workspace facts (historical path name git-facts). git half:
+            isRepository/branch/head (PLAN-0340). env half (PLAN-0382,
+            additive): cwd/platform/shell/observedAt; null cwd/shell mean
+            unknown (host/mxc modes never report a host-absolute path) and CP
+            maps missing/null keys to env_status=unknown. observedAt is
+            report-time only and never an idempotency key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkspaceFactsResult' }
   /internal/v1/runtime/workspaces:
     post: { operationId: registerRuntimeWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Registered } } }
   /internal/v1/runtime/workspaces/{workspaceId}/execution-spec:
@@ -1620,6 +1635,7 @@ components:
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
     RuntimeReadFileRequest: { type: object, required: [path], additionalProperties: false, properties: { path: { type: string, description: 'Workspace-relative path.' }, max_bytes: { type: integer, description: 'Truncate content to N bytes; truncated=true marks an applied cut.' } } }
+    WorkspaceFactsResult: { type: object, required: [isRepository, cwd, platform, shell, observedAt], properties: { isRepository: { type: boolean }, branch: { type: string, description: 'Omitted when non-repo or detached.' }, head: { type: string }, cwd: { type: string, nullable: true, description: 'Logical sandbox cwd (/workspace in docker); null = unknown (host/mxc never report host paths).' }, platform: { type: string, nullable: true, description: 'Execution-face OS (container OS in docker, Runtime host OS otherwise).' }, shell: { type: string, nullable: true, description: 'Tool-exec shell entry (xihe-shell in docker); null = no shell layer or unknown.' }, observedAt: { type: string, format: date-time, description: 'Report time (RFC3339 UTC); diagnostics only, never an idempotency key.' } } }
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
     AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Agent tool-call correlation id of the durable spawn_agent OperationItem; never the OperationItem primary key' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }

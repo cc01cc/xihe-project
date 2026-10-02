@@ -1051,13 +1051,20 @@ class LangGraphRunner(AgentRunner):
 
         l1_text = ""
         if context.epoch:
-            l1_text = context.epoch.l1_rendered or ""
-            if not l1_text and context.epoch.sources:
-                parts = []
-                for source in context.epoch.sources:
-                    if source.key.upper().startswith("AGENTS"):
-                        parts.append(source.content)
-                l1_text = "\n\n".join(p for p in parts if p)
+            # PLAN-0382 Q2=A (spec §3): the fail-closed family never injects —
+            # neither rendered text nor the legacy `sources` fallback may feed
+            # the model without an ok state (BL-48: no unmarked fallback).
+            # "" (legacy key-absent) with content stays injectable: upgrades
+            # must not blank every pre-0382 session's L1.
+            l1_status = getattr(context.epoch, "l1_status", "")
+            if l1_status not in ("failed", "unavailable", "missing"):
+                l1_text = context.epoch.l1_rendered or ""
+                if not l1_text and context.epoch.sources:
+                    parts = []
+                    for source in context.epoch.sources:
+                        if source.key.upper().startswith("AGENTS"):
+                            parts.append(source.content)
+                    l1_text = "\n\n".join(p for p in parts if p)
         if l1_text:
             messages.append(SystemMessage(content=l1_text))
 
@@ -1111,16 +1118,20 @@ class LangGraphRunner(AgentRunner):
 
 
 def _render_env_block(epoch=None) -> str:
-    """PLAN-0340 T1.2: L1b env. Local facts + optional git from epoch (Runtime facts)."""
-    import os
-    import platform
+    """PLAN-0382 T2.2 (spec §2.1/§4): env facts come ONLY from the snapshot
+    (Runtime-reported via CP) — the Agent host never fills cwd/platform/shell
+    for a workspace. Unknown/absent facts render as `unknown`, never as a
+    host value. `date` is a neutral clock fact (design §3: kept as-is)."""
     from datetime import UTC, datetime
 
+    env_cwd = getattr(epoch, "env_cwd", None)
+    env_platform = getattr(epoch, "env_platform", None)
+    env_shell = getattr(epoch, "env_shell", None)
     lines = [
-        "cwd: /",
-        f"platform: {platform.system()}",
+        f"cwd: {env_cwd or 'unknown'}",
+        f"platform: {env_platform or 'unknown'}",
         f"date: {datetime.now(UTC).strftime('%Y-%m-%d')}",
-        f"shell: {os.environ.get('SHELL') or os.environ.get('COMSPEC') or 'unknown'}",
+        f"shell: {env_shell or 'unknown'}",
     ]
     if epoch is not None and getattr(epoch, "env_is_repository", False):
         branch = getattr(epoch, "env_branch", "") or "unknown"

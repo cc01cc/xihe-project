@@ -615,6 +615,10 @@ public class ChatController {
                 } catch (Exception sourceError) {
                     logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh_failed sessionId={} runId={} error={}",
                             sessionId, runId, sourceError.getMessage());
+                    // PLAN-0382 T0.5/B6: the run stays fail-open, but the L1 slot
+                    // must not survive as a fresh `ok` — record unavailable so the
+                    // frozen fail-closed policy applies to this run.
+                    contextSourceRefreshService.markSourceUnavailable(sessionId, workspaceId, userId);
                 }
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
                 ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))

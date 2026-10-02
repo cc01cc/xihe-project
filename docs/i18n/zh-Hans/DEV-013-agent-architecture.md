@@ -166,7 +166,7 @@ CP `ContextSourceRefreshService`（**每 run** 在 `ChatController.execAsync` �
 1. 经 Runtime 读 workspace 根 `AGENTS.md`，SHA-256（超 32KiB 截断标注）。
 2. 对比 **session epoch `source_hash`**（首注入必发，不跨 session 抑制）；workspace 表仅作增量优化。
 3. 变化 → `context.source_changed`（`created|updated` + `rendered_text` + sources）→ 读模型 **L1 槽替换**；I/O 失败 → `status=failed` 清 L1；未变 → `unchanged` 不发事件。
-4. Runtime `GET .../git-facts`（branch+HEAD，无 dirty）变化 → `context.env_updated` 存 epoch；U2 **不**因 env 告警。
+4. Runtime `GET .../git-facts`（**PLAN-0382 扩展为 workspace facts**：既有 branch/HEAD + 增量 `cwd/platform/shell/observedAt`，值来源表见 0382 spec §2.1；路径名为历史遗留）变化 → `context.env_updated`（含 `env_status` 四值）存 epoch；U2 **不**因 env 告警。Agent env block 只渲染 snapshot 中的 Runtime facts，host `cwd/platform/shell` 代填已移除；L1 仅 `l1_status=ok` 注入（fail-closed 族不注入，spec §3）。
 5. Agent `_build_system_messages`：`L0 → L1(l1_rendered) → env 块 → SUM`；不受 20 条历史截断。
 
 ### 3.5 诊断回灌（PLAN-0342）

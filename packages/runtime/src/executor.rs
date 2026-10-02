@@ -584,6 +584,17 @@ impl WorkspaceExecutionRouter {
         self.in_flight.clone()
     }
 
+    /// PLAN-0382 T1.1: last materialized execution mode of this workspace
+    /// in this Runtime lifetime (`None` = never materialized here → facts
+    /// report `null` fields and CP maps them to `env_status=unknown`).
+    pub fn execution_mode(&self, workspace_id: &str) -> Option<String> {
+        self.mode_by_workspace
+            .lock()
+            .expect("mode map poisoned")
+            .get(workspace_id)
+            .cloned()
+    }
+
     /// PLAN-0317 T2.9：追偿未确认终止；返回需要回调 CP 的迟到终止列表。
     pub async fn retry_unconfirmed_terminations(&self) -> Vec<LateTermination> {
         self.in_flight.retry_unconfirmed(&self.docker).await

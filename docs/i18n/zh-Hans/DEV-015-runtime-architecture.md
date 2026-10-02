@@ -191,3 +191,10 @@ refs/xihe/slices/<epochMs>-<commitHash>   ← 自定义 ref（非 refs/heads 分
 - Runtime internal：`POST /internal/v1/runtime/workspaces/{id}/checkpoints/capture|gc|cleanup|revert/preview|revert`、`GET .../blob`、`GET .../git-status`。CP 为调用方；public API 仅 workspace 级切片列表、按 `sliceRef` 恢复/读文件/清理。
 - 端点字段：[OpenAPI](../../api/openapi.yaml) / [API inventory](../../api/inventory.md)。
 - 实现与验证：`packages/runtime/src/checkpoint*.rs`；证据 `plans/PLAN-0338-XH-checkpoint-core-closure/evidence/`、`plans/PLAN-0358-XH-checkpoint-performance/evidence/`。
+
+## 7. workspace facts（PLAN-0382，2026-10-01 冻结）
+
+- **单一权威 route**：`GET /internal/v1/runtime/workspaces/{workspaceId}/git-facts` **就地扩展**（URL 不变，否决改名/并行新 route）——git half（`isRepository/branch/head`，PLAN-0340）+ env half（`cwd/platform/shell/observedAt`，PLAN-0382），`WorkspaceFactsResult` flatten 组装（`main.rs`）。
+- **值来源表（spec §2.1）**：docker 模式 `cwd=/workspace`（挂载点）、`platform=linux`、`shell=xihe-shell`；host/mxc 模式 **`cwd` 禁报宿主绝对路径 → null**、`shell` 直启无 shell 层 → null、`platform`=Runtime 执行面 OS；模式未知 → 三值 null（CP 记 `unknown`）。`HostSnapshot`（`environment.rs`）为未接线非事实源，不复用。
+- **安全边界**：`host_root`、凭据、宿主路径不进响应；`observedAt` 为报告时 RFC3339，只进诊断且**不作幂等键**；缺文件语义由 PLAN-0427 `files/read` 的 `found` 承载，与本 route 正交。
+- 缺失事实一律 `null`（非编造）；CP 对缺键/`null` 统一落 `env_status=unknown`。

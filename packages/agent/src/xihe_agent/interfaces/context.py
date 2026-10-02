@@ -228,6 +228,18 @@ class ContextSource:
     content_hash: str
 
 
+def _derive_l1_status(payload: dict[str, Any], legacy_status: str) -> str:
+    """PLAN-0382 spec §5: new key wins; legacy created/updated→ok, else direct."""
+    explicit = payload.get("l1_status")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    if legacy_status in ("created", "updated"):
+        return "ok"
+    if legacy_status in ("failed", "missing", "unavailable", "unknown"):
+        return legacy_status
+    return ""
+
+
 @dataclass(frozen=True)
 class ContextEpoch:
     """Versioned system-context baseline with L1/SUM slot separation (PLAN-0340)."""
@@ -239,9 +251,20 @@ class ContextEpoch:
     source_hash: str = ""
     summary_hash: str = ""
     l1_rendered: str = ""
+    # PLAN-0382 (spec §2/§5): "" = key absent → readers infer per the legacy
+    # table (source_hash non-empty → ok, else unknown). Clearing statuses
+    # (failed/unavailable/missing) are fail-closed markers.
+    l1_status: str = ""
     env_branch: str = ""
     env_head: str = ""
     env_is_repository: bool = False
+    # PLAN-0382: Runtime-reported facts (spec §2.1 value-source table).
+    # None = unknown (never host-filled — §4 model-visible boundary).
+    env_status: str = ""
+    env_observed_at: str = ""
+    env_cwd: str | None = None
+    env_platform: str | None = None
+    env_shell: str | None = None
 
 
 @dataclass
@@ -312,6 +335,9 @@ class AgentContext:
             # PLAN-0340: replace L1 half of epoch; never append into messages.
             self._apply_source_changed(payload)
         elif event_type in ("epoch.started", "epoch.replaced"):
+            # PLAN-0382 T2.1: a new epoch keeps the observed env/source state
+            # (CP setEpoch passthrough honors payload keys, else previous).
+            prev_epoch = self.epoch
             self.epoch = ContextEpoch(
                 epoch_id=payload.get("epoch_id", ""),
                 baseline_hash=payload.get("baseline_hash", ""),
@@ -329,6 +355,15 @@ class AgentContext:
                 source_hash=payload.get("source_hash", payload.get("baseline_hash", "")),
                 summary_hash=payload.get("summary_hash", ""),
                 l1_rendered=payload.get("l1_rendered", ""),
+                l1_status=payload.get("l1_status", prev_epoch.l1_status if prev_epoch else ""),
+                env_branch=prev_epoch.env_branch if prev_epoch else "",
+                env_head=prev_epoch.env_head if prev_epoch else "",
+                env_is_repository=prev_epoch.env_is_repository if prev_epoch else False,
+                env_status=payload.get("env_status", prev_epoch.env_status if prev_epoch else ""),
+                env_observed_at=payload.get("env_observed_at", prev_epoch.env_observed_at if prev_epoch else ""),
+                env_cwd=payload.get("env_cwd", prev_epoch.env_cwd if prev_epoch else None),
+                env_platform=payload.get("env_platform", prev_epoch.env_platform if prev_epoch else None),
+                env_shell=payload.get("env_shell", prev_epoch.env_shell if prev_epoch else None),
             )
         elif event_type == "runtime.state_cleared":
             self.clear_runtime_state()
@@ -361,6 +396,17 @@ class AgentContext:
                 source_hash=prev.source_hash,
                 summary_hash=payload.get("summaryHash", ""),
                 l1_rendered=prev.l1_rendered,
+                # PLAN-0382 T2.1: compaction must not drop env/source state
+                # (mirrors CP applyCompaction — replay parity, current-state §2).
+                l1_status=prev.l1_status,
+                env_branch=prev.env_branch,
+                env_head=prev.env_head,
+                env_is_repository=prev.env_is_repository,
+                env_status=prev.env_status,
+                env_observed_at=prev.env_observed_at,
+                env_cwd=prev.env_cwd,
+                env_platform=prev.env_platform,
+                env_shell=prev.env_shell,
             )
         elif event_type == "context.prune":
             # PLAN-0341 T1.2: anti-resurrection — replace matching tool results
@@ -379,6 +425,14 @@ class AgentContext:
                 env_branch=payload.get("branch", ""),
                 env_head=payload.get("head", ""),
                 env_is_repository=bool(payload.get("is_repository", False)),
+                # PLAN-0382: new keys copy-on-present (mirror CP applyEnvUpdated);
+                # legacy events preserve the previous state/fact values.
+                l1_status=prev.l1_status,
+                env_status=payload.get("env_status", prev.env_status),
+                env_observed_at=payload.get("env_observed_at", prev.env_observed_at),
+                env_cwd=payload.get("env_cwd", prev.env_cwd),
+                env_platform=payload.get("env_platform", prev.env_platform),
+                env_shell=payload.get("env_shell", prev.env_shell),
             )
         elif event_type == "taskplan.created":
             self.metadata["task_plan"] = {
@@ -493,6 +547,12 @@ class AgentContext:
             env_branch=previous.env_branch,
             env_head=previous.env_head,
             env_is_repository=previous.env_is_repository,
+            l1_status=previous.l1_status,
+            env_status=previous.env_status,
+            env_observed_at=previous.env_observed_at,
+            env_cwd=previous.env_cwd,
+            env_platform=previous.env_platform,
+            env_shell=previous.env_shell,
         )
 
     def _apply_tool_called(self, payload: dict[str, Any]) -> None:
@@ -582,8 +642,14 @@ class AgentContext:
 
     def _apply_source_changed(self, payload: dict[str, Any]) -> None:
         status = payload.get("status", "updated")
+        # PLAN-0382 (spec §3/§5): canonical l1_status — new key wins, legacy
+        # events derive (created/updated→ok, failed/missing/unavailable direct).
+        l1_status = _derive_l1_status(payload, status)
         prev = self.epoch or ContextEpoch(epoch_id="", baseline_hash="", system_messages=[])
-        if status == "failed":
+        if l1_status in ("failed", "missing", "unavailable"):
+            # Q2=A fail-closed family: clear the slot WITH its state mark and
+            # drop the legacy `sources` array too — replay must never fall back
+            # to it unmarked (BL-48). Env facts survive the clear.
             self.epoch = ContextEpoch(
                 epoch_id=prev.epoch_id,
                 baseline_hash="",
@@ -592,9 +658,18 @@ class AgentContext:
                 source_hash="",
                 summary_hash=prev.summary_hash,
                 l1_rendered="",
+                l1_status=l1_status,
+                env_branch=prev.env_branch,
+                env_head=prev.env_head,
+                env_is_repository=prev.env_is_repository,
+                env_status=prev.env_status,
+                env_observed_at=prev.env_observed_at,
+                env_cwd=prev.env_cwd,
+                env_platform=prev.env_platform,
+                env_shell=prev.env_shell,
             )
             self.metadata["context_sources"] = {
-                "status": "failed",
+                "status": status,
                 "source_hash": "",
             }
             return
@@ -617,6 +692,15 @@ class AgentContext:
             source_hash=source_hash,
             summary_hash=prev.summary_hash,
             l1_rendered=payload.get("rendered_text", ""),
+            l1_status=l1_status,
+            env_branch=prev.env_branch,
+            env_head=prev.env_head,
+            env_is_repository=prev.env_is_repository,
+            env_status=prev.env_status,
+            env_observed_at=prev.env_observed_at,
+            env_cwd=prev.env_cwd,
+            env_platform=prev.env_platform,
+            env_shell=prev.env_shell,
         )
         self.metadata["context_sources"] = {
             "status": status,
@@ -681,6 +765,19 @@ class AgentContext:
                 source_hash=epoch_raw.get("source_hash", ""),
                 summary_hash=epoch_raw.get("summary_hash", ""),
                 l1_rendered=epoch_raw.get("l1_rendered", ""),
+                # PLAN-0382: env/source state + Runtime facts round-trip
+                # (absent keys keep the ""/None defaults → legacy inference).
+                # The three legacy env fields finally round-trip too — they
+                # were dropped on both codec ends before (current-state §2).
+                env_branch=epoch_raw.get("env_branch", ""),
+                env_head=epoch_raw.get("env_head", ""),
+                env_is_repository=bool(epoch_raw.get("env_is_repository", False)),
+                l1_status=epoch_raw.get("l1_status", ""),
+                env_status=epoch_raw.get("env_status", ""),
+                env_observed_at=epoch_raw.get("env_observed_at") or "",
+                env_cwd=epoch_raw.get("env_cwd"),
+                env_platform=epoch_raw.get("env_platform"),
+                env_shell=epoch_raw.get("env_shell"),
             )
         return ctx
 
@@ -688,7 +785,7 @@ class AgentContext:
         if self.epoch is None:
             return {}
         epoch = self.epoch
-        return {
+        out: dict[str, Any] = {
             "epoch_id": epoch.epoch_id,
             "baseline_hash": epoch.baseline_hash,
             "system_messages": epoch.system_messages,
@@ -714,6 +811,27 @@ class AgentContext:
                 for s in epoch.sources
             ],
         }
+        # PLAN-0382: emit only non-default state/fact keys so an absent key
+        # round-trips as absent (spec §5 legacy inference depends on absence).
+        if epoch.env_branch:
+            out["env_branch"] = epoch.env_branch
+        if epoch.env_head:
+            out["env_head"] = epoch.env_head
+        if epoch.env_is_repository:
+            out["env_is_repository"] = True
+        if epoch.l1_status:
+            out["l1_status"] = epoch.l1_status
+        if epoch.env_status:
+            out["env_status"] = epoch.env_status
+        if epoch.env_observed_at:
+            out["env_observed_at"] = epoch.env_observed_at
+        if epoch.env_cwd is not None:
+            out["env_cwd"] = epoch.env_cwd
+        if epoch.env_platform is not None:
+            out["env_platform"] = epoch.env_platform
+        if epoch.env_shell is not None:
+            out["env_shell"] = epoch.env_shell
+        return out
 
 
 class ContextProvider(ABC):

@@ -527,6 +527,14 @@ public class ContextProjectionService {
         }
         epoch.set("l1_sources", l1Sources);
         epoch.put("l1_rendered", payload.path("l1_rendered").asText(""));
+        // PLAN-0382: restore state/fact keys when an epoch payload carries them
+        // (additive; absent keys keep the spec §5 legacy inference).
+        for (String field : java.util.List.of(
+                "l1_status", "env_status", "env_cwd", "env_platform", "env_shell", "env_observed_at")) {
+            if (payload.has(field)) {
+                epoch.set(field, payload.get(field));
+            }
+        }
         ArrayNode sources = objectMapper.createArrayNode();
         if (payload.has("snapshot") && payload.get("snapshot").has("sources")) {
             payload.get("snapshot").get("sources").forEach(sources::add);
@@ -551,24 +559,35 @@ public class ContextProjectionService {
         }
         String status = payload.path("status").asText("updated");
         String hash = payload.path("source_hash").asText("");
-        if ("failed".equals(status)) {
+        // PLAN-0382 (spec §3/§5): canonical l1_status — prefer the new key, else
+        // derive from the legacy emission vocabulary so replaying old events
+        // yields the frozen enum without rewriting history.
+        String l1Status = resolveL1Status(payload, status);
+        boolean clearSlot = L1_CLEAR_STATUSES.contains(l1Status);
+        if (clearSlot) {
             epoch.put("source_hash", "");
             epoch.put("l1_rendered", "");
             ((ArrayNode) epoch.get("l1_sources")).removeAll();
-            return;
+            // PLAN-0382/BL-48: a cleared slot must also drop the legacy
+            // `sources` array — otherwise replay can fall back to it unmarked.
+            ((ArrayNode) epoch.get("sources")).removeAll();
+        } else {
+            epoch.put("source_hash", hash);
+            epoch.put("l1_rendered", payload.path("rendered_text").asText(""));
+            ArrayNode l1 = (ArrayNode) epoch.get("l1_sources");
+            if (l1 == null) {
+                l1 = objectMapper.createArrayNode();
+                epoch.set("l1_sources", l1);
+            }
+            l1.removeAll();
+            if (payload.has("l1_sources") && payload.get("l1_sources").isArray()) {
+                payload.get("l1_sources").forEach(l1::add);
+            } else if (payload.has("sources") && payload.get("sources").isArray()) {
+                payload.get("sources").forEach(l1::add);
+            }
         }
-        epoch.put("source_hash", hash);
-        epoch.put("l1_rendered", payload.path("rendered_text").asText(""));
-        ArrayNode l1 = (ArrayNode) epoch.get("l1_sources");
-        if (l1 == null) {
-            l1 = objectMapper.createArrayNode();
-            epoch.set("l1_sources", l1);
-        }
-        l1.removeAll();
-        if (payload.has("l1_sources") && payload.get("l1_sources").isArray()) {
-            payload.get("l1_sources").forEach(l1::add);
-        } else if (payload.has("sources") && payload.get("sources").isArray()) {
-            payload.get("sources").forEach(l1::add);
+        if (l1Status != null) {
+            epoch.put("l1_status", l1Status);
         }
         // Dual-write metadata for U1 without inventing a new projection root key.
         ObjectNode meta = (ObjectNode) context.get("metadata");
@@ -579,6 +598,25 @@ public class ContextProjectionService {
         meta.set("context_sources", sourcesMeta);
     }
 
+    /** PLAN-0382 spec §3/§5: new key wins; legacy events map created/updated→ok, failed→failed. */
+    private static String resolveL1Status(ObjectNode payload, String legacyStatus) {
+        if (payload.hasNonNull("l1_status")) {
+            String value = payload.get("l1_status").asText();
+            if (!value.isBlank()) {
+                return value;
+            }
+        }
+        return switch (legacyStatus) {
+            case "created", "updated" -> "ok";
+            case "failed", "missing", "unavailable", "unknown" -> legacyStatus;
+            default -> null; // unchanged/absent: leave the key unwritten (legacy inference).
+        };
+    }
+
+    /** Statuses that clear the L1 slot (fail-closed family, spec §3). */
+    private static final java.util.Set<String> L1_CLEAR_STATUSES =
+            java.util.Set.of("failed", "missing", "unavailable");
+
     private void applyEnvUpdated(ObjectNode context, ObjectNode payload) {
         ObjectNode epoch = (ObjectNode) context.get("epoch");
         if (epoch == null) {
@@ -588,6 +626,20 @@ public class ContextProjectionService {
         epoch.put("env_branch", payload.path("branch").asText(""));
         epoch.put("env_head", payload.path("head").asText(""));
         epoch.put("env_is_repository", payload.path("is_repository").asBoolean(false));
+        // PLAN-0382 (additive): status/observation + Runtime-reported env facts.
+        // Old events lack these keys → keys stay unwritten → readers apply the
+        // spec §5 legacy table (no env_status → unknown).
+        copyEnvFact(payload, epoch, "env_status");
+        copyEnvFact(payload, epoch, "env_cwd");
+        copyEnvFact(payload, epoch, "env_platform");
+        copyEnvFact(payload, epoch, "env_shell");
+        copyEnvFact(payload, epoch, "env_observed_at");
+    }
+
+    private static void copyEnvFact(ObjectNode payload, ObjectNode epoch, String field) {
+        if (payload.has(field)) {
+            epoch.set(field, payload.get(field));
+        }
     }
 
     private void setWorkspaceAndUser(ObjectNode context, ObjectNode payload) {
