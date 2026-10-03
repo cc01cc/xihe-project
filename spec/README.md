@@ -52,6 +52,7 @@ spec/
 | architecture / communication | proposed | partial | 跨边界 owner | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；Session 派生状态 SSE extension 顺序承接至 PLAN-0408；Runtime 运行拓扑见 `architecture/runtime-topology.md` |
 | ui interaction | proposed | partial | UI + 跨边界 owner | UI、CP、Agent、Session、Workspace | A03-xihe | PLAN-0388；PLAN-0384 仅负责 feature flow |
 | agent execution / Context | proposed | partial | Agent owner | Agent、CP、Runtime、UI、Security | A03-xihe | PLAN-0387；PLAN-0381/0382 局部规范状态见其文件级消费者/来源字段 |
+| agent run guardrails（总览索引） | proposed | partial | Agent owner（索引 owner，不裁决跨域规则） | Agent、CP、Runtime、Security、UI、后续 XH PLAN | A03-xihe | PLAN-0429；只导航风险类别/执行层/实现状态，领域细则仍归各 owner SPEC |
 | session boundaries | proposed | partial | CP/Session owner | UI、CP/Session、Agent、Context、Operation、Workspace、Runtime/MCP | A03-xihe | PLAN-0387；Chat Session、ChatRun/Operation、MCP session 分开；fork/branch actions 见 PLAN-0409；派生协作 Inbox 见 PLAN-0408 |
 | session branch context isolation | active | partial | CP Context + Agent Context owners | CP Chat/EventStore/Context、Agent Context、UI | A03-xihe | PLAN-0410；V43 数据面已实现并承接 child `session.forked` seed consumer（T3.6），公开 branch selector、fork action 与浏览器验收由 PLAN-0409 消费；不覆盖 PLAN-0387 的 Session 生命周期 SPEC |
 | authentication / authorization | proposed | partial | Security owner | Authentication：CP API、UI 登录、Agent/Runtime 内部客户端；Authorization：CP policy、Workspace API、MCP 工具门、UI 结果 | A03-xihe | PLAN-0386；principal/role/scope 归 Security |
@@ -103,6 +104,10 @@ PLAN-0387 已建立 Agent/Session proposed 草案；它们只冻结执行、绑�
 - [Chat Session 生命周期](session/chat-session.md)
 - [ChatRun 与 Operation 生命周期](session/chat-run-operation.md)
 - [Runtime MCP Session 生命周期](session/mcp-session.md)
+
+PLAN-0429 建立 Agent Run 护栏的跨域总览索引（风险类别、执行层、canonical owner 与实现状态导航；不复制领域细则、不新建策略裁决点，缺口盘点与 backlog 去向以 XH 台账为准）：
+
+- [Agent Run 护栏总览](agent/run-guardrails.md)
 
 PLAN-0408 建立 parent Session 派生 child terminal Inbox 的独立生命周期规范；不修改 PLAN-0387 的 Session 生命周期规范：
 
