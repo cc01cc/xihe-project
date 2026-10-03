@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -189,8 +190,9 @@ public class SessionController {
             String modelName = request == null ? null : request.modelName();
             String providerConnectionId = request == null ? null : request.providerConnectionId();
             String agentPrincipalId = request == null ? null : request.agentPrincipalId();
+            ContextTemplateService.TemplateSelection templateSelection = templateSelection(request);
             Session session = sessionService.createAgentSession(userId, workspaceId, title,
-                    modelProvider, modelName, providerConnectionId, agentPrincipalId);
+                    modelProvider, modelName, providerConnectionId, agentPrincipalId, templateSelection);
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -211,6 +213,24 @@ public class SessionController {
             String providerConnectionId = request == null ? null : request.providerConnectionId();
             Session session = sessionService.update(sessionId, userId, workspaceId,
                     title, modelProvider, modelName, providerConnectionId);
+            return ResponseEntity.ok(toView(session));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    @PatchMapping("/{sessionId}/context-template")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    public ResponseEntity<?> updateContextTemplate(@PathVariable String sessionId,
+                                                   @RequestBody ContextTemplateBindingRequest request) {
+        try {
+            if (request == null || request.layer() == null || request.templateId() == null
+                    || request.version() == null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "layer, templateId and version are required");
+            }
+            Session session = sessionService.updateContextTemplate(sessionId, TenantContext.getUserId(),
+                    TenantContext.getWorkspaceId(), request.layer(), request.templateId(), request.version());
             return ResponseEntity.ok(toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -268,6 +288,9 @@ public class SessionController {
         view.put("modelName", session.getModelName());
         view.put("providerConnectionId", session.getProviderConnectionId());
         view.put("connectionRevision", session.getConnectionRevision());
+        view.put("contextTemplateLayer", session.getContextTemplateLayer());
+        view.put("contextTemplateId", session.getContextTemplateId());
+        view.put("contextTemplateVersion", session.getContextTemplateVersion());
         view.put("archived", session.isArchived());
         view.put("createdAt", session.getCreatedAt() == null ? null : session.getCreatedAt().toString());
         view.put("updatedAt", session.getUpdatedAt() == null ? null : session.getUpdatedAt().toString());
@@ -292,12 +315,32 @@ public class SessionController {
         // navigation create a duplicate session.
         view.put("workspaceId", session.getWorkspaceId());
         view.put("agentPrincipalId", session.getAgentPrincipalId());
+        view.put("contextTemplateLayer", session.getContextTemplateLayer());
+        view.put("contextTemplateId", session.getContextTemplateId());
+        view.put("contextTemplateVersion", session.getContextTemplateVersion());
         return view;
     }
 
     public record CreateSessionRequest(String title, String modelProvider, String modelName,
-                                       String providerConnectionId, String agentPrincipalId) {}
+                                       String providerConnectionId, String agentPrincipalId,
+                                       String contextTemplateLayer, String contextTemplateId,
+                                       Integer contextTemplateVersion) {}
+    public record ContextTemplateBindingRequest(String layer, String templateId, Integer version) {}
     public record ForkRequest(String sourceBranchId, String anchorMessageId) {}
     public record UpdateSessionRequest(String title, String modelProvider, String modelName,
                                        String providerConnectionId) {}
+
+    private static ContextTemplateService.TemplateSelection templateSelection(CreateSessionRequest request) {
+        if (request == null) return null;
+        boolean any = request.contextTemplateLayer() != null || request.contextTemplateId() != null
+                || request.contextTemplateVersion() != null;
+        if (!any) return null;
+        if (request.contextTemplateLayer() == null || request.contextTemplateId() == null
+                || request.contextTemplateVersion() == null) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "contextTemplateLayer, contextTemplateId and contextTemplateVersion must be provided together");
+        }
+        return new ContextTemplateService.TemplateSelection(request.contextTemplateLayer(),
+                request.contextTemplateId(), request.contextTemplateVersion());
+    }
 }

@@ -11,20 +11,25 @@ export type ConfigLayer = 'instance' | 'workspace' | 'user'
 export const INSTANCE_DOMAINS = [
   'llm-provider', 'context-policy', 'embedding', 'rag',
   'agent-runtime', 'agent-profile', 'user-preference', 'logging',
-  'approval-policy', 'agent-templates', 'job-policy',
+  'approval-policy', 'agent-templates', 'context-templates', 'job-policy',
 ] as const
 
 export type ConfigDomain = typeof INSTANCE_DOMAINS[number]
 
-/** Merged-config domains; agent templates only have explicit-layer reads. */
-export const CONFIG_DOMAINS: readonly Exclude<ConfigDomain, 'agent-templates'>[] = INSTANCE_DOMAINS.filter(
-  (domain): domain is Exclude<ConfigDomain, 'agent-templates'> => domain !== 'agent-templates',
-)
+/**
+ * Merged-config domains; agent/context templates only have explicit-layer reads
+ * (PLAN-0414: context-templates rejects merged effective on the CP side).
+ */
+export const CONFIG_DOMAINS: readonly Exclude<ConfigDomain, 'agent-templates' | 'context-templates'>[] =
+  INSTANCE_DOMAINS.filter(
+    (domain): domain is Exclude<ConfigDomain, 'agent-templates' | 'context-templates'> =>
+      domain !== 'agent-templates' && domain !== 'context-templates',
+  )
 
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
   instance: INSTANCE_DOMAINS,
-  user: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'agent-profile', 'user-preference', 'agent-templates'],
-  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'approval-policy', 'agent-templates', 'job-policy'],
+  user: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'agent-profile', 'user-preference', 'agent-templates', 'context-templates'],
+  workspace: ['llm-provider', 'context-policy', 'embedding', 'rag', 'agent-runtime', 'approval-policy', 'agent-templates', 'context-templates', 'job-policy'],
 }
 
 export interface ConfigImportReport {

@@ -42,6 +42,7 @@ public class SessionService {
     private final AuthorizationGrantRepository authorizationGrantRepository;
     private final DbLockTimeout dbLockTimeout;
     private final AgentPrincipalService agentPrincipalService;
+    private final ContextTemplateService contextTemplateService;
     private final EntityManager entityManager;
 
     public SessionService(SessionRepository sessionRepository,
@@ -55,10 +56,11 @@ public class SessionService {
                           ChatAttachmentService chatAttachmentService,
                           ProviderConnectionService providerConnectionService,
                           SessionPolicyState sessionPolicyState,
-                          AuthorizationGrantRepository authorizationGrantRepository,
-                          DbLockTimeout dbLockTimeout,
-                          AgentPrincipalService agentPrincipalService,
-                          EntityManager entityManager) {
+                           AuthorizationGrantRepository authorizationGrantRepository,
+                           DbLockTimeout dbLockTimeout,
+                           AgentPrincipalService agentPrincipalService,
+                           ContextTemplateService contextTemplateService,
+                           EntityManager entityManager) {
         this.sessionRepository = sessionRepository;
         this.forkRequestRepository = forkRequestRepository;
         this.sessionBranchRepository = sessionBranchRepository;
@@ -73,6 +75,7 @@ public class SessionService {
         this.authorizationGrantRepository = authorizationGrantRepository;
         this.dbLockTimeout = dbLockTimeout;
         this.agentPrincipalService = agentPrincipalService;
+        this.contextTemplateService = contextTemplateService;
         this.entityManager = entityManager;
     }
 
@@ -102,6 +105,15 @@ public class SessionService {
     public Session createAgentSession(String userId, String workspaceId, String title,
                                       String modelProvider, String modelName,
                                       String providerConnectionId, String agentPrincipalId) {
+        return createAgentSession(userId, workspaceId, title, modelProvider, modelName,
+                providerConnectionId, agentPrincipalId, null);
+    }
+
+    @Transactional
+    public Session createAgentSession(String userId, String workspaceId, String title,
+                                      String modelProvider, String modelName,
+                                      String providerConnectionId, String agentPrincipalId,
+                                      ContextTemplateService.TemplateSelection templateSelection) {
         requireWorkspace(userId, workspaceId);
         if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "agentPrincipalId is required");
@@ -115,6 +127,9 @@ public class SessionService {
         session.setModelProvider(modelProvider);
         session.setModelName(modelName);
         bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
+        ContextTemplateService.TemplateBinding binding = contextTemplateService.resolveForSession(
+                userId, workspaceId, session.getModelProvider(), session.getModelName(), templateSelection);
+        applyContextTemplateBinding(session, binding);
         return sessionRepository.save(session);
     }
 
@@ -137,6 +152,9 @@ public class SessionService {
         child.setModelProvider(source.getModelProvider());
         child.setModelName(source.getModelName());
         child.setApprovalMode(source.getApprovalMode());
+        child.setContextTemplateLayer(source.getContextTemplateLayer());
+        child.setContextTemplateId(source.getContextTemplateId());
+        child.setContextTemplateVersion(source.getContextTemplateVersion());
         child.setKind(Session.KIND_FORK);
         child.setSpawnedFromSessionId(source.getId());
         child.setSpawnedFromRunId(UUID.fromString(anchorRunId));
@@ -255,6 +273,23 @@ public class SessionService {
             bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
         }
         return sessionRepository.save(session);
+    }
+
+    @Transactional
+    public Session updateContextTemplate(String sessionId, String userId, String workspaceId,
+                                         String layer, String templateId, int version) {
+        Session session = lockCurrentForMutation(sessionId, userId, workspaceId);
+        ContextTemplateService.TemplateBinding binding = contextTemplateService.binding(
+                layer, templateId, version, "explicit", UUID.fromString(userId), UUID.fromString(workspaceId));
+        applyContextTemplateBinding(session, binding);
+        return sessionRepository.save(session);
+    }
+
+    private static void applyContextTemplateBinding(Session session,
+                                                     ContextTemplateService.TemplateBinding binding) {
+        session.setContextTemplateLayer(binding.layer());
+        session.setContextTemplateId(UUID.fromString(binding.templateId()));
+        session.setContextTemplateVersion(binding.version());
     }
 
     private void bindProviderConnection(

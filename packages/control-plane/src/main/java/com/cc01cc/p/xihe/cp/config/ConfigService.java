@@ -47,15 +47,15 @@ public class ConfigService {
     public static final Set<String> DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
         "agent-runtime", "agent-profile", "user-preference", "logging",
-         "approval-policy", "agent-templates", "pricing", "job-policy");
+          "approval-policy", "agent-templates", "context-templates", "pricing", "job-policy");
 
     private static final Set<String> USER_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag",
-         "agent-runtime", "agent-profile", "user-preference", "agent-templates");
+          "agent-runtime", "agent-profile", "user-preference", "agent-templates", "context-templates");
 
     private static final Set<String> WORKSPACE_WRITABLE_DOMAINS = Set.of(
         "llm-provider", "context-policy", "embedding", "rag", "agent-runtime",
-         "approval-policy", "agent-templates", "job-policy");
+          "approval-policy", "agent-templates", "context-templates", "job-policy");
 
     /** Decision #17: instructions is instance-level behaviour, never user/workspace writable. */
     private static final Map<String, Set<String>> INSTANCE_ONLY_KEYS = Map.of(
@@ -181,6 +181,7 @@ public class ConfigService {
         Map<String, Map<String, String>> result = new LinkedHashMap<>();
         for (String domain : domains) {
             rejectEffectiveAgentTemplates(domain);
+            rejectEffectiveContextTemplates(domain);
             Map<String, String> entries = layerEntries(layer, domain, userId, workspaceId);
             if (entries.isEmpty()) {
                 continue;
@@ -208,6 +209,7 @@ public class ConfigService {
 
     public EffectiveConfig effective(String domain, UUID userId, UUID workspaceId) {
         rejectEffectiveAgentTemplates(domain);
+        rejectEffectiveContextTemplates(domain);
         Map<String, String> merged = new LinkedHashMap<>();
         List<ConfigEntity> rows = new ArrayList<>();
         String source = "default";
@@ -238,6 +240,12 @@ public class ConfigService {
     private static void rejectEffectiveAgentTemplates(String domain) {
         if ("agent-templates".equals(domain)) {
             throw new ConfigAccessException("Agent templates must be read from one explicit config layer");
+        }
+    }
+
+    private static void rejectEffectiveContextTemplates(String domain) {
+        if ("context-templates".equals(domain)) {
+            throw new ConfigAccessException("Context templates must be read from one explicit config layer");
         }
     }
 
@@ -289,6 +297,9 @@ public class ConfigService {
             throw new IllegalArgumentException(
                 "Schema validation failed: " + String.join("; ", errors));
         }
+        if ("context-templates".equals(domain)) {
+            validateContextTemplateUpdate(layer, entries, userId, workspaceId);
+        }
         if ("llm-provider".equals(domain)) {
             List<String> providerErrors = validateProviderBinding(
                 layer, entries, userId, workspaceId);
@@ -299,6 +310,122 @@ public class ConfigService {
         }
         putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId);
         publishLoggingChanged(domain, layer);
+    }
+
+    private void validateContextTemplateUpdate(String layer, Map<String, String> proposedEntries,
+                                               UUID userId, UUID workspaceId) {
+        JsonNode proposedTemplates = parseJsonValue(proposedEntries.get("templates"), "templates");
+        JsonNode oldTemplates = parseJsonValue(
+                layerEntries(layer, "context-templates", userId, workspaceId).get("templates"), "templates");
+        if (!proposedTemplates.isArray() || !oldTemplates.isArray()) {
+            throw new IllegalArgumentException("context-templates.templates must be an array");
+        }
+
+        Map<String, JsonNode> oldRevisions = templateRevisions(oldTemplates);
+        Map<String, JsonNode> newRevisions = templateRevisions(proposedTemplates);
+        Map<String, Integer> oldLatest = templateLatestVersions(oldTemplates);
+        Map<String, Integer> newLatest = templateLatestVersions(proposedTemplates);
+        for (Map.Entry<String, JsonNode> old : oldRevisions.entrySet()) {
+            if (!old.getValue().equals(newRevisions.get(old.getKey()))) {
+                throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
+                        "CONTEXT_TEMPLATE_REVISION_IMMUTABLE",
+                        "Existing context template revisions cannot be changed or deleted");
+            }
+        }
+        for (Map.Entry<String, Integer> latest : newLatest.entrySet()) {
+            int previous = oldLatest.getOrDefault(latest.getKey(), 0);
+            if (latest.getValue() > previous && latest.getValue() != previous + 1) {
+                throw new IllegalArgumentException("A context template update must append exactly the next version");
+            }
+        }
+        validateTemplateDefaults(layer, proposedEntries, proposedTemplates);
+    }
+
+    private void validateTemplateDefaults(String layer, Map<String, String> entries, JsonNode templates) {
+        if ("workspace".equals(layer)
+                && (entries.containsKey("defaultTemplate") || entries.containsKey("userDefault")
+                || (entries.containsKey("providerModelDefaults")
+                && !parseJsonValue(entries.get("providerModelDefaults"), "providerModelDefaults").isEmpty()))) {
+            throw new IllegalArgumentException("Workspace context templates cannot define defaults in v1");
+        }
+        if ("user".equals(layer) && entries.containsKey("defaultTemplate")) {
+            throw new IllegalArgumentException("defaultTemplate is reserved for the instance layer");
+        }
+        if ("instance".equals(layer)
+                && (entries.containsKey("userDefault") || entries.containsKey("providerModelDefaults"))) {
+            throw new IllegalArgumentException("Instance context templates may define only defaultTemplate");
+        }
+        if (entries.containsKey("userDefault")) {
+            JsonNode ref = parseJsonValue(entries.get("userDefault"), "userDefault");
+            if (!"user".equals(ref.path("layer").asText())) {
+                throw new IllegalArgumentException("userDefault must reference a user-layer template");
+            }
+            requireTemplateReference(templates, ref);
+        }
+        if (entries.containsKey("defaultTemplate")) {
+            JsonNode ref = parseJsonValue(entries.get("defaultTemplate"), "defaultTemplate");
+            if (!"instance".equals(ref.path("layer").asText())) {
+                throw new IllegalArgumentException("defaultTemplate must reference an instance-layer template");
+            }
+            requireTemplateReference(templates, ref);
+        }
+        if (entries.containsKey("providerModelDefaults")) {
+            JsonNode defaults = parseJsonValue(entries.get("providerModelDefaults"), "providerModelDefaults");
+            Set<String> providerModels = new HashSet<>();
+            for (JsonNode item : defaults) {
+                String pair = item.path("provider").asText().toLowerCase(Locale.ROOT)
+                        + "\u0000" + item.path("model").asText().toLowerCase(Locale.ROOT);
+                if (!providerModels.add(pair)) {
+                    throw new IllegalArgumentException("Duplicate provider/model context template default");
+                }
+                JsonNode ref = objectMapper.createObjectNode()
+                        .put("templateId", item.path("templateId").asText())
+                        .put("version", item.path("version").asInt());
+                requireTemplateReference(templates, ref);
+            }
+        }
+    }
+
+    private void requireTemplateReference(JsonNode templates, JsonNode ref) {
+        String id = ref.path("templateId").asText();
+        int version = ref.path("version").asInt();
+        for (JsonNode template : templates) {
+            if (id.equalsIgnoreCase(template.path("id").asText())
+                    && version == template.path("version").asInt()) {
+                return;
+            }
+        }
+        throw new IllegalArgumentException("Context template default references a missing revision");
+    }
+
+    private JsonNode parseJsonValue(String value, String key) {
+        if (value == null) return objectMapper.createArrayNode();
+        try {
+            return objectMapper.readTree(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("context-templates." + key + " must be valid JSON", e);
+        }
+    }
+
+    private Map<String, JsonNode> templateRevisions(JsonNode templates) {
+        Map<String, JsonNode> result = new HashMap<>();
+        for (JsonNode template : templates) {
+            String id = template.path("id").asText().toLowerCase(Locale.ROOT);
+            int version = template.path("version").asInt();
+            if (result.putIfAbsent(id + ":" + version, template) != null) {
+                throw new IllegalArgumentException("Duplicate context template id/version");
+            }
+        }
+        return result;
+    }
+
+    private Map<String, Integer> templateLatestVersions(JsonNode templates) {
+        Map<String, Integer> result = new HashMap<>();
+        for (JsonNode template : templates) {
+            result.merge(template.path("id").asText().toLowerCase(Locale.ROOT),
+                    template.path("version").asInt(), Math::max);
+        }
+        return result;
     }
 
     /** PLAN-0307 T2.15: notify listeners after a logging instance-layer write. */
@@ -693,7 +820,7 @@ public class ConfigService {
     }
 
     private String auditValue(ConfigEntity entity, String value) {
-        if ("agent-templates".equals(entity.getDomain())) {
+        if ("agent-templates".equals(entity.getDomain()) || "context-templates".equals(entity.getDomain())) {
             if (value == null || value.isBlank()) {
                 return "missing";
             }

@@ -73,6 +73,30 @@
   //   "templates": []
   // },
 
+  // context-templates — 上下文模板（PLAN-0414）：显式分层读写（merged effective 拒绝）；
+  // 版本不可变，更新只能追加 id+version 连续新修订；instance 层仅允许 defaultTemplate 默认。
+  // document 中组件标记 {{component:<instanceId>}} 必须引用同模板 components[].instanceId。
+  // "context-templates": {
+  //   "templates": [
+  //     {
+  //       "id": "20000000-0000-4000-8000-000000000001",
+  //       "version": 1,
+  //       "name": "Default context",
+  //       "description": "Instance-layer sample context template",
+  //       "document": "{{component:30000000-0000-4000-8000-000000000001}}",
+  //       "components": [
+  //         {
+  //           "instanceId": "30000000-0000-4000-8000-000000000001",
+  //           "type": "root_agents_md",
+  //           "enabled": true,
+  //           "config": { "enabled": true, "refreshPolicy": "session_snapshot", "maxBytes": 32768, "missingPolicy": "empty_with_status" }
+  //         }
+  //       ]
+  //     }
+  //   ],
+  //   "defaultTemplate": { "layer": "instance", "templateId": "20000000-0000-4000-8000-000000000001", "version": 1 }
+  // },
+
   // job-policy — job 运行时限（PLAN-0373 BL-22）：**instance 层默认值与硬上限权威，
   // workspace 可在上限内下调**，user 层不可写。maxTimeoutSecs=0 表示未设上限（不钳制）。
   // CP 在 tools/call 出站前无条件覆写 timeout：未传→默认、>0→min(参数,上限)、0→钳到上限

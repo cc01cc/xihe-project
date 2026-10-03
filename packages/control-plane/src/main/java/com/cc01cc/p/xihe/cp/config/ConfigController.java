@@ -28,6 +28,7 @@ import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
+import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 /**
@@ -47,6 +48,7 @@ public class ConfigController {
     private final McpServerRepository remoteRepo;
     private final com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger;
     private final AgentTemplateService agentTemplateService;
+    private final ContextTemplateService contextTemplateService;
 
     public ConfigController(ConfigService configService,
                             WorkspaceService workspaceService,
@@ -54,7 +56,8 @@ public class ConfigController {
                             McpStdioServerRepository stdioRepo,
                             McpServerRepository remoteRepo,
                             com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger,
-                            AgentTemplateService agentTemplateService) {
+                            AgentTemplateService agentTemplateService,
+                            ContextTemplateService contextTemplateService) {
         this.configService = configService;
         this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
@@ -62,6 +65,7 @@ public class ConfigController {
         this.remoteRepo = remoteRepo;
         this.auditLogger = auditLogger;
         this.agentTemplateService = agentTemplateService;
+        this.contextTemplateService = contextTemplateService;
     }
 
     /** Decision #33: agent-runtime (instructions / workersDir) is not readable by non-admins. */
@@ -129,10 +133,18 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Agent templates require an explicit config layer");
         }
+        if ("context-templates".equals(domain) && layer == null) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Context templates require an explicit config layer");
+        }
         UUID userId = currentUserId();
         if ("agent-templates".equals(domain) && "instance".equals(layer) && !isAdmin()) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance Agent templates are not readable by this user");
+        }
+        if ("context-templates".equals(domain) && "instance".equals(layer) && !isAdmin()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance Context templates are not readable by this user");
         }
         String wsId = currentWorkspaceId(headerWorkspaceId, queryWorkspaceId);
         UUID workspaceId = null;
@@ -153,6 +165,8 @@ public class ConfigController {
         } catch (ConfigService.ConfigAccessException e) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration layer is not readable");
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
         if (raw == null) {
             return ProblemDetailsHandler.problemResponse(
@@ -188,6 +202,15 @@ public class ConfigController {
     }
 
     private Map<String, String> readLayer(String domain, String layer, UUID userId, UUID workspaceId) {
+        if ("context-templates".equals(domain)) {
+            if ("user".equals(layer) && userId == null) {
+                return null;
+            }
+            if ("workspace".equals(layer) && workspaceId == null) {
+                return null;
+            }
+            return contextTemplateService.readLayer(layer, userId, workspaceId);
+        }
         return switch (layer) {
             case "instance" -> configService.layerEntries("instance", domain, null, null);
             case "user" -> userId == null
@@ -253,6 +276,13 @@ public class ConfigController {
                             HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
                 }
                 agentTemplateService.putConfigLayer(actorId.toString(), layer, userId, workspaceId, body);
+            } else if ("context-templates".equals(domain)) {
+                UUID actorId = currentUserId();
+                if (actorId == null) {
+                    return ProblemDetailsHandler.problemResponse(
+                            HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+                }
+                contextTemplateService.putLayer(layer, body, actorId.toString(), userId, workspaceId);
             } else {
                 configService.putLayer(layer, domain, body, changedBy, userId, workspaceId);
             }
@@ -266,6 +296,8 @@ public class ConfigController {
         } catch (ConfigService.ConfigAccessException e) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration write is not allowed");
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Configuration update is invalid");

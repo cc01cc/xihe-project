@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.entity;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
@@ -8,6 +10,8 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -67,6 +71,10 @@ public class ChatRun {
 
     @Column(name = "tool_mode", nullable = false, length = 20)
     private String toolMode = "none";
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "context_template_snapshot", nullable = false, columnDefinition = "jsonb")
+    private JsonNode contextTemplateSnapshot = JsonNodeFactory.instance.objectNode();
 
     @Column(name = "user_message_id", length = 36)
     @Convert(converter = UuidStringConverter.class)
@@ -128,6 +136,7 @@ public class ChatRun {
 
     @PrePersist
     protected void onCreate() {
+        ensureContextTemplateSnapshot();
         Instant now = Instant.now();
         createdAt = now;
         updatedAt = now;
@@ -138,7 +147,16 @@ public class ChatRun {
 
     @PreUpdate
     protected void onUpdate() {
+        // Defensive: detached-merge re-saves must never null the snapshot
+        // (column is NOT NULL DEFAULT '{}'; merge copies detached nulls).
+        ensureContextTemplateSnapshot();
         updatedAt = Instant.now();
+    }
+
+    private void ensureContextTemplateSnapshot() {
+        if (contextTemplateSnapshot == null) {
+            contextTemplateSnapshot = JsonNodeFactory.instance.objectNode();
+        }
     }
 
     public UUID getId() { return id; }
@@ -167,6 +185,12 @@ public class ChatRun {
     public void setConnectionRevision(Long connectionRevision) { this.connectionRevision = connectionRevision; }
     public String getToolMode() { return toolMode; }
     public void setToolMode(String toolMode) { this.toolMode = toolMode; }
+
+    public JsonNode getContextTemplateSnapshot() { return contextTemplateSnapshot; }
+    public void setContextTemplateSnapshot(JsonNode contextTemplateSnapshot) {
+        this.contextTemplateSnapshot = contextTemplateSnapshot == null
+                ? JsonNodeFactory.instance.objectNode() : contextTemplateSnapshot.deepCopy();
+    }
     public String getUserMessageId() { return userMessageId; }
     public void setUserMessageId(String userMessageId) { this.userMessageId = userMessageId; }
     public String getAssistantMessageId() { return assistantMessageId; }

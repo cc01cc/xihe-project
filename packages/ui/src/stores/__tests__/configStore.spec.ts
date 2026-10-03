@@ -259,14 +259,14 @@ describe('useConfigStore', () => {
 
       await store.loadLayerDomains('workspace', 'ws-1')
 
-      // Workspace includes approval-policy, agent-templates, and job-policy.
-      expect(calls).toHaveLength(8)
+      // Workspace includes approval-policy, agent-templates, context-templates, and job-policy.
+      expect(calls).toHaveLength(9)
       for (const call of calls) {
         expect(call.url).toContain('layer=workspace')
         expect(call.url).toContain('includeMeta=true')
         expect(call.url).toContain('workspaceId=ws-1')
       }
-      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(8)
+      expect(Object.keys(store.layerConfig.workspace)).toHaveLength(9)
       expect(store.layerConfig.workspace['embedding']).toEqual({ 'workspace-embedding-key': 'value' })
       expect(store.envOverridden['embedding']).toEqual({ model: 'env-model' })
       expect(store.envOverridden['rag']).toEqual({})
@@ -288,13 +288,13 @@ describe('useConfigStore', () => {
       expect(store.layerConfig.user['job-policy']).toBeUndefined()
     })
 
-    it('loadLayerDomains loads all eight user domains without workspace query', async () => {
+    it('loadLayerDomains loads all nine user domains without workspace query', async () => {
       const calls = mockLayerFetch()
       const store = useConfigStore()
 
       await store.loadLayerDomains('user')
 
-      expect(calls).toHaveLength(8)
+      expect(calls).toHaveLength(9)
       for (const call of calls) {
         expect(call.url).toContain('layer=user')
         expect(call.url).not.toContain('workspaceId=')

@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xihe.dev/config-schemas/context-templates.json",
+  "type": "object",
+  "required": ["templates"],
+  "properties": {
+    "templates": { "type": "array", "items": { "$ref": "#/$defs/template" } },
+    "defaultTemplate": { "$ref": "#/$defs/templateRef" },
+    "userDefault": { "$ref": "#/$defs/templateRef" },
+    "providerModelDefaults": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/providerModelDefault" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "templateRef": {
+      "type": "object",
+      "required": ["layer", "templateId", "version"],
+      "properties": {
+        "layer": { "enum": ["instance", "user", "workspace"] },
+        "templateId": { "$ref": "#/$defs/uuid" },
+        "version": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "template": {
+      "type": "object",
+      "required": ["id", "version", "name", "description", "document", "components"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "version": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "document": { "type": "string", "maxLength": 262144 },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/component" } }
+      },
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "required": ["instanceId", "type", "enabled", "config"],
+      "properties": {
+        "instanceId": { "$ref": "#/$defs/uuid" },
+        "type": {
+          "enum": [
+            "text", "system_prompt", "root_agents_md", "conversation_history",
+            "tool_history", "tool_definitions", "workspace_tree", "agents_md_tree",
+            "runtime_environment"
+          ]
+        },
+        "enabled": { "type": "boolean" },
+        "config": { "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "text" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/textConfig" } } } },
+        { "if": { "properties": { "type": { "const": "system_prompt" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/systemPromptConfig" } } } },
+        { "if": { "properties": { "type": { "const": "root_agents_md" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/rootAgentsConfig" } } } },
+        { "if": { "properties": { "type": { "const": "conversation_history" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/conversationHistoryConfig" } } } },
+        { "if": { "properties": { "type": { "const": "tool_history" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/toolHistoryConfig" } } } },
+        { "if": { "properties": { "type": { "const": "tool_definitions" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/toolDefinitionsConfig" } } } },
+        { "if": { "properties": { "type": { "const": "workspace_tree" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/workspaceTreeConfig" } } } },
+        { "if": { "properties": { "type": { "const": "agents_md_tree" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/agentsMdTreeConfig" } } } },
+        { "if": { "properties": { "type": { "const": "runtime_environment" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/runtimeEnvironmentConfig" } } } }
+      ],
+      "additionalProperties": false
+    },
+    "textConfig": {
+      "type": "object", "required": ["text"],
+      "properties": { "text": { "type": "string", "maxLength": 65536 }, "label": { "type": "string", "maxLength": 120 } },
+      "additionalProperties": false
+    },
+    "systemPromptConfig": {
+      "type": "object", "required": ["source", "includeAgentPrompt"],
+      "properties": { "source": { "enum": ["system", "agent"] }, "includeAgentPrompt": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "rootAgentsConfig": {
+      "type": "object", "required": ["enabled", "refreshPolicy", "maxBytes", "missingPolicy"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "refreshPolicy": { "enum": ["per_run", "session_snapshot"] },
+        "maxBytes": { "type": "integer", "minimum": 1024, "maximum": 262144 },
+        "missingPolicy": { "enum": ["fail_run", "empty_with_status"] }
+      },
+      "additionalProperties": false
+    },
+    "conversationHistoryConfig": {
+      "type": "object", "required": ["selection", "maxTokens", "includeCompaction"],
+      "properties": {
+        "selection": { "enum": ["recent", "all_within_budget"] },
+        "maxTurns": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+        "includeCompaction": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "toolHistoryConfig": {
+      "type": "object", "required": ["selection", "maxTokens", "resultMode", "includeFailedCalls", "parameterPolicy"],
+      "properties": {
+        "selection": { "enum": ["recent", "all_within_budget"] },
+        "maxCalls": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+        "resultMode": { "enum": ["preview", "reference_when_available"] },
+        "includeFailedCalls": { "type": "boolean" },
+        "parameterPolicy": { "enum": ["approved_redaction"] }
+      },
+      "additionalProperties": false
+    },
+    "toolDefinitionsConfig": {
+      "type": "object", "required": ["selection", "includeDescriptions", "includeSchemas", "maxTools", "maxTokens"],
+      "properties": {
+        "selection": { "enum": ["all_authorized"] },
+        "includeDescriptions": { "type": "boolean" },
+        "includeSchemas": { "type": "boolean" },
+        "maxTools": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 10000000 }
+      },
+      "additionalProperties": false
+    },
+    "workspaceTreeConfig": {
+      "type": "object", "required": ["root", "maxDepth", "includeFiles", "maxEntries"],
+      "properties": {
+        "root": { "const": "session_workspace" },
+        "maxDepth": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "includeFiles": { "type": "boolean" },
+        "excludePatterns": { "type": "array", "items": { "type": "string", "maxLength": 256 }, "maxItems": 100 },
+        "maxEntries": { "type": "integer", "minimum": 1, "maximum": 100000 }
+      },
+      "additionalProperties": false
+    },
+    "agentsMdTreeConfig": {
+      "type": "object", "required": ["root", "maxDepth", "fileNames", "maxEntries"],
+      "properties": {
+        "root": { "const": "session_workspace" },
+        "maxDepth": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "fileNames": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 }, "minItems": 1, "maxItems": 8 },
+        "excludePatterns": { "type": "array", "items": { "type": "string", "maxLength": 256 }, "maxItems": 100 },
+        "maxEntries": { "type": "integer", "minimum": 1, "maximum": 100000 }
+      },
+      "additionalProperties": false
+    },
+    "runtimeEnvironmentConfig": {
+      "type": "object", "required": ["fields", "maxTokens", "sourceStatus"],
+      "properties": {
+        "fields": { "type": "array", "items": { "enum": ["cwd", "platform", "shell", "git"] }, "uniqueItems": true, "maxItems": 4 },
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "sourceStatus": { "const": "visible" }
+      },
+      "additionalProperties": false
+    },
+    "providerModelDefault": {
+      "type": "object", "required": ["provider", "model", "templateId", "version"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "model": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "templateId": { "$ref": "#/$defs/uuid" },
+        "version": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -24,6 +24,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.LedgerOperationRepository;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -71,6 +72,7 @@ public class ChatSubmissionService {
     private final LedgerOperationRepository ledgerOperationRepository;
     private final EventStoreRepository eventStoreRepository;
     private final AgentPrincipalService agentPrincipalService;
+    private final ContextTemplateService contextTemplateService;
     private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
     private final EntityManager entityManager;
     private final ApprovalService approvalService;
@@ -89,9 +91,10 @@ public class ChatSubmissionService {
                                  DbLockTimeout dbLockTimeout,
                                  ObjectMapper objectMapper,
                                  LedgerOperationRepository ledgerOperationRepository,
-                                  EventStoreRepository eventStoreRepository,
-                                  AgentPrincipalService agentPrincipalService,
-                                  com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
+                                   EventStoreRepository eventStoreRepository,
+                                   AgentPrincipalService agentPrincipalService,
+                                   ContextTemplateService contextTemplateService,
+                                   com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
                                   EntityManager entityManager,
                                   ApprovalService approvalService,
                                   AuditLogger auditLogger) {
@@ -110,6 +113,7 @@ public class ChatSubmissionService {
         this.ledgerOperationRepository = ledgerOperationRepository;
         this.eventStoreRepository = eventStoreRepository;
         this.agentPrincipalService = agentPrincipalService;
+        this.contextTemplateService = contextTemplateService;
         this.branchPathService = branchPathService;
         this.entityManager = entityManager;
         this.approvalService = approvalService;
@@ -379,6 +383,9 @@ public class ChatSubmissionService {
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
         childSession.setConnectionRevision(parentSession.getConnectionRevision());
         childSession.setApprovalMode(parentSession.getApprovalMode());
+        childSession.setContextTemplateLayer(parentSession.getContextTemplateLayer());
+        childSession.setContextTemplateId(parentSession.getContextTemplateId());
+        childSession.setContextTemplateVersion(parentSession.getContextTemplateVersion());
         sessionRepository.save(childSession);
 
         String requestId = UUID.randomUUID().toString();
@@ -581,7 +588,7 @@ public class ChatSubmissionService {
                                String toolMode, String providerConnectionId, Long connectionRevision,
                                String leaseOwner, String requestId, String content, String attachmentsJson,
                                List<String> attachmentIds, String requestedPrincipalId) {
-        bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
+        Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
         rejectConcurrentSubmission(sessionId, userId, idempotencyKey);
         if (requestedBranchId == null || requestedBranchId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
@@ -595,6 +602,11 @@ public class ChatSubmissionService {
                 provider, model, toolMode, "accepted");
         chatRun.setOrigin(origin);
         chatRun.setBranchId(branchId);
+        // PLAN-0414 T1.4: admission fixes one atomic Context Template snapshot
+        // from the Session binding; template edits cannot mutate a live Run.
+        chatRun.setContextTemplateSnapshot(contextTemplateService.resolveSnapshot(
+                session.getContextTemplateLayer(), session.getContextTemplateId().toString(),
+                session.getContextTemplateVersion(), userId, workspaceId));
         chatRun.setLeaseOwner(leaseOwner);
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
@@ -647,8 +659,8 @@ public class ChatSubmissionService {
         }
     }
 
-    private void bindOrValidateAgentSession(String sessionId, String userId, String workspaceId,
-                                            String requestedPrincipalId) {
+    private Session bindOrValidateAgentSession(String sessionId, String userId, String workspaceId,
+                                               String requestedPrincipalId) {
         UUID sessionUuid = UUID.fromString(sessionId);
         dbLockTimeout.apply();
         Session session = sessionRepository.findByIdForUpdate(sessionUuid)
@@ -708,6 +720,7 @@ public class ChatSubmissionService {
         if (!activePrincipal || !workspaceBound) {
             throw agentSessionForbidden();
         }
+        return session;
     }
 
     private static CpApiException agentSessionForbidden() {

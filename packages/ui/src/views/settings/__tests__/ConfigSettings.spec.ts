@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import { i18n } from '../../../i18n'
-import { INSTANCE_DOMAINS, LAYER_DOMAINS } from '../../../stores/config'
+import { CONFIG_DOMAINS, INSTANCE_DOMAINS, LAYER_DOMAINS } from '../../../stores/config'
 
 vi.mock('vue-router', () => ({
   useRoute: () =>
@@ -23,7 +23,7 @@ vi.mock('vue-router', () => ({
 }))
 
 vi.mock('vue-sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }))
 
 const WORKSPACE_ID = '66666666-6666-4666-8666-666666666666'
@@ -191,5 +191,84 @@ describe('ConfigSettings Agent template and approval policy (PLAN-0374)', () => 
     })
     expect(request).toBeTruthy()
     expect(JSON.parse(String(request?.[1]?.body))).toEqual({ askActionClasses: '["CREATE_TEMPLATE"]' })
+  })
+})
+
+describe('ConfigSettings Context templates (PLAN-0414)', () => {
+  it('registers context-templates on all writable layers and never in merged config', () => {
+    expect(INSTANCE_DOMAINS).toContain('context-templates')
+    expect(LAYER_DOMAINS.instance).toContain('context-templates')
+    expect(LAYER_DOMAINS.user).toContain('context-templates')
+    expect(LAYER_DOMAINS.workspace).toContain('context-templates')
+    expect(CONFIG_DOMAINS).not.toContain('context-templates')
+  })
+
+  it('creates a template, inserts a typed component and saves it to the active layer', async () => {
+    const wrapper = await mountView()
+
+    const panel = wrapper.find('[data-testid="context-templates-panel"]')
+    expect(panel.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="context-template-empty"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="context-template-new"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="context-template-name"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="context-template-preview"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="context-template-insert-select"]').setValue('conversation_history')
+    await wrapper.find('[data-testid="context-template-insert"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="context-template-component-0"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="context-template-preview-row-0"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="context-template-preview-status-0"]').text()).toBeTruthy()
+
+    // Insert a second component, then reorder: component-0 must become the text one.
+    await wrapper.find('[data-testid="context-template-insert-select"]').setValue('text')
+    await wrapper.find('[data-testid="context-template-insert"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="context-template-component-1"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="context-template-component-move-up-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="context-template-component-0"]').text()).toContain(
+      i18n.global.t('settings.contextTemplate.typeText'),
+    )
+    expect(wrapper.find('[data-testid="context-template-component-1"]').text()).toContain(
+      i18n.global.t('settings.contextTemplate.typeConversationHistory'),
+    )
+    await wrapper.find('[data-testid="context-template-component-remove-0"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-testid="context-template-save"]').trigger('click')
+    await flushPromises()
+
+    const request = vi.mocked(fetch).mock.calls.find(([input, init]) => {
+      const url = typeof input === 'string' ? input : input.url
+      return url.includes('/config/') && url.includes('/context-templates') && init?.method === 'PUT'
+    })
+    expect(request).toBeTruthy()
+
+    const body = JSON.parse(String(request?.[1]?.body)) as Record<string, string>
+    const saved = JSON.parse(body.templates) as Array<{ version: number; components: Array<{ type: string }> }>
+    expect(saved).toHaveLength(1)
+    expect(saved[0].version).toBe(1)
+    expect(saved[0].components).toHaveLength(1)
+    expect(saved[0].components[0].type).toBe('conversation_history')
+  })
+
+  it('flags an unresolved component marker in the configuration-level preview', async () => {
+    const wrapper = await mountView()
+
+    await wrapper.find('[data-testid="context-template-new"]').trigger('click')
+    await flushPromises()
+
+    const document = wrapper.find('[data-testid="context-template-document"]')
+    expect(document.exists()).toBe(true)
+    await document.setValue('{{component:33333333-3333-4333-8333-333333333333}}')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="context-template-preview-row-0"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="context-template-preview-status-0"]').text()).toBe(
+      i18n.global.t('settings.contextTemplate.statusUnknown'),
+    )
   })
 })

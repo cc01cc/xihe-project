@@ -5,6 +5,7 @@ import { toast } from 'vue-sonner'
 import { useConfigStore, LAYER_DOMAINS, type ConfigLayer } from '../../stores/config'
 import ConfigDomainPanel, { type DomainField } from '../../components/settings/ConfigDomainPanel.vue'
 import AgentTemplatesPanel from '../../components/settings/AgentTemplatesPanel.vue'
+import ContextTemplatesPanel from '../../components/settings/ContextTemplatesPanel.vue'
 import McpStdioServerList from '../../components/settings/McpStdioServerList.vue'
 import ProviderHub from '../../components/settings/ProviderHub.vue'
 import SettingsNav from '../../components/settings/SettingsNav.vue'
@@ -40,6 +41,7 @@ const domainLabels: Record<string, string> = {
   'logging': t('settings.domainLogging'),
   'approval-policy': t('settings.domainApprovalPolicy'),
   'agent-templates': t('settings.domainAgentTemplates'),
+  'context-templates': t('settings.domainContextTemplates'),
   'job-policy': t('settings.domainJobPolicy'),
 }
 
@@ -544,6 +546,13 @@ async function handleImportFile(event: Event) {
               v-if="domain === 'agent-templates'"
               :entries="configStore.layerConfig[activeTab][domain] || {}"
               :saving="savingDomains[domain] || false"
+              @save="handleSave(domain, $event)"
+            />
+            <ContextTemplatesPanel
+              v-else-if="domain === 'context-templates'"
+              :entries="configStore.layerConfig[activeTab][domain] || {}"
+              :saving="savingDomains[domain] || false"
+              :layer="activeTab"
               @save="handleSave(domain, $event)"
             />
             <ConfigDomainPanel

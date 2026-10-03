@@ -23,6 +23,7 @@ import InputArea from "./InputArea.vue";
 import SSEStream from "./SSEStream.vue";
 import ApprovalModal from "./ApprovalModal.vue";
 import SessionPolicyControls from "./SessionPolicyControls.vue";
+import SessionContextTemplate from "./SessionContextTemplate.vue";
 import ContextSourcesU1 from "./ContextSourcesU1.vue";
 import SessionDerivedStatePanel from "./SessionDerivedStatePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
@@ -662,6 +663,7 @@ watch(
 <template>
     <div class="flex flex-col h-full min-h-0 overflow-hidden">
         <SessionPolicyControls :session-id="sessionId" />
+        <SessionContextTemplate :session-id="sessionId" />
         <ContextSourcesU1 :session-id="sessionId" />
         <div class="flex items-center gap-3 border-b px-4 py-2" data-testid="session-branch-selector">
             <label :for="`session-branch-${sessionId}`" class="text-xs font-medium text-muted-foreground">

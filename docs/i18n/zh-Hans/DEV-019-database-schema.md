@@ -38,7 +38,7 @@ tags:
 | Compose PG 定义 | `docker-compose.yml`（`postgres` 服务，`./postgres-init:/docker-entrypoint-initdb.d:ro`） |
 | 扩展初始化 | `postgres-init/01-enable-pgvector.sql` |
 | 连接配置 | `packages/control-plane/src/main/resources/application.properties:12-24`（`datasource.url`、`flyway.locations=classpath:db/migration`） |
-| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V41__default_grant_bootstrap.sql`（当前 active chain；V1 基线，V2–V41 增量迁移） |
+| 迁移链 | `packages/control-plane/src/main/resources/db/migration/V1__init_schema.sql` 至 `V48__context_template_session_binding.sql`（当前 active chain；V1 基线，V2–V48 增量迁移；V42–V47 行由各自计划补登） |
 | Entity 镜像 | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/entity/`（32 个）+ `context/entity/`（3 个） |
 | Seed | `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java`（仅 seed `admin@xihe.local`，密码随机不落日志） |
 
@@ -237,7 +237,7 @@ erDiagram
 > - `idx_workspace_users_user_id (user_id)`
 > - `idx_workspace_users_user_workspace (user_id, workspace_id)` — 双向查（`V14`）
 
-**sessions**（`V1` + `V14/V19/V24/V37/V40`，Entity `entity/Session.java`）：服务端 canonical 会话，含单父 Session/run provenance 与派生 kind，详见 [DEV-017](DEV-017-session-architecture.md)。
+**sessions**（`V1` + `V14/V19/V24/V37/V40/V48`，Entity `entity/Session.java`）：服务端 canonical 会话，含单父 Session/run provenance 与派生 kind，详见 [DEV-017](DEV-017-session-architecture.md)。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -255,6 +255,9 @@ erDiagram
 | spawned_from_run_id | UUID | nullable（`V37`） | 父 ChatRun；停止传播与 lineage 查询来源 |
 | spawned_at | TIMESTAMPTZ | nullable（`V37`） | 派生创建时间 |
 | kind | VARCHAR(16) | nullable，`ck_sessions_kind` + `ck_sessions_provenance_shape`（`V40`） | root 四字段全 NULL；派生 Session 四字段全 NOT NULL，`spawn`/`fork` |
+| context_template_layer | VARCHAR(16) | NOT NULL DEFAULT 'instance'，`ck_sessions_context_template_layer`（`V48`） | PLAN-0414：钉住的上下文模板来源层 `instance`/`user`/`workspace`（显式层，非 merged） |
+| context_template_id | UUID | NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'（`V48`） | PLAN-0414：上下文模板稳定 ID；修订在其配置层内追加不可变 |
+| context_template_version | INTEGER | NOT NULL DEFAULT 1，`ck_sessions_context_template_version > 0`（`V48`） | PLAN-0414：Session 钉住的不可变修订；显式切换只影响后续 Run |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 | updated_at | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | — |
 
@@ -283,7 +286,7 @@ erDiagram
 > - `idx_messages_session_id (session_id)`
 > - `idx_messages_run_id (run_id)`（`V16`）
 
-**chat_runs**（`V16` + `V19/V22/V39`，Entity `entity/ChatRun.java`）：一次用户提交或 CP 内部 spawn 派生执行（PLAN-247/0407），同幂等键不重复起 Agent。
+**chat_runs**（`V16` + `V19/V22/V39/V48`，Entity `entity/ChatRun.java`）：一次用户提交或 CP 内部 spawn 派生执行（PLAN-247/0407），同幂等键不重复起 Agent。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -297,6 +300,7 @@ erDiagram
 | provider | VARCHAR(50) | nullable | 全链路透传 |
 | model | VARCHAR(100) | nullable | 全链路透传 |
 | tool_mode | VARCHAR(20) | NOT NULL DEFAULT 'none' | 普通 chat `none`，workspace 操作 `workspace` |
+| context_template_snapshot | JSONB | NOT NULL DEFAULT '{}'，`ck_chat_runs_context_template_snapshot_object`（`V48`） | PLAN-0414：admission 时从 Session 钉住的模板修订复制的原子快照；在途 Run 永不随模板编辑漂移 |
 | user_message_id | VARCHAR(36) | nullable，无 FK | 逻辑关联，避免循环 FK |
 | assistant_message_id | VARCHAR(36) | nullable，无 FK | 逻辑关联，避免循环 FK |
 | status | VARCHAR(24) | NOT NULL | 运行态 |
@@ -903,7 +907,7 @@ erDiagram
 
 > 索引：`idx_task_items_plan (task_plan_id)`；`idx_task_items_status (status)`
 
-## 4. 迁移对照（当前 active 链 V1~V41）
+## 4. 迁移对照（当前 active 链 V1~V48；V42–V47 行由各自计划补登）
 
 > PLAN-280 destructive rebaseline 取代了当时的历史链（旧 V2~V22/U6 移出 active classpath，仅 Git 历史可追溯）；V15 起的 V15~V41 均为当前 active 链的 post-rebaseline migrations。本节保留历史编号解释，不把两套编号混用；表内 V2/V3/V4/V30 的旧名属于历史迁移文件名与原表名（V33 改名后保留）。
 
@@ -950,6 +954,7 @@ erDiagram
 | V39 | `V39__chat_run_origin.sql` | `chat_runs.origin` 回填旧行为 `user_submission`，约束 `user_submission/spawn`；新增 spawn-only `(user_id,idempotency_key)` 部分唯一索引，保证父 durable event 全局幂等（PLAN-0407 T1.4） | `chat_runs` |
 | V40 | `V40__session_derivation_kind.sql` | `sessions.kind` 区分 `spawn/fork`；root provenance 全 NULL、派生四元组全 NOT NULL 的 CHECK；既有 V37 provenance 行在无 fork creator 的前置阶段回填为 spawn（PLAN-0407 T2.2） | `sessions` |
 | V41 | `V41__default_grant_bootstrap.sql` | 对既有 users 与 root Agent Sessions 补 source=default grant（USER/ADMIN 矩阵），自动默认 read_state=read，并为回填 grant 写 audit row（PLAN-0407 T2.4） | `grants` |
+| V48 | `V48__context_template_session_binding.sql` | **纯 schema（不含数据清理）**：`sessions` 增 `context_template_layer/id/version` 三列（NOT NULL DEFAULT 钉内置模板）与 CHECK（PLAN-0414 T1.1/T1.3），`chat_runs` 增 `context_template_snapshot` JSONB 对象 DEFAULT（T1.4 admission 原子快照）；存量清库是迁移前置运维动作 `dev:reset`（用户 2026-10-03 裁定「先清库，迁移里不该清」，V14 dev-state 可弃先例），迁移不携带 DELETE/拦截 | `sessions/chat_runs` |
 
 ## 5. 本地查看与运维
 

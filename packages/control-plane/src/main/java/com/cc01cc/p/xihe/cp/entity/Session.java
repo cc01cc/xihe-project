@@ -13,6 +13,9 @@ public class Session {
 
     public static final String KIND_SPAWN = "spawn";
     public static final String KIND_FORK = "fork";
+    public static final String DEFAULT_CONTEXT_TEMPLATE_LAYER = "instance";
+    public static final UUID DEFAULT_CONTEXT_TEMPLATE_ID =
+            UUID.fromString("00000000-0000-4000-8000-000000000001");
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")
@@ -33,6 +36,15 @@ public class Session {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "agent_permissions_snapshot", columnDefinition = "jsonb")
     private JsonNode agentPermissionsSnapshot;
+
+    @Column(name = "context_template_layer", nullable = false, length = 16)
+    private String contextTemplateLayer;
+
+    @Column(name = "context_template_id", nullable = false, columnDefinition = "uuid")
+    private UUID contextTemplateId;
+
+    @Column(name = "context_template_version", nullable = false)
+    private Integer contextTemplateVersion;
 
     @Column(length = 255)
     private String title;
@@ -97,6 +109,7 @@ public class Session {
 
     @PrePersist
     protected void onCreate() {
+        ensureContextTemplateBinding();
         createdAt = Instant.now();
         updatedAt = Instant.now();
     }
@@ -116,6 +129,10 @@ public class Session {
 
     @PreUpdate
     protected void onUpdate() {
+        // Defensive: a detached-entity merge must never null out the pinned
+        // binding (DB columns are NOT NULL; merge copies detached nulls over
+        // the managed copy before UPDATE).
+        ensureContextTemplateBinding();
         updatedAt = Instant.now();
     }
 
@@ -135,6 +152,13 @@ public class Session {
     public void setAgentPermissionsSnapshot(JsonNode agentPermissionsSnapshot) {
         this.agentPermissionsSnapshot = agentPermissionsSnapshot;
     }
+
+    public String getContextTemplateLayer() { return contextTemplateLayer; }
+    public void setContextTemplateLayer(String contextTemplateLayer) { this.contextTemplateLayer = contextTemplateLayer; }
+    public UUID getContextTemplateId() { return contextTemplateId; }
+    public void setContextTemplateId(UUID contextTemplateId) { this.contextTemplateId = contextTemplateId; }
+    public Integer getContextTemplateVersion() { return contextTemplateVersion; }
+    public void setContextTemplateVersion(Integer contextTemplateVersion) { this.contextTemplateVersion = contextTemplateVersion; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
@@ -177,4 +201,12 @@ public class Session {
 
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+
+    private void ensureContextTemplateBinding() {
+        if (contextTemplateLayer == null || contextTemplateId == null || contextTemplateVersion == null) {
+            contextTemplateLayer = DEFAULT_CONTEXT_TEMPLATE_LAYER;
+            contextTemplateId = DEFAULT_CONTEXT_TEMPLATE_ID;
+            contextTemplateVersion = 1;
+        }
+    }
 }
