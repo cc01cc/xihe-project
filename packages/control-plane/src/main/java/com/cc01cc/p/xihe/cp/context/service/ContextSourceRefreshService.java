@@ -100,11 +100,41 @@ public class ContextSourceRefreshService {
      */
     @Transactional
     public String refreshForRun(String sessionId, String workspaceId, String userId) {
-        return refresh(sessionId, workspaceId, userId);
+        return refreshForRun(sessionId, workspaceId, userId, true);
     }
 
     @Transactional
+    public String refreshForRun(String sessionId, String workspaceId, String userId, boolean refreshRootAgentsMd) {
+        String result = refreshRootAgentsMd
+                ? refreshRootAgents(sessionId, workspaceId, userId)
+                : STATUS_UNCHANGED;
+        // PLAN-0382: env facts refresh on EVERY path, independent of the root
+        // AGENTS.md source-refresh policy selected by the template component.
+        refreshEnvFacts(sessionId, workspaceId, userId);
+        return result;
+    }
+
+    /** Backward-compatible explicit refresh path for existing callers/tests. */
+    @Transactional
     public String refresh(String sessionId, String workspaceId, String userId) {
+        return refreshForRun(sessionId, workspaceId, userId, true);
+    }
+
+    /**
+     * A per_session root source pins the first successful content read or
+     * explicit found:false observation. Transient unknown/unavailable/failed
+     * states are not pinned and are retried on a later Run.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasSuccessfulSessionL1Snapshot(String sessionId) {
+        String status = projectedL1Status(sessionId);
+        if (L1_OK.equals(status) || L1_MISSING.equals(status)) {
+            return true;
+        }
+        return status == null && lastSessionL1Hash(sessionId) != null;
+    }
+
+    private String refreshRootAgents(String sessionId, String workspaceId, String userId) {
         SourceRead read;
         try {
             read = runtimeContextSourceClient.readAgents(workspaceId);
@@ -124,9 +154,6 @@ public class ContextSourceRefreshService {
         } else {
             result = ingestContent(sessionId, workspaceId, userId, read.content());
         }
-        // PLAN-0382: env facts refresh on EVERY path (previously skipped on
-        // failures, leaving env stale for the run).
-        refreshEnvFacts(sessionId, workspaceId, userId);
         return result;
     }
 

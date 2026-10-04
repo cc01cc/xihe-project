@@ -4,6 +4,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.awaitility.Awaitility.await;
 
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
@@ -14,6 +15,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceUser;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -33,6 +35,7 @@ import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -43,6 +46,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("cp.agent-url", () -> "http://localhost:" + wireMock.port() + "/internal/v1/agent/chat");
         registry.add("cp.agent-base-url", () -> "http://localhost:" + wireMock.port());
+        registry.add("cp.mcp.runtime-url", () -> "http://localhost:" + wireMock.port());
     }
 
     @Autowired
@@ -59,6 +63,9 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private AgentPrincipalRepository agentPrincipalRepository;
 
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
@@ -151,6 +158,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 .withHeader("Content-Type", containing("application/json"))
                 .withRequestBody(matchingJsonPath("$.sessionId"))
                 .withRequestBody(matchingJsonPath("$.content"))
+                .withRequestBody(matchingJsonPath("$.contextTemplateSnapshot.templateId"))
                 .withRequestBody(matchingJsonPath("$.stream", equalTo("true"))));
 
         String forwardedBody = wireMock.findAll(postRequestedFor(urlEqualTo("/internal/v1/agent/chat")))
@@ -161,6 +169,86 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
             assertFalse(forwardedBody.contains("\"" + authorityField + "\""),
                     "CP→Agent payload must not include authority-bearing field " + authorityField);
         }
+    }
+
+    @Test
+    void chatForwardsOnlyResolvedAgentInstructionsNotPrincipalAuthority() {
+        AgentPrincipal principal = agentPrincipalRepository.findById(UUID.fromString(principalId)).orElseThrow();
+        var snapshot = (com.fasterxml.jackson.databind.node.ObjectNode) principal.getTemplateSnapshot().deepCopy();
+        snapshot.put("systemPrompt", "Use the CP-selected instructions only.");
+        principal.setTemplateSnapshot(snapshot);
+        agentPrincipalRepository.saveAndFlush(principal);
+
+        String sessionId = UUID.randomUUID().toString();
+        createAgentSession(sessionId, "Safe Agent instructions");
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/event-stream")
+                        .withBody("event: done\ndata: {\"content\":\"ok\"}\n\n")));
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                url("/api/v1/chat"), HttpMethod.POST,
+                entityWithAuth(Map.of(
+                        "sessionId", sessionId,
+                        "branchId", branchPathService.ensureRootBranchId(sessionId),
+                        "content", "safe profile",
+                        "userId", userId,
+                        "workspaceId", workspaceId), token), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> wireMock.verify(
+                postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
+                        .withRequestBody(matchingJsonPath("$.instructions",
+                                equalTo("Use the CP-selected instructions only.")))
+                        .withRequestBody(matchingJsonPath("$.contextTemplateSnapshot.templateId"))));
+        String forwarded = wireMock.findAll(postRequestedFor(urlEqualTo("/internal/v1/agent/chat")))
+                .getFirst().getBodyAsString();
+        for (String authorityField : List.of("agentPrincipalId", "principalId", "roleId", "scope",
+                "grants", "permissions", "capabilities", "authorizedTools")) {
+            assertFalse(forwarded.contains("\"" + authorityField + "\""),
+                    "Only resolved instructions may cross CP→Agent; payload included " + authorityField);
+        }
+    }
+
+    @Test
+    void chatAddsOnlyPathBasedComponentSourcesToAgentPayload() {
+        String templateId = UUID.randomUUID().toString();
+        String componentId = UUID.randomUUID().toString();
+        String sessionId = UUID.randomUUID().toString();
+        String treeTemplate = "[{\"id\":\"" + templateId + "\",\"version\":1,\"name\":\"tree\","
+                + "\"description\":\"d\",\"document\":\"{{component:" + componentId + "}}\","
+                + "\"components\":[{\"instanceId\":\"" + componentId + "\",\"type\":\"workspace_tree\","
+                + "\"enabled\":true,\"config\":{\"root\":\"session_workspace\",\"maxDepth\":2,"
+                + "\"includeFiles\":true,\"maxEntries\":20}}]}]";
+        configService.putLayer("user", "context-templates", Map.of("templates", treeTemplate),
+                "test", UUID.fromString(userId), UUID.fromString(workspaceId));
+        createAgentSession(sessionId, "Tree component");
+        Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        session.setContextTemplateLayer("user");
+        session.setContextTemplateId(UUID.fromString(templateId));
+        session.setContextTemplateVersion(1);
+        sessionRepository.saveAndFlush(session);
+
+        wireMock.stubFor(post(urlPathMatching("/internal/v1/runtime/workspaces/.*/files/list"))
+                .willReturn(okJson("{\"entries\":[{\"name\":\"README.md\",\"path\":\"README.md\","
+                        + "\"is_dir\":false,\"is_symlink\":false}]}")));
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "text/event-stream")
+                        .withBody("event: done\ndata: {\"content\":\"ok\"}\n\n")));
+        ResponseEntity<Map> accepted = restTemplate.exchange(url("/api/v1/chat"), HttpMethod.POST,
+                entityWithAuth(Map.of("sessionId", sessionId,
+                        "branchId", branchPathService.ensureRootBranchId(sessionId),
+                        "content", "paths only"), token), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, accepted.getStatusCode());
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> wireMock.verify(
+                postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
+                        .withRequestBody(matchingJsonPath("$['componentSources']['" + componentId + "']['status']"))));
+        String forwarded = wireMock.findAll(postRequestedFor(urlEqualTo("/internal/v1/agent/chat")))
+                .getFirst().getBodyAsString();
+        assertTrue(forwarded.contains("README.md"));
+        assertFalse(forwarded.contains("agentPrincipalId"));
+        assertFalse(forwarded.contains("agent_permissions_snapshot"));
+        wireMock.verify(postRequestedFor(urlPathMatching("/internal/v1/runtime/workspaces/.*/files/list"))
+                .withHeader("Authorization", equalTo("Bearer dev-token-not-secure")));
     }
 
     @Test

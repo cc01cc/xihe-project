@@ -112,6 +112,32 @@ async def test_langgraph_runner_stream_yields_agent_events():
 
 
 @pytest.mark.asyncio
+async def test_template_context_does_not_inject_hidden_runner_system_messages(monkeypatch):
+    captured = {}
+
+    class FakeAgent:
+        async def astream_events(self, inputs, version):
+            captured["messages"] = inputs["messages"]
+            if False:
+                yield {}
+
+    monkeypatch.setattr(langgraph_runner_module, "create_react_agent", lambda _model, tools: FakeAgent())
+    context = AgentContext("session", epoch=ContextEpoch(
+        "epoch", "hash", ["unselected summary"], l1_status="ok", l1_rendered="unselected L1",
+        env_status="ok", env_platform="unselected env",
+    ))
+    runner = LangGraphRunner(model_factory=lambda _model: object())
+    async for _ in runner.stream(
+        [TextMessage("system", "selected component"), TextMessage("human", "current prompt")],
+        RunnerConfig(model="fake", system_prompt="HIDDEN-LEGACY-PROMPT", tools=[], context=context, template_context=True),
+    ):
+        pass
+    system_contents = [message.content for message in captured["messages"] if message.type == "system"]
+    assert system_contents == ["selected component"]
+    assert "HIDDEN-LEGACY-PROMPT" not in system_contents
+
+
+@pytest.mark.asyncio
 async def test_langgraph_runner_uses_custom_event_adapter():
     class CustomAdapter(EventAdapter):
         def translate(self, raw_event: dict):
@@ -157,6 +183,58 @@ async def test_prompt_event_uses_timezone_aware_utc_timestamp():
     event = event_store.append.await_args.args[0]
     assert event.created_at.tzinfo is UTC
     assert event.created_at.utcoffset().total_seconds() == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_template_admits_only_current_prompt_not_history(monkeypatch):
+    event_store = MagicMock()
+    event_store.append = AsyncMock()
+
+    class EmptyAgent:
+        async def astream_events(self, _inputs, version):
+            assert version == "v2"
+            if False:
+                yield {}
+
+    monkeypatch.setattr(langgraph_runner_module, "create_react_agent", lambda _model, tools: EmptyAgent())
+    runner = LangGraphRunner(
+        model_factory=lambda _model: object(),
+        event_store=event_store,
+    )
+    async for _ in runner.stream(
+        [TextMessage("human", "historical user turn"), TextMessage("human", "current prompt")],
+        RunnerConfig(
+            model="fake", system_prompt="", tools=[], context=AgentContext("session-1"),
+            template_context=True, admitted_prompt="current prompt",
+        ),
+    ):
+        pass
+
+    admitted = [call.args[0] for call in event_store.append.await_args_list if call.args[0].type == "prompt.admitted"]
+    assert [event.payload["message"]["content"] for event in admitted] == ["current prompt"]
+
+
+@pytest.mark.asyncio
+async def test_stream_legacy_without_admitted_prompt_preserves_message_behavior(monkeypatch):
+    event_store = MagicMock()
+    event_store.append = AsyncMock()
+
+    class EmptyAgent:
+        async def astream_events(self, _inputs, version):
+            if False:
+                yield {}
+
+    monkeypatch.setattr(langgraph_runner_module, "create_react_agent", lambda _model, tools: EmptyAgent())
+    runner = LangGraphRunner(model_factory=lambda _model: object(), event_store=event_store)
+    async for _ in runner.stream(
+        [TextMessage("human", "legacy historical turn"), TextMessage("human", "legacy current turn")],
+        RunnerConfig(model="fake", system_prompt="legacy baseline", tools=[], context=AgentContext("session-legacy")),
+    ):
+        pass
+    admitted = [call.args[0] for call in event_store.append.await_args_list if call.args[0].type == "prompt.admitted"]
+    assert [event.payload["message"]["content"] for event in admitted] == [
+        "legacy historical turn", "legacy current turn",
+    ]
 
 
 @pytest.mark.asyncio

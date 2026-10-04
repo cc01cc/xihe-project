@@ -96,7 +96,7 @@ flowchart TD
 
 - CP 是唯一真相源，负责事件持久化与读模型构建。
 - Agent 无状态，通过 `/internal/v1/context/{sessionId}/snapshot` 获取读模型快照。
-- 上下文模板（PLAN-0414）在 CP 侧钉住：`sessions.context_template_layer/id/version` 于 Session 创建/显式换绑时落定，admission 原子复制进 `chat_runs.context_template_snapshot`；Agent 侧当前不读该字段——把模板组件装配进 snapshot/context 的运行期消费归 PLAN-0415（配置级预览与完整构建诊断分界见 PLAN-0414 design 决策）。
+- 上下文模板（PLAN-0414/0415）：CP Session 钉 `context_template_layer/id/version`，admission 把模板修订复制进 `chat_runs.context_template_snapshot`；`/internal/v1/agent/chat` additive 传 snapshot、可选 safe `instructions` 和 path-only `componentSources`（Workspace tree 由 CP PolicyEngine + Runtime list resolver 提供）；Agent 构造 typed per-dispatch `ChatRunContext`/有序 `BuildContext`，只有 `system_prompt` marker 命中时才在文档位置加入平台/Agent instructions，不在 template-run 头尾 hidden append。AgentPrincipal ID/permission snapshot 不出 CP；组件/Run 不得扩大工具能力。`root_agents_md` 刷新值 `per_chat_run/per_session` 见 DEV-014 §8f。
 - **分支上下文（PLAN-0410/V43）**：snapshot 携 `?runId`/`?branchId` 选择器（两者并存必须一致，未知/伪造 404、冲突 409 fail-closed，缺省=root）；Agent 只消费 CP 给定的 branch（`AgentContext.branch_id`），从不自选或回退整 Session history；run-scoped Event 写 `correlation_id=runId`，必需 append 失败使 Run 收敛失败而非静默续跑。
 - 事件写入当前为同步；性能测试显示批量写入已足够快（~17k events/s），未引入异步队列。
 

@@ -83,7 +83,7 @@
       "type": "object", "required": ["enabled", "refreshPolicy", "maxBytes", "missingPolicy"],
       "properties": {
         "enabled": { "type": "boolean" },
-        "refreshPolicy": { "enum": ["per_run", "session_snapshot"] },
+        "refreshPolicy": { "enum": ["per_chat_run", "per_session"] },
         "maxBytes": { "type": "integer", "minimum": 1024, "maximum": 262144 },
         "missingPolicy": { "enum": ["fail_run", "empty_with_status"] }
       },

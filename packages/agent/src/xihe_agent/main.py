@@ -38,8 +38,10 @@ from xihe_agent.context import (
     CrashRecovery,
     EventSourcedContextProvider,
 )
+from xihe_agent.context.builder import build_context
 from xihe_agent.dotenv_loader import load_project_env, parse_cli_overrides
 from xihe_agent.interfaces.agent_runner import RunnerConfig
+from xihe_agent.interfaces.chat_run_context import ChatRunContext, ContextBuildError
 from xihe_agent.interfaces.message import Message, TextMessage
 from xihe_agent.llm.base import (
     LLMConfig,
@@ -59,6 +61,25 @@ from xihe_agent.rag import chunk_document as rag_chunk
 from xihe_agent.registry.registry import WorkerRegistry
 from xihe_agent.security_defaults import enforce_security_defaults
 from xihe_agent.tools import GenerateImageAgentTool, GenerateImageTool, ProviderManager
+
+_SAFE_CONTEXT_DIAGNOSTIC_CODES = {
+    "root_agents_md_missing",
+    "runtime_environment_missing",
+    "tool_definitions_max_tools_reached",
+    "tool_definitions_budget_truncated",
+    "artifact_status_available",
+    "artifact_status_expired",
+    "artifact_status_unavailable",
+    "artifact_status_unknown",
+    "invalid_session_workspace_binding",
+    "unsupported_tree_root",
+    "policy_request_invalid",
+    "authorization_denied",
+    "policy_approval_required",
+    "policy_denied",
+    "runtime_returned_invalid_path",
+    "entry_limit_reached",
+}
 
 # Suppress litellm verbose debugging that prints Authorization headers and
 # full request payloads. The redaction boundary already masks Bearer/JWT, but
@@ -853,7 +874,8 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
     model_override: str | None = data.get("model")
     provider_override: str | None = data.get("provider")
     tool_mode: str = data.get("toolMode", "none")
-    instructions: str = data.get("instructions", AGENT_INSTRUCTIONS)
+    safe_agent_instructions: str = data.get("instructions", "")
+    instructions: str = safe_agent_instructions or AGENT_INSTRUCTIONS
     chat_history_raw: list[dict[str, Any]] = data.get("history", [])
     credential_lease: str | None = data.get("credentialLease") or None
     provider_connection_id: str | None = data.get("providerConnectionId") or None
@@ -1165,12 +1187,59 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                 if mcp_tools:
                     all_tools = list(mcp_tools) + all_tools
 
-                messages = list(chat_history)
-                messages.append(TextMessage(role="human", content=content))
+                has_template = "contextTemplateSnapshot" in data
+                if has_template:
+                    run_context = ChatRunContext.from_request(
+                        {
+                            **data,
+                            "runId": run_id,
+                            "sessionId": session_id,
+                            "workspaceId": workspace_id,
+                            "requestId": request_id,
+                            "operationId": operation_id,
+                            "provider": request_config.provider,
+                            "model": model_override or request_config.model,
+                            "toolMode": tool_mode,
+                            "instructions": safe_agent_instructions,
+                            "platformInstructions": AGENT_INSTRUCTIONS,
+                        },
+                        context,
+                    )
+                    built = build_context(run_context, all_tools, content, token_counter=_token_counter)
+                    messages = list(built.messages)
+                    for component_result in built.components:
+                        raw_source = component_result.source
+                        source_kind = raw_source.get("kind") if isinstance(raw_source, dict) else "unknown"
+                        if source_kind not in {"context_projection", "runtime_workspace", "runtime"}:
+                            source_kind = "unknown"
+                        diagnostic_codes = [
+                            code
+                            for code in component_result.diagnostics
+                            if code in _SAFE_CONTEXT_DIAGNOSTIC_CODES
+                        ]
+                        logger.info(
+                            "Context component resolved type={} status={} sourceKind={} estimatedTokens={} truncated={} diagnosticCodes={}",
+                            component_result.type,
+                            component_result.status,
+                            source_kind,
+                            component_result.estimated_tokens,
+                            component_result.truncated,
+                            diagnostic_codes,
+                        )
+                    logger.info(
+                        "Context template built templateId={} version={} components={} estimatedTokens={}",
+                        run_context.template_snapshot.get("templateId"),
+                        run_context.template_snapshot.get("version"),
+                        len(built.components),
+                        built.estimated_tokens,
+                    )
+                else:
+                    messages = list(chat_history)
+                    messages.append(TextMessage(role="human", content=content))
 
                 config = RunnerConfig(
                     model=model_override or request_config.model,
-                    system_prompt=instructions,
+                    system_prompt="" if has_template else instructions,
                     tools=all_tools,
                     context=context,
                     cancel_event=cancel_event,
@@ -1180,6 +1249,8 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                         workspace_overrides,
                     ).prune_window_chars,
                     branch_id=context.branch_id,
+                    template_context=has_template,
+                    admitted_prompt=content,
                 )
 
                 llm_request_started = True
@@ -1297,6 +1368,29 @@ async def chat(request: Request, _token: None = Depends(verify_api_token)):
                             "type": "error",
                         }
                     ),
+                )
+        except ContextBuildError as exc:
+            error_seen = True
+            terminal_error_code = "CONTEXT_BUILD_FAILED"
+            terminal_outcome = "error"
+            logger.warning(
+                "Context template build failed requestId={} runId={} errorType={}",
+                request_id,
+                run_id,
+                type(exc).__name__,
+                exc_info=True,
+            )
+            if not error_sent:
+                error_sent = True
+                yield render_sse(
+                    "error",
+                    correlated_data({
+                        "code": terminal_error_code,
+                        "detail": "Context template snapshot is invalid",
+                        "retryable": False,
+                        "outcome": terminal_outcome,
+                        "type": "error",
+                    }),
                 )
         except Exception as exc:
             error_seen = True

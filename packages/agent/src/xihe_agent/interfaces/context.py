@@ -86,6 +86,7 @@ class ParsedToolResult:
     content: str
     truncated: bool = False
     artifact_ref: str = ""
+    artifact_status: str = ""
     size_bytes: int | None = None
     error_code: str = ""
     legacy_normalized: bool = False
@@ -96,6 +97,7 @@ def _result_whitelist(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "truncated": bool(result.get("truncated", False)),
         "artifact_ref": str(result.get("artifactRef") or result.get("artifact_ref") or ""),
+        "artifact_status": result.get("status") if result.get("status") in {"available", "expired", "unavailable"} else "",
         "size_bytes": size_bytes if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) else None,
         "error_code": str(result.get("errorCode") or result.get("error_code") or ""),
     }
@@ -162,6 +164,8 @@ def _snapshot_message(message: Message) -> dict[str, Any]:
             data["truncated"] = True
         if message.artifact_ref:
             data["artifact_ref"] = message.artifact_ref
+        if message.artifact_status:
+            data["artifact_status"] = message.artifact_status
         if message.size_bytes is not None:
             data["size_bytes"] = message.size_bytes
         if message.error_code:
@@ -197,6 +201,7 @@ def message_from_dict(raw: dict[str, Any]) -> TextMessage:
         status=str(raw.get("status", "") or ""),
         truncated=bool(raw.get("truncated", False)),
         artifact_ref=str(raw.get("artifact_ref", "") or ""),
+        artifact_status=str(raw.get("artifact_status", "") or ""),
         size_bytes=size_bytes if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) else None,
         error_code=str(raw.get("error_code", "") or ""),
         degraded=bool(raw.get("degraded", False)),
@@ -596,6 +601,7 @@ class AgentContext:
                 status=status,
                 truncated=parsed.truncated,
                 artifact_ref=parsed.artifact_ref,
+                artifact_status=parsed.artifact_status,
                 size_bytes=parsed.size_bytes,
                 error_code=parsed.error_code,
                 legacy_normalized=parsed.legacy_normalized,

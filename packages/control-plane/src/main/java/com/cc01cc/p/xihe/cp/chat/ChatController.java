@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import com.cc01cc.p.xihe.cp.status.CircuitBreaker;
@@ -64,6 +65,7 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.context.service.ContextService contextService;
     private final ChatSubmissionService chatSubmissionService;
     private final SessionService sessionService;
+    private final AgentPrincipalService agentPrincipalService;
     private final MessageRepository messageRepository;
     private final FileRepository fileRepository;
     private final ChatRunRepository chatRunRepository;
@@ -78,6 +80,7 @@ public class ChatController {
     private final ChatRunTerminalService chatRunTerminalService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
+    private final com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService;
     private final Map<String, String> activeRuns = new ConcurrentHashMap<>();
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
@@ -114,6 +117,7 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.context.service.ContextService contextService,
             ChatSubmissionService chatSubmissionService,
             SessionService sessionService,
+            AgentPrincipalService agentPrincipalService,
             MessageRepository messageRepository,
             FileRepository fileRepository,
             ChatRunRepository chatRunRepository,
@@ -126,8 +130,9 @@ public class ChatController {
             com.cc01cc.p.xihe.cp.timeout.ToolTimeoutPolicy toolTimeoutPolicy,
             ChatRunCancellationService chatRunCancellationService,
             ChatRunTerminalService chatRunTerminalService,
-            com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
-            com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper) {
+             com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
+             com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper,
+             com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -139,6 +144,7 @@ public class ChatController {
         this.contextService = contextService;
         this.chatSubmissionService = chatSubmissionService;
         this.sessionService = sessionService;
+        this.agentPrincipalService = agentPrincipalService;
         this.messageRepository = messageRepository;
         this.fileRepository = fileRepository;
         this.chatRunRepository = chatRunRepository;
@@ -153,6 +159,7 @@ public class ChatController {
         this.chatRunTerminalService = chatRunTerminalService;
         this.contextSourceRefreshService = contextSourceRefreshService;
         this.usageCostMapper = usageCostMapper;
+        this.contextTemplateSourceService = contextTemplateSourceService;
 
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
@@ -599,10 +606,15 @@ public class ChatController {
                     logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_compaction_failed sessionId={} runId={} error={}",
                             sessionId, runId, gateError.getMessage());
                 }
-                // PLAN-0340 T1.1: per-run source refresh while activeRuns still
-                // serializes the session. Failures are fail-open inside refresh.
+                ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))
+                        .orElseThrow(() -> new IllegalStateException("Chat run not found"));
+                boolean refreshRootAgentsMd = shouldRefreshRootAgentsMd(persistedRun);
+                // PLAN-0340/0415: the source policy is fixed by the admission
+                // template. per_chat_run refreshes each turn; per_session pins
+                // the first successful source snapshot for this Session.
                 try {
-                    String sourceStatus = contextSourceRefreshService.refreshForRun(sessionId, workspaceId, userId);
+                    String sourceStatus = contextSourceRefreshService.refreshForRun(
+                            sessionId, workspaceId, userId, refreshRootAgentsMd);
                     logger.info("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh sessionId={} runId={} status={}",
                             sessionId, runId, sourceStatus);
                     // PLAN-0340 U2: only AGENTS.md chain created/updated (not env, not unchanged/failed).
@@ -615,14 +627,13 @@ public class ChatController {
                 } catch (Exception sourceError) {
                     logger.warn("[LIFECYCLE] service=cp event=chat_pre_run_source_refresh_failed sessionId={} runId={} error={}",
                             sessionId, runId, sourceError.getMessage());
-                    // PLAN-0382 T0.5/B6: the run stays fail-open, but the L1 slot
-                    // must not survive as a fresh `ok` — record unavailable so the
-                    // frozen fail-closed policy applies to this run.
-                    contextSourceRefreshService.markSourceUnavailable(sessionId, workspaceId, userId);
+                    // Env refresh can fail while per_session L1 is deliberately
+                    // frozen; only mark L1 unavailable when this Run attempted it.
+                    if (refreshRootAgentsMd) {
+                        contextSourceRefreshService.markSourceUnavailable(sessionId, workspaceId, userId);
+                    }
                 }
                 transitionRun(runId, List.of("accepted", "queued"), "running", null, null, null, 0, 0);
-                ChatRun persistedRun = chatRunRepository.findById(UUID.fromString(runId))
-                        .orElseThrow(() -> new IllegalStateException("Chat run not found"));
                 String effectiveProvider = persistedRun.getProvider() == null
                         ? provider : persistedRun.getProvider();
                 String effectiveModel = persistedRun.getModel() == null
@@ -662,6 +673,24 @@ public class ChatController {
                     agentRequest.put("credentialLease", credentialLease.token());
                     agentRequest.put("providerConnectionId", persistedRun.getProviderConnectionId());
                     agentRequest.put("connectionRevision", persistedRun.getConnectionRevision());
+                }
+                // PLAN-0415 M1: only the admission-frozen template snapshot and,
+                // when present, the CP-selected model instructions cross to Agent.
+                // The existing AgentChatIntegrationTest security contract keeps
+                // principal IDs and permission snapshots strictly CP-local.
+                Session boundSession = sessionService.requireCurrent(sessionId, userId, workspaceId);
+                if (boundSession.getAgentPrincipalId() == null || boundSession.getAgentPrincipalId().isBlank()) {
+                    throw new IllegalStateException("ChatRun Session is missing its AgentPrincipal binding");
+                }
+                agentRequest.put("contextTemplateSnapshot", persistedRun.getContextTemplateSnapshot());
+                Map<String, Object> componentSources = contextTemplateSourceService.resolve(persistedRun, boundSession);
+                if (!componentSources.isEmpty()) {
+                    agentRequest.put("componentSources", componentSources);
+                }
+                String agentInstructions = agentPrincipalService.resolveSystemInstructionsForRun(
+                        boundSession.getAgentPrincipalId());
+                if (agentInstructions != null) {
+                    agentRequest.put("instructions", agentInstructions);
                 }
                 // PLAN-0307 T2.7 (decision #3=#3a): run-scoped layer overrides are
                 // resolved per run from this request's workspace/user context and
@@ -876,6 +905,40 @@ public class ChatController {
             releaseRun(sessionId, runId, "worker_start_failed");
             throw e;
         }
+    }
+
+    private boolean shouldRefreshRootAgentsMd(ChatRun run) {
+        com.fasterxml.jackson.databind.JsonNode snapshot = run.getContextTemplateSnapshot();
+        com.fasterxml.jackson.databind.JsonNode components = snapshot == null
+                ? null : snapshot.path("template").path("components");
+        // Pre-template/legacy ChatRuns retain the existing per-run refresh.
+        if (components == null || !components.isArray()) {
+            return true;
+        }
+        boolean hasRootComponent = false;
+        boolean hasPerSession = false;
+        for (com.fasterxml.jackson.databind.JsonNode component : components) {
+            if (!component.path("enabled").asBoolean(false)
+                    || !"root_agents_md".equals(component.path("type").asText())) {
+                continue;
+            }
+            hasRootComponent = true;
+            String policy = component.path("config").path("refreshPolicy").asText("");
+            if ("per_chat_run".equals(policy)) {
+                return true;
+            }
+            if ("per_session".equals(policy)) {
+                hasPerSession = true;
+            } else {
+                // Unknown persisted value fails safe toward the established
+                // fresh-per-run source rather than pinning stale rules.
+                return true;
+            }
+        }
+        if (!hasRootComponent) {
+            return false;
+        }
+        return hasPerSession && !contextSourceRefreshService.hasSuccessfulSessionL1Snapshot(run.getSessionId());
     }
 
     /**

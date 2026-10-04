@@ -2232,6 +2232,11 @@ components:
       properties:
         sessionId: { type: string }
         content: { type: string }
+        instructions: { type: string, description: CP-selected safe Agent profile instructions text only; AgentPrincipal IDs and permission snapshots are forbidden on this wire. }
+        contextTemplateSnapshot: { $ref: '#/components/schemas/ContextTemplateSnapshot' }
+        componentSources:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/ContextComponentSource' }
         operationId: { type: string, format: uuid, readOnly: true }
         stream: { type: boolean, default: true }
         provider: { type: string }
@@ -2268,6 +2273,36 @@ components:
           enum: [full, partial]
           description: "PLAN-0308 M1 (decision #23): `partial` when the CP tool→server cache was cold at payload time, so some tools have no per-tool wait entry."
         attachments: { type: array, items: { type: object, additionalProperties: true } }
+    ContextTemplateSnapshot:
+      type: object
+      required: [layer, templateId, version, source, template]
+      properties:
+        layer: { type: string, enum: [instance, user, workspace] }
+        templateId: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        source: { type: string, const: session-binding }
+        template:
+          type: object
+          required: [id, version, name, document, components]
+          properties:
+            id: { type: string, format: uuid }
+            version: { type: integer, minimum: 1 }
+            name: { type: string }
+            description: { type: string }
+            document: { type: string }
+            components: { type: array, items: { type: object, additionalProperties: true } }
+          additionalProperties: false
+      additionalProperties: false
+    ContextComponentSource:
+      type: object
+      required: [status, source, items, truncated, diagnostics]
+      properties:
+        status: { type: string, enum: [ready, empty, missing, unavailable, unknown, truncated, failed, approval_required] }
+        source: { type: string, description: Source-kind identifier; e.g. runtime_workspace. }
+        items: { type: array, items: { type: string }, description: Workspace-relative paths only; no file contents. }
+        truncated: { type: boolean }
+        diagnostics: { type: array, items: { type: string } }
+      additionalProperties: false
     AgentSummarizeRequest:
       type: object
       required: [credentialLease, text]

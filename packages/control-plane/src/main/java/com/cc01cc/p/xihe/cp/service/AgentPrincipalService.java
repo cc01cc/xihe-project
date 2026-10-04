@@ -83,6 +83,22 @@ public class AgentPrincipalService {
         return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot());
     }
 
+    /**
+     * Returns only the selected Agent's model instructions. Principal IDs,
+     * permission atoms, and the full template snapshot remain CP-owned.
+     */
+    @Transactional(readOnly = true)
+    public String resolveSystemInstructionsForRun(String principalId) {
+        UUID id = parseUuid(principalId, "INVALID_AGENT_PRINCIPAL");
+        AgentPrincipal principal = agentPrincipalRepository.findById(id)
+                .orElseThrow(() -> new CpApiException(
+                        HttpStatus.NOT_FOUND, "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
+        JsonNode snapshot = principal.getTemplateSnapshot();
+        JsonNode instructions = snapshot == null ? null : snapshot.get("systemPrompt");
+        return instructions != null && instructions.isTextual() && !instructions.asText().isBlank()
+                ? instructions.asText() : null;
+    }
+
     /** The caller authorizes CREATE_ACCOUNT and supplies a server-resolved immutable template snapshot. */
     @Transactional
     public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,

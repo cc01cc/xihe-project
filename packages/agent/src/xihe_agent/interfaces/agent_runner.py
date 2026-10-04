@@ -49,6 +49,11 @@ class RunnerConfig:
     # assembled from that branch's snapshot and a mismatch with the loaded
     # AgentContext fails closed instead of silently re-reading the Session.
     branch_id: str = ""
+    # PLAN-0415: messages already contain the ordered per-dispatch projection.
+    template_context: bool = False
+    # Current user prompt only; template-context messages may also contain prior
+    # history, which must not be re-appended as fresh prompt.admitted events.
+    admitted_prompt: str | None = None
 
 
 class AgentRunner(ABC):

@@ -15,6 +15,7 @@ from typing import Any
 
 import litellm
 import pytest
+from langchain_core.messages import HumanMessage, SystemMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
 from xihe_agent.interfaces.message import TextMessage, ToolCallRef
@@ -248,6 +249,68 @@ async def test_anthropic_route_wire_capture_emits_tool_use_blocks(
         assert tool_result["tool_use_id"] == "c1"
         assert "file content" in json.dumps(tool_result["content"])
         # 契约 §4 delta 表：litellm 链不产 is_error —— 登记现状，不以 mock 伪造
+        assert response.choices[0].message.content == "ok"
+    finally:
+        await fixture.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_model", ["openai/gpt-test", "anthropic/claude-test"])
+async def test_template_prompt_order_uses_provider_role_mapping(
+    monkeypatch: pytest.MonkeyPatch, provider_model: str,
+) -> None:
+    fixture = _WireCapture(
+        (lambda _path, _payload: _openai_response())
+        if provider_model.startswith("openai/")
+        else (lambda _path, _payload: _anthropic_response())
+    )
+    await fixture.start()
+    try:
+        client = _openai_client(monkeypatch, f"{fixture.base_url}/v1")
+        ordered = [
+            SystemMessage(content="template-prefix"),
+            HumanMessage(content="history-marker"),
+            SystemMessage(content="selected-platform-instructions"),
+            HumanMessage(content="current-prompt"),
+        ]
+        message_dicts, _params = client._create_message_dicts(ordered, None)
+        response = await litellm.acompletion(
+            model=provider_model,
+            messages=message_dicts,
+            api_base=f"{fixture.base_url}/v1" if provider_model.startswith("openai/") else fixture.base_url,
+            api_key="sk-fake",
+            max_tokens=256,
+            stream=False,
+            max_retries=0,
+            timeout=10,
+        )
+
+        assert len(fixture.requests) == 1
+        _path, body, _headers = fixture.requests[0]
+        if provider_model.startswith("openai/"):
+            assert [(message["role"], message["content"]) for message in body["messages"]] == [
+                ("system", "template-prefix"),
+                ("user", "history-marker"),
+                ("system", "selected-platform-instructions"),
+                ("user", "current-prompt"),
+            ]
+        else:
+            # Anthropic transports system blocks in its top-level `system`
+            # field, so cross-role interleaving cannot survive this provider's
+            # protocol. Verify system-block order and user-content order rather
+            # than claiming OpenAI-style cross-role order is preserved.
+            system = body.get("system", "")
+            if isinstance(system, list):
+                system_text = "\n".join(str(block.get("text", "")) for block in system if isinstance(block, dict))
+            else:
+                system_text = str(system)
+            assert system_text.index("template-prefix") < system_text.index("selected-platform-instructions")
+            user_blocks = [
+                block.get("text", "")
+                for message in body["messages"] if message["role"] == "user"
+                for block in (message["content"] if isinstance(message["content"], list) else [])
+            ]
+            assert user_blocks == ["history-marker", "current-prompt"]
         assert response.choices[0].message.content == "ok"
     finally:
         await fixture.stop()

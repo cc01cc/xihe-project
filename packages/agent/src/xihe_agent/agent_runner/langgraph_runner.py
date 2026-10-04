@@ -810,7 +810,12 @@ class LangGraphRunner(AgentRunner):
             raise RuntimeError(
                 f"runner branch {config_branch} does not match the CP-given context branch {context_branch}"
             )
-        await self._append_prompt_admitted(messages, context)
+        prompt_events = (
+            [TextMessage(role="human", content=config.admitted_prompt)]
+            if config.admitted_prompt is not None
+            else messages
+        )
+        await self._append_prompt_admitted(prompt_events, context)
 
         usage = RunUsage()
         approval_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
@@ -827,7 +832,7 @@ class LangGraphRunner(AgentRunner):
         # conversation history (compaction already applied by CP). The caller's
         # `messages` list carries only the current turn's prompt; historical
         # turns come from the snapshot so multi-turn context reaches the LLM.
-        history = list(context.messages)
+        history = [] if config.template_context else list(context.messages)
         # PLAN-0341 T1.2: assembly fuse only — never orphan a tool result.
         if len(history) > HISTORY_TRUNCATION_LIMIT:
             fuse_start = _align_truncation_start(history, HISTORY_TRUNCATION_LIMIT)
@@ -840,9 +845,9 @@ class LangGraphRunner(AgentRunner):
         history = prune_result.messages
         if prune_result.tombstones:
             await self._append_prune_event(context, prune_result.tombstones)
-        assembled = [*history, *messages]
+        assembled = list(messages) if config.template_context else [*history, *messages]
 
-        system_messages = self._build_system_messages(config, context)
+        system_messages = [] if config.template_context else self._build_system_messages(config, context)
         langchain_messages = list(system_messages)
         langchain_messages.extend(_to_langchain_messages(assembled))
 

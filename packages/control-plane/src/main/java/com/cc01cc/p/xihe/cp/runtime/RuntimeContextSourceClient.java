@@ -12,6 +12,8 @@ import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 
 /** Fetches a workspace's AGENTS.md from the Runtime so CP no longer reads the host filesystem. */
 @Component
@@ -50,6 +52,14 @@ public class RuntimeContextSourceClient {
         /** spec §3 wire→status mapping for the two failure branches. */
         public String failureStatus() {
             return (httpStatus == null || httpStatus >= 500) ? "unavailable" : "failed";
+        }
+    }
+
+    public record DirectoryEntry(String name, String path, boolean directory, boolean symlink) { }
+
+    public record DirectoryRead(List<DirectoryEntry> entries, String status, Integer httpStatus) {
+        public DirectoryRead {
+            entries = List.copyOf(entries == null ? List.of() : entries);
         }
     }
 
@@ -132,6 +142,64 @@ public class RuntimeContextSourceClient {
         }
         // Unreachable: the loop always returns on the final attempt.
         return SourceRead.error(null);
+    }
+
+    /** Reads one directory from the existing Runtime route; malformed responses fail closed. */
+    public DirectoryRead listDirectory(String workspaceId, String relativePath) {
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                headers.setBearerAuth(serviceToken);
+                Map<String, Object> body = Map.of("path", relativePath);
+                ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                        runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/files/list",
+                        org.springframework.http.HttpMethod.POST,
+                        new HttpEntity<>(body, headers),
+                        new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() { });
+                int code = response.getStatusCode().value();
+                if (!response.getStatusCode().is2xxSuccessful()) {
+                    if (code >= 500 && attempt < MAX_ATTEMPTS) {
+                        logger.warn("Runtime directory list 5xx, retrying workspaceId={} status={}", workspaceId, code);
+                        continue;
+                    }
+                    return new DirectoryRead(List.of(), code >= 500 ? "unavailable" : "failed", code);
+                }
+                Object rawEntries = response.getBody() == null ? null : response.getBody().get("entries");
+                if (!(rawEntries instanceof List<?> entries)) {
+                    return new DirectoryRead(List.of(), "failed", code);
+                }
+                List<DirectoryEntry> parsed = new ArrayList<>();
+                for (Object raw : entries) {
+                    if (!(raw instanceof Map<?, ?> entry)
+                            || !(entry.get("name") instanceof String name) || name.isBlank()
+                            || !(entry.get("path") instanceof String path) || path.isBlank()
+                            || !(entry.get("is_dir") instanceof Boolean directory)
+                            || !(entry.get("is_symlink") instanceof Boolean symlink)) {
+                        return new DirectoryRead(List.of(), "failed", code);
+                    }
+                    parsed.add(new DirectoryEntry(name, path, directory, symlink));
+                }
+                return new DirectoryRead(parsed, "ready", code);
+            } catch (HttpStatusCodeException httpError) {
+                int code = httpError.getStatusCode().value();
+                if (code >= 500 && attempt < MAX_ATTEMPTS) {
+                    logger.warn("Runtime directory list 5xx, retrying workspaceId={} status={}", workspaceId, code);
+                    continue;
+                }
+                return new DirectoryRead(List.of(), code >= 500 ? "unavailable" : "failed", code);
+            } catch (Exception error) {
+                if (attempt < MAX_ATTEMPTS) {
+                    logger.warn("Runtime directory list transport error, retrying workspaceId={} exceptionType={}",
+                            workspaceId, error.getClass().getSimpleName());
+                    continue;
+                }
+                logger.warn("Runtime directory list unavailable workspaceId={} exceptionType={}",
+                        workspaceId, error.getClass().getSimpleName());
+                return new DirectoryRead(List.of(), "unavailable", null);
+            }
+        }
+        return new DirectoryRead(List.of(), "unavailable", null);
     }
 
     /** PLAN-0340: branch + short HEAD for L1b; empty when non-git or unreachable. Same bounded retry as {@link #readAgents}. */

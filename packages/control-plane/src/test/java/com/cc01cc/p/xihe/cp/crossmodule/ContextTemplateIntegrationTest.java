@@ -188,6 +188,20 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
 
+    @Test
+    void rootAgentsRefreshPolicyUsesSessionAndChatRunScopeNames() {
+        String template = "[{\"id\":\"" + TEMPLATE_ID + "\",\"version\":1,\"name\":\"root rules\","
+                + "\"description\":\"d\",\"document\":\"{{component:" + COMPONENT_ID + "}}\","
+                + "\"components\":[{\"instanceId\":\"" + COMPONENT_ID + "\",\"type\":\"root_agents_md\","
+                + "\"enabled\":true,\"config\":{\"enabled\":true,\"refreshPolicy\":\"per_session\","
+                + "\"maxBytes\":32768,\"missingPolicy\":\"empty_with_status\"}}]}]";
+        assertEquals(HttpStatus.OK, putUserTemplates(template).getStatusCode());
+
+        String oldName = template.replace("per_session", "session_snapshot");
+        ResponseEntity<Map> rejected = putUserTemplates(oldName);
+        assertEquals(HttpStatus.BAD_REQUEST, rejected.getStatusCode());
+    }
+
     // ---- T1.3 / V3: explicit Session binding ----
 
     @Test

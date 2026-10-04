@@ -24,6 +24,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -93,6 +95,53 @@ class ContextSourceRefreshServiceTest extends AbstractH2Test {
         return eventStoreService.read(sessionId, 0L).stream()
                 .filter(e -> "context.source_changed".equals(e.getEventType()))
                 .count();
+    }
+
+    @Test
+    void perSessionPinsFirstSuccessfulL1ReadAndRetriesTransientFailure() {
+        String userId = UUID.randomUUID().toString();
+        String sessionId = UUID.randomUUID().toString();
+        Workspace ws = createWorkspace(userId);
+        stubFacts(false);
+
+        when(runtimeContextSourceClient.readAgents(anyString()))
+                .thenReturn(SourceRead.error(null))
+                .thenReturn(SourceRead.content("Rules v1."))
+                .thenReturn(SourceRead.content("Rules v2."));
+
+        String transientFailure = refreshService.refreshForRun(sessionId, ws.getId().toString(), userId, true);
+        assertThat(transientFailure).isEqualTo(ContextSourceRefreshService.L1_UNAVAILABLE);
+        assertThat(refreshService.hasSuccessfulSessionL1Snapshot(sessionId)).isFalse();
+
+        String firstSuccess = refreshService.refreshForRun(sessionId, ws.getId().toString(), userId, true);
+        assertThat(firstSuccess).isIn(ContextSourceRefreshService.STATUS_CREATED, ContextSourceRefreshService.STATUS_UPDATED);
+        assertThat(refreshService.hasSuccessfulSessionL1Snapshot(sessionId)).isTrue();
+        assertThat(projectedEpochText(sessionId, "l1_rendered")).contains("Rules v1.");
+
+        // per_session reuses the successful CP event snapshot while env still
+        // refreshes independently; later Runtime changes do not mutate this Session.
+        String reused = refreshService.refreshForRun(sessionId, ws.getId().toString(), userId, false);
+        assertThat(reused).isEqualTo(ContextSourceRefreshService.STATUS_UNCHANGED);
+        assertThat(projectedEpochText(sessionId, "l1_rendered")).contains("Rules v1.");
+        verify(runtimeContextSourceClient, times(2)).readAgents(anyString());
+    }
+
+    @Test
+    void perSessionPinsExplicitMissingButNotTransientUnavailable() {
+        String userId = UUID.randomUUID().toString();
+        String sessionId = UUID.randomUUID().toString();
+        Workspace ws = createWorkspace(userId);
+        stubFacts(false);
+        when(runtimeContextSourceClient.readAgents(anyString()))
+                .thenReturn(SourceRead.absent())
+                .thenReturn(SourceRead.content("late file"));
+
+        assertThat(refreshService.refreshForRun(sessionId, ws.getId().toString(), userId, true))
+                .isEqualTo(ContextSourceRefreshService.L1_MISSING);
+        assertThat(refreshService.hasSuccessfulSessionL1Snapshot(sessionId)).isTrue();
+        refreshService.refreshForRun(sessionId, ws.getId().toString(), userId, false);
+        assertThat(projectedEpochText(sessionId, "l1_status")).isEqualTo(ContextSourceRefreshService.L1_MISSING);
+        verify(runtimeContextSourceClient, times(1)).readAgents(anyString());
     }
 
     @Test

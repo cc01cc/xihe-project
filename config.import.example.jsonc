@@ -89,7 +89,7 @@
   //           "instanceId": "30000000-0000-4000-8000-000000000001",
   //           "type": "root_agents_md",
   //           "enabled": true,
-  //           "config": { "enabled": true, "refreshPolicy": "session_snapshot", "maxBytes": 32768, "missingPolicy": "empty_with_status" }
+  //           "config": { "enabled": true, "refreshPolicy": "per_chat_run", "maxBytes": 32768, "missingPolicy": "empty_with_status" }
   //         }
   //       ]
   //     }

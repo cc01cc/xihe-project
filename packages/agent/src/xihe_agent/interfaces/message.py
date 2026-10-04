@@ -39,6 +39,7 @@ class TextMessage:
     status: str = ""
     truncated: bool = False
     artifact_ref: str = ""
+    artifact_status: str = ""
     size_bytes: int | None = None
     error_code: str = ""
     # PLAN-0381 T1.1 — pairing/degradation markers (both sides)

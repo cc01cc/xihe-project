@@ -59,7 +59,7 @@ function defaultConfig(type: string): Record<string, unknown> {
   switch (type) {
     case 'text': return { text: '', label: '' }
     case 'system_prompt': return { source: 'system', includeAgentPrompt: true }
-    case 'root_agents_md': return { enabled: true, refreshPolicy: 'session_snapshot', maxBytes: 32768, missingPolicy: 'empty_with_status' }
+    case 'root_agents_md': return { enabled: true, refreshPolicy: 'per_chat_run', maxBytes: 32768, missingPolicy: 'empty_with_status' }
     case 'conversation_history': return { selection: 'recent', maxTurns: 20, maxTokens: 8000, includeCompaction: true }
     case 'tool_history': return { selection: 'recent', maxTokens: 6000, resultMode: 'preview', includeFailedCalls: false, parameterPolicy: 'approved_redaction' }
     case 'tool_definitions': return { selection: 'all_authorized', includeDescriptions: true, includeSchemas: true, maxTools: 64, maxTokens: 4000 }
@@ -488,6 +488,9 @@ function layerLabel(layer: ConfigLayer): string {
               :data-testid="`context-template-component-config-${index}`"
               @input="handleConfigInput(component.instanceId, $event)"
             />
+            <p v-if="component.type === 'root_agents_md'" class="text-muted-foreground" :data-testid="`context-template-refresh-help-${index}`">
+              {{ t('settings.contextTemplate.rootRefreshHelp') }}
+            </p>
             <p v-if="configErrors[component.instanceId]" class="text-destructive" :data-testid="`context-template-component-error-${index}`">
               {{ configErrors[component.instanceId] }}
             </p>
