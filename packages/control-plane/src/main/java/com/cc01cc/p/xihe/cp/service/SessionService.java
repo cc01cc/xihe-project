@@ -298,7 +298,9 @@ public class SessionService {
             String workspaceId,
             String providerConnectionId,
             String requestedProvider) {
-        if (providerConnectionId == null || providerConnectionId.isBlank()) return;
+        if (providerConnectionId == null || providerConnectionId.isBlank()) {
+            return;
+        }
         try {
             ProviderConnection connection = providerConnectionService.requireUsable(providerConnectionId);
             if (requestedProvider != null && !requestedProvider.isBlank()

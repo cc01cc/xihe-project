@@ -70,7 +70,9 @@ public class OAuthCredential {
         Instant now = Instant.now();
         createdAt = now;
         updatedAt = now;
-        if (status == null) status = "AUTHORIZED";
+        if (status == null) {
+            status = "AUTHORIZED";
+        }
     }
 
     @PreUpdate

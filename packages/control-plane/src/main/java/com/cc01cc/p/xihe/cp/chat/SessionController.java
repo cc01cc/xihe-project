@@ -12,7 +12,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
 import java.time.Duration;
@@ -331,10 +339,14 @@ public class SessionController {
                                        String providerConnectionId) {}
 
     private static ContextTemplateService.TemplateSelection templateSelection(CreateSessionRequest request) {
-        if (request == null) return null;
+        if (request == null) {
+            return null;
+        }
         boolean any = request.contextTemplateLayer() != null || request.contextTemplateId() != null
                 || request.contextTemplateVersion() != null;
-        if (!any) return null;
+        if (!any) {
+            return null;
+        }
         if (request.contextTemplateLayer() == null || request.contextTemplateId() == null
                 || request.contextTemplateVersion() == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",

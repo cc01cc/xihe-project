@@ -1,7 +1,18 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
-import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static org.junit.jupiter.api.Assertions.*;
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.containing;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
+import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.awaitility.Awaitility.await;
@@ -31,7 +42,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.http.*;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -151,7 +164,11 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
 
-        try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure"))
@@ -279,7 +296,11 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
-        try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
                 .withHeader("Authorization", containing("Bearer dev-token-not-secure"))
                 .withRequestBody(matchingJsonPath("$.stream", equalTo("true")))
@@ -326,7 +347,11 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
-        try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
 
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
                 .withRequestBody(matchingJsonPath(
@@ -373,7 +398,11 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 Map.class);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
-        try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat")));
     }
 

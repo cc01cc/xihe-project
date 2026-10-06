@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.config;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.networknt.schema.Error;
 import com.networknt.schema.InputFormat;
 import com.networknt.schema.Schema;
@@ -44,7 +43,9 @@ public class ConfigDomainSchema {
 
         for (Resource resource : resources) {
             String filename = resource.getFilename();
-            if (filename == null) continue;
+            if (filename == null) {
+                continue;
+            }
             String domain = filename.replace(".json", "");
             try (InputStream is = resource.getInputStream()) {
                 JsonNode schemaNode = objectMapper.readTree(is);

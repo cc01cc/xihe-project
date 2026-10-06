@@ -38,7 +38,6 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0407 T3.1 / verify V6 — the tiered query internal API on a real PostgreSQL chain:

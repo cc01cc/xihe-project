@@ -2,7 +2,8 @@ package com.cc01cc.p.xihe.cp.mcp;
 
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RequestRewriterTest {
     private final ObjectMapper mapper = new ObjectMapper();
