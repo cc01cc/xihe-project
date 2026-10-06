@@ -3,7 +3,8 @@ from typing import TYPE_CHECKING, Optional
 from langchain.agents import create_agent as create_react_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.graph import StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.pregel import Pregel
 from langgraph_supervisor import create_supervisor
 
 if TYPE_CHECKING:
@@ -41,7 +42,7 @@ def build_supervisor(
     all_mcp_tools: list[BaseAgentTool],
     custom_tools: list[BaseAgentTool],
     registry: Optional["WorkerRegistry"] = None,
-) -> StateGraph:
+) -> CompiledStateGraph:
     from xihe_agent.registry.registry import _get_tools_for_worker
 
     def _adapt(tools: list[BaseAgentTool]) -> list[BaseTool]:
@@ -61,7 +62,7 @@ def build_supervisor(
         workers = None
 
     if workers:
-        sub_agents = []
+        sub_agents: list[Pregel] = []
         for config in workers:
             tools = _get_tools_for_worker(config, all_mcp_tools, custom_tools)
             sub_agents.append(

@@ -37,8 +37,12 @@ class LLMProvider(ABC):
         ...
 
     @abstractmethod
-    async def stream_complete(self, request: LLMRequest) -> AsyncIterator[LLMToken]:
-        """Generate a streaming response, yielding tokens."""
+    def stream_complete(self, request: LLMRequest) -> AsyncIterator[LLMToken]:
+        """Generate a streaming response, yielding tokens.
+
+        Implementations are async generators; callers iterate directly with
+        ``async for`` (no ``await``).
+        """
         ...
 
     @abstractmethod

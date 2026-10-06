@@ -28,6 +28,8 @@ pnpm run lint
 pnpm run build
 ```
 
+`pnpm run lint` 对语法/correctness、unused变量、`prefer-const` 和重复导入执行阻断；其他存量 style warning 仍需看完整输出，不等同于零告警。全包 `pnpm run lint:oxfmt` 的历史差异由独立 formatter 波次承接；本波不得全仓 `--write`。
+
 `test:unit -- ...` 后接实际测试文件或 Vitest 参数。完整 `pnpm run test:unit` 与全量 E2E 只在测试波次或里程碑执行；不要把全套验证当作每次小改默认动作。
 
 ## 跨层与交互规则

@@ -3,13 +3,9 @@ package com.cc01cc.p.xihe.cp.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
-import jakarta.persistence.Convert;
 import jakarta.persistence.PrePersist;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Table;
-import jakarta.persistence.Convert;
 
 import java.time.Instant;
 import java.util.UUID;

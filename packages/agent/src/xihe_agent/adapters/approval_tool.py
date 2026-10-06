@@ -5,7 +5,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TypeGuard
 from uuid import uuid4
 
 from langchain_core.tools import BaseTool
@@ -115,8 +115,12 @@ def _configured_timeout_seconds() -> float:
         return 300.0
 
 
-def is_valid_approval_request_id(request_id: Any) -> bool:
-    """PLAN-0328 T1.9: the CP gate provides the request id; validate before keying state."""
+def is_valid_approval_request_id(request_id: Any) -> TypeGuard[str]:
+    """PLAN-0328 T1.9: the CP gate provides the request id; validate before keying state.
+
+    Returns True only for a `str` matching the id pattern, so callers can rely
+    on the narrowed `str` type after the guard.
+    """
     return isinstance(request_id, str) and bool(APPROVAL_REQUEST_ID_PATTERN.fullmatch(request_id))
 
 
@@ -358,10 +362,10 @@ class ApprovalCoordinator:
             return "accepted", approved
 
         if request_id in self.completed_statuses:
-            existing = self.completed_decisions[request_id]
-            if existing is None:
+            decision = self.completed_decisions[request_id]
+            if decision is None:
                 return "expired", None
-            return ("already_decided", existing) if existing == approved else ("conflict", existing)
+            return ("already_decided", decision) if decision == approved else ("conflict", decision)
         return "not_found", None
 
     def get_pending(self) -> list[dict[str, Any]]:

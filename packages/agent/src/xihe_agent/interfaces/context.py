@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from xihe_agent.interfaces.event import Event
-from xihe_agent.interfaces.message import Message, TextMessage, ToolCallRef
+from xihe_agent.interfaces.message import Message, MessageRole, TextMessage, ToolCallRef
 
 # PLAN-0381 T1.1/T1.5 (frozen cross-language contract: evidence/m1-contract.md
 # §3–§4). CP's ContextProjectionService mirrors these helpers — markers and
@@ -184,12 +184,13 @@ def message_from_dict(raw: dict[str, Any]) -> TextMessage:
     tool_calls: tuple[ToolCallRef, ...] = ()
     for entry in raw.get("tool_calls") or []:
         if isinstance(entry, dict) and entry.get("call_id"):
+            raw_arguments = entry.get("arguments")
             tool_calls = (
                 *tool_calls,
                 ToolCallRef(
                     call_id=str(entry.get("call_id", "")),
                     tool_name=str(entry.get("tool_name", "")),
-                    arguments=entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {},
+                    arguments=raw_arguments if isinstance(raw_arguments, dict) else {},
                 ),
             )
     size_bytes = raw.get("size_bytes")
@@ -278,7 +279,10 @@ class AgentContext:
 
     aggregate_id: str
     latest_sequence: int = 0
-    messages: list[Message] = field(default_factory=list)
+    # Snapshot history is always concrete TextMessage (see message_from_dict
+    # and every append site); the concrete type exposes tool-history fields
+    # that builder/runner code reads without extra narrowing.
+    messages: list[TextMessage] = field(default_factory=list)
     epoch: ContextEpoch | None = None
     runtime_state: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -286,7 +290,7 @@ class AgentContext:
     # snapshot predates branch awareness). The Agent never fills this itself.
     branch_id: str = ""
 
-    def add_message(self, message: Message) -> "AgentContext":
+    def add_message(self, message: TextMessage) -> "AgentContext":
         self.messages.append(message)
         return self
 
@@ -351,8 +355,8 @@ class AgentContext:
                     ContextSource(
                         key=s["key"],
                         source_type=s.get("source_type", "agents_md"),
-                        content=s.get("content", ""),
-                        content_hash=s.get("content_hash", s.get("content_hash", "")),
+                        content=str(s.get("content") or ""),
+                        content_hash=str(s.get("content_hash") or ""),
                     )
                     for s in payload.get("sources", [])
                     if isinstance(s, dict)
@@ -516,7 +520,7 @@ class AgentContext:
         if not isinstance(raw_messages, list) or not isinstance(context_epoch, str) or not context_epoch:
             raise ValueError("session.forked summary_seed requires messages and child contextEpoch")
 
-        messages: list[Message] = []
+        messages: list[TextMessage] = []
         for raw_message in raw_messages:
             if not isinstance(raw_message, dict):
                 raise ValueError("session.forked summary_seed message must be an object")
@@ -622,7 +626,11 @@ class AgentContext:
         elif payload.get("token"):
             content = payload["token"]
         if content:
-            self.messages.append(TextMessage(role=role, content=content))
+            # Contract §5 roles are closed-vocabulary; normalize anything else
+            # the same way message_from_dict does instead of storing it.
+            valid_roles: dict[str, MessageRole] = {"system": "system", "human": "human", "ai": "ai", "tool": "tool"}
+            resolved_role = valid_roles.get(role, "human")
+            self.messages.append(TextMessage(role=resolved_role, content=content))
 
     def _apply_prune_tombstones(self, payload: dict[str, Any]) -> None:
         import hashlib

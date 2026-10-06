@@ -44,11 +44,32 @@ def _normalize_outbound_messages(messages: Sequence[BaseMessage]) -> list[BaseMe
     normalized: list[BaseMessage] = []
     for message in messages:
         content = message.content
-        if isinstance(content, list) and all(isinstance(item, str) for item in content):
-            normalized.append(message.model_copy(update={"content": "".join(content)}))
-        else:
-            normalized.append(message)
+        if isinstance(content, list):
+            text_parts = [item for item in content if isinstance(item, str)]
+            if len(text_parts) == len(content):
+                normalized.append(message.model_copy(update={"content": "".join(text_parts)}))
+                continue
+        normalized.append(message)
     return normalized
+
+
+def _stream_token_text(content: Any) -> str:
+    """Flatten a streaming chunk's content into the LLMToken text contract.
+
+    Providers normally stream plain strings; structured content blocks are
+    flattened to their text fields so `LLMToken.content` stays a `str`.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "".join(parts)
+    return str(content) if content else ""
 
 
 def _normalize_message_dict(message: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -147,8 +168,8 @@ def env_api_key(provider: str) -> str:
 def resolve_provider_base_url(
     llm_entries: Mapping[str, str],
     provider: str,
-    fallback: str = "",
-) -> str:
+    fallback: str | None = "",
+) -> str | None:
     """Shared precedence for a provider endpoint: `{provider}ApiBase` > `baseUrl` > caller fallback."""
     return llm_entries.get(f"{provider}ApiBase") or llm_entries.get("baseUrl") or fallback
 
@@ -403,8 +424,9 @@ class XiheLiteLLM(ChatLiteLLM, LLMProvider):
     async def stream_complete(self, request: LLMRequest) -> AsyncIterator[LLMToken]:
         messages = _to_langchain_messages(request.messages)
         async for chunk in self.astream(messages):
-            if chunk.content:
-                yield LLMToken(content=chunk.content)
+            token_text = _stream_token_text(chunk.content)
+            if token_text:
+                yield LLMToken(content=token_text)
 
     def with_model(self, model: str) -> LLMProvider:
         return XiheLiteLLM(config=self._config.with_model(model))
@@ -436,8 +458,9 @@ class MockChatModel(BaseChatModel, LLMProvider):
     async def stream_complete(self, request: LLMRequest) -> AsyncIterator[LLMToken]:
         messages = _to_langchain_messages(request.messages)
         async for chunk in self.astream(messages):
-            if chunk.content:
-                yield LLMToken(content=chunk.content)
+            token_text = _stream_token_text(chunk.content)
+            if token_text:
+                yield LLMToken(content=token_text)
 
     def with_model(self, model: str) -> LLMProvider:
         return MockChatModel()
@@ -481,7 +504,8 @@ class MockChatModel(BaseChatModel, LLMProvider):
         return "xihe-mock"
 
 
-def create_llm(config: LLMConfig | None = None) -> LLMProvider:
+def create_llm(config: LLMConfig | None = None) -> "MockChatModel | XiheLiteLLM":
+    """Build the concrete chat model; both variants are BaseChatModel + LLMProvider."""
     cfg = config or LLMConfig.from_env()
     if cfg.provider == "mock":
         return MockChatModel()

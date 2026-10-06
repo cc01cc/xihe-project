@@ -37,6 +37,8 @@ mvn -o -q checkstyle:check
 
 `-Dtest=...` 替换为具体测试类（必要时加 `#method`）。完整 `mvn -o test` 只在测试波次或里程碑执行；不要把全量测试当作每次小改的默认门禁。
 
+`mvn checkstyle:check` 对 `checkstyle.xml` 中 severity=error 的规则阻断；历史 severity=warning 诊断仍需通过 Checkstyle 报告查看，不代表零告警。当前规则分层与后续风格清理范围见 PLAN-0458。
+
 ## API 与跨层契约
 
 - 公开接口统一 `/api/v1`、Bearer 认证、`TenantContext` 租户隔离与 RFC 9457 Problem Details（含 `code`、`requestId`）。

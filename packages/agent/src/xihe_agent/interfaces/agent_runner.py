@@ -60,12 +60,16 @@ class AgentRunner(ABC):
     """Abstract agent executor."""
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         config: RunnerConfig,
     ) -> AsyncIterator[AgentEvent]:
-        """Stream agent events for the given conversation."""
+        """Stream agent events for the given conversation.
+
+        Implementations are async generators; callers iterate directly with
+        ``async for`` (no ``await``).
+        """
         ...
 
     @abstractmethod

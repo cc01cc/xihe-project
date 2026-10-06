@@ -81,7 +81,6 @@ function installPolicyApi(page: Page) {
     const url = new URL(request.url())
     const method = request.method()
     const layer = url.searchParams.get('layer') ?? ''
-    const scope = url.searchParams.get('scope') ?? 'workspace'
     const json = (status: number, body: unknown) => route.fulfill({
       status,
       contentType: 'application/json',

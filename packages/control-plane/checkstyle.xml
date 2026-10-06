@@ -9,26 +9,44 @@
 
   <module name="TreeWalker">
     <module name="UnusedImports"/>
-    <module name="RedundantImport"/>
+    <module name="RedundantImport">
+      <property name="severity" value="error"/>
+    </module>
     <module name="AvoidStarImport"/>
 
     <module name="EmptyBlock"/>
     <module name="LeftCurly"/>
     <module name="NeedBraces"/>
-    <module name="RightCurly"/>
+    <module name="RightCurly">
+      <property name="severity" value="error"/>
+    </module>
 
-    <module name="OneTopLevelClass"/>
+    <module name="OneTopLevelClass">
+      <property name="severity" value="error"/>
+    </module>
     <module name="HideUtilityClassConstructor"/>
-    <module name="InterfaceIsType"/>
+    <module name="InterfaceIsType">
+      <property name="severity" value="error"/>
+    </module>
 
     <module name="ConstantName"/>
-    <module name="LocalFinalVariableName"/>
-    <module name="LocalVariableName"/>
+    <module name="LocalFinalVariableName">
+      <property name="severity" value="error"/>
+    </module>
+    <module name="LocalVariableName">
+      <property name="severity" value="error"/>
+    </module>
     <module name="MemberName"/>
     <module name="MethodName"/>
-    <module name="PackageName"/>
+    <module name="PackageName">
+      <property name="severity" value="error"/>
+    </module>
     <module name="ParameterName"/>
-    <module name="StaticVariableName"/>
-    <module name="TypeName"/>
+    <module name="StaticVariableName">
+      <property name="severity" value="error"/>
+    </module>
+    <module name="TypeName">
+      <property name="severity" value="error"/>
+    </module>
   </module>
 </module>

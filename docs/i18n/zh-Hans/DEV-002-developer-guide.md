@@ -230,6 +230,9 @@ Chat SSE 结构化事件与日志字段见 DEV-004 §6.3；UI 传输层见 DEV-0
 ## 5. 测试入口
 
 - 单元：`mise run test`（UI + Agent + CP + Runtime lib）；`mise run validate`（lint + typecheck + build + test，Docker 自动管理）。
+- 静态检查：UI 语法/correctness、未使用变量、`prefer-const` 与重复导入错误会阻断 lint/validate；其他 style warnings 仍须看完整输出，不代表零告警。UI 全包 formatter 历史差异由独立波次处理，不属于当前 `mise run validate` 硬门禁。
+- CP 静态检查：`mise run lint:cp` 对选定的 Checkstyle error 级规则阻断；存量 warning 级风格诊断保持可见但非阻断，规则范围与后续清理见 PLAN-0458。
+- Agent 静态检查：`mise run lint:agent` 的 mypy 对 `src/` 真实阻断（`pyproject.toml` 已移除全局 `ignore_errors`，当前 0 error）；发现类型错误必须修复，不得以全局/整模块 ignore 换取绿灯。
 - 集成：`mise run test:integration`（T2；T3 需 Docker）。
 - E2E：`mise run test:e2e`（Compose-compatible，排除 `@host`）；`mise run test:e2e:host`（需先 `dev:host`，每轮隔离 DB/host root，成功/失败/中断必 teardown）。
 - 全量：`mise run validate:full`。策略详见 DEV-020/021/022/023。

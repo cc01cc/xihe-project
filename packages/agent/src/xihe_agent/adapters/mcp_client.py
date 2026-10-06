@@ -478,7 +478,11 @@ class MCPAgentTool(BaseAgentTool):
         if isinstance(args_schema, dict):
             input_schema = args_schema
         elif args_schema:
-            input_schema = args_schema.model_json_schema()
+            if hasattr(args_schema, "model_json_schema"):
+                input_schema = args_schema.model_json_schema()
+            else:
+                # pydantic v1-compatible fastmcp tools expose only .schema().
+                input_schema = args_schema.schema()
         else:
             input_schema = {}
         return ToolSpec(

@@ -68,7 +68,6 @@ const server = createServer(async (request, response) => {
   if (body.method === 'initialize') {
     sessions.set(sessionId, { lastEventId: null, nextEventNumber: 1 })
   }
-  const session = sessions.get(sessionId)
   if (body.method === 'tools/call' && body.params?.requestState) {
     const state = requestStates.get(JSON.stringify(body.params.requestState))
     if (!state || state.sessionId !== sessionId || state.expiresAt <= Date.now()) {

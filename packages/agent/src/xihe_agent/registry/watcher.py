@@ -3,12 +3,27 @@ import os
 from pathlib import Path
 
 from loguru import logger
-from watchdog.events import FileCreatedEvent, FileDeletedEvent, FileModifiedEvent, FileSystemEventHandler
+from watchdog.events import (
+    DirCreatedEvent,
+    DirDeletedEvent,
+    DirModifiedEvent,
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileModifiedEvent,
+    FileSystemEventHandler,
+)
 from watchdog.observers import Observer
 
 from xihe_agent.registry.loader import parse_markdown_worker
 
 _DEBOUNCE_SECONDS = 0.5
+
+
+def _event_path(src_path: str | bytes) -> str:
+    """watchdog may hand back bytes paths on some platforms; normalize once."""
+    if isinstance(src_path, bytes):
+        return src_path.decode("utf-8", errors="replace")
+    return src_path
 
 
 class WorkerFileHandler(FileSystemEventHandler):
@@ -19,17 +34,23 @@ class WorkerFileHandler(FileSystemEventHandler):
         self.custom_tools = custom_tools
         self._debounce_timers: dict[str, asyncio.TimerHandle | None] = {}
 
-    def on_created(self, event: FileCreatedEvent):
-        if not event.is_directory and event.src_path.endswith(".md"):
-            self._debounce("created", event.src_path, self._handle_created)
+    def on_created(self, event: DirCreatedEvent | FileCreatedEvent):
+        if not event.is_directory:
+            path = _event_path(event.src_path)
+            if path.endswith(".md"):
+                self._debounce("created", path, self._handle_created)
 
-    def on_modified(self, event: FileModifiedEvent):
-        if not event.is_directory and event.src_path.endswith(".md"):
-            self._debounce("modified", event.src_path, self._handle_modified)
+    def on_modified(self, event: DirModifiedEvent | FileModifiedEvent):
+        if not event.is_directory:
+            path = _event_path(event.src_path)
+            if path.endswith(".md"):
+                self._debounce("modified", path, self._handle_modified)
 
-    def on_deleted(self, event: FileDeletedEvent):
-        if not event.is_directory and event.src_path.endswith(".md"):
-            self._debounce("deleted", event.src_path, self._handle_deleted)
+    def on_deleted(self, event: DirDeletedEvent | FileDeletedEvent):
+        if not event.is_directory:
+            path = _event_path(event.src_path)
+            if path.endswith(".md"):
+                self._debounce("deleted", path, self._handle_deleted)
 
     def _debounce(self, event_type: str, path: str, handler):
         path_key = f"{event_type}:{path}"

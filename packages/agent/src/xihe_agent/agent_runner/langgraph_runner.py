@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -12,10 +12,11 @@ from uuid import uuid4
 
 import litellm
 from langchain.agents import create_agent as create_react_agent
+from langchain.agents.middleware import InputAgentState
 from langchain_core.callbacks import AsyncCallbackManagerForToolRun
 from langchain_core.messages import (
     AIMessage,
-    BaseMessage,
+    AnyMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
@@ -255,17 +256,17 @@ def _bound_command_preview(content: str) -> tuple[str, dict[str, Any]]:
         preview = content
     # 病态兜底（其他大键/转义爆炸）：整体走通用截断（m2-contract.md §3）。
     if len(preview) > RESULT_PREVIEW_LIMIT:
-        preview, meta = _bound_generic_preview(preview)
+        preview, generic_meta = _bound_generic_preview(preview)
         if artifact_id is not None:
-            meta["artifactRef"] = artifact_id
-            meta["status"] = "available"
+            generic_meta["artifactRef"] = artifact_id
+            generic_meta["status"] = "available"
         elif wire_truncated:
-            meta["errorCode"] = "artifact_unavailable"
+            generic_meta["errorCode"] = "artifact_unavailable"
         if wire_truncated:
-            meta.pop("sizeBytes", None)  # wire 截断过 → 完整大小未知
+            generic_meta.pop("sizeBytes", None)  # wire 截断过 → 完整大小未知
         else:
-            meta["sizeBytes"] = len(content.encode("utf-8"))
-        return preview, meta
+            generic_meta["sizeBytes"] = len(content.encode("utf-8"))
+        return preview, generic_meta
 
     meta: dict[str, Any] = {"truncated": True}
     if artifact_id is not None:
@@ -350,7 +351,7 @@ def _content_head_tail(content: str, limit: int = 120) -> tuple[str, str]:
     return content[:limit], content[-limit:]
 
 
-def _align_truncation_start(history: list[Message], limit: int) -> int:
+def _align_truncation_start(history: Sequence[Message], limit: int) -> int:
     """Window start that never orphans a tool result (T1.2 fuse rule)."""
     start = max(0, len(history) - limit)
     # Walk back while the slice would begin on a tool message so its preceding
@@ -361,7 +362,7 @@ def _align_truncation_start(history: list[Message], limit: int) -> int:
 
 
 def prune_history_tool_results(
-    history: list[Message],
+    history: Sequence[Message],
     prune_window_chars: int = DEFAULT_PRUNE_WINDOW_CHARS,
 ) -> PruneResult:
     """Prune stale oversized/duplicate/window-overflow tool results.
@@ -423,7 +424,7 @@ def prune_history_tool_results(
 
 
 # Back-compat alias used by existing unit tests (PLAN-294 surface).
-def _mask_history_tool_results(history: list[Message]) -> list[Message]:
+def _mask_history_tool_results(history: Sequence[Message]) -> list[Message]:
     return prune_history_tool_results(history).messages
 
 
@@ -832,7 +833,7 @@ class LangGraphRunner(AgentRunner):
         # conversation history (compaction already applied by CP). The caller's
         # `messages` list carries only the current turn's prompt; historical
         # turns come from the snapshot so multi-turn context reaches the LLM.
-        history = [] if config.template_context else list(context.messages)
+        history: Sequence[Message] = [] if config.template_context else list(context.messages)
         # PLAN-0341 T1.2: assembly fuse only — never orphan a tool result.
         if len(history) > HISTORY_TRUNCATION_LIMIT:
             fuse_start = _align_truncation_start(history, HISTORY_TRUNCATION_LIMIT)
@@ -848,7 +849,7 @@ class LangGraphRunner(AgentRunner):
         assembled = list(messages) if config.template_context else [*history, *messages]
 
         system_messages = [] if config.template_context else self._build_system_messages(config, context)
-        langchain_messages = list(system_messages)
+        langchain_messages: list[AnyMessage | dict[str, Any]] = [*system_messages]
         langchain_messages.extend(_to_langchain_messages(assembled))
 
         agent = create_react_agent(
@@ -856,7 +857,7 @@ class LangGraphRunner(AgentRunner):
             tools=tools,
         )
 
-        inputs = {"messages": langchain_messages}
+        inputs: InputAgentState = {"messages": langchain_messages}
         seen_tool_ids: set[str] = set()
         cancel_event = config.cancel_event
         cancelled = False
@@ -864,14 +865,16 @@ class LangGraphRunner(AgentRunner):
 
         try:
             raw_stream = agent.astream_events(inputs, version="v2").__aiter__()
-            raw_task = asyncio.create_task(raw_stream.__anext__())
+            # ensure_future accepts the Awaitable returned by __anext__ (typeshed
+            # types it as Awaitable, not Coroutine; asyncio still schedules it).
+            raw_task: asyncio.Future[Any] = asyncio.ensure_future(raw_stream.__anext__())
             approval_task = asyncio.create_task(approval_events.get())
             cancel_wait_task: asyncio.Task[bool] | None = (
                 asyncio.create_task(cancel_event.wait()) if cancel_event is not None else None
             )
             try:
                 while True:
-                    wait_set: set[asyncio.Task[Any]] = {raw_task, approval_task}
+                    wait_set: set[asyncio.Future[Any]] = {raw_task, approval_task}
                     if cancel_wait_task is not None:
                         wait_set.add(cancel_wait_task)
                     completed, _ = await asyncio.wait(
@@ -898,7 +901,7 @@ class LangGraphRunner(AgentRunner):
                                 if isinstance(content, str):
                                     assistant_parts.append(content)
                             yield event
-                        raw_task = asyncio.create_task(raw_stream.__anext__())
+                        raw_task = asyncio.ensure_future(raw_stream.__anext__())
             finally:
                 for task in (raw_task, approval_task, cancel_wait_task):
                     if task is not None and not task.done():
@@ -980,7 +983,7 @@ class LangGraphRunner(AgentRunner):
     ) -> str:
         return str(uuid4())
 
-    async def _append_prompt_admitted(self, messages: list[Message], context: AgentContext) -> None:
+    async def _append_prompt_admitted(self, messages: Sequence[Message], context: AgentContext) -> None:
         if self._event_store is None:
             return
         for message in messages:
@@ -1169,7 +1172,7 @@ def _langchain_tool_status(status: str) -> Literal["success", "error"]:
     return "error"
 
 
-def to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
+def to_langchain_messages(messages: list[Message]) -> list[AnyMessage]:
     """PLAN-0381 T1.4 / contract §7: provider mapping with explicit pairing.
 
     Reconstructs assistant tool-call declarations + tool results into the
@@ -1177,7 +1180,7 @@ def to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
     unanswered calls get an explicit missing-result marker, unpaired results
     degrade to system text facts (never a fabricated pair).
     """
-    result: list[BaseMessage] = []
+    result: list[AnyMessage] = []
     pending: dict[str, str] = {}  # tool_call_id -> tool_name (contract §7)
 
     def _flush_missing() -> None:

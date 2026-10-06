@@ -91,7 +91,7 @@ describe('useSessionStore (server canonical)', () => {
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce({ ok: true, status: 201, json: () => Promise.resolve(mockSessionResponse({ id: 's1' })) } as Response)
-    const s1 = await store.createSession('principal-test', 'S1')
+    await store.createSession('principal-test', 'S1')
     spy.mockResolvedValueOnce({ ok: true, status: 201, json: () => Promise.resolve(mockSessionResponse({ id: 's2' })) } as Response)
     const s2 = await store.createSession('principal-test', 'S2')
     spy.mockReset()

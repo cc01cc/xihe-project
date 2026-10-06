@@ -10,14 +10,14 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager, suppress
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from uuid import uuid4
 
 import litellm
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AnyMessage
 from litellm import get_llm_provider
 from loguru import logger
 
@@ -31,7 +31,7 @@ from xihe_agent.adapters.mcp_client import MCPClientManager
 from xihe_agent.adapters.sse_adapter import render_sse
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.cancel_registry import RunCancelRegistry
-from xihe_agent.config_client import ConfigClient
+from xihe_agent.config_client import ConfigClient, SyncReport
 from xihe_agent.context import (
     CPContextServiceClient,
     CPEventStoreClient,
@@ -263,6 +263,12 @@ embedding_model: str | None = None
 _embedding_api_key: str | None = None
 _embedding_api_base: str | None = None
 embedding_enabled = False
+# Created and swapped inside _refresh_embedding_config (module `global`
+# assignments). The bare annotations declare their types for readers without
+# changing the current "NameError until first refresh" runtime behaviour.
+embedding_service: EmbeddingService
+embedding_adapter: LiteLLMEmbeddings
+vector_store: VectorStore
 
 
 def _refresh_embedding_config() -> None:
@@ -349,11 +355,12 @@ def _log_token_usage(result: Any) -> None:
 
 
 def _derive_llm_ready(
-    report: dict[str, Any],
+    report: SyncReport,
     catalog: dict[str, Any],
     config: LLMConfig,
 ) -> tuple[str, str | None]:
-    required_status = report.get("domains", {}).get("llm-provider", {}).get("status", "unknown")
+    llm_domain = report["domains"].get("llm-provider")
+    required_status: str = llm_domain["status"] if llm_domain else "unknown"
     if required_status in {"unreachable", "unauthorized", "invalid_response"}:
         return "unknown", None
     if config.provider == "mock":
@@ -518,7 +525,7 @@ def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
     return "AGENT_STREAM_FAILED", "Agent stream failed", True
 
 
-async def reload_runtime_config(reason: str) -> dict[str, Any]:
+async def reload_runtime_config(reason: str) -> SyncReport:
     """Refresh config-derived dependencies and swap their runtime snapshot atomically."""
     global llm_config, image_provider_manager, generate_image_tool
     global AGENT_INSTRUCTIONS, AGENT_USER_NAME, USE_SUPERVISOR, USE_REGISTRY
@@ -1620,7 +1627,14 @@ async def summarize(request: Request, _token: None = Depends(verify_api_token)):
     return JSONResponse(content={"summary": summary, "usage": usage})
 
 
-def _rag_config_defaults() -> dict[str, float | int]:
+class _RagDefaults(TypedDict):
+    chunkSize: int
+    chunkOverlap: int
+    topK: int
+    minScore: float
+
+
+def _rag_config_defaults() -> _RagDefaults:
     """PLAN-0307 T2.4: RAG defaults come from the DB `rag` domain; request params win."""
     return {
         "chunkSize": int(config_client.get("rag", "chunkSize") or 1000),
@@ -1703,7 +1717,7 @@ def _deserialize_messages(raw: list[dict[str, Any]]) -> list[Message]:
     return [message_from_dict(item) for item in raw]
 
 
-def _to_langchain_messages(messages: list[Message]) -> list[BaseMessage]:
+def _to_langchain_messages(messages: list[Message]) -> list[AnyMessage]:
     # PLAN-0381 T1.4: one shared provider mapping (contract §7) — the runner
     # and this supervisor path must not diverge on pairing/degradation rules.
     from xihe_agent.agent_runner.langgraph_runner import to_langchain_messages

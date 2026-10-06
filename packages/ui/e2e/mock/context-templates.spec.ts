@@ -54,7 +54,6 @@ test.describe('Context templates (PLAN-0414)', () => {
     const puts: Array<Record<string, string>> = []
 
     await page.route('**/api/v1/config/**context-templates**', async (route) => {
-      const url = new URL(route.request().url())
       if (route.request().method() === 'PUT') {
         const body = route.request().postDataJSON() as Record<string, string>
         puts.push(body)
